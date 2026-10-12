@@ -7362,10 +7362,15 @@ def _verify_runtime_credential_vars(
         return " ".join(parts)
 
     def _flag_value(args: str, env: dict[str, str], *flags: str) -> str:
+        # 与服务端 resolveCommandTemplate 一致，先展开完整 command / entrypoint，
+        # 再做 shell 分词。模板可能嵌在一个完整参数里（例如
+        # `--requirepass=${REDIS_SECRET:-secret}`），只解析“整个参数恰好是
+        # ${VAR}”会把合法的运行时凭据误判为空。
+        resolved_args = _resolve_text(args, env)
         try:
-            tokens = shlex.split(args)
+            tokens = shlex.split(resolved_args)
         except ValueError:
-            tokens = args.split()
+            tokens = resolved_args.split()
 
         def _resolve(raw: str) -> str:
             value = raw.strip().strip('"\'')

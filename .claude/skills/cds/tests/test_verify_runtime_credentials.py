@@ -197,6 +197,21 @@ def test_startup_flag_resolves_against_project_scope():
     assert aliases == {"CDS_REDIS_PASSWORD"}
 
 
+def test_startup_flag_default_template_matches_server_command_resolution():
+    for command in (
+        "redis-server --requirepass ${REDIS_SECRET:-project-secret}",
+        "redis-server --requirepass=${REDIS_SECRET:-project-secret}",
+    ):
+        aliases = cdscli._verify_runtime_credential_vars({
+            "redis": {
+                "image": "redis:7-alpine",
+                "command": command,
+            },
+        })
+
+        assert aliases == {"CDS_REDIS_PASSWORD"}
+
+
 def test_nats_config_file_authorization_matches_server_detection():
     aliases = cdscli._verify_runtime_credential_vars(
         {

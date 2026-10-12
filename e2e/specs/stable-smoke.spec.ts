@@ -4235,9 +4235,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIDEO-001][VIDEO-002][VIDEO-003][VIDEO-005][VIDEO-006] 文稿生成真实分镜并进入关键帧控制台', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[VIDEO-001][VIDEO-002][VIDEO-003] 文稿生成真实分镜并完成一个镜头', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动执行视频分镜生成与关键帧写入');
-    test.setTimeout(420_000);
+    test.setTimeout(720_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-storyboard-r${testInfo.retry}`;
     const article = '# 雨夜来信\n\n雨夜的旧车站里，一名邮差把最后一封信交给等候的人。\n\n天光出现时，两人沿着湿润的站台走向出口。';
@@ -4336,6 +4336,55 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         overviewJustification: '需要同时证明暗色桌面分镜顺序、当前镜头、关键帧设置和时间线没有局部变浅或裁切。',
         caption: '暗色桌面分镜态下，镜头顺序、关键帧控制、提示词和时间线清晰且操作完整。',
       });
+
+      const renderPath = `/api/video-agent/runs/${encodeURIComponent(runId)}/scenes/0/render`;
+      const renderResponsePromise = page.waitForResponse((response) => (
+        response.request().method() === 'POST'
+        && new URL(response.url()).pathname === renderPath
+      ), { timeout: 30_000 });
+      await consoleRoot.getByRole('button', { name: '生成这个镜头', exact: true }).click();
+      const renderResponse = await renderResponsePromise;
+      const renderBody = await renderResponse.json() as ApiEnvelope<boolean>;
+      expect(renderResponse.ok(), renderBody.error?.message || '提交镜头生成失败').toBe(true);
+      expect(renderBody.success, renderBody.error?.message || '提交镜头生成失败').toBe(true);
+
+      let observedWorking = false;
+      let renderedScene: {
+        status: string;
+        videoUrl?: string;
+        errorMessage?: string;
+        versions?: Array<{ id: string; videoUrl?: string }>;
+      } | undefined;
+      const renderStartedAt = Date.now();
+      while (Date.now() - renderStartedAt < 360_000) {
+        const status = await readEnvelope<{
+          status: string;
+          errorMessage?: string;
+          scenes: Array<{
+            status: string;
+            videoUrl?: string;
+            errorMessage?: string;
+            versions?: Array<{ id: string; videoUrl?: string }>;
+          }>;
+        }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }));
+        const scene = status.scenes[0];
+        if (scene && /Queued|Generating|Processing|Rendering/i.test(scene.status)) observedWorking = true;
+        if (scene && /Error|Failed/i.test(scene.status)) {
+          throw new Error(scene.errorMessage || '镜头生成失败，请保留分镜后重试');
+        }
+        if (scene && /Done|Completed/i.test(scene.status) && scene.videoUrl && (scene.versions?.length ?? 0) > 0) {
+          renderedScene = scene;
+          break;
+        }
+        if (/Failed|Cancelled/i.test(status.status)) {
+          throw new Error(status.errorMessage || '视频任务未完成镜头生成');
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
+      }
+      expect(observedWorking, '镜头生成必须出现可回读的处理中状态').toBe(true);
+      expect(renderedScene?.videoUrl, '镜头生成完成后必须返回可播放产物').toBeTruthy();
+      expect(renderedScene?.versions?.length, '镜头生成完成后必须登记至少一个版本').toBeGreaterThan(0);
+      await expect(consoleRoot.getByRole('button', { name: '生成新版本', exact: true }), '完成后页面必须允许生成新版本').toBeVisible({ timeout: 30_000 });
     } finally {
       if (runId) {
         const current = await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) });
@@ -4368,7 +4417,82 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIDEO-009] 视频生成失败说明影响并保留重新创作入口', async ({ browser, request }, testInfo) => {
+  test('[VIDEO-005] 活动视频任务取消后费用和产物停止增长并可回读', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动取消计费视频任务');
+    test.setTimeout(180_000);
+    const token = await loginAndReadToken(page, request, '/video-agent');
+    const models = await readEnvelope<Array<{
+      id: string;
+      healthStatus?: string;
+      durations?: number[];
+      resolutions?: string[];
+      aspectRatios?: string[];
+      pricePerCall?: number;
+    }>>(await page.request.get('/api/video-agent/models', { headers: authHeaders(token) }));
+    const model = models
+      .filter((item) => !/unhealthy|disabled|unavailable/i.test(item.healthStatus || ''))
+      .sort((left, right) => (left.pricePerCall ?? Number.MAX_SAFE_INTEGER) - (right.pricePerCall ?? Number.MAX_SAFE_INTEGER))[0];
+    expect(model, '取消验收需要至少一个可用视频模型').toBeTruthy();
+    const duration = model.durations?.includes(5) ? 5 : model.durations?.[0] || 5;
+    const resolution = model.resolutions?.includes('720p') ? '720p' : model.resolutions?.[0] || '720p';
+    const aspectRatio = model.aspectRatios?.includes('16:9') ? '16:9' : model.aspectRatios?.[0] || '16:9';
+    let runId = '';
+    try {
+      const createResponse = await page.request.post('/api/video-agent/runs', {
+        headers: authHeaders(token),
+        data: {
+          mode: 'direct',
+          directPrompt: '固定镜头，一只白色纸船放在木桌上，柔和自然光，不要文字，不要人物',
+          directVideoModel: model.id,
+          directAspectRatio: aspectRatio,
+          directResolution: resolution,
+          directDuration: duration,
+          generateAudio: false,
+        },
+      });
+      const createBody = await createResponse.json() as ApiEnvelope<{ runId: string }>;
+      expect(createResponse.ok(), createBody.error?.message || '创建取消验收任务失败').toBe(true);
+      expect(createBody.success, createBody.error?.message || '创建取消验收任务失败').toBe(true);
+      runId = createBody.data.runId;
+      const beforeCancel = await readEnvelope<{
+        status: string;
+        directVideoCost?: number;
+        videoAssetUrl?: string;
+        scenes: Array<{ cost?: number; videoUrl?: string; versions?: Array<{ id: string }> }>;
+      }>(await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }));
+      expect(beforeCancel.status, '取消必须针对仍在执行的任务').toMatch(/Queued|Scripting|Rendering/i);
+
+      const cancelResponse = await page.request.post(`/api/video-agent/runs/${encodeURIComponent(runId)}/cancel`, { headers: authHeaders(token) });
+      expect(cancelResponse.ok(), await cancelResponse.text()).toBe(true);
+      let cancelled = beforeCancel;
+      await expect.poll(async () => {
+        cancelled = await readEnvelope<typeof beforeCancel>(
+          await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
+        );
+        return cancelled.status;
+      }, { message: '取消后任务必须进入可回读终态', timeout: 60_000, intervals: [1_000, 2_000] }).toBe('Cancelled');
+      const cancelledArtifacts = cancelled.scenes.reduce((count, scene) => count + (scene.videoUrl ? 1 : 0) + (scene.versions?.length ?? 0), cancelled.videoAssetUrl ? 1 : 0);
+      const cancelledCost = (cancelled.directVideoCost ?? 0) + cancelled.scenes.reduce((sum, scene) => sum + (scene.cost ?? 0), 0);
+
+      await new Promise((resolveWait) => setTimeout(resolveWait, 10_000));
+      const afterCancel = await readEnvelope<typeof beforeCancel>(
+        await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
+      );
+      const afterArtifacts = afterCancel.scenes.reduce((count, scene) => count + (scene.videoUrl ? 1 : 0) + (scene.versions?.length ?? 0), afterCancel.videoAssetUrl ? 1 : 0);
+      const afterCost = (afterCancel.directVideoCost ?? 0) + afterCancel.scenes.reduce((sum, scene) => sum + (scene.cost ?? 0), 0);
+      expect(afterCancel.status).toBe('Cancelled');
+      expect(afterArtifacts, '取消进入终态后不得新增视频产物或生成版本').toBe(cancelledArtifacts);
+      expect(afterCost, '取消进入终态后不得继续增加已记录费用').toBe(cancelledCost);
+    } finally {
+      if (runId) {
+        const cleanup = await page.request.delete(`/api/video-agent/runs/${encodeURIComponent(runId)}?deleteEmptyProject=true`, { headers: authHeaders(token) });
+        expect(cleanup.ok(), await cleanup.text()).toBe(true);
+        expect((await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) })).status()).toBe(404);
+      }
+    }
+  });
+
+  test('视频生成失败说明影响并保留重新创作入口', async ({ browser, request }, testInfo) => {
     const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, serviceWorkers: 'block' });
     const page = await context.newPage();
     await loginAndReadToken(page, request, '/video-agent');
@@ -4667,7 +4791,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIDEO-002] 移动端可从新项目进入持续变化的拆镜阶段', async ({ browser, request }, testInfo) => {
+  test('[VIDEO-002][VIDEO-009] 移动端拆镜刷新后恢复同一任务与进度', async ({ browser, request }, testInfo) => {
     const mobileContext = await browser.newContext({
       ...devices['iPhone 13'],
       baseURL: testInfo.project.use.baseURL,
@@ -4739,6 +4863,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         overviewJustification: '窄屏需要同时证明阶段名称、百分比、实时通道、步骤和停止操作持续可见且无遮挡。',
         caption: '受控移动拆镜阶段持续显示 46% 进度、服务通道、当前步骤和停止操作，没有静止等待。',
       });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      await expect(page).toHaveURL(new RegExp(`run=${encodeURIComponent(runId)}`));
+      const restoredProgress = page.getByTestId('video-storyboard-progress');
+      await expect(restoredProgress, '刷新后必须恢复同一视频任务').toBeVisible({ timeout: 30_000 });
+      await expect(restoredProgress.getByText('46%', { exact: true }), '刷新后必须恢复同一任务进度').toBeVisible();
     } finally {
       await mobileContext.close();
     }
@@ -4761,7 +4891,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
   });
 
-  test('[VIDEO-009] 单镜失败不阻断其他镜头继续处理', async ({ browser, request }, testInfo) => {
+  test('[VIDEO-003][VIDEO-006] 单镜失败保留成功镜头并提供本镜重试', async ({ browser, request }, testInfo) => {
     const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, serviceWorkers: 'block' });
     const page = await context.newPage();
     await loginAndReadToken(page, request, '/video-agent');
