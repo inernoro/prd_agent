@@ -181,3 +181,9 @@ Agent 发起申请后，CDS 右下角会出现授权请求。确认 Agent 名称
 - [一键可视化部署](guide.cds.one-click-deploy.md)
 - [部署验收](guide.cds.deploy-acceptance.md)
 - [环境与凭据](guide.cds.env.md)
+
+## 2026.10 新人实战案例
+
+产品经理与业务同事可以从 [CDS 新人实验室](https://cds.miduo.org/tutorials/starter-lab/index.html#0) 开始。它提供六个短章节、流程图、48 秒 HyperFrames 动画、真实部署录屏与可操作的“小步清单”。控制台入口为「接入 Agent → 上手助手 → 新人实验室」。
+
+案例采用独立项目的极速版，已经验证首次部署、公网新增与完成、刷新保留，以及推送后 CI 测试、不可变镜像和 CDS 自动部署后的任务保留。录屏保留早期源码模式操作并补上最终极速版验收。首次页面授权、CI 失败注入和回滚未重演，不能据此宣布整个静默接入体系闭环。练习区公开共享，只使用演示数据。

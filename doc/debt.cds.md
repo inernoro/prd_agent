@@ -2361,3 +2361,12 @@ CDS 的系统环境文件有两个读者：`source` 它的 shell，和 Node 启�
 - 布局与走线（纯函数）：`cds/web/src/components/branch/relationLayout.ts`
 - 几何判据：`cds/tests/web/relation-geometry.ts`、`cds/tests/web/relation-geometry.test.ts`；同构样本：`cds/tests/web/fixtures/relation-shape-alpha.json`
 - 浏览器判据：`cds/scripts/relation-visual-audit.mjs`；样本：`cds/scripts/fixtures/relation-fixtures.mjs`
+
+## 新人实验室教学边界（2026-10-12）
+
+| 事项 | 当前边界 | 完成条件 |
+|---|---|---|
+| 首次授权取证 | 小步清单本次复用已有管理员授权并保存项目级凭据；首次页面批准与一次性换钥未重演 | 在空白工作区录制首次批准、创建、换钥和二次静默接入，核对凭据不入 Git |
+| 异常与回滚取证 | 极速版成功链路已完成：CI 先测后构建，CDS 自动部署固定提交镜像；尚未故意注入 CI 失败，也未演练版本回滚 | 在独立练习分支验证失败不发布、回滚可用与数据保持；不得据成功路径推断所有异常闭环 |
+| 练习数据隔离 | 公开演示没有账号隔离；同名数据卷在其他分支可能共享，仅 main 已实测 | 业务化前补用户隔离与容量控制；多分支练习使用独立卷并验证相互不可见 |
+| 教程新鲜度 | 当前章节和录屏是 2026-10-12 的人工核对快照，不自动跟随界面变化 | 接入流程变更时更新内容、录屏、版本记录并重新完成公网用户路径验收 |
