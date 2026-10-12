@@ -47,7 +47,8 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         // 服务接单的第一条事件（task_accepted）就要让进度动起来，而不是等到引擎开跑。
         chunks.First().Type.ShouldBe("phase");
         chunks.ShouldContain(chunk => chunk.Type == "phase" && chunk.Progress.HasValue);
-        chunks.ShouldContain(chunk => chunk.Type == "thinking" && chunk.Content == "OpenDesign 正在修改共享工作区。");
+        chunks.ShouldNotContain(chunk => chunk.Type == "thinking");
+        chunks.ShouldNotContain(chunk => chunk.Content == "OpenDesign 正在修改共享工作区。");
         var delta = chunks.Single(chunk => chunk.Type == "delta");
         delta.Content.ShouldBe(IndexHtml);
 
@@ -170,7 +171,8 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         service.EventRequests.Count.ShouldBe(2);
         service.EventRequests[0].AfterSeq.ShouldBe("0");
         service.EventRequests[1].AfterSeq.ShouldBe("2");
-        chunks.Where(chunk => chunk.Type == "thinking").Select(chunk => chunk.Content).ShouldBe(["第一段", "第二段"]);
+        chunks.ShouldNotContain(chunk => chunk.Type == "thinking");
+        chunks.ShouldNotContain(chunk => chunk.Content == "第一段" || chunk.Content == "第二段");
         chunks.ShouldContain(chunk => chunk.Type == "delta");
     }
 
@@ -196,8 +198,13 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
         service.OnEvents(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Content = new StreamContent(new FirstThenHangStream(Encoding.UTF8.GetBytes(Event(1, "text_delta",
-                new JsonObject { ["text"] = "正在设计" })))),
+            Content = new StreamContent(new FirstThenHangStream(Encoding.UTF8.GetBytes(Event(1, "status",
+                new JsonObject
+                {
+                    ["status"] = "running",
+                    ["reason"] = "open_design_running",
+                    ["elapsedSeconds"] = 3,
+                })))),
         });
         var executor = BuildExecutor(service, BuildBroker().Object);
         using var cts = new CancellationTokenSource();
@@ -206,7 +213,7 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         {
             await foreach (var chunk in executor.ExecuteAsync(BuildRun(), null, cts.Token))
             {
-                if (chunk.Type == "thinking") cts.Cancel();
+                if (chunk.Type == "phase") cts.Cancel();
             }
         });
 
