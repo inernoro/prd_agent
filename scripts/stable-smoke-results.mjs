@@ -3,6 +3,12 @@ const CASE_ID_PATTERN = /\[((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|
 export function collectPlaywrightCases(report, environment) {
   const rows = [];
 
+  function outputText(output) {
+    if (typeof output?.text === 'string') return output.text;
+    if (typeof output?.body === 'string') return output.body;
+    return '';
+  }
+
   function collectSuites(suites = []) {
     for (const suite of suites) {
       for (const spec of suite.specs || []) {
@@ -15,6 +21,13 @@ export function collectPlaywrightCases(report, environment) {
         const attemptErrors = results
           .map((item) => item?.error?.message || '')
           .filter(Boolean);
+        const attemptDiagnostics = [...new Set(results.flatMap((item) => [
+          ...(item?.stdout || []),
+          ...(item?.stderr || []),
+        ])
+          .map(outputText)
+          .flatMap((value) => [...value.matchAll(/HTTP\s+(5\d{2})\s+(https?:\/\/\S+)/gi)]
+            .map((match) => `HTTP ${match[1]} ${match[2]}`)))];
         const status = rawStatus === 'passed'
           ? 'pass'
           : rawStatus === 'skipped' || rawStatus === 'not-run'
@@ -32,6 +45,7 @@ export function collectPlaywrightCases(report, environment) {
             retryCount: Math.max(0, results.length - 1),
             hadFailedAttempt: priorResults.some((item) => !['passed', 'skipped'].includes(item?.status)),
             attemptErrors,
+            attemptDiagnostics,
           });
         }
       }
@@ -106,6 +120,10 @@ export function reconcileCaseCoverage(
         || existing.status === 'fail'
         || row.status === 'fail',
       attemptErrors: messages,
+      attemptDiagnostics: [...new Set([
+        ...(existing.attemptDiagnostics || []),
+        ...(row.attemptDiagnostics || []),
+      ])],
     });
   }
   const reconciled = [];

@@ -981,7 +981,7 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
 
 export function buildCommonClosureEvidenceRow(rows) {
   const cleanupRows = rows.filter((row) => row.caseId !== 'COMMON-004'
-    && Array.isArray(row.tags) && row.tags.includes('@cleanup'));
+    && Array.isArray(row.tags) && row.tags.some((tag) => ['cleanup', '@cleanup'].includes(tag)));
   const requiredRegressions = [
     'REG-stsmk-notify-evidence-001',
     'REG-stsmk-report-view-001',
@@ -992,9 +992,19 @@ export function buildCommonClosureEvidenceRow(rows) {
   ));
   const failedCleanup = cleanupRows.filter((row) => row.status !== 'pass' || row.hadFailedAttempt);
   const passed = cleanupRows.length > 0 && failedCleanup.length === 0 && missingRegressions.length === 0;
+  const failedCleanupCaseIds = [...new Set(failedCleanup.map((row) => row.caseId))];
+  const failedCleanupDiagnostics = [...new Set(failedCleanup.flatMap((row) => row.attemptDiagnostics || []))];
+  const hasStaticAsset502 = failedCleanupDiagnostics.some((item) => /HTTP\s+502\b.*\/assets\//i.test(item));
+  const hasControlPlane504 = failedCleanupDiagnostics.some((item) => /HTTP\s+504\b.*\/_cds\/api\//i.test(item));
+  const infrastructureCause = [
+    hasStaticAsset502 ? 'CDS 静态资源网关 502' : '',
+    hasControlPlane504 ? 'CDS 控制面网关 504' : '',
+  ].filter(Boolean).join('、');
   const reasons = [
     cleanupRows.length === 0 ? '没有执行带清理回读的业务旅程' : '',
-    failedCleanup.length > 0 ? `清理旅程未稳定通过：${[...new Set(failedCleanup.map((row) => row.caseId))].join('、')}` : '',
+    failedCleanup.length > 0
+      ? `${infrastructureCause ? `${infrastructureCause} 导致` : ''}清理旅程首轮失败、确定性重试通过：${failedCleanupCaseIds.join('、')}；首次尝试的清理副作用尚未证实为零`
+      : '',
     missingRegressions.length > 0 ? `报告或通知门禁缺失：${missingRegressions.join('、')}` : '',
   ].filter(Boolean);
   return {
@@ -1344,14 +1354,14 @@ export function evaluateProductionSafetyGate(
   cdsWasFiltered = false,
   requiredCaseIds = [],
 ) {
-  const hazardousFailures = cdsRows.filter((row) => {
+  const hazardousFailures = [...new Map(cdsRows.filter((row) => {
     const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
-    const isCleanupCase = Array.isArray(row.tags) && row.tags.includes('cleanup');
+    const isCleanupCase = Array.isArray(row.tags) && row.tags.some((tag) => ['cleanup', '@cleanup'].includes(tag));
     const isCleanupHazard = isCleanupCase || /\bP0\b|数据污染|清理失败|pollution/i.test(
       `${row.error || ''} ${attemptErrors}`,
     );
     return isCleanupHazard && (row.status === 'fail' || row.hadFailedAttempt === true || row.retryCount > 0);
-  });
+  }).map((row) => [String(row.caseId || '').toUpperCase(), row])).values()];
   const processFailed = !cdsExecution || !['executed', 'dry-run'].includes(cdsExecution.status);
   const passingCaseIds = new Set(cdsRows
     .filter((row) => row.status === 'pass')
@@ -2342,11 +2352,13 @@ async function main() {
         const passed = environmentCoverageRows.filter((row) => row.status === 'pass').length;
         const failed = environmentCoverageRows.filter((row) => row.status === 'fail').length;
         const notRun = environmentCoverageRows.filter((row) => row.status === 'not-run').length;
+        const flaky = environmentCoverageRows.filter((row) => row.status === 'pass' && row.hadFailedAttempt).length;
         return {
           environment,
           planned: environmentCoverageRows.length,
           completed: passed + failed,
           passed,
+          flaky,
           failed,
           notRun,
         };

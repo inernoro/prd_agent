@@ -79,6 +79,22 @@ test('COMMON-004 只在清理回读与报告通知门禁全部通过时成立', 
   assert.equal(buildCommonClosureEvidenceRow(base.filter((row) => row.caseId !== 'WEB-001')).status, 'fail');
 });
 
+test('COMMON-004 接受真实 cleanup 标签并保留 CDS 首轮波动诊断', () => {
+  const rows = [
+    { caseId: 'WEB-001', environment: 'cds', status: 'pass', tags: ['cleanup'], hadFailedAttempt: true, attemptDiagnostics: ['HTTP 502 https://cds.example/assets/app.js'] },
+    { caseId: 'WEB-004', environment: 'cds', status: 'pass', tags: ['cleanup'], hadFailedAttempt: true, attemptDiagnostics: ['HTTP 504 https://cds.example/_cds/api/branches'] },
+    { caseId: 'REG-stsmk-notify-evidence-001', environment: 'cds', status: 'pass', tags: [] },
+    { caseId: 'REG-stsmk-report-view-001', environment: 'cds', status: 'pass', tags: [] },
+    { caseId: 'REG-stsmk-report-risk-001', environment: 'cds', status: 'pass', tags: [] },
+  ];
+  const result = buildCommonClosureEvidenceRow(rows);
+  assert.equal(result.status, 'fail');
+  assert.match(result.error, /CDS 静态资源网关 502/);
+  assert.match(result.error, /CDS 控制面网关 504/);
+  assert.match(result.error, /首次尝试的清理副作用尚未证实为零/);
+  assert.doesNotMatch(result.error, /没有执行/);
+});
+
 function gatewayToken(securityVersion = '7') {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ user_security_version: securityVersion })}.signature`;

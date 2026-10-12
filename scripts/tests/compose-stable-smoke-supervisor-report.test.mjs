@@ -50,6 +50,7 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
     passed: 48,
     failed: 31,
     notRun: 112,
+    flaky: 0,
     completionRate: 79 / 191 * 100,
     executedPassRate: 48 / 79 * 100,
     balanced: true,
@@ -70,7 +71,7 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /\| 完成率 \| 41\.4% \|/);
   assert.match(page, /\| 已执行通过率 \| 60\.8% \|/);
   assert.match(page, /\| 已采集且可审核 \| 148 \| 图片、路径、时间和方法字段齐全，不等于验收通过 \|/);
-  assert.match(page, /\| 能直接证明通过 \| 36 \|/);
+  assert.match(page, /\| 能直接证明通过 \| 36 \| 截图呈现目标视觉状态，不替代功能、清理和正式环境写入验证 \|/);
   assert.match(page, /功能未执行 112 项与截图不能证明业务结果 112 张是两个独立维度/);
   assert.match(page, /本轮数字相同纯属巧合/);
   assert.match(page, /## 双环境覆盖差异/);
@@ -84,6 +85,22 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /2026-08-15 18:21（北京时间）前/);
   assert.match(page, /补齐语音识别成员，交付一条可打开且刷新仍存在的转录笔记/);
   assert.match(page, /查看逐项失败结果/);
+});
+
+test('老板首屏单列重试后通过并正确归因 CDS 清理波动', () => {
+  const page = renderBusinessDecisionPage('', `
+## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|---|---|
+| CDS | 跨模块 | 清理门禁 | 冒烟 | 首页 → 网页托管 → 清理回读 | 不通过 | CDS 静态资源网关 502、CDS 控制面网关 504 导致清理旅程首轮失败、确定性重试通过 | CDS 与运行平台负责人 | [查看](#method-common-004) |
+`, '', {
+    runId: 'stsmk-20261012-1315-final-e646',
+    coverage: { total: 250, passed: 138, failed: 1, notRun: 111, flaky: 10 },
+  }, 'fail');
+  assert.match(page, /稳定通过 128 项、重试后通过 10 项、失败 1 项、未执行 111 项/);
+  assert.match(page, /首轮分别遭遇 CDS 静态资源网关 502 与控制面网关 504/);
+  assert.match(page, /CDS 与运行平台负责人/);
 });
 
 test('功能未执行与视觉缺口数量不同时不得声称数字相同', () => {
@@ -360,7 +377,7 @@ test('功能报告缺少处理流程时自动生成双账本首屏', () => {
   assert.match(report, /## 处理流程/);
   assert.match(report, /## 结论与处理顺序/);
   assert.match(report, /\| 已完成 \| 14 \|/);
-  assert.match(report, /功能验收 \| 12\/20 通过，2 不通过，6 未执行/);
+  assert.match(report, /功能验收 \| 12\/20 稳定通过，0 重试后通过，2 不通过，6 未执行/);
   assert.match(report, /截图证据 \| 已采集 148\/148；状态判定为 通过 125，不通过 9，需补证 7，需干预 7/);
   assert.ok(report.indexOf('## 处理流程') < report.indexOf('## 模块验收总览'));
   assert.doesNotMatch(report, /老板先看|主管先看|主管报告|主管结论|主管动作/);

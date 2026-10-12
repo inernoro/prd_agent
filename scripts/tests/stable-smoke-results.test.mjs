@@ -20,7 +20,7 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
       specs: [{
         title: '[CORE-001] 首页可用',
         tags: ['cleanup'],
-        tests: [{ results: [{ status: 'failed', duration: 10 }, { status: 'passed', duration: 20 }] }],
+        tests: [{ results: [{ status: 'failed', duration: 10, stdout: [{ text: 'HTTP 502 https://cds.example/assets/app.js' }] }, { status: 'passed', duration: 20 }] }],
       }],
     }],
   };
@@ -35,6 +35,7 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
     retryCount: 1,
     hadFailedAttempt: true,
     attemptErrors: [],
+    attemptDiagnostics: ['HTTP 502 https://cds.example/assets/app.js'],
   }]);
 });
 

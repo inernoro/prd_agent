@@ -104,7 +104,9 @@ function buildMetadata(plan, matrix, row) {
     testType: testType(row.caseId),
     statusLabel: statusLabel(row.status),
     intervention: row.status === 'pass' ? '无需' : row.status === 'fail' ? '团队修复并复测' : row.environment === 'production' ? '准备正式验收身份后补测' : '团队补齐自动化并补测',
-    owner: OWNER_BY_FEATURE[feature?.id] || '质量负责人',
+    owner: row.caseId === 'COMMON-004' && /CDS .*网关|清理旅程首轮失败/.test(String(row.error || ''))
+      ? 'CDS 与运行平台负责人'
+      : OWNER_BY_FEATURE[feature?.id] || '质量负责人',
     methodAnchor: `method-${row.caseId.toLowerCase()}`,
   };
 }
@@ -157,6 +159,7 @@ export function renderSupervisorReport({
     pass: metadata.filter((row) => row.status === 'pass').length,
     fail: metadata.filter((row) => row.status === 'fail').length,
     notRun: metadata.filter((row) => row.status === 'not-run').length,
+    flaky: metadata.filter((row) => row.status === 'pass' && row.hadFailedAttempt).length,
   };
   const verdict = executionFailures.length > 0 || counts.fail > 0
     ? '不通过'
@@ -168,6 +171,7 @@ export function renderSupervisorReport({
     const passed = environmentRows.filter((row) => row.status === 'pass').length;
     const failed = environmentRows.filter((row) => row.status === 'fail').length;
     const notRun = environmentRows.filter((row) => row.status === 'not-run').length;
+    const flaky = environmentRows.filter((row) => row.status === 'pass' && row.hadFailedAttempt).length;
     const blocker = notRun === 0
       ? '无'
       : environment === 'production' ? '正式环境专用身份或安全门槛' : '自动化步骤或依赖资源缺失';
@@ -177,13 +181,13 @@ export function renderSupervisorReport({
     const closeCondition = notRun === 0
       ? '保持周期复测'
       : '所有未执行项获得真实通过或失败结果，并完成清理回读';
-    return { environment, rows: environmentRows, passed, failed, notRun, blocker, command, closeCondition };
+    return { environment, rows: environmentRows, passed, failed, notRun, flaky, blocker, command, closeCondition };
   });
 
   const lines = [
     `# 核心业务稳定验收主管报告 · ${runId}`,
     '',
-    `> 主管结论：${verdict}。共 ${counts.total} 项，${counts.pass} 项通过、${counts.fail} 项不通过、${counts.notRun} 项未执行。未执行不能按通过计算。`,
+    `> 主管结论：${verdict}。共 ${counts.total} 项，${counts.pass - counts.flaky} 项稳定通过、${counts.flaky} 项重试后通过、${counts.fail} 项不通过、${counts.notRun} 项未执行。重试后通过和未执行都不能按稳定通过计算。`,
     '',
     '## 主管验收总览',
     '',
@@ -192,7 +196,8 @@ export function renderSupervisorReport({
     `| 总体结论 | ${verdict} | ${verdict === '通过' ? '无需干预' : '先处理下方“需干预事项”，关闭前不得对外宣称全面通过'} |`,
     `| 发布建议 | ${verdict === '通过' ? '可以发布' : '暂缓全面放行'} | 关键项全部通过且未执行清零后再变更结论 |`,
     `| 是否需要主管介入 | ${managerIntervention} | 技术修复和自动化补跑由对应负责人处理 |`,
-    `| 通过 | ${counts.pass}/${counts.total} | 可抽查逐项账本中的证据与方法 |`,
+    `| 最终通过（含重试） | ${counts.pass}/${counts.total} | 可抽查逐项账本中的证据与方法 |`,
+    `| 重试后通过 | ${counts.flaky}/${counts.total} | 必须解释首轮失败并确认没有清理副作用 |`,
     `| 不通过 | ${counts.fail}/${counts.total} | 必须修复并在 CDS 与正式环境复测 |`,
     `| 未执行 | ${counts.notRun}/${counts.total} | 必须补齐身份或自动化步骤，不能用入口截图代替 |`,
     '',
@@ -200,9 +205,9 @@ export function renderSupervisorReport({
     '',
     '先看环境汇总，再按验收项补跑。补跑命令只包含安全的执行入口，不包含账号、密码或单次票据。',
     '',
-    '| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 | 关闭条件 |',
-    '|---|---:|---:|---:|---:|---:|---|---|---|',
-    ...environmentCoverage.map((coverage) => `| ${environmentLabel(coverage.environment)} | ${coverage.rows.length} | ${coverage.passed + coverage.failed} | ${coverage.passed} | ${coverage.failed} | ${coverage.notRun} | ${coverage.blocker} | \`${coverage.command}\` | ${coverage.closeCondition} |`),
+    '| 环境 | 计划 | 已执行 | 稳定通过 | 重试后通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 | 关闭条件 |',
+    '|---|---:|---:|---:|---:|---:|---:|---|---|---|',
+    ...environmentCoverage.map((coverage) => `| ${environmentLabel(coverage.environment)} | ${coverage.rows.length} | ${coverage.passed + coverage.failed} | ${coverage.passed - coverage.flaky} | ${coverage.flaky} | ${coverage.failed} | ${coverage.notRun} | ${coverage.blocker} | \`${coverage.command}\` | ${coverage.closeCondition} |`),
     '',
     '| 验收项编号 | 环境 | 阻塞类别 | 具体原因 | 代码或页面入口 | 补跑命令 | 关闭条件 |',
     '|---|---|---|---|---|---|---|',
