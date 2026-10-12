@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_PREBUILT_ONLY_ERROR,
   buildPrebuiltGateRejection,
+  buildPrebuiltPolicyMutationRejection,
+  enforceAgentPrebuiltPolicy,
   findNonPrebuiltDefaultModes,
   findNonPrebuiltProfiles,
+  hasPrebuiltCapability,
   isAgentGatedRequest,
+  isAgentPrebuiltPolicyEnabled,
   isAgentPrebuiltOnly,
   isPrebuiltMode,
   listPrebuiltModeIds,
+  resolveAgentPrebuiltPolicy,
+  shouldDisableSourceFallback,
   withoutSourceFallback,
 } from '../../src/services/agent-prebuilt-gate.js';
 import type { BranchEntry, BuildProfile, Project } from '../../src/types.js';
@@ -44,6 +50,39 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(isAgentPrebuiltOnly({ id: 'p' } as Project)).toBe(false);
     expect(isAgentPrebuiltOnly(undefined)).toBe(false);
     expect(isAgentPrebuiltOnly(project)).toBe(true);
+    expect(resolveAgentPrebuiltPolicy(project)).toBe('prebuilt-only');
+    expect(resolveAgentPrebuiltPolicy({ ...project, agentPrebuiltPolicy: 'prefer-prebuilt' })).toBe('prefer-prebuilt');
+    expect(resolveAgentPrebuiltPolicy({ ...project, agentPrebuiltPolicy: 'unrestricted' })).toBe('unrestricted');
+    expect(isAgentPrebuiltPolicyEnabled({ ...project, agentPrebuiltPolicy: 'prefer-prebuilt' })).toBe(true);
+    expect(isAgentPrebuiltPolicyEnabled({ ...project, agentPrebuiltPolicy: 'unrestricted' })).toBe(false);
+  });
+
+  it('优先极速版只拦已有预构建能力却仍选源码的服务，严格模式全拦，不限制模式全放', () => {
+    const capable = profile({ id: 'capable', activeDeployMode: 'dev' });
+    const sourceOnly = profile({ id: 'source-only', activeDeployMode: 'dev', deployModes: { dev: { label: '开发模式' } } });
+    const violations = findNonPrebuiltProfiles([capable, sourceOnly], undefined);
+    expect(enforceAgentPrebuiltPolicy({ ...project, agentPrebuiltPolicy: 'prebuilt-only' }, [capable, sourceOnly], violations))
+      .toMatchObject([{ profileId: 'capable' }, { profileId: 'source-only' }]);
+    expect(enforceAgentPrebuiltPolicy({ ...project, agentPrebuiltPolicy: 'prefer-prebuilt' }, [capable, sourceOnly], violations))
+      .toMatchObject([{ profileId: 'capable' }]);
+    expect(enforceAgentPrebuiltPolicy({ ...project, agentPrebuiltPolicy: 'unrestricted' }, [capable, sourceOnly], violations))
+      .toEqual([]);
+    expect(shouldDisableSourceFallback({ ...project, agentPrebuiltPolicy: 'prefer-prebuilt' }, capable)).toBe(true);
+    expect(shouldDisableSourceFallback({ ...project, agentPrebuiltPolicy: 'prefer-prebuilt' }, sourceOnly)).toBe(false);
+
+    const imageBaseline = profile({
+      id: 'image-baseline',
+      prebuiltImage: true,
+      activeDeployMode: 'source',
+      deployModes: { source: { label: '源码', prebuilt: false, command: 'pnpm build' } },
+    });
+    expect(hasPrebuiltCapability(imageBaseline)).toBe(true);
+    expect(enforceAgentPrebuiltPolicy(
+      { ...project, agentPrebuiltPolicy: 'prefer-prebuilt' },
+      [imageBaseline],
+      findNonPrebuiltProfiles([imageBaseline], undefined),
+    )).toHaveLength(1);
+    expect(shouldDisableSourceFallback({ ...project, agentPrebuiltPolicy: 'prefer-prebuilt' }, imageBaseline)).toBe(true);
   });
 
   it('只有机器凭据受门禁约束；调用方自己写的 X-CDS-Trigger 不能换来豁免；真人 cookie 与内部 loopback 旁路都不带机器凭据', () => {
@@ -96,9 +135,16 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(rejection.error).toBe(AGENT_PREBUILT_ONLY_ERROR);
     expect(rejection.message).toContain('部署被拦截');
     expect(rejection.message).toContain('API（当前 静态部署，可切 express）');
-    expect(rejection.message).toContain('cdscli branch set-mode b1 <profileId> <极速版模式>');
+    expect(rejection.message).toContain('cdscli branch set-mode b1 api express');
     expect(rejection.violations[0].prebuiltModes).toEqual(['express']);
     expect(rejection.hint).toContain('deployRuntime.prebuilt');
+    expect(rejection.policy).toBe('prebuilt-only');
+    expect(rejection.settingsPath).toBe('/settings/proj-a#general');
+    expect(rejection.recovery).toEqual({
+      kind: 'switch-to-prebuilt',
+      requiresHuman: false,
+      commands: ['cdscli branch set-mode b1 api express'],
+    });
 
     const bare = profile({ deployModes: { dev: { label: '开发模式' } } });
     const gap = buildPrebuiltGateRejection(project, [bare], findNonPrebuiltProfiles([bare], branch()), {
@@ -107,6 +153,19 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(gap.message).toContain('该服务没有极速版模式');
     expect(gap.message).toContain('项目默认只能由真人在项目设置页修改');
     expect(gap.hint).toContain('还没接 CI 预构建');
+    expect(gap.hint).toContain('不是 CDS 全局限制');
+    expect(gap.recovery.kind).toBe('configure-prebuilt-or-change-policy');
+    expect(gap.recovery.requiresHuman).toBe(true);
+  });
+
+  it('模式定义写入的拒绝响应也包含统一策略与真人恢复入口', () => {
+    const rejection = buildPrebuiltPolicyMutationRejection(project, '不能修改模式定义', '请由真人处理');
+    expect(rejection).toMatchObject({
+      error: 'agent_prebuilt_only',
+      policy: 'prebuilt-only',
+      settingsPath: '/settings/proj-a#general',
+      recovery: { kind: 'configure-prebuilt-or-change-policy', requiresHuman: true, commands: [] },
+    });
   });
 
   it('withoutSourceFallback 摘掉源码回退 profile，其余字段原样；没挂回退时返回同一对象', () => {
@@ -147,6 +206,24 @@ describe('agent-prebuilt-gate 判据', () => {
     const rejection = buildPrebuiltGateRejection(project, [imageSite], findNonPrebuiltProfiles([imageSite], branch(), { profileId: 'api', modeId: 'source' }), { operation: 'deploy' });
     expect(rejection.message).toContain('可切 plain');
     expect(rejection.hint).not.toContain('还没接 CI 预构建');
+  });
+
+  it('镜像站点只有极速版基线时，拒绝响应指导清除分支模式覆盖，不误报为缺少 CI', () => {
+    const imageBaseline = profile({
+      prebuiltImage: true,
+      activeDeployMode: 'source',
+      deployModes: { source: { label: '源码', prebuilt: false, command: 'pnpm build' } },
+    });
+    const rejection = buildPrebuiltGateRejection(
+      { ...project, agentPrebuiltPolicy: 'prefer-prebuilt' },
+      [imageBaseline],
+      findNonPrebuiltProfiles([imageBaseline], branch()),
+      { branchId: 'b1', operation: 'deploy' },
+    );
+    expect(rejection.message).toContain('可回到极速版基线');
+    expect(rejection.violations[0]).toMatchObject({ prebuiltModes: [], prebuiltBaseline: true });
+    expect(rejection.recovery.commands).toEqual(['cdscli branch set-mode b1 api ""']);
+    expect(rejection.recovery.kind).toBe('switch-to-prebuilt');
   });
 
   it('coverAllProfiles：整表替换时表里没有的 profile 也按基线判，空表不能把安全默认换掉', () => {

@@ -749,29 +749,66 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.project.autoSmokeEnabled).toBe(false);
     });
 
-    // ── Agent 极速版门禁开关 ──
-    it('agentPrebuiltOnly 缺省关闭，真人可开可关并 GET 回读', async () => {
+    // ── Agent 部署策略 ──
+    it('旧 agentPrebuiltOnly 兼容读写；真人可设置三档策略并 GET 回读', async () => {
       const before = await request(server, 'GET', '/api/projects/default');
       expect(before.body.agentPrebuiltOnly).toBeFalsy();
       const on = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
       expect(on.status).toBe(200);
       expect(on.body.project.agentPrebuiltOnly).toBe(true);
+      expect(on.body.project.agentPrebuiltPolicy).toBe('prebuilt-only');
       const get = await request(server, 'GET', '/api/projects/default');
       expect(get.body.agentPrebuiltOnly).toBe(true);
       const off = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: false });
       expect(off.body.project.agentPrebuiltOnly).toBe(false);
+      expect(off.body.project.agentPrebuiltPolicy).toBe('unrestricted');
+
+      const prefer = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltPolicy: 'prefer-prebuilt' });
+      expect(prefer.status).toBe(200);
+      expect(prefer.body.project.agentPrebuiltPolicy).toBe('prefer-prebuilt');
+      expect(prefer.body.project.agentPrebuiltOnly).toBe(false);
+      const invalid = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltPolicy: 'sometimes' });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body.field).toBe('agentPrebuiltPolicy');
     });
 
-    it('机器凭据不得开启或关闭 agentPrebuiltOnly（否则门禁形同虚设）', async () => {
+    it('机器凭据不得修改新旧 Agent 部署策略字段（否则门禁形同虚设）', async () => {
       await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
       const res = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: false }, { 'x-ai-access-key': 'agent-key' });
       expect(res.status).toBe(403);
       expect(res.body.error).toBe('agent_prebuilt_only_human_only');
+      const policy = await request(server, 'PUT', '/api/projects/default', { agentPrebuiltPolicy: 'prefer-prebuilt' }, { 'x-ai-access-key': 'agent-key' });
+      expect(policy.status).toBe(403);
       const get = await request(server, 'GET', '/api/projects/default');
       expect(get.body.agentPrebuiltOnly).toBe(true);
       // 机器凭据改别的字段照常，不受这一条影响
       const other = await request(server, 'PUT', '/api/projects/default', { description: '由 Agent 更新' }, { 'x-ai-access-key': 'agent-key' });
       expect(other.status).toBe(200);
+    });
+
+    it('优先极速版只拦已有预构建能力却选择源码的服务，源码专用服务可继续部署', async () => {
+      stateService.addBuildProfile({
+        id: 'source-only', projectId: 'default', name: 'Source Only', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5000,
+        deployModes: { dev: { label: '开发' } },
+      });
+      stateService.addBuildProfile({
+        id: 'capable', projectId: 'default', name: 'Capable', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5001,
+        deployModes: { dev: { label: '开发' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/capable:sha-${CDS_COMMIT_SHA}' } },
+      });
+      await request(server, 'PUT', '/api/projects/default', { agentPrebuiltPolicy: 'prefer-prebuilt' });
+      const machine = { 'x-ai-access-key': 'agent-key' };
+
+      const blocked = await request(server, 'PUT', '/api/projects/default', {
+        defaultDeployModes: { 'source-only': 'dev', capable: 'dev' },
+      }, machine);
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.policy).toBe('prefer-prebuilt');
+      expect(blocked.body.violations).toMatchObject([{ profileId: 'capable' }]);
+
+      const allowed = await request(server, 'PUT', '/api/projects/default', {
+        defaultDeployModes: { 'source-only': 'dev', capable: 'express' },
+      }, machine);
+      expect(allowed.status).toBe(200);
     });
 
     it('门禁下机器凭据写 defaultDeployModes：源码模式 409、极速版放行；对齐端点同样受闸（Codex P1）', async () => {
