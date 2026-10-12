@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.92；日期：2026-10-12；状态：blocked。
+版本：v1.92；日期：2026-10-12；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -75,18 +75,18 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 ## Goal State
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
-- 当前阶段：blocked（连续三轮生产准入条件未满足；八分支 CI 通过，真实部署及视觉未验）
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:7e4b5247447f6bdc539f44f003b4dffec8544d3d,IMP:d53ffc36d2649c38a9431ad6dd897259fbf1aa32（此次文档同步前快照）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；origin/test=IMP:49fa978bf35625116c98339f22b278578f8181e8；ahead/behind=CDS对origin/main:297/0,IMP对origin/test:122/0；environment=自有固定Git/HTTP/SQLite控制和真实GitHubCI，目标未部署；database=N/A共享未写；tenant=N/A平台；role=本地主进程；route=N/A目标未部署；auth=既有技能CLI，密钥不输出；external_ids=八个CI run逐个见当前候选清单`
+- 当前阶段：publishing（用户已授权待发布CDS修复分支；保持IMP稳定性基线，先发布制品后分步灰度）
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:cf4f00e58e322069170f9d0daa847d5aedc869f7,IMP:7114feb71ec5435a943b5a004a868b181cb8d852（此次文档同步前快照）；origin/main=CDS:45533b419e1cfc54b145a545a716563617659d01,IMP:2bf49bf92a634057b65d40e0c5e9faa3ed02ae9c；origin/test=IMP:49fa978bf35625116c98339f22b278578f8181e8；ahead/behind=CDS对origin/main:300/0,IMP对origin/test:125/0；environment=自有固定Git/HTTP/SQLite控制和真实GitHubCI，目标未部署；database=N/A共享未写；tenant=N/A平台；role=本地主进程；route=N/A目标未部署；auth=既有技能CLI，密钥不输出；external_ids=八个CI run逐个见当前候选清单`
 - 写入所有权：`owner=/root仅两自有工作树及八已授权IMP refs；other_tabs=原mdimp目录read-only,tail_acceptance只写仓库外账本；handoff_checkpoint=两产品与八目标已固定，末尾独立局部复验完成，实际运行验收待准入`
 - 范围账本：`goal-core=49条完整极速与控制面治理；required-prerequisite=现有CDS修复集成,按CL-10v1.4核对默认权限,目标初始化与条件配置写入；environment-recovery=只读宿主诊断，不重建共享数据库；successor-or-non-goal=业务流程重写,真实定时作业恢复,他人目标关闭`
 - 已确认范围 / 非目标：两仓库技术交付目标，不改变业务合同或扩展业务验收分母。
-- 当前实现事实：当前产品 CDS:973fb7d039ec78878d92d22326672ae6bd089e1f;IMP:d53ffc36d2649c38a9431ad6dd897259fbf1aa32。八个既有授权分支已快进推送且远端 SHA 精确确认，最新 Branch Image CI 八个全部 success，十应用镜像、RPC辅助及初始化镜像的 CI 构建发布步骤成功；真实 registry manifest/pull/run 尚未核验。原 CI 两轮失败保留：宿主自带 mysql 导致缺客户端夹具失真，97c 测试隔离修复；Ubuntu 未安装 rg 导致 Bash 守卫退出127，d53 保持全部断言改用 grep。两项各有独立固定复验，生产源码未因此改变。当前 CDS CLI 分支列表八个目标均无记录，未部署/无黄闪电/视觉 N/A。主 CDS973 全量692文件10328通过、19跳过，web类型检查及构建 exit0；跨仓 bf1/973 独立局部复验通过，不继承正式性能结论。45 partial-local/4 todo，49正式全部 not-executed。主/末尾分工与双工作树保持；新CDS分支发布授权及合格隔离宿主仍待落实，既有八分支推送与共享自更新授权持续有效。实际 1/2/8 完整图、排队、30分钟、公网、恢复、双主题视觉、48小时及一周观察未执行。当前证据 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/production-host-v196/current-delivery-checkpoint.json。
+- 当前实现事实：当前产品 CDS:973fb7d039ec78878d92d22326672ae6bd089e1f;IMP:d53ffc36d2649c38a9431ad6dd897259fbf1aa32。八个既有授权分支已快进推送且远端 SHA 精确确认，最新 Branch Image CI 八个全部 success，十应用镜像、RPC辅助及初始化镜像的 CI 构建发布步骤成功；真实 registry manifest/pull/run 尚未核验。原 CI 两轮失败保留：宿主自带 mysql 导致缺客户端夹具失真，97c 测试隔离修复；Ubuntu 未安装 rg 导致 Bash 守卫退出127，d53 保持全部断言改用 grep。两项各有独立固定复验，生产源码未因此改变。当前 CDS CLI 分支列表八个目标均无记录，未部署/无黄闪电/视觉 N/A。主 CDS973 全量692文件10328通过、19跳过，web类型检查及构建 exit0；跨仓 bf1/973 独立局部复验通过，不继承正式性能结论。45 partial-local/4 todo，49正式全部 not-executed。主/末尾分工与双工作树保持；CDS修复分支推送已于本轮获授权；合格隔离宿主仍待落实，既有八分支推送与共享自更新授权持续有效。实际 1/2/8 完整图、排队、30分钟、公网、恢复、双主题视觉、48小时及一周观察未执行。当前证据 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/production-host-v196/current-delivery-checkpoint.json。
 - 本批实现检查点：产品 CDS973 条件 Profile PUT 与 IMPbf1 生产宿主适配已有局部独立通过；97c/d53 仅修改测试环境依赖。当前8分支快进历史、33个选定传播路径、各20命令与4752运行输入已固定；真实 CI 全绿不能替代实际制品准入和部署。两失败轮原件、修复红绿、独立结果与当前全量均保留在仓库外。
 - 证据纪元：`target_sha=CDS:973fb7d039ec78878d92d22326672ae6bd089e1f;IMP:d53ffc36d2649c38a9431ad6dd897259fbf1aa32；tested_sha=CDS973全量10328/19skip及web0,IMP八精确目标实际CI全部success；independent_sha=bf1/973跨仓固定局部,97c缺客户端反例,d53 Bash兼容检查；deployed_sha=N/A；environment=固定Git/HTTP/SQLite及真实GitHubCI，无实际目标DB/Daemon部署；observed_at=2026-10-11T21:15:41.237847+00:00`
-- 当前阻塞或环境限制：新CDS修复分支发布授权与合格隔离宿主仍待落实；已有八push及共享自更新授权保持，不重复索取。当前官方CLI列表八目标均缺部署记录；Self checkout head=e4e0c8b65，不把checkout单独当运行证据。本机默认Colima状态报告错误且socket不可达；本次自有2GiB验收VM启动90秒仍无runtime/socket，已停止并核对磁盘/配置保留、默认VM及Docker context不变。当前A01精确初始化镜像经宿主现有Docker凭据只读manifest返回unauthorized，不能判缺镜像；准入证据 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/owned-runtime-recovery-v1/current-admission-checkpoint.json。历史共享宿主余量830MiB与满swap不作为当前容量事实。未知Daemon晚创建/重启对账与真实负载仍须验证。目标索引162条超过60且本目标未登记，只读报告保留，不猜改其他目标终态。
+- 当前阻塞或环境限制：2026-10-12用户已授权推送CDS修复分支；既有八push及共享自更新授权持续有效。隔离宿主与镜像读取准入继续核对；用户强调IMP当前反馈不错，必须冻结当前运行基线再灰度比较。当前官方CLI列表八目标均缺部署记录；Self checkout head=e4e0c8b65，不把checkout单独当运行证据。本机默认Colima状态报告错误且socket不可达；本次自有2GiB验收VM启动90秒仍无runtime/socket，已停止并核对磁盘/配置保留、默认VM及Docker context不变。当前A01精确初始化镜像经宿主现有Docker凭据只读manifest返回unauthorized，不能判缺镜像；准入证据 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/owned-runtime-recovery-v1/current-admission-checkpoint.json。历史共享宿主余量830MiB与满swap不作为当前容量事实。未知Daemon晚创建/重启对账与真实负载仍须验证。目标索引162条超过60且本目标未登记，只读报告保留，不猜改其他目标终态。
 - 涌现决定：N/A本批测试兼容修复无需新增终态机制条款；强验收门槛保持。
 - 下一动作与完成条件：落实新CDS分支发布与隔离宿主，先核实际镜像及依赖准入，再一/二/八完整十三角色灰度；末尾逐计划条目独立检查真实黄闪电、版本、公网延迟、失败/取消/重启恢复并取得双主题视觉。30分钟、48小时和一周观察实际完成后才能勾选。正式49当前未执行，不能以CI全绿收口。
-- 终止/接替结论：blocked
+- 终止/接替结论：active
 
 ## v1.25 实际路由与长日志反例恢复审计
 
