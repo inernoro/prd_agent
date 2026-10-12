@@ -31,7 +31,7 @@ describe('网页托管原版列表布局回归', () => {
     expect(toolbar).not.toContain('webpages-knowledge-generate');
   });
 
-  it('只在原站点菜单进入修改，知识生成复用上传弹窗且深链保持可用', () => {
+  it('只在原站点菜单进入修改，移动端生成与上传都可发现且深链保持可用', () => {
     expect(source).not.toContain('webpages-ai-edit-primary');
     expect(source).not.toContain('onVersionHistory');
     expect(source).toContain("label: '帮我修改'");
@@ -39,7 +39,9 @@ describe('网页托管原版列表布局回归', () => {
     expect(source).toContain('data-tour-id="webpages-knowledge-generate"');
     expect(source).toContain('onClick={onGenerate}');
     expect(source).toContain('parseDesignArtifactLaunch(location.search)');
-    expect(source).toContain('<MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />');
+    expect(source).toContain('<MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />');
+    expect(source).toContain('data-tour-id="webpages-mobile-upload"');
+    expect(source).toContain('aria-label="上传网页"');
     expect(source).toContain("gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))'");
     expect(source).toContain('data-tour-id="webpages-guest-preview"');
   });

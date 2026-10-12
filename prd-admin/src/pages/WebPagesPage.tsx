@@ -1608,6 +1608,21 @@ export default function WebPagesPage() {
                 <span className="text-[13px] font-semibold">筛选</span>
                 {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
               </button>
+              <button
+                type="button"
+                onClick={openCreateUploadDialog}
+                aria-label="上传网页"
+                title="上传网页"
+                data-tour-id="webpages-mobile-upload"
+                className="h-11 w-11 rounded-[12px] inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <Upload size={17} />
+              </button>
             </div>
             <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px] text-token-muted">
               <span className="truncate">{activeSpaceLabel}</span>
@@ -1628,7 +1643,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
+          <MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />
         )}
 
         {/* Batch actions */}

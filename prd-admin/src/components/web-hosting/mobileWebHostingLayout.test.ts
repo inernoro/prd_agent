@@ -72,8 +72,11 @@ describe('mobile web hosting layout', () => {
     expect(cardSource).not.toContain('data-site-version-actions');
   });
 
-  it('restores the original upload FAB and keeps knowledge generation inside that entry', () => {
-    expect(pageSource).toContain('<MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />');
+  it('keeps generation directly discoverable on touch navigation without hiding upload', () => {
+    expect(pageSource).toContain('<MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />');
+    expect(pageSource).toContain('data-tour-id="webpages-mobile-upload"');
+    expect(pageSource).toContain('aria-label="上传网页"');
+    expect(pageSource).toContain('className="h-11 w-11 rounded-[12px] inline-flex items-center justify-center shrink-0"');
     expect(pageSource).not.toContain('aria-label="网页托管快捷操作"');
     expect(pageSource).toContain('!isEdit && !file && !saving');
     expect(pageSource).toContain('data-tour-id="webpages-knowledge-generate"');
