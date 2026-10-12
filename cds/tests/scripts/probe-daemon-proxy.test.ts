@@ -6,7 +6,7 @@ import net from 'node:net';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it } from 'vitest';
-import { createProbeDaemonProxy, numericProbeExitCode, removalStackSummary } from '../../scripts/application-docker-inner-drill.js';
+import { createProbeDaemonProxy, numericProbeExitCode, removalStackSummary, creationStackSummary } from '../../scripts/application-docker-inner-drill.js';
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-wire-'));
@@ -230,6 +230,43 @@ describe('owned Docker probe proxy wire conformance', () => {
     expect(result.matched).toEqual([{ state: 'syscall', functions: ['os.removeAll', 'github.com/docker/docker/daemon.(*Daemon).cleanupContainer'] }]);
     expect(JSON.stringify(result)).not.toContain('secret-value'); expect(JSON.stringify(result)).not.toContain('0x123');
   });
+  it('limits creation evidence to known symbols and excludes stack arguments and paths', () => {
+    const result = creationStackSummary('goroutine 12 [syscall]:\nos.OpenFile(0x123, "secret-value")\n\t/private/secret-value.go:12\ngithub.com/docker/docker/daemon.(*Daemon).containerCreate(0x123, 0x456)\n\t/owned/secret-value.go:5\n\ngoroutine 15 [chan receive]:\nmain.credentials("secret-value")\n');
+    expect(result.matched).toEqual([{ state: 'syscall', functions: ['os.OpenFile', 'github.com/docker/docker/daemon.(*Daemon).containerCreate'] }]);
+    expect(JSON.stringify(result)).not.toContain('secret-value'); expect(JSON.stringify(result)).not.toContain('0x123');
+    expect(creationStackSummary('goroutine 1 [running]:\nos.removeAll(0x1)\n').matched).toEqual([]);
+  });
+  it('observes only the held create and preserves its original body and 201 when the observer fails', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-create-observer-'));
+    const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
+    const id = 'c'.repeat(64), bodies: string[] = [], sockets = new Set<net.Socket>();
+    let reply!: () => void, sampled!: () => void;
+    const sample = new Promise<void>(resolve => { sampled = resolve; });
+    const backend = http.createServer((request, response) => {
+      let body = ''; request.on('data', chunk => { body += chunk; }); request.once('end', () => {
+        bodies.push(body); reply = () => { response.writeHead(201, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ Id: id })); };
+      });
+    });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const samples: unknown[] = [], proxy = await createProbeDaemonProxy(proxyPath, backendPath, 'daemon-created', undefined,
+      (...args) => { samples.push(args); sampled(); throw new Error('secret-value'); });
+    proxy.arm();
+    const body = JSON.stringify({ Image: 'owned-create-fixture', Cmd: ['true'], Entrypoint: [],
+      Labels: { 'cds.agent.probe': 'runtime-validation', 'cds.agent.probe.operation': 'd'.repeat(32), 'cds.instance': 'e'.repeat(12) },
+      HostConfig: { Memory: 134217728, NanoCpus: 250000000, PidsLimit: 64, ReadonlyRootfs: true, AutoRemove: true, NetworkMode: 'none' } });
+    const client = http.request({ socketPath: proxyPath, method: 'POST', path: '/v1.53/containers/create?name=owned-create-fixture' });
+    client.on('error', () => {});
+    try {
+      client.end(body); await Promise.race([sample, new Promise((_, reject) => setTimeout(() => reject(new Error('creation observer did not run')), 1000))]);
+      expect(samples).toEqual([[expect.objectContaining({ containerName: 'owned-create-fixture', operationId: 'd'.repeat(32), instanceId: 'e'.repeat(12), forwardedAt: expect.any(String) }), 0]]);
+      reply(); await proxy.caught; client.destroy(); await proxy.settle();
+      expect(bodies).toEqual([body]); expect(proxy.timeline).toContainEqual(expect.objectContaining({ phase: 'backend-create-replied', status: 201, containerId: id }));
+      expect(proxy.timeline).toContainEqual(expect.objectContaining({ phase: 'create-diagnostic-failed', elapsedMs: 0 }));
+      expect(JSON.stringify(proxy.timeline)).not.toContain('secret-value');
+    } finally { client.destroy(); await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+  }, 5000);
   it('forwards the exact wait result while recording only its numerical terminal outcome', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-wait-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');

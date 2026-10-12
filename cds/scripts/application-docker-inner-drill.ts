@@ -38,13 +38,16 @@ export function numericProbeExitCode(value: unknown): number | null {
     && Number(value) >= -2147483648 && Number(value) <= 2147483647 ? Number(value) : null;
 }
 // Keep function symbols only: raw goroutine dumps include arguments and host paths.
-export function removalStackSummary(text: string) {
+function daemonStackSummary(text: string, phase: 'creation' | 'removal') {
   const blocks = text.split(/\n\n/), matches: Array<{ state: string; functions: string[] }> = [];
   for (const block of blocks) {
     if (!/^goroutine \d+ \[[^\]]+\]:/m.test(block)) continue;
     const functions = block.split('\n').map(line => line.match(/^((?:[A-Za-z0-9_-]+[./])+[A-Za-z0-9_-]+(?:\.\(\*?[A-Za-z0-9_]+\))?(?:\.[A-Za-z0-9_]+)*)\(/)?.[1])
       .filter((name): name is string => Boolean(name) && /^(?:github\.com\/(?:docker\/docker|moby\/moby)\/|os\.|syscall\.|sync\.|internal\/poll\.)/.test(name!));
-    if (!functions.some(name => /(?:cleanupContainer|containerRm|ReleaseLayer|ReleaseRWLayer|RemoveAll|removeAll|graphdriver\/vfs|imageDeleteHelper)/.test(name))) continue;
+    const relevant = phase === 'creation'
+      ? /(?:containerCreate|createContainer|CreateRWLayer|createRWLayer|graphdriver\/vfs.*(?:Create|create|Copy|copy))/
+      : /(?:cleanupContainer|containerRm|ReleaseLayer|ReleaseRWLayer|RemoveAll|removeAll|graphdriver\/vfs|imageDeleteHelper)/;
+    if (!functions.some(name => relevant.test(name))) continue;
     const state = block.match(/^goroutine \d+ \[([^\]]+)\]:/m)?.[1] || 'unknown';
     matches.push({ state: /^(?:IO wait|syscall|runnable|running|chan receive|select|semacquire|sync\.Mutex\.Lock)(?:, \d+ minutes)?$/.test(state) ? state : 'other',
       functions: functions.slice(0, 24) });
@@ -52,9 +55,13 @@ export function removalStackSummary(text: string) {
   }
   return { matched: matches, truncated: matches.length >= 64, inputBytes: Buffer.byteLength(text) };
 }
+export function removalStackSummary(text: string) { return daemonStackSummary(text, 'removal'); }
+export function creationStackSummary(text: string) { return daemonStackSummary(text, 'creation'); }
+type PendingCreateTarget = { containerName: string; operationId: string; instanceId: string; imageReference: string; forwardedAt: string };
 export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock',
   cancelBoundary: 'client-disconnect' | 'daemon-created' = 'client-disconnect',
-  pendingWait?: (containerId: string, elapsedMs: number) => Promise<void>) {
+  pendingWait?: (containerId: string, elapsedMs: number) => Promise<void>,
+  pendingCreate?: (target: PendingCreateTarget, elapsedMs: number) => Promise<void>) {
   const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
   const requestTimeline: any[] = []; let requestSequence = 0, traceEnabled = false, traceOverflow = 0;
   const classify = (url = '', method = '') => {
@@ -292,6 +299,24 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
       upstream.once('error', () => { observe('transport-error'); row.transportErrors++; if (delayed) { record('backend-create-transport-error'); settledResolve(); }
         else if (!response.destroyed) { if (!response.headersSent) response.statusCode = 502; response.end(); } });
       if (body) upstream.end(body); else request.pipe(upstream);
+      // Observe the one injected original create before the daemon replies.
+      // Never await observers or change forwarding, cancellation or deadlines.
+      if (delayed && body && pendingCreate) {
+        const config = JSON.parse(body.toString('utf8'));
+        const containerName = new URL(request.url!, 'http://owned').searchParams.get('name');
+        const operationId = config.Labels?.['cds.agent.probe.operation'], instanceId = config.Labels?.['cds.instance'];
+        if (containerName && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(containerName)
+          && typeof config.Image === 'string' && /^[a-f0-9]{32}$/.test(operationId || '') && /^[a-f0-9]{12}$/.test(instanceId || '')) {
+          const target: PendingCreateTarget = { containerName, operationId, instanceId, imageReference: config.Image, forwardedAt: new Date().toISOString() };
+          let replied = false;
+          const timers = [0, 3000].map(elapsedMs => setTimeout(() => {
+            if (!upstream.destroyed && !replied) void Promise.resolve().then(() => pendingCreate(target, elapsedMs))
+              .catch(() => record('create-diagnostic-failed', { elapsedMs }));
+          }, elapsedMs));
+          const clear = () => { for (const timer of timers) clearTimeout(timer); };
+          upstream.once('response', () => { replied = true; clear(); }); upstream.once('close', clear); upstream.once('error', clear);
+        }
+      }
     };
     if ((!armed && !startGate) || !/\/containers\/create(?:\?|$)/.test(request.url || '')) { forward(); return; }
     const chunks: Buffer[] = []; let bytes = 0;
@@ -636,6 +661,8 @@ async function main(): Promise<void> {
       server: dockerVersions.Server?.Version, serverApi: dockerVersions.Server?.ApiVersion };
     report.pendingWaitDiagnostics = [];
     report.pendingWaitDiagnosticOverflow = 0;
+    report.pendingCreateDiagnostics = [];
+    report.pendingCreateDiagnosticOverflow = 0;
     const daemonRead = (endpoint: string, limit: number) => new Promise<{ status: number; text: string }>((resolve, reject) => {
       const request = http.get({ socketPath: '/var/run/owned.sock', path: endpoint, timeout: 1000 }, response => {
         const chunks: Buffer[] = []; let bytes = 0;
@@ -683,6 +710,44 @@ async function main(): Promise<void> {
           const stack = results[1];
           if (stack.status === 'fulfilled') { record.stackStatus = stack.value.status;
             if (stack.value.status === 200) record.removalStacks = removalStackSummary(stack.value.text); }
+          else record.stackUnavailable = true;
+          for (const [index, key] of [[2, 'daemonIo'], [3, 'outerCpu'], [4, 'outerMemoryEvents']] as const) {
+            const result = results[index]; record[key] = result.status === 'fulfilled' ? result.value : null;
+          }
+          record.daemonPid1Verified = results[5].status === 'fulfilled' && results[5].value.trim() === 'dockerd';
+          if (!record.daemonPid1Verified) record.daemonIo = null;
+          record.status = 'finished'; record.finishedAt = new Date().toISOString();
+        })();
+        diagnosticTasks.add(task); try { await task; } finally { diagnosticTasks.delete(task); }
+      }, async (target, scheduledAfterForwardMs) => {
+        if (report.pendingCreateDiagnostics.length >= 4) { report.pendingCreateDiagnosticOverflow++; return; }
+        const record: any = { ...target, scheduledAfterForwardMs, at: new Date().toISOString(), readOnly: true,
+          source: 'private-owned-daemon-unix-socket', status: 'pending' };
+        report.pendingCreateDiagnostics.push(record);
+        const task = (async () => {
+          const results = await Promise.allSettled([
+            daemonRead(`/containers/${encodeURIComponent(target.containerName)}/json`, 256 * 1024),
+            daemonRead('/debug/pprof/goroutine?debug=2', 1024 * 1024),
+            counterRead('/proc/1/io'), counterRead('/sys/fs/cgroup/cpu.stat'), counterRead('/sys/fs/cgroup/memory.events'),
+            fs.readFile('/proc/1/comm', 'utf8'),
+          ]);
+          const inspect = results[0];
+          if (inspect.status === 'fulfilled') {
+            record.inspectStatus = inspect.value.status;
+            if (inspect.value.status === 200) {
+              try {
+                const view = JSON.parse(inspect.value.text), labels = view.Config?.Labels || {};
+                record.ownedIdentityConfirmed = view.Name === `/${target.containerName}` && /^[a-f0-9]{64}$/.test(view.Id)
+                  && view.Config?.Image === target.imageReference && labels['cds.managed'] === 'true' && labels['cds.type'] === 'agent-session'
+                  && labels['cds.agent.probe'] === 'runtime-validation' && labels['cds.agent.probe.operation'] === target.operationId
+                  && labels['cds.instance'] === target.instanceId;
+                if (record.ownedIdentityConfirmed) record.containerId = view.Id;
+              } catch { record.inspectParseFailed = true; }
+            }
+          } else record.inspectUnavailable = true;
+          const stack = results[1];
+          if (stack.status === 'fulfilled') { record.stackStatus = stack.value.status;
+            if (stack.value.status === 200) record.creationStacks = creationStackSummary(stack.value.text); }
           else record.stackUnavailable = true;
           for (const [index, key] of [[2, 'daemonIo'], [3, 'outerCpu'], [4, 'outerMemoryEvents']] as const) {
             const result = results[index]; record[key] = result.status === 'fulfilled' ? result.value : null;
