@@ -144,6 +144,7 @@ describe('Projects router (P4 Part 2)', () => {
   let stateService: StateService;
   let shell: MockShellExecutor;
   let server: http.Server;
+  let projectConfig: CdsConfig;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-test-'));
@@ -169,7 +170,8 @@ describe('Projects router (P4 Part 2)', () => {
     const githubApp = {
       getInstallationToken: async () => 'github-app-installation-token',
     } as GitHubAppClient;
-    app.use('/api', createProjectsRouter({ stateService, shell, githubApp, config: { rootDomains: ['preview.test', 'secondary.test'] } as CdsConfig }));
+    projectConfig = { rootDomains: ['preview.test', 'secondary.test'] } as CdsConfig;
+    app.use('/api', createProjectsRouter({ stateService, shell, githubApp, config: projectConfig }));
 
     server = app.listen(0);
   });
@@ -858,7 +860,12 @@ describe('Projects router (P4 Part 2)', () => {
       expect((await request(server, 'GET', `/api/projects/${id}/identity-history`, undefined, { 'x-test-human': 'member' })).status).toBe(403);
     });
 
-    it.each(['alias', 'custom-domain', 'canonical', 'named-service', 'legacy-service', 'override-service'])('rejects a rename occupying another branch %s host before changing history', async (kind) => {
+    it.each(['alias', 'custom-domain', 'canonical', 'named-service', 'legacy-service', 'override-service'].flatMap(kind =>
+      ['root-domains', 'preview-only', 'empty-roots-preview'].map(mode => [mode, kind])))('rejects a rename in %s occupying another branch %s host before changing history', async (mode, kind) => {
+      if (mode !== 'root-domains') {
+        projectConfig.rootDomains = mode === 'preview-only' ? undefined : [];
+        projectConfig.previewDomain = 'preview.test';
+      }
       const id = (await request(server, 'POST', '/api/projects', { name: 'Rename', slug: 'before-rename' })).body.project.id;
       const owner = (await request(server, 'POST', '/api/projects', { name: 'Owner', slug: 'host-owner' })).body.project.id;
       const now = new Date().toISOString();
@@ -875,7 +882,7 @@ describe('Projects router (P4 Part 2)', () => {
       // main + feature-host-owner 与 feature/main + host-owner 的主入口相同。
       stateService.addBranch({ id: 'owner-branch', projectId: owner, branch: kind === 'canonical' ? 'feature/main' : 'main', status: 'idle', services: {}, createdAt: now, worktreePath: tmpDir,
         ...(kind === 'alias' || named ? { subdomainAliases: [host] } : {}),
-        ...(kind === 'custom-domain' ? { customDomains: [`${host}.secondary.test`] } : {}),
+        ...(kind === 'custom-domain' ? { customDomains: [`${host}.${mode === 'root-domains' ? 'secondary.test' : 'preview.test'}`] } : {}),
       } as BranchEntry);
       const before = structuredClone(stateService.getProject(id)!);
       const response = await request(server, 'PUT', `/api/projects/${id}`, { slug });

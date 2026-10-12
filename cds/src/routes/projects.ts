@@ -3509,7 +3509,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         return;
       }
       if (slug !== project.slug) {
-        const roots = config?.rootDomains || [];
+        const roots = config?.rootDomains?.length ? config.rootDomains : (config?.previewDomain ? [config.previewDomain] : []);
         const branches = stateService.getAllBranches();
         for (const branch of branches.filter(entry => entry.projectId === project.id)) {
           const profiles = stateService.getEffectiveProfilesForBranch(branch);

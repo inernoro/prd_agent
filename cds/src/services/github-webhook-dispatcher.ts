@@ -1008,7 +1008,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
       const names = projects.map((p) => `'${p.name}'`).join('、');
@@ -1928,7 +1928,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
     }
