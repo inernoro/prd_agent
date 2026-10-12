@@ -1,0 +1,39 @@
+name: CDS Native Business Access
+
+on:
+  push:
+    branches: [codex/cds-state-write-throttle-20261009]
+    paths:
+      - cds/scripts/native-business-access-preflight.mjs
+      - cds/tests/scripts/native-business-access-preflight.test.ts
+      - .github/workflows/cds-native-business-access.yml
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  access-prerequisite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read source and OCI access with this workflow token
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p cds/native-business-access-output
+          docker run --rm --cpus 4 --memory 6g --pids-limit 1024 \
+            --env GH_TOKEN --env GITHUB_ACTOR --env GITHUB_RUN_ID --env GITHUB_SHA \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/cds/scripts,dst=/probe,readonly" \
+            --mount "type=bind,src=${GITHUB_WORKSPACE}/cds/native-business-access-output,dst=/out" \
+            node@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 \
+            node /probe/native-business-access-preflight.mjs /out/report.json
+      - name: Preserve prerequisite results including denied access
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-native-business-access-${{ github.sha }}
+          path: cds/native-business-access-output/report.json
+          if-no-files-found: error
+          retention-days: 14
