@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -43,13 +43,14 @@ import {
   Pencil,
 } from 'lucide-react';
 
-import { AppShell, Crumb, PaletteHint, TopBar, Workspace, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
+import { AppShell, Crumb, PaletteHint, TopBar, Workspace, ConsoleAuthContext, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
 import { buildProjectGroups } from '@/lib/replicaGroups';
 import {
   BRANCH_GROUP_LIMITS,
+  assignBranchToGroup,
   groupAcceptsPin,
   BRANCH_GROUP_COLORS,
   groupBranches,
@@ -63,8 +64,9 @@ import {
 import { BranchGroupHeader, type BranchGroupSummaryPart } from '@/components/branch-groups/BranchGroupHeader';
 import { BranchGroupEditorDialog } from '@/components/branch-groups/BranchGroupEditorDialog';
 import { BranchGroupSuggestions, EMPTY_SUGGESTION_DRAFT, type BranchGroupSuggestionDraft } from '@/components/branch-groups/BranchGroupSuggestions';
-import { BranchSubmitterHeader } from '@/components/branch-groups/BranchSubmitterHeader';
-import { branchSubmitter, groupBranchesBySubmitter, parseBranchViewMode, type BranchSubmitter, type BranchViewMode } from '@/lib/branchSubmitters';
+import { BranchViewGroupHeader } from '@/components/branch-groups/BranchSubmitterHeader';
+import { BranchViewManagerDialog } from '@/components/branch-groups/BranchViewManagerDialog';
+import { BRANCH_VIEW_SOURCES, branchViewGroups, branchViewsStorageKey, defaultBranchViews, groupBranchesByView, readBranchViews, type BranchViewGroup, type BranchViewsSettings } from '@/lib/branchViews';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
@@ -1482,16 +1484,13 @@ function summarizeBranchStates(
 }
 
 const DORMANT_COLLAPSED_KEY = 'cds_branch_dormant_collapsed';
-const BRANCH_VIEW_MODE_KEY = 'cds_branch_view_mode';
 const BRANCH_GROUP_COLLAPSED_KEY = 'cds_branch_group_collapsed';
 
 /** 视图模式与分组收起状态按项目记在本机浏览器：个人习惯，不进项目共享数据。 */
-function readBranchViewMode(projectId: string): BranchViewMode {
+function loadBranchViewPreferences(key: string | null, projectId: string): BranchViewsSettings {
   try {
-    return parseBranchViewMode(localStorage.getItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`));
-  } catch {
-    return 'status';
-  }
+    return key ? readBranchViews(localStorage, key, projectId) : defaultBranchViews();
+  } catch { return defaultBranchViews(); }
 }
 
 function readCollapsedGroups(projectId: string): Set<string> {
@@ -1652,8 +1651,11 @@ function closePreviewTarget(target: PreviewTarget): void {
 
 export function BranchListPage(): JSX.Element {
   const canManageConsole = useCanManageConsole();
+  const { status: authStatus } = useContext(ConsoleAuthContext);
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
+  const account = authStatus?.enabled === false ? 'local' : authStatus?.user?.githubLogin || authStatus?.user?.username;
+  const viewPreferencesKey = account ? branchViewsStorageKey(`${authStatus?.mode ?? 'local'}:${account}`, projectId) : null;
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
@@ -1720,7 +1722,14 @@ export function BranchListPage(): JSX.Element {
   const [activeTagFilter, setActiveTagFilter] = useState<string | null>(null);
   const [dormantCollapsed, setDormantCollapsed] = useState<boolean>(() => readDormantCollapsed());
   /* 自定义分组（2026-09-29）：分组定义按项目存在服务端、项目内共享；视图模式与收起状态只记本机。 */
-  const [viewMode, setViewModeState] = useState<BranchViewMode>(() => readBranchViewMode(projectId));
+  const [viewPreferences, setViewPreferences] = useState(() => ({ key: viewPreferencesKey, settings: loadBranchViewPreferences(viewPreferencesKey, projectId) }));
+  // 切账号 / 项目时同步读取新偏好，防止 effect 执行前短暂沿用上一个人的分类。
+  const savedViewSettings = useMemo(() => loadBranchViewPreferences(viewPreferencesKey, projectId), [viewPreferencesKey, projectId]);
+  const viewSettings = viewPreferences.key === viewPreferencesKey ? viewPreferences.settings : savedViewSettings;
+  const selectedView = viewSettings.views.find((view) => view.id === viewSettings.selectedId) ?? viewSettings.views[0];
+  const viewMode = selectedView.source;
+  const automaticView = viewMode !== 'status' && viewMode !== 'groups';
+  const [viewManagerOpen, setViewManagerOpen] = useState(false);
   const [branchGroups, setBranchGroups] = useState<BranchGroupsSettings | null>(null);
   const [groupsLoadError, setGroupsLoadError] = useState('');
   const [groupsSaving, setGroupsSaving] = useState(false);
@@ -1741,8 +1750,8 @@ export function BranchListPage(): JSX.Element {
   // 切项目时把上一个项目的分组残留一并清掉：开着的编辑器、保存中 / 保存失败的提示、拖拽落点。
   // 不清的话，编辑器里上个项目的分组会带着新项目的版本号存进新项目（Codex P2，PR #1647）。
   useEffect(() => {
-    setViewModeState(readBranchViewMode(projectId));
     setCollapsedGroups(readCollapsedGroups(projectId));
+    setViewManagerOpen(false);
     // 已停止行的展开是按分组 id 记的，而「未分组」与同名 id 在各项目里是同一个键：
     // 不清的话 A 项目展开过的行，进 B 项目时照样展开着（Codex P2，PR #1647）
     setExpandedDormantGroups(new Set());
@@ -1774,10 +1783,15 @@ export function BranchListPage(): JSX.Element {
       });
     return () => { cancelled = true; };
   }, [projectId]);
-  const setViewMode = useCallback((mode: BranchViewMode) => {
-    setViewModeState(mode);
-    try { localStorage.setItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`, mode); } catch { /* 隐私模式：只影响记忆 */ }
-  }, [projectId]);
+  const saveViewPreferences = useCallback((settings: BranchViewsSettings): boolean => {
+    if (!viewPreferencesKey) return false;
+    setViewPreferences({ key: viewPreferencesKey, settings });
+    try { localStorage.setItem(viewPreferencesKey, JSON.stringify(settings)); return true; }
+    catch { return false; }
+  }, [viewPreferencesKey]);
+  const setViewMode = (id: string) => {
+    if (!saveViewPreferences({ ...viewSettings, selectedId: id })) setToast('分类已切换，但浏览器无法记住偏好；刷新后需要重新选择。');
+  };
   const toggleGroupCollapsed = useCallback((groupId: string) => {
     setCollapsedGroups((current) => {
       const next = new Set(current);
@@ -2680,7 +2694,7 @@ export function BranchListPage(): JSX.Element {
   const groupsReadOnly = !canManageConsole || Boolean(branchGroups?.readOnly);
   const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
-  const submitterSections = useMemo(() => groupBranchesBySubmitter(sortedBranches), [sortedBranches]);
+  const automaticSections = useMemo(() => automaticView ? groupBranchesByView(selectedView, sortedBranches) : [], [automaticView, selectedView, sortedBranches]);
   // 当前每个分支归哪组、怎么归进去的；拖放 / 菜单移组前用来判断这次操作会不会真的改变什么
   const groupAssignmentRef = useRef<Map<string, { groupId: string; via: 'pin' | 'rule' }>>(new Map());
   groupAssignmentRef.current = groupedBranches.assignment;
@@ -2732,12 +2746,12 @@ export function BranchListPage(): JSX.Element {
   // 卡片根本没渲染——先把它所在的组与那一行展开（只临时展开，不改写收起记忆）。
   const revealInGroupsRef = useRef<(branchId: string) => void>(() => undefined);
   revealInGroupsRef.current = (branchId: string) => {
-    if (!groupedView && viewMode !== 'submitters') return;
+    if (!groupedView && !automaticView) return;
     // 搜索会清除标签筛选；从全部分支找身份，才能展开原先被筛掉的目标。
     const target = branches.find((branch) => branch.id === branchId);
-    const sectionId = viewMode === 'submitters' && target
-      ? branchSubmitter(target).id
-      : groupedBranches.assignment.get(branchId)?.groupId ?? '__ungrouped__';
+    const sectionId = automaticView && target
+      ? branchViewGroups(selectedView, target)[0].id
+      : target ? assignBranchToGroup(groupList, target)?.groupId ?? '__ungrouped__' : '__ungrouped__';
     setCollapsedGroups((current) => {
       if (!current.has(sectionId)) return current;
       const next = new Set(current);
@@ -3579,6 +3593,8 @@ export function BranchListPage(): JSX.Element {
   // 搜索命中后将卡片设为稳定选中态并滚动到视口中部。选中态保留到下一次
   // 选择其它分支,比临时动画更符合"这是你刚选中的面板"的用户心智。
   const focusBranchCard = useCallback((branchId: string): void => {
+    // 搜索或命令面板定位到一个分支时，先清除会把目标卡片藏起来的标签筛选。
+    setActiveTagFilter(null);
     // 只临时展开、不写回 localStorage：用户收起分组的偏好不因一次定位被改掉。
     if (dormantIdsRef.current.has(branchId)) setDormantCollapsed(false);
     revealInGroupsRef.current(branchId);
@@ -3854,7 +3870,7 @@ export function BranchListPage(): JSX.Element {
   };
 
   /* 一个分组区块：组头（与页头同口径的一句话汇总）+ 组内运行中 / 构建中的卡片 + 停止的收成一行。 */
-  const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[], submitter?: BranchSubmitter): JSX.Element => {
+  const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[], submitter?: BranchViewGroup): JSX.Element => {
     const id = submitter?.id ?? (group ? group.id : '__ungrouped__');
     const collapsed = collapsedGroups.has(id);
     const summary = summarizeBranchStates(list, actions, projectProfileIds);
@@ -3872,9 +3888,10 @@ export function BranchListPage(): JSX.Element {
     return (
       <section
         key={id}
-        aria-label={submitter ? `提交者 ${submitter.name}` : group ? group.name : '未归组'}
+        aria-label={submitter ? `${selectedView.name} ${submitter.name}` : group ? group.name : '未归组'}
         data-branch-group={id}
-        data-branch-submitter={submitter?.id}
+        data-branch-submitter={viewMode === 'submitters' ? submitter?.id : undefined}
+        data-branch-view-section={submitter?.id}
         className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !submitter && !dropping ? 'opacity-80' : ''}`}
         onDragOver={submitter ? undefined : (event) => onGroupDragOver(event, id)}
         onDragLeave={submitter ? undefined : (event) => {
@@ -3885,8 +3902,10 @@ export function BranchListPage(): JSX.Element {
         onDrop={submitter ? undefined : (event) => onGroupDrop(event, id)}
       >
         {submitter ? (
-          <BranchSubmitterHeader
-            submitter={submitter}
+          <BranchViewGroupHeader
+            group={submitter}
+            label={viewMode === 'submitters' ? '提交者' : selectedView.name}
+            userIcon={viewMode === 'submitters' || viewMode === 'roles'}
             count={list.length}
             parts={summary.parts}
             collapsed={collapsed}
@@ -4172,7 +4191,7 @@ export function BranchListPage(): JSX.Element {
                 只在 active 时显示一行简单 chip(单标签过滤,不做 multi-select)。 */}
             {/* 2026-05-07 wave 2.4:Tag filter bar — 列出所有 tags 横排,
                 点击 chip 切换过滤;再次点击清除。激活的 tag chip 高亮。 */}
-            {branches.length > 0 ? (
+            {branches.length > 0 || viewPreferencesKey ? (
               /* 一句话汇总（2026-09-29）：先说「所以呢」——几个要处理、几个在动——再把每张卡都
                  重复的共享基础设施、全项目共用的构建槽收到这里说一次。 */
               <div className="mb-5 flex flex-wrap items-end justify-between gap-x-4 gap-y-2" data-testid="branch-overview-bar">
@@ -4222,19 +4241,29 @@ export function BranchListPage(): JSX.Element {
                   ) : null}
                   {/* 自动提交者视图只读分类，沿用个人视图记忆，不写项目共享分组。 */}
                   <div className="inline-flex shrink-0 gap-0.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 p-[3px]" role="group" aria-label="分支视图">
-                    {([['status', '按状态'], ['groups', '按分组'], ['submitters', '按提交者']] as const).map(([mode, label]) => (
+                    {viewSettings.views.slice(0, 3).map((view) => (
                       <button
-                        key={mode}
+                        key={view.id}
                         type="button"
-                        aria-pressed={viewMode === mode}
-                        data-branch-view-toggle={mode}
-                        className={`h-7 rounded-md px-3 text-[0.8125rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${viewMode === mode ? 'bg-[hsl(var(--surface-raised))] font-semibold text-foreground shadow-[0_0_0_1px_hsl(var(--hairline-strong))]' : 'text-muted-foreground hover:text-foreground'}`}
-                        onClick={() => setViewMode(mode)}
+                        aria-pressed={selectedView.id === view.id}
+                        data-branch-view-toggle={view.id}
+                        disabled={!viewPreferencesKey}
+                        className={`h-7 max-w-40 truncate rounded-md px-3 text-[0.8125rem] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${selectedView.id === view.id ? 'bg-[hsl(var(--surface-raised))] font-semibold text-foreground shadow-[0_0_0_1px_hsl(var(--hairline-strong))]' : 'text-muted-foreground hover:text-foreground'}`}
+                        onClick={() => setViewMode(view.id)}
                       >
-                        {label}
+                        {view.name}
                       </button>
                     ))}
+                    {viewSettings.views.length > 3 ? <DropdownMenu trigger={
+                      <Button size="sm" variant="ghost" className={`h-7 max-w-40 ${viewSettings.views.slice(3).some((view) => view.id === selectedView.id) ? 'bg-accent font-semibold' : 'text-muted-foreground'}`}>
+                        <span className="truncate">{viewSettings.views.slice(3).some((view) => view.id === selectedView.id) ? selectedView.name : '更多分类'}</span><ChevronDown />
+                      </Button>
+                    }>
+                      <DropdownLabel>其他分类</DropdownLabel>
+                      {viewSettings.views.slice(3).map((view) => <DropdownItem key={view.id} onSelect={() => setViewMode(view.id)}><span className="min-w-0 truncate">{view.name}</span>{selectedView.id === view.id ? <CheckCircle2 className="ml-auto h-4 w-4 shrink-0" /> : null}</DropdownItem>)}
+                    </DropdownMenu> : null}
                   </div>
+                  <Button type="button" variant="outline" size="sm" className="h-8" disabled={!viewPreferencesKey} onClick={() => setViewManagerOpen(true)} data-branch-view-manage><Settings />管理分类</Button>
                   {viewMode === 'groups' && groupsReadOnly ? (
                     <span
                       className="inline-flex h-8 items-center rounded-md border border-dashed border-border px-2.5 text-xs text-muted-foreground"
@@ -4341,12 +4370,12 @@ export function BranchListPage(): JSX.Element {
                 </div>
               </div>
             ) : (
-              viewMode === 'submitters' ? (
-                <div className="flex flex-col gap-5" data-branch-submitters-view>
+              automaticView ? (
+                <div className="flex flex-col gap-5" data-branch-submitters-view={viewMode === 'submitters' ? '' : undefined} data-branch-auto-view={selectedView.id}>
                   <p className="px-2 text-xs text-muted-foreground">
-                    按最近一次 GitHub 推送账号归类；没有推送账号时使用提交作者信息，缺少身份的归入「未知提交者」。
+                    {BRANCH_VIEW_SOURCES[viewMode].description}{viewMode === 'tag-prefix' ? ` 当前前缀：${selectedView.tagPrefix}` : ''}
                   </p>
-                  {submitterSections.map(({ submitter, branches: list }) => renderGroupSection(null, list, submitter))}
+                  {automaticSections.map(({ group, branches: list }) => renderGroupSection(null, list, group))}
                 </div>
               ) : viewMode === 'groups' ? (
                 <div className="flex flex-col gap-4" data-branch-view="groups">
@@ -4438,6 +4467,12 @@ export function BranchListPage(): JSX.Element {
         {/* Branch detail drawer — opens when 详情 is clicked on a card.
             Avoids the page navigation the user explicitly asked us to skip
             ("能在一个页面完成的，切勿跳转页面"). */}
+        {viewManagerOpen && viewPreferencesKey ? <BranchViewManagerDialog
+          key={viewPreferencesKey}
+          settings={viewSettings}
+          onApply={saveViewPreferences}
+          onClose={() => setViewManagerOpen(false)}
+        /> : null}
         <BranchGroupEditorDialog
           open={Boolean(groupEditor) && !groupsReadOnly}
           initial={groupEditor?.group ?? null}
