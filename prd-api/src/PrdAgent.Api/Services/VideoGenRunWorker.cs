@@ -2424,9 +2424,6 @@ public class VideoGenRunWorker : BackgroundService
         string? durableScope,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(currentScope) || string.IsNullOrWhiteSpace(durableScope))
-            return null;
-
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Id, task.RunId)
                      & fb.Eq(x => x.OwnerAdminId, task.OwnerAdminId)
