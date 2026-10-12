@@ -39,6 +39,17 @@ describe('Markdown 报告同页锚点', () => {
     expect(document).toContain('<h2 id="foo-3">Foo</h2>');
   });
 
+  it('显式锚点与同名 Markdown 标题各自获得唯一 ID', () => {
+    const document = buildMarkdownReportDocument(
+      '[查看](#关联测试方法)\n\n<a id="关联测试方法"></a>\n## 关联测试方法',
+      'light',
+    );
+
+    expect(document).toContain('<a id="关联测试方法"></a>');
+    expect(document).toContain('<h2 id="关联测试方法-1">关联测试方法</h2>');
+    expect(document.match(/id="关联测试方法"/g)).toHaveLength(1);
+  });
+
   it('按当前主题生成可读链接颜色', () => {
     expect(buildMarkdownReportDocument('', 'light')).toContain('#2563eb');
     expect(buildMarkdownReportDocument('', 'dark')).toContain('#60a5fa');

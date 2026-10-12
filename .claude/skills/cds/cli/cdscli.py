@@ -7047,6 +7047,39 @@ def _verify_collect_env_keys(doc: dict) -> set[str]:
     return keys
 
 
+def _verify_project_env_scope(doc: dict) -> dict[str, str]:
+    """构造与部署阶段一致的项目 env 可用性作用域。
+
+    `kind: required` 的值在部署前由必填闸门保证存在，`generate: secret`
+    的值则会由 CDS 自动生成。仓库不应为了让本地 verify 推导运行时凭据别名
+    而保存这些明文值，因此这里用非敏感哨兵表示“部署时保证非空”。
+    """
+    raw_env = doc.get("x-cds-env") or {}
+    project_env = (
+        {
+            str(key): str(value)
+            for key, value in raw_env.items()
+            if value is not None
+        }
+        if isinstance(raw_env, dict)
+        else {}
+    )
+    meta = doc.get("x-cds-env-meta") or {}
+    if not isinstance(meta, dict):
+        return project_env
+    for raw_key, raw_meta in meta.items():
+        if not isinstance(raw_meta, dict):
+            continue
+        kind = str(raw_meta.get("kind") or "auto").strip().lower()
+        generate = str(raw_meta.get("generate") or "").strip().lower()
+        if kind != "required" and generate != "secret":
+            continue
+        key = str(raw_key)
+        if not project_env.get(key, "").strip():
+            project_env[key] = "__CDS_VERIFY_RUNTIME_SECRET__"
+    return project_env
+
+
 def _verify_extract_var_refs(value: str) -> list[str]:
     """从字符串里抽出所有 ${VAR} 引用名(不含 :- 默认值场景)。"""
     import re
@@ -7813,7 +7846,7 @@ def _verify_run_all(doc: dict, root: str) -> list[dict]:
             "fix": "添加 services: 段并定义至少一个 service",
         }]
     env_keys = _verify_collect_env_keys(doc)
-    env_decls = doc.get("x-cds-env") if isinstance(doc.get("x-cds-env"), dict) else {}
+    env_decls = _verify_project_env_scope(doc)
     app_services = {n: s for n, s in services.items() if isinstance(s, dict) and _verify_is_app_service(s)}
     infra_services = {n: s for n, s in services.items() if isinstance(s, dict) and not _verify_is_app_service(s)}
     runtime_credential_vars = _verify_runtime_credential_vars(infra_services, env_decls)

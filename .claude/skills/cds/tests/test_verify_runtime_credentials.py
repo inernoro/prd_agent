@@ -143,6 +143,78 @@ def test_project_env_default_template_matches_server_runtime_resolution():
     assert aliases == {"CDS_POSTGRES_USER", "CDS_POSTGRES_PASSWORD"}
 
 
+def test_required_env_meta_resolves_runtime_credential_alias_without_plaintext():
+    document = {
+        "x-cds-env-meta": {
+            "POSTGRES_PASSWORD": {"kind": "required"},
+        },
+        "services": {
+            "api": {
+                "build": ".",
+                "volumes": [".:/repo"],
+                "environment": {
+                    "DATABASE_PASSWORD": "${CDS_POSTGRES_PASSWORD}",
+                },
+            },
+            "postgres": {
+                "image": "postgres:17-alpine",
+                "environment": {
+                    "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
+                },
+            },
+        },
+    }
+
+    issues = cdscli._verify_run_all(document, ".")
+
+    assert not any(
+        issue.get("rule") == "env-var-unresolved"
+        and issue.get("meta", {}).get("var") == "CDS_POSTGRES_PASSWORD"
+        for issue in issues
+    )
+    assert any(
+        issue.get("rule") == "env-var-cds-runtime"
+        and "CDS_POSTGRES_PASSWORD" in issue.get("message", "")
+        for issue in issues
+    )
+
+
+def test_generated_secret_env_meta_resolves_runtime_credential_alias_without_plaintext():
+    document = {
+        "x-cds-env-meta": {
+            "POSTGRES_PASSWORD": {"kind": "auto", "generate": "secret"},
+        },
+        "services": {
+            "api": {
+                "build": ".",
+                "volumes": [".:/repo"],
+                "environment": {
+                    "DATABASE_PASSWORD": "${CDS_POSTGRES_PASSWORD}",
+                },
+            },
+            "postgres": {
+                "image": "postgres:17-alpine",
+                "environment": {
+                    "POSTGRES_PASSWORD": "${POSTGRES_PASSWORD}",
+                },
+            },
+        },
+    }
+
+    issues = cdscli._verify_run_all(document, ".")
+
+    assert not any(
+        issue.get("rule") == "env-var-unresolved"
+        and issue.get("meta", {}).get("var") == "CDS_POSTGRES_PASSWORD"
+        for issue in issues
+    )
+    assert any(
+        issue.get("rule") == "env-var-cds-runtime"
+        and "CDS_POSTGRES_PASSWORD" in issue.get("message", "")
+        for issue in issues
+    )
+
+
 def test_nested_project_env_alias_with_empty_default_is_resolved():
     aliases = cdscli._verify_runtime_credential_vars(
         {

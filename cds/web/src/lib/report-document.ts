@@ -33,8 +33,8 @@ const headingId = (attributes: string): string | null => {
 export function addHeadingIdsToReportHtml(parsed: string): string {
   const headingPattern = /<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/gi;
   const reservedIds = new Set<string>();
-  for (const match of parsed.matchAll(headingPattern)) {
-    const id = headingId(match[2]);
+  for (const match of parsed.matchAll(/<[a-z][^>]*>/gi)) {
+    const id = headingId(match[0]);
     if (id !== null) reservedIds.add(id);
   }
 
