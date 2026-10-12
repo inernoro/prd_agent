@@ -170,6 +170,20 @@ public static class LiteraryIllustrationHistory
         public bool Ok => Failure == RestoreFailure.None;
     }
 
+    internal static ArticleIllustrationPlanItem? RestoredPlan(
+        ArticleIllustrationMarker marker, ImageAsset asset, string? description)
+    {
+        var hasSize = asset.Width > 0 && asset.Height > 0;
+        if (description == null && !hasSize) return null;
+        return new ArticleIllustrationPlanItem
+        {
+            Prompt = description ?? marker.PlanItem?.Prompt ?? LiteraryMcpWorkflow.EffectivePrompt(marker),
+            Count = marker.PlanItem?.Count ?? 1,
+            // 放回的是旧图，尺寸不能沿用新位置的默认值；早期缺尺寸的资产保留原方案。
+            Size = hasSize ? $"{asset.Width}x{asset.Height}" : marker.PlanItem?.Size,
+        };
+    }
+
     /// <summary>
     /// 把这篇文章的某张旧图挂回到指定标记上。旧图本身不动，被换下的那张同样留在历史里。
     ///
@@ -191,12 +205,7 @@ public static class LiteraryIllustrationHistory
             return new(RestoreFailure.AssetNotFound, "这张图不属于这篇文章，或已不存在。先读一遍历史配图拿到 assetId。", markerIndex, null, null);
 
         var description = string.IsNullOrWhiteSpace(asset.OriginalMarkerText) ? null : asset.OriginalMarkerText.Trim();
-        var planItem = description == null ? null : new ArticleIllustrationPlanItem
-        {
-            Prompt = description,
-            Count = marker.PlanItem?.Count ?? 1,
-            Size = marker.PlanItem?.Size,
-        };
+        var planItem = RestoredPlan(marker, asset, description);
         if (!await LiteraryMarkerWrites.RestoreMarkerAsync(db, ws.Id, workflowVersion, markerIndex, asset, description, planItem))
             return new(RestoreFailure.VersionChanged, "配图方案已经更新（正文被改过或重新规划了标记），请重读后再放回。", markerIndex, null, null);
         return new(RestoreFailure.None,
