@@ -1,0 +1,50 @@
+{
+  "checkedAt": "2026-10-12",
+  "cdsBaseline": "e4e0c8b6552315642c6d78a5620b5669901abd37",
+  "sampleRepository": "inernoro/cds-small-steps-lab",
+  "projectId": "6fa7d576d84d",
+  "branchId": "small-steps-lab-main",
+  "sampleCommit": "115a0f52290449174db469e3422fb99c10814449",
+  "previewUrl": "https://main-small-steps-lab.miduo.org",
+  "previewSource": "cdscli preview-url / GET /api/branches",
+  "deploymentRuns": [
+    {
+      "id": "dr_06f81524698b63745bc66130",
+      "trigger": "manual",
+      "commit": "04f9ae6de25fde23bea4246f7b7d16c5238bec6f",
+      "result": "running"
+    },
+    {
+      "id": "dr_f2e10a43e59c63eee097036c",
+      "trigger": "webhook",
+      "commit": "ca43bff132ac3943406f1044df37225d784d2855",
+      "result": "running"
+    },
+    {
+      "id": "dr_5f1c4fc7fa565bbad8b86fc2",
+      "trigger": "webhook",
+      "commit": "115a0f52290449174db469e3422fb99c10814449",
+      "mode": "express",
+      "result": "running"
+    }
+  ],
+  "sampleRemoteDeployed": true,
+  "deploymentMode": "express",
+  "browserVerified": [
+    "create",
+    "complete",
+    "reload"
+  ],
+  "publicApiAfterRedeploy": "Original task 1bbfd5b9-be8e-4c78-bfe5-9845ef203017 remains completed after express automatic deployment; new express task create/complete/reload passed",
+  "unverified": [
+    "first-page-approval-and-key-handover",
+    "ci-failure-injection",
+    "version-rollback-drill"
+  ],
+  "animation": "HyperFrames 0.8.149",
+  "recording": "81 seconds of actual browser frames; early source-mode run followed by final express deployment; waiting gaps removed; no voiceover",
+  "ciWorkflowUrl": "https://github.com/inernoro/cds-small-steps-lab/actions/runs/38235051851",
+  "deployedImage": "ghcr.io/inernoro/cds-small-steps-lab:sha-115a0f52290449174db469e3422fb99c10814449",
+  "deploymentVersion": "dv_0c6528ecba119a3882b52eb6",
+  "recordingSha256": "4e6edc983acdcbb5697096471b74529e72809c7aa7863e1cab31bf3c8a31443d"
+}
