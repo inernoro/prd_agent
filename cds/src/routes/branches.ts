@@ -46,6 +46,7 @@ import {
   namedServiceLabel,
   publishedServiceLabels,
   occupiedHostOwners,
+  projectBranchPreviewSlugs,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
@@ -16193,16 +16194,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
     const project = stateService.getProject(entry.projectId);
-    const slug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    if (!slug) return [];
+    const slugs = projectBranchPreviewSlugs(entry, project);
     const hosts: string[] = [];
     const seen = new Set<string>();
     for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
       const sub = resolveEffectiveProfile(bp, entry).subdomain;
       if (!sub || seen.has(sub)) continue;
       seen.add(sub);
-      for (const label of publishedServiceLabels(slug, sub)) {
-        hosts.push(`${label}.${root}`.toLowerCase());
+      for (const slug of slugs) {
+        for (const label of publishedServiceLabels(slug, sub)) hosts.push(`${label}.${root}`.toLowerCase());
       }
     }
     return hosts;
@@ -16221,12 +16221,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const other of stateService.getAllBranches()) {
       const projectId = other.projectId || 'default';
       const project = stateService.getProject(projectId);
-      const previewSlug = buildPreviewUrlForProject('', other.branch, project, projectId).previewSlug;
+      const previewSlugs = projectBranchPreviewSlugs(other, project);
       for (const rawRoot of rootDomains) {
         const root = rawRoot.toLowerCase();
-        const previewHost = previewSlug ? `${previewSlug}.${root}` : '';
-        if (previewHost && candidates.has(previewHost)) {
-          conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
+        for (const previewSlug of previewSlugs) {
+          const previewHost = `${previewSlug}.${root}`;
+          if (candidates.has(previewHost)) conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
         }
 
         for (const alias of stateService.getBranchSubdomainAliases(other.id)) {

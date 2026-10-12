@@ -70,6 +70,7 @@ import { buildCacheMounts } from './cache-catalog.js';
 import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
 import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
+import { projectBranchPreviewSlugs } from './preview-entrypoints.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -1388,7 +1389,7 @@ export class StateService {
       for (const other of Object.values(this.state.branches)) {
         if (other.id === branchId) continue;
         // Collision: candidate equals another branch's slug
-        if (other.id.toLowerCase() === normalized) {
+        if (other.id.toLowerCase() === normalized || projectBranchPreviewSlugs(other, this.getProject(other.projectId)).includes(normalized)) {
           conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'slug' });
           continue;
         }
