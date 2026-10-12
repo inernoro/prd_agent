@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,21 +61,31 @@ async function request(
   const addr = server.address();
   if (!addr || typeof addr === 'string') throw new Error('no server address');
   try {
-    const res = await fetch(`http://127.0.0.1:${addr.port}${url}`, {
-      method,
-      headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
-      body: body === undefined ? undefined : JSON.stringify(body),
+    return await new Promise((resolve, reject) => {
+      const payload = body === undefined ? undefined : JSON.stringify(body);
+      const req = http.request({
+        hostname: '127.0.0.1', port: addr.port, path: url, method,
+        // 每次请求都新建临时服务器，不能复用上一次服务的连接池。
+        agent: false,
+        headers: { ...(payload === undefined ? {} : {
+          'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload),
+        }), ...headers },
+      }, (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { text += chunk; });
+        res.on('error', reject);
+        res.on('end', () => {
+          let parsed: any = null;
+          try { parsed = text ? JSON.parse(text) : null; } catch { /* 保留非 JSON 原文供断言 */ }
+          resolve({ status: res.statusCode!, body: parsed, text, contentType: String(res.headers['content-type'] || '') });
+        });
+      });
+      req.on('error', reject);
+      req.end(payload);
     });
-    const text = await res.text();
-    let parsed: any = null;
-    try {
-      parsed = text ? JSON.parse(text) : null;
-    } catch {
-      parsed = null;
-    }
-    return { status: res.status, body: parsed, text, contentType: res.headers.get('content-type') || '' };
   } finally {
-    server.close();
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
   }
 }
 

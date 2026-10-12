@@ -38,6 +38,7 @@ import {
   type WebhookNoiseStats,
 } from '../services/github-webhook-noise.js';
 import type { StateService } from '../services/state.js';
+import { projectIdentityResponse, projectIdentityActorFromRequest } from '../services/project-identity-history.js';
 import type { GithubWebhookDelivery, GithubAppWhitelistSettings } from '../types.js';
 import type { WorktreeService } from '../services/worktree.js';
 import type { IShellExecutor, CdsConfig, OperationLog } from '../types.js';
@@ -1103,9 +1104,9 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       githubRepoFullName: repoFullName,
       githubAutoDeploy: autoDeploy,
       githubLinkedAt: new Date().toISOString(),
-    });
+    }, projectIdentityActorFromRequest(req));
     const updated = stateService.getProject(project.id)!;
-    res.json({ project: updated });
+    res.json({ project: projectIdentityResponse(updated) });
   });
 
   // ── POST /api/github/webhook/self-test ─────────────────────────────
@@ -1189,8 +1190,8 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       githubRepoFullName: undefined,
       githubAutoDeploy: undefined,
       githubLinkedAt: undefined,
-    });
-    res.json({ ok: true });
+    }, projectIdentityActorFromRequest(req));
+    res.json({ ok: true, project: projectIdentityResponse(stateService.getProject(project.id)!) });
   });
 
   // ── GET /api/cds-system/github/webhook-deliveries ───────────────────
