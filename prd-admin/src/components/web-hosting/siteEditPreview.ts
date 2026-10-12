@@ -14,6 +14,28 @@ export function runningGenerationActivity(phase: string, elapsedSeconds: number)
 
 export const REQUIRED_WEB_PAGE_RUNTIME = 'open-design';
 
+export type RuntimeRecoveryAction = 'generate' | 'restart';
+
+export function runtimeRecoveryActionNeedsPolling(action: string | null | undefined): action is RuntimeRecoveryAction {
+  return action === 'generate' || action === 'restart';
+}
+
+export function runtimeRecoveredForOperation(
+  capabilities: readonly DesignRuntimeCapability[],
+  runtimeId: string,
+  operation: 'generate' | 'edit',
+) {
+  const runtime = capabilities.find((item) => item.id === runtimeId);
+  return runtime?.enabled === true
+    && runtime.healthy === true
+    && runtime.operations.includes(operation);
+}
+
+export function runtimeRecoverySuccessDetail(detail: string, action: RuntimeRecoveryAction) {
+  const nextAction = action === 'restart' ? '按原要求重新开始' : '按原要求重试';
+  return `${detail} 运行环境已回收，可以${nextAction}。`;
+}
+
 /** 新网页任务只认 OpenDesign；其它 capability 只用于历史任务显示和诊断。 */
 export function requiredWebPageRuntime(
   capabilities: readonly DesignRuntimeCapability[],

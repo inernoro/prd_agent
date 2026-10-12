@@ -19,6 +19,9 @@ import {
   sanitizeAiPreviewCss,
   isLatestPreviewRequest,
   requiredWebPageRuntime,
+  runtimeRecoveredForOperation,
+  runtimeRecoveryActionNeedsPolling,
+  runtimeRecoverySuccessDetail,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
 } from './siteEditPreview';
 
@@ -182,6 +185,36 @@ describe('网页微调任务恢复', () => {
     expect(runningGenerationActivity('正在读取知识', 23))
       .toBe('当前步骤：正在读取知识。已运行 23 秒，任务仍在继续，页面会自动更新。');
     expect(runningGenerationActivity('', -4)).toContain('已运行 0 秒');
+  });
+
+  it('普通重试和冻结输入重启都会轮询会话运行环境', () => {
+    expect(runtimeRecoveryActionNeedsPolling('generate')).toBe(true);
+    expect(runtimeRecoveryActionNeedsPolling('restart')).toBe(true);
+    expect(runtimeRecoveryActionNeedsPolling('history')).toBe(false);
+  });
+
+  it('只有执行器启用、健康且支持当前操作时才解除恢复门', () => {
+    const runtime = {
+      id: 'open-design',
+      enabled: true,
+      healthy: true,
+      operations: ['generate', 'edit'],
+    } as unknown as Parameters<typeof runtimeRecoveredForOperation>[0][number];
+    expect(runtimeRecoveredForOperation([runtime], 'open-design', 'edit')).toBe(true);
+    expect(runtimeRecoveredForOperation([{ ...runtime, healthy: false }], 'open-design', 'edit')).toBe(false);
+    expect(runtimeRecoveredForOperation([{ ...runtime, enabled: false }], 'open-design', 'edit')).toBe(false);
+    expect(runtimeRecoveredForOperation([{ ...runtime, operations: ['generate'] }], 'open-design', 'edit')).toBe(false);
+  });
+
+  it('运行环境恢复后保留 restart 动作并用冻结输入重开，不静默新建任务', () => {
+    expect(runtimeRecoverySuccessDetail('上次任务因服务重启中断。', 'restart'))
+      .toBe('上次任务因服务重启中断。 运行环境已回收，可以按原要求重新开始。');
+    expect(editPanelSource).toContain('runtimeRecoveryActionNeedsPolling(recoveryAction)');
+    expect(editPanelSource).toContain("runtimeRecoveredForOperation(result.data.runtimes, runtimeId, 'edit')");
+    expect(editPanelSource).toContain("current?.action === recoveryAction");
+    expect(editPanelSource).toContain("recoveryNotice.action === 'restart' && recoveryNotice.runId");
+    expect(editPanelSource).toContain('void restartInterruptedRun(recoveryNotice.runId)');
+    expect(editPanelSource).toContain('restartDesignArtifactRun(runId, key)');
   });
 });
 

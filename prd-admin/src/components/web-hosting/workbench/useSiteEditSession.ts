@@ -36,6 +36,9 @@ import {
   REQUIRED_WEB_PAGE_RUNTIME,
   requiredWebPageRuntime,
   revisionLabel,
+  runtimeRecoveredForOperation,
+  runtimeRecoveryActionNeedsPolling,
+  runtimeRecoverySuccessDetail,
 } from '../siteEditPreview';
 import {
   GATEWAY_PLATFORM_FALLBACK,
@@ -302,7 +305,8 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
 
   useEffect(() => {
     const runtimeId = runtimeRecoveryGate?.runtimeId;
-    if (!runtimeId || recoveryNotice?.action !== 'generate') return;
+    const recoveryAction = recoveryNotice?.action;
+    if (!runtimeId || !runtimeRecoveryActionNeedsPolling(recoveryAction)) return;
     let active = true;
     let timer: number | undefined;
     const inspect = async () => {
@@ -311,13 +315,13 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       if (result.success) {
         const supported = result.data.runtimes.filter((item) => item.operations.includes('edit'));
         setCapabilities(supported);
-        const recovered = supported.find((item) => item.id === runtimeId)?.enabled === true;
+        const recovered = runtimeRecoveredForOperation(result.data.runtimes, runtimeId, 'edit');
         if (recovered) {
           setRuntimeRecoveryGate(null);
-          setRecoveryNotice((current) => current?.action === 'generate'
+          setRecoveryNotice((current) => current?.action === recoveryAction
             ? {
                 ...current,
-                detail: `${current.detail} 运行环境已回收，可以按原要求重试。`,
+                detail: runtimeRecoverySuccessDetail(current.detail, recoveryAction),
               }
             : current);
           return;
