@@ -216,6 +216,7 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
   let transientContextFailures = 0;
   let transientLoginFailures = 0;
   let stabilizations = 0;
+  let branchIdAttempts = 0;
   const values = {
     STABLE_SMOKE_CDS_GW_BASE_URL: 'https://gateway.example.test',
     STABLE_SMOKE_CDS_GW_USER: 'admin',
@@ -223,6 +224,8 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
   };
   const commandFn = (_program, args) => {
     if (args.includes('branch-id')) {
+      branchIdAttempts += 1;
+      if (branchIdAttempts === 1) return { status: 1, stdout: '' };
       return { status: 0, stdout: JSON.stringify({ data: { branchId: 'prd-agent-branch' } }) };
     }
     deployments += 1;
@@ -271,6 +274,7 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       stabilizeFn: async () => { stabilizations += 1; },
     });
     assert.equal(deployments, 2);
+    assert.equal(branchIdAttempts, 2, 'CDS 控制面瞬断只允许一次确定性重试');
     assert.equal(stabilizations, 1);
     assert.equal(transientContextFailures, 1);
     assert.equal(transientLoginFailures, 1);
@@ -294,6 +298,7 @@ test('网关连续部署证据要求两次就绪、旧会话可用和安全版�
       stabilizeFn: async () => { stabilizations += 1; },
     });
     assert.equal(deployments, 2);
+    assert.equal(branchIdAttempts, 2, '复用同一轮证据时不应重新读取分支标识');
     assert.equal(stabilizations, 1, '复用同一轮证据时不应再次触发公网稳定等待');
   } finally {
     rmSync(directory, { recursive: true, force: true });

@@ -573,14 +573,19 @@ export async function runCdsGatewayPersistenceProbe({
     () => readGatewayLoginSnapshot(values, fetchFn),
     retryOptions,
   );
-  const branchIdResult = commandFn('python3', [
-    '.claude/skills/cds/cli/cdscli.py',
-    'branch-id',
-  ]);
-  const branchIdPayload = readJsonFromText(branchIdResult.stdout);
-  const branchId = branchIdPayload?.data?.branchId;
-  if (branchIdResult.status !== 0 || !branchId) {
-    throw new Error('CDS 权威分支标识读取失败，无法执行网关连续部署验证');
+  let branchId = '';
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const branchIdResult = commandFn('python3', [
+      '.claude/skills/cds/cli/cdscli.py',
+      'branch-id',
+    ]);
+    const branchIdPayload = readJsonFromText(branchIdResult.stdout);
+    branchId = branchIdResult.status === 0 ? String(branchIdPayload?.data?.branchId || '').trim() : '';
+    if (branchId) break;
+    if (attempt === 2) {
+      throw new Error('CDS 权威分支标识读取失败，无法执行网关连续部署验证');
+    }
+    await (sleepFn || ((milliseconds) => new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds))))(2_000);
   }
   const attempts = [];
   const deploymentRunIds = new Set();
