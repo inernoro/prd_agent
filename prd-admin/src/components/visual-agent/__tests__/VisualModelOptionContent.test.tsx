@@ -14,9 +14,9 @@ const pool: ModelGroupForApp = {
 };
 
 describe('模型短名与真实身份分开展示', () => {
-  it('短名不改请求身份，默认标记与选中状态独立', () => {
+  it.each([false, true])('短名不改请求身份，默认标记与选中状态独立（compact=%s）', (compact) => {
     const [model] = buildVisualAgentModelOptions([pool]);
-    const markup = renderToStaticMarkup(<VisualModelOptionContent model={model} />);
+    const markup = renderToStaticMarkup(<VisualModelOptionContent model={model} compact={compact} />);
     expect(markup).toContain('GPT 画师');
     expect(markup).toContain('gpt-image-2');
     expect(markup).toContain(pool.description);
@@ -25,19 +25,19 @@ describe('模型短名与真实身份分开展示', () => {
     expect(model.id).toBe('pool_gateway-model');
     expect(model.modelName).toBe('gpt-image-2');
     expect(model.platformId).toBe('logical-model');
-    expect(renderToStaticMarkup(<VisualModelOptionContent model={model} selected />)).toContain('当前选中');
+    expect(renderToStaticMarkup(<VisualModelOptionContent model={model} selected compact={compact} />)).toContain('当前选中');
   });
 
-  it('只有服务端明确允许探测才呈现恢复提示，不把不可用线路伪装可选', () => {
+  it.each([false, true])('只有明确探测资格才呈现恢复提示（compact=%s）', (compact) => {
     const unavailable = { ...pool, models: [{ ...pool.models[0], healthStatus: ModelHealthStatus.Unavailable }] };
     const [blocked] = buildVisualAgentModelOptions([unavailable]);
     expect(blocked.enabled).toBe(false);
-    const blockedMarkup = renderToStaticMarkup(<VisualModelOptionContent model={blocked} />);
+    const blockedMarkup = renderToStaticMarkup(<VisualModelOptionContent model={blocked} compact={compact} />);
     expect(blockedMarkup).toContain('暂时无法生成，请选其他模型');
     expect(blockedMarkup).not.toContain('可以尝试生成');
     const [recovering] = buildVisualAgentModelOptions([{ ...unavailable,
       models: [{ ...unavailable.models[0], isRecoveryProbeAvailable: true }] }]);
     expect(recovering.enabled).toBe(true);
-    expect(renderToStaticMarkup(<VisualModelOptionContent model={recovering} />)).toContain('正在恢复，可以尝试生成');
+    expect(renderToStaticMarkup(<VisualModelOptionContent model={recovering} compact={compact} />)).toContain('正在恢复，可以尝试生成');
   });
 });

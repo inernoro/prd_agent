@@ -54,7 +54,7 @@ import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode 
 import type { BackdropAsset } from '@/lib/backdropRotation';
 import { BACKDROP_CATALOG, dimFor } from '@/lib/backdropCatalog';
 import { readGeneratedBackdrops } from '@/lib/backdropStudio';
-import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint } from '@/components/visual-agent/VisualModelOptionContent';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint, VISUAL_MODEL_DESKTOP_MENU } from '@/components/visual-agent/VisualModelOptionContent';
 import { placeAnchoredPanel, type AnchoredPanelPlacement } from '@/lib/anchoredPanel';
 import { consumeWakeOnce } from '@/lib/wakeSweep';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
@@ -274,6 +274,8 @@ function ModelPickerButton(props: {
   onChange: (id: string) => void;
 }) {
   const { options, modelId, onChange } = props;
+  const { isMobile } = useBreakpoint();
+  const compact = !isMobile;
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -296,8 +298,8 @@ function ModelPickerButton(props: {
         },
         height: panelRef.current?.getBoundingClientRect().height,
         prefer: 'above',
-        width: 360,
-        maxHeight: 640,
+        width: compact ? VISUAL_MODEL_DESKTOP_MENU.width : 360,
+        maxHeight: compact ? VISUAL_MODEL_DESKTOP_MENU.maxHeight : 640,
       }));
     };
     place();
@@ -314,7 +316,7 @@ function ModelPickerButton(props: {
       window.visualViewport?.removeEventListener('resize', place);
       window.visualViewport?.removeEventListener('scroll', place);
     };
-  }, [open, pos?.width]);
+  }, [open, pos?.width, compact]);
 
   useEffect(() => {
     if (!open) return;
@@ -383,8 +385,8 @@ function ModelPickerButton(props: {
               padding: 0,
             }}
           >
-            <VisualModelMenuHeading onClose={() => setOpen(false)} />
-            <div className="min-h-0 p-1.5" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
+            <VisualModelMenuHeading compact={compact} count={options.length} onClose={() => setOpen(false)} />
+            <div className="min-h-0" style={{ padding: compact ? 4 : 6, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {options.map((opt) => {
               const active = opt.id === modelId;
               return (
@@ -393,7 +395,7 @@ function ModelPickerButton(props: {
                   type="button"
                   className="w-full text-left hover-bg-soft transition-colors"
                   style={{
-                    padding: '12px 10px',
+                    padding: compact ? VISUAL_MODEL_DESKTOP_MENU.rowPadding : '12px 10px',
                     borderRadius: 8,
                     border: active ? '1px solid var(--report-accent-border)' : '1px solid transparent',
                     background: active ? 'var(--report-accent-soft)' : 'transparent',
@@ -412,12 +414,12 @@ function ModelPickerButton(props: {
                   title={opt.enabled ? undefined : '暂时无法生成，请选其他模型'}
                   onClick={() => { if (!opt.enabled) return; onChange(opt.id); setOpen(false); }}
                 >
-                  <VisualModelOptionContent model={opt} selected={active} />
+                  <VisualModelOptionContent compact={compact} model={opt} selected={active} />
                 </button>
               );
             })}
             </div>
-            <VisualModelMenuHint />
+            <VisualModelMenuHint compact={compact} />
           </div>
         </div>,
         document.body,

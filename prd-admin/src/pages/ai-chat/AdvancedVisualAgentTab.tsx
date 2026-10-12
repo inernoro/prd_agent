@@ -171,7 +171,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useGlobalDefectStore } from '@/stores/globalDefectStore';
 import { useVisualAgentPrefsStore } from '@/stores/visualAgentPrefsStore';
-import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint } from '@/components/visual-agent/VisualModelOptionContent';
+import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint, VisualModelMenuControl, VISUAL_MODEL_DESKTOP_MENU } from '@/components/visual-agent/VisualModelOptionContent';
 import { buildVisualAgentModelOptions, selectVisualModel, type VisualAgentModelOption } from './visualAgentModelOptions';
 
 import { MessageContentRenderer } from './components/MessageContentRenderer';
@@ -8396,10 +8396,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           align="start"
                           sideOffset={6}
                           className="surface-popover z-50 rounded-[16px] p-1.5"
-                          style={{ width: 360, maxWidth: 'calc(100vw - 16px)', maxHeight: 'var(--radix-dropdown-menu-content-available-height)', overflowY: 'auto' }}
+                          style={{ width: isMobile ? 360 : VISUAL_MODEL_DESKTOP_MENU.width, padding: isMobile ? 6 : 0, maxWidth: 'calc(100vw - 16px)', maxHeight: isMobile ? 'var(--radix-dropdown-menu-content-available-height)' : `min(${VISUAL_MODEL_DESKTOP_MENU.maxHeight}px, var(--radix-dropdown-menu-content-available-height))`, display: 'flex', flexDirection: 'column' }}
                         >
-                          <VisualModelMenuHeading />
+                          <VisualModelMenuHeading compact={!isMobile} count={allImageGenModels.length} />
 
+                          {isMobile ? (<>
                           {/* 智能切换开关：遇到不可用模型时，默认会弹窗询问是否切换；关闭后进入严格模式，直接按用户选择发送 */}
                           <div className="surface-inset mx-1 mb-1 flex items-center justify-between gap-2 rounded-[10px] px-2 py-1.5">
                             <div className="min-w-0 flex-1">
@@ -8438,7 +8439,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               />
                             </button>
                           </div>
-                          <div className="overflow-auto p-1" style={{ maxHeight: 420 }}>
+                          </>) : null}
+                          <div className="overflow-auto p-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                               {allImageGenModels.length === 0 ? (
                                 <div className="rounded-[12px] px-3 py-3 text-[11px] leading-relaxed text-token-muted" style={{ border: '1px dashed rgba(255,255,255,0.12)' }}>
                                   {modelsError ? (
@@ -8477,6 +8479,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     disabled={disabled}
                                     aria-pressed={using}
                                     style={{
+                                      padding: isMobile ? undefined : VISUAL_MODEL_DESKTOP_MENU.rowPadding,
                                       border: using ? '1px solid var(--report-accent-border)' : '1px solid transparent',
                                       background: using ? 'var(--report-accent-soft)' : 'transparent',
                                     }}
@@ -8486,12 +8489,38 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       setQuickModelOpen(false);
                                     }}
                                   >
-                                    <VisualModelOptionContent model={m} selected={using} />
+                                    <VisualModelOptionContent compact={!isMobile} model={m} selected={using} />
                                   </button>
                                 );
                               })}
                           </div>
-                          <VisualModelMenuHint />
+                          {!isMobile && <VisualModelMenuControl label="智能切换" description={smartModelFallback ? '发送前若当前模型不可用，会询问是否切换到其他可用模型' : '严格模式：直接使用你选的模型，不做任何切换'}>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={smartModelFallback}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSmartModelFallback(!smartModelFallback);
+                              }}
+                              className="shrink-0 relative inline-flex items-center rounded-full transition-colors"
+                              style={{
+                                width: 32,
+                                height: 18,
+                                background: smartModelFallback ? 'rgba(129, 140, 248, 0.7)' : 'rgba(255,255,255,0.15)',
+                              }}
+                              title={smartModelFallback ? '关闭后进入严格模式' : '打开后遇到不可用模型会询问切换'}
+                            >
+                              <span
+                                className="absolute top-0.5 rounded-full bg-white transition-transform"
+                                style={{
+                                  width: 14,
+                                  height: 14,
+                                  transform: smartModelFallback ? 'translateX(15px)' : 'translateX(2px)',
+                                }}
+                              />
+                            </button>                          </VisualModelMenuControl>}
+                          <VisualModelMenuHint compact={!isMobile} />
                         </DropdownMenu.Content>
                       </DropdownMenu.Portal>
                     </DropdownMenu.Root>
@@ -9512,8 +9541,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         align="end"
                         sideOffset={6}
                         className="surface-popover z-50 flex min-h-0 flex-col rounded-[16px] p-1.5"
-                        style={{ width: 360, maxWidth: 'calc(100vw - 16px)', maxHeight: 'var(--radix-dropdown-menu-content-available-height)' }}
+                        style={{ width: isMobile ? 360 : VISUAL_MODEL_DESKTOP_MENU.width, padding: isMobile ? 6 : 0, maxWidth: 'calc(100vw - 16px)', maxHeight: isMobile ? 'var(--radix-dropdown-menu-content-available-height)' : `min(${VISUAL_MODEL_DESKTOP_MENU.maxHeight}px, var(--radix-dropdown-menu-content-available-height))` }}
                       >
+                        {isMobile ? (<>
                         <div className="flex shrink-0 items-center justify-between gap-3 px-3 py-2">
                           <div className="min-w-0">
                             <div className="truncate text-[13px] font-semibold text-token-primary">
@@ -9537,9 +9567,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           </div>
                         </div>
 
-                        <VisualModelMenuHeading />
+                        </>) : null}
 
-                        <div className="min-h-0 overflow-auto p-1" style={{ maxHeight: 420, overscrollBehavior: 'contain' }}>
+                        <VisualModelMenuHeading compact={!isMobile} count={allImageGenModels.length} />
+
+                        <div className="min-h-0 overflow-auto p-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
                           {allImageGenModels.length === 0 ? (
                             <div className="rounded-[14px] px-3 py-4 text-center text-[12px] text-token-muted" style={{ border: '1px dashed var(--border-subtle)' }}>
                               {modelsError ? (
@@ -9560,7 +9592,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </button>
                             </div>
                           ) : (
-                            <div className="space-y-1.5">
+                            <div className={isMobile ? "space-y-1.5" : undefined}>
                               {allImageGenModels.map((m) => {
                                   const picked = (!modelPrefAuto && modelPrefModelId === m.id) || (modelPrefAuto && serverDefaultModel?.id === m.id);
                                   return (
@@ -9571,6 +9603,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                       aria-pressed={picked}
                                       className="w-full text-left rounded-[12px] px-3 py-3 hover-bg-soft disabled:opacity-70 disabled:cursor-not-allowed transition-colors"
                                       style={{
+                                        padding: isMobile ? undefined : VISUAL_MODEL_DESKTOP_MENU.rowPadding,
                                         border: picked ? '1px solid var(--report-accent-border)' : '1px solid transparent',
                                         background: picked ? 'var(--report-accent-soft)' : 'transparent',
                                       }}
@@ -9580,17 +9613,21 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                         setModelPrefOpen(false);
                                       }}
                                     >
-                                      <VisualModelOptionContent model={m} selected={picked} />
+                                      <VisualModelOptionContent compact={!isMobile} model={m} selected={picked} />
                                     </button>
                                   );
                                 })}
                             </div>
                           )}
                         </div>
-                        <VisualModelMenuHint />
-                        <div className="shrink-0 px-3 pb-2 text-[10px] leading-relaxed text-token-muted-faint">
+                        {!isMobile && <VisualModelMenuControl label="优化提示词" description="开启后自动优化生图提示词；关闭后直接使用原始输入。业务模型不会静默切换，服务线路由网关管理。">
+                          <Switch checked={directPrompt} onCheckedChange={setDirectPrompt} ariaLabel="提示词模式" />
+                        </VisualModelMenuControl>}
+                        <VisualModelMenuHint compact={!isMobile} />
+                        {isMobile && <div className="shrink-0 px-3 pb-2 text-[10px] leading-relaxed text-token-muted-faint">
                           选择的是业务模型；实际服务线路由网关管理，不会静默切换到其他业务模型。
-                        </div>
+                        </div>}
+
                       </DropdownMenu.Content>
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
