@@ -1,3 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
+using PrdAgent.Api.Services;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -49,5 +53,86 @@ public sealed class DesignArtifactStage2ContractTests
         Assert.Contains("debounce", executor, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("poll", executor);
         Assert.Contains("close", executor);
+    }
+
+    [Fact]
+    public void OpenDesign最终受信产物留给服务端持久化但不进入用户事件流()
+    {
+        var html = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html lang=\"zh-CN\"><head><title>阶段二产物</title></head><body><main>已完成页面</main></body></html>");
+        var bytes = Encoding.UTF8.GetBytes(html);
+        var files = new[]
+        {
+            new DesignWorkspaceFile(
+                "index.html",
+                Convert.ToBase64String(bytes),
+                Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+                bytes.LongLength,
+                "text/html; charset=utf-8"),
+        };
+        var output = new StringBuilder();
+        var run = new DesignArtifactRun { Runtime = DesignArtifactRuntimes.OpenDesign };
+        var chunk = new DesignArtifactExecutorChunk("delta", html, files);
+
+        var suppressedFromPublicStream = HostedSiteEditRunWorker.ConsumePrivateOpenDesignChunk(run, chunk, output);
+        var persistedHtml = HostedSiteEditRunWorker.HardenExecutorOutput(output.ToString(), files);
+
+        Assert.True(suppressedFromPublicStream);
+        Assert.Equal(html, persistedHtml);
+    }
+
+    [Theory]
+    [InlineData("delta")]
+    [InlineData("thinking")]
+    public void OpenDesign原始模型文本不进入服务端产物或用户事件流(string type)
+    {
+        const string privateModelText = "内部模型原始内容不得展示";
+        var output = new StringBuilder();
+        var run = new DesignArtifactRun { Runtime = DesignArtifactRuntimes.OpenDesign };
+        var chunk = new DesignArtifactExecutorChunk(type, privateModelText);
+
+        var suppressedFromPublicStream = HostedSiteEditRunWorker.ConsumePrivateOpenDesignChunk(run, chunk, output);
+
+        Assert.True(suppressedFromPublicStream);
+        Assert.Empty(output.ToString());
+    }
+
+    [Fact]
+    public void OpenDesign空或不一致的受信结果包仍然失败()
+    {
+        var run = new DesignArtifactRun { Runtime = DesignArtifactRuntimes.OpenDesign };
+        var emptyOutput = new StringBuilder();
+        var emptyFiles = Array.Empty<DesignWorkspaceFile>();
+
+        Assert.True(HostedSiteEditRunWorker.ConsumePrivateOpenDesignChunk(
+            run,
+            new DesignArtifactExecutorChunk("delta", "不应采纳", emptyFiles),
+            emptyOutput));
+        Assert.Empty(emptyOutput.ToString());
+        Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteEditRunWorker.HardenExecutorOutput(emptyOutput.ToString(), emptyFiles));
+
+        var packagedHtml = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html><head><title>原产物</title></head><body>原产物</body></html>");
+        var packagedBytes = Encoding.UTF8.GetBytes(packagedHtml);
+        var files = new[]
+        {
+            new DesignWorkspaceFile(
+                "index.html",
+                Convert.ToBase64String(packagedBytes),
+                Convert.ToHexString(SHA256.HashData(packagedBytes)).ToLowerInvariant(),
+                packagedBytes.LongLength,
+                "text/html; charset=utf-8"),
+        };
+        var mismatchedOutput = new StringBuilder();
+        Assert.True(HostedSiteEditRunWorker.ConsumePrivateOpenDesignChunk(
+            run,
+            new DesignArtifactExecutorChunk(
+                "delta",
+                packagedHtml.Replace("原产物", "被替换", StringComparison.Ordinal),
+                files),
+            mismatchedOutput));
+        Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteEditRunWorker.HardenExecutorOutput(mismatchedOutput.ToString(), files));
     }
 }

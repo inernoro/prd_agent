@@ -241,7 +241,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
                 // OpenDesign 只允许有限阶段码和整页 preview 进入用户流；模型原文与隐式推理
                 // 即使未来执行器误产出，也只能留在运行时内部，不能由 MAP 二次透传。
-                if (run.Runtime == DesignArtifactRuntimes.OpenDesign && chunk.Type is "delta" or "thinking")
+                // Done 分片也沿用 delta 类型，但它同时带着已经过工作区合同校验的完整文件包：
+                // 这份入口 HTML 必须留在服务端供 HardenExecutorOutput 校验和持久化，仍然不得作为
+                // 用户可见 delta 发到 SSE。不能只按 Type 丢弃，否则会留下文件包却把入口正文清空。
+                if (ConsumePrivateOpenDesignChunk(run, chunk, output))
                     continue;
 
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
@@ -1195,6 +1198,21 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 verifiedFiles.Select(file => file.Path).ToArray());
         if (verifiedFiles != null) _ = BuildVerifiedHostedSiteFiles(verifiedFiles, hardened);
         return hardened;
+    }
+
+    internal static bool ConsumePrivateOpenDesignChunk(
+        DesignArtifactRun run,
+        DesignArtifactExecutorChunk chunk,
+        StringBuilder output)
+    {
+        if (run.Runtime != DesignArtifactRuntimes.OpenDesign
+            || chunk.Type is not ("delta" or "thinking"))
+            return false;
+
+        if (chunk.Type == "delta" && chunk.VerifiedFiles is { Count: > 0 })
+            output.Append(chunk.Content);
+
+        return true;
     }
 
     internal static string? NormalizeExecutorInput(DesignArtifactRun run, string? currentHtml)
