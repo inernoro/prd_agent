@@ -4,3 +4,4 @@
 | test | prd-api | 补充旧客户端兼容改写和 OpenDesign 不可用负面路径测试 |
 | fix | cds | 让 MAP API 与设计服务从同一份 LLMGW 基址派生模型出口，避免部署配置漂移 |
 | test | cds | 补充 API 与设计服务 LLMGW 地址同源的部署契约测试 |
+| test | prd-api | 对齐 LLMGW 基址同源派生的跨服务部署合同守卫 |
