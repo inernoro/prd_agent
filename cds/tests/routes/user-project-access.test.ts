@@ -216,10 +216,10 @@ describe('human project grants through the production server', () => {
     // retries unrelated to the behavior under test.
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     finish();
-    for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined();
+    await vi.waitFor(
+      () => expect(humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId))).toBeUndefined(),
+      { timeout: 2_000, interval: 20 },
+    );
     expect(flush).toHaveBeenCalledTimes(3);
     expect((await call('GET', '/api/projects', member)).body.projects.map((p: any) => p.id)).toEqual(['project-a']);
     fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'late-write-restored.json'));
