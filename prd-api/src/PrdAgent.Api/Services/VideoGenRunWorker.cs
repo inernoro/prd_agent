@@ -1923,6 +1923,14 @@ public class VideoGenRunWorker : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "VideoGen 单镜渲染异常: runId={RunId}, scene={Idx}", run.Id, sceneIdx);
+            // 用户在上游状态查询或下载尚未返回时可能已经请求取消。外部调用随后
+            // 以异常结束时，取消意图必须优先于普通镜头失败，否则镜头会落 Error、
+            // run 却继续停在 Editing，单次“停止任务”永远无法进入可清理终态。
+            if (await IsRunCancellationRequestedAsync(run.Id))
+            {
+                await CancelRunAsync(run);
+                return;
+            }
             await MarkSceneErrorAsync(run.Id, sceneIdx, ex.Message, expectedJobId, claimId);
         }
     }

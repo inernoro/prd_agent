@@ -937,6 +937,46 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task CancelEditingRun_WhenStatusCallFails_ShouldStillReachCancelled()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-during-status-failure", test.OwnerId, SceneItemStatus.PollingClaimed);
+        run.Scenes[0].JobId = "upstream-job-cancelled";
+        run.Scenes[0].RenderLeaseId = "lease:active";
+        run.Scenes[0].RenderLeaseExpiresAt = DateTime.UtcNow.AddMinutes(2);
+        run.Scenes[0].SubmissionStartedAt = DateTime.UtcNow;
+        await test.SaveRunAsync(run);
+
+        var statusStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseStatus = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        test.VideoClient.Setup(client => client.GetStatusAsync(
+                It.IsAny<string>(),
+                "upstream-job-cancelled",
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                statusStarted.SetResult(true);
+                await releaseStatus.Task;
+                throw new InvalidOperationException("上游状态查询已中断");
+            });
+
+        var worker = test.CreateWorker();
+        var processing = worker.ProcessSceneRenderAsync(run, 0, "lease:active", resumeExistingJob: true);
+        await statusStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await test.Context.VideoGenRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<VideoGenRun>.Update.Set(item => item.CancelRequested, true));
+        releaseStatus.SetResult(true);
+
+        await processing.WaitAsync(TimeSpan.FromSeconds(2));
+        var cancelled = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        cancelled.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        cancelled.Scenes[0].Status.ShouldBe(SceneItemStatus.PollingClaimed);
+        cancelled.Scenes[0].ErrorMessage.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task ConcurrentBatchRequests_ShouldQueueEachEligibleSceneExactlyOnce()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

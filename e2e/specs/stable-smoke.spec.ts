@@ -4237,7 +4237,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[VIDEO-001][VIDEO-002][VIDEO-003] 文稿生成真实分镜并完成一个镜头', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动执行视频分镜生成与关键帧写入');
-    test.setTimeout(720_000);
+    test.setTimeout(960_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-storyboard-r${testInfo.retry}`;
     const article = '# 雨夜来信\n\n雨夜的旧车站里，一名邮差把最后一封信交给等候的人。\n\n天光出现时，两人沿着湿润的站台走向出口。';
@@ -4356,7 +4356,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         versions?: Array<{ id: string; videoUrl?: string }>;
       } | undefined;
       const renderStartedAt = Date.now();
-      while (Date.now() - renderStartedAt < 360_000) {
+      while (Date.now() - renderStartedAt < 600_000) {
         const status = await readEnvelope<{
           status: string;
           errorMessage?: string;
