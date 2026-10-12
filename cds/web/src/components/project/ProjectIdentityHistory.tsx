@@ -4,7 +4,7 @@ import { apiRequest } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Section, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
-type Snapshot = Record<'name' | 'displayName' | 'slug' | 'repository', string>;
+type Snapshot = Record<'name' | 'displayName' | 'slug' | 'repository', string> & { githubRepository?: string };
 interface RecordEntry {
   id: string; at: string; kind: 'created' | 'baseline' | 'changed' | 'migrated'; actor: string;
   slugSource?: 'explicit' | 'repository' | 'name';
@@ -13,8 +13,21 @@ interface RecordEntry {
 interface HistoryResponse { records: RecordEntry[]; nextCursor: string | null; coverage: string }
 const FIELD_LABELS: Record<keyof Snapshot, string> = {
   name: '项目名称', displayName: '显示名称', slug: '项目 slug', repository: 'Git 仓库',
+  githubRepository: 'GitHub 仓库关联',
 };
 const SOURCE_LABELS = { explicit: '创建请求指定', repository: '仓库名称', name: '项目名称' };
+
+export function ProjectIdentityFields({ before, after }: { before?: Snapshot; after: Snapshot }): JSX.Element {
+  return <dl className="space-y-1">
+    {(Object.keys(FIELD_LABELS) as (keyof Snapshot)[]).filter(key =>
+      (key !== 'githubRepository' || before?.[key] || after[key]) && (!before || before[key] !== after[key])).map(key => (
+      <div key={key} className="flex flex-wrap gap-x-2 break-all">
+        <dt className="text-muted-foreground">{FIELD_LABELS[key]}</dt>
+        <dd>{before ? `${before[key] || '未设置'} → ` : ''}{after[key] || '未设置'}</dd>
+      </div>
+    ))}
+  </dl>;
+}
 
 export function ProjectIdentityHistory({ projectId, version }: { projectId: string; version?: string }): JSX.Element {
   const [records, setRecords] = useState<RecordEntry[]>([]);
@@ -50,14 +63,7 @@ export function ProjectIdentityHistory({ projectId, version }: { projectId: stri
               <span>{record.kind === 'created' ? '创建项目' : record.kind === 'baseline' ? '首次观察基线（历史未知）' : record.kind === 'migrated' ? '合并旧标识' : '修改设置'}</span>
             </div>
             {record.slugSource ? <p>初始标识来源：{SOURCE_LABELS[record.slugSource]}</p> : null}
-            <dl className="space-y-1">
-              {(Object.keys(FIELD_LABELS) as (keyof Snapshot)[]).filter((key) => !record.before || record.before[key] !== record.after[key]).map((key) => (
-                <div key={key} className="flex flex-wrap gap-x-2 break-all">
-                  <dt className="text-muted-foreground">{FIELD_LABELS[key]}</dt>
-                  <dd>{record.before ? `${record.before[key] || '未设置'} → ` : ''}{record.after[key] || '未设置'}</dd>
-                </div>
-              ))}
-            </dl>
+            <ProjectIdentityFields before={record.before} after={record.after} />
           </div>
         ))}
       </div>

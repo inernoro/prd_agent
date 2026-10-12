@@ -48,11 +48,13 @@ function safeRepository(raw: string | undefined): string {
 }
 
 export function projectIdentitySnapshot(project: Project): ProjectIdentitySnapshot {
+  const github = project.githubRepoFullName || '';
   return {
     name: project.name,
     displayName: project.aliasName || project.name,
     slug: project.slug,
     repository: safeRepository(project.gitRepoUrl),
+    ...(github ? { githubRepository: /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(github) ? github : safeRepository(github) } : {}),
   };
 }
 
@@ -69,7 +71,7 @@ export function identityRecord(
 }
 
 export function identityChanged(before: Project, after: Project): boolean {
-  return before.gitRepoUrl !== after.gitRepoUrl ||
+  return before.gitRepoUrl !== after.gitRepoUrl || before.githubRepoFullName !== after.githubRepoFullName ||
     JSON.stringify(projectIdentitySnapshot(before)) !== JSON.stringify(projectIdentitySnapshot(after));
 }
 
@@ -78,6 +80,7 @@ export function publicIdentityRecord(record: ProjectIdentityRecord): ProjectIden
   const snapshot = (value: ProjectIdentitySnapshot): ProjectIdentitySnapshot => ({
     name: value.name, displayName: value.displayName,
     slug: value.slug || value.previewIdentifier || value.originalIdentifier || '', repository: value.repository,
+    ...(value.githubRepository === undefined ? {} : { githubRepository: value.githubRepository }),
   });
   return { ...record, before: record.before ? snapshot(record.before) : undefined, after: snapshot(record.after) };
 }

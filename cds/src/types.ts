@@ -3676,6 +3676,8 @@ export interface ProjectIdentitySnapshot {
   previewIdentifier?: string;
   originalIdentifier?: string;
   repository: string;
+  /** 已绑定的 GitHub 仓库；与显式 Git 地址分别留痕，旧记录可能没有此字段。 */
+  githubRepository?: string;
 }
 
 export interface ProjectIdentityRecord {

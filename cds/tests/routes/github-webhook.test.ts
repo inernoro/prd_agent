@@ -810,6 +810,39 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(stateService.getProject('p1')!.name).toBe('另一处修改');
   });
 
+  it('显式 Git 地址保持时，绑定与解绑仍留存真实操作者、前后关联并推进版本', async () => {
+    stateService.updateProject('p1', { gitRepoUrl: 'https://example.test/explicit.git' });
+    const before = structuredClone(stateService.getProject('p1')!);
+    server = startServer();
+    const payload = JSON.stringify({ installationId: 42, repoFullName: 'octocat/repo', actor: 'spoofed-user' });
+    const linked = await request(server, 'POST', '/api/projects/p1/github/link', payload, { 'x-test-project-key': 'p1' });
+    expect(linked.status).toBe(200);
+    expect(linked.body.project.identityVersion).not.toBe(before.identityHistory!.at(-1)!.id);
+    const bound = stateService.getProject('p1')!.identityHistory!.at(-1)!;
+    expect(bound.before?.repository).toBe('https://example.test/explicit.git');
+    expect(bound.after.repository).toBe(bound.before?.repository);
+    expect(bound.before?.githubRepository).toBeUndefined();
+    expect(bound.after.githubRepository).toBe('octocat/repo');
+    expect(bound.actor).toBe('agent:k-test');
+    expect(bound.requestId).toBeTruthy();
+    const count = stateService.getProject('p1')!.identityHistory!.length;
+    await request(server, 'POST', '/api/projects/p1/github/link', payload, { 'x-test-project-key': 'p1' });
+    expect(stateService.getProject('p1')!.identityHistory).toHaveLength(count);
+    const removed = await request(server, 'DELETE', '/api/projects/p1/github/link', '', { 'x-test-project-key': 'p1' });
+    expect(removed.status).toBe(200);
+    const unbound = stateService.getProject('p1')!.identityHistory!.at(-1)!;
+    expect(unbound.id).not.toBe(bound.id);
+    expect(unbound.before?.githubRepository).toBe('octocat/repo');
+    expect(unbound.after.githubRepository).toBeUndefined();
+    expect(unbound.actor).toBe('agent:k-test');
+    expect(unbound.requestId).not.toBe(bound.requestId);
+    expect(stateService.getProject('p1')!.gitRepoUrl).toBe(before.gitRepoUrl);
+    await stateService.flush();
+    const restarted = new StateService(path.join(tmp, 'state.json'));
+    restarted.load();
+    expect(restarted.getProject('p1')!.identityHistory!.at(-1)!.id).toBe(unbound.id);
+  });
+
   it('同项目机器凭据绑定仓库只返回版本摘要，不返回完整设置记录', async () => {
     stateService.updateProject('p1', { name: '更新后的名称' }, { actor: 'user:history-owner', requestId: 'history-request' });
     server = startServer();
@@ -820,7 +853,7 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(linked.body.project).not.toHaveProperty('identityHistory');
     expect(JSON.stringify(linked.body)).not.toContain('history-owner');
     expect(JSON.stringify(linked.body)).not.toContain('history-request');
-    expect(stateService.getProject('p1')!.identityHistory).toHaveLength(2);
+    expect(stateService.getProject('p1')!.identityHistory).toHaveLength(3);
   });
 
   it('绑一个已被别的项目绑走的仓库：默认拦住，并回兄弟项目名', async () => {

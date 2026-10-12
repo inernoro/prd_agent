@@ -217,6 +217,42 @@ describe('脱敏（不带凭据）', () => {
 });
 
 describe('只读 + 幂等（子实例播种）', () => {
+  it('镜像 ID 撞本地旧标识时映射副本和关联，旧设置仍定位原项目且重启不重播', async () => {
+    const parent = parentState();
+    parent.updateProject('map', { slug: 'source-current' });
+    const now = new Date().toISOString();
+    parent.getBuildProfile('api')!.env!.projectId = 'map';
+    parent.getProject('map')!.managedProfiles = [{ id: 'managed-api', projectId: 'map', name: 'Managed' } as BuildProfile];
+    parent.getBranch('map-main')!.extraProfiles = [{ id: 'extra-web', projectId: 'map', name: 'Extra' } as BuildProfile];
+    parent.addInfraService({ id: 'db', projectId: 'map', name: 'DB', dockerImage: 'mongo:7', containerPort: 27017, volumes: [], env: {}, createdAt: now } as InfraService);
+    parent.addDeploymentRun({ id: 'id-map-run', projectId: 'map', branchId: 'map-main', status: 'succeeded', startedAt: now, events: [] } as unknown as Parameters<StateService['addDeploymentRun']>[0]);
+    parent.createAcceptanceReport({ title: 'ID mapping', format: 'md', content: 'parent', projectId: 'map', branchId: 'map-main', createdBy: 'fixture' });
+    const mirror = buildPreviewMirror(parent, { nowMs: Date.now() });
+    const original = structuredClone(mirror);
+    const childFile = path.join(tmp, 'id-mapped-state.json');
+    const child = new StateService(childFile, tmp); child.load();
+    child.addProject({ id: PREVIEW_DEMO_PROJECT_ID, slug: 'map', name: 'Local', kind: 'git', createdAt: now, updatedAt: now } as Project);
+    child.updateProject(PREVIEW_DEMO_PROJECT_ID, { slug: 'local-current' });
+    expect(seedPreviewInstanceMirror(child, mirror)).toBe(true);
+    const copied = child.getProject('mirror-map')!;
+    expect(copied.slug).toBe('source-current');
+    expect(child.getProject('map')!.id).toBe(PREVIEW_DEMO_PROJECT_ID);
+    expect(copied.managedProfiles?.[0].projectId).toBe(copied.id);
+    expect(child.getBuildProfile('api')!.projectId).toBe(copied.id);
+    expect(child.getBuildProfile('api')!.env!.projectId).toBe('map');
+    expect(child.getBranch('map-main')!.projectId).toBe(copied.id);
+    expect(child.getBranch('map-main')!.extraProfiles?.[0].projectId).toBe(copied.id);
+    expect(child.getInfraServicesForProject(copied.id).map(p => p.id)).toEqual(['db']);
+    expect(child.getDeploymentRuns({ projectId: copied.id }).map(r => r.id)).toEqual(['id-map-run']);
+    expect(child.listAcceptanceReports(copied.id).some(r => r.title === 'ID mapping')).toBe(true);
+    expect(child.getLogs('map-main')).toHaveLength(1);
+    await child.flush();
+    const restarted = new StateService(childFile, tmp); restarted.load();
+    expect(restarted.getProject('map')!.id).toBe(PREVIEW_DEMO_PROJECT_ID);
+    expect(seedPreviewInstanceMirror(restarted, mirror)).toBe(false);
+    expect(mirror).toEqual(original);
+    expect(parent.getProject('map')!.id).toBe('map');
+  });
   it('镜像清理冲突的历史入口，保持完整播种、旧格式修复和重启幂等', async () => {
     const parent = parentState();
     parent.updateProject('map', { slug: 'shared-old' });
@@ -262,9 +298,10 @@ describe('只读 + 幂等（子实例播种）', () => {
     child.updateProject(PREVIEW_DEMO_PROJECT_ID, { slug: 'map-mirror' });
     child.updateProject(PREVIEW_DEMO_PROJECT_ID, { slug: 'renamed-demo' });
     expect(seedPreviewInstanceMirror(child, mirror)).toBe(true);
-    expect(child.getProject('map')?.slug).toBe('map-mirror-2');
-    expect(child.getBuildProfiles().some(p => p.id === 'api' && p.projectId === 'map')).toBe(true);
-    expect(child.getBranch('map-main')?.projectId).toBe('map');
+    expect(child.getProject('map')?.id).toBe(PREVIEW_DEMO_PROJECT_ID);
+    expect(child.getProject('mirror-map')?.slug).toBe('map-mirror-2');
+    expect(child.getBuildProfiles().some(p => p.id === 'api' && p.projectId === 'mirror-map')).toBe(true);
+    expect(child.getBranch('map-main')?.projectId).toBe('mirror-map');
     expect(child.getLogs('map-main')).toHaveLength(1);
     expect(mirror.projects.find(p => p.id === 'map')?.slug).toBe('map');
     expect(child.getProject(PREVIEW_DEMO_PROJECT_ID)?.slug).toBe('renamed-demo');

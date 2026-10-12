@@ -78,6 +78,15 @@ describe('项目只保留一个 slug', () => {
     expect(legacyRecord.after.originalIdentifier).toBe('old-project');
   });
 
+  it('新项目 ID 不能抢占其他项目的历史标识，旧设置查找仍指向原项目', () => {
+    const state = new StateService(file, dir); state.load();
+    state.addProject(project('local-id', 'retained-id') as Project);
+    state.updateProject('local-id', { slug: 'local-current' });
+    expect(() => state.addProject(project('retained-id', 'unique-current') as Project)).toThrow(/reserved/);
+    expect(state.getProject('retained-id')?.id).toBe('local-id');
+    expect(state.getProjects()).toHaveLength(1);
+  });
+
   it('改名后旧凭据按哈希绑定识别；伪造前缀、撤销授权及吊销仍拒绝', () => {
     const state = new StateService(file, dir); state.load();
     state.addProject(project('p1', 'old-project') as Project);

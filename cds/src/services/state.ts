@@ -1985,6 +1985,9 @@ export class StateService {
     if (this.state.projects.some((p) => p.id === project.id)) {
       throw new Error(`Project with id '${project.id}' already exists`);
     }
+    if (this.state.projects.some(p => projectReservedIdentifiers(p).includes(project.id))) {
+      throw new Error(`Project id '${project.id}' is reserved by an existing project`);
+    }
     if (this.state.projects.some((p) => projectReservedIdentifiers(p).includes(project.slug))) {
       throw new Error(`Project with slug '${project.slug}' already exists`);
     }

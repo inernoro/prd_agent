@@ -84,7 +84,7 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
   const stampedProjects = state.getProjects().filter((p) => p.mirror);
   const stampedBranches = state.getAllBranches().filter((b) => b.mirror);
   // 冲突清理后的投影既用于播种，也用于同采集时刻的幂等检查。
-  mirror = { ...mirror, projects: prepareMirrorProjects(state, mirror.projects) };
+  mirror = prepareMirrorSnapshot(state, mirror);
   if (mirrorFullySeeded(state, mirror, stampedProjects, stampedBranches)) return changed;
 
   // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志；部署 run 要单独删——
@@ -151,16 +151,24 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
   return true;
 }
 
-function prepareMirrorProjects(state: StateService, projects: Project[]): Project[] {
+function prepareMirrorSnapshot(state: StateService, mirror: PreviewMirrorFile): PreviewMirrorFile {
   const reserved = new Set(state.getProjects().filter(p => !p.mirror).flatMap(projectReservedIdentifiers));
-  return projects.map(p => {
+  const projectIds = new Map<string, string>();
+  const projects = mirror.projects.map(p => {
+    let id = p.id;
+    let idSuffix = 1;
+    while (reserved.has(id)) {
+      id = `mirror-${p.id}${idSuffix === 1 ? '' : `-${idSuffix}`}`;
+      idSuffix++;
+    }
+    projectIds.set(p.id, id);
     let slug = p.slug;
     let suffix = 1;
     while (reserved.has(slug)) {
       slug = `${p.slug}-mirror${suffix === 1 ? '' : `-${suffix}`}`;
       suffix++;
     }
-    const prepared = { ...p, slug, legacyFlag: undefined, identityHistory: undefined };
+    const prepared = { ...p, id, slug, legacyFlag: undefined, identityHistory: undefined };
     if (p.mirror?.routingIdentity) {
       prepared.mirror = { ...p.mirror, routingIdentity: {
         ...p.mirror.routingIdentity,
@@ -170,6 +178,18 @@ function prepareMirrorProjects(state: StateService, projects: Project[]): Projec
     for (const identifier of projectReservedIdentifiers(prepared)) reserved.add(identifier);
     return prepared;
   });
+  // 仅映射模型的结构化关联，环境变量、日志和自由文本仍是父实例观察值。
+  const remap = <T extends { projectId?: string | null }>(item: T): T => {
+    return typeof item.projectId === 'string' ? { ...item, projectId: projectIds.get(item.projectId) || item.projectId } : { ...item };
+  };
+  return { ...mirror,
+    projects: projects.map(p => ({ ...p, ...(p.managedProfiles ? { managedProfiles: p.managedProfiles.map(remap) } : {}) })),
+    buildProfiles: mirror.buildProfiles.map(remap),
+    infraServices: mirror.infraServices?.map(remap),
+    branches: mirror.branches.map(b => ({ ...remap(b), ...(b.extraProfiles ? { extraProfiles: b.extraProfiles.map(remap) } : {}) })),
+    deploymentRuns: mirror.deploymentRuns.map(remap),
+    reports: mirror.reports.map(remap),
+  };
 }
 
 /** 同一份镜像是否已经一条不缺地在库里：capturedAt 相同，且每个集合的条数都对得上。 */
