@@ -1,6 +1,6 @@
 # CDS 长期性能优化待办 · 计划
 
-> **版本**：v1.143 | **日期**：2026-10-12，北京时间 | **状态**：基线已采集，候选修正未上线，最终验收未通过
+> **版本**：v1.144 | **日期**：2026-10-12，北京时间 | **状态**：基线已采集，候选修正未上线，最终验收未通过
 
 **一句话**：把六项优化拆成有依赖、负责人和验收证据的待办，防止“代码写完”被当作“线上问题解决”。
 **谁该读**：实施负责人、项目 CI 负责人和独立监理。
@@ -1013,3 +1013,17 @@ T09阶段门仍需完整STG-02/03及事前固定同负载两版30分钟；T14/T1
 范围维护候选校验最终类型0；首默认全量在原project-db-isolation出现socket hang up、一失败9509通过，原日志保留，未修改该旧模块或放宽参数。相同源码原模块25项复核全通过，再跑同默认659文件9510项通过、19跳过84.97秒，原obsolete提示保留；docs/diff0。不是声称修复连接问题或新原生已通过。
 
 真实API第二次原/health已200、UP并返回完整eab提交；主库411条successful history包含原基线记录，原日志此次新applied63，两口径不混同；KeyVault另1条迁移实际成功。原first缺IndexSecret退出1保留；新32字节Base64只在内存生成和环境注入、不写任务文件，原入口/DB与鉴权/Flyway门未变。27件首次真实API及两库证据封存business-application-runtime-candidate，清单28d3f7bef2b54590de7f953588670a3ae7be50b1b74593eeef2c1f8ba57e881e。只证明原API及两库，另外库、四worker/前端、完整分支待产物恢复及T09/正式项/48小时仍欠。
+
+
+## 固定08041演练终态与真实调度依赖
+
+同一原生38190582967已终态八成功、一失败，两构建成功；原orphan、branch-claim及观察隔离范围检查实际通过。创建后取消完整场景app/docker/host通过，首次4250ms/code0、末747ms/code0，缓存原120秒、真实引用释放和最后容器零盘点均有原详报。延迟创建首次10259ms/code1仍失败，后720ms/code0仅证明责任恢复；实际转发至daemon201为7852ms，201已超过首次五秒清理期限3085ms，底层慢创建原因未证明。两份原strict退出0，固定362源、三驾驶器、361编译与134Web逐项一致；原期限、4CPU/6GiB/1024PID、六池24actor、VFS及物理断言未改。74件封存scope-contract-sync-candidate，清单d123a59a3a6c89287d2af80188a03d8a14d955989f13822d30da38d06e42c79d；观察进程因gh EOF退出不等于workflow被停止，没有重跑来覆盖首败。
+
+真实GENERATION原镜像首启退出1、无OOM，根因缺少原启用XXL-JOB的admin地址，原四角色均保持enabled。已补真实官方2.2.0原镜像和未改DDL，只用新自有schema、用户、密码及token；登录HTML200、错误token拒绝、正确token接受与真实登录通过。自选180秒前提观察首轮超时保留，同容器Spring实际约193秒启动，后续单次协议核对通过，未重启。14件封存business-xxl-admin-prerequisites，清单8b2241e6ac4bb7a3857ad4a8aeb7c37a3d263cf59f4ffd4f7d4a1049983d7cae。GENERATION第二次已用原镜像、原Java入口、原300秒、同一自有IndexSecret内存注入及真实admin/token启动，功能仍待验证。自有镜像仓库为释放其0.25CPU暂时停止，数据和原manifest保留；下次产物检查前必须恢复，未操作共享/原生daemon。
+
+本轮有真实依赖补齐和严格演练新结果，仍不是完整业务或线上改善。监理按冻结蓝本复核，只有T00完成；六方向、T09、两版同负载30分钟、正式A01–A12及48小时保持开放，既有L3决策保持待定。
+
+
+GENERATION第二次原300秒内实际启动，观测255.83秒、无OOM/重启；三个原handler集合精确匹配，admin真实自动注册地址对上自有容器，executor beat错误token拒绝、正确token200。通过原admin认证界面创建禁用定时的新BEAN任务，并手动执行原generationJobHandler；真实调度日志trigger_code与handle_code均200，worker开始/完成及租户超时扫描日志对上。本次是空数据周期扫描，不证明订单状态变化或完整业务。原验收driver首次title超原DDL12字符而被拒绝、无新增group，诊断原响应保留，只缩短自有样例名称，没有改表结构或产品源码。38件封存business-workers-runtime-candidate，清单a08a1a25442d8bee7f4004496e23b8d79cbcf16006c49219e48407f03a7bb7f7；另外三角色与完整业务仍欠。
+
+监理v1.86限定确认创建后取消整例，延迟首次失败保留；admin协议原先只有派生断言，监理未独立验证。已新增五次原HTTP返回，包含HTML、两token结果、登录及实际cookie鉴权读取，cookie值脱敏；7件封存business-xxl-admin-protocol-receipts，清单1bb7d160a1111567d47d324d52fab3aef1f162ece4a2f9df52f91af95fa95426，待限定复核，不回填旧14件或提前签正式通过。只读cdscli当前Master/Web仍e4e0c8b65、原PID1799360，候选未上线；没有30分钟改善窗口或48小时结果。
