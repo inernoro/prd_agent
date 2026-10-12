@@ -428,6 +428,15 @@ describe('wiring guards', () => {
     expect(config).not.toMatch(/OPENAI_API_KEY|CODEX_API_KEY|chatgpt|api\.openai\.com/);
   });
 
+  it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
+    const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
+    expect(dockerfile).toContain('pnpm exec playwright install --with-deps chromium');
+    expect(dockerfile).toContain('chown open-design:open-design');
+    expect(dockerfile).toContain('/var/lib/map-design-runtime/browser-quality');
+    expect(dockerfile).toContain('chmod 0711 /var/lib/map-design-runtime');
+    expect(dockerfile).toContain('chmod 0700 /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality');
+  });
+
   it('keeps the production defaults on the layout the image provides', () => {
     const config = loadConfig({});
     expect(config).toMatchObject({

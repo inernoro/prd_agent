@@ -413,6 +413,30 @@ export async function startHarness(options: { apiKey?: string; overrides?: Desig
       codexObservation: 'codex-cli 0.143.0',
       missingSkillFiles: [],
       designSystems: ['default', 'editorial'],
+      browserQuality: { ready: true, executablePath: '/test/chromium', observation: 'test Chromium' },
+    },
+    browserQualityRunner: {
+      run: async (job) => {
+        fs.mkdirSync(job.evidenceDir, { recursive: true });
+        const measurements = [
+          { viewport: 'desktop' as const, width: 1440, height: 900 },
+          { viewport: 'mobile' as const, width: 390, height: 844 },
+        ].map((viewport) => {
+          const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
+          fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+          return {
+            ...viewport,
+            documentWidth: viewport.width,
+            h1Count: 1,
+            visibleHeadingCount: 2,
+            visibleCtaCount: 1,
+            visibleLandmarkCount: 2,
+            issues: [],
+            screenshotPath,
+          };
+        });
+        return { browserVersion: 'test-chromium', measurements };
+      },
     },
     log: () => undefined,
     ...options.overrides,

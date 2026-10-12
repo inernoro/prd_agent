@@ -18,6 +18,24 @@ public sealed class DesignArtifactLlmRequestPolicy
 }
 
 /// <summary>
+/// 隔离浏览器质量证据的有界摘要。逐视口测量与截图保存在受信产物包，Run 只保存可聚合指标和引用，
+/// 不复制 HTML、模型正文或隐式推理。
+/// </summary>
+public sealed class DesignArtifactBrowserQualitySummary
+{
+    public string SchemaVersion { get; set; } = string.Empty;
+    public string RuleVersion { get; set; } = string.Empty;
+    public string HeuristicVersion { get; set; } = string.Empty;
+    public bool FirstPassPassed { get; set; }
+    public int RepairAttempts { get; set; }
+    public bool RepairSucceeded { get; set; }
+    public bool FinalHardPassed { get; set; }
+    public double FinalScore { get; set; }
+    public List<string> Viewports { get; set; } = new();
+    public string EvidenceRef { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// 跨网页托管、知识库与 HTML PPT 的统一设计任务。
 /// v2 权威生命周期事件与状态保存在同一 Mongo 文档；Redis 仅服务历史流程和兼容投影。
 /// </summary>
@@ -173,6 +191,20 @@ public class DesignArtifactRun
 
     /// <summary>最近一次有效阶段或预览更新时间，用于计算最大静止间隔。</summary>
     public DateTime? LastProgressAt { get; set; }
+
+    /// <summary>相邻服务端权威进度时间点之间的最大秒数；旧任务缺失时不回填、不冒充零等待。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public double? MaxStaticGapSeconds { get; set; }
+
+    /// <summary>带游标重新建立任务事件流的次数；首连 afterSeq=0 不计入。</summary>
+    public int StreamReconnectCount { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? LastStreamReconnectAt { get; set; }
+
+    /// <summary>最终产物的浏览器质量摘要；旧任务缺失时只读兼容，不回填。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactBrowserQualitySummary? BrowserQuality { get; set; }
 
     public string? Error { get; set; }
 

@@ -120,6 +120,21 @@ public sealed class OpenDesignStageProgressTests
     }
 
     [Fact]
+    public void 浏览器质量阶段只展示成果语言且不泄露测量参数()
+    {
+        var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18);
+
+        var update = tracker.Observe("open_design_browser_quality_checking", null, null);
+
+        Assert.NotNull(update);
+        Assert.Equal(81, update!.Progress);
+        Assert.Equal("正在检查桌面与移动端布局", update.Phase);
+        Assert.Equal(DesignArtifactPhaseCodes.ReviewingPage, update.PhaseCode);
+        Assert.DoesNotContain("1440", update.Phase, StringComparison.Ordinal);
+        Assert.DoesNotContain("Chromium", update.Phase, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 认不出的阶段不编造进度()
     {
         var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18);

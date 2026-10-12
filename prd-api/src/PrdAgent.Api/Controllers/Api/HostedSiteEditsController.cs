@@ -513,6 +513,26 @@ public sealed class HostedSiteEditsController : ControllerBase
             return;
         }
 
+        if (afterSeq > 0)
+        {
+            try
+            {
+                var reconnectedAt = DateTime.UtcNow;
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    item => item.Id == initial.Id
+                            && item.UserId == userId
+                            && item.DeploymentSlug == initial.DeploymentSlug,
+                    Builders<DesignArtifactRun>.Update
+                        .Inc(item => item.StreamReconnectCount, 1)
+                        .Set(item => item.LastStreamReconnectAt, reconnectedAt),
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "记录网页修改事件流重连失败 runId={RunId}", runId);
+            }
+        }
+
         var cursor = Math.Max(0, afterSeq);
         var idleRounds = 0;
         var redisProjectionAvailable = true;
@@ -976,6 +996,10 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.FirstVisibleFeedbackAt,
         run.FirstPreviewAt,
         run.LastProgressAt,
+        run.MaxStaticGapSeconds,
+        run.StreamReconnectCount,
+        run.LastStreamReconnectAt,
+        run.BrowserQuality,
         artifactSiteId = run.ArtifactSiteId ?? run.ProducedArtifactSiteId,
         artifactRevisionId = run.ArtifactRevisionId ?? run.ProducedArtifactRevisionId,
         run.LinkedRunId,

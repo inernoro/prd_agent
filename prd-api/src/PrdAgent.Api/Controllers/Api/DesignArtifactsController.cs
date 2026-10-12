@@ -116,7 +116,8 @@ public sealed class DesignArtifactsController : ControllerBase
     /// </summary>
     /// <summary>
     /// 本部署最近 30 天网页生成的真实耗时（按执行器 × 产物类型分组的 P50 / P95），
-    /// 以及「资料到可分享链接」端到端耗时。口径见 <see cref="DesignArtifactTimingStats"/>。
+    /// 以及首次预览、最长静止间隔、恢复、二十四小时内发布、分享和浏览器质量聚合。
+    /// 口径见 <see cref="DesignArtifactTimingStats"/>。
     /// 只返回聚合数字，不含任何任务正文或用户标识。前端据此给出「预计约 X 分钟」，
     /// 样本不足 estimateMinSamples 时前端退回经验值并明说数据在积累。
     /// </summary>
@@ -849,6 +850,25 @@ public sealed class DesignArtifactsController : ControllerBase
             }), ct);
             return;
         }
+        if (afterSeq > 0)
+        {
+            try
+            {
+                var reconnectedAt = DateTime.UtcNow;
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    item => item.Id == initial.Id
+                            && item.UserId == userId
+                            && item.DeploymentSlug == initial.DeploymentSlug,
+                    Builders<DesignArtifactRun>.Update
+                        .Inc(item => item.StreamReconnectCount, 1)
+                        .Set(item => item.LastStreamReconnectAt, reconnectedAt),
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "记录网页生成事件流重连失败 runId={RunId}", runId);
+            }
+        }
         var cursor = Math.Max(0, afterSeq);
         var idleRounds = 0;
         var redisProjectionAvailable = true;
@@ -1045,6 +1065,10 @@ public sealed class DesignArtifactsController : ControllerBase
         run.FirstVisibleFeedbackAt,
         run.FirstPreviewAt,
         run.LastProgressAt,
+        run.MaxStaticGapSeconds,
+        run.StreamReconnectCount,
+        run.LastStreamReconnectAt,
+        run.BrowserQuality,
         run.ArtifactSiteId,
         run.ArtifactRevisionId,
         run.ProducedArtifactSiteId,

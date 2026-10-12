@@ -9,6 +9,7 @@ import type { EgressRelay, EgressRelayOptions } from './engine/egress-relay.js';
 import { EngineLifecycle } from './engine/lifecycle.js';
 import { runEngineSelfCheck, type EngineSelfCheck } from './engine/self-check.js';
 import { DesignTaskExecutor } from './executor.js';
+import { SubprocessBrowserQualityRunner, type BrowserQualityRunner } from './quality/browser-runner.js';
 import { createServer } from './http/server.js';
 import { TaskManager } from './tasks.js';
 
@@ -20,6 +21,7 @@ export interface DesignRuntimeOverrides {
   startRelay?: (options: EgressRelayOptions) => Promise<EgressRelay>;
   resetRetryBaseMs?: number;
   log?: (line: string) => void;
+  browserQualityRunner?: BrowserQualityRunner;
 }
 
 export interface DesignRuntime {
@@ -75,6 +77,8 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     startRelay: overrides.startRelay,
+    browserQualityRunner: overrides.browserQualityRunner
+      ?? new SubprocessBrowserQualityRunner(config.engineUid, config.engineGid, config.engineHome),
   });
   const tasks = new TaskManager({
     run: (task, signal, onCreatingStage, onStage) => executor.run(task, signal, onCreatingStage, onStage),

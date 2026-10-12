@@ -617,6 +617,16 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         bool incrementLifecycle = true,
         string? phaseCode = null)
     {
+        if (updates.TryGetValue(nameof(DesignArtifactRun.LastProgressAt), out var progressAtValue)
+            && progressAtValue is BsonDateTime progressAt)
+        {
+            var previous = current.LastProgressAt ?? current.CreatedAt;
+            var next = progressAt.ToUniversalTime();
+            var gapSeconds = next >= previous ? (next - previous).TotalSeconds : 0;
+            updates[nameof(DesignArtifactRun.MaxStaticGapSeconds)] = Math.Round(
+                Math.Max(current.MaxStaticGapSeconds ?? 0, gapSeconds),
+                1);
+        }
         var nextSequence = new BsonDocument("$add", new BsonArray
         {
             new BsonDocument("$ifNull", new BsonArray { $"${nameof(DesignArtifactRun.LifecycleEventSequence)}", 0 }),

@@ -153,6 +153,22 @@ export interface DesignArtifactRunSummary {
   firstVisibleFeedbackAt?: string | null;
   firstPreviewAt?: string | null;
   lastProgressAt?: string | null;
+  maxStaticGapSeconds?: number | null;
+  streamReconnectCount?: number;
+  lastStreamReconnectAt?: string | null;
+  /** 最终产物的隔离浏览器质量摘要；逐视口证据保存在产物包，不进入普通运行流。 */
+  browserQuality?: {
+    schemaVersion: string;
+    ruleVersion: string;
+    heuristicVersion: string;
+    firstPassPassed: boolean;
+    repairAttempts: number;
+    repairSucceeded: boolean;
+    finalHardPassed: boolean;
+    finalScore: number;
+    viewports: string[];
+    evidenceRef: string;
+  } | null;
   restartedFromRunId?: string | null;
   artifactSiteId?: string | null;
   artifactRevisionId?: string | null;
@@ -1582,6 +1598,23 @@ export interface DesignTimingGroup {
   /** 资料到可分享链接：创建时刻 → 生成者为产出站点建的第一条分享/访问链接。 */
   materialToShareLink: DesignTimingMetric;
   materialToShareLinkEligibleRuns: number;
+  firstPreview?: DesignTimingMetric;
+  maxStaticGap?: DesignTimingMetric;
+  restartedCount?: number;
+  recoveredCount?: number;
+  streamReconnectCount?: number;
+  publishedWithin24HoursCount?: number;
+  browserQuality?: {
+    sampleCount: number;
+    firstPassPassedCount: number;
+    firstPassRate: number | null;
+    repairedRunCount: number;
+    repairSucceededCount: number;
+    repairSuccessRate: number | null;
+    averageRepairAttempts: number | null;
+    finalScore: DesignTimingMetric;
+    ruleVersions: string[];
+  };
 }
 
 export interface DesignTimingStats {

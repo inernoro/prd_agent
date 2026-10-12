@@ -57,7 +57,7 @@ async function statusReasons(taskId: string): Promise<string[]> {
 }
 
 describe('edit runs seeded from the current published site', () => {
-  it.each([[false, true], [true, true], [false, false]])('seeds complete edit resources and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
+  it.each([[false, true], [true, true]])('seeds complete edit resources and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
     harness = await startHarness();
     const html = '<!doctype html><html><head><title>Library</title></head><body><main><h1>Original sentence.</h1><p>Library information.</p></main></body></html>';
     const metadataPaths = ['assets/accessibility-static-report.json', 'assets/design-tokens.json', 'assets/page-outline.json', 'assets/provenance.json'];
@@ -107,8 +107,11 @@ describe('edit runs seeded from the current published site', () => {
     for (const filePath of metadataPaths) {
       const file = committed.files.find((item: { path: string }) => item.path === filePath);
       if (includeReports) {
-        const expected = buildGeneratedArtifactFiles(hardenSelfContainedHtml(html.replace('Original sentence.', 'Updated sentence.')),
-          assets.filter((asset) => !removeAsset || asset.path !== 'assets/pixel.png').map((asset) => asset.path)).find((item) => item.path === filePath);
+        const expected = buildGeneratedArtifactFiles(
+          hardenSelfContainedHtml(html.replace('Original sentence.', 'Updated sentence.')),
+          assets.filter((asset) => !removeAsset || asset.path !== 'assets/pixel.png').map((asset) => asset.path),
+          ['assets/quality/attempt-0-desktop.png', 'assets/quality/attempt-0-mobile.png', 'assets/visual-quality-report.json'],
+        ).find((item) => item.path === filePath);
         expect(file).toEqual(expected);
       } else expect(file).toBeUndefined();
     }
@@ -116,6 +119,21 @@ describe('edit runs seeded from the current published site', () => {
     expect(manifest.artifactRevision).toBe(computePublicArtifactRevision(committed.files.filter((item: { path: string }) => item.path !== 'manifest.json')));
     expect(Buffer.from(committed.files.find((item: { path: string }) => item.path === 'index.html').contentBase64, 'base64').toString('utf8')).toContain('Updated sentence.');
     expect(committed.files.some((item: { path: string }) => item.path === 'current/index.html.artifact.json')).toBe(false);
+  });
+
+  it('rejects a legacy output allowlist that cannot retain browser quality evidence', async () => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Launch page</main></body></html>');
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg, (request) => ({
+      ...request,
+      transfer: { ...request.transfer, allowedOutputPaths: ['index.html', 'manifest.json'] },
+    }));
+    expect(view.error.code).toBe('workspace_quality_evidence_unsupported');
+    expect(map!.commits).toHaveLength(0);
   });
 
   it.each([
@@ -400,6 +418,139 @@ describe('collecting the deliverable', () => {
     expect(harness.daemon.runBodies).toHaveLength(3);
     expect(String(harness.daemon.runBodies[2].message)).toContain('document-order position(s) 1');
     expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
+  });
+
+  it('runs at most two browser hard-gate repairs in the same OpenDesign conversation and serializes bounded evidence', async () => {
+    const seenAttempts: number[] = [];
+    const seenEvidenceDirs: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          seenAttempts.push(job.repairAttempt);
+          seenEvidenceDirs.push(job.evidenceDir);
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 2,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 2,
+              issues: job.repairAttempt < 2 ? [{
+                issueCode: viewport.viewport === 'mobile' ? 'mobile_navigation_unusable' as const : 'horizontal_overflow' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { measured: 12 },
+                target: 'measured hard target',
+                element: { tag: 'main', id: 'content' },
+              }] : [],
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main id="content"><h1>Launch page</h1></main></body></html>');
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(seenAttempts).toEqual([0, 1, 2]);
+    expect(seenEvidenceDirs.every((dir) => dir.startsWith(path.dirname(harness!.config.outputDir)))).toBe(true);
+    expect(seenEvidenceDirs.every((dir) => !dir.startsWith(harness!.config.odDataDir))).toBe(true);
+    expect(harness.daemon.runBodies).toHaveLength(4);
+    expect(harness.daemon.runBodies.slice(2).every((body) => String(body.message).includes('isolated browser quality gate'))).toBe(true);
+    expect(new Set(harness.daemon.runBodies.map((body) => body.conversationId)).size).toBe(1);
+    const reportFile = map!.commits[0].files.find((file: { path: string }) => file.path === 'assets/visual-quality-report.json');
+    const reportText = Buffer.from(reportFile.contentBase64, 'base64').toString('utf8');
+    const report = JSON.parse(reportText);
+    expect(report).toMatchObject({
+      schemaVersion: 'map-browser-quality-evidence-v1',
+      ruleVersion: 'browser-hard-gate-v1',
+      firstPassPassed: false,
+      repairAttempts: 2,
+      repairSucceeded: true,
+      finalHardPassed: true,
+    });
+    expect(report.attempts).toHaveLength(3);
+    expect(reportText).not.toContain('<!doctype html>');
+    expect(reportText).not.toContain('thinking');
+  });
+
+  it('restores and flushes the best measured preview when two browser repairs still fail', async () => {
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const html = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
+          const issueCount = html.includes('best-initial') ? 1 : html.includes('repair-one') ? 4 : 3;
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 2,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 2,
+              issues: Array.from({ length: issueCount }, () => ({
+                issueCode: 'horizontal_overflow' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { measured: issueCount },
+                target: 'measured hard target',
+              })),
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir, index }) => {
+      const marker = index === 1 ? 'best-initial' : index === 3 ? 'repair-one' : index === 4 ? 'repair-two' : '';
+      if (marker) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><h1>${marker}</h1></main></body></html>`);
+      }
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state).toBe('failed');
+    expect(view.error.code).toBe('design_browser_quality_rejected');
+    expect(view.error.details.bestRepairAttempt).toBe(0);
+    expect(map!.commits).toHaveLength(0);
+    expect(map!.previews.at(-1)?.html).toContain('best-initial');
+  });
+
+  it('fails honestly when the isolated browser worker is unavailable and does not commit an unchecked artifact', async () => {
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async () => { throw new Error('browser process missing'); } },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Launch page</main></body></html>');
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state).toBe('failed');
+    expect(view.error.message).toContain('browser process missing');
+    expect(map!.commits).toHaveLength(0);
   });
 });
 

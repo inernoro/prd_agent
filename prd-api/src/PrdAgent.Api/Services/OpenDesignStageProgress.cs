@@ -34,6 +34,7 @@ public sealed class OpenDesignStageProgress
         Designing,
         Reviewing,
         Repairing,
+        BrowserChecking,
         Collecting,
         Committing,
     }
@@ -111,6 +112,7 @@ public sealed class OpenDesignStageProgress
         "open_design_running" => Macro.Designing,
         "open_design_reviewing" => Macro.Reviewing,
         "open_design_quality_repairing" => Macro.Repairing,
+        "open_design_browser_quality_checking" or "open_design_browser_quality_checked" => Macro.BrowserChecking,
         "workspace_collecting" or "deliverable_entry_resolved" => Macro.Collecting,
         "workspace_committing" => Macro.Committing,
         _ => null,
@@ -129,6 +131,7 @@ public sealed class OpenDesignStageProgress
         Macro.Designing => 25 + Math.Min(37, elapsed / 13),
         Macro.Reviewing => Math.Max(64, Math.Min(74, 64 + elapsed / 20)),
         Macro.Repairing => Math.Min(80, 75 + _repairAttempt),
+        Macro.BrowserChecking => 81,
         Macro.Collecting => 82,
         Macro.Committing => 85,
         _ => _progress,
@@ -147,6 +150,7 @@ public sealed class OpenDesignStageProgress
             Macro.Repairing => (_repairAttempt > 0
                 ? $"正在修复自查发现的问题（第 {_repairAttempt} 次）"
                 : "正在修复自查发现的问题") + suffix,
+            Macro.BrowserChecking => "正在检查桌面与移动端布局",
             Macro.Collecting => "正在收集并校验产物",
             Macro.Committing => "正在提交产物",
             _ => "OpenDesign 设计中",
@@ -161,6 +165,7 @@ public sealed class OpenDesignStageProgress
         Macro.Designing => DesignArtifactPhaseCodes.ComposingPage,
         Macro.Reviewing => DesignArtifactPhaseCodes.ReviewingPage,
         Macro.Repairing => DesignArtifactPhaseCodes.RepairingQuality,
+        Macro.BrowserChecking => DesignArtifactPhaseCodes.ReviewingPage,
         Macro.Collecting => DesignArtifactPhaseCodes.CollectingArtifact,
         Macro.Committing => DesignArtifactPhaseCodes.CommittingArtifact,
         _ => DesignArtifactPhaseCodes.PreparingWorkspace,

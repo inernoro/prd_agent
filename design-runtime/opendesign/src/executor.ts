@@ -19,11 +19,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
+  BROWSER_QUALITY_REPORT_PATH,
   CDS_GENERATED_ARTIFACT_PATHS,
   assertPublicArtifactFileCount,
   buildGeneratedPublicArtifactPackage,
-  buildPublicArtifactManifest,
-  compareOrdinal,
   isAllowedOutput,
   mediaTypeForFile,
   MAX_OUTPUT_FILE_COUNT,
@@ -55,6 +54,14 @@ import {
   collectVisibleTextOccurrenceConstraints,
   createArtifactQualityGate,
 } from './quality/gate.js';
+import {
+  MAX_BROWSER_REPAIR_ATTEMPTS,
+  browserRepairMessage,
+  buildBrowserQualityEvidence,
+  summarizeAttempt,
+  type BrowserQualityAttemptEvidence,
+} from './quality/browser-contract.js';
+import { SubprocessBrowserQualityRunner, type BrowserQualityRunner } from './quality/browser-runner.js';
 import { exportValidatedOutputs, readRegularFileNoFollow } from './workspace/output-preflight.js';
 import { SHA256_RE, normalizeRelativePath, sha256 } from './workspace/primitives.js';
 import {
@@ -103,6 +110,8 @@ export interface ExecutorOptions {
   engineGid?: number;
   /** 测试注入：替换转发口的实现。 */
   startRelay?: (options: EgressRelayOptions) => Promise<EgressRelay>;
+  /** 浏览器检查在独立子进程执行；测试注入确定性 runner。 */
+  browserQualityRunner?: BrowserQualityRunner;
 }
 
 export interface DesignTaskInput {
@@ -130,6 +139,8 @@ interface PreparedWorkspace {
 interface PreviewPusher {
   /** 定时轮询的完整性兜底。 */
   poll: () => Promise<void>;
+  /** 在终止前立即推送当前最佳预览，不受轮询节流影响。 */
+  flush: () => Promise<void>;
   /** 任务结束时必须清理监听器与 debounce 计时器。 */
   close: () => void;
 }
@@ -138,11 +149,14 @@ export class DesignTaskExecutor {
   private readonly fetchImpl: typeof fetch;
   private readonly pollIntervalMs: number;
   private readonly startRelay: (options: EgressRelayOptions) => Promise<EgressRelay>;
+  private readonly browserQualityRunner: BrowserQualityRunner;
 
   constructor(private readonly options: ExecutorOptions) {
     this.fetchImpl = options.fetchImpl || fetch;
     this.pollIntervalMs = Math.max(5, options.pollIntervalMs || 750);
     this.startRelay = options.startRelay || startEgressRelay;
+    this.browserQualityRunner = options.browserQualityRunner
+      || new SubprocessBrowserQualityRunner(options.engineUid, options.engineGid);
   }
 
   async run(
@@ -373,6 +387,11 @@ export class DesignTaskExecutor {
     );
     let activeRunId: string | undefined;
     let previewPusher: PreviewPusher | undefined;
+    const browserEvidenceDir = path.join(
+      path.dirname(this.options.paths.outputDir),
+      'browser-quality',
+      sha256(Buffer.from(sessionId)).slice(0, 24),
+    );
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
       const designContext = collectDesignTaskContext(workspaceDir);
@@ -545,7 +564,129 @@ export class DesignTaskExecutor {
           deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
         }
       }
+      const browserAttempts: BrowserQualityAttemptEvidence[] = [];
+      let bestBrowserCandidate = { score: Number.NEGATIVE_INFINITY, html: hardenedHtml, repairAttempt: 0 };
+      let browserVersion = '';
+      fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
+      fs.mkdirSync(browserEvidenceDir, { recursive: true, mode: 0o700 });
+      this.chownForEngine(browserEvidenceDir);
+      for (let browserRepairAttempt = 0; ; browserRepairAttempt += 1) {
+        assertExecutionDeadline(executionDeadline);
+        const indexPath = path.join(workspaceDir, 'index.html');
+        fs.writeFileSync(indexPath, hardenedHtml);
+        this.chownForEngine(indexPath);
+        onStage('open_design_browser_quality_checking', {
+          repairAttempt: browserRepairAttempt,
+          viewports: ['desktop-1440', 'mobile-390'],
+        });
+        const checked = await this.browserQualityRunner.run({
+          workspaceDir,
+          evidenceDir: browserEvidenceDir,
+          repairAttempt: browserRepairAttempt,
+        }, signal);
+        browserVersion = checked.browserVersion;
+        const evidence = summarizeAttempt(browserRepairAttempt, browserVersion, checked.measurements);
+        browserAttempts.push(evidence);
+        if (evidence.score > bestBrowserCandidate.score) {
+          bestBrowserCandidate = { score: evidence.score, html: hardenedHtml, repairAttempt: browserRepairAttempt };
+        }
+        onStage('open_design_browser_quality_checked', {
+          repairAttempt: browserRepairAttempt,
+          hardPassed: evidence.hardPassed,
+          issueCodes: evidence.issueCodes,
+          score: evidence.score,
+        });
+        if (evidence.hardPassed) break;
+        if (browserRepairAttempt >= MAX_BROWSER_REPAIR_ATTEMPTS) {
+          if (bestBrowserCandidate.html !== hardenedHtml) {
+            fs.writeFileSync(indexPath, bestBrowserCandidate.html);
+            this.chownForEngine(indexPath);
+          }
+          await previewPusher?.flush();
+          throw new AgentWorkspaceRuntimeError(
+            'design_browser_quality_rejected',
+            'The isolated browser quality gate still found hard layout or usability issues after two targeted repair attempts',
+            false,
+            {
+              ruleVersion: evidence.viewports[0]?.issues[0]?.ruleVersion ?? null,
+              repairAttempts: browserRepairAttempt,
+              issueCodes: evidence.issueCodes,
+              bestScore: Math.max(...browserAttempts.map((attempt) => attempt.score)),
+              bestRepairAttempt: bestBrowserCandidate.repairAttempt,
+            },
+          );
+        }
+        const repair = await client.odJson('/api/runs', {
+          method: 'POST',
+          body: buildRunBody(browserRepairMessage(evidence)),
+          signal: signalForDeadline(executionDeadline, signal),
+          acceptedStatuses: [200, 202],
+        });
+        finalRunId = typeof repair.runId === 'string'
+          ? repair.runId
+          : typeof repair.id === 'string'
+            ? repair.id
+            : '';
+        if (!finalRunId) {
+          throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign browser quality repair run returned no run id');
+        }
+        activeRunId = finalRunId;
+        onStage('open_design_quality_repairing', {
+          runId: finalRunId,
+          attempt: browserRepairAttempt + 1,
+          kind: 'browser-hard-gate',
+          issueCodes: evidence.issueCodes,
+        });
+        runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher.poll);
+        deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+        this.promoteDeliverableEntry(deliverableEntryFile, onStage);
+        this.exportOutputs(transfer, prepared);
+        collectedFiles = this.collectOutputs(transfer);
+        indexFile = collectedFiles.find((file) => file.path === 'index.html');
+        if (!indexFile) {
+          throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign browser repair completed without index.html');
+        }
+        const repairedBytes = Buffer.from(indexFile.contentBase64, 'base64');
+        const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
+        if (
+          !runOutcome.deliverableValid
+          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, repairedBytes)
+        ) {
+          throw new AgentWorkspaceRuntimeError(
+            'open_design_deliverable_invalid',
+            runOutcome.deliverableValidation || 'OpenDesign rejected its browser quality repair deliverable',
+          );
+        }
+        hardenedHtml = checkArtifactQuality(
+          repairedBytes.toString('utf8'),
+          collectedFiles.map((file) => file.path),
+        );
+        assertRequiredFactualCoverage(
+          hardenedHtml,
+          designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
+        );
+      }
       activeRunId = undefined;
+      const browserQuality = buildBrowserQualityEvidence(browserVersion, browserAttempts);
+      const browserEvidenceFiles: WorkspacePackageFile[] = [];
+      const reportBytes = Buffer.from(`${JSON.stringify(browserQuality, null, 2)}\n`);
+      browserEvidenceFiles.push({
+        path: BROWSER_QUALITY_REPORT_PATH,
+        contentBase64: reportBytes.toString('base64'),
+        sha256: sha256(reportBytes),
+        size: reportBytes.byteLength,
+        mediaType: mediaTypeForFile(BROWSER_QUALITY_REPORT_PATH),
+      });
+      for (const evidenceRef of [...new Set(browserAttempts.flatMap((attempt) => attempt.evidenceRefs))]) {
+        const screenshot = fs.readFileSync(path.join(browserEvidenceDir, path.basename(evidenceRef)));
+        browserEvidenceFiles.push({
+          path: evidenceRef,
+          contentBase64: screenshot.toString('base64'),
+          sha256: sha256(screenshot),
+          size: screenshot.byteLength,
+          mediaType: mediaTypeForFile(evidenceRef),
+        });
+      }
       const hardenedBytes = Buffer.from(hardenedHtml);
       indexFile!.contentBase64 = hardenedBytes.toString('base64');
       indexFile!.sha256 = sha256(hardenedBytes);
@@ -553,10 +694,14 @@ export class DesignTaskExecutor {
       // Keep validated author assets byte-for-byte. The service alone produces its
       // reserved metadata and manifest; no author manifest is trusted.
       collectedFiles = validatePublicArtifactFiles(collectedFiles, true);
-      const files = CDS_GENERATED_ARTIFACT_PATHS.every((reportPath) => isAllowedOutput(reportPath, transfer.allowedOutputPaths))
-        ? buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles)
-        : [...collectedFiles, buildPublicArtifactManifest(collectedFiles)]
-            .sort((left, right) => compareOrdinal(left.path, right.path));
+      const generatedPaths = [...CDS_GENERATED_ARTIFACT_PATHS, ...browserEvidenceFiles.map((file) => file.path)];
+      if (!generatedPaths.every((reportPath) => isAllowedOutput(reportPath, transfer.allowedOutputPaths))) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_quality_evidence_unsupported',
+          'MAP output allowlist does not permit the versioned browser quality evidence bundle',
+        );
+      }
+      const files = buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles, browserEvidenceFiles);
       assertPublicArtifactFileCount(files.length);
       const totalOutputBytes = files.reduce((total, file) => total + file.size, 0);
       if (totalOutputBytes > transfer.maxOutputBytes) {
@@ -634,6 +779,7 @@ export class DesignTaskExecutor {
       previewPusher?.close();
       if (activeRunId) await client.cancelRun(activeRunId);
       await relay.close().catch(() => undefined);
+      fs.rmSync(browserEvidenceDir, { recursive: true, force: true });
     }
   }
 
@@ -911,6 +1057,7 @@ export class DesignTaskExecutor {
     }
     return {
       poll: () => push(false),
+      flush: () => push(true),
       close: () => {
         closed = true;
         if (debounceTimer) clearTimeout(debounceTimer);

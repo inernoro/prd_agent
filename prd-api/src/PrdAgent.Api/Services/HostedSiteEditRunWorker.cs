@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Runtime.CompilerServices;
 using MongoDB.Driver;
 using PrdAgent.Api.Filters;
@@ -287,6 +288,23 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 html,
                 qualityEvidence,
                 allowScriptedControls: verifiedFiles != null);
+            var browserQuality = ParseBrowserQualitySummary(verifiedFiles);
+            if (run.Runtime == DesignArtifactRuntimes.OpenDesign
+                && run.ContractVersion == DesignArtifactContractVersions.Current
+                && browserQuality == null)
+                throw new InvalidOperationException("OpenDesign 没有提交浏览器质量证据，请重新生成");
+            if (browserQuality != null)
+            {
+                run.BrowserQuality = browserQuality;
+                if (!await PersistBrowserQualityAsync(
+                        db,
+                        run.Id,
+                        leaseOwner,
+                        browserQuality,
+                        DateTime.UtcNow,
+                        CancellationToken.None))
+                    throw new DesignArtifactRunLeaseLostException(run.Id);
+            }
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 88,
                 run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页",
                 DesignArtifactPhaseCodes.SavingResult);
@@ -1200,6 +1218,117 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         return hardened;
     }
 
+    internal static DesignArtifactBrowserQualitySummary? ParseBrowserQualitySummary(
+        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles)
+    {
+        const string evidencePath = "assets/visual-quality-report.json";
+        var file = verifiedFiles?.SingleOrDefault(item => item.Path == evidencePath);
+        if (file == null) return null;
+        if (file.Size <= 0 || file.Size > 256 * 1024)
+            throw new InvalidOperationException("浏览器质量证据大小不合法，请重新生成");
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(file.ContentBase64); }
+        catch (FormatException) { throw new InvalidOperationException("浏览器质量证据损坏，请重新生成"); }
+        try
+        {
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
+            var root = document.RootElement;
+            var ruleVersion = root.GetProperty("ruleVersion").GetString();
+            var heuristicVersion = root.GetProperty("heuristicVersion").GetString();
+            if (root.ValueKind != JsonValueKind.Object
+                || root.GetProperty("schemaVersion").GetString() != "map-browser-quality-evidence-v1"
+                || ruleVersion != "browser-hard-gate-v1"
+                || heuristicVersion != "browser-aesthetic-heuristic-v1"
+                || !root.GetProperty("finalHardPassed").GetBoolean())
+                throw new InvalidOperationException("浏览器质量证据合同不一致，请重新生成");
+            if (ContainsForbiddenBrowserEvidence(root))
+                throw new InvalidOperationException("浏览器质量证据包含不应持久化的模型或页面正文，请重新生成");
+            var attempts = root.GetProperty("attempts");
+            if (attempts.ValueKind != JsonValueKind.Array || attempts.GetArrayLength() is < 1 or > 3)
+                throw new InvalidOperationException("浏览器质量证据轮次不合法，请重新生成");
+            var repairAttempts = root.GetProperty("repairAttempts").GetInt32();
+            var finalScore = root.GetProperty("finalScore").GetDouble();
+            var firstPassPassed = root.GetProperty("firstPassPassed").GetBoolean();
+            var repairSucceeded = root.GetProperty("repairSucceeded").GetBoolean();
+            if (repairAttempts is < 0 or > 2
+                || repairAttempts != attempts.GetArrayLength() - 1
+                || firstPassPassed != (repairAttempts == 0)
+                || repairSucceeded != (repairAttempts > 0)
+                || !double.IsFinite(finalScore)
+                || finalScore is < 0 or > 100)
+                throw new InvalidOperationException("浏览器质量证据指标不合法，请重新生成");
+            var filesByPath = verifiedFiles!.ToDictionary(item => item.Path, StringComparer.Ordinal);
+            var expectedViewports = new[] { "desktop", "mobile" };
+            foreach (var attempt in attempts.EnumerateArray())
+            {
+                var attemptViewports = attempt.GetProperty("viewports").EnumerateArray()
+                    .Select(viewport => viewport.GetProperty("viewport").GetString())
+                    .OrderBy(viewport => viewport, StringComparer.Ordinal)
+                    .ToArray();
+                if (!attemptViewports.SequenceEqual(expectedViewports, StringComparer.Ordinal))
+                    throw new InvalidOperationException("浏览器质量证据缺少桌面或移动视口，请重新生成");
+                var refs = attempt.GetProperty("evidenceRefs").EnumerateArray()
+                    .Select(item => item.GetString())
+                    .ToArray();
+                if (refs.Length != 2 || refs.Any(reference => reference is null))
+                    throw new InvalidOperationException("浏览器质量证据截图引用不完整，请重新生成");
+                foreach (var reference in refs.Select(reference => reference!))
+                {
+                    if (!reference.StartsWith("assets/quality/", StringComparison.Ordinal)
+                        || !filesByPath.TryGetValue(reference, out var screenshot)
+                        || screenshot.Size <= 0
+                        || !string.Equals(screenshot.MediaType, "image/png", StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("浏览器质量证据截图引用无效，请重新生成");
+                }
+            }
+            return new DesignArtifactBrowserQualitySummary
+            {
+                SchemaVersion = "map-browser-quality-evidence-v1",
+                RuleVersion = ruleVersion,
+                HeuristicVersion = heuristicVersion,
+                FirstPassPassed = firstPassPassed,
+                RepairAttempts = repairAttempts,
+                RepairSucceeded = repairSucceeded,
+                FinalHardPassed = true,
+                FinalScore = finalScore,
+                Viewports = expectedViewports.ToList(),
+                EvidenceRef = evidencePath,
+            };
+        }
+        catch (KeyNotFoundException) { throw new InvalidOperationException("浏览器质量证据缺少必填字段，请重新生成"); }
+        catch (JsonException) { throw new InvalidOperationException("浏览器质量证据不是有效 JSON，请重新生成"); }
+        catch (InvalidOperationException error) when (!error.Message.StartsWith("浏览器质量证据", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("浏览器质量证据字段类型不合法，请重新生成");
+        }
+    }
+
+    private static bool ContainsForbiddenBrowserEvidence(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Equals("html", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("rawHtml", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("raw_html", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("thinking", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("reasoning", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("chainOfThought", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("text_delta", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("textDelta", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("prompt", StringComparison.OrdinalIgnoreCase)) return true;
+                if (ContainsForbiddenBrowserEvidence(property.Value)) return true;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                if (ContainsForbiddenBrowserEvidence(item)) return true;
+        }
+        return false;
+    }
+
     internal static bool ConsumePrivateOpenDesignChunk(
         DesignArtifactRun run,
         DesignArtifactExecutorChunk chunk,
@@ -1504,6 +1633,26 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > updatedAt),
             update,
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
+    }
+
+    internal static async Task<bool> PersistBrowserQualityAsync(
+        MongoDbContext db,
+        string runId,
+        string leaseOwner,
+        DesignArtifactBrowserQualitySummary summary,
+        DateTime updatedAt,
+        CancellationToken ct)
+    {
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
+                   && run.Status == RunStatuses.Running
+                   && run.LeaseOwnerId == leaseOwner
+                   && run.LeaseExpiresAt > updatedAt),
+            Builders<DesignArtifactRun>.Update
+                .Set(run => run.BrowserQuality, summary)
+                .Max(run => run.UpdatedAt, updatedAt),
             cancellationToken: ct);
         return write.ModifiedCount == 1;
     }

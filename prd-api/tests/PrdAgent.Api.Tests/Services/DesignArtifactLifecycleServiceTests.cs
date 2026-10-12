@@ -532,6 +532,37 @@ public sealed class DesignArtifactLifecycleServiceTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task AppendEvent_PersistsLargestStaticProgressGapWithoutRewritingHistory()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var service = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        var run = await service.CreateSessionAsync(Session(
+            "static-gap",
+            DesignArtifactTypes.WebPage,
+            DesignArtifactWorkspaceKinds.RemotePackage,
+            "open-design"));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.LastProgressAt, DateTime.UtcNow.AddSeconds(-42))
+                .Set(item => item.MaxStaticGapSeconds, 10));
+        var seeded = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+
+        await service.AppendEventAsync(new AppendDesignArtifactEventRequest(
+            seeded.Id,
+            seeded.UserId,
+            DesignArtifactLifecycleEventTypes.Phase,
+            "浏览器质量检查",
+            81));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.InRange(persisted.MaxStaticGapSeconds!.Value, 40, 50);
+        Assert.Equal(2, persisted.LifecycleEventSequence);
+        Assert.Equal(2, persisted.LifecycleEvents.Count);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task ActiveLeaseCannotBeBypassedByOmittingLeaseOwner()
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
