@@ -126,14 +126,8 @@ public sealed class HostedSiteEditsController : ControllerBase
                 _db, userId, request.AttachmentIds, CancellationToken.None);
             referenceImages = await DesignRunInputAttachments.ResolveImagesAsync(
                 _db, userId, request.ScreenshotAttachmentIds, CancellationToken.None);
-            if (_generationSettings != null)
-                designDirection = await _generationSettings.FreezeAsync(null, CancellationToken.None);
         }
         catch (DesignRunInputException ex)
-        {
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-        catch (DesignGenerationSettingsException ex)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
@@ -184,6 +178,19 @@ public sealed class HostedSiteEditsController : ControllerBase
                     : BadRequest(ApiResponse<object>.Fail(ex.Code, ex.Message));
         }
 
+        var inheritedContext = await FindOwnedPublishedContextAsync(editable, userId);
+        if (inheritedContext == null && _generationSettings != null)
+        {
+            try
+            {
+                designDirection = await _generationSettings.FreezeAsync(null, CancellationToken.None);
+            }
+            catch (DesignGenerationSettingsException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            }
+        }
+
         var runId = Guid.NewGuid().ToString("N");
         var createdAt = DateTime.UtcNow;
         DesignArtifactLlmRequestPolicy requestPolicy;
@@ -227,7 +234,18 @@ public sealed class HostedSiteEditsController : ControllerBase
             CreatedAt = createdAt,
             UpdatedAt = createdAt,
         };
-        DesignArtifactBriefFactory.Freeze(run, editable.Html);
+        if (inheritedContext is { } inherited)
+        {
+            DesignArtifactBriefFactory.TryInheritPublishedContext(
+                run,
+                inherited.Run,
+                inherited.RevisionId);
+        }
+        else
+        {
+            DesignArtifactBriefFactory.MarkLegacyEditFallback(run, editable.Site.PublishedRevisionId);
+            DesignArtifactBriefFactory.Freeze(run, editable.Html);
+        }
         if (runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex)
         {
             try
@@ -279,6 +297,35 @@ public sealed class HostedSiteEditsController : ControllerBase
             _logger.LogWarning(ex, "网页修改任务即时入队失败，等待 Mongo 恢复器重试 runId={RunId}", runId);
         }
         return Accepted(ApiResponse<object>.Ok(new { runId, status = meta.Status, runtime }));
+    }
+
+    private async Task<(DesignArtifactRun Run, string RevisionId)?> FindOwnedPublishedContextAsync(
+        HostedSiteEditableEntry editable,
+        string userId)
+    {
+        var revisionId = editable.Site.PublishedRevisionId?.Trim();
+        if (string.IsNullOrWhiteSpace(revisionId)) return null;
+
+        var revision = await _db.HostedSiteRevisions.Find(item =>
+                item.Id == revisionId
+                && item.SiteId == editable.Site.Id
+                && item.Status == HostedSiteRevisionStatuses.Published
+                && item.CreatedByUserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (revision == null || string.IsNullOrWhiteSpace(revision.SourceRunId)) return null;
+
+        var sourceRunId = revision.SourceRunId.Trim();
+        var source = await _db.DesignArtifactRuns.Find(item =>
+                item.DeploymentSlug == DeploymentScope.Current
+                && item.Id == sourceRunId
+                && item.UserId == userId
+                && item.ArtifactType == DesignArtifactTypes.WebPage
+                && ((item.ArtifactSiteId == editable.Site.Id && item.ArtifactRevisionId == revisionId)
+                    || (item.ProducedArtifactSiteId == editable.Site.Id
+                        && item.ProducedArtifactRevisionId == revisionId)))
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (source?.DesignBrief == null || source.BrandPackage == null) return null;
+        return (source, revisionId);
     }
 
     internal static string ValidateEditInputCompatibility(HostedSiteEditableEntry editable)
@@ -874,6 +921,16 @@ public sealed class HostedSiteEditsController : ControllerBase
             run.BrandPackage.Source,
             run.BrandPackage.DesignSystemId,
             run.BrandPackage.Fingerprint,
+        },
+        designContextProvenance = run.DesignContextProvenance == null ? null : new
+        {
+            run.DesignContextProvenance.SchemaVersion,
+            run.DesignContextProvenance.Version,
+            run.DesignContextProvenance.Source,
+            run.DesignContextProvenance.SourceRunId,
+            run.DesignContextProvenance.SourceRevisionId,
+            run.DesignContextProvenance.ParentDesignBriefFingerprint,
+            run.DesignContextProvenance.ParentBrandPackageFingerprint,
         },
         uploadedSources = run.UploadedSources?.Select(item => new { item.AttachmentId, item.FileName, item.ContentHash }),
         referenceImages = run.ReferenceImages?.Select(item => new { item.AttachmentId, item.FileName, item.MimeType, item.Size }),

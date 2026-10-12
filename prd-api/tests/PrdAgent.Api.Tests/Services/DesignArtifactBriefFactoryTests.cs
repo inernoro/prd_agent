@@ -38,11 +38,15 @@ public sealed class DesignArtifactBriefFactoryTests
         Assert.Equal(["所有数据以正式合同为准。"], run.BrandPackage.FixedStatements);
         Assert.Equal(12, run.DesignBrief.Fingerprint.Length);
         Assert.Equal(12, run.BrandPackage.Fingerprint.Length);
+        Assert.Equal(DesignArtifactContextSources.DeterministicNewRun, run.DesignContextProvenance!.Source);
 
         var task = Task(DesignArtifactWorkspaceContract.BuildInputPackage(run, null));
         Assert.Equal(run.DesignBrief.Fingerprint, task["designBrief"]!["fingerprint"]!.GetValue<string>());
         Assert.Equal(run.BrandPackage.Fingerprint, task["brandPackage"]!["fingerprint"]!.GetValue<string>());
         Assert.Equal("minimal", task["brandPackage"]!["designSystemId"]!.GetValue<string>());
+        Assert.Equal(
+            DesignArtifactContextSources.DeterministicNewRun,
+            task["designContextProvenance"]!["source"]!.GetValue<string>());
     }
 
     [Fact]
@@ -105,8 +109,10 @@ public sealed class DesignArtifactBriefFactoryTests
 
         Assert.Null(run.DesignBrief);
         Assert.Null(run.BrandPackage);
+        Assert.Null(run.DesignContextProvenance);
         Assert.Null(task["designBrief"]);
         Assert.Null(task["brandPackage"]);
+        Assert.Null(task["designContextProvenance"]);
     }
 
     private static DesignArtifactRun BaseRun(string operation) => new()

@@ -151,6 +151,28 @@ public sealed class DesignArtifactBrandPackage
     public string Fingerprint { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// 冻结设计上下文的来源凭证。它只记录稳定标识和指纹，不保存用户正文；
+/// 修改任务可据此证明是沿用目标版本，还是对没有历史上下文的旧站点执行兼容回退。
+/// </summary>
+public sealed class DesignArtifactContextProvenance
+{
+    public string SchemaVersion { get; set; } = "map-design-context-provenance-v1";
+    public int Version { get; set; } = 1;
+    public string Source { get; set; } = DesignArtifactContextSources.DeterministicNewRun;
+    public string? SourceRunId { get; set; }
+    public string? SourceRevisionId { get; set; }
+    public string? ParentDesignBriefFingerprint { get; set; }
+    public string? ParentBrandPackageFingerprint { get; set; }
+}
+
+public static class DesignArtifactContextSources
+{
+    public const string DeterministicNewRun = "deterministic-new-run";
+    public const string InheritedSiteRevision = "inherited-site-revision";
+    public const string LegacyEditDeterministicFallback = "legacy-edit-deterministic-fallback";
+}
+
 /// <summary>直接上传、作为事实来源的文档（附件的已提取正文）。</summary>
 public sealed class DesignUploadedSource
 {

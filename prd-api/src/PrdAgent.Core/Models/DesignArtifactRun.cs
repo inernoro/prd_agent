@@ -260,6 +260,10 @@ public class DesignArtifactRun
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactBrandPackage? BrandPackage { get; set; }
 
+    /// <summary>冻结设计上下文的可追溯来源；旧运行缺失时只读兼容，不回填。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactContextProvenance? DesignContextProvenance { get; set; }
+
     /// <summary>直接上传的文档（事实来源，与知识库引用并列；不写进站点的知识来源记录）。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public List<DesignUploadedSource>? UploadedSources { get; set; }

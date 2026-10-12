@@ -48,6 +48,49 @@ public static class DesignArtifactBriefFactory
 
         run.BrandPackage = BuildBrandPackage(run);
         run.DesignBrief = BuildDesignBrief(run, currentHtml, run.BrandPackage);
+        run.DesignContextProvenance ??= new DesignArtifactContextProvenance
+        {
+            Source = DesignArtifactContextSources.DeterministicNewRun,
+        };
+    }
+
+    /// <summary>
+    /// 修改任务沿用目标站点已发布版本的完整冻结上下文。修改指令仍保留在新 Run.Instruction，
+    /// 不参与重算品牌或原始简报；来源指纹用于审计继承链。
+    /// </summary>
+    public static bool TryInheritPublishedContext(
+        DesignArtifactRun target,
+        DesignArtifactRun source,
+        string sourceRevisionId)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        ArgumentNullException.ThrowIfNull(source);
+        if (source.DesignBrief == null || source.BrandPackage == null) return false;
+        if (target.DesignBrief != null || target.BrandPackage != null)
+            throw new InvalidOperationException("设计简报与品牌包只能在任务开始时冻结一次");
+
+        target.DesignDirection = Clone(source.DesignDirection);
+        target.DesignBrief = Clone(source.DesignBrief)!;
+        target.BrandPackage = Clone(source.BrandPackage)!;
+        target.DesignContextProvenance = new DesignArtifactContextProvenance
+        {
+            Source = DesignArtifactContextSources.InheritedSiteRevision,
+            SourceRunId = source.Id,
+            SourceRevisionId = sourceRevisionId,
+            ParentDesignBriefFingerprint = source.DesignBrief.Fingerprint,
+            ParentBrandPackageFingerprint = source.BrandPackage.Fingerprint,
+        };
+        return true;
+    }
+
+    public static void MarkLegacyEditFallback(DesignArtifactRun run, string? sourceRevisionId)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        run.DesignContextProvenance = new DesignArtifactContextProvenance
+        {
+            Source = DesignArtifactContextSources.LegacyEditDeterministicFallback,
+            SourceRevisionId = string.IsNullOrWhiteSpace(sourceRevisionId) ? null : sourceRevisionId.Trim(),
+        };
     }
 
     internal static DesignArtifactBrandPackage? BuildBrandPackage(DesignArtifactRun run)
@@ -270,5 +313,14 @@ public static class DesignArtifactBriefFactory
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant()[..12];
+    }
+
+    private static T? Clone<T>(T? value)
+    {
+        if (value == null) return default;
+        return JsonSerializer.Deserialize<T>(JsonSerializer.SerializeToUtf8Bytes(
+            value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 }
