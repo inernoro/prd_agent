@@ -23,7 +23,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p cds/native-business-access-output
-          docker run --rm --cpus 4 --memory 6g --pids-limit 1024 \
+          docker run --rm --user "$(id -u):$(id -g)" --cpus 4 --memory 6g --pids-limit 1024 \
             --env GH_TOKEN --env GITHUB_ACTOR --env GITHUB_RUN_ID --env GITHUB_SHA \
             --mount "type=bind,src=${GITHUB_WORKSPACE}/cds/scripts,dst=/probe,readonly" \
             --mount "type=bind,src=${GITHUB_WORKSPACE}/cds/native-business-access-output,dst=/out" \
