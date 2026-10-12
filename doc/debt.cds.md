@@ -2361,3 +2361,11 @@ CDS 的系统环境文件有两个读者：`source` 它的 shell，和 Node 启�
 - 布局与走线（纯函数）：`cds/web/src/components/branch/relationLayout.ts`
 - 几何判据：`cds/tests/web/relation-geometry.ts`、`cds/tests/web/relation-geometry.test.ts`；同构样本：`cds/tests/web/fixtures/relation-shape-alpha.json`
 - 浏览器判据：`cds/scripts/relation-visual-audit.mjs`；样本：`cds/scripts/fixtures/relation-fixtures.mjs`
+
+## CDS Self 缺少预构建预览模式（2026-10-12）
+
+**现状**：提交者分类视图的验收过程中，CDS Self 项目只有源码构建配置，没有可选的预构建模式。现有 CI 产物用于更新共享控制面，不能直接作为分支预览的运行镜像。按 Agent 仅使用预构建部署的约定，当前无法通过这份项目配置完成远端分支验收。
+
+**影响**：CDS 界面改动可以通过类型检查、构建、回归测试与隔离实例的浏览器检查，但这些证据不能替代真实预览域名的验收。不能为了测试一个界面功能就更新共享控制面。
+
+**完成条件**：维护者为 CDS Self 提供可运行的 CI 预构建模式；分支预览无需在共享宿主编译源码，保留子实例身份隔离和门禁，且能在真实预览域名按用户路径完成双主题检查。

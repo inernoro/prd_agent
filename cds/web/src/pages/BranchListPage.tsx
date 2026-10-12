@@ -63,6 +63,8 @@ import {
 import { BranchGroupHeader, type BranchGroupSummaryPart } from '@/components/branch-groups/BranchGroupHeader';
 import { BranchGroupEditorDialog } from '@/components/branch-groups/BranchGroupEditorDialog';
 import { BranchGroupSuggestions, EMPTY_SUGGESTION_DRAFT, type BranchGroupSuggestionDraft } from '@/components/branch-groups/BranchGroupSuggestions';
+import { BranchSubmitterHeader } from '@/components/branch-groups/BranchSubmitterHeader';
+import { branchSubmitter, groupBranchesBySubmitter, parseBranchViewMode, type BranchSubmitter, type BranchViewMode } from '@/lib/branchSubmitters';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
@@ -1483,12 +1485,10 @@ const DORMANT_COLLAPSED_KEY = 'cds_branch_dormant_collapsed';
 const BRANCH_VIEW_MODE_KEY = 'cds_branch_view_mode';
 const BRANCH_GROUP_COLLAPSED_KEY = 'cds_branch_group_collapsed';
 
-type BranchViewMode = 'status' | 'groups';
-
 /** 视图模式与分组收起状态按项目记在本机浏览器：个人习惯，不进项目共享数据。 */
 function readBranchViewMode(projectId: string): BranchViewMode {
   try {
-    return localStorage.getItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`) === 'groups' ? 'groups' : 'status';
+    return parseBranchViewMode(localStorage.getItem(`${BRANCH_VIEW_MODE_KEY}:${projectId}`));
   } catch {
     return 'status';
   }
@@ -2680,6 +2680,7 @@ export function BranchListPage(): JSX.Element {
   const groupsReadOnly = !canManageConsole || Boolean(branchGroups?.readOnly);
   const groupsEditable = groupedView && !groupsReadOnly;
   const groupedBranches = useMemo(() => groupBranches(groupList, sortedBranches), [groupList, sortedBranches]);
+  const submitterSections = useMemo(() => groupBranchesBySubmitter(sortedBranches), [sortedBranches]);
   // 当前每个分支归哪组、怎么归进去的；拖放 / 菜单移组前用来判断这次操作会不会真的改变什么
   const groupAssignmentRef = useRef<Map<string, { groupId: string; via: 'pin' | 'rule' }>>(new Map());
   groupAssignmentRef.current = groupedBranches.assignment;
@@ -2731,8 +2732,12 @@ export function BranchListPage(): JSX.Element {
   // 卡片根本没渲染——先把它所在的组与那一行展开（只临时展开，不改写收起记忆）。
   const revealInGroupsRef = useRef<(branchId: string) => void>(() => undefined);
   revealInGroupsRef.current = (branchId: string) => {
-    if (!groupedView) return;
-    const sectionId = groupedBranches.assignment.get(branchId)?.groupId ?? '__ungrouped__';
+    if (!groupedView && viewMode !== 'submitters') return;
+    // 搜索会清除标签筛选；从全部分支找身份，才能展开原先被筛掉的目标。
+    const target = branches.find((branch) => branch.id === branchId);
+    const sectionId = viewMode === 'submitters' && target
+      ? branchSubmitter(target).id
+      : groupedBranches.assignment.get(branchId)?.groupId ?? '__ungrouped__';
     setCollapsedGroups((current) => {
       if (!current.has(sectionId)) return current;
       const next = new Set(current);
@@ -3849,14 +3854,14 @@ export function BranchListPage(): JSX.Element {
   };
 
   /* 一个分组区块：组头（与页头同口径的一句话汇总）+ 组内运行中 / 构建中的卡片 + 停止的收成一行。 */
-  const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[]): JSX.Element => {
-    const id = group ? group.id : '__ungrouped__';
+  const renderGroupSection = (group: BranchGroup | null, list: BranchSummary[], submitter?: BranchSubmitter): JSX.Element => {
+    const id = submitter?.id ?? (group ? group.id : '__ungrouped__');
     const collapsed = collapsedGroups.has(id);
     const summary = summarizeBranchStates(list, actions, projectProfileIds);
     const active = list.filter((branch) => !isDormantBranch(branch, actions[branch.id]));
     const dormant = list.filter((branch) => isDormantBranch(branch, actions[branch.id]));
     const dormantOpen = expandedDormantGroups.has(id);
-    const dropping = groupDropTarget?.id === id ? groupDropTarget : null;
+    const dropping = !submitter && groupDropTarget?.id === id ? groupDropTarget : null;
     const dropHint = !dropping
       ? ''
       : dropping.reject
@@ -3867,18 +3872,27 @@ export function BranchListPage(): JSX.Element {
     return (
       <section
         key={id}
-        aria-label={group ? group.name : '未归组'}
+        aria-label={submitter ? `提交者 ${submitter.name}` : group ? group.name : '未归组'}
         data-branch-group={id}
-        className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !dropping ? 'opacity-80' : ''}`}
-        onDragOver={(event) => onGroupDragOver(event, id)}
-        onDragLeave={(event) => {
+        data-branch-submitter={submitter?.id}
+        className={`rounded-xl border-2 px-2 py-1.5 transition-colors ${dropping ? 'border-dashed border-primary bg-primary/5' : 'border-transparent'} ${!group && !submitter && !dropping ? 'opacity-80' : ''}`}
+        onDragOver={submitter ? undefined : (event) => onGroupDragOver(event, id)}
+        onDragLeave={submitter ? undefined : (event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
             setGroupDropTarget((current) => (current?.id === id ? null : current));
           }
         }}
-        onDrop={(event) => onGroupDrop(event, id)}
+        onDrop={submitter ? undefined : (event) => onGroupDrop(event, id)}
       >
-        <BranchGroupHeader
+        {submitter ? (
+          <BranchSubmitterHeader
+            submitter={submitter}
+            count={list.length}
+            parts={summary.parts}
+            collapsed={collapsed}
+            onToggle={() => toggleGroupCollapsed(id)}
+          />
+        ) : <BranchGroupHeader
           group={group}
           count={list.length}
           parts={summary.parts}
@@ -3892,11 +3906,11 @@ export function BranchListPage(): JSX.Element {
           } : undefined}
           onGripDragEnd={() => { draggingGroupIdRef.current = null; setGroupDropTarget(null); }}
           dropHint={dropHint}
-        />
+        />}
         {!collapsed ? (
           <>
             {active.length > 0 ? (
-              <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={onGroupAreaDragEnd}>
+              <div className="cds-branch-card-grid mt-3" onDragStart={submitter ? undefined : onGroupAreaDragStart} onDragEnd={submitter ? undefined : onGroupAreaDragEnd}>
                 {active.map(renderBranchTile)}
               </div>
             ) : null}
@@ -3923,7 +3937,7 @@ export function BranchListPage(): JSX.Element {
                   </span>
                 </button>
                 {dormantOpen ? (
-                  <div className="cds-branch-card-grid mt-3" onDragStart={onGroupAreaDragStart} onDragEnd={onGroupAreaDragEnd}>
+                  <div className="cds-branch-card-grid mt-3" onDragStart={submitter ? undefined : onGroupAreaDragStart} onDragEnd={submitter ? undefined : onGroupAreaDragEnd}>
                     {dormant.map(renderBranchTile)}
                   </div>
                 ) : null}
@@ -4206,9 +4220,9 @@ export function BranchListPage(): JSX.Element {
                       <span>进行中 · 排队 {branchOverview.queued}</span>
                     </span>
                   ) : null}
-                  {/* 视图切换（2026-09-29 自定义分组）：「按状态」是默认视图；「按分组」按项目共享的分组规则分区。 */}
+                  {/* 自动提交者视图只读分类，沿用个人视图记忆，不写项目共享分组。 */}
                   <div className="inline-flex shrink-0 gap-0.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 p-[3px]" role="group" aria-label="分支视图">
-                    {([['status', '按状态'], ['groups', '按分组']] as const).map(([mode, label]) => (
+                    {([['status', '按状态'], ['groups', '按分组'], ['submitters', '按提交者']] as const).map(([mode, label]) => (
                       <button
                         key={mode}
                         type="button"
@@ -4327,7 +4341,14 @@ export function BranchListPage(): JSX.Element {
                 </div>
               </div>
             ) : (
-              viewMode === 'groups' ? (
+              viewMode === 'submitters' ? (
+                <div className="flex flex-col gap-5" data-branch-submitters-view>
+                  <p className="px-2 text-xs text-muted-foreground">
+                    按最近一次 GitHub 推送账号归类；没有推送账号时使用提交作者信息，缺少身份的归入「未知提交者」。
+                  </p>
+                  {submitterSections.map(({ submitter, branches: list }) => renderGroupSection(null, list, submitter))}
+                </div>
+              ) : viewMode === 'groups' ? (
                 <div className="flex flex-col gap-4" data-branch-view="groups">
                   {/* 拖拽 / 菜单移组是先乐观挪卡、再排队落盘；落盘慢时（上限 30 秒）要让人看见「还没存住」，
                       否则看着已经完成，超时后又被撤回，像是自己弹回去的（Codex P2，PR #1647） */}
