@@ -1802,14 +1802,8 @@ function GithubProjectTab({
   async function unlinkRepo(): Promise<void> {
     setUnlinking(true);
     try {
-      await apiRequest(`/api/projects/${encodeURIComponent(project.id)}/github/link`, { method: 'DELETE' });
-      onSaved({
-        ...project,
-        githubInstallationId: undefined,
-        githubRepoFullName: undefined,
-        githubAutoDeploy: undefined,
-        githubLinkedAt: undefined,
-      });
+      const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(project.id)}/github/link`, { method: 'DELETE' });
+      onSaved(result.project);
       setUnlinkOpen(false);
       onToast('GitHub 仓库绑定已解除');
     } catch (err) {

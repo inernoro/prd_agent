@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
 import { GeneralTab } from '../../web/src/pages/ProjectSettingsPage.js';
 import { ProjectIdentityFields } from '../../web/src/components/project/ProjectIdentityHistory.js';
 
 describe('project settings effective preview identifier', () => {
+  it('解绑调用将后端返回的项目摘要交给已有保存链路，不保留旧版本', () => {
+    const source = readFileSync(new URL('../../web/src/pages/ProjectSettingsPage.tsx', import.meta.url), 'utf8');
+    const unlink = source.slice(source.indexOf('async function unlinkRepo()'), source.indexOf('const linked = Boolean(project.githubRepoFullName)'));
+    expect(unlink).toMatch(/const result = await apiRequest<GithubLinkResponse>/);
+    expect(unlink).toContain('onSaved(result.project)');
+    expect(unlink).not.toContain('...project');
+  });
   it('仓库关联绑定和解绑可见，保留独立 Git 地址并兼容旧记录', () => {
     const base = { name: 'Project', displayName: 'Project', slug: 'project-id', repository: 'https://example.test/repo.git' };
     const linked = { ...base, githubRepository: 'owner/repo' };

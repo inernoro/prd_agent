@@ -837,10 +837,20 @@ describe('POST /api/projects/:id/github/link', () => {
     expect(unbound.actor).toBe('agent:k-test');
     expect(unbound.requestId).not.toBe(bound.requestId);
     expect(stateService.getProject('p1')!.gitRepoUrl).toBe(before.gitRepoUrl);
+    expect(removed.body.ok).toBe(true);
+    expect(removed.body.project.identityVersion).toBe(unbound.id);
+    expect(removed.body.project.identityHistory).toBeUndefined();
+    expect(removed.body.project.githubRepoFullName).toBeUndefined();
+    const nextSave = await request(server, 'PUT', '/api/projects/p1', JSON.stringify({
+      name: '解绑后保存', expectedIdentityVersion: removed.body.project.identityVersion,
+    }), { 'x-test-project-key': 'p1' });
+    expect(nextSave.status).toBe(200);
+    expect(nextSave.body.project.name).toBe('解绑后保存');
+    const lastVersion = nextSave.body.project.identityVersion;
     await stateService.flush();
     const restarted = new StateService(path.join(tmp, 'state.json'));
     restarted.load();
-    expect(restarted.getProject('p1')!.identityHistory!.at(-1)!.id).toBe(unbound.id);
+    expect(restarted.getProject('p1')!.identityHistory!.at(-1)!.id).toBe(lastVersion);
   });
 
   it('同项目机器凭据绑定仓库只返回版本摘要，不返回完整设置记录', async () => {

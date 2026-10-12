@@ -27,6 +27,7 @@ import type { StateService } from '../services/state.js';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { projectIdentityActorFromRequest } from '../services/project-identity-history.js';
+import { projectReservedIdentifiers } from '../services/preview-slug.js';
 
 const LEGACY_PROJECT_ID = 'default';
 const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/;
@@ -212,8 +213,8 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
       res.status(400).json({ error: 'newId 只能包含小写字母、数字、短横线，且不能以短横线开头/结尾' });
       return;
     }
-    if ((stateService.getProjects?.() || []).some(p => p.id === normalizedId)) {
-      res.status(409).json({ error: `项目 id "${normalizedId}" 已存在` });
+    if ((stateService.getProjects?.() || []).some(p => p.id !== LEGACY_PROJECT_ID && projectReservedIdentifiers(p).includes(normalizedId))) {
+      res.status(409).json({ error: `项目标识 "${normalizedId}" 已被占用，请选择其他标识` });
       return;
     }
 

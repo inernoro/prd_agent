@@ -105,6 +105,26 @@ describe('Legacy-Cleanup Routes', () => {
   });
 
   describe('POST /api/legacy-cleanup/rename-default', () => {
+    it.each(['reserved-project', 'reserved-current', 'reserved-old'])('拒绝占用其他项目保留标识 %s，迁移前状态与旧查找保持', async (newId) => {
+      addEmptyLegacyProject(stateService);
+      stateService.addProject({ id: 'reserved-project', name: '保留标识所属项目', slug: 'reserved-old',
+        kind: 'manual', createdAt: NOW, updatedAt: NOW });
+      stateService.updateProject('reserved-project', { slug: 'reserved-current' });
+      stateService.setCustomEnvVar('KEEP_ENV', 'kept', 'default');
+      fs.mkdirSync(path.join(worktreeBase, 'default'));
+      const before = structuredClone(stateService.getProjects());
+      const envBefore = structuredClone(stateService.getCustomEnvRaw());
+      const res = await request(server, 'POST', '/api/legacy-cleanup/rename-default', {
+        newId, newName: '不应保存',
+      });
+      expect(res.status).toBe(409);
+      expect(stateService.getProjects()).toEqual(before);
+      expect(stateService.getCustomEnvRaw()).toEqual(envBefore);
+      expect(stateService.getProject('reserved-old')!.id).toBe('reserved-project');
+      expect(stateService.getProject('reserved-current')!.id).toBe('reserved-project');
+      expect(fs.existsSync(path.join(worktreeBase, 'default'))).toBe(true);
+      expect(fs.existsSync(path.join(worktreeBase, newId))).toBe(false);
+    });
     it('记录实际改名前后值和认证操作者，重启后仍可追溯', async () => {
       const original = addEmptyLegacyProject(stateService);
       const version = original.identityHistory!.at(-1)!.id;

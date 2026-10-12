@@ -1191,7 +1191,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       githubAutoDeploy: undefined,
       githubLinkedAt: undefined,
     }, projectIdentityActorFromRequest(req));
-    res.json({ ok: true });
+    res.json({ ok: true, project: projectIdentityResponse(stateService.getProject(project.id)!) });
   });
 
   // ── GET /api/cds-system/github/webhook-deliveries ───────────────────
