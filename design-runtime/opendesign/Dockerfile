@@ -29,14 +29,14 @@ LABEL org.opencontainers.image.source="https://github.com/inernoro/prd_agent" \
 
 USER root
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 WORKDIR /opt/map-design-runtime
 RUN corepack enable && corepack prepare pnpm@10.28.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --prod --frozen-lockfile \
-    && pnpm exec playwright-core install --with-deps chromium \
-    && chmod -R a+rX /opt/ms-playwright
+    && apk add --no-cache chromium=152.0.7977.82-r0 \
+    && test -x "$DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH"
 
 # 与 cds/open-design-runtime/Dockerfile 同一个钉住版本，并在构建时核对。
 RUN npm install --global --ignore-scripts=false @openai/codex@0.143.0 \

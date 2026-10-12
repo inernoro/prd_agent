@@ -21,8 +21,12 @@ export interface BrowserQualityProbe {
   observation: string;
 }
 
-export function probeBrowserQuality(): BrowserQualityProbe {
-  const executablePath = chromium.executablePath();
+export function resolveBrowserExecutablePath(env: NodeJS.ProcessEnv = process.env): string {
+  return env.DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH?.trim() || chromium.executablePath();
+}
+
+export function probeBrowserQuality(env: NodeJS.ProcessEnv = process.env): BrowserQualityProbe {
+  const executablePath = resolveBrowserExecutablePath(env);
   const ready = fs.existsSync(executablePath);
   return {
     ready,
@@ -47,6 +51,9 @@ export class SubprocessBrowserQualityRunner implements BrowserQualityRunner {
           HOME: this.home,
           ...(process.env.PLAYWRIGHT_BROWSERS_PATH
             ? { PLAYWRIGHT_BROWSERS_PATH: process.env.PLAYWRIGHT_BROWSERS_PATH }
+            : {}),
+          ...(process.env.DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH
+            ? { DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: process.env.DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH }
             : {}),
           MAP_BROWSER_QUALITY_WORKER: '1',
         },

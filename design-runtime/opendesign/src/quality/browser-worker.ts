@@ -14,6 +14,7 @@ import {
   type BrowserQualityWorkerResult,
   type BrowserViewportMeasurement,
 } from './browser-contract.js';
+import { resolveBrowserExecutablePath } from './browser-runner.js';
 
 const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -270,7 +271,11 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
   fs.mkdirSync(job.evidenceDir, { recursive: true, mode: 0o700 });
   const server = await startServer(job.workspaceDir);
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const browser = await chromium.launch({ headless: true, args: ['--disable-dev-shm-usage', '--no-sandbox'] });
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: resolveBrowserExecutablePath(),
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+  });
   try {
     const measurements: BrowserViewportMeasurement[] = [];
     for (const viewport of BROWSER_QUALITY_VIEWPORTS) {

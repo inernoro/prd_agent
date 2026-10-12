@@ -21,6 +21,7 @@ import {
   prepareWebPrototypeResources,
 } from '../src/engine/web-prototype.js';
 import { OPEN_DESIGN_CODEX_VERSION, buildOpenDesignCodexConfig } from '../src/prompts.js';
+import { resolveBrowserExecutablePath } from '../src/quality/browser-runner.js';
 import { FIXTURES, waitFor } from './helpers.js';
 
 const SERVICE_ROOT = path.resolve(__dirname, '..');
@@ -430,11 +431,19 @@ describe('wiring guards', () => {
 
   it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
     const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toContain('pnpm exec playwright-core install --with-deps chromium');
+    expect(dockerfile).toContain('apk add --no-cache chromium=152.0.7977.82-r0');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser');
     expect(dockerfile).toContain('chown open-design:open-design');
     expect(dockerfile).toContain('/var/lib/map-design-runtime/browser-quality');
     expect(dockerfile).toContain('chmod 0711 /var/lib/map-design-runtime');
     expect(dockerfile).toContain('chmod 0700 /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality');
+  });
+
+  it('uses the image-provided Chromium path without changing local Playwright tests', () => {
+    expect(resolveBrowserExecutablePath({
+      DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: ' /usr/bin/chromium-browser ',
+    })).toBe('/usr/bin/chromium-browser');
+    expect(resolveBrowserExecutablePath({})).toContain('chromium');
   });
 
   it('keeps the production defaults on the layout the image provides', () => {
