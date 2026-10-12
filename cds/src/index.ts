@@ -200,14 +200,23 @@ const shell = isPreviewInstance()
   ? new PreviewInstanceShellExecutor(localShell)
   : localShell;
 // 操作池只预热自有IPC进程；预览实例的宿主命令仍由外层守卫拒绝，Git也不延后从大Master建进程。
-await operationShell.start().catch(() => console.warn('[execution] 操作执行器暂不可用；明确拒绝任务，不从Master启动命令。'));
+async function startExecutionPool(name: string, pool: IsolatedShellExecutor | ObservationStreamExecutor, warning: string): Promise<void> {
+  try {
+    await pool.start();
+    console.log(`[execution-pool] ${JSON.stringify({ name, outcome: 'ready', ...pool.getLifecycle(), stats: pool.getStats() })}`);
+  } catch {
+    console.warn(warning);
+    console.warn(`[execution-pool] ${JSON.stringify({ name, outcome: 'unavailable', ...pool.getLifecycle() })}`);
+  }
+}
+await startExecutionPool('operation', operationShell, '[execution] 操作执行器暂不可用；明确拒绝任务，不从Master启动命令。');
 if (!isPreviewInstance()) {
   await Promise.all([
-    localShell.start().catch(() => console.warn('[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。')),
-    startupStreams.start().catch(() => console.warn('[observation] 启动日志执行器暂不可用；启动信号不报告就绪。')),
-    journalStreams.start().catch(() => console.warn('[observation] 系统日志执行器暂不可用；保留明确失败诊断。')),
-    userLogStreams.start().catch(() => console.warn('[observation] 用户日志执行器暂不可用；保留明确失败和重试入口。')),
-    eventStreams.start().catch(() => console.warn('[observation] 容器事件执行器暂不可用；保留未知状态。')),
+    startExecutionPool('observation', localShell, '[observation] 状态查询执行器暂不可用；保留控制面启动并明确拒绝观测查询。'),
+    startExecutionPool('startup-log', startupStreams, '[observation] 启动日志执行器暂不可用；启动信号不报告就绪。'),
+    startExecutionPool('journal', journalStreams, '[observation] 系统日志执行器暂不可用；保留明确失败诊断。'),
+    startExecutionPool('user-log', userLogStreams, '[observation] 用户日志执行器暂不可用；保留明确失败和重试入口。'),
+    startExecutionPool('container-event', eventStreams, '[observation] 容器事件执行器暂不可用；保留未知状态。'),
   ]);
 }
 if (isPreviewInstance()) {

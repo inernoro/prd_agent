@@ -47,6 +47,44 @@ afterEach(async () => {
 });
 
 describe('IsolatedShellExecutor 真实进程', () => {
+  it('启动诊断保留真实就绪时间并返回独立快照', async () => {
+    const e = executor({ concurrency: 1 });
+    await e.start();
+    const diagnostic = e.getLifecycle();
+    expect(Date.parse(diagnostic.startedAt!)).toBeLessThanOrEqual(Date.parse(diagnostic.readyAt!));
+    expect(diagnostic.readyElapsedMs).toBeGreaterThanOrEqual(0);
+    expect(diagnostic.failure).toBeUndefined();
+    diagnostic.readyAt = 'changed-by-consumer';
+    expect(e.getLifecycle().readyAt).not.toBe('changed-by-consumer');
+    expect((await e.exec('printf still-working', observation)).stdout).toBe('still-working');
+  });
+
+  it('原5秒首次启动失败保留原因且不暴露命令或私有输入', async () => {
+    const operation = { exec: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })) };
+    const e = new IsolatedShellExecutor(operation, { processFactory: () => childProcess.spawn(process.execPath,
+      ['--eval', 'setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }) });
+    executors.push(e);
+    await expect(e.exec('private-command', { ...observation, timeout: 10000, stdin: 'private-input', env: { PRIVATE_KEY: 'private-value' } }))
+      .rejects.toMatchObject({ code: 'unavailable' });
+    const diagnostic = e.getLifecycle();
+    expect(diagnostic.failure).toMatchObject({ reason: 'startup-deadline', phase: 'startup', generation: 0, actors: 0, readyActors: 0 });
+    expect(diagnostic.failure!.elapsedMs).toBeGreaterThanOrEqual(4900);
+    expect(JSON.stringify(diagnostic)).not.toMatch(/private-command|private-input|PRIVATE_KEY|private-value/);
+    diagnostic.failure!.reason = 'process-create';
+    diagnostic.failure!.actorPids.push(12345);
+    expect(e.getLifecycle().failure!.reason).toBe('startup-deadline');
+    expect(e.getLifecycle().failure!.actorPids).toEqual([]);
+    await expect(e.exec('must-not-retry', observation)).rejects.toMatchObject({ code: 'unavailable' });
+    expect(operation.exec).not.toHaveBeenCalled();
+  }, 15000);
+
+  it('同步创建错误只记录有限原因，原异常正文不进入诊断', async () => {
+    const e = executor({ processFactory: () => { throw new Error('secret-provider-message'); } });
+    await expect(e.start()).rejects.toMatchObject({ code: 'unavailable' });
+    expect(e.getLifecycle().failure).toMatchObject({ reason: 'process-create', phase: 'startup' });
+    expect(JSON.stringify(e.getLifecycle())).not.toContain('secret-provider-message');
+  });
+
   it('在操作授权前回传真实actor、工厂代次和任务身份，取消队列不伪造身份', async () => {
     const e = executor({ isolatedLane: 'operation', concurrency: 2, reservedCleanup: 1 });
     await e.start();

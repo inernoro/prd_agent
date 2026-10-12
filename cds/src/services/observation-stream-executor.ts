@@ -11,6 +11,7 @@ export class ObservationStreamExecutor {
     this.shell = new IsolatedShellExecutor(new ShellExecutor(), { concurrency, maxQueued: 1 });
   }
   start(): Promise<void> { return this.shell.start(); }
+  getLifecycle(): ReturnType<IsolatedShellExecutor['getLifecycle']> { return this.shell.getLifecycle(); }
   async exec(command: string, options: Pick<ExecOptions, 'onData' | 'signal' | 'timeout' | 'cwd' | 'env'>): Promise<ExecResult> {
     if (this.closed) throw new ObservationExecutionError('closed');
     if (this.admitted >= this.concurrency) throw new ObservationExecutionError('capacity');

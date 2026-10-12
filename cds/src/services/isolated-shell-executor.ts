@@ -5,6 +5,13 @@ import { cleanObservationGroup, findObservationOwners } from './observation-proc
 import type { ExecOptions, ExecResult, IShellExecutor } from '../types.js';
 
 type FailureCode = 'capacity' | 'deadline' | 'cancelled' | 'unavailable' | 'closed' | 'callback' | 'cleanup';
+type PoolFailureReason = 'startup-deadline' | 'process-error' | 'process-exit' | 'ipc-send' | 'process-create' | 'factory-fatal';
+interface PoolLifecycle {
+  startedAt?: string;
+  readyAt?: string;
+  readyElapsedMs?: number;
+  failure?: { reason: PoolFailureReason; phase: 'startup' | 'runtime'; at: string; elapsedMs: number; generation: number; supervisorPid?: number; factoryPid?: number; actors: number; actorPids: number[]; readyActors: number };
+}
 const messages: Record<FailureCode, string> = {
   capacity: '状态查询繁忙，请稍后重试。', deadline: '状态查询超时，请稍后重试。',
   cancelled: '状态查询已取消。', unavailable: '状态查询执行器暂不可用，请稍后重试。',
@@ -69,6 +76,8 @@ export class IsolatedShellExecutor implements IShellExecutor {
   private startResolve?: () => void;
   private startReject?: (error: ObservationExecutionError) => void;
   private startTimer?: NodeJS.Timeout;
+  private startedMonotonic = 0;
+  private readonly lifecycle: PoolLifecycle = {};
   private stopping?: Promise<void>;
   private closing?: Promise<void>;
   private readonly concurrency: number;
@@ -112,17 +121,19 @@ export class IsolatedShellExecutor implements IShellExecutor {
     if (this.closed) return Promise.reject(this.executionError('closed'));
     if (this.unavailable) return Promise.reject(this.executionError('unavailable'));
     if (this.starting) return this.starting;
+    this.startedMonotonic = performance.now();
+    this.lifecycle.startedAt = new Date().toISOString();
     this.starting = new Promise((resolve, reject) => { this.startResolve = resolve; this.startReject = reject; });
-    this.startTimer = setTimeout(() => { void this.failPool(); }, 5000);
+    this.startTimer = setTimeout(() => { void this.failPool('startup-deadline'); }, 5000);
     try {
       const child = this.processFactory(this.owner);
       this.factory = child;
       this.factoryExit = new Promise(resolve => child.once('close', () => resolve()));
       child.on('message', (message: any) => this.onMessage(message));
-      child.on('error', () => { void this.failPool(); });
-      child.on('exit', () => { if (!this.closed && !this.stopping) void this.failPool(); });
-      child.send({ type: 'initialize', concurrency: this.concurrency }, error => { if (error && !this.stopping) void this.failPool(); });
-    } catch { void this.failPool(); }
+      child.on('error', () => { void this.failPool('process-error'); });
+      child.on('exit', () => { if (!this.closed && !this.stopping) void this.failPool('process-exit'); });
+      child.send({ type: 'initialize', concurrency: this.concurrency }, error => { if (error && !this.stopping) void this.failPool('ipc-send'); });
+    } catch { void this.failPool('process-create'); }
     return this.starting;
   }
 
@@ -219,8 +230,10 @@ export class IsolatedShellExecutor implements IShellExecutor {
       if (actor && actor.pid === message.pid) actor.metrics = message.metrics;
       return;
     }
-    if (message.type === 'fatal') { void this.failPool(); return; }
+    if (message.type === 'fatal') { void this.failPool('factory-fatal'); return; }
     if (message.type === 'ready' && !this.closed && (!this.unavailable || this.supervised && !this.failed && !this.stopping)) {
+      this.lifecycle.readyAt ??= new Date().toISOString();
+      this.lifecycle.readyElapsedMs ??= Math.round(performance.now() - this.startedMonotonic);
       this.unavailable = false;
       this.ready = true; clearTimeout(this.startTimer); this.startResolve?.(); this.drain(); return;
     }
@@ -254,7 +267,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
   }
 
   private send(message: object): void {
-    if (this.factory?.connected) this.factory.send(message, error => { if (error && !this.stopping) void this.failPool(); });
+    if (this.factory?.connected) this.factory.send(message, error => { if (error && !this.stopping) void this.failPool('ipc-send'); });
   }
   private refPool(): void { this.factory?.ref(); this.factory?.channel?.ref(); }
   private drain(): void {
@@ -314,13 +327,23 @@ export class IsolatedShellExecutor implements IShellExecutor {
     })();
     return this.stopping;
   }
-  private async failPool(): Promise<void> {
+  private async failPool(reason: PoolFailureReason): Promise<void> {
     if (this.failed) return;
+    // 清理前保存有限元数据，绝不记录命令、环境、输入或原始异常正文。
+    this.lifecycle.failure = { reason, phase: this.lifecycle.readyAt ? 'runtime' : 'startup', at: new Date().toISOString(),
+      elapsedMs: Math.round(performance.now() - this.startedMonotonic), generation: this.factoryGeneration,
+      supervisorPid: this.supervised ? this.factory?.pid : undefined,
+      factoryPid: this.supervised ? this.factoryProcessPid : this.factory?.pid,
+      actors: this.actors.size, actorPids: [...this.actors.values()].map(actor => actor.pid),
+      readyActors: [...this.actors.values()].filter(actor => actor.metrics).length };
     this.failed = true; this.unavailable = true;
     let code: FailureCode = 'unavailable';
     try { await this.stopPool(); } catch { code = 'cleanup'; }
     this.startReject?.(this.executionError(code));
     for (const job of [...this.jobs.values()]) this.finish(job, undefined, code);
+  }
+  getLifecycle(): PoolLifecycle {
+    return { ...this.lifecycle, failure: this.lifecycle.failure ? { ...this.lifecycle.failure, actorPids: [...this.lifecycle.failure.actorPids] } : undefined };
   }
   close(): Promise<void> {
     if (this.closing) return this.closing;
