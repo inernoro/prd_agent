@@ -220,6 +220,7 @@
 - [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
 - [MAP 核心功能验收方法 · 指南](./guide.platform.core-business-acceptance.md) `guide.platform.core-business-acceptance`
+- [MAP 核心功能历史问题与经验 · 指南](./guide.platform.core-business-history.md) `guide.platform.core-business-history`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
@@ -263,6 +264,7 @@
 - [移动端视觉检查矩阵 · 规则](./rule.frontend.mobile-visual-check-matrix.md) `rule.frontend.mobile-visual-check-matrix`
 - [流式文本动效 · 规则](./rule.frontend.streaming-text.md) `rule.frontend.streaming-text`
 - [录音链路：换一条录音要放掉什么 · 规则](./rule.prd-admin.recording-entry-scope.md) `rule.prd-admin.recording-entry-scope`
+- [MAP 验收三池经验规范 · 规则](./rule.platform.acceptance-memory.md) `rule.platform.acceptance-memory`
 - [Agent 开发交付流程 · 规则](./rule.platform.agent-development.md) `rule.platform.agent-development`
 - [Agent 权限分类 · 规则](./rule.platform.agent-permissions.md) `rule.platform.agent-permissions`
 - [AI 模型可见性原则 · 规则](./rule.platform.ai-model-visibility.md) `rule.platform.ai-model-visibility`
@@ -431,3 +433,6 @@
 |---|---|---|---|
 | 2026-10-10 | 新增 | spec.platform.core-business-checklist | MAP 核心功能验收清单 · 规格 |
 | 2026-10-10 | 新增 | guide.platform.core-business-acceptance | MAP 核心功能验收方法 · 指南 |
+| 2026-10-12 | 新增 | guide.platform.core-business-history | MAP 核心功能历史问题与经验 · 指南 |
+| 2026-10-12 | 新增 | rule.platform.acceptance-memory | MAP 验收三池经验规范 · 规则 |
+| 2026-10-12 | 更新 | spec.platform.core-business-checklist、guide.platform.core-business-acceptance | 加入近期热点、历史跳转及常见/候选方法分层 |
