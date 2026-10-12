@@ -568,6 +568,88 @@ type ShortVideoVisualRun = {
   [key: string]: unknown;
 };
 
+async function cleanupShortVideoFixture(
+  page: Page,
+  token: string,
+  runId: string,
+  storeId: string,
+  uploadedEntryId: string,
+) {
+  const errors: string[] = [];
+  if (runId) {
+    try {
+      const cancel = await retryTransientTransport('请求取消短视频任务', () => page.request.post(
+        `/api/short-video-materials/runs/${runId}/cancel`,
+        { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+      ));
+      if (![200, 202, 404].includes(cancel.status()))
+        errors.push(`取消短视频任务返回 ${cancel.status()}`);
+    } catch (error) {
+      errors.push(`取消短视频任务失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const deadline = Date.now() + 90_000;
+    let deleted = false;
+    while (!deleted && Date.now() < deadline) {
+      try {
+        const response = await retryTransientTransport('删除短视频任务', () => page.request.delete(
+          `/api/short-video-materials/runs/${runId}`,
+          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+        ));
+        if ([200, 404].includes(response.status())) {
+          deleted = true;
+          break;
+        }
+        if (response.status() !== 409) {
+          errors.push(`删除短视频任务返回 ${response.status()}`);
+          break;
+        }
+      } catch (error) {
+        errors.push(`删除短视频任务失败：${error instanceof Error ? error.message : String(error)}`);
+        break;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+    }
+    if (!deleted) errors.push('短视频任务在取消后 90 秒内仍未进入可删除终态');
+  }
+
+  if (storeId) {
+    try {
+      const response = await retryTransientTransport('删除短视频测试知识库', () => page.request.delete(
+        `/api/document-store/stores/${storeId}`,
+        { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+      ));
+      if (![200, 204, 404].includes(response.status()))
+        errors.push(`删除短视频测试知识库返回 ${response.status()}`);
+    } catch (error) {
+      errors.push(`删除短视频测试知识库失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (uploadedEntryId) {
+    try {
+      const response = await page.request.get(`/api/document-store/entries/${uploadedEntryId}`, {
+        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+      });
+      if (response.status() !== 404) errors.push(`上传条目清理后仍返回 ${response.status()}`);
+    } catch (error) {
+      errors.push(`核对上传条目残留失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (runId) {
+    try {
+      const response = await page.request.get(`/api/short-video-materials/runs/${runId}`, {
+        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+      });
+      if (response.status() !== 404) errors.push(`短视频任务清理后仍返回 ${response.status()}`);
+    } catch (error) {
+      errors.push(`核对短视频任务残留失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (errors.length > 0) throw new Error(`短视频测试清理未闭环：${errors.join('；')}`);
+}
+
 type UploadArtifactItem = {
   id: string;
   requestId: string;
@@ -3842,11 +3924,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let storeId = '';
     let uploadedEntryId = '';
     let runId = '';
-    let createdRun: ShortVideoVisualRun | null = null;
-    let markRunCreated!: () => void;
-    const runCreated = new Promise<void>((resolveCreated) => { markRunCreated = resolveCreated; });
-    let visualStage: 'parse' | 'transcript' | 'real' = 'parse';
-    const runRoute = (url: URL) => url.pathname.replace(/\/+$/, '').startsWith('/api/short-video-materials/runs/');
     try {
       storeId = (await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -3893,70 +3970,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const directVideoUrl = new URL(uploadBody.data.fileUrl, page.url()).href;
       expect(directVideoUrl).toMatch(/^https?:\/\/.+\.mp4(?:\?|$)/i);
 
-      await page.route(runRoute, async (route) => {
-        await runCreated;
-        if (!createdRun) return route.continue();
-        const runningKey = visualStage === 'real' ? '' : visualStage;
-        if (!runningKey) return route.continue();
-        const stages = createdRun.stages.map((stage) => ({
-          ...stage,
-          status: stage.key === runningKey
-            ? 'running'
-            : runningKey === 'transcript' && ['parse', 'source'].includes(stage.key)
-              ? 'done'
-              : 'pending',
-          message: stage.key === runningKey
-            ? runningKey === 'parse'
-              ? '正在识别直接视频文件并准备保存原始素材'
-              : '正在从已入库视频转写原始文字'
-            : stage.message,
-        }));
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true, data: { ...createdRun, status: 'running', card: null, stages }, error: null }),
-        });
-      });
-      await page.evaluate(() => {
-        const nativeFetch = window.fetch.bind(window);
-        window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-          const rawUrl = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
-          const url = new URL(rawUrl, window.location.href);
-          const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
-          const path = url.pathname.replace(/\/+$/, '');
-          if (method !== 'GET' || !path.startsWith('/api/short-video-materials/runs/')) {
-            return nativeFetch(input, init);
-          }
-          for (let attempt = 0; attempt < 100 && !sessionStorage.getItem('__stableSmokeShortVideoRun'); attempt += 1) {
-            await new Promise((resolveWait) => window.setTimeout(resolveWait, 25));
-          }
-          const serialized = sessionStorage.getItem('__stableSmokeShortVideoRun');
-          const stage = sessionStorage.getItem('__stableSmokeShortVideoStage') || 'parse';
-          if (!serialized || stage === 'real') return nativeFetch(input, init);
-          const controlledRun = JSON.parse(serialized) as ShortVideoVisualRun;
-          const stages = controlledRun.stages.map((item) => ({
-            ...item,
-            status: item.key === stage
-              ? 'running'
-              : stage === 'transcript' && ['parse', 'source'].includes(item.key)
-                ? 'done'
-                : 'pending',
-            message: item.key === stage
-              ? stage === 'parse'
-                ? '正在识别直接视频文件并准备保存原始素材'
-                : '正在从已入库视频转写原始文字'
-              : item.message,
-          }));
-          const reads = Number(sessionStorage.getItem('__stableSmokeShortVideoReads') || '0') + 1;
-          sessionStorage.setItem('__stableSmokeShortVideoReads', String(reads));
-          return new Response(JSON.stringify({
-            success: true,
-            data: { ...controlledRun, status: 'running', card: null, stages },
-            error: null,
-          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-        };
-      });
-
       const parseAction = await openDocumentStoreAction(page, '解析短视频');
       await expect(parseAction).toBeVisible();
       await parseAction.click();
@@ -3984,46 +3997,49 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const createBody = await createResponse.json() as ApiEnvelope<{ run: ShortVideoVisualRun }>;
       expect(createResponse.ok(), createBody.error?.message || '创建短视频解析任务失败').toBe(true);
       expect(createBody.success, createBody.error?.message || '创建短视频解析任务失败').toBe(true);
-      createdRun = createBody.data.run;
+      const createdRun = createBody.data.run;
       runId = createdRun.id;
-      await page.evaluate(({ run }) => {
-        sessionStorage.setItem('__stableSmokeShortVideoRun', JSON.stringify(run));
-        sessionStorage.setItem('__stableSmokeShortVideoStage', 'parse');
-      }, { run: createdRun });
-      markRunCreated();
+      expect(createdRun.stages.map((stage) => stage.key)).toEqual([
+        'parse',
+        'source',
+        'transcript',
+        'ready',
+      ]);
 
       const parseProgress = drawer.locator('.streaming-text')
-        .filter({ hasText: '解析链接：正在处理' })
-        .filter({ hasText: '正在识别直接视频文件' })
+        .filter({ hasText: '处理进度（来自服务器，刷新后仍会保留）' })
         .first();
       await expect(parseProgress).toBeVisible({ timeout: 20_000 });
-      expect(
-        await page.evaluate(() => Number(sessionStorage.getItem('__stableSmokeShortVideoReads') || '0')),
-        '短视频受控详情请求没有进入浏览器内模拟器',
-      ).toBeGreaterThan(0);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-04',
         target: parseProgress,
-        caption: '短视频任务进入抽取准备阶段，阶段名和正在执行的动作持续显示而不是静止等待。',
+        caption: '真实创建响应进入后台队列，四个服务端阶段和当前等待状态均可见，没有替换运行详情响应。',
       });
 
-      visualStage = 'transcript';
-      await page.evaluate(() => sessionStorage.setItem('__stableSmokeShortVideoStage', 'transcript'));
-      const transcriptProgress = drawer.locator('.streaming-text')
-        .filter({ hasText: '视频转文字：正在处理' })
-        .filter({ hasText: '正在从已入库视频转写原始文字' })
-        .first();
+      const originalVideo = drawer.getByRole('button', { name: '原始视频', exact: true });
+      await expect(originalVideo).toBeVisible({ timeout: 360_000 });
+      const finalRun = await readEnvelope<ShortVideoVisualRun>(await page.request.get(
+        `/api/short-video-materials/runs/${runId}`,
+        { headers: authHeaders(token) },
+      ));
+      expect(finalRun.status).toBe('done');
+      expect(finalRun.stages.map((stage) => stage.key)).toEqual([
+        'parse',
+        'source',
+        'transcript',
+        'ready',
+      ]);
+      expect(finalRun.stages.find((stage) => stage.key === 'parse')?.status).toBe('done');
+      expect(finalRun.stages.find((stage) => stage.key === 'source')?.status).toBe('done');
+      expect(['done', 'failed']).toContain(finalRun.stages.find((stage) => stage.key === 'transcript')?.status);
+      const transcriptProgress = drawer.getByText(/视频转文字：(已完成|处理失败)/).first();
       await expect(transcriptProgress).toBeVisible({ timeout: 20_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-05',
         target: transcriptProgress,
-        caption: '真实视频进入转写阶段，阶段说明持续变化并明确文字来自已入库视频。',
+        caption: '服务端真实终态回读出视频转文字阶段；成功与受控失败均来自实际运行记录，不使用路由桩造状态。',
       });
 
-      visualStage = 'real';
-      await page.evaluate(() => sessionStorage.setItem('__stableSmokeShortVideoStage', 'real'));
-      const originalVideo = drawer.getByRole('button', { name: '原始视频', exact: true });
-      await expect(originalVideo).toBeVisible({ timeout: 360_000 });
       await expect(drawer.getByText(/已入库，可继续加工|视频已入库/).first()).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-06',
@@ -4032,23 +4048,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '短视频真实入库终态可回读，原始视频和后续加工入口完整；转写失败时页面也明确说明恢复方式。',
       });
     } finally {
-      markRunCreated?.();
-      await page.unroute(runRoute).catch(() => undefined);
-      if (runId) {
-        const deletedRun = await page.request.delete(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) });
-        expect([200, 404]).toContain(deletedRun.status());
+      try {
+        await cleanupShortVideoFixture(page, token, runId, storeId, uploadedEntryId);
+      } finally {
+        await context.close();
       }
-      if (storeId) {
-        const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
-        expect([200, 204]).toContain(deletedStore.status());
-        if (uploadedEntryId) {
-          expect((await page.request.get(`/api/document-store/entries/${uploadedEntryId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
-      }
-      if (runId) {
-        expect((await page.request.get(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
-      }
-      await context.close();
     }
   });
 
@@ -4132,18 +4136,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '移动端刷新可恢复的短视频终态完整显示，原始视频与继续加工入口在窄屏内可触达。',
       });
     } finally {
-      if (runId) {
-        const deletedRun = await page.request.delete(`/api/short-video-materials/runs/${runId}`, { headers: authHeaders(token) });
-        expect([200, 404]).toContain(deletedRun.status());
+      try {
+        await cleanupShortVideoFixture(page, token, runId, storeId, uploadedEntryId);
+      } finally {
+        await mobileContext.close();
       }
-      if (storeId) {
-        const deletedStore = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
-        expect([200, 204]).toContain(deletedStore.status());
-        if (uploadedEntryId) {
-          expect((await page.request.get(`/api/document-store/entries/${uploadedEntryId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
-      }
-      await mobileContext.close();
     }
   });
 

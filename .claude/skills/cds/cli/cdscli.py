@@ -7407,7 +7407,18 @@ def _verify_runtime_credential_vars(
             return bool(_value(env, "REDIS_USERNAME")), True
 
         nats_password = _value(env, "NATS_PASSWORD") or _flag_value(args, startup_env, "--pass")
-        nats_auth = bool(_flag_value(args, startup_env, "--pass", "--auth"))
+        # 与服务端 detectInfraAuth 的口径保持一致：官方 NATS 预设不会把口令
+        # 放进 argv，而是在启动命令里写 authorization 配置并由 nats-server -c
+        # 加载。只看 --pass/--auth 会把这条真实认证路径误判成未配置。
+        nats_config_auth = bool(
+            re.search(r"authorization\s*\{", args, re.IGNORECASE)
+            and re.search(
+                r"nats-server[^|;&]*\s(?:-c|--config)(?:=|\s+)\S",
+                args,
+                re.IGNORECASE,
+            )
+        )
+        nats_auth = bool(_flag_value(args, startup_env, "--pass", "--auth")) or nats_config_auth
         if nats_password and nats_auth:
             nats_user = _value(env, "NATS_USER") or _flag_value(args, startup_env, "--user")
             if nats_user:

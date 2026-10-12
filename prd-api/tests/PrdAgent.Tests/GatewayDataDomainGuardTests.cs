@@ -1692,6 +1692,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("RenewProcessingLeaseAsync", shortVideoWorker);
         Assert.Contains("ProcessingLeaseHeartbeatInterval", shortVideoWorker);
         Assert.Contains("current.ProcessingToken == processingToken", shortVideoWorker);
+        Assert.Contains("authorityStop.Cancel()", shortVideoWorker);
+        Assert.Contains("processor.ProcessAsync(run.Id, leaseAuthorityStop.Token)", shortVideoWorker);
+        Assert.Contains("ExecuteVideoDownloaderAsync(", shortVideoWorker);
+        Assert.Contains("authorityToken", shortVideoWorker);
+        Assert.Contains("CleanupRunArtifactsAsync(runId)", shortVideoWorker);
+        Assert.Contains("DeleteDownloadedVideoIfUnreferencedAsync(videoMaterial)", shortVideoWorker);
         Assert.Contains("Filter.Ne(r => r.ProcessingToken, (string?)null)", shortVideoWorker);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config)", watchdog);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)", worker);

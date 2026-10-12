@@ -34,6 +34,7 @@ public sealed class ShortVideoMaterialDeletionTests
     [InlineData(ShortVideoMaterialRunStatus.Queued)]
     [InlineData(ShortVideoMaterialRunStatus.Done)]
     [InlineData(ShortVideoMaterialRunStatus.Failed)]
+    [InlineData(ShortVideoMaterialRunStatus.Cancelled)]
     public async Task DeleteRun_WhenNoWorkerOwnsTheRun_ShouldDeleteAtomically(string status)
     {
         await using var test = await ShortVideoDeletionDatabase.CreateAsync();
@@ -58,6 +59,39 @@ public sealed class ShortVideoMaterialDeletionTests
 
         Assert.IsType<ConflictObjectResult>(result);
         Assert.Equal(1, await test.Context.ShortVideoMaterialRuns.CountDocumentsAsync(x => x.Id == run.Id));
+    }
+
+    [Fact]
+    public async Task CancelRun_WhenRunning_ShouldRequestCancellationWithoutDroppingLease()
+    {
+        await using var test = await ShortVideoDeletionDatabase.CreateAsync();
+        var run = test.NewRun(ShortVideoMaterialRunStatus.Running);
+        run.ProcessingToken = "active-worker";
+        await test.Context.ShortVideoMaterialRuns.InsertOneAsync(run);
+
+        var result = await test.CreateController().CancelRun(run.Id);
+
+        Assert.IsType<AcceptedResult>(result);
+        var persisted = await test.Context.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.True(persisted.CancelRequested);
+        Assert.Equal(ShortVideoMaterialRunStatus.Running, persisted.Status);
+        Assert.Equal("active-worker", persisted.ProcessingToken);
+    }
+
+    [Fact]
+    public async Task CancelRun_WhenQueued_ShouldBecomeCancelledImmediately()
+    {
+        await using var test = await ShortVideoDeletionDatabase.CreateAsync();
+        var run = test.NewRun(ShortVideoMaterialRunStatus.Queued);
+        await test.Context.ShortVideoMaterialRuns.InsertOneAsync(run);
+
+        var result = await test.CreateController().CancelRun(run.Id);
+
+        Assert.IsType<OkObjectResult>(result);
+        var persisted = await test.Context.ShortVideoMaterialRuns.Find(x => x.Id == run.Id).SingleAsync();
+        Assert.True(persisted.CancelRequested);
+        Assert.Equal(ShortVideoMaterialRunStatus.Cancelled, persisted.Status);
+        Assert.Null(persisted.ProcessingToken);
     }
 
     private sealed class ShortVideoDeletionDatabase : IAsyncDisposable

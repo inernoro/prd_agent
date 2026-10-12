@@ -197,6 +197,46 @@ def test_startup_flag_resolves_against_project_scope():
     assert aliases == {"CDS_REDIS_PASSWORD"}
 
 
+def test_nats_config_file_authorization_matches_server_detection():
+    aliases = cdscli._verify_runtime_credential_vars(
+        {
+            "nats": {
+                "image": "nats:2-alpine",
+                "command": (
+                    "sh -c 'printf \"authorization { user: \\\"%s\\\", password: \\\"%s\\\" }\\n\" "
+                    "\"$NATS_USER\" \"$NATS_PASSWORD\" > /tmp/cds-nats.conf; "
+                    "exec nats-server -c /tmp/cds-nats.conf'"
+                ),
+                "environment": {
+                    "NATS_USER": "${CDS_NATS_USER}",
+                    "NATS_PASSWORD": "${CDS_NATS_PASSWORD}",
+                },
+            },
+        },
+        {
+            "CDS_NATS_USER": "app",
+            "CDS_NATS_PASSWORD": "project-secret",
+        },
+    )
+
+    assert aliases == {"CDS_NATS_USER", "CDS_NATS_PASSWORD"}
+
+
+def test_nats_config_flag_without_authorization_does_not_whitelist_credentials():
+    aliases = cdscli._verify_runtime_credential_vars({
+        "nats": {
+            "image": "nats:2-alpine",
+            "command": "nats-server -c /tmp/plain.conf",
+            "environment": {
+                "NATS_USER": "app",
+                "NATS_PASSWORD": "unused-secret",
+            },
+        },
+    })
+
+    assert aliases == set()
+
+
 def test_required_template_without_value_does_not_whitelist_runtime_alias():
     aliases = cdscli._verify_runtime_credential_vars(
         {

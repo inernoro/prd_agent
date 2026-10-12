@@ -50,7 +50,7 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
     [Fact]
     public void ResolveDownloadedVideoContentType_ShouldNormalizeM4vAndRejectOgv()
     {
-        CapsuleExecutor.ResolveDownloadedVideoContentType([], "video/x-m4v")
+        CapsuleExecutor.ResolveDownloadedVideoContentType(Mp4Bytes(), "video/x-m4v")
             .ShouldBe("video/mp4");
         var ex = Should.Throw<InvalidOperationException>(() =>
             CapsuleExecutor.ResolveDownloadedVideoContentType(
@@ -58,6 +58,39 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
                 "application/octet-stream"));
 
         ex.Message.ShouldContain("不支持 OGV");
+    }
+
+    [Fact]
+    public void ResolveDownloadedVideoContentType_ShouldRejectDeclaredVideoWhenSignatureIsNotVideo()
+    {
+        var ex = Should.Throw<InvalidOperationException>(() =>
+            CapsuleExecutor.ResolveDownloadedVideoContentType(
+                Encoding.UTF8.GetBytes("<html>sign in required</html>"),
+                "video/mp4"));
+
+        ex.Message.ShouldContain("文件签名不是受支持的视频容器");
+    }
+
+    [Theory]
+    [InlineData("video/mp4")]
+    [InlineData("video/x-m4v")]
+    public void ResolveDownloadedVideoContentType_ShouldAcceptMp4CompatibleDeclarations(string declaredType)
+    {
+        CapsuleExecutor.ResolveDownloadedVideoContentType(Mp4Bytes(), declaredType)
+            .ShouldBe("video/mp4");
+    }
+
+    [Fact]
+    public void ResolveDownloadedVideoContentType_ShouldRejectContainerMismatch()
+    {
+        var webm = new byte[] { 0x1A, 0x45, 0xDF, 0xA3 }
+            .Concat(Encoding.ASCII.GetBytes("header-webm-video"))
+            .ToArray();
+
+        var ex = Should.Throw<InvalidOperationException>(() =>
+            CapsuleExecutor.ResolveDownloadedVideoContentType(webm, "video/mp4"));
+
+        ex.Message.ShouldContain("文件签名实际为 video/webm");
     }
 
     [Fact]
@@ -118,4 +151,11 @@ public class CapsuleExecutorVideoDownloaderSecurityTests
                 sp.GetRequiredService<ISafeOutboundHttpHandlerFactory>().CreateHandler());
         return services.BuildServiceProvider();
     }
+
+    private static byte[] Mp4Bytes() =>
+    [
+        0, 0, 0, 24,
+        (byte)'f', (byte)'t', (byte)'y', (byte)'p',
+        (byte)'i', (byte)'s', (byte)'o', (byte)'m',
+    ];
 }

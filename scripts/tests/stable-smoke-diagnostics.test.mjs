@@ -21,7 +21,8 @@ const secretSamples = [
   'X-AI-Access-Key: access-key-value',
   'X-Stable-Smoke-Signature: request-signature-value',
   'X-Stable-Smoke-Nonce: one-time-nonce',
-  'Cookie: session=private-cookie',
+  'Cookie: theme=dark; session=private-cookie; csrf=private-csrf',
+  '"set-cookie":"session=private-set-cookie; Path=/; HttpOnly", "status":401',
   '"accessToken":"short-lived-token"',
   '"refreshToken":"refresh-secret"',
   '"privateKey":"private-key-value"',
@@ -36,10 +37,14 @@ test('稳定冒烟诊断脱敏保留端点与状态并移除全部凭据形态',
   assert.match(output, /POST \/api\/v1\/auth\/synthetic\/ticket/);
   assert.match(output, /HTTP 504/);
   assert.match(output, /\[REDACTED\]/);
-  for (const value of ['header.payload.signature', 'access-key-value', 'request-signature-value', 'one-time-nonce', 'private-cookie', 'short-lived-token', 'refresh-secret', 'private-key-value', 'one-time-body-code', 'one-time-code', 'private-material']) {
+  for (const value of ['header.payload.signature', 'access-key-value', 'request-signature-value', 'one-time-nonce', 'private-cookie', 'private-csrf', 'private-set-cookie', 'short-lived-token', 'refresh-secret', 'private-key-value', 'one-time-body-code', 'one-time-code', 'private-material']) {
     assert.doesNotMatch(output, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.equal(redactStableSmokeDiagnosticText('{"code":"AUTH_DENIED"}'), '{"code":"AUTH_DENIED"}');
+  assert.equal(
+    redactStableSmokeDiagnosticText('{"cookie":"a=1; session=secret", "status":401}'),
+    '{"cookie":"[REDACTED]", "status":401}',
+  );
 });
 
 test('Playwright 错误对象会在 reporter 读取前原地脱敏', () => {
@@ -62,7 +67,7 @@ test('产物树脱敏覆盖 JSON、Markdown 与日志且不改二进制文件', 
   try {
     writeFileSync(resolve(directory, 'results.json'), JSON.stringify({ error: secretSamples[0] }));
     writeFileSync(resolve(directory, 'error-context.md'), secretSamples[2]);
-    writeFileSync(resolve(directory, 'video.webm'), secretSamples[5]);
+    writeFileSync(resolve(directory, 'video.webm'), secretSamples[6]);
     const result = sanitizeStableSmokeArtifactTree(directory);
     assert.equal(result.scanned, 2);
     assert.equal(result.changed, 2);

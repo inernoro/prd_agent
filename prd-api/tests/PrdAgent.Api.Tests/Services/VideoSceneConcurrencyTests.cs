@@ -216,6 +216,60 @@ public class VideoSceneConcurrencyTests
     }
 
     [Fact]
+    public async Task UserAccess_ShouldAdoptOnlyOwnedLegacyUnscopedRunsAndExports()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        const string currentScope = "project-a::feature-video::revision::new";
+        var owned = NewRun("legacy-owned", test.OwnerId, SceneItemStatus.Draft);
+        owned.DeploymentSlug = null;
+        var otherApp = NewRun("legacy-other-app", test.OwnerId, SceneItemStatus.Draft);
+        otherApp.AppKey = "visual-agent";
+        otherApp.DeploymentSlug = null;
+        var foreign = NewRun("legacy-foreign", "another-owner", SceneItemStatus.Draft);
+        foreign.DeploymentSlug = null;
+        await Task.WhenAll(
+            test.SaveRunAsync(owned),
+            test.SaveRunAsync(otherApp),
+            test.SaveRunAsync(foreign));
+        await test.Context.VideoExportTasks.InsertManyAsync([
+            new VideoExportTask
+            {
+                Id = "legacy-owned-export",
+                RunId = owned.Id,
+                OwnerAdminId = test.OwnerId,
+                AppKey = owned.AppKey,
+                DeploymentSlug = null,
+            },
+            new VideoExportTask
+            {
+                Id = "legacy-foreign-export",
+                RunId = foreign.Id,
+                OwnerAdminId = foreign.OwnerAdminId,
+                AppKey = foreign.AppKey,
+                DeploymentSlug = null,
+            },
+        ]);
+
+        var adopted = await test.CreateService().AdoptLegacyUnscopedRunsAsync(
+            test.OwnerId,
+            owned.AppKey,
+            currentScope,
+            CancellationToken.None);
+
+        adopted.ShouldBe(2);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == owned.Id).SingleAsync())
+            .DeploymentSlug.ShouldBe(currentScope);
+        (await test.Context.VideoExportTasks.Find(x => x.Id == "legacy-owned-export").SingleAsync())
+            .DeploymentSlug.ShouldBe(currentScope);
+        (await test.Context.VideoGenRuns.Find(x => x.Id == otherApp.Id).SingleAsync())
+            .DeploymentSlug.ShouldBeNull();
+        (await test.Context.VideoGenRuns.Find(x => x.Id == foreign.Id).SingleAsync())
+            .DeploymentSlug.ShouldBeNull();
+        (await test.Context.VideoExportTasks.Find(x => x.Id == "legacy-foreign-export").SingleAsync())
+            .DeploymentSlug.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Worker_ShouldAdoptOnlySafePreviousRevisionWork()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();

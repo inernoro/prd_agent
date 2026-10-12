@@ -1667,8 +1667,6 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
     '.claude/skills/cds/cli/cdscli.py',
     '.claude/skills/cds/tests/test_verify_runtime_credentials.py',
     '.Codex/rules/user-readable-errors.md',
-    'cds/src/commands/compose/verify.ts',
-    'cds/web/src/lib/report-document.ts',
     'cds/tests/commands/compose-verify.test.ts',
     'e2e/specs/stable-smoke.spec.ts',
     'scripts/stable-smoke-visual-gate.mjs',
@@ -1680,6 +1678,9 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
   assert.equal(files.every(isValidationOnlyPath), true);
   assert.equal(isValidationOnlyPath('.codex/rules/user-readable-errors.md'), false);
   assert.equal(isValidationOnlyPath('cds-compose.yml'), false);
+  assert.equal(isValidationOnlyPath('cds/src/commands/compose/verify.ts'), false);
+  assert.equal(isValidationOnlyPath('cds/web/src/lib/report-document.ts'), false);
+  assert.equal(isValidationOnlyPath('cds/doc/runtime-check.md'), true);
   assert.match(readFileSync('scripts/stable-smoke-run.mjs', 'utf8'), /'core\.quotePath=false'/);
   const expectation = resolveRuntimeExpectation(branch, expectedCommit, files);
   branch.lastDeployDispatchCommitSha = 'stale-dispatch';
@@ -1696,6 +1697,17 @@ test('纯验收工具变化可复用已部署业务版本且留下等价记录',
       admin: deployedCommit,
     },
   });
+});
+
+test('短视频稳定冒烟读取真实阶段并在清理前请求取消', () => {
+  const source = readFileSync('e2e/specs/stable-smoke.spec.ts', 'utf8');
+  assert.doesNotMatch(source, /__stableSmokeShortVideoStage/);
+  assert.doesNotMatch(source, /page\.route\([^\n]*short-video-materials/);
+  assert.match(source, /\/api\/short-video-materials\/runs\/\$\{runId\}\/cancel/);
+  assert.match(source, /if \(response\.status\(\) !== 409\)/);
+  assert.match(source, /const finalRun = await readEnvelope<ShortVideoVisualRun>/);
+  assert.match(source, /createdRun\.stages\.map\(\(stage\) => stage\.key\)/);
+  assert.match(source, /finalRun\.stages\.find\(\(stage\) => stage\.key === 'parse'\)/);
 });
 
 test('业务运行时代码变化不得借用旧镜像通过版本门禁', () => {

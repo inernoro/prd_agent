@@ -5066,7 +5066,8 @@ function safeChart(canvasId, config) {
                 _ => throw new InvalidOperationException($"未知执行器类型: {executorType}，支持: builtin-llm, docker, api, script, lobster, claude-sdk"),
             };
         }
-        catch (Exception ex) when (ex is not InvalidOperationException)
+        catch (Exception ex) when (ex is not InvalidOperationException
+                                   && ex is not OperationCanceledException)
         {
             sb.AppendLine($"[CLI Agent] 执行异常: {ex.Message}");
             logger.LogError(ex, "CliAgent executor {Type} failed", executorType);
@@ -5939,7 +5940,8 @@ function safeChart(canvasId, config) {
         IServiceProvider sp,
         WorkflowNode node,
         Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts)
+        List<ExecutionArtifact> inputArtifacts,
+        CancellationToken cancellationToken = default)
     {
         var sb = new StringBuilder();
         var apiBaseUrl = ReplaceVariables(GetConfigString(node, "apiBaseUrl") ?? "https://api.tikhub.dev", variables).TrimEnd('/');
@@ -6007,8 +6009,8 @@ function safeChart(canvasId, config) {
         var requestUrl = $"{apiBaseUrl}/api/v1/douyin/web/fetch_one_video_by_share_url?share_url={Uri.EscapeDataString(videoUrl)}";
         sb.AppendLine($"[DouyinParser] 请求: GET {requestUrl}");
 
-        var response = await client.GetAsync(requestUrl, CancellationToken.None);
-        var responseBody = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        var response = await client.GetAsync(requestUrl, cancellationToken);
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
 
         sb.AppendLine($"[DouyinParser] 状态: {(int)response.StatusCode}");
 
@@ -6167,7 +6169,8 @@ function safeChart(canvasId, config) {
         IServiceProvider sp,
         WorkflowNode node,
         Dictionary<string, string> variables,
-        List<ExecutionArtifact> inputArtifacts)
+        List<ExecutionArtifact> inputArtifacts,
+        CancellationToken cancellationToken = default)
     {
         var sb = new StringBuilder();
 
@@ -6218,12 +6221,12 @@ function safeChart(canvasId, config) {
                 videoUrl,
                 "视频下载地址",
                 System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
-                CancellationToken.None);
+                cancellationToken);
             response.EnsureSuccessStatusCode();
             videoBytes = await ReadContentWithLimitAsync(
                 response.Content,
                 maxBytes,
-                CancellationToken.None);
+                cancellationToken);
             var rawType = response.Content.Headers.ContentType?.MediaType;
             contentType = ResolveDownloadedVideoContentType(videoBytes, rawType);
             sb.AppendLine($"[VideoDownloader] 下载完成: {videoBytes.Length} bytes, type={contentType} (raw={rawType ?? "null"})");
@@ -6235,7 +6238,7 @@ function safeChart(canvasId, config) {
 
         // 上传到 COS
         var assetStorage = sp.GetRequiredService<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
-        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", CancellationToken.None, domain: "workflow-agent", type: "doc");
+        var stored = await assetStorage.SaveAsync(videoBytes, contentType ?? "video/mp4", cancellationToken, domain: "workflow-agent", type: "doc");
 
         sb.AppendLine($"[VideoDownloader] COS 上传成功: {stored.Url}");
         sb.AppendLine($"[VideoDownloader] SHA256: {stored.Sha256}, 大小: {stored.SizeBytes} bytes");
@@ -6283,11 +6286,12 @@ function safeChart(canvasId, config) {
 
     internal static string ResolveDownloadedVideoContentType(byte[] videoBytes, string? rawType)
     {
+        var detectedType = DetectDownloadedVideoContentType(videoBytes);
         if (!string.IsNullOrWhiteSpace(rawType)
             && rawType.StartsWith("video/", StringComparison.OrdinalIgnoreCase))
         {
             var normalizedVideoType = rawType.Trim().ToLowerInvariant();
-            return normalizedVideoType switch
+            var declaredType = normalizedVideoType switch
             {
                 "video/mp4" or "video/x-m4v" => "video/mp4",
                 "video/quicktime" => "video/quicktime",
@@ -6297,14 +6301,27 @@ function safeChart(canvasId, config) {
                 _ => throw new InvalidOperationException(
                     $"当前下载与转写流水线不支持视频格式（{rawType}），请先转换为 MP4、MOV、WebM、MKV 或 AVI"),
             };
+            if (detectedType == null)
+                throw new InvalidOperationException(
+                    $"视频下载地址声明为 {rawType}，但文件签名不是受支持的视频容器，已中止保存");
+            if (!string.Equals(declaredType, detectedType, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"视频下载地址声明为 {rawType}，但文件签名实际为 {detectedType}，已中止保存");
+            return detectedType;
         }
         if (!string.IsNullOrWhiteSpace(rawType)
             && !rawType.EndsWith("/octet-stream", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException(
                 $"视频下载地址返回了非视频内容（{rawType}），可能是分享页、登录页或防盗链拦截，已中止保存");
 
-        // CDN 常把视频声明成 octet-stream。此时只能依据容器签名决定真实格式，
-        // 禁止把任意二进制直接伪装成 MP4。
+        if (detectedType != null) return detectedType;
+        throw new InvalidOperationException("视频下载地址返回了无法识别的二进制格式，已中止保存；请提供可验证的视频文件直链");
+    }
+
+    private static string? DetectDownloadedVideoContentType(byte[] videoBytes)
+    {
+        // CDN 常把视频声明成 octet-stream；即使声明成 video/*，也必须以容器
+        // 签名为准，防止 HTML、登录页或其他容器被伪装成 MP4 入库。
         if (videoBytes.Length >= 12
             && videoBytes[4] == (byte)'f'
             && videoBytes[5] == (byte)'t'
@@ -6344,8 +6361,7 @@ function safeChart(canvasId, config) {
             && videoBytes[2] == (byte)'g'
             && videoBytes[3] == (byte)'S')
             throw new InvalidOperationException("当前下载与转写流水线不支持 OGV 容器，请先转换为 MP4、MOV、WebM、MKV 或 AVI");
-
-        throw new InvalidOperationException("视频下载地址返回了无法识别的二进制格式，已中止保存；请提供可验证的视频文件直链");
+        return null;
     }
 
     /// <summary>
@@ -6356,14 +6372,15 @@ function safeChart(canvasId, config) {
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        EmitEventDelegate? emitEvent)
+        EmitEventDelegate? emitEvent,
+        CancellationToken cancellationToken = default)
     {
         var sb = new StringBuilder();
         var extractMode = (GetConfigString(node, "extractMode") ?? "metadata").Trim().ToLowerInvariant();
 
         // ASR 模式走专门通道（下载视频 + ffmpeg 抽音 + 流式 ASR + 可选 hook 提炼），单独分发避免污染老 metadata/llm 路径
         if (extractMode == "asr")
-            return await ExecuteVideoToTextAsrAsync(sp, node, variables, inputArtifacts, emitEvent);
+            return await ExecuteVideoToTextAsrAsync(sp, node, variables, inputArtifacts, emitEvent, cancellationToken);
 
         var inputContent = inputArtifacts.FirstOrDefault(a => a.SlotId == "vt-in")?.InlineContent
             ?? inputArtifacts.FirstOrDefault()?.InlineContent;
@@ -6419,7 +6436,7 @@ function safeChart(canvasId, config) {
                 }
             };
 
-            var llmResponse = await gateway.SendAsync(request, CancellationToken.None);
+            var llmResponse = await gateway.SendAsync(request, cancellationToken);
             var llmContent = llmResponse.Content ?? "";
             sb.AppendLine($"[VideoToText] LLM 分析完成，输出长度: {llmContent.Length}");
 
@@ -6460,7 +6477,8 @@ function safeChart(canvasId, config) {
         WorkflowNode node,
         Dictionary<string, string> variables,
         List<ExecutionArtifact> inputArtifacts,
-        EmitEventDelegate? emitEvent)
+        EmitEventDelegate? emitEvent,
+        CancellationToken cancellationToken)
     {
         var sb = new StringBuilder();
 
@@ -6534,6 +6552,7 @@ function safeChart(canvasId, config) {
         var resolutionErrors = new List<string>();
         foreach (var caller in asrCallerChain)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var r = await modelResolver.ResolveAsync(caller, ModelTypes.Asr);
             if (r.Success && firstSuccessfulResolution == null)
             {
@@ -6562,7 +6581,7 @@ function safeChart(canvasId, config) {
         sb.AppendLine($"[VideoToText:asr] ASR caller={resolvedCaller} mode=gateway-multipart");
 
         // ffmpeg 启动前探测，防止错误被误读为 ASR/网络问题
-        await EnsureFfmpegAvailableAsync();
+        await EnsureFfmpegAvailableAsync(cancellationToken);
 
         var http = httpFactory.CreateClient("SafeOutbound");
         http.Timeout = TimeSpan.FromMinutes(8);
@@ -6571,6 +6590,7 @@ function safeChart(canvasId, config) {
         int idx = 0;
         foreach (var item in rawItems)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             idx++;
 
             // 复制原 item 为可写 JsonObject（保留所有原字段，再追加 transcript/hook/bullets）
@@ -6615,11 +6635,11 @@ function safeChart(canvasId, config) {
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 流式下载视频");
                     // 流式直写 temp file，避免把整个视频读到 byte[] 内存（视频可能 50MB+，
                     // maxItems 上限 20 → 1GB 内存压力。同 media-rehost 的修复路径）
-                    tmpVideoPath = await DownloadToTempFileAsync(http, urlValidator, videoUrl);
+                    tmpVideoPath = await DownloadToTempFileAsync(http, urlValidator, videoUrl, cancellationToken);
                     var videoSize = new System.IO.FileInfo(tmpVideoPath).Length;
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 视频 {videoSize} 字节落盘，开始抽音");
 
-                    var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath);
+                    var audioBytes = await ExtractAudioWithFfmpegFromFileAsync(tmpVideoPath, cancellationToken);
                     sb.AppendLine($"[VideoToText:asr] item#{idx} 音频 {audioBytes.Length} 字节，提交 ASR");
 
                     var gwRes = resolution.ToGatewayResolution();
@@ -6651,8 +6671,8 @@ function safeChart(canvasId, config) {
                         throw new InvalidOperationException(routeError);
                     }
                     var gatewayResult = !gwRes.IsExchange && AsrAudioRoutePolicy.ShouldUseChatAudio(gwRes.ActualModel, gwRes.Protocol, gwRes.PlatformType)
-                        ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes)
-                        : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes);
+                        ? await TranscribeAudioViaChatAsync(gateway, resolvedCaller!, audioBytes, gwRes, cancellationToken)
+                        : await TranscribeAudioViaGatewayAsync(gateway, resolvedCaller!, audioBytes, gwRes, cancellationToken);
                     transcript = gatewayResult.Transcript;
                     if (gatewayResult.Cues.Count > 0)
                     {
@@ -6663,6 +6683,10 @@ function safeChart(canvasId, config) {
                     {
                         sb.AppendLine($"[VideoToText:asr] item#{idx} Gateway ASR 完成（model={gwRes.ActualModel}），转写 {transcript.Length} 字");
                     }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -6726,7 +6750,7 @@ function safeChart(canvasId, config) {
                         SystemPromptRedacted: "video-to-text-asr-hook",
                         RequestType: "chat",
                         AppCallerCode: AppCallerRegistry.VideoAgent.VideoToText.Chat));
-                    var llmResponse = await gateway.SendAsync(llmRequest, CancellationToken.None);
+                    var llmResponse = await gateway.SendAsync(llmRequest, cancellationToken);
                     var llmContent = (llmResponse.Content ?? "").Trim();
 
                     if (TryExtractJsonObject(llmContent, out var parsed))
@@ -6758,6 +6782,10 @@ function safeChart(canvasId, config) {
                     {
                         sb.AppendLine($"[VideoToText:asr] item#{idx} LLM 输出非 JSON ({llmContent.Length} 字)，跳过 hook 提炼");
                     }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -6800,7 +6828,8 @@ function safeChart(canvasId, config) {
         ILlmGateway gateway,
         string appCallerCode,
         byte[] audioBytes,
-        GatewayModelResolution resolution)
+        GatewayModelResolution resolution,
+        CancellationToken cancellationToken)
     {
         var rawRequest = new GatewayRawRequest
         {
@@ -6819,7 +6848,7 @@ function safeChart(canvasId, config) {
             TimeoutSeconds = 600,
         };
 
-        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, cancellationToken);
         if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
         {
             var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
@@ -6837,7 +6866,8 @@ function safeChart(canvasId, config) {
         ILlmGateway gateway,
         string appCallerCode,
         byte[] audioBytes,
-        GatewayModelResolution resolution)
+        GatewayModelResolution resolution,
+        CancellationToken cancellationToken)
     {
         var base64 = Convert.ToBase64String(audioBytes);
         var body = new JsonObject
@@ -6883,7 +6913,7 @@ function safeChart(canvasId, config) {
             TimeoutSeconds = 600,
         };
 
-        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, CancellationToken.None);
+        var rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, resolution, cancellationToken);
         if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
         {
             var detail = rawResp?.ErrorMessage ?? rawResp?.Content ?? "无响应";
@@ -7000,7 +7030,7 @@ function safeChart(canvasId, config) {
     /// <summary>
     /// ffmpeg 启动前探测。失败时给出指引明确的错误信息，避免被误判为网络/模型问题。
     /// </summary>
-    private static async Task EnsureFfmpegAvailableAsync()
+    private static async Task EnsureFfmpegAvailableAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -7013,11 +7043,20 @@ function safeChart(canvasId, config) {
                 UseShellExecute = false,
             });
             if (probe == null) throw new InvalidOperationException("ffmpeg 进程启动失败（Process.Start 返回 null）");
-            await probe.WaitForExitAsync();
+            try
+            {
+                await probe.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                try { if (!probe.HasExited) probe.Kill(entireProcessTree: true); } catch { }
+                throw;
+            }
             if (probe.ExitCode != 0)
                 throw new InvalidOperationException($"ffmpeg -version 异常退出（exit={probe.ExitCode}）");
         }
-        catch (Exception ex) when (ex is not InvalidOperationException)
+        catch (Exception ex) when (ex is not InvalidOperationException
+                                   && ex is not OperationCanceledException)
         {
             throw new InvalidOperationException(
                 $"环境缺 ffmpeg：{ex.Message}。CDS 容器已预装，命中此错误请重建容器；本地 dev 请安装：apt install ffmpeg / brew install ffmpeg / choco install ffmpeg",
@@ -7029,7 +7068,11 @@ function safeChart(canvasId, config) {
     /// 流式下载到 temp 文件，返回路径。避免把整个 body 读到 byte[] 内存。
     /// 调用方负责 finally 删除 temp 文件。
     /// </summary>
-    private static async Task<string> DownloadToTempFileAsync(System.Net.Http.HttpClient http, ISafeOutboundUrlValidator urlValidator, string url)
+    private static async Task<string> DownloadToTempFileAsync(
+        System.Net.Http.HttpClient http,
+        ISafeOutboundUrlValidator urlValidator,
+        string url,
+        CancellationToken cancellationToken)
     {
         var tmpPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-dl-{Guid.NewGuid():N}");
         using var resp = await GetSafeOutboundAsync(
@@ -7038,11 +7081,11 @@ function safeChart(canvasId, config) {
             url,
             "视频转文字下载地址",
             System.Net.Http.HttpCompletionOption.ResponseHeadersRead,
-            CancellationToken.None);
+            cancellationToken);
         resp.EnsureSuccessStatusCode();
-        await using var srcStream = await resp.Content.ReadAsStreamAsync(CancellationToken.None);
+        await using var srcStream = await resp.Content.ReadAsStreamAsync(cancellationToken);
         await using var dstStream = System.IO.File.Create(tmpPath);
-        await srcStream.CopyToAsync(dstStream, 64 * 1024, CancellationToken.None);
+        await srcStream.CopyToAsync(dstStream, 64 * 1024, cancellationToken);
         return tmpPath;
     }
 
@@ -7084,7 +7127,9 @@ function safeChart(canvasId, config) {
     /// 与 ExtractAudioWithFfmpegAsync(byte[]) 二选一：流式下载场景应该走这个，
     /// 避免视频 byte[] 在内存里多停一份
     /// </summary>
-    private static async Task<byte[]> ExtractAudioWithFfmpegFromFileAsync(string videoPath)
+    private static async Task<byte[]> ExtractAudioWithFfmpegFromFileAsync(
+        string videoPath,
+        CancellationToken cancellationToken)
     {
         var tmpOut = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"capsule-vt-out-{Guid.NewGuid():N}.wav");
         try
@@ -7101,14 +7146,22 @@ function safeChart(canvasId, config) {
                 ?? throw new InvalidOperationException("ffmpeg 启动失败");
             var stderrTask = process.StandardError.ReadToEndAsync();
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                throw;
+            }
             await Task.WhenAll(stderrTask, stdoutTask);
             if (process.ExitCode != 0)
             {
                 var err = await stderrTask;
                 throw new InvalidOperationException($"ffmpeg 抽音频失败 (exit={process.ExitCode}): {err}");
             }
-            return await System.IO.File.ReadAllBytesAsync(tmpOut);
+            return await System.IO.File.ReadAllBytesAsync(tmpOut, cancellationToken);
         }
         finally
         {

@@ -669,7 +669,8 @@ const validationOnlyPrefixes = [
   '.claude/skills/create-visual-test-to-kb/',
   '.claude/skills/stable-smoke/',
   '.Codex/',
-  'cds/',
+  'cds/tests/',
+  'cds/scripts/tests/',
   'changelogs/',
   'doc/',
   'e2e/',
@@ -687,6 +688,7 @@ export function isValidationOnlyPath(path) {
   const normalized = String(path || '').replaceAll('\\', '/');
   return validationOnlyFiles.has(normalized)
     || normalized.startsWith('scripts/stable-smoke-')
+    || (normalized.startsWith('cds/') && /\.(?:md|mdx)$/i.test(normalized))
     || validationOnlyPrefixes.some((prefix) => normalized.startsWith(prefix));
 }
 

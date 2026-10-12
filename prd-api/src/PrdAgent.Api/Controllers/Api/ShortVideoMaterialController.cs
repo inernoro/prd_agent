@@ -111,6 +111,7 @@ public class ShortVideoMaterialController : ControllerBase
                    && run.UserId == userId
                    && (run.Status == ShortVideoMaterialRunStatus.Queued
                        || run.Status == ShortVideoMaterialRunStatus.Done
+                       || run.Status == ShortVideoMaterialRunStatus.Cancelled
                        || (run.Status == ShortVideoMaterialRunStatus.Failed
                            && run.ProcessingToken == null)),
             CancellationToken.None);
@@ -126,6 +127,47 @@ public class ShortVideoMaterialController : ControllerBase
         return Conflict(ApiResponse<object>.Fail(
             "SHORT_VIDEO_RUN_ACTIVE",
             "短视频仍在处理中，暂时不能删除。请等待处理完成或失败后再重试"));
+    }
+
+    [HttpPost("runs/{runId}/cancel")]
+    public async Task<IActionResult> CancelRun(string runId)
+    {
+        var userId = GetUserId();
+        var queued = await _db.ShortVideoMaterialRuns.UpdateOneAsync(
+            run => run.Id == runId
+                   && run.UserId == userId
+                   && run.Status == ShortVideoMaterialRunStatus.Queued,
+            Builders<ShortVideoMaterialRun>.Update
+                .Set(run => run.CancelRequested, true)
+                .Set(run => run.Status, ShortVideoMaterialRunStatus.Cancelled)
+                .Set(run => run.ProcessingToken, (string?)null)
+                .Set(run => run.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        if (queued.ModifiedCount == 1)
+            return Ok(ApiResponse<object>.Ok(new { cancelled = true }));
+
+        var running = await _db.ShortVideoMaterialRuns.UpdateOneAsync(
+            run => run.Id == runId
+                   && run.UserId == userId
+                   && run.Status == ShortVideoMaterialRunStatus.Running,
+            Builders<ShortVideoMaterialRun>.Update
+                .Set(run => run.CancelRequested, true)
+                .Set(run => run.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        if (running.MatchedCount == 1)
+            return Accepted(ApiResponse<object>.Ok(new { cancelled = false, cancellationRequested = true }));
+
+        var existing = await _db.ShortVideoMaterialRuns
+            .Find(run => run.Id == runId && run.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (existing == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "运行记录不存在"));
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            cancelled = existing.Status == ShortVideoMaterialRunStatus.Cancelled,
+            cancellationRequested = false,
+            status = existing.Status,
+        }));
     }
 
     private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)

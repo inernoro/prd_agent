@@ -35,8 +35,20 @@ export function redactStableSmokeDiagnosticText(value) {
     redacted,
   );
   const headerPattern = sensitiveHeaderNames.map(escapeRegExp).join('|');
+  // 先处理 JSON、对象转储等带引号的完整 header value。Cookie 经常包含多个
+  // `name=value`，中间以分号和空格分隔，不能只遮掉第一个非空白 token。
   output = output.replace(
-    new RegExp(`(["']?(?:${headerPattern})["']?\\s*[:=]\\s*["']?)(?:Bearer\\s+)?([^"'\\s,}\\]\\r\\n]+)`, 'gi'),
+    new RegExp(`(["']?(?:${headerPattern})["']?\\s*[:=]\\s*)(["'])([^\\r\\n]*?)\\2`, 'gi'),
+    `$1$2${redacted}$2`,
+  );
+  // 再处理 curl/Playwright 日志里的原始 header 行，以及不带引号的对象值。
+  // 行形式允许 Cookie 内部出现逗号；对象形式以 JSON 分隔符为边界。
+  output = output.replace(
+    new RegExp(`(^|\\r?\\n)(\\s*(?:${headerPattern})\\s*:\\s*)(?:Bearer\\s+)?[^\\r\\n]*`, 'gim'),
+    `$1$2${redacted}`,
+  );
+  output = output.replace(
+    new RegExp(`(["']?(?:${headerPattern})["']?\\s*[:=]\\s*)(?!["'])(?:Bearer\\s+)?([^,}\\]\\r\\n]+)`, 'gi'),
     `$1${redacted}`,
   );
   const valuePattern = sensitiveValueNames.map(escapeRegExp).join('|');

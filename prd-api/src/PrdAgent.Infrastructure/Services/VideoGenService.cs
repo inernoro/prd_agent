@@ -51,6 +51,46 @@ public class VideoGenService : IVideoGenService
     private static FilterDefinition<T> CurrentBranchDeploymentFilter<T>(string fieldName)
         => BuildBranchDeploymentFilter<T>(fieldName, DeploymentScope.Current, DeploymentScope.CurrentDurable);
 
+    /// <summary>
+    /// 部署域字段上线前的任务没有 DeploymentSlug。只有用户在某个 CDS 部署中按本人
+    /// 身份读取这些任务时，才把本人、同 app 的历史记录显式归入当前作用域；后台
+    /// Worker 不得自行争抢共享库里的无作用域记录。
+    /// </summary>
+    internal async Task<long> AdoptLegacyUnscopedRunsAsync(
+        string ownerAdminId,
+        string? appKey,
+        string? currentScope,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(currentScope)) return 0;
+
+        var runFb = Builders<VideoGenRun>.Filter;
+        var runFilter = runFb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                        & runFb.Eq(x => x.DeploymentSlug, null);
+        if (appKey != null) runFilter &= runFb.Eq(x => x.AppKey, appKey);
+        var adoptedRuns = await _db.VideoGenRuns.UpdateManyAsync(
+            runFilter,
+            Builders<VideoGenRun>.Update.Set(x => x.DeploymentSlug, currentScope),
+            cancellationToken: ct);
+
+        var exportFb = Builders<VideoExportTask>.Filter;
+        var exportFilter = exportFb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                           & exportFb.Eq(x => x.DeploymentSlug, null);
+        if (appKey != null) exportFilter &= exportFb.Eq(x => x.AppKey, appKey);
+        var adoptedExports = await _db.VideoExportTasks.UpdateManyAsync(
+            exportFilter,
+            Builders<VideoExportTask>.Update.Set(x => x.DeploymentSlug, currentScope),
+            cancellationToken: ct);
+
+        return adoptedRuns.ModifiedCount + adoptedExports.ModifiedCount;
+    }
+
+    private Task<long> AdoptLegacyUnscopedRunsAsync(
+        string ownerAdminId,
+        string? appKey,
+        CancellationToken ct)
+        => AdoptLegacyUnscopedRunsAsync(ownerAdminId, appKey, DeploymentScope.Current, ct);
+
     public async Task<VideoProject> CreateProjectAsync(
         string appKey,
         string ownerAdminId,
@@ -590,6 +630,7 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
+        await AdoptLegacyUnscopedRunsAsync(ownerAdminId, appKey, ct);
         var fb = Builders<VideoExportTask>.Filter;
         var filter = fb.Eq(x => x.ProjectId, projectId)
                      & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
@@ -603,6 +644,7 @@ public class VideoGenService : IVideoGenService
 
     public async Task<VideoGenRun?> GetRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
     {
+        await AdoptLegacyUnscopedRunsAsync(ownerAdminId, appKey, ct);
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Id, runId)
                      & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
@@ -614,6 +656,7 @@ public class VideoGenService : IVideoGenService
 
     public async Task<(long total, List<VideoGenRun> items)> ListRunsAsync(string ownerAdminId, string? appKey = null, int limit = 20, int skip = 0, CancellationToken ct = default)
     {
+        await AdoptLegacyUnscopedRunsAsync(ownerAdminId, appKey, ct);
         limit = Math.Clamp(limit, 1, 50);
         skip = Math.Max(skip, 0);
 
@@ -696,6 +739,7 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
+        await AdoptLegacyUnscopedRunsAsync(ownerAdminId, appKey, ct);
         await using var runDeletionLease = await VideoAssetMutationLease.AcquireAsync(
             _db,
             $"run-delete:{runId}",
@@ -856,6 +900,7 @@ public class VideoGenService : IVideoGenService
 
     public async Task<long> CountTodayRunsAsync(string ownerAdminId, string appKey, CancellationToken ct = default)
     {
+        await AdoptLegacyUnscopedRunsAsync(ownerAdminId, appKey, ct);
         var startOfDay = DateTime.UtcNow.Date;
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.OwnerAdminId, ownerAdminId)
