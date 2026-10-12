@@ -10,6 +10,7 @@ import {
   applyCredentialRegistry,
   buildExecutionRecord,
   buildEnvironmentGrep,
+  buildCommonClosureEvidenceRow,
   buildDryRunSummary,
   buildAffectedNotificationTargets,
   buildStableSmokeArchiveCommand,
@@ -62,6 +63,21 @@ import {
   validateSelectedEnvironmentConfig,
   visualGateExecutionMatchesResult,
 } from '../stable-smoke-run.mjs';
+
+test('COMMON-004 只在清理回读与报告通知门禁全部通过时成立', () => {
+  const base = [
+    { caseId: 'WEB-001', environment: 'cds', status: 'pass', tags: ['@cleanup'], hadFailedAttempt: false },
+    { caseId: 'REG-stsmk-notify-evidence-001', environment: 'cds', status: 'pass', tags: [] },
+    { caseId: 'REG-stsmk-report-view-001', environment: 'cds', status: 'pass', tags: [] },
+    { caseId: 'REG-stsmk-report-risk-001', environment: 'cds', status: 'pass', tags: [] },
+  ];
+  assert.equal(buildCommonClosureEvidenceRow(base).status, 'pass');
+  assert.equal(buildCommonClosureEvidenceRow(base.map((row) => (
+    row.caseId === 'WEB-001' ? { ...row, hadFailedAttempt: true } : row
+  ))).status, 'fail');
+  assert.equal(buildCommonClosureEvidenceRow(base.slice(0, -1)).status, 'fail');
+  assert.equal(buildCommonClosureEvidenceRow(base.filter((row) => row.caseId !== 'WEB-001')).status, 'fail');
+});
 
 function gatewayToken(securityVersion = '7') {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');

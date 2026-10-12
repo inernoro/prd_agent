@@ -970,6 +970,38 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
   };
 }
 
+export function buildCommonClosureEvidenceRow(rows) {
+  const cleanupRows = rows.filter((row) => row.caseId !== 'COMMON-004'
+    && Array.isArray(row.tags) && row.tags.includes('@cleanup'));
+  const requiredRegressions = [
+    'REG-stsmk-notify-evidence-001',
+    'REG-stsmk-report-view-001',
+    'REG-stsmk-report-risk-001',
+  ];
+  const missingRegressions = requiredRegressions.filter((caseId) => !rows.some(
+    (row) => row.caseId === caseId && row.status === 'pass',
+  ));
+  const failedCleanup = cleanupRows.filter((row) => row.status !== 'pass' || row.hadFailedAttempt);
+  const passed = cleanupRows.length > 0 && failedCleanup.length === 0 && missingRegressions.length === 0;
+  const reasons = [
+    cleanupRows.length === 0 ? '没有执行带清理回读的业务旅程' : '',
+    failedCleanup.length > 0 ? `清理旅程未稳定通过：${[...new Set(failedCleanup.map((row) => row.caseId))].join('、')}` : '',
+    missingRegressions.length > 0 ? `报告或通知门禁缺失：${missingRegressions.join('、')}` : '',
+  ].filter(Boolean);
+  return {
+    caseId: 'COMMON-004',
+    environment: 'cds',
+    title: '业务资源清理回读与报告通知证据门禁',
+    tags: ['@cleanup'],
+    status: passed ? 'pass' : 'fail',
+    durationMs: 0,
+    error: passed ? '' : reasons.join('；'),
+    retryCount: 0,
+    hadFailedAttempt: !passed,
+    attemptErrors: passed ? [] : reasons,
+  };
+}
+
 export function runCdsVersionEvidence(runDir, commandRunner = command) {
   const readiness = readJson(resolve(runDir, 'cds-readiness.json'));
   const contract = commandRunner('node', [
@@ -2069,6 +2101,11 @@ async function main() {
           : [];
         cdsRows.push(...supplementalRows);
         cdsRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
+        if (selectedCdsCases.includes('COMMON-004') && !cdsRows.some((row) => row.caseId === 'COMMON-004')) {
+          const commonClosure = buildCommonClosureEvidenceRow(cdsRows);
+          cdsRows.push(commonClosure);
+          supplementalRows.push(commonClosure);
+        }
         productionSafetyGate = evaluateProductionSafetyGate(
           cdsExecution,
           cdsRows,
@@ -2203,6 +2240,11 @@ async function main() {
     });
     environmentRows.push(...supplementalRows);
     environmentRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
+    if (selectedCdsCases.includes('COMMON-004') && !environmentRows.some((row) => row.caseId === 'COMMON-004')) {
+      const commonClosure = buildCommonClosureEvidenceRow(environmentRows.filter((row) => row.environment === 'cds'));
+      environmentRows.push(commonClosure);
+      supplementalRows.push(commonClosure);
+    }
     const requiredCaseIds = selectCoverageCaseIdsByEnvironment(
       plan,
       grep,

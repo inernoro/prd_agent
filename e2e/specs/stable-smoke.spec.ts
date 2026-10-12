@@ -77,7 +77,7 @@ async function retryTransientTransport<T>(label: string, action: () => Promise<T
     return await action();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (!/socket hang up|ECONNRESET|fetch failed|connection reset/i.test(message)) throw error;
+    if (!/socket hang up|ECONNRESET|fetch failed|connection reset|Timeout \d+ms exceeded/i.test(message)) throw error;
     await new Promise((resolveWait) => setTimeout(resolveWait, 750));
     try {
       return await action();
@@ -130,6 +130,13 @@ function requiredEnv(name: string) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`缺少 ${name}，无法执行合成登录冒烟测试。`);
   return value;
+}
+
+function aiAccessHeaders() {
+  return {
+    Authorization: `Bearer ${requiredEnv('STABLE_SMOKE_AI_ACCESS_KEY')}`,
+    'Content-Type': 'application/json',
+  };
 }
 
 function syntheticLoginCode(loginUrl: string) {
@@ -528,6 +535,9 @@ type ImageRunDetail = {
   run: {
     id: string;
     status: string;
+    modelId?: string;
+    logicalModelPublicId?: string;
+    size?: string;
     total: number;
     done: number;
     failed: number;
@@ -1653,13 +1663,17 @@ async function uploadStableHostedSite(page: Page, title: string) {
   const marker = `${title}-正文标记`;
   // 用实体编码的 # 覆盖浏览器会解码、源码扫描器容易漏判的真实锚点形态。
   const html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title></head><body><a id="jump" href="&#35;target">跳到验收锚点</a><div style="height:900px"></div><section id="target">${marker}。本页介绍白桃，颜色为浅粉色。</section></body></html>`;
-  await page.getByRole('button', { name: '上传网页', exact: false }).click();
+  const openUpload = page.getByRole('button', { name: '上传网页', exact: false });
+  await openUpload.waitFor({ state: 'visible', timeout: stableSmokeApiTimeoutMs });
+  await openUpload.click({ timeout: stableSmokeApiTimeoutMs });
   await page.locator('input[type="file"]').first().setInputFiles({
     name: `${title}.html`, mimeType: 'text/html', buffer: Buffer.from(html, 'utf8'),
   });
   const uploaded = page.waitForResponse(response => new URL(response.url()).pathname === '/api/web-pages/upload'
-    && response.request().method() === 'POST');
-  await page.getByRole('button', { name: '开始上传', exact: true }).click();
+    && response.request().method() === 'POST', { timeout: stableSmokeCleanupTimeoutMs });
+  const startUpload = page.getByRole('button', { name: '开始上传', exact: true });
+  await startUpload.waitFor({ state: 'visible', timeout: stableSmokeApiTimeoutMs });
+  await startUpload.click({ timeout: stableSmokeApiTimeoutMs });
   const response = await uploaded;
   const body = await response.json() as ApiEnvelope<StableHostedSite>;
   expect(response.ok(), body.error?.message || '网页上传失败').toBe(true);
@@ -1672,10 +1686,17 @@ async function uploadStableHostedSite(page: Page, title: string) {
 }
 
 async function deleteStableHostedSite(page: Page, token: string, siteId: string) {
-  const response = await page.request.delete(`/api/web-pages/${siteId}`, { headers: authHeaders(token) });
-  expect(response.ok(), '稳定冒烟站点清理失败').toBe(true);
-  expect((await response.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
-  expect((await page.request.get(`/api/web-pages/${siteId}`, { headers: authHeaders(token) })).status()).toBe(404);
+  const response = await retryTransientTransport('清理网页托管站点', () => page.request.delete(
+    `/api/web-pages/${siteId}`,
+    { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+  ));
+  if (response.status() !== 404) {
+    expect(response.ok(), '稳定冒烟站点清理失败').toBe(true);
+    expect((await response.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+  }
+  expect((await page.request.get(`/api/web-pages/${siteId}`, {
+    headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+  })).status()).toBe(404);
 }
 
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
@@ -1856,8 +1877,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007][REG-web-sandbox-001] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
-    test.setTimeout(120_000);
+  test('[WEB-001][WEB-002][WEB-003][WEB-006][WEB-007][REG-web-sandbox-001][REG-web-cleanup-timeout-001] 创建空文件夹并高亮拖入站点后刷新保持归属', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(300_000);
     const token = await openWebHostingFromHome(page, request);
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-folder-r${testInfo.retry}`;
     let siteId = '';
@@ -2070,10 +2091,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await page.request.delete(`/api/web-folders/${recreatedFolderId}`, { headers: authHeaders(token) });
       }
       if (folderId) {
-        const deleted = await page.request.delete(`/api/web-folders/${folderId}`, { headers: authHeaders(token) });
-        expect(deleted.ok(), '稳定冒烟文件夹清理失败').toBe(true);
+        const deleted = await retryTransientTransport('清理网页托管文件夹', () => page.request.delete(
+          `/api/web-folders/${folderId}`,
+          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+        ));
+        expect(deleted.ok() || deleted.status() === 404, '稳定冒烟文件夹清理失败').toBe(true);
         const folders = await readEnvelope<{ items: StableWebFolder[] }>(
-          await page.request.get('/api/web-folders', { headers: authHeaders(token) }),
+          await page.request.get('/api/web-folders', { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs }),
         );
         expect(folders.items.some((folder) => folder.id === folderId)).toBe(false);
       }
@@ -3317,6 +3341,83 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           headers: authHeaders(token),
         });
         expect(missing.status()).toBe(404);
+      }
+    }
+  });
+
+  test('[LIT-003][LIT-004] 文学续写停止后内容稳定且改写只替换选中段落', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.setTimeout(180_000);
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学续改-r${test.info().retry}`;
+    const prefix = '# 续写与改写验收\n\n开篇边界保持不变。\n\n';
+    const selected = '这段文字将被展开。';
+    const suffix = '\n\n收尾边界保持不变。';
+    const original = `${prefix}${selected}${suffix}`;
+    const continuation = '续写段落只允许出现在原文末尾。';
+    let workspaceId = '';
+    try {
+      const created = await readEnvelope<{ workspaceId: string }>(await page.request.post(
+        '/api/open/literary/workspaces',
+        {
+          headers: aiAccessHeaders(),
+          data: {
+            title,
+            content: original,
+            clientRequestId: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-literary-rewrite-r${test.info().retry}`,
+          },
+          timeout: stableSmokeApiTimeoutMs,
+        },
+      ));
+      workspaceId = created.workspaceId;
+
+      const before = await readEnvelope<{ content: string; updatedAt: string }>(await page.request.get(
+        `/api/open/literary/workspaces/${workspaceId}`,
+        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+      ));
+      expect(before.content).toBe(original);
+
+      await readEnvelope(await page.request.post(`/api/open/literary/workspaces/${workspaceId}/content`, {
+        headers: aiAccessHeaders(),
+        data: { mode: 'append', content: continuation, expectedUpdatedAt: before.updatedAt },
+        timeout: stableSmokeApiTimeoutMs,
+      }));
+      const continued = await readEnvelope<{ content: string; updatedAt: string }>(await page.request.get(
+        `/api/open/literary/workspaces/${workspaceId}`,
+        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+      ));
+      expect(continued.content).toBe(`${original}\n\n${continuation}`);
+      await page.waitForTimeout(1_000);
+      const stopped = await readEnvelope<{ content: string; updatedAt: string }>(await page.request.get(
+        `/api/open/literary/workspaces/${workspaceId}`,
+        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+      ));
+      expect(stopped.content, '续写请求完成后正文不得继续自行增长').toBe(continued.content);
+
+      const expanded = '这段文字已展开为两句，并保留原来的叙事位置。第二句用于证明改写范围没有越界。';
+      const rewritten = `${prefix}${expanded}${suffix}\n\n${continuation}`;
+      await readEnvelope(await page.request.post(`/api/open/literary/workspaces/${workspaceId}/content`, {
+        headers: aiAccessHeaders(),
+        data: { mode: 'replace', content: rewritten, expectedUpdatedAt: stopped.updatedAt },
+        timeout: stableSmokeApiTimeoutMs,
+      }));
+      const after = await readEnvelope<{ content: string }>(await page.request.get(
+        `/api/open/literary/workspaces/${workspaceId}`,
+        { headers: aiAccessHeaders(), timeout: stableSmokeApiTimeoutMs },
+      ));
+      expect(after.content.startsWith(prefix), '改写不得改变选中段落之前的正文').toBe(true);
+      expect(after.content.endsWith(`${suffix}\n\n${continuation}`), '改写不得改变选中段落之后的正文').toBe(true);
+      expect(after.content).toContain(expanded);
+      expect(after.content).not.toContain(selected);
+    } finally {
+      if (workspaceId) {
+        const deleted = await retryTransientTransport('清理文学续改工作区', () => page.request.delete(
+          `/api/literary-agent/workspaces/${workspaceId}`,
+          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+        ));
+        expect(deleted.ok() || deleted.status() === 404, '文学续改工作区清理失败').toBe(true);
+        expect((await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        })).status()).toBe(404);
       }
     }
   });
@@ -6657,7 +6758,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001][REG-visual-model-contract-001][REG-visual-viewport-001][REG-visual-progress-002] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-006][VIS-007][VIS-010][REG-visual-policy-001][REG-visual-model-contract-001][REG-visual-viewport-001][REG-visual-progress-002] 业务默认模型真实产物、重试保留旧结果、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     // 生产生图 HTTP 契约允许最长 600 秒。测试总时限额外保留页面验证、审计查询与清理余量，
     // 避免上游仍在合法执行时先由 Playwright 误杀，再把取消/删除冲突误报成模型故障。
     test.setTimeout(720_000);
@@ -6668,6 +6769,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const wideTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-wide-boundary-target`;
     let runId = '';
     let boundaryRunId = '';
+    let retryRunId = '';
     let generatedArtifacts: UploadArtifactItem[] = [];
     try {
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
@@ -6810,11 +6912,46 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       expect(completed.statuses.length, '轮询必须至少读取到一次有效任务状态').toBeGreaterThanOrEqual(1);
       await assertImageArtifact(page, completed.detail);
-      const artifactResult = await readEnvelope<{ items: UploadArtifactItem[] }>(await page.request.get(
-        `/api/visual-agent/upload-artifacts?requestId=${encodeURIComponent(`${runId}-0-0`)}`,
-        { headers: authHeaders(token) },
+      const originalImageUrl = completed.detail.items[0]?.url;
+      expect(originalImageUrl, '首个真实任务必须留下可回读的旧结果').toBeTruthy();
+      const retryCreate = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
+        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-retry-run` },
+        data: {
+          prompt: generationPrompt,
+          userMessageContent: '生成一枚纯白背景上的蓝色陶瓷杯',
+          targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-retry-target`,
+          platformId: 'logical-model',
+          modelId: pool!.code,
+          size: '1024x1024',
+          responseFormat: 'url',
+          expectedImageRefCount: 0,
+          x: 0,
+          y: 1100,
+          w: 1001,
+          h: 1001,
+        },
+      });
+      retryRunId = (await readEnvelope<{ runId: string }>(retryCreate)).runId;
+      expect(retryRunId, '重试必须创建新的任务身份').not.toBe(runId);
+      const retried = await waitForImageRun(page, token, retryRunId, 600_000);
+      await assertImageArtifact(page, retried.detail);
+      expect(retried.detail.items[0]?.prompt, '重试任务必须保留原始描述').toBe(generationPrompt);
+      expect(retried.detail.run.logicalModelPublicId || retried.detail.run.modelId, '重试任务必须保留原始模型选择').toBe(pool!.code);
+      expect(retried.detail.run.size, '重试任务必须保留原始尺寸').toBe('1024x1024');
+      const oldAfterRetry = await readEnvelope<ImageRunDetail>(await page.request.get(
+        `/api/visual-agent/image-gen/runs/${runId}?includeItems=true&includeImages=true`,
+        { headers: authHeaders(token), timeout: stableSmokeApiTimeoutMs },
       ));
-      generatedArtifacts = artifactResult.items.filter((item) => item.kind === 'output_image');
+      expect(oldAfterRetry.run.status).toBe('Completed');
+      expect(oldAfterRetry.items[0]?.url, '新任务完成后旧结果不得丢失或被覆盖').toBe(originalImageUrl);
+
+      const artifactResults = await Promise.all([runId, retryRunId].map(async (candidateRunId) => readEnvelope<{ items: UploadArtifactItem[] }>(
+        await page.request.get(
+          `/api/visual-agent/upload-artifacts?requestId=${encodeURIComponent(`${candidateRunId}-0-0`)}`,
+          { headers: authHeaders(token) },
+        ),
+      )));
+      generatedArtifacts = artifactResults.flatMap((result) => result.items).filter((item) => item.kind === 'output_image');
       expect(generatedArtifacts.length, '真实生图必须登记可清理的输出产物').toBeGreaterThan(0);
       const gatewayLog = await waitForGatewayLog(request, `${runId}-0-0`);
       expect(gatewayLog.logicalModelPublicId, '真实生图日志必须记录逻辑模型').toBe(pool!.code);
@@ -6948,7 +7085,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.waitForTimeout(500);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
-      for (const candidateRunId of [runId, boundaryRunId].filter(Boolean)) {
+      for (const candidateRunId of [runId, boundaryRunId, retryRunId].filter(Boolean)) {
         const current = await page.request.get(`/api/visual-agent/image-gen/runs/${candidateRunId}`, {
           headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
         });
@@ -6970,7 +7107,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, {
         headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
       })).status()).toBe(404);
-      for (const candidateRunId of [runId, boundaryRunId].filter(Boolean)) {
+      for (const candidateRunId of [runId, boundaryRunId, retryRunId].filter(Boolean)) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${candidateRunId}`, {
           headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
         })).status()).toBe(404);
