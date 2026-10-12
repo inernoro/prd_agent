@@ -8,7 +8,7 @@
 
 ## 当前检查点（2026-10-12）
 
-当前产品 CDS:973fb7d039ec78878d92d22326672ae6bd089e1f;IMP:d53ffc36d2649c38a9431ad6dd897259fbf1aa32。八个既有授权分支已快进推送且远端 SHA 精确确认，最新 Branch Image CI 八个全部 success，十应用镜像、RPC辅助及初始化镜像的 CI 构建发布步骤成功；真实 registry manifest/pull/run 尚未核验。原 CI 两轮失败保留：宿主自带 mysql 导致缺客户端夹具失真，97c 测试隔离修复；Ubuntu 未安装 rg 导致 Bash 守卫退出127，d53 保持全部断言改用 grep。两项各有独立固定复验，生产源码未因此改变。当前 CDS CLI 分支列表八个目标均无记录，未部署/无黄闪电/视觉 N/A。主 CDS973 全量692文件10328通过、19跳过，web类型检查及构建 exit0；跨仓 bf1/973 独立局部复验通过，不继承正式性能结论。45 partial-local/4 todo，49正式全部 not-executed。主/末尾分工与双工作树保持；新CDS分支发布授权及合格隔离宿主仍待落实，既有八分支推送与共享自更新授权持续有效。实际 1/2/8 完整图、排队、30分钟、公网、恢复、双主题视觉、48小时及一周观察未执行。当前证据 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/production-host-v196/current-delivery-checkpoint.json。
+2026-10-12用户授权已用于推送CDS修复分支，远端精确SHA 8624e494f50aa5e8bd03b2479c3dd2eb5a300a9e；CDS Prebuilt #38221371485与Branch Image #38221371444 success。CDS代码与已全量验证的973产品相同；实际OCI拉取/解出manifest SHA及后端/HTML/入口JS CSS hash已核验，临时容器已回收，但在mycds.local离线完成，绝非canonical上线证据。独立冻结canonical master-vmi3221419/94GB/18核/PID1799360，当前旧e4源码；hostload35.47/freePercent9，暂无已准入隔离宿主。IMP当前五运行分支65应用express记录，68running/4原有error；app06运行镜像与git SHA漂移，mixed含附加bootstrap，保留真实分母。八IMP候选CI成功但当前CDS无部署记录。本地GitHubCLI现有scopes缺read:packages，mycds.local私有IMP镜像读取unauthorized；canonical镜像鉴权未核验，不能断言其鉴权失败；浏览器控制台无登录态。维护现有改善，未重部署/停任何IMP服务、未自更新canonical。45partial-local/4todo、正式49未执行、视觉N/A。下一步落实隔离宿主与实际registry读取，再固定e4精确回滚点（当前远端旧分支已推进36f，不能拿分支名当e4回滚点）、灰度及独立逐条比较。证据 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/resume-publication-v1/pre-rollout-consolidated-receipt.json。
 
 ## 冻结门槛
 
