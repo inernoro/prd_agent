@@ -14,6 +14,7 @@ import { useOfflineExport } from '../useOfflineExport';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
+  REQUIRED_WEB_PAGE_RUNTIME,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
   revisionChangeSummary,
   revisionLabel,
@@ -82,8 +83,8 @@ export default function SiteEditStage({
     instruction, setInstruction, phase, elapsedSeconds, resolvedModel, thinking,
     previewHtml, previewUrl, previewedRevision, previewFromEvent, revisions, loadingHistory,
     generating, mutatingId, mutatingAction, recentKnowledge, selectedKnowledge, setSelectedKnowledge,
-    loadingKnowledge, selectedRuntime, setSelectedRuntime, screenshots, runInfo, activeRunId,
-    stopRequested, recoveryNotice, runtimeRecoveryGate, enabledRuntimes, runtimesLoaded, activeRuntime, runtimeFallback,
+    loadingKnowledge, screenshots, runInfo, activeRunId,
+    stopRequested, recoveryNotice, runtimeRecoveryGate, runtimesLoaded, activeRuntime, requestRuntime,
     screenshotsSupported, addScreenshots, generationStageIndex, openRevision, generate, stopGeneration,
     publish, rollback, reject, retryRecovery, progress,
   } = session;
@@ -182,7 +183,7 @@ export default function SiteEditStage({
       icon: ImagePlus,
       onPick: () => screenshotInputRef.current?.click(),
       disabledReason: !screenshotsSupported
-        ? '截图需要「精细」方式；在输入框下面切到精细后可用'
+        ? '设计服务就绪后可以附上截图'
         : screenshots.items.length >= MAX_EDIT_SCREENSHOTS
           ? `最多 ${MAX_EDIT_SCREENSHOTS} 张，先移除一张`
           : undefined,
@@ -200,7 +201,7 @@ export default function SiteEditStage({
       key: item.key,
       label: item.fileName,
       status: !screenshotsSupported
-        ? '快速方式不带截图'
+        ? '设计服务尚未就绪'
         : item.status === 'uploading'
           ? `上传 ${item.progress}%`
           : item.status === 'ready' ? '截图' : item.status === 'failed' ? item.error || '失败' : '保存中',
@@ -209,8 +210,7 @@ export default function SiteEditStage({
     })),
   ];
 
-  const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
-  const runtimeCopy = requestRuntime ? RUNTIME_CARD_REGISTRY[requestRuntime.id] : undefined;
+  const runtimeCopy = RUNTIME_CARD_REGISTRY[REQUIRED_WEB_PAGE_RUNTIME];
   const sendBlocker = !requestRuntime
     ? missingRuntimeBlocker(runtimesLoaded)
     : screenshots.busy ? '截图还在上传，传完就能生成' : '';
@@ -338,9 +338,6 @@ export default function SiteEditStage({
           </button>
         </AssistantBubble>
       )}
-      {runtimeFallback && !generating && (
-        <p className="rounded-lg px-2.5 py-2 text-[11px]" style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>{runtimeFallback}</p>
-      )}
       <div ref={conversationEndRef} />
     </>
   );
@@ -362,19 +359,6 @@ export default function SiteEditStage({
           event.preventDefault();
           addScreenshots(files);
         }}
-        options={enabledRuntimes.length > 1 ? (
-          <Segmented
-            label="修改方式"
-            value={requestRuntime?.id ?? ''}
-            disabled={generating}
-            onChange={setSelectedRuntime}
-            options={enabledRuntimes.map((item) => ({
-              value: item.id,
-              label: runtimeCardTitle(item).replace('生成', '').replace('设计', ''),
-              title: RUNTIME_CARD_REGISTRY[item.id]?.description ?? item.label,
-            }))}
-          />
-        ) : undefined}
         sendLabel={generating ? '正在修改…' : '生成修改草稿 · 线上不变'}
         sendDisabled={generating || !instruction.trim() || Boolean(sendBlocker)}
         sendDisabledReason={generating ? undefined : sendBlocker || '先写一句想改哪里'}

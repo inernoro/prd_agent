@@ -26,15 +26,15 @@ import {
   activeSiteEditRunStorageKey,
   appendRunNarration,
   canPublishRevision,
-  chooseDesignRuntime,
   designPreviewEventDocument,
   isLatestPreviewRequest,
   isNewerPreviewRevision,
   displayedDesignRuntime,
   elapsedSecondsSince,
   previewableAiStreamHtml,
+  REQUIRED_WEB_PAGE_RUNTIME,
+  requiredWebPageRuntime,
   revisionLabel,
-  runtimeFallbackNotice,
 } from '../siteEditPreview';
 import { GATEWAY_PLATFORM_FALLBACK, resolveRunModelBadge } from '../siteGenerateProgress';
 import {
@@ -144,7 +144,7 @@ function generationRecoveryDetail(detail: string) {
   const safetyFailure = /脚本|外链|表单|嵌入|导航|离线安全|安全校验/u.test(detail);
   const nextStep = safetyFailure
     ? '请移除包外资源、外部网络地址或嵌套页面，只保留工作区内可核对的网页文件后再试。'
-    : '你可以缩小修改范围、换一种说法或切换执行器后再试。';
+    : '你可以缩小修改范围、换一种说法，或等设计服务恢复后再试。';
   return `${detail}。线上版本没有变化，修改要求已保留。${nextStep}`;
 }
 
@@ -195,8 +195,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
   const [runtimesLoaded, setRuntimesLoaded] = useState(false);
-  const [selectedRuntime, setSelectedRuntime] = useState('open-design');
-  const [defaultRuntime, setDefaultRuntime] = useState<string | null>(null);
   // 「附上截图」：用户圈出问题的图片，随修改任务一起交给执行器（最多 3 张）。
   const screenshots = useDesignAttachmentUploads('image', MAX_EDIT_SCREENSHOTS);
   // 预览来自服务端 preview 事件（执行器写出的整页，允许脚本）还是来自直连流的 delta（严格清洗、不许脚本）。
@@ -232,10 +230,10 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
   }, [generating, runStartedAtMs]);
-  const enabledRuntimes = capabilities.filter((item) => item.enabled);
+  const requestRuntime = requiredWebPageRuntime(capabilities, 'edit');
   const activeRuntime = displayedDesignRuntime(
     capabilities,
-    selectedRuntime,
+    requestRuntime?.id ?? REQUIRED_WEB_PAGE_RUNTIME,
     generating ? activeRunRuntime : null,
   );
   const unavailableRuntimes = capabilities.filter((item) => !item.enabled);
@@ -245,10 +243,8 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       ? '经过清单与哈希校验的网页包，包内脚本、样式与图片可以运行'
       : '声明式 HTML 与内联 CSS，不执行脚本'}。`
     : '当前没有可用执行器，请根据下方原因完成配置。';
-  const runtimeFallback = runtimeFallbackNotice(capabilities, defaultRuntime, selectedRuntime);
-  // 截图参考只有精细设计（OpenDesign）能用：快速修改带截图后端会 400，所以这里直接置灰并说清原因。
-  const selectedEditRuntimeId = (enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0])?.id;
-  const screenshotsSupported = screenshotRuntimeSupported(selectedEditRuntimeId);
+  // 新修改任务固定走 OpenDesign；服务未就绪时截图仍可保留，但不允许发起任务。
+  const screenshotsSupported = screenshotRuntimeSupported(requestRuntime?.id);
   const addScreenshots = (files: File[]) => {
     const rejected = screenshots.addFiles(files);
     if (rejected.length > 0) toast.error('有截图没有加入', rejected.join('；'));
@@ -291,13 +287,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       if (runtimes.success) {
         const supported = runtimes.data.runtimes.filter((item) => item.operations.includes('edit'));
         setCapabilities(supported);
-        // 默认值由「网页生成设置」决定（服务端写进 defaultRuntime）；不可用时回落并在界面上写明原因。
-        setDefaultRuntime(runtimes.data.defaultRuntime);
-        const runtimeId = chooseDesignRuntime(
-          supported,
-          runtimes.data.defaultRuntime,
-        );
-        if (runtimeId) setSelectedRuntime(runtimeId);
       }
       setRuntimesLoaded(true);
     });
@@ -530,14 +519,13 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       toast.info('截图还在上传', '等缩略图显示「可以用」后再生成');
       return;
     }
-    const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
     if (!requestRuntime) {
       setRecoveryNotice({
-        title: '没有可用的设计执行器',
-        detail: '执行器当前未就绪，线上版本没有变化。请稍后刷新页面再试。',
+        title: '设计服务暂不可用',
+        detail: '设计服务当前未就绪，线上版本没有变化。请稍后刷新页面再试。',
         action: 'generate',
       });
-      toast.error('没有可用的设计执行器', '请检查执行器部署状态后重试');
+      toast.error('设计服务暂不可用', '请检查设计服务部署状态后重试');
       return;
     }
     // 校验排在拿忙碌标记之前（Codex P2）：原先它在 busyRef.current = true 之后才 return，
@@ -587,9 +575,8 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       entryId: entry.entryId,
       storeId: entry.storeId,
     }));
-    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, requestRuntime.id, {
-      // 只有精细设计收截图；换成快速修改时已加的截图保留在面板上，但不随这次请求提交。
-      screenshotAttachmentIds: screenshotRuntimeSupported(requestRuntime.id) ? screenshots.readyIds : [],
+    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, {
+      screenshotAttachmentIds: screenshots.readyIds,
     });
     // 创建期间工作台被关掉或重开：这个实例已经不是用户眼前那一个，交出去，别再往下走。
     if (abort.signal.aborted) {
@@ -931,9 +918,6 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     setSelectedKnowledge,
     loadingKnowledge,
     capabilities,
-    selectedRuntime,
-    setSelectedRuntime,
-    defaultRuntime,
     screenshots,
     previewFromEvent,
     runInfo,
@@ -943,12 +927,11 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
     setRecoveryNotice,
     runtimeRecoveryGate,
     setRuntimeRecoveryGate,
-    enabledRuntimes,
+    requestRuntime,
     runtimesLoaded,
     activeRuntime,
     unavailableRuntimes,
     activeRuntimeFact,
-    runtimeFallback,
     screenshotsSupported,
     addScreenshots,
     generationStageIndex,

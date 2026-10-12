@@ -32,8 +32,7 @@ describe('mobile web hosting layout', () => {
     expect(cardSource).toContain('className="absolute bottom-[-5px] left-[-5px] z-20 inline-flex h-11 w-11');
     expect(cardActionsSource).toContain('max-sm:h-11 max-sm:min-h-11');
     expect(cardActionsSource).toContain('max-sm:w-11 max-sm:min-w-11');
-    expect(editPanelSource).toContain('aria-label="页面修改执行器"');
-    expect(editPanelSource).toContain('className="mt-3 min-h-11 w-full');
+    expect(editPanelSource).not.toContain('aria-label="页面修改执行器"');
     expect(pageSource).toContain('className="min-h-11 w-full pl-9');
     expect(pageSource).toContain('className="h-11 px-3 rounded-[12px]');
     expect(appShellSource).toContain("gridTemplateColumns: '44px minmax(0, 1fr) 92px'");

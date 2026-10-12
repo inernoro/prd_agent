@@ -67,12 +67,6 @@ public sealed class HostedSiteEditsController : ControllerBase
         _privateSources = privateSources;
     }
 
-    /// <summary>默认执行器读网页生成设置（内置默认 open-design）；未注入设置服务的构造（单测）保留旧默认直连。</summary>
-    private async Task<string> ResolveDefaultRuntimeAsync()
-        => _generationSettings == null
-            ? HostedSiteEditRuntimes.MapGateway
-            : (await _generationSettings.GetAsync(CancellationToken.None)).DefaultRuntime;
-
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
     {
@@ -82,7 +76,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             .ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
-            defaultRuntime = await ResolveDefaultRuntimeAsync(),
+            defaultRuntime = WebPageDesignRuntimePolicy.RequiredRuntime,
             runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
@@ -113,10 +107,16 @@ public sealed class HostedSiteEditsController : ControllerBase
         var knowledgeReferences = request.KnowledgeReferences ?? new List<HostedSiteKnowledgeReference>();
         if (knowledgeReferences.Count > 3)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "首版一次最多引用 3 篇知识"));
-        var runtime = string.IsNullOrWhiteSpace(request.Runtime)
-            ? await ResolveDefaultRuntimeAsync()
-            : request.Runtime.Trim().ToLowerInvariant();
-        var runsInWorkspace = runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex;
+        var runtimeDecision = WebPageDesignRuntimePolicy.ResolveForNewRun(request.Runtime);
+        var runtime = runtimeDecision.Runtime;
+        if (runtimeDecision.ClientOverrideIgnored)
+        {
+            _logger.LogWarning(
+                "网页修改任务忽略了旧客户端提交的执行器选择，统一使用 OpenDesign。userId={UserId} siteId={SiteId} operation={Operation}",
+                userId,
+                siteId,
+                DesignArtifactOperations.Edit);
+        }
         List<DesignUploadedSource> uploadedSources;
         List<DesignReferenceImage> referenceImages;
         DesignArtifactDesignDirection? designDirection = null;
@@ -137,30 +137,22 @@ public sealed class HostedSiteEditsController : ControllerBase
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
         }
-        // 直连执行器是一次纯文本调用，截图递不进去；静默丢掉会让用户以为模型看过了图。
-        if (referenceImages.Count > 0 && !runsInWorkspace)
-            return BadRequest(ApiResponse<object>.Fail(
-                ErrorCodes.INVALID_FORMAT,
-                "截图参考需要用精细设计（OpenDesign）执行器，快速修改只接受文字描述"));
         var capability = await _providers.FindAsync(userId, runtime, CancellationToken.None);
         if (capability == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的页面修改运行时"));
+            return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "设计服务未配置，请联系管理员检查部署状态"));
         if (!capability.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
             || !capability.Operations.Contains(DesignArtifactOperations.Edit, StringComparer.Ordinal))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选执行器不支持修改网页"));
+            return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "设计服务暂不支持修改网页"));
         if (!capability.Enabled)
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
-                capability.Reason ?? "所选页面修改执行器尚未部署并通过健康检查"));
+                capability.Reason ?? "设计服务尚未部署并通过健康检查，请稍后重试"));
 
         HostedSiteEditableEntry editable;
         try
         {
             editable = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
-            // 单 HTML、无脚本只是直连执行器的限制：它把整页当一段文本改写，只能按声明式规则加固。
-            // OpenDesign 拿到的是整站文件，产物按「整包校验」放行包内脚本与资源（CDS 与 MAP 两道闸都认包清单），
-            // 所以带脚本、多文件的网页走它可以改。
-            if (!runsInWorkspace) ValidateEditInputCompatibility(editable);
+            // 新修改任务固定走 OpenDesign 整站工作区，不再套用直连执行器的单 HTML、无脚本限制。
         }
         catch (KeyNotFoundException)
         {
@@ -179,13 +171,9 @@ public sealed class HostedSiteEditsController : ControllerBase
                     reference.EntryId ?? string.Empty,
                     reference.StoreId ?? string.Empty,
                     reference.ContentHash)).ToList();
-            if (runtime == DesignArtifactRuntimes.OpenDesign)
-            {
-                var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
-                snapshots = workspace.KnowledgeReferences;
-                originals = workspace.Originals;
-            }
-            else snapshots = await _knowledgeSnapshots.ResolveForRunAsync(userId, identities, CancellationToken.None);
+            var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
+            snapshots = workspace.KnowledgeReferences;
+            originals = workspace.Originals;
         }
         catch (DesignKnowledgeSnapshotException ex)
         {

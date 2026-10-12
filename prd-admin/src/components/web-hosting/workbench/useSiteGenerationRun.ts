@@ -35,7 +35,7 @@ import {
  */
 
 const ACTIVE_GENERATION_RUN_KEY = 'web-hosting-design-active-run-v1';
-/** map-gateway 没有 preview 事件，用累计 delta 做预览时的刷新间隔。 */
+/** 兼容恢复历史 map-gateway 任务：它没有 preview 事件，用累计 delta 做预览刷新。 */
 const DELTA_PREVIEW_THROTTLE_MS = 500;
 
 /**
@@ -90,7 +90,6 @@ export interface GenerationNotice {
 export interface GenerationRequest {
   instruction: string;
   title?: string;
-  runtimeId: string;
   sourceSurface: 'knowledge-base' | 'web-hosting';
   knowledge: KnowledgeEntrySelection[];
   styleId: string | null;
@@ -357,7 +356,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     setElapsedSeconds(0);
     setRunStartedAtMs(Date.now());
     setLastEventAtMs(null);
-    setActiveRunRuntime(request.runtimeId);
+    setActiveRunRuntime(null);
     setRunInfo(null);
     setCompletedSite(null);
     setThinking('');
@@ -378,7 +377,6 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     const created = await createDesignArtifactRun({
       instruction: text,
       title: request.title?.trim() || undefined,
-      runtime: request.runtimeId,
       sourceSurface: request.sourceSurface,
       // 目标空间跟着请求走，不再等完成回调——用户中途离开时那条回调根本不会执行。
       destinationTeamId: destinationTeamIdRef.current ?? null,

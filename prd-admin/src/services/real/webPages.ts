@@ -1630,7 +1630,6 @@ export async function resolveDesignKnowledgeReferences(
 export async function createDesignArtifactRun(input: {
   instruction: string;
   title?: string;
-  runtime?: string;
   sourceSurface: 'web-hosting' | 'knowledge-base';
   /**
    * 目标团队空间，在发起这一刻冻结、由服务端建站时应用。
@@ -1650,7 +1649,7 @@ export async function createDesignArtifactRun(input: {
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
-  const { styleId, designSystemId, attachmentIds, runtime, ...rest } = input;
+  const { styleId, designSystemId, attachmentIds, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
@@ -1662,8 +1661,6 @@ export async function createDesignArtifactRun(input: {
         storeId,
         contentHash,
       })),
-      // 不传执行器时交给服务端按「网页生成设置」的默认值决定，前端不再写死一个默认。
-      ...(runtime ? { runtime } : {}),
       ...(designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
@@ -1713,7 +1710,6 @@ export async function createHostedSiteEditRun(
   siteId: string,
   instruction: string,
   knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
-  runtime = 'map-gateway',
   extras: HostedSiteEditRunExtras = {},
 ): Promise<ApiResponse<Pick<DesignArtifactRunSummary, 'runId' | 'status' | 'runtime'>
   & Partial<Pick<DesignArtifactRunSummary, 'styleName' | 'promptFingerprint' | 'reviewMode'>>>> {
@@ -1725,7 +1721,6 @@ export async function createHostedSiteEditRun(
     method: 'POST',
     body: {
       instruction,
-      runtime,
       knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
         entryId,
         storeId,

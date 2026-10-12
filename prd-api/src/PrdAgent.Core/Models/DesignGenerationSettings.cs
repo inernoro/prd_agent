@@ -2,7 +2,7 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 网页生成设置（单例文档：Id 固定为 global）。
-/// 默认执行器、自查强度、风格预设与三段可编辑提示词都存在这里，管理员改完下一次运行即生效；
+/// 自查强度、风格预设与三段可编辑提示词都存在这里，管理员改完下一次运行即生效；
 /// 每次运行创建时把当时的取值冻结进 <see cref="DesignArtifactDesignDirection"/>，之后再改设置不影响在途运行。
 /// 字段为 null 表示「沿用内置默认」，内置默认值由 API 层的 DesignGenerationDefaults 统一给出。
 /// </summary>
@@ -13,7 +13,7 @@ public class DesignGenerationSettings
 
     public string Id { get; set; } = SingletonId;
 
-    /// <summary>默认执行器（map-gateway / open-design）；null 表示内置默认 open-design。</summary>
+    /// <summary>旧版默认执行器覆盖。新网页任务已固定使用 OpenDesign；字段仅用于兼容读取旧文档。</summary>
     public string? DefaultRuntime { get; set; }
 
     /// <summary>自查强度（off / light / strict）；null 表示内置默认 light。</summary>

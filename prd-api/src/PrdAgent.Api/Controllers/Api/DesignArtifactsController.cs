@@ -98,14 +98,6 @@ public sealed class DesignArtifactsController : ControllerBase
         _generationSettings = generationSettings;
     }
 
-    /// <summary>
-    /// 默认执行器读网页生成设置（内置默认 open-design）。未注入设置服务的构造（单测）保留旧默认直连。
-    /// </summary>
-    private async Task<string> ResolveDefaultRuntimeAsync()
-        => _generationSettings == null
-            ? DesignArtifactRuntimes.MapGateway
-            : (await _generationSettings.GetAsync(CancellationToken.None)).DefaultRuntime;
-
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
     {
@@ -114,7 +106,7 @@ public sealed class DesignArtifactsController : ControllerBase
             .ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
-            defaultRuntime = await ResolveDefaultRuntimeAsync(),
+            defaultRuntime = WebPageDesignRuntimePolicy.RequiredRuntime,
             runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
@@ -205,19 +197,25 @@ public sealed class DesignArtifactsController : ControllerBase
                 ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法把生成的网页放进这个空间"));
         }
 
-        var runtime = string.IsNullOrWhiteSpace(request.Runtime)
-            ? await ResolveDefaultRuntimeAsync()
-            : request.Runtime.Trim().ToLowerInvariant();
+        var runtimeDecision = WebPageDesignRuntimePolicy.ResolveForNewRun(request.Runtime);
+        var runtime = runtimeDecision.Runtime;
+        if (runtimeDecision.ClientOverrideIgnored)
+        {
+            _logger?.LogWarning(
+                "网页生成任务忽略了旧客户端提交的执行器选择，统一使用 OpenDesign。userId={UserId} operation={Operation}",
+                userId,
+                DesignArtifactOperations.Generate);
+        }
         var capability = await _providers.FindAsync(userId, runtime, CancellationToken.None);
         if (capability == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的设计执行器"));
+            return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "设计服务未配置，请联系管理员检查部署状态"));
         if (!capability.ArtifactTypes.Contains(DesignArtifactTypes.WebPage, StringComparer.Ordinal)
             || !capability.Operations.Contains(DesignArtifactOperations.Generate, StringComparer.Ordinal))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选执行器不支持生成网页"));
+            return Conflict(ApiResponse<object>.Fail("RUNTIME_NOT_READY", "设计服务暂不支持生成网页"));
         if (!capability.Enabled)
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
-                capability.Reason ?? "所选执行器尚未部署并通过健康检查，请先使用可用执行器"));
+                capability.Reason ?? "设计服务尚未部署并通过健康检查，请稍后重试"));
 
         var references = request.KnowledgeReferences ?? new List<DesignKnowledgeReferenceRequest>();
         List<DesignUploadedSource> uploadedSources;
@@ -255,13 +253,12 @@ public sealed class DesignArtifactsController : ControllerBase
                     reference.StoreId ?? string.Empty,
                     reference.ContentHash)).ToList();
             if (identities.Count == 0) snapshots = Array.Empty<DesignKnowledgeSnapshot>();
-            else if (runtime == DesignArtifactRuntimes.OpenDesign)
+            else
             {
                 var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
                 snapshots = workspace.KnowledgeReferences;
                 originals = workspace.Originals;
             }
-            else snapshots = await _knowledgeSnapshots.ResolveForRunAsync(userId, identities, CancellationToken.None);
         }
         catch (DesignKnowledgeSnapshotException ex)
         {

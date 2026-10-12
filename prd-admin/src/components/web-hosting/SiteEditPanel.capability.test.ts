@@ -17,9 +17,10 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain("item.reason || '未启用'");
   });
 
-  it('只有已启用执行器可以进入选择框', () => {
-    expect(source).toContain('const enabledRuntimes = capabilities.filter((item) => item.enabled)');
-    expect(source).toContain('{enabledRuntimes.map((item) => (');
+  it('新修改任务只认 OpenDesign，不向用户暴露执行器选择', () => {
+    expect(source).toContain("requiredWebPageRuntime(capabilities, 'edit')");
+    expect(source).not.toContain('aria-label="页面修改执行器"');
+    expect(source).not.toContain('setSelectedRuntime');
   });
 
   it('只提交知识身份并由服务端校验正文和容量', () => {
@@ -123,7 +124,7 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('role="alert"');
     expect(source).toContain('retryRecovery');
     expect(source).toContain('按原要求重试');
-    expect(source).toContain('调整要求或切换执行器');
+    expect(source).toContain('调整要求或稍后重试');
     expect(source).toContain('adjustFailedGeneration');
     expect(source).toContain('请移除包外资源、外部网络地址或嵌套页面');
     expect(source).toContain('当前线上版本仍然有效，可直接重试发布。');

@@ -79,15 +79,20 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
-    public async Task CreateRun_QuickPathShouldRejectMultiFileSiteBeforeResolvingKnowledgeOrQueueing()
+    public async Task CreateRun_LegacyMapGatewayRequestShouldUseOpenDesignForMultiFileSite()
     {
-        // 直连执行器把整页当一段文本改写，只能按声明式规则加固，所以多文件站点在它这里仍要当场拒绝，
-        // 并告诉用户换精细设计。
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>", fileCount: 2));
-        var providers = EnabledProvider(DesignArtifactRuntimes.MapGateway);
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化"));
         var queue = new Mock<IRunQueue>(MockBehavior.Strict);
         var controller = BuildController(
             NewLazyDb(),
@@ -103,10 +108,9 @@ public sealed class HostedSiteEditsControllerTests
             Runtime = DesignArtifactRuntimes.MapGateway,
         });
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Contains("ZIP 或多文件资源", ResponseMessage(badRequest), StringComparison.Ordinal);
-        Assert.Contains("OpenDesign", ResponseMessage(badRequest), StringComparison.Ordinal);
-        knowledge.VerifyNoOtherCalls();
+        Assert.IsType<ConflictObjectResult>(result);
+        providers.VerifyAll();
+        knowledge.VerifyAll();
         queue.VerifyNoOtherCalls();
     }
 
@@ -166,14 +170,21 @@ public sealed class HostedSiteEditsControllerTests
     }
 
     [Fact]
-    public async Task CreateRun_QuickPathShouldRejectDynamicCurrentHtmlBeforeQueueing()
+    public async Task CreateRun_LegacyMapGatewayRequestShouldUseOpenDesignForScriptedSite()
     {
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(BuildEditableEntry(
                 "<!doctype html><html><body><script>fetch('https://evil.example')</script></body></html>"));
-        var providers = EnabledProvider(DesignArtifactRuntimes.MapGateway);
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
+                "owner-user",
+                It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
+                CancellationToken.None))
+            .ThrowsAsync(new DesignKnowledgeSnapshotException(
+                DesignKnowledgeSnapshotResolver.ContentChangedCode,
+                "引用内容已变化"));
         var queue = new Mock<IRunQueue>(MockBehavior.Strict);
         var controller = BuildController(
             NewLazyDb(),
@@ -189,9 +200,9 @@ public sealed class HostedSiteEditsControllerTests
             Runtime = DesignArtifactRuntimes.MapGateway,
         });
 
-        var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Contains("仅支持声明式、自包含 HTML", ResponseMessage(badRequest), StringComparison.Ordinal);
-        knowledge.VerifyNoOtherCalls();
+        Assert.IsType<ConflictObjectResult>(result);
+        providers.VerifyAll();
+        knowledge.VerifyAll();
         queue.VerifyNoOtherCalls();
     }
 
@@ -250,14 +261,14 @@ public sealed class HostedSiteEditsControllerTests
         var providers = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
         providers.Setup(service => service.FindAsync(
                 "owner-user",
-                DesignArtifactRuntimes.MapGateway,
+                DesignArtifactRuntimes.OpenDesign,
                 CancellationToken.None))
             .ReturnsAsync(new DesignArtifactProviderCapability(
-                DesignArtifactRuntimes.MapGateway,
-                "MAP",
-                DesignArtifactAdapterKinds.InProcess,
-                DesignArtifactExecutionOwners.Map,
-                DesignArtifactIsolationModes.Process,
+                DesignArtifactRuntimes.OpenDesign,
+                "OpenDesign",
+                DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent,
+                DesignArtifactIsolationModes.SessionContainer,
                 [DesignArtifactTypes.WebPage],
                 [DesignArtifactOperations.Generate],
                 [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase],
@@ -266,7 +277,7 @@ public sealed class HostedSiteEditsControllerTests
                 Enabled: true,
                 Reason: null));
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
-        knowledge.Setup(service => service.ResolveForRunAsync(
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
                 "owner-user",
                 It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
                 CancellationToken.None))
@@ -315,6 +326,73 @@ public sealed class HostedSiteEditsControllerTests
             payload.GetProperty("error").GetProperty("code").GetString());
         queue.VerifyNoOtherCalls();
         events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task GenerateRun_OpenDesignUnavailableShouldFailWithoutFallingBackOrQueueing()
+    {
+        var providers = DisabledOpenDesignProvider(DesignArtifactOperations.Generate);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = new DesignArtifactsController(
+            NewLazyDb(),
+            events.Object,
+            queue.Object,
+            providers.Object,
+            knowledge.Object,
+            new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_unavailable_unit_{Guid.NewGuid():N}"),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", "owner-user")], "test")),
+            },
+        };
+
+        var result = await controller.CreateRun(new CreateDesignArtifactRunRequest
+        {
+            ArtifactType = DesignArtifactTypes.WebPage,
+            Runtime = DesignArtifactRuntimes.MapGateway,
+            Instruction = "生成产品说明网页",
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Equal("RUNTIME_NOT_READY", ResponseErrorCode(conflict));
+        providers.VerifyAll();
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
+        events.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task EditRun_OpenDesignUnavailableShouldFailWithoutFallingBackOrQueueing()
+    {
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        var providers = DisabledOpenDesignProvider(DesignArtifactOperations.Edit);
+        var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
+        var queue = new Mock<IRunQueue>(MockBehavior.Strict);
+        var controller = BuildController(
+            NewLazyDb(),
+            "owner-user",
+            sites.Object,
+            providers.Object,
+            knowledge.Object,
+            queue.Object);
+
+        var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
+        {
+            Instruction = "调整版式",
+            Runtime = DesignArtifactRuntimes.MapGateway,
+        });
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result);
+        Assert.Equal("RUNTIME_NOT_READY", ResponseErrorCode(conflict));
+        providers.VerifyAll();
+        sites.VerifyNoOtherCalls();
+        knowledge.VerifyNoOtherCalls();
+        queue.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -376,13 +454,15 @@ public sealed class HostedSiteEditsControllerTests
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(BuildEditableEntry(
                 $"<!doctype html><html><body>{new string('a', 800_000)}</body></html>"));
-        var providers = EnabledProvider(DesignArtifactRuntimes.Codex);
+        var providers = EnabledProvider(DesignArtifactRuntimes.OpenDesign);
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
-        knowledge.Setup(service => service.ResolveForRunAsync(
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
                 "owner-user",
                 It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
                 CancellationToken.None))
-            .ReturnsAsync(Array.Empty<DesignKnowledgeSnapshot>());
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(
+                Array.Empty<DesignKnowledgeSnapshot>(),
+                new DesignKnowledgeOriginalSnapshot()));
         var queue = new Mock<IRunQueue>(MockBehavior.Strict);
         var controller = BuildController(
             NewLazyDb(),
@@ -1081,6 +1161,29 @@ public sealed class HostedSiteEditsControllerTests
         return provider;
     }
 
+    private static Mock<IDesignArtifactProviderCatalog> DisabledOpenDesignProvider(string operation)
+    {
+        var provider = new Mock<IDesignArtifactProviderCatalog>(MockBehavior.Strict);
+        provider.Setup(service => service.FindAsync(
+                "owner-user",
+                DesignArtifactRuntimes.OpenDesign,
+                CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactProviderCapability(
+                DesignArtifactRuntimes.OpenDesign,
+                "OpenDesign",
+                DesignArtifactAdapterKinds.RemoteAgent,
+                DesignArtifactExecutionOwners.CdsRemoteAgent,
+                DesignArtifactIsolationModes.SessionContainer,
+                [DesignArtifactTypes.WebPage],
+                [operation],
+                [DesignArtifactSourceSurfaces.WebHosting, DesignArtifactSourceSurfaces.KnowledgeBase],
+                Configured: true,
+                Healthy: false,
+                Enabled: false,
+                Reason: "设计服务暂未就绪"));
+        return provider;
+    }
+
     private static HostedSiteEditableEntry BuildEditableEntry(
         string html,
         int fileCount = 1,
@@ -1129,6 +1232,12 @@ public sealed class HostedSiteEditsControllerTests
     {
         var payload = JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         return payload.GetProperty("error").GetProperty("message").GetString() ?? string.Empty;
+    }
+
+    private static string ResponseErrorCode(ObjectResult result)
+    {
+        var payload = JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        return payload.GetProperty("error").GetProperty("code").GetString() ?? string.Empty;
     }
 
     private sealed class HostedSiteEditMongoFixture : IAsyncDisposable

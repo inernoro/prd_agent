@@ -8,7 +8,7 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Api.Services;
 
 /// <summary>
-/// 网页生成设置的内置默认值：默认执行器、8 套风格、三段可编辑提示词、只读平台契约。
+/// 网页生成设置的内置默认值：OpenDesign 兼容值、8 套风格、三段可编辑提示词、只读平台契约。
 /// 设置文档里为 null 的字段一律回落到这里，所以「恢复默认」就是把字段写回 null。
 /// </summary>
 public static class DesignGenerationDefaults
@@ -328,7 +328,7 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
             BuiltIn = style.BuiltIn,
         }).ToList();
         return new DesignGenerationEffectiveSettings(
-            stored?.DefaultRuntime ?? DesignGenerationDefaults.DefaultRuntime,
+            DesignGenerationDefaults.DefaultRuntime,
             stored?.ReviewMode ?? DesignGenerationDefaults.DefaultReviewMode,
             styles,
             stored?.GeneratePrompt ?? DesignGenerationDefaults.GeneratePrompt,
@@ -353,7 +353,8 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
         var next = new DesignGenerationSettings
         {
             Id = DesignGenerationSettings.SingletonId,
-            DefaultRuntime = current.DefaultRuntime,
+            // 阶段 1 起新网页任务固定走 OpenDesign；保留存量字段只为兼容旧文档，保存时顺手清掉旧覆盖。
+            DefaultRuntime = null,
             ReviewMode = current.ReviewMode,
             Styles = current.Styles,
             GeneratePrompt = current.GeneratePrompt,
@@ -363,9 +364,8 @@ public sealed class DesignGenerationSettingsService : IDesignGenerationSettingsS
         if (update.DefaultRuntime != null)
         {
             var runtime = update.DefaultRuntime.Trim().ToLowerInvariant();
-            if (runtime is not (DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.MapGateway))
-                throw new DesignGenerationSettingsException("默认执行器只能是 open-design 或 map-gateway");
-            next.DefaultRuntime = runtime == DesignGenerationDefaults.DefaultRuntime ? null : runtime;
+            if (runtime != DesignArtifactRuntimes.OpenDesign)
+                throw new DesignGenerationSettingsException("网页生成和修改已统一使用 OpenDesign，不再支持切换到直连执行器");
         }
         if (update.ReviewMode != null)
         {

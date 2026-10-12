@@ -9,7 +9,6 @@ import {
   buildStrictAiPreviewDocument,
   buildStrictAiPreviewParserInput,
   canPublishRevision,
-  chooseDesignRuntime,
   displayedDesignRuntime,
   elapsedSecondsSince,
   extractCompleteAiPreviewHtml,
@@ -19,6 +18,7 @@ import {
   runningGenerationActivity,
   sanitizeAiPreviewCss,
   isLatestPreviewRequest,
+  requiredWebPageRuntime,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
 } from './siteEditPreview';
 
@@ -152,14 +152,24 @@ describe('网页微调任务恢复', () => {
     expect(activeSiteEditRunStorageKey('site-a')).not.toBe(activeSiteEditRunStorageKey('site-b'));
   });
 
-  it('历史任务执行器与下一次可选执行器分开计算', () => {
+  it('新任务只使用 OpenDesign，历史任务仍显示原执行器', () => {
     const runtimes = [
-      { id: 'map-gateway', enabled: true },
-      { id: 'open-design', enabled: false },
-    ] as Parameters<typeof chooseDesignRuntime>[0];
-    expect(chooseDesignRuntime(runtimes, 'map-gateway')).toBe('map-gateway');
+      { id: 'map-gateway', enabled: true, operations: ['generate', 'edit'] },
+      { id: 'open-design', enabled: false, operations: ['generate', 'edit'] },
+    ] as unknown as Parameters<typeof requiredWebPageRuntime>[0];
+    expect(requiredWebPageRuntime(runtimes, 'edit')).toBeUndefined();
     expect(displayedDesignRuntime(runtimes, 'map-gateway', 'open-design')?.id).toBe('open-design');
     expect(displayedDesignRuntime(runtimes, 'map-gateway')?.id).toBe('map-gateway');
+  });
+
+  it('OpenDesign 就绪时才允许创建新任务，不会回落到直连', () => {
+    const runtimes = [
+      { id: 'map-gateway', enabled: true, operations: ['generate', 'edit'] },
+      { id: 'open-design', enabled: true, operations: ['generate'] },
+    ] as unknown as Parameters<typeof requiredWebPageRuntime>[0];
+    expect(requiredWebPageRuntime(runtimes, 'generate')?.id).toBe('open-design');
+    expect(requiredWebPageRuntime(runtimes, 'edit')).toBeUndefined();
+    expect(displayedDesignRuntime(runtimes, 'missing-open-design')).toBeUndefined();
   });
 
   it('恢复后的运行时长从服务端创建时间继续计算', () => {
