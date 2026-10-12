@@ -92,11 +92,15 @@ function buildMetadata(plan, matrix, row) {
   const feature = resolveFeature(plan, row.caseId);
   const method = matrix.get(row.caseId);
   const scenario = method?.scenario || (row.caseId.startsWith('REG-') ? '永久回归' : '业务验收');
-  const breadcrumb = [...(feature?.breadcrumb || ['关键业务']), scenario].join(' → ');
+  const commonInfrastructureFailure = row.caseId === 'COMMON-004'
+    && /CDS .*网关|清理旅程首轮失败/.test(String(row.error || ''));
+  const breadcrumb = commonInfrastructureFailure
+    ? `网页托管 → 清理回读 → ${scenario}`
+    : [...(feature?.breadcrumb || ['关键业务']), scenario].join(' → ');
   return {
     ...row,
     featureId: feature?.id || 'unmapped',
-    featureLabel: feature?.label || '未映射功能线',
+    featureLabel: commonInfrastructureFailure ? '跨模块清理门禁' : feature?.label || '未映射功能线',
     breadcrumb,
     scenario,
     assertion: method?.assertion || '按永久回归账本验证问题不再出现',
@@ -104,7 +108,7 @@ function buildMetadata(plan, matrix, row) {
     testType: testType(row.caseId),
     statusLabel: statusLabel(row.status),
     intervention: row.status === 'pass' ? '无需' : row.status === 'fail' ? '团队修复并复测' : row.environment === 'production' ? '准备正式验收身份后补测' : '团队补齐自动化并补测',
-    owner: row.caseId === 'COMMON-004' && /CDS .*网关|清理旅程首轮失败/.test(String(row.error || ''))
+    owner: commonInfrastructureFailure
       ? 'CDS 与运行平台负责人'
       : OWNER_BY_FEATURE[feature?.id] || '质量负责人',
     methodAnchor: `method-${row.caseId.toLowerCase()}`,
