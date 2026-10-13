@@ -221,6 +221,8 @@ interface BranchSummary {
   lastStopReason?: string;
   lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
+  runningCommitSha?: string | null;
+  targetCommitSha?: string | null;
   commitSha?: string;
   subject?: string;
   builder?: {
@@ -7009,13 +7011,13 @@ const BranchCard = memo(function BranchCard({
         {ciFailedChip ? (
           <span
             className="inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
-            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，可切回源码编译或重试 CI 后再部署。`}
+            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，请查看 CI 日志，修复并重试 CI，通过后再部署。`}
           >
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onDetail(); }}
               className="inline-flex min-w-0 items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
-              aria-label="CI 构建失败，打开分支详情切回源码编译"
+              aria-label="新版本 CI 失败，查看失败原因；旧版本仍在服务"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
               <span className="min-w-0 truncate">CI 失败</span>
@@ -7561,8 +7563,8 @@ const BranchCard = memo(function BranchCard({
                 </span>
               </span>
             ) : footerSha ? (
-              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`commit ${footerSha}`}>
-                {footerSha}
+              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；仓库最新提交 ${footerSha}`}>
+                运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}{branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? ` · 待发布 ${branch.targetCommitSha.slice(0, 7)}` : ''}
               </span>
             ) : null}
             {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject

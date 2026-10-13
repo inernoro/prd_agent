@@ -5330,6 +5330,24 @@ describe('Branch Routes', () => {
   // static fallback, returning HTML — the React loader saw 200 OK and
   // rendered a blank panel. These tests lock in the JSON contract.
   describe('GET /api/branches/:id (F9)', () => {
+    it('运行 A 与被 CI 拦截的目标 B 在列表和详情保持分离', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/x' });
+      const branch = stateService.getBranch('feature-x')!;
+      const A = 'a'.repeat(40), B = 'b'.repeat(40);
+      branch.githubCommitSha = B;
+      branch.ciTargetSha = B;
+      branch.ciImageStatus = 'failed';
+      branch.status = 'running';
+      branch.services = { web: { profileId: 'web', containerName: 'lab-web', hostPort: 18080, status: 'running', deployedImage: `ghcr.io/test/lab:sha-${A}` } };
+      const detail = await request(server, 'GET', '/api/branches/feature-x');
+      const list = await request(server, 'GET', '/api/branches?project=default&live=false');
+      for (const view of [(detail.body as any).branch, (list.body as any).branches.find((b: any) => b.id === branch.id)]) {
+        expect(view.runningCommitSha).toBe(A);
+        expect(view.targetCommitSha).toBe(B);
+        expect(view.ciImageStatus).toBe('failed');
+      }
+    });
+
     it('returns 200 + { branch } when the id exists', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/x' });
       const res = await request(server, 'GET', '/api/branches/feature-x');

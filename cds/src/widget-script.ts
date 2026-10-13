@@ -911,12 +911,9 @@ export function buildWidgetScript(
       var profileRes=res.profileRes||{};
       var found=res.found||null;
       branchStatus=found?found.status:'';
-      // Codex P2「Keep ciTargetSha when refreshing the widget badge」：服务端已按
-      // ciTargetSha 注入了正确的初始 sha（反映容器实际跑的镜像 commit）。客户端刷新**不要**
-      // 用 /api/branches 的 commitSha（docs-only push 会更新它但镜像没换）把它降级覆盖；
-      // 优先保留服务端注入值，仅服务端没给时才用 API 值兜底。
-      commitSha=commitSha||(found&&(found.commitSha||found.githubCommitSha))||'';
-      commitMsg=found&&found.subject?found.subject:'';
+      // 页面渲染时注入的是该服务真实产物；未知时只读运行版本，禁止用推送目标兜底。
+      commitSha=commitSha||(found&&found.runningCommitSha)||'';
+      commitMsg=found&&found.githubCommitSha===commitSha&&found.subject?found.subject:'';
       branchTags=(found&&found.tags)||[];
       var sourceProfiles=(profileRes&&profileRes.profiles)||[];
       profiles=found&&found.projectId
