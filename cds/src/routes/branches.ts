@@ -1602,9 +1602,12 @@ async function ensureDockerNetwork(shell: IShellExecutor, network: string): Prom
 async function cleanupResourceExternalFirewall(shell: IShellExecutor, chain: string, port?: number): Promise<void> {
   if (!/^[A-Z0-9_]{1,28}$/.test(chain)) return;
   if (port && port >= 1 && port <= 65535) {
-    for (let i = 0; i < 8; i += 1) {
-      const del = await shell.exec(`iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
-      if (del.exitCode !== 0) break;
+    for (const direction of [' --ctdir ORIGINAL', '']) {
+      // Also remove old undirected rules, which blocked return traffic.
+      for (let i = 0; i < 8; i += 1) {
+        const del = await shell.exec(`iptables -D DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port}${direction} -j ${chain}`, { timeout: 5000 });
+        if (del.exitCode !== 0) break;
+      }
     }
   }
   await shell.exec(`iptables -F ${chain} 2>/dev/null || true`, { timeout: 5000 });
@@ -1643,9 +1646,9 @@ async function applyResourceExternalFirewall(
   if (drop.exitCode !== 0) {
     throw new Error(`写入 IP allowlist 默认拒绝规则失败：${combinedOutput(drop).slice(0, 240)}`);
   }
-  const check = await shell.exec(`iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+  const check = await shell.exec(`iptables -C DOCKER-USER -p tcp -m conntrack --ctorigdstport ${port} --ctdir ORIGINAL -j ${chain}`, { timeout: 5000 });
   if (check.exitCode !== 0) {
-    const jump = await shell.exec(`iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport ${port} -j ${chain}`, { timeout: 5000 });
+    const jump = await shell.exec(`iptables -I DOCKER-USER 1 -p tcp -m conntrack --ctorigdstport ${port} --ctdir ORIGINAL -j ${chain}`, { timeout: 5000 });
     if (jump.exitCode !== 0) {
       throw new Error(`挂载 IP allowlist 链失败：${combinedOutput(jump).slice(0, 240)}`);
     }

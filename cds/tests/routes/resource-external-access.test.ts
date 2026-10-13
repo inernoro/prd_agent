@@ -182,6 +182,7 @@ describe('resource external TCP access', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.policy.allowlistEnforced).toBe(true);
+    expect(shell.commands.find((cmd) => cmd.startsWith('iptables -I DOCKER-USER'))).toContain('--ctdir ORIGINAL');
     expect(res.body.policy.host).toBe('192.0.2.20');
     expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('-p 192.0.2.20:43000:15432');
     expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('EXPIRES_AT=');
