@@ -660,6 +660,7 @@ export class StateService {
       if (!profile.cacheMounts) profile.cacheMounts = [];
 
       for (const cm of profile.cacheMounts) {
+        if (cm.kind === 'volume') continue;
         const updated = this.normalizeCacheHostPath(cm.hostPath);
         if (updated !== cm.hostPath) {
           cm.hostPath = updated;

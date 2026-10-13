@@ -5,9 +5,21 @@ import { serviceRuntimeRefs } from './service-runtime.js';
 
 let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
 let memoryRead: Promise<void> | undefined;
-let daemonMemory: { usedMB: number; at: number; maxAgeMs: number } | undefined;
-export function setDeploymentPhaseHostUsage(usedMB: number, at: number, maxAgeMs: number): void {
-  if (Number.isFinite(usedMB) && usedMB >= 0) daemonMemory = { usedMB, at, maxAgeMs };
+let daemonMemory: { usedMB: number; pids?: number; at: number; maxAgeMs: number } | undefined;
+export function setDeploymentPhaseHostUsage(usedMB: number, at: number, maxAgeMs: number, pids?: number): void {
+  if (Number.isFinite(usedMB) && usedMB >= 0) daemonMemory = { usedMB, at, maxAgeMs, pids };
+}
+export function deploymentHostPidBudget(): number | null {
+  const raw = process.env.CDS_HOST_PID_BUDGET;
+  if (raw === undefined) return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 128 ? value : 0;
+}
+function sampleHostAvailablePids(): number {
+  const budget = deploymentHostPidBudget();
+  if (budget === null) return Infinity;
+  if (!budget || !daemonMemory || daemonMemory.pids === undefined || Date.now() - daemonMemory.at > daemonMemory.maxAgeMs) return 0;
+  return Math.max(0, budget - daemonMemory.pids - 256);
 }
 export function deploymentHostMemoryBudgetMB(): number | null {
   const raw = process.env.CDS_HOST_MEMORY_BUDGET_MB;
@@ -42,6 +54,7 @@ interface Request {
   resolve: (release: () => void) => void; reject: (error: Error) => void;
   abort?: () => void; memoryMB: number; enqueuedAt: number;
   reservationKey?: string;
+  pids: number;
 }
 
 /** 阶段互不占槽；旧服务的物理占用已在可用内存内，新启动额外预留控制面余量。 */
@@ -49,24 +62,25 @@ export class DeploymentPhaseBudget {
   private readonly active = new Map<DeploymentPhase, Set<Request>>();
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
   private readonly lastProject = new Map<DeploymentPhase, string>();
-  private readonly memoryReservations = new Map<string, { memoryMB: number; owner: DeploymentPhaseOwner }>();
+  private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner }>();
   private timer?: NodeJS.Timeout;
   private readonly limits: Record<DeploymentPhase, number>;
   constructor(private readonly availableMemoryMB: () => number = () => memoryProvider(),
     limits: Partial<Record<DeploymentPhase, number>> = {},
-    private readonly headroomMB = 1024) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
+    private readonly headroomMB = 1024, private readonly availablePids = sampleHostAvailablePids) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
 
   snapshot() {
     return Object.fromEntries((['pull', 'start', 'ready', 'cleanup', 'terminal'] as const).map(phase => [phase, {
       limit: this.limits[phase], active: [...(this.active.get(phase) || [])].map(request => ({ ...request.owner, memoryMB: request.memoryMB })),
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
-        reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom' : 'phase-capacity' })),
+        reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom'
+          : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom' : 'phase-capacity' })),
     }]));
   }
 
   releaseMemory(key: string): void { this.memoryReservations.delete(key); this.pump(); }
-  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner): void {
-    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), owner });
+  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64): void {
+    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, value]) => ({ key, ...value })); }
   private memoryAllows(memoryMB: number, key?: string): boolean {
@@ -75,9 +89,14 @@ export class DeploymentPhaseBudget {
       + [...(this.active.get('start') || [])].filter(request => !request.reservationKey).reduce((sum, request) => sum + request.memoryMB, 0);
     return Number.isFinite(available) && available >= this.headroomMB + reserved + memoryMB;
   }
+  private pidsAllow(request: Request): boolean {
+    const reserved = [...this.memoryReservations].reduce((sum, [key, value]) => sum + (key === request.reservationKey ? 0 : value.pids), 0)
+      + [...(this.active.get('start') || [])].filter(item => !item.reservationKey).reduce((sum, item) => sum + item.pids, 0);
+    return this.availablePids() >= reserved + request.pids;
+  }
 
   acquire(phase: DeploymentPhase, owner: DeploymentPhaseOwner, options: {
-    check?: () => void; signal?: AbortSignal; memoryMB?: number; reservationKey?: string;
+    check?: () => void; signal?: AbortSignal; memoryMB?: number; reservationKey?: string; pids?: number;
   } = {}): Promise<() => void> {
     try { options.check?.(); } catch (error) { return Promise.reject(error); }
     if (options.signal?.aborted) return Promise.reject(new Error('部署阶段等待已取消'));
@@ -86,7 +105,8 @@ export class DeploymentPhaseBudget {
     this.waiting.set(phase, waiting);
     return new Promise((resolve, reject) => {
       const request: Request = { owner, check: options.check, signal: options.signal, resolve, reject,
-        memoryMB: phase === 'start' ? Math.max(1, options.memoryMB || 512) : 0, enqueuedAt: Date.now(), reservationKey: options.reservationKey };
+        memoryMB: phase === 'start' ? Math.max(1, options.memoryMB || 512) : 0, pids: phase === 'start' ? Math.max(1, options.pids || 64) : 0,
+        enqueuedAt: Date.now(), reservationKey: options.reservationKey };
       request.abort = () => {
         const index = waiting.indexOf(request);
         if (index >= 0) { waiting.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!);
@@ -112,13 +132,13 @@ export class DeploymentPhaseBudget {
       while (active.size < this.limits[phase] && queue.length) {
         const previous = this.lastProject.get(phase);
         let index = queue.findIndex(request => (request.owner.projectId || '_unknown') !== previous
-          && (phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey)));
-        if (index < 0) index = queue.findIndex(request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey));
+          && (phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request)));
+        if (index < 0) index = queue.findIndex(request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request));
         if (index < 0) break;
         const [request] = queue.splice(index, 1);
         request.signal?.removeEventListener('abort', request.abort!);
         active.add(request); this.lastProject.set(phase, request.owner.projectId || '_unknown');
-        if (phase === 'start' && request.reservationKey) this.reserveKnownMemory(request.reservationKey, request.memoryMB, request.owner);
+        if (phase === 'start' && request.reservationKey) this.reserveKnownMemory(request.reservationKey, request.memoryMB, request.owner, request.pids);
         let released = false;
         request.resolve(() => { if (released) return; released = true; active.delete(request); this.pump(); });
       }

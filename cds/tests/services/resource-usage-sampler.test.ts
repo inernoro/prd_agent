@@ -44,6 +44,18 @@ describe('computeResourceSnapshot', () => {
     const snap = computeResourceSnapshot(branches, stats, new Map(), Date.now(), 45000, new Set(['alive-error']));
     expect(snap.totals).toEqual({ cpuPercent: 25, memUsedMB: 128, runningContainers: 1 });
   });
+  it('真实snapshot返回未知时不走会掩盖错误的空集合兼容方法', async () => {
+    const branches = [branch('p1', [{ status: 'error', containerName: 'alive' }])];
+    const provider = { getRunningContainerNamesSnapshot: vi.fn().mockResolvedValue(new Set(['alive'])),
+      getRunningContainerNames: vi.fn().mockResolvedValue(new Set()),
+      getServiceStats: vi.fn().mockResolvedValue(new Map([['alive', { cpuPercent: 5, memUsedBytes: 8 * MB }]])) };
+    const sampler = new ResourceUsageSampler({ getAllBranches: () => branches } as StateService, provider);
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(1);
+    provider.getRunningContainerNamesSnapshot.mockResolvedValueOnce(null);
+    expect((await sampler.sampleOnce())?.totals.runningContainers).toBe(1);
+    expect(countReservedContainers(branches)).toBe(1);
+    expect(provider.getRunningContainerNames).not.toHaveBeenCalled();
+  });
   it('rolls up running-container CPU/mem per project and merges build churn', () => {
     const branches = [
       branch('p1', [

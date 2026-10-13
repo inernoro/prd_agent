@@ -43,6 +43,7 @@ import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
 import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
 import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
+import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { Button } from '@/components/ui/button';
@@ -453,6 +454,7 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
+  const events = useCdsEvents();
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
@@ -534,6 +536,10 @@ export function ProjectListPage(): JSX.Element {
       setState({ status: 'error', message });
     }
   }, [loadPendingImports]);
+
+  useEffect(() => {
+    if (events.lastAccessRequestEvent?.type === 'progress') void refresh(false);
+  }, [events.lastAccessRequestEvent, refresh]);
 
   // 暂停 / 恢复一个项目。乐观刷新；暂停会停止运行容器，由后端后台执行，
   // 前端轮询反映停止结果。返回的 message 已含「正在停止 N 个分支」。

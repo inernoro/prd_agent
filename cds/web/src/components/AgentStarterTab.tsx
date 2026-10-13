@@ -516,6 +516,16 @@ export function AgentStarterTab({ cdsPrompt, projectId, onOpenMarketplace, activ
               <Sparkles className="h-4 w-4" /> Agent Starter
             </div>
             <h3 className="mt-1 text-xl font-semibold tracking-tight">一句话改项目，一个地址看效果</h3>
+            <a
+              href="/tutorials/starter-lab/index.html#0"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] px-3 py-2 text-sm font-medium text-foreground hover:bg-[hsl(var(--surface-raised))] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            >
+              <FlaskConical className="h-5 w-5 shrink-0" aria-hidden="true" />
+              新人实验室：图解、动画与真实操作
+              <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+            </a>
           </div>
           <div className="hidden items-center gap-1 sm:flex">
             {STEPS.map((label, index) => (

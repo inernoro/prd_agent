@@ -161,6 +161,10 @@ describe('Executor /exec/deploy', () => {
     mock.addResponsePattern(/git rev-parse --verify '([^']+)\^\{commit\}'/, (match) => ({
       stdout: /^[0-9a-f]{7,40}$/i.test(match[1]) ? match[1].padEnd(40, '0') : 'a'.repeat(40), stderr: '', exitCode: 0,
     }));
+    mock.addResponsePattern(/docker network inspect --format .*Labels.* '([^']+)'$/, match => {
+      const entry = stateService.getAllBranches().find(branch => branch.replacementNetworks?.includes(match[1]));
+      return { stdout: JSON.stringify({ 'cds.type': 'replacement-network', 'cds.project.id': entry?.projectId || '_unknown', 'cds.branch.id': entry?.id }), stderr: '', exitCode: 0 };
+    });
     mock.addResponsePattern(/git rev-parse HEAD/, () => ({ stdout: 'a'.repeat(40), stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker inspect --format '\{\{.Id\}\}' '[a-f0-9]{64}'$/, () => ({ stdout: '', stderr: 'No such object: removed-owned-id', exitCode: 1 }));
     mock.addResponsePattern(/docker inspect.*"running".* '([^']+)'$/, match => {

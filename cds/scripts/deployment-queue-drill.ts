@@ -13,6 +13,7 @@ const sourcePaths = ['src/routes/branches.ts', 'src/services/container.ts', 'src
   'src/services/deployment-input.ts', 'src/services/deployment-version.ts', 'src/services/artifact-admission.ts',
   'src/services/artifact-admission-wait.ts', 'src/services/worktree.ts', 'src/services/deploy-runtime.ts',
   'src/services/build-gate.ts', 'src/services/deploy-layer-runner.ts', 'src/services/env-provenance.ts',
+  'src/services/service-runtime.ts', 'src/services/service-replacement.ts', 'src/services/deployment-phase-budget.ts',
   'src/services/isolated-shell-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'scripts/deployment-queue-drill.ts'];
 const m = {
   router: await import(new URL('../dist/routes/branches.js', import.meta.url).href) as typeof import('../src/routes/branches.js'),
@@ -34,6 +35,8 @@ async function until<T>(check: () => Promise<T | undefined>, timeoutMs = 60_000)
 async function main(): Promise<void> {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux'); assert.match(process.env.GITHUB_RUN_ID || '', /^\d+$/);
   const owner = `cds_queue_${randomBytes(8).toString('hex')}`;
+  const branchId = `${owner}-branch`;
+  const observedOwnedContainers = new Set<string>();
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-queue-ci-')); await fs.chmod(temp, 0o700);
   const output = path.resolve('queue-output'); await fs.mkdir(output, { recursive: true, mode: 0o700 });
   const head = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); assert.match(head, /^[a-f0-9]{40}$/);
@@ -51,7 +54,27 @@ async function main(): Promise<void> {
   const shell: IShellExecutor = { exec: async (command: string, options?: ExecOptions) => {
     if (/^docker (?:system|container|image|network) prune\b/.test(command)) throw new Error('Global prune forbidden in owned queue drill');
     if (options?.cwd) assert.ok(path.resolve(options.cwd).startsWith(temp + path.sep));
-    if (/^docker (?:run|create|rm|stop|start|restart|cp|exec|commit|network (?:create|rm|disconnect|connect)|image rm)\b/.test(command)) assert.ok(command.includes(owner), 'Docker mutation must target the owned namespace');
+    if (/^docker (?:run|create|rm|stop|start|restart|cp|exec|commit|network (?:create|rm|disconnect|connect)|image rm)\b/.test(command) && !command.includes(owner)) {
+      const ids = [...command.matchAll(/\b[a-f0-9]{64}\b/g)].map(match => match[0]);
+      const networkName = command.match(/^docker network (?:rm|disconnect|connect).*? '([a-zA-Z0-9_.-]+)'/)?.[1];
+      if (ids.length) {
+        for (const id of ids) {
+          if (!observedOwnedContainers.has(id)) {
+            const view = JSON.parse(docker(['inspect', id]))[0];
+            assert.equal(view.Config.Labels['cds.acceptance.owner'], owner);
+            assert.equal(view.Config.Labels['cds.project.id'], owner);
+            assert.equal(view.Config.Labels['cds.branch.id'], branchId);
+            observedOwnedContainers.add(id);
+          }
+        }
+      } else {
+        assert.ok(networkName, 'Docker mutation must target a qualified owned resource');
+        const view = JSON.parse(docker(['network', 'inspect', networkName]))[0];
+        assert.equal(view.Labels['cds.type'], 'replacement-network');
+        assert.equal(view.Labels['cds.project.id'], owner);
+        assert.equal(view.Labels['cds.branch.id'], branchId);
+      }
+    }
     if (/^(?:kill|killall|pkill|fuser).*\b/.test(command)) throw new Error('Unqualified process mutation forbidden');
     if (/^rm\b/.test(command)) assert.ok(command.includes(temp + path.sep));
     if (/^git\b/.test(command)) assert.ok(!command.includes('--global'));
@@ -85,7 +108,7 @@ async function main(): Promise<void> {
     }
     const config: CdsConfig = { repoRoot: repo, worktreeBase: path.join(temp, 'worktrees'), masterPort: 0, workerPort: 5500, executorPort: 5501,
       dockerNetwork: network, mode: 'standalone', portStart: 10001, rootDomains: ['invalid'], previewDomain: 'invalid', sharedEnv: {}, jwt: { secret: randomBytes(32).toString('hex'), issuer: 'owned-queue' } };
-    const projectId = owner, branchId = `${owner}-branch`, now = new Date().toISOString();
+    const projectId = owner, now = new Date().toISOString();
     state.addProject({ id: projectId, slug: owner.replaceAll('_', '-'), name: '隔离队列项目', kind: 'git', legacyFlag: true, dockerNetwork: network, createdAt: now, updatedAt: now });
     for (const role of ['api', 'web']) state.addBuildProfile({ id: role, projectId, name: role, dockerImage: imagePrefix + ':sha-${CDS_COMMIT_SHA}',
       prebuiltImage: true, localArtifact: true, workDir: '.', command: '', containerPort: 8080, env: { SERVICE_NAME: role }, readinessProbe: { timeoutSeconds: 30 } });
@@ -134,13 +157,23 @@ async function main(): Promise<void> {
     await until(async () => runs.get(latestApiRun)?.status === 'running' && runs.get(webRun)?.status === 'running'
       && coordinator.getActiveOperations(branchId).length === 0 && coordinator.getPendingWebhookDeploy(branchId) === undefined ? true : undefined);
     const branch = state.getBranch(branchId)!;
+    const projectNetwork = network; assert.ok(projectNetwork);
     const probe = async (role: string, sha: string) => { const service = branch.services[role]; assert.equal(service.status, 'running');
       const response = await fetch(`http://127.0.0.1:${service.hostPort}/`, { signal: AbortSignal.timeout(3000) }); assert.equal(response.status, 200);
       assert.deepEqual(await response.json(), { service: role, source: sha, runtime: sha });
       const view = JSON.parse(docker(['inspect', service.containerName]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner);
-      assert.equal(view.HostConfig.NetworkMode, network); assert.equal(view.State.Running, true); };
+      assert.equal(view.State.Running, true);
+      assert.ok(view.NetworkSettings.Networks[projectNetwork], 'configured project network must remain attached');
+      if (view.HostConfig.NetworkMode !== projectNetwork) {
+        const primary = JSON.parse(docker(['network', 'inspect', view.HostConfig.NetworkMode]))[0];
+        assert.equal(primary.Labels['cds.type'], 'replacement-network');
+        assert.equal(primary.Labels['cds.project.id'], owner); assert.equal(primary.Labels['cds.branch.id'], branchId);
+        assert.ok(primary.Containers[view.Id]);
+        assert.ok(view.NetworkSettings.Networks[view.HostConfig.NetworkMode].Aliases.includes(role));
+        assert.ok(!view.NetworkSettings.Networks[projectNetwork].Aliases?.includes(role), 'project shared network cannot publish replacement app aliases');
+      } };
     await probe('api', three); await probe('web', two);
-    const runCommands = commands.filter(command => /^docker run -d\b/.test(command));
+    const runCommands = commands.filter(command => /^(?:docker run -d|docker create)\b/.test(command) && command.includes('--label cds.type=app'));
     const runtimeImages = runCommands.map(command => { const matches = command.match(/sha256:[a-f0-9]{64}/g); assert.ok(matches?.length); return matches![matches!.length - 1]; });
     const imageFor = (sha: string) => JSON.parse(docker(['image', 'inspect', `${imagePrefix}:sha-${sha}`]))[0].Id;
     assert.equal(runtimeImages.filter(image => image === imageFor(one)).length, 2);
@@ -167,6 +200,17 @@ async function main(): Promise<void> {
     try { for (const image of images) { const view = JSON.parse(docker(['image', 'inspect', image]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], owner); docker(['image', 'rm', '-f', image]); } report.ownedImagesRemoved = true; }
     catch (error) { cleanupErrors.push(String(error)); }
     if (network) { try { const view = JSON.parse(docker(['network', 'inspect', network]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner); docker(['network', 'rm', network]); report.ownedNetworkRemoved = true; } catch (error) { cleanupErrors.push(String(error)); } }
+    try {
+      const replacements = docker(['network', 'ls', '-q', '--filter', `label=cds.project.id=${owner}`, '--filter', `label=cds.branch.id=${branchId}`]).split('\n').filter(Boolean);
+      for (const id of replacements) {
+        const view = JSON.parse(docker(['network', 'inspect', id]))[0];
+        assert.equal(view.Labels['cds.type'], 'replacement-network');
+        assert.equal(view.Labels['cds.project.id'], owner); assert.equal(view.Labels['cds.branch.id'], branchId);
+        assert.equal(Object.keys(view.Containers || {}).length, 0);
+        docker(['network', 'rm', id]);
+      }
+      report.ownedReplacementNetworksRemoved = true;
+    } catch (error) { cleanupErrors.push(String(error)); }
     try { await fs.rm(temp, { recursive: true, force: true }); report.isolatedFilesRemoved = true; } catch (error) { cleanupErrors.push(String(error)); }
     if (previousHost === undefined) delete process.env.DOCKER_HOST; else process.env.DOCKER_HOST = previousHost;
     if (previousContext === undefined) delete process.env.DOCKER_CONTEXT; else process.env.DOCKER_CONTEXT = previousContext;

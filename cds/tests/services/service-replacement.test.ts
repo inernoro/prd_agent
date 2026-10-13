@@ -55,7 +55,22 @@ describe('就绪切换与保旧回退', () => {
     expect(f.container.removeOwnedRuntime).toHaveBeenCalledWith(f.entry, 'api', expect.objectContaining({ containerId: 'a'.repeat(64) }), expect.objectContaining({ profileId: 'api' }));
   });
 
-  it('保存期间新操作取代时，不恢复旧操作指针或回收容器', async () => {
+  it('切换保存尚未返回时继续旧入口，确认后才发布新入口', async () => {
+    const f = fixture(); f.service.status = 'running';
+    let entered!: () => void, release!: () => void;
+    const saving = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(f.state.flush).mockResolvedValueOnce(undefined).mockImplementationOnce(async () => { entered(); await pending; });
+    const commit = commitServiceReplacements({ ...f, profileIds: ['api'] });
+    await saving;
+    expect(f.service.servingRuntime?.containerName).toBe('new-api');
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    release(); await commit;
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+  });
+
+  it('保存期间新操作取代时，不改其候选身份；未发布指针回到原确认入口', async () => {
     const f = fixture(); f.service.status = 'running';
     vi.mocked(f.state.flush).mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
       f.service.containerName = 'newer-api'; f.service.hostPort = 10005;
@@ -64,7 +79,7 @@ describe('就绪切换与保旧回退', () => {
       if (step === 'after runtime cutover persistence') throw new Error('superseded');
     } })).rejects.toThrow('superseded');
     expect(f.service.containerName).toBe('newer-api');
-    expect(f.service.servingRuntime?.containerName).toBe('new-api');
+    expect(f.service.servingRuntime?.containerName).toBe('old-api');
     expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
   });
 

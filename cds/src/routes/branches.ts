@@ -82,6 +82,7 @@ import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { recordMainThreadSection, timeMainThreadSection } from '../services/main-thread-diagnostics.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { branchVersionFacts } from '../services/running-version.js';
 import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
@@ -4381,7 +4382,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * extraProfiles、漏了 profileOverrides）。状态层保持明文供 deploy 直读。
    */
   function branchForView<T extends BranchEntry>(branch: T): T {
-    return maskBranchExtraProfilesEnv(branch);
+    return maskBranchExtraProfilesEnv({ ...branch, ...branchVersionFacts(branch, branch.currentVersionId ? stateService.getDeploymentVersion(branch.currentVersionId) : undefined) });
   }
 
   function isSqlInitInfra(service: InfraService): boolean {
@@ -5054,7 +5055,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 拿到的是全平台所有分支。断线重连同样走这里。
     timeMainThreadSection(projectFilter ? 'sse.branches.snapshot.project' : 'sse.branches.snapshot.all', () => {
       for (const branch of snapshot) reconcileBranchStatus(branch);
-      safeSend('snapshot', { branches: snapshot.map(branch => branchForHumanView(req, branch)), projectId: projectFilter || undefined, ts: nowIso() });
+      safeSend('snapshot', { branches: snapshot.map(branch => branchForHumanView(req, branchForView(branch))), projectId: projectFilter || undefined, ts: nowIso() });
     });
 
     // Subscribe to the 'any' channel so we get one envelope per emit
@@ -5066,7 +5067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 流式 branch.status / branch.updated 事件同样要给 extraProfiles env 脱敏（Bugbot Medium
       // 「SSE leaks extra service secrets」）：此前只有初始 snapshot 走了 branchForView，后续事件
       // 直接从 state 取原始 branch，订阅者会收到额外服务明文密钥。这里统一过 branchForView。
-      return branchForHumanView(req, withSha);
+      return branchForHumanView(req, branchForView(withSha));
     };
     // 每个事件 × 每条连接各算一遍（脱敏 + 序列化完整分支），连接之间不共享。
     const anyHandler = (envelope: any) => {
@@ -6448,7 +6449,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(m.status).json(m.body);
       return;
     }
-    res.json({ branch: branchForHumanView(req, branch) });
+    res.json({ branch: branchForHumanView(req, branchForView(branch)) });
   });
 
   router.get('/branches/:id/resources', async (req, res) => {
@@ -16254,6 +16255,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ branchId: id, profiles: payload });
   });
 
+  function clearSourceModeCiMetadata(id: string): void {
+    const branch = stateService.getBranch(id);
+    if (!branch) return;
+    const profiles = stateService.getEffectiveProfilesForBranch(branch);
+    if (branchUsesPrebuiltMode(profiles, branch)
+      || profiles.some(profile => resolveEffectiveProfile(profile, branch).prebuiltImage === true)) return;
+    stateService.updateBranchGithubMeta(id, {
+      ciImageStatus: undefined, ciTargetSha: undefined,
+      ciWorkflowConclusion: undefined, ciWorkflowRunUrl: undefined,
+      ciWaitingSince: undefined, ciImageError: undefined,
+    });
+  }
+
   router.put('/branches/:id/profile-overrides/:profileId', (req, res) => {
     const { id, profileId } = req.params;
     const entry = stateService.getBranch(id);
@@ -16413,6 +16427,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           ? { webEntry: prevOverride.webEntry } : {}),
       };
       stateService.setBranchProfileOverride(id, profileId, { ...override, ...preserved });
+      clearSourceModeCiMetadata(id);
       stateService.save();
 
       // Return the new effective profile so the UI can show the merged result
@@ -17472,6 +17487,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } else {
         stateService.clearBranchProfileOverride(id, profileId);
       }
+      clearSourceModeCiMetadata(id);
       stateService.save();
       res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
     } catch (err) {

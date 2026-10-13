@@ -5333,7 +5333,7 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         if (waitedMs < CI_WAIT_TIMEOUT_MS) continue;
         const waitedMin = Math.round(waitedMs / 60000);
         const shortSha = (b.ciTargetSha || b.githubCommitSha || '').slice(0, 7);
-        const reason = `CI 预构建镜像${shortSha ? ` ${shortSha}` : ''}等待超时（${waitedMin} 分钟无匹配构建完成）。常见原因：该分支缺少 .github/workflows/branch-image.yml（从旧 main 切出）、CI 未运行或事件丢失。可在分支详情切回源码编译重试。`;
+        const reason = `CI 预构建镜像${shortSha ? ` ${shortSha}` : ''}等待超时（${waitedMin} 分钟无匹配构建完成）。常见原因：该分支缺少 .github/workflows/branch-image.yml（从旧 main 切出）、CI 未运行或事件丢失。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`;
         stateService.updateBranchGithubMeta(b.id, {
           ciImageStatus: 'failed',
           ciWorkflowConclusion: 'timed_out_no_run',

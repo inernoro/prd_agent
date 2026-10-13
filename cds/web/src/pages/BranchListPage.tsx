@@ -221,6 +221,8 @@ interface BranchSummary {
   lastStopReason?: string;
   lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
+  runningCommitSha?: string | null;
+  targetCommitSha?: string | null;
   commitSha?: string;
   subject?: string;
   builder?: {
@@ -1656,6 +1658,11 @@ function closePreviewTarget(target: PreviewTarget): void {
 export function BranchListPage(): JSX.Element {
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
+  // 从授权回执或项目切换器进入另一项目时，不能保留旧项目的分支抽屉与在途页面状态。
+  return <ProjectBranchList key={projectId} projectId={projectId} />;
+}
+
+function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
   const [manualBranchName, setManualBranchName] = useState('');
@@ -2317,6 +2324,20 @@ export function BranchListPage(): JSX.Element {
 
   // SSE 连接状态只用于故障兜底。在线状态不再渲染绿点,避免无意义状态噪音。
   const [sseConnected, setSseConnected] = useState(true);
+  useEffect(() => {
+    if (sseConnected) return;
+    // 控制面重启后 SSE 会主动关闭；低频读取权威快照，避免卡片永远停在构建中。
+    // 保留既有的手动重连入口，不恢复浏览器每 3 秒重连造成的请求风暴。
+    let inFlight = false;
+    const sync = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try { await refreshLiveBranches(); } finally { inFlight = false; }
+    };
+    void sync();
+    const timer = window.setInterval(() => { void sync(); }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [sseConnected, refreshLiveBranches]);
   /*
    * 卡片生命周期动效(2026-06-23 用户反馈「webhook 回收分支没有动效」):
    *   - 新分支(branch.created)→ enteringIds → 卡片淡入长出来
@@ -6983,13 +7004,13 @@ const BranchCard = memo(function BranchCard({
         {ciFailedChip ? (
           <span
             className="inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
-            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，可切回源码编译或重试 CI 后再部署。`}
+            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，请查看 CI 日志，修复并重试 CI，通过后再部署。`}
           >
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onDetail(); }}
               className="inline-flex min-w-0 items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
-              aria-label="CI 构建失败，打开分支详情切回源码编译"
+              aria-label="新版本 CI 失败，查看失败原因；旧版本仍在服务"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
               <span className="min-w-0 truncate">CI 失败</span>
@@ -7535,8 +7556,8 @@ const BranchCard = memo(function BranchCard({
                 </span>
               </span>
             ) : footerSha ? (
-              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`commit ${footerSha}`}>
-                {footerSha}
+              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；待发布目标 ${branch.targetCommitSha || '未确认'}`}>
+                运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}{branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? ` · 待发布 ${branch.targetCommitSha.slice(0, 7)}` : ''}
               </span>
             ) : null}
             {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject

@@ -62,4 +62,16 @@ describe('部署阶段容量准入', () => {
     const released = await next; released(); budget.releaseMemory('next');
     expect(budget.memorySnapshot()).toEqual([]);
   });
+
+  it('PID余量不足时保持等待，启动回执不能提前归还线程预留', async () => {
+    let pids = 96;
+    const budget = new DeploymentPhaseBudget(() => 10000, {}, 1024, () => pids);
+    const first = await budget.acquire('start', { projectId: 'a' }, { reservationKey: 'warming' });
+    first();
+    const next = budget.acquire('start', { projectId: 'b' }, { reservationKey: 'next' });
+    expect((budget.snapshot().start as { queued: Array<{ reason: string }> }).queued[0].reason).toBe('pid-headroom');
+    expect(budget.memorySnapshot()[0].pids).toBe(64);
+    pids = 192; budget.pump(); const release = await next; release();
+    budget.releaseMemory('warming'); budget.releaseMemory('next');
+  });
 });

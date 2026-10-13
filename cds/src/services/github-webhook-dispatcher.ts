@@ -654,13 +654,13 @@ export class GitHubWebhookDispatcher {
       ciWorkflowConclusion: cached.conclusion,
       ciWorkflowRunUrl: cached.htmlUrl,
       ciWaitingSince: '',
-      ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
+      ciImageError: `CI 构建未成功（${cached.conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
     });
     this.deps.stateService.save();
     this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
     return {
       action: 'ci-image-failed',
-      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,可在分支详情切回源码编译`,
+      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -1076,7 +1076,7 @@ export class GitHubWebhookDispatcher {
    * 只处理 `completed` + 来自预构建镜像工作流（branch-image.yml）的 run,按
    * head_sha 找到「等待中」的极速版分支:
    *   - success → 置 ready + 返回 deployRequest（路由层触发 docker pull + 部署）
-   *   - 其它   → 置 failed（前端提示可切回源码编译,不自动回退）
+   *   - 其它   → 置 failed（前端提示修复后重试 CI,不自动回退）
    */
   private async handleWorkflowRun(event: GitHubWorkflowRunEvent, dryRun: boolean): Promise<WebhookDispatchResult> {
     const run = event.workflow_run;
@@ -1185,7 +1185,7 @@ export class GitHubWebhookDispatcher {
       };
     }
 
-    // 失败 / cancelled / timed_out — 不自动回退,等用户手动切回源码编译。
+    // 失败 / cancelled / timed_out — 不自动回退,等待修复后重试 CI。
     if (!dryRun) {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'failed',
@@ -1195,14 +1195,14 @@ export class GitHubWebhookDispatcher {
         // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
         // 区别于「超时无 run」的看门狗失败。
         ciWaitingSince: '',
-        ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
+        ciImageError: `CI 构建未成功（${conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
     }
     return {
       action: 'ci-image-failed',
-      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,可在分支详情切回源码编译`,
+      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -1819,7 +1819,7 @@ export class GitHubWebhookDispatcher {
         repoFullName, branchName, commitSha, project.githubInstallationId ?? event.installation?.id,
       );
       if (workflowPresence === 'missing') {
-        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow，或在构建配置中把分支切回源码编译模式。';
+        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow 并推送，待 CI 检查通过后再部署。';
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           ciImageStatus: 'failed',
           ciTargetSha: commitSha,

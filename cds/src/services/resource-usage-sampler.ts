@@ -1,4 +1,4 @@
-import { deploymentHostMemoryBudgetMB, setDeploymentPhaseHostUsage } from './deployment-phase-budget.js';
+import { deploymentHostMemoryBudgetMB, deploymentHostPidBudget, setDeploymentPhaseHostUsage } from './deployment-phase-budget.js';
 import type { StateService } from './state.js';
 import type { BranchEntry } from '../types.js';
 import { summarizeBuildActivity, type BuildActivitySummary } from './build-activity-tracker.js';
@@ -55,10 +55,13 @@ interface ContainerStatLite {
   netTxBytes?: number;
   blockReadBytes?: number;
   blockWriteBytes?: number;
+  pids?: number;
+  pidsKnown?: boolean;
 }
 interface StatsProvider {
   getServiceStats(names: string[]): Promise<Map<string, ContainerStatLite>>;
   getRunningContainerNames?(): Promise<Set<string>>;
+  getRunningContainerNamesSnapshot?(): Promise<Set<string> | null>;
 }
 
 const DEFAULT_INTERVAL_MS = Math.max(
@@ -205,7 +208,9 @@ export class ResourceUsageSampler {
     this.running = true;
     try {
       const branches = this.stateService.getAllBranches();
-      const actualRunningNames = await this.containerService.getRunningContainerNames?.();
+      const actualRunningNames = this.containerService.getRunningContainerNamesSnapshot
+        ? await this.containerService.getRunningContainerNamesSnapshot() : await this.containerService.getRunningContainerNames?.();
+      if (actualRunningNames === null) throw new Error('实际容器盘点未确认，保留已有资源占用');
       if (actualRunningNames) observedRunningNames = actualRunningNames;
       const runningNames = new Set<string>();
       for (const branch of branches) {
@@ -215,7 +220,7 @@ export class ResourceUsageSampler {
           }
         }
       }
-      const sampleNames = deploymentHostMemoryBudgetMB() !== null && actualRunningNames ? actualRunningNames : runningNames;
+      const sampleNames = (deploymentHostMemoryBudgetMB() !== null || deploymentHostPidBudget() !== null) && actualRunningNames ? actualRunningNames : runningNames;
       const statsByContainer = sampleNames.size
         ? await this.containerService.getServiceStats([...sampleNames])
         : new Map<string, ContainerStatLite>();
@@ -223,7 +228,9 @@ export class ResourceUsageSampler {
       if (actualRunningNames && sampleNames === actualRunningNames && sampleNames.size === statsByContainer.size) {
         const all = [...statsByContainer.values()];
         if (all.every(stat => Number.isFinite(stat.memUsedBytes) && stat.memUsedBytes >= 0)) {
-          setDeploymentPhaseHostUsage(all.reduce((sum, stat) => sum + stat.memUsedBytes / 1048576, 0), nowMs, this.intervalMs * 2);
+          const pids = all.every(stat => stat.pidsKnown !== false && Number.isInteger(stat.pids) && stat.pids! >= 0)
+            ? all.reduce((sum, stat) => sum + stat.pids!, 0) : undefined;
+          setDeploymentPhaseHostUsage(all.reduce((sum, stat) => sum + stat.memUsedBytes / 1048576, 0), nowMs, this.intervalMs * 2, pids);
         }
       }
       // 同一帧同时供两处用：项目汇总（下面）与按容器的历史序列。

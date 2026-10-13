@@ -3,7 +3,7 @@ import type { BranchEntry, BuildProfile, ServiceState } from '../types.js';
 import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { branchAppNetworkName } from './branch-network.js';
-import { runtimeRef, serviceRuntimeRefs, servingRuntime } from './service-runtime.js';
+import { runtimeRef, serviceRuntimeRefs, servingRuntime, pinServingRuntimeDuringCommit } from './service-runtime.js';
 
 export function reserveServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; portStart: number; operationId?: string;
@@ -43,7 +43,8 @@ export async function prepareServiceReplacement(options: {
   const { entry, service, state, container, profile, assertCurrent } = options;
   if (!service.servingRuntime && !service.pendingRuntime) return service;
   assertCurrent?.('before candidate prepare');
-  const actual = service.servingRuntime ? await container.inspectOwnedRuntime(entry, profile.id, service.servingRuntime) : null;
+  const approved = servingRuntime(service);
+  const actual = approved ? await container.inspectOwnedRuntime(entry, profile.id, approved) : null;
   assertCurrent?.('after old runtime identity');
   if (!actual) {
     assertCurrent?.('after old runtime check');
@@ -105,21 +106,23 @@ export async function commitServiceReplacements(options: {
   await state.flush();
   assertCurrent?.('after candidate persistence before cutover');
   const previous = changed.map(service => ({ service, active: service.servingRuntime!, retained: service.retainedRuntimes }));
-  const switchedNames = new Map(changed.map(service => [service, service.containerName]));
+  const pins = changed.map(service => pinServingRuntimeDuringCommit(service));
+  const nextPointers = new Map(changed.map(service => [service, runtimeRef(service)]));
   for (const { service, active } of previous) {
     service.retainedRuntimes = [...(service.retainedRuntimes || []), runtimeRef(active)];
-    service.servingRuntime = runtimeRef(service);
+    service.servingRuntime = nextPointers.get(service);
   }
   try {
     state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
     assertCurrent?.('after runtime cutover persistence');
   } catch (error) {
-    for (const old of previous) if (old.service.containerName === switchedNames.get(old.service)
-      && old.service.servingRuntime?.containerName === switchedNames.get(old.service)) {
+    for (const old of previous) if (old.service.servingRuntime === nextPointers.get(old.service)) {
       old.service.servingRuntime = old.active; old.service.retainedRuntimes = old.retained;
     }
     state.save([{ kind: 'branches', id: entry.id }]);
     throw error;
+  } finally {
+    for (const release of pins) release();
   }
   // 仍被未替换服务连接的旧版本保留；每个已声明网络关系都计入实际容量。
   for (const service of Object.values(entry.services)) {

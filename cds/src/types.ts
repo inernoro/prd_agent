@@ -550,7 +550,9 @@ export interface BuildProfileOverride {
 
 /** A shared cache mount to avoid duplicating packages across branches */
 export interface CacheMount {
-  /** Host path (absolute) for the shared cache */
+  /** 未标记的存量条目沿用 bind 缓存迁移；volume 是 Docker 命名卷，不能改写为宿主机目录。 */
+  kind?: 'volume' | 'bind';
+  /** bind 的宿主机路径，或 volume 的 Docker 卷名。 */
   hostPath: string;
   /** Container path where it gets mounted */
   containerPath: string;
@@ -4271,12 +4273,18 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
+  /** Agent 申报的建项目目标，仅供审批核对，不改变一次建项目的权限范围。 */
+  requestedProject?: { name: string; repository?: string };
+  /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
+  createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
   status: 'pending' | 'approved' | 'rejected';
   /** ISO submit time. */
   createdAt: string;
   /** Set when status flips away from 'pending'. */
   decidedAt?: string;
+  /** 此次批准已启用建项目回执；存量已批准记录不反推未采集过的进度。 */
+  creationReceiptEnabled?: boolean;
   /** GitHub login / 'cookie' / 'global-key' — who decided. */
   decidedBy?: string;
   /** 拒绝原因(status='rejected' 时可选)。 */

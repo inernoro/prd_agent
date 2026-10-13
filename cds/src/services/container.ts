@@ -536,6 +536,7 @@ export interface ContainerStats {
   blockReadBytes: number;
   blockWriteBytes: number;
   pids: number;
+  pidsKnown?: boolean;
 }
 
 /** 把 docker stats 输出的 "1.234MiB" / "5.6kB" / "2.1GiB" 解析为 bytes */
@@ -741,7 +742,7 @@ export class ContainerService {
   ): Promise<void> {
     const shell = this.qualifiedShell(assertCurrent);
     assertCurrent?.('before replacement peer network');
-    await ensureDockerNetworkWithReclaim(shell, network);
+    await this.ensureReplacementNetwork(entry, network, assertCurrent);
     const view = await shell.exec(`docker inspect --format ${this.shellQuote('{{json .Config.Labels}}')} ${this.shellQuote(service.containerName)}`);
     if (view.exitCode !== 0) throw new Error('旧服务身份无法确认，入口保持原版本');
     const labels = JSON.parse(view.stdout);
@@ -754,6 +755,27 @@ export class ContainerService {
     if (result.exitCode !== 0 && !/already exists/i.test(combinedOutput(result))) throw new Error('新服务网络准备失败，旧入口保持原版本');
     service.connectedNetworks = [...new Set([...(service.connectedNetworks || []), network])];
     service.aliasNetworks = [...new Set([...(service.aliasNetworks || []), ...(service.networkName ? [service.networkName] : []), network])];
+  }
+
+  private async ensureReplacementNetwork(entry: BranchEntry, network: string, assertCurrent?: (step: string) => void): Promise<void> {
+    const prefix = `${branchAppNetworkName(entry.id).slice(0, 27)}-r-`;
+    if (!network.startsWith(prefix) || !/^[a-f0-9]{32}$/.test(network.slice(prefix.length))) throw new Error('新服务网络身份不属于本分支');
+    const shell = this.qualifiedShell(assertCurrent);
+    const inspect = () => shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(network)}`,
+      { timeout: 5000, executionLane: 'observation' });
+    let result = await inspect();
+    if (result.exitCode !== 0) {
+      if (!/not found|No such network/i.test(combinedOutput(result))) throw new Error('新服务网络状态未确认，保持旧入口');
+      const labels = ['cds.type=replacement-network', `cds.project.id=${entry.projectId || '_unknown'}`, `cds.branch.id=${entry.id}`]
+        .map(label => `--label ${this.shellQuote(label)}`).join(' ');
+      const created = await shell.exec(`docker network create ${labels} ${this.shellQuote(network)}`);
+      if (created.exitCode !== 0 && !/already exists/i.test(combinedOutput(created))) throw new Error('新服务网络容量或创建失败，保持旧入口；请检查网络容量后重试');
+      result = await inspect();
+    }
+    if (result.exitCode !== 0) throw new Error('新服务网络创建未确认，保持旧入口');
+    const labels = JSON.parse(result.stdout);
+    if (labels?.['cds.type'] !== 'replacement-network' || labels?.['cds.project.id'] !== (entry.projectId || '_unknown')
+      || labels?.['cds.branch.id'] !== entry.id) throw new Error('新服务网络归属不匹配，保持旧入口');
   }
 
   async stopRuntimeGroup(service: ServiceState, reason?: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
@@ -1089,9 +1111,11 @@ export class ContainerService {
 
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
-        const mkdir = await this.shell.exec(`mkdir -p ${this.shellQuote(cm.hostPath)}`);
-        if (mkdir.exitCode !== 0) {
-          throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
+        if (cm.kind !== 'volume') {
+          const mkdir = await this.shell.exec(`mkdir -p ${this.shellQuote(cm.hostPath)}`);
+          if (mkdir.exitCode !== 0) {
+            throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
+          }
         }
         volumeFlags.push(`-v ${this.shellQuote(cm.hostPath)}:${this.shellQuote(cm.containerPath)}`);
       }
@@ -1437,7 +1461,8 @@ export class ContainerService {
       ? { ...baseNetPlan, runNetwork: service.networkName,
         connectNetworks: [...new Set([network, ...baseNetPlan.connectNetworks])].filter(value => value !== service.networkName) }
       : baseNetPlan;
-    if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
+    if (entry.replacementNetworks?.includes(netPlan.runNetwork)) await this.ensureReplacementNetwork(entry, netPlan.runNetwork, context.assertCurrent);
+    else if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
     // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
     // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
@@ -2915,6 +2940,7 @@ export class ContainerService {
         blockReadBytes: parseDockerSize((blockIO.split('/')[0] || '').trim()),
         blockWriteBytes: parseDockerSize((blockIO.split('/')[1] || '').trim()),
         pids: parseFloatSafe(pids),
+        pidsKnown: /^\d+$/.test(pids.trim()),
       });
     }
     return out;
