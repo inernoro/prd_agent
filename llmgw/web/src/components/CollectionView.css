@@ -113,3 +113,14 @@
 .lg-entity-detail-bounded .lg-entity-detail-pill-warning { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 28%, var(--border-subtle)); }
 
 .lg-collection-route-table td:first-child strong { font-family: var(--font-mono); }
+
+.lg-collection-entity-meta { display: flex; align-items: center; flex-wrap: wrap; flex-shrink: 0; gap: 12px; }
+.lg-collection-entity-meta-provider { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); padding: 10px 14px; }
+.lg-collection-entity-meta .lg-collection-connection-summary { flex: 1; min-width: 260px; padding: 0; border: 0; }
+.lg-entity-detail-bounded .lg-collection-entity-meta .lg-entity-detail-properties[open] { flex-basis: 100%; }
+.lg-entity-detail-bounded .lg-entity-detail-properties > div { max-height: 240px; overflow: auto; }
+.lg-entity-detail-bounded .lg-entity-detail-properties nav { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 0; }
+.lg-entity-detail-bounded .lg-entity-detail-properties nav a { color: var(--accent); text-decoration: none; }
+.lg-entity-detail-bounded .lg-entity-detail-properties code { color: var(--text-muted); font-size: var(--fs-secondary); overflow-wrap: anywhere; }
+.lg-entity-detail-bounded .lg-entity-detail-hero { flex-shrink: 0; }
+.lg-entity-detail-bounded .lg-entity-detail-manage { background: var(--accent); color: var(--accent-contrast); border-color: var(--accent); }

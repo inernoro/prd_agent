@@ -74,28 +74,26 @@ function EntityDetailsShell({
       <div className="lg-entity-detail-content">
         <Link className="lg-entity-detail-back" to={backHref}><ArrowLeft size={15} />{backLabel}</Link>
         <header className="lg-entity-detail-hero">
-          <div className={`lg-entity-detail-brand lg-entity-detail-brand-${kind}`}>{icon}</div>
+          {!bounded ? <div className={`lg-entity-detail-brand lg-entity-detail-brand-${kind}`}>{icon}</div> : null}
           <div className="lg-entity-detail-heading">
-            <span>{subtitle}</span>
-            <h1>{title}</h1>
-            <code title={identifier}>{identifier}</code>
+            {bounded ? <><h1>{title}</h1>{kind === 'model' ? <code title={identifier}>{identifier}</code> : null}{kind === 'provider' ? <span>{subtitle}</span> : null}</> : <><span>{subtitle}</span><h1>{title}</h1><code title={identifier}>{identifier}</code></>}
           </div>
           <div className="lg-entity-detail-actions">
             <Link to={primaryHref}>{primaryLabel}<ArrowUpRight size={15} /></Link>
-            {management ? <Link to={management.href}>{management.label}<ArrowUpRight size={15} /></Link> : null}
+            {management ? <Link className="lg-entity-detail-manage" to={management.href}>{management.label}<ArrowUpRight size={15} /></Link> : null}
           </div>
         </header>
 
-        {bounded ? <>{connectionSummary}{statusContent}<details className="lg-entity-detail-properties"><summary>完整属性与运行统计</summary>{descriptionContent}{metricsContent}</details></> : <>{descriptionContent}{statusContent}{metricsContent}</>}
+        {bounded ? <div className={`lg-collection-entity-meta lg-collection-entity-meta-${kind}`}>{connectionSummary}{statusContent}<details className="lg-entity-detail-properties"><summary>{kind === 'provider' ? '完整连接参数' : '模型属性'}</summary><div><p>{subtitle}</p>{descriptionContent}<code>{identifier}</code>{metricsContent}{kind === 'provider' ? sections.filter((section) => section.id === 'connection').map((section) => <div key={section.id}>{section.description ? <p>{section.description}</p> : null}{section.content}</div>) : null}<nav aria-label="详情章节">{sections.filter((section) => !(kind === 'provider' && section.id === 'connection')).map((section) => <a key={section.id} href={`#${section.id}`}>{section.title}</a>)}</nav></div></details></div> : <>{descriptionContent}{statusContent}{metricsContent}</>}
 
         <div className="lg-entity-detail-layout">
-          <aside aria-label="详情章节">
+          {!bounded ? <aside aria-label="详情章节">
             <nav>
               {sections.map((section) => <a key={section.id} href={`#${section.id}`}>{section.title}</a>)}
             </nav>
-          </aside>
+          </aside> : null}
           <main>
-            {sections.map((section) => {
+            {sections.filter((section) => !(bounded && kind === 'provider' && section.id === 'connection')).map((section) => {
               const collection = bounded && (section.id === 'providers' || section.id === 'models');
               return <section key={section.id} id={section.id} title={section.hideHeading ? section.description : undefined} className={`lg-entity-detail-section${collection ? ' lg-entity-detail-collection' : ''}`}>
                 {bounded && !collection ? <details><summary>{section.title}</summary><div>{section.description ? <p>{section.description}</p> : null}{section.content}</div></details> : <>{!section.hideHeading ? <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}</> : null}{section.content}</>}
@@ -393,7 +391,7 @@ export function ProviderDetailsPage() {
       kind="provider"
       title={provider.name}
       identifier={provider.providerId || provider.id}
-      subtitle={`${registered ? 'Gateway Provider' : '运行时 Provider'} · ${provider.platformType || '未标注协议'}`}
+      subtitle={registered ? `Provider · ${models.length} 个托管模型` : `运行时 Provider · ${provider.platformType || '未标注协议'}`}
       description={provider.remark || '该 Provider 负责把 Gateway 请求发送到上游服务。页面只展示当前租户有权读取的连接摘要，不显示密钥明文，也不会建立新的上游连接。'}
       icon={<ProviderEntityIcon provider={provider.name} size="lg" />}
       status={registered ? [
