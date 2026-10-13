@@ -197,11 +197,33 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(match?.access).toEqual({ canCreateProjects: true, projects: [] });
     const entry = stateService.getGlobalAgentKeys().find((key) => key.id === match?.keyId);
     expect(entry?.oneTime).toBe(true);
+    const receiptList = await request(server, 'GET', '/api/access-requests');
+    const receipt = receiptList.body.requests.find((row: any) => row.id === reqId);
+    expect(receipt.status).toBe('approved');
+    expect(receipt.creationReceiptEnabled).toBe(true);
+    expect(receipt.deliveredAt).toEqual(expect.any(String));
+    expect(receipt.createdProject).toBeUndefined();
+    expect(receipt.issuedKeyPlaintext).toBeUndefined();
 
     const deliverAgain = await request(server, 'GET', `/api/bootstrap-access-requests/${reqId}`, undefined, {
       'X-Poll-Token': token,
     });
     expect(deliverAgain.body).toEqual({ status: 'approved', delivered: true });
+  });
+
+  it('申请目标只保留项目名和脱敏仓库，不采信客户端创建回执', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      agentName: 'Codex',
+      requestedProject: { name: '  新人演练  ', repository: 'https://user:secret@github.com/example/demo.git?token=private#private' },
+      createdProject: { id: 'forged', name: '假的成功' },
+    });
+    expect(init.status).toBe(201);
+    const list = await request(server, 'GET', '/api/access-requests');
+    const item = list.body.requests.find((entry: any) => entry.id === init.body.requestId);
+    expect(item.requestedProject).toEqual({ name: '新人演练', repository: 'github.com/example/demo.git' });
+    expect(item.createdProject).toBeUndefined();
+    expect(JSON.stringify(item)).not.toContain('secret');
+    expect(JSON.stringify(item)).not.toContain('private');
   });
 
   it('拒绝路径:发起方凭 token 轮询看到 rejected + 原因', async () => {
