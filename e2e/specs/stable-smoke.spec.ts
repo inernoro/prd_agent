@@ -8172,8 +8172,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const harness = await import(webEvidenceHarnessUrl);
     harness.attachAutoCapture(page);
     const out = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), `reference-evidence-${testInfo.testId}-r${testInfo.retry}`);
+    const evidenceLabels: Record<string, string> = {
+      '01-desktop-entry': '01 通过：首页进入视觉创作',
+      '02-clipboard-card': '02 通过：复制保留图片卡片',
+      '03-invalid-preserved': '03 通过：失效输入未丢失',
+      '04-generated-restored': '04 通过：刷新后参考图正确',
+      '05-mobile-entry': '05 通过：上传入口可点',
+      '06-mobile-reference': '06 通过：图片和描述可读',
+    };
     const capture = async (targetPage: Page, name: string, caption: string, target: Locator) => {
-      await harness.box(targetPage, target, `${name.slice(0, 2)} ${caption}`);
+      await target.scrollIntoViewIfNeeded();
+      await harness.box(targetPage, target, evidenceLabels[name]);
+      // 只调整取证标注；长图注留在报告中，避免标签换行遮挡被证明的正文。
+      await targetPage.locator('.__acc_box').last().evaluate((label) => {
+        Object.assign((label as HTMLElement).style, {
+          top: `${Math.max(0, parseFloat((label as HTMLElement).style.top) - 15)}px`,
+          left: `${Math.max(4, parseFloat((label as HTMLElement).style.left))}px`,
+          whiteSpace: 'nowrap',
+        });
+      });
       try {
         const evidence = await harness.shot(targetPage, out, name, caption, {
           skipReady: true, module: 'visual-reference', testType: '回归', primaryState: name,
@@ -8297,6 +8314,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await mobile.getByRole('dialog').getByRole('button', { name: '创建', exact: true }).tap();
         mobileWorkspaceId = (await (await mobileCreation).json() as ApiEnvelope<{ workspace: { id: string } }>).data.workspace.id;
         await expect(mobile.getByRole('button', { name: '上传参考图', exact: true })).toBeEnabled({ timeout: 30_000 });
+        // 使用预览工具自己的关闭按钮，不修改业务布局或隐藏产品内容。
+        const previewWidget = mobile.locator('[data-cds-widget-root]');
+        if (await previewWidget.isVisible()) {
+          const expandWidget = previewWidget.getByRole('button', { name: /^显示分支信息/ });
+          if (await expandWidget.isVisible()) await expandWidget.tap();
+          await previewWidget.getByRole('button', { name: '关闭 CDS 调试工具', exact: true }).tap();
+        }
         await capture(mobile, '05-mobile-entry', '移动端入口：独立触控登录与导航后上传参考图操作可达', mobile.getByRole('button', { name: '上传参考图', exact: true }));
         await mobile.locator('input[type="file"][accept="image/*"]').setInputFiles({ name: '移动蓝色参考.png', mimeType: 'image/png',
           buffer: Buffer.from(solidPngDataUrl(35, 90, 190, 32).split(',')[1]!, 'base64') });
