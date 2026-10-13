@@ -9,6 +9,8 @@ describe('CDS Self 预构建预览契约', () => {
   it('导入真实 compose 后能按精确 SHA 解析隔离运行模式', () => {
     const parsed = parseCdsCompose(fs.readFileSync(path.resolve('cds-compose.selfhost.yml'), 'utf8'))!;
     const profile = parsed.buildProfiles.find((item) => item.id === 'cds')!;
+    expect(Object.keys(parsed.envMeta!)).toEqual(['CDS_PREVIEW_USERNAME', 'CDS_PREVIEW_PASSWORD']);
+    expect(parsed.envMeta!.CDS_PREVIEW_PASSWORD.kind).toBe('required');
     const branch = { id: 'self-feature', branch: 'feature/classifications', githubCommitSha: 'a'.repeat(40),
       profileOverrides: { cds: { activeDeployMode: 'express' } } } as unknown as BranchEntry;
     const effective = resolveEffectiveProfile(profile, branch);

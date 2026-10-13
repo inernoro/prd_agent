@@ -51,6 +51,14 @@ x-cds-project:
   description: "CDS 预览实例（CDS 托管 CDS）：验收 CDS 自身改动，不执行真实部署"
   repo: https://github.com/inernoro/prd_agent.git
 
+x-cds-env-meta:
+  CDS_PREVIEW_USERNAME:
+    kind: required
+    hint: "预览实例专用用户名，保存在本项目的环境变量中"
+  CDS_PREVIEW_PASSWORD:
+    kind: required
+    hint: "预览实例专用密码，不复用父实例密码"
+
 x-cds-deploy-modes:
   cds:
     express:
