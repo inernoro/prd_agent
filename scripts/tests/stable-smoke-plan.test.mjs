@@ -293,6 +293,12 @@ test('VIDEO-005 取消验收必须等待上游作业真实提交', () => {
     '取消前必须回读已持久化的上游作业 ID');
   assert.match(block, /beforeCancel\.currentPhase === 'videogen-polling'/,
     '取消前必须证明真实任务已进入上游轮询阶段');
+  assert.match(block, /cancelled\.directVideoUpstreamStatus/,
+    '取消后必须核对上游终态，不能只比较冻结后的本地费用');
+  assert.match(block, /cancelled\.directVideoReconciledAt/,
+    '取消终态必须由上游回读事实支撑');
+  assert.doesNotMatch(block, /directVideoCost\s*\?\?\s*0/,
+    '供应商未提供费用不能视为免费');
   assert.doesNotMatch(block, /toMatch\(\/Queued\|Scripting\|Rendering\/i\)/,
     '不得将未提交上游作业的 Queued 或 Scripting 状态当作取消验收前置');
 });

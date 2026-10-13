@@ -39,6 +39,8 @@ public class VideoGenRunWorker : BackgroundService
     private readonly ILogger<VideoGenRunWorker> _logger;
     internal DateTime LegacyTakeoverEnabledAt { get; set; } = DateTime.UtcNow.AddMinutes(20);
     internal TimeSpan WorkerLeaseHeartbeatInterval { get; set; } = WorkerLeaseHeartbeat;
+    internal TimeSpan DirectVideoPollInterval { get; set; } = TimeSpan.FromSeconds(6);
+    internal TimeSpan DirectVideoPollingWindow { get; set; } = TimeSpan.FromMinutes(10);
 
     public VideoGenRunWorker(
         MongoDbContext db,
@@ -725,11 +727,11 @@ public class VideoGenRunWorker : BackgroundService
     /// AppCallerCode = "video-agent.videogen::video-gen" 决定模型池，
     /// 平台 ApiKey 从平台管理中配置的凭据自动取用，不依赖环境变量。
     /// </summary>
-    private async Task ProcessDirectVideoGenAsync(VideoGenRun run, CancellationToken authorityToken)
+    internal async Task ProcessDirectVideoGenAsync(VideoGenRun run, CancellationToken authorityToken)
     {
         authorityToken.ThrowIfCancellationRequested();
         // 领取前已请求取消（claim 仅过滤 Status==Queued、不看 CancelRequested）：直接置终态，不进入提交流程（Codex review）
-        if (run.CancelRequested) { await CancelRunAsync(run); return; }
+        if (run.CancelRequested && string.IsNullOrWhiteSpace(run.DirectVideoJobId)) { await CancelRunAsync(run); return; }
 
         // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
         // 不再一律记到 video-agent（Codex review，配合前端改走 /api/visual-agent/video-gen）。
@@ -842,22 +844,21 @@ public class VideoGenRunWorker : BackgroundService
             new { phase = "videogen-polling", progress = 10, jobId });
 
         // ─── 轮询 ───
-        const int pollIntervalSec = 6;
         const int maxWaitMinutes = 10;
-        var deadline = DateTime.UtcNow.AddMinutes(maxWaitMinutes);
+        var deadline = DateTime.UtcNow + DirectVideoPollingWindow;
         var progress = 10;
 
         while (DateTime.UtcNow < deadline)
         {
-            // 用户取消
-            var fresh = await _db.VideoGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
-            if (fresh?.CancelRequested == true)
+            // 已提交作业必须追踪到上游终态。停止本地轮询不能证明停止计费。
+            var fresh = await _db.VideoGenRuns.Find(OwnedRunFilter(run)).FirstOrDefaultAsync(CancellationToken.None);
+            if (fresh == null) return;
+            if (fresh.CancelRequested)
             {
-                await CancelRunAsync(run);
-                return;
+                await UpdatePhaseAsync(run, "videogen-reconciling", progress);
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), authorityToken);
+            await Task.Delay(DirectVideoPollInterval, authorityToken);
 
             OpenRouterVideoStatus status;
             try
@@ -883,6 +884,20 @@ public class VideoGenRunWorker : BackgroundService
             {
                 _logger.LogWarning(ex, "VideoGen 轮询异常（继续等待）: runId={RunId}", run.Id);
                 continue;
+            }
+
+            var observed = await _db.VideoGenRuns.UpdateOneAsync(
+                OwnedRunFilter(run),
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.DirectVideoUpstreamStatus, status.Status)
+                    .Set(x => x.DirectVideoCost, status.Cost)
+                    .Set(x => x.DirectVideoReconciledAt, status.IsTerminal ? DateTime.UtcNow : (DateTime?)null),
+                cancellationToken: CancellationToken.None);
+            if (observed.MatchedCount != 1) return;
+            if (status.IsTerminal && await IsRunCancellationRequestedAsync(run.Id))
+            {
+                await FinalizeCancelledDirectJobAsync(run, jobId!, status.Cost);
+                return;
             }
 
             if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
@@ -987,9 +1002,23 @@ public class VideoGenRunWorker : BackgroundService
                 Builders<VideoGenRun>.Update.Set(x => x.PhaseProgress, progress),
                 cancellationToken: CancellationToken.None);
             await PublishEventAsync(run.Id, "phase.progress",
-                new { phase = "videogen-polling", progress, status = status.Status });
+                new { phase = fresh.CancelRequested ? "videogen-reconciling" : "videogen-polling", progress, status = status.Status });
         }
 
+        if (await IsRunCancellationRequestedAsync(run.Id))
+        {
+            // 有界轮询结束只释放租约，后续 worker 继续原作业对账，不重提、不伪造取消终态。
+            await _db.VideoGenRuns.UpdateOneAsync(
+                OwnedRunFilter(run),
+                Builders<VideoGenRun>.Update
+                    .Set(x => x.Status, VideoGenRunStatus.Queued)
+                    .Set(x => x.CurrentPhase, "videogen-reconciling")
+                    .Set(x => x.WorkerLeaseId, (string?)null)
+                    .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                    .Set(x => x.WorkerLeasePhase, (string?)null),
+                cancellationToken: CancellationToken.None);
+            return;
+        }
         await FailRunAsync(run, "OPENROUTER_TIMEOUT", $"视频生成超过 {maxWaitMinutes} 分钟未完成");
     }
 
@@ -1031,8 +1060,29 @@ public class VideoGenRunWorker : BackgroundService
 
         await DeleteStoredVideoIfUnreferencedAsync(storedSha256, storedUrl);
         if (await IsRunCancellationRequestedAsync(run.Id))
-            await CancelRunAsync(run);
+            await FinalizeCancelledDirectJobAsync(run, jobId, cost);
         return false;
+    }
+
+    private async Task FinalizeCancelledDirectJobAsync(VideoGenRun run, string jobId, double? cost)
+    {
+        var cancelled = await _db.VideoGenRuns.UpdateOneAsync(
+            OwnedRunFilter(run)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, true)
+            & Builders<VideoGenRun>.Filter.Eq(x => x.DirectVideoJobId, jobId),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                .Set(x => x.DirectVideoCost, cost)
+                .Set(x => x.DirectVideoReconciledAt, DateTime.UtcNow)
+                .Set(x => x.CurrentPhase, "cancelled")
+                .Set(x => x.EndedAt, DateTime.UtcNow)
+                .Set(x => x.WorkerLeaseId, (string?)null)
+                .Set(x => x.WorkerLeaseExpiresAt, (DateTime?)null)
+                .Set(x => x.WorkerLeasePhase, (string?)null),
+            cancellationToken: CancellationToken.None);
+        if (cancelled.ModifiedCount != 1) return;
+        await UpdateProjectAsync(run, VideoProjectStatus.Draft);
+        await PublishEventAsync(run.Id, "run.cancelled", new { cost, reconciled = true });
     }
 
     /// <summary>
