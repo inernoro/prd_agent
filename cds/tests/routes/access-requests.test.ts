@@ -87,6 +87,11 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
       if (req.method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(req.path)) return next();
       // 默认模拟原始账号的人类 cookie 登录;带 x-local-user 时模拟持久化本地会话;
       // 带 x-machine-key 时模拟「机器密钥通过全局鉴权但不是人」。
+      if (req.headers['x-member'] === '1') {
+        (req as any).cdsUser = { username: 'member', isSystemOwner: false, authProvider: 'local' };
+        (req as any).cdsSession = { id: 'member-session' };
+        return next();
+      }
       if (req.headers['x-machine-key'] !== '1') {
         if (req.headers['x-local-user'] === '1') {
           (req as any).cdsUser = {
@@ -105,6 +110,21 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     });
     app.use('/api', createAccessRequestsRouter({ stateService }));
     server = app.listen(0);
+  });
+
+  it('普通成员不能枚举其他项目的授权目标、回执或批准申请', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      agentName: 'test', requestedProject: { name: 'Private', repository: 'https://github.com/acme/private' },
+    });
+    const headers = { 'x-member': '1' };
+    const list = await request(server, 'GET', '/api/access-requests', undefined, headers);
+    expect(list.status).toBe(403);
+    expect(JSON.stringify(list.body)).not.toContain('acme/private');
+    for (const action of ['approve', 'reject']) {
+      const result = await request(server, 'POST', `/api/access-requests/${init.body.requestId}/${action}`, {}, headers);
+      expect(result.status).toBe(403);
+    }
+    expect(stateService.getAccessRequest(init.body.requestId)?.status).toBe('pending');
   });
 
   afterEach(async () => {

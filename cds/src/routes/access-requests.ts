@@ -25,7 +25,7 @@ import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { resolveUserCredential } from './identity.js';
 import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
-import { isAuthenticatedHuman } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
 
 export interface AccessRequestsRouterDeps {
   stateService: StateService;
@@ -305,6 +305,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         error: 'human_approval_required',
         message: '授权审批必须由登录用户在 CDS 界面完成,机器密钥(API key)不可批准/拒绝授权申请。',
       });
+      return false;
+    }
+    if (!isHumanSystemOwner(req)) {
+      res.status(403).json({ error: 'system_owner_required', message: '请联系 CDS 系统所有者查看和处理授权申请。' });
       return false;
     }
     return true;
