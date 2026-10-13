@@ -229,8 +229,13 @@
 
 .lg-collection-facts > div { display: grid; grid-template-columns: 100px minmax(0,1fr); gap: 10px; }
 
-.lg-collection-provider-row td:first-child button { height: 24px !important; padding: 0 !important; }
+.lg-collection-provider-row td:first-child button { padding: 0 !important; }
 
 .lg-collection-provider-edit { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .lg-collection-provider-edit input { min-width: 0; max-width: 320px; }
 @media (min-width: 1001px) and (max-width: 1450px) { .lg-console-content:has(.lg-collection-page, .lg-entity-detail-bounded) { padding: 20px; } }
+
+.lg-collection-provider-row .lg-row-actions { flex-wrap: nowrap; gap: 4px; }
+.lg-collection-key-row td:nth-child(3) button { height: 24px !important; }
+.lg-collection-key-row td > div { line-height: 1.35 !important; }
+.lg-collection-key-permissions { overflow: auto; overscroll-behavior: contain; }

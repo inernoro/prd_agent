@@ -49,7 +49,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
 }
 
 /** 桌面并列、窄屏独立详情态。保持真实编辑表单内联在页面，不复制写入逻辑。 */
-export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode }) {
+export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon, footer }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode; footer?: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -60,6 +60,7 @@ export function CollectionDetailPane({ title, identifier, onClose, children, tab
     <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><h2>{title}</h2>{identifier ? <code>{identifier}</code> : null}</div><button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button></header>
     {tabs ? <div className="lg-collection-pane-tabs">{tabs}</div> : null}
     <div className="lg-collection-pane-body">{children}</div>
+    {footer}
   </aside>;
 }
 
