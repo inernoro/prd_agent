@@ -491,6 +491,33 @@ describe('collecting the deliverable', () => {
     expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
   });
 
+  it('bounds deterministic repair before the finalization reserve and keeps the rejected trusted snapshot', async () => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><a href="#missing">trusted-invalid</a></main></body></html>');
+      }
+      if (index === 3) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-repair</main></body></html>');
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state).toBe('failed');
+    expect(view.error.code).toBe('design_output_quality_rejected');
+    expect(harness.daemon.cancels).toContain('od-run-3');
+    expect(harness.daemon.freezes).toBe(harness.daemon.thaws);
+    expect(map!.commits).toHaveLength(0);
+    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
+      'open_design_quality_repairing',
+      'open_design_quality_repair_budget_exhausted',
+    ]));
+  });
+
   it('isolates quality work from generation history and keeps browser repairs in the quality conversation', async () => {
     const seenAttempts: number[] = [];
     const seenEvidenceDirs: string[] = [];
@@ -560,6 +587,134 @@ describe('collecting the deliverable', () => {
     expect(reportText).not.toContain('<!doctype html>');
     expect(reportText).not.toContain('thinking');
   });
+
+  it('cancels a browser repair at its absolute deadline, restores the trusted snapshot, and reruns both viewports', async () => {
+    const checkedHtml: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          const html = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
+          checkedHtml.push(html);
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/deadline-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 1,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 1,
+              issues: job.repairAttempt === 0 ? [{
+                issueCode: 'mobile_navigation_unusable' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { measured: false },
+                target: 'usable navigation',
+              }] : [],
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-candidate</h1></main></body></html>');
+      }
+      if (index === 3) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-browser-repair</main></body></html>');
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.cancels).toContain('od-run-3');
+    expect(checkedHtml).toHaveLength(2);
+    expect(checkedHtml[0]).toContain('trusted-candidate');
+    expect(checkedHtml[1]).toContain('trusted-candidate');
+    expect(checkedHtml[1]).not.toContain('partial-browser-repair');
+    const committedIndex = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('trusted-candidate');
+    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
+      'open_design_quality_repairing',
+      'open_design_quality_repair_budget_exhausted',
+      'open_design_browser_quality_checked',
+    ]));
+  }, 15_000);
+
+  it('ends as a traceable browser quality rejection when the restored snapshot still has hard issues', async () => {
+    const checkedHtml: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          checkedHtml.push(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8'));
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/rejected-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 1,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 1,
+              issues: [{
+                issueCode: 'key_text_contrast_low' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { contrastRatio: 2.5 },
+                target: 'at least 4.5',
+              }],
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-with-hard-issue</h1></main></body></html>');
+      }
+      if (index === 3) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-browser-repair</main></body></html>');
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state).toBe('failed');
+    expect(view.error.code).toBe('design_browser_quality_rejected');
+    expect(view.error.details).toMatchObject({
+      repairBudgetExhausted: true,
+      issueCodes: ['key_text_contrast_low'],
+      bestRepairAttempt: 0,
+    });
+    expect(harness.daemon.cancels).toContain('od-run-3');
+    expect(checkedHtml).toHaveLength(2);
+    expect(checkedHtml[1]).toContain('trusted-with-hard-issue');
+    expect(checkedHtml[1]).not.toContain('partial-browser-repair');
+    expect(map!.commits).toHaveLength(0);
+  }, 15_000);
 
   it('restores and flushes the best measured preview when two browser repairs still fail', async () => {
     harness = await startHarness({ overrides: {

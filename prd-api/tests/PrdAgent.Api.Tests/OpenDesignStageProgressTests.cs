@@ -116,7 +116,22 @@ public sealed class OpenDesignStageProgressTests
 
         Assert.NotEmpty(repair);
         Assert.All(repair, u => Assert.True(u.Progress >= beforeRepair));
+        Assert.All(repair, u => Assert.Equal("repairing-quality", u.PhaseCode));
         Assert.Contains("第 1 次", repair[0].Phase);
+        Assert.Contains("已运行", repair[^1].Phase);
+    }
+
+    [Fact]
+    public void 质量修复按截止时间收口后仍停留在成果修正阶段()
+    {
+        var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18);
+        Replay(tracker, TypicalGenerate().TakeWhile(e => e.Item1 != "workspace_collecting"));
+
+        var update = tracker.Observe("open_design_quality_repair_budget_exhausted", null, 1);
+
+        Assert.NotNull(update);
+        Assert.Equal("repairing-quality", update!.PhaseCode);
+        Assert.Contains("第 1 次", update.Phase);
     }
 
     [Fact]

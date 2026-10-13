@@ -33,3 +33,6 @@
 | test | prd-api | 覆盖终审预算收口阶段的稳定进度与用户文案映射 |
 | fix | design-runtime | 补齐隔离 Chromium 的可写 HOME，并让启动能力探针拒绝浏览器运行目录缺失的假健康镜像 |
 | test | design-runtime | 覆盖浏览器 HOME 镜像合同、能力探针与 Chromium 关键退出原因摘要 |
+| fix | design-runtime | 将确定性与浏览器质量修复纳入绝对收尾截止线，超时恢复受信快照并重新执行双视口门禁 |
+| test | design-runtime | 覆盖质量修复取消、完整快照恢复、复检通过提交与硬问题可追溯拒绝 |
+| fix | prd-api | 质量修复按截止时间收口时保持稳定成果阶段与持续进度文案 |

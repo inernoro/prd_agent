@@ -95,6 +95,7 @@ function designStageSummary(stage: string, detail?: Record<string, unknown>): st
     open_design_review_budget_exhausted: '模型复查已按本次时间预算收口，设计执行服务正在用浏览器继续检查成品。',
     deliverable_entry_checkpointed: '设计执行服务已保留终审前的受信产物。',
     open_design_quality_repairing: '设计执行服务已发现可修复的质量问题，OpenDesign 正在定向修正。',
+    open_design_quality_repair_budget_exhausted: '本轮质量修复已按截止时间收口，设计执行服务正在复检保留的受信版本。',
     workspace_collecting: '设计执行服务正在校验生成文件与安全边界。',
     workspace_committing: '设计执行服务正在向 MAP 提交已校验的结果。',
   };

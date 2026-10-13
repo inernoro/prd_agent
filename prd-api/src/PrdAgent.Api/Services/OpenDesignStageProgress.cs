@@ -113,7 +113,7 @@ public sealed class OpenDesignStageProgress
         "open_design_running" => Macro.Designing,
         "open_design_reviewing" => Macro.Reviewing,
         "open_design_review_budget_exhausted" => Macro.ReviewConverged,
-        "open_design_quality_repairing" => Macro.Repairing,
+        "open_design_quality_repairing" or "open_design_quality_repair_budget_exhausted" => Macro.Repairing,
         "open_design_browser_quality_checking" or "open_design_browser_quality_checked" => Macro.BrowserChecking,
         "workspace_collecting" or "deliverable_entry_resolved" => Macro.Collecting,
         "workspace_committing" => Macro.Committing,
