@@ -15,6 +15,7 @@ const base = {
   caseId: 'REG-multi-image-001',
   recovery: '暂停异常模型并通过 CDS 回滚 previous 版本',
   reportUrl: 'https://reports.example.test/stsmk-123',
+  verifiedReport: { status: 'passed', runId: 'stsmk-123', reportUrl: 'https://reports.example.test/stsmk-123' },
   isTest: false,
 };
 
@@ -46,6 +47,22 @@ test('执行链异常可以把动作改为打开通知中心', () => {
 
 test('缺少目标用户时拒绝全局通知', () => {
   assert.ok(validateNotificationOptions({ ...base, targetUserId: '' }).some((item) => item.includes('拒绝发送全局通知')));
+});
+
+test('无同轮验真回执不得发送，另轮或另地址也不能冒充', async () => {
+  for (const proof of [undefined, { ...base.verifiedReport, runId: 'other-run' }, { ...base.verifiedReport, reportUrl: 'https://other.test' }]) {
+    await assert.rejects(sendNotification({ ...base, verifiedReport: proof }, () => { throw Error('不应发送'); }), /verify-open/);
+  }
+});
+
+test('固定用户名不被陈旧本机ID覆盖，错误ID回读仍拒绝送达', async () => {
+  let payload;
+  await assert.rejects(sendNotification({ ...base, targetUsername: 'inernoro' }, async (_url, init) => {
+    payload = JSON.parse(init.body);
+    return new Response(JSON.stringify({ success: true, data: { notification: { id: 'n', targetUserId: 'wrong-user' } } }));
+  }), /核对目标用户/);
+  assert.equal(payload.targetUsername, 'inernoro');
+  assert.equal(payload.targetUserId, undefined);
 });
 
 test('缺少或损坏的通知地址会在发请求前给出明确配置错误', () => {

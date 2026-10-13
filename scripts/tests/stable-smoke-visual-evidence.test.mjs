@@ -94,6 +94,24 @@ test('视觉取证未配置时是显式 no-op', async () => {
   });
 });
 
+test('正式取证按正式槽位而非CDS图片；例行只忽略合同外位，不忽略环境错误', async () => {
+  const current = fixture([slot('PRODUCTION-VISUAL-SINGLE-01', { environment: 'production' })]);
+  try {
+    const plan = JSON.parse(readFileSync(current.planPath, 'utf8'));
+    plan.scope = 'routine';
+    writeFileSync(current.planPath, JSON.stringify(plan));
+    const capture = createStableSmokeVisualEvidence({ environment: { ...current.environment, STABLE_SMOKE_ENVIRONMENT: 'production' }, harnessLoader: async () => fakeHarness() });
+    const result = await capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target() });
+    assert.equal(result.captured, true);
+    const manifest = JSON.parse(readFileSync(join(current.outputPath, 'manifest.json'), 'utf8'));
+    assert.equal(manifest[0].slotId, 'PRODUCTION-VISUAL-SINGLE-01');
+    assert.equal(manifest[0].environment, 'production');
+    assert.equal((await capture(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-02', target: target() })).reason, 'outside-routine-plan');
+    const wrongEnvironment = createStableSmokeVisualEvidence({ environment: current.environment, harnessLoader: async () => fakeHarness() });
+    await assert.rejects(() => wrongEnvironment(page(), undefined, { slotId: 'CDS-VISUAL-SINGLE-01', target: target() }), /环境不一致/);
+  } finally { rmSync(current.root, { recursive: true, force: true }); }
+});
+
 test('只配置视觉计划或输出目录时拒绝静默降级', async () => {
   const capture = createStableSmokeVisualEvidence({
     environment: { STABLE_SMOKE_VISUAL_PLAN: '/tmp/plan.json' },

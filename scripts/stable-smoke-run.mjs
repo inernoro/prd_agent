@@ -14,6 +14,7 @@ import {
 import { renderVisualPlan } from './stable-smoke-visual-plan.mjs';
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
 import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
+import { persistRunExperience, readPools, updatePools, renderExperienceSummary } from './stable-smoke-memory.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -28,6 +29,9 @@ const valueOptions = new Set([
   '--visual-manifest',
   '--production-visual-manifest',
   '--report-url',
+  '--profile',
+  '--cds-checkout',
+  '--cds-live-branch',
 ]);
 const flagOptions = new Set([
   '--force-unlock',
@@ -56,6 +60,9 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --grep <表达式>      只运行匹配的 Playwright 用例
   --visual-manifest <路径> 指定本轮真人浏览器视觉取证 manifest；完整运行必填
   --capture-visual     在 CDS 真实业务旅程中按 visual-plan.json 自动逐槽取证并生成 manifest
+  --profile <范围>     routine（默认）：正式为主/CDS五项核心；full：专项完整双环境回归
+  --cds-checkout <路径> 在已有部署分支 checkout 中权威查询 CDS；例行检查不等待工具分支发布
+  --cds-live-branch <名称> 例行CDS已有分支，默认main；只从项目分支账本读取canonical id和preview-url
   --production-visual-manifest <路径> 指定 CDS 门禁通过后采集的正式环境视觉 manifest
   --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
   --force-unlock       仅在确认原进程已结束或锁损坏时清理遗留互斥锁
@@ -843,10 +850,19 @@ function runtimeExpectationForBranch(branch, expectedCommit) {
   );
 }
 
-function readCdsBranchStatusOnce(commandFn = command) {
-  const branchIdResult = commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
+export function resolveExistingCdsBranchId(commandFn, projectId, branchName = 'main') {
+  if (!projectId || !branchName) throw new Error('CDS 当前部署缺少明确项目或分支');
+  const listed = commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'list', '--project', projectId]);
+  const payload = listed.status === 0 ? readJsonFromText(listed.stdout) : null;
+  const matches = (payload?.data?.branches || []).filter(branch => branch.projectId === projectId && branch.branch === branchName);
+  if (matches.length !== 1 || !matches[0].id) throw new Error('CDS 已有分支身份不唯一或不存在，拒绝猜测入口');
+  return matches[0].id;
+}
+
+function readCdsBranchStatusOnce(commandFn = command, providedBranchId = '') {
+  const branchIdResult = providedBranchId ? { status: 0, stdout: '' } : commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch-id']);
   const branchIdPayload = branchIdResult.status === 0 ? readJsonFromText(branchIdResult.stdout) : null;
-  const branchId = branchIdPayload?.data?.branchId;
+  const branchId = providedBranchId || branchIdPayload?.data?.branchId;
   if (!branchId) throw new Error('CDS 权威分支标识读取失败，拒绝在未知部署版本上开测');
   const statusResult = commandFn('python3', ['.claude/skills/cds/cli/cdscli.py', 'branch', 'status', branchId]);
   const statusPayload = statusResult.status === 0 ? readJsonFromText(statusResult.stdout) : null;
@@ -867,6 +883,7 @@ function readCdsBranchStatusOnce(commandFn = command) {
 }
 
 export async function readCdsBranchStatusWithRetries(commandFn = command, {
+  branchId = '',
   attempts = 3,
   delayMs = 2_000,
   delayFn = delay,
@@ -874,7 +891,7 @@ export async function readCdsBranchStatusWithRetries(commandFn = command, {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return readCdsBranchStatusOnce(commandFn);
+      return readCdsBranchStatusOnce(commandFn, branchId);
     } catch (error) {
       lastError = error;
       if (attempt < attempts) await delayFn(delayMs * attempt);
@@ -1324,7 +1341,7 @@ export function mergeVisualPlans(cdsPlan, productionPlan) {
   return {
     schemaVersion: '3.0',
     name: cdsPlan.name || productionPlan.name,
-    scope: 'full',
+    scope: cdsPlan.scope === 'routine' && productionPlan.scope === 'routine' ? 'routine' : 'full',
     environments: ['cds', 'production'],
     runId: cdsPlan.runId,
     commit: cdsPlan.commit,
@@ -1679,6 +1696,10 @@ export async function deliverUnhandledFailure(argv, error) {
   }
   writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
   process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: 'fail', notification: summaryDocument.notification })}\n`);
+  if (!argv.includes('--dry-run')) {
+    summaryDocument.experience = persistRunExperience({ runId, rows: productionBaseline?.rows || [], archive: summaryDocument.archive, notification: summaryDocument.notification }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
+    writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
+  }
   process.stderr.write(`稳定冒烟异常终止，失败摘要已保存：${reason}\n`);
   return { runDir, summaryPath, summary: summaryDocument };
 }
@@ -1798,6 +1819,11 @@ export function acquireLock(lockPath) {
 async function main() {
   const argv = process.argv.slice(2);
   const options = parseRunnerArgs(argv);
+  const profile = options.read('--profile', 'routine');
+  if (!['routine', 'full'].includes(profile)) throw new Error('巡检范围必须为 routine 或 full');
+  const cdsCheckout = resolve(options.read('--cds-checkout', repoRoot));
+  const cdsCommand = (name, args, extra = {}) => command(name, args, { cwd: cdsCheckout, ...extra });
+  let liveCdsBranchId = '';
   if (options.has('--help')) {
     process.stdout.write(runnerHelpText);
     return;
@@ -1831,9 +1857,11 @@ async function main() {
     if (cdsAddressResolved || !selected.includes('cds')) return;
     cdsAddressResolved = true;
     try {
+      if (profile === 'routine') liveCdsBranchId = resolveExistingCdsBranchId(cdsCommand, registry.environments?.cds?.projectAutomation?.projectId, options.read('--cds-live-branch', 'main'));
       const cdsUrls = resolveCdsPreviewUrls(
         values.STABLE_SMOKE_CDS_BASE_URL || '',
         values.STABLE_SMOKE_CDS_GW_BASE_URL || '',
+        () => cdsCommand('python3', ['.claude/skills/cds/cli/cdscli.py', '--human', ...(liveCdsBranchId ? ['branch', 'preview-url', liveCdsBranchId] : ['preview-url'])]),
       );
       values.STABLE_SMOKE_CDS_BASE_URL = cdsUrls.appUrl;
       values.STABLE_SMOKE_CDS_GW_BASE_URL = cdsUrls.gatewayUrl;
@@ -1872,8 +1900,9 @@ async function main() {
         preflightBlockers.push('无法读取待验收提交');
       } else {
         try {
-          const branch = await readCdsBranchStatusWithRetries();
-          const readiness = evaluateCdsReadiness(branch, expectedCommit, runtimeExpectationForBranch(branch, expectedCommit));
+          const branch = await readCdsBranchStatusWithRetries(cdsCommand, { branchId: liveCdsBranchId });
+          const targetCommit = profile === 'routine' ? branch.commitSha : expectedCommit;
+          const readiness = evaluateCdsReadiness(branch, targetCommit, runtimeExpectationForBranch(branch, targetCommit));
           preflightBlockers.push(...readiness.reasons);
         } catch (error) {
           preflightBlockers.push(error instanceof Error ? error.message : 'CDS 部署状态读取失败');
@@ -1945,8 +1974,12 @@ async function main() {
       && !options.has('--dry-run')
       && cdsAddressBlockers.length === 0
       && validateEnvironmentConfig('cds', values).length === 0) {
-      const expectedCommit = values.STABLE_SMOKE_COMMIT;
-      const readiness = await waitForCdsDeployment(expectedCommit);
+      const existingBranch = profile === 'routine' ? await readCdsBranchStatusWithRetries(cdsCommand, { branchId: liveCdsBranchId }) : null;
+      const expectedCommit = existingBranch?.commitSha || values.STABLE_SMOKE_COMMIT;
+      const readiness = existingBranch
+        ? evaluateCdsReadiness(existingBranch, expectedCommit, runtimeExpectationForBranch(existingBranch, expectedCommit))
+        : await waitForCdsDeployment(expectedCommit);
+      if (!readiness.ready) throw new Error(`CDS 当前部署未就绪：${readiness.reasons.join('；')}`);
       writeFileSync(resolve(runDir, 'cds-readiness.json'), `${JSON.stringify({
         checkedAt: new Date().toISOString(),
         expectedCommit,
@@ -1957,7 +1990,7 @@ async function main() {
     const planPath = resolve(runDir, 'plan.json');
     const planMarkdownPath = resolve(runDir, 'plan.md');
     const planResult = command('node', [
-      'scripts/stable-smoke-plan.mjs', '--mode', 'scheduled',
+      'scripts/stable-smoke-plan.mjs', '--mode', 'scheduled', '--profile', profile,
       '--output-json', planPath, '--output-md', planMarkdownPath, '--strict',
     ]);
     if (planResult.status !== 0) throw new Error('稳定冒烟计划生成失败，请检查业务功能台账和未映射变更');
@@ -1984,7 +2017,7 @@ async function main() {
     let productionSafetyGate = initializeProductionSafetyGate(selected);
     const visualScope = selected.length === 1 && selected[0] === 'production' && productionSafetyGate.restricted
       ? 'production-read-only'
-      : 'full';
+      : profile === 'routine' ? 'routine' : 'full';
     const captureVisual = options.has('--capture-visual');
     let requestedVisualManifest = options.read('--visual-manifest');
     const requestedProductionVisualManifest = options.read('--production-visual-manifest');
@@ -2136,8 +2169,8 @@ async function main() {
         productionSafetyGate = evaluateProductionSafetyGate(
           cdsExecution,
           cdsRows,
-          Boolean(grep),
-          plannedCaseIdsForEnvironment(plan, 'cds'),
+          profile === 'full' && Boolean(grep),
+          profile === 'routine' ? plan.cdsCoreCaseIds : plannedCaseIdsForEnvironment(plan, 'cds'),
         );
         cdsVisualGate = runVisualGate({
           manifestPath: resolve(requestedVisualManifest),
@@ -2167,7 +2200,7 @@ async function main() {
             runId,
             commit: values.STABLE_SMOKE_COMMIT,
             environments: ['production'],
-            scope: 'full',
+            scope: visualScope,
           });
           if (!reusableUnlock) {
             const unlockedAt = new Date().toISOString();
@@ -2179,7 +2212,7 @@ async function main() {
               '--run-id', runId,
               '--commit', values.STABLE_SMOKE_COMMIT,
               '--capture-started-at', unlockedAt,
-              '--scope', 'full',
+              '--scope', visualScope,
               '--production-origin', values.STABLE_SMOKE_PROD_BASE_URL || '',
               '--production-gateway-origin', values.STABLE_SMOKE_PROD_GW_BASE_URL || '',
             ]);
@@ -2197,7 +2230,7 @@ async function main() {
             }, null, 2)}\n`, 'utf8');
           }
 
-          if (!requestedProductionVisualManifest) {
+          if (!requestedProductionVisualManifest && !captureVisual) {
             const stagedSummary = {
               runId,
               verdict: 'awaiting-production-visual',
@@ -2210,6 +2243,7 @@ async function main() {
               archive: { status: 'pending-production-visual', reportUrl: '' },
               notification: { status: 'skipped', reason: '等待正式环境视觉取证，不属于测试失败' },
             };
+            stagedSummary.experience = persistRunExperience({ runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows: [...(productionBaseline?.rows || []), ...cdsRows], requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment, archive: stagedSummary.archive }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
             writeFileSync(resolve(runDir, 'summary.json'), `${JSON.stringify(stagedSummary, null, 2)}\n`, 'utf8');
             process.stdout.write(`${JSON.stringify({
               runId,
@@ -2248,8 +2282,8 @@ async function main() {
         values,
         runDir,
         effectiveGrep,
-        captureVisual && environment === 'cds'
-          ? { planPath: visualPlanPath, outputPath: automaticCdsVisualOutput }
+        captureVisual && (environment === 'cds' || !productionSafetyGate.restricted)
+          ? { planPath: environment === 'cds' ? visualPlanPath : productionVisualPlanPath, outputPath: environment === 'cds' ? automaticCdsVisualOutput : resolve(runDir, 'production-visual-evidence') }
           : null,
       );
       executions.push({
@@ -2308,7 +2342,7 @@ async function main() {
       writeFileSync(visualPlanForGatePath, `${JSON.stringify(combinedPlan, null, 2)}\n`, 'utf8');
       writeFileSync(visualPlanForReportPath, `${renderVisualPlan(combinedPlan)}\n`, 'utf8');
       const cdsManifest = readJson(resolve(requestedVisualManifest));
-      const productionManifest = readJson(resolve(requestedProductionVisualManifest));
+      const productionManifest = readJson(resolve(requestedProductionVisualManifest || resolve(runDir, 'production-visual-evidence/manifest.json')));
       if (!Array.isArray(cdsManifest) || !Array.isArray(productionManifest)) {
         throw new Error('CDS 或正式环境视觉 manifest 不是有效数组');
       }
@@ -2416,6 +2450,8 @@ async function main() {
       '--output', supervisorPath,
     ]);
     if (compose.status !== 0) throw new Error('功能与视觉主管报告合并失败');
+    const experiencePreview = updatePools(readPools(), { runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows, requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment });
+    writeFileSync(supervisorPath, `${readFileSync(supervisorPath, 'utf8')}\n${renderExperienceSummary(experiencePreview)}`, 'utf8');
 
     const archiveReportPath = resolve(runDir, 'archive-report.md');
     const prepareArchive = command('node', [
@@ -2434,7 +2470,7 @@ async function main() {
     } else if (!options.has('--dry-run')) {
       const branchResult = command('git', ['branch', '--show-current']);
       const commitResult = command('git', ['rev-parse', 'HEAD']);
-      const archiveBranchStatus = productionReadOnlyArchive ? await readCdsBranchStatusWithRetries() : null;
+      const archiveBranchStatus = productionReadOnlyArchive ? await readCdsBranchStatusWithRetries(cdsCommand, { branchId: liveCdsBranchId }) : null;
       const archiveCommand = buildStableSmokeArchiveCommand({
         productionReadOnly: productionReadOnlyArchive,
         runId,
@@ -2472,6 +2508,7 @@ async function main() {
       ), { env: { ...process.env, ...values } });
       if (verifyOpen.status === 0) {
         summaryDocument.archive.verifyOpen = 'passed';
+        writeFileSync(resolve(runDir, 'verified-report.json'), `${JSON.stringify({ status: 'passed', runId, reportUrl })}\n`, { mode: 0o600 });
       } else {
         summaryDocument.archive = {
           ...summaryDocument.archive,
@@ -2517,11 +2554,13 @@ async function main() {
           '--request-id', target.requestId,
           '--recovery', target.recovery,
           '--report-url', reportUrl,
+          '--verification-file', resolve(runDir, 'verified-report.json'),
         ], {
           env: {
             ...process.env,
             ...values,
             STABLE_SMOKE_NOTIFY_BASE_URL: resolveNotificationBaseUrl(values),
+            STABLE_SMOKE_NOTIFY_TARGET_USERNAME: registry.environments?.production?.notificationTarget?.username || '',
           },
         });
         return {
@@ -2543,9 +2582,12 @@ async function main() {
           };
     }
     if (summaryDocument.notification.status === 'delivery-failed') {
-      summaryDocument.verdict = 'fail';
       summaryDocument.deliveryFailure = '非通过报告未能完成“在线归档后定向通知”的交付闭环';
     }
+    summaryDocument.businessVerdict = summaryDocument.verdict;
+    if (summaryDocument.deliveryFailure) summaryDocument.verdict = 'fail';
+    // 基线的 commit 是工具提交，不冒充正式部署版本；实际版本见原 CORE-001 证据。
+    summaryDocument.experience = persistRunExperience({ runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows, requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment, archive: summaryDocument.archive, notification: summaryDocument.notification, deployments: { cds: readJson(resolve(runDir, 'cds-readiness.json')), production: { source: 'CORE-001 原始版本回读证据', actualCommit: null } } }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
     writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
 
     process.stdout.write(`${JSON.stringify({

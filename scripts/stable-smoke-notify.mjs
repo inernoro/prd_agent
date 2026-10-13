@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
+import { readFileSync } from 'node:fs';
 
 function readArg(argv, name, fallback = '') {
   const index = argv.indexOf(name);
@@ -25,8 +26,8 @@ export function buildNotificationPayload(options) {
     title,
     message: detail,
     level: isTest ? 'info' : options.verdict === 'fail' ? 'error' : 'warning',
-    targetUserId: options.targetUserId || undefined,
-    targetUsername: options.targetUserId ? undefined : options.targetUsername,
+    targetUserId: options.targetUsername ? undefined : options.targetUserId || undefined,
+    targetUsername: options.targetUsername || undefined,
     actionLabel: options.actionLabel || '查看验收证据',
     actionUrl: options.reportUrl,
     actionKind: 'open-url',
@@ -56,6 +57,10 @@ export function validateNotificationOptions(options) {
     errors.push('缺少定向通知用户，拒绝发送全局通知');
   }
   if (!options.reportUrl || !/^https:\/\//.test(options.reportUrl)) errors.push('验收证据必须是 HTTPS 地址');
+  if (!options.isTest && options.verdict !== 'pass'
+      && (options.verifiedReport?.status !== 'passed'
+        || options.verifiedReport?.runId !== options.runId
+        || options.verifiedReport?.reportUrl !== options.reportUrl)) errors.push('缺少同轮同地址 verify-open 成功回执，拒绝投递未验真报告');
   if (!options.isTest && options.verdict !== 'pass' && !options.recovery) errors.push('失败通知必须给出恢复动作');
   return errors;
 }
@@ -77,6 +82,7 @@ export async function sendNotification(options, fetchImpl = fetch) {
   const eventUrl = new URL('/api/dashboard/notifications/events', baseUrl);
   const body = JSON.stringify(buildNotificationPayload(options));
   const response = await fetchImpl(eventUrl, {
+    signal: AbortSignal.timeout(20_000),
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -132,6 +138,8 @@ async function main() {
     reportUrl: readArg(argv, '--report-url'),
     actionLabel: readArg(argv, '--action-label', '查看验收证据'),
     isTest: argv.includes('--test'),
+    verifiedReport: readArg(argv, '--verification-file')
+      ? JSON.parse(readFileSync(readArg(argv, '--verification-file'), 'utf8')) : undefined,
   };
   const result = await sendNotification(options);
   process.stdout.write(`${JSON.stringify(result)}\n`);

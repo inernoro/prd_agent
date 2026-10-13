@@ -232,7 +232,8 @@ export function createStableSmokeVisualEvidence(options = {}) {
     required(runtime.runId, 'STABLE_SMOKE_RUN_ID');
     required(runtime.commit, 'STABLE_SMOKE_COMMIT');
     required(runtime.environment, 'STABLE_SMOKE_ENVIRONMENT');
-    const slotId = required(input.slotId, 'slotId');
+    const inputSlotId = required(input.slotId, 'slotId');
+    const slotId = runtime.environment === 'production' ? inputSlotId.replace(/^CDS-/, 'PRODUCTION-') : inputSlotId;
     const status = input.status || '通过';
     if (!allowedStatuses.has(status)) throw new Error(`视觉位 ${slotId} 使用了未知状态：${status}`);
     if (input.failureEvidence && (!input.failureReason || status === '通过')) {
@@ -250,6 +251,12 @@ export function createStableSmokeVisualEvidence(options = {}) {
     await mkdir(outputPath, { recursive: true });
     const plan = await readJson(planPath, '视觉取证计划');
     validatePlan(plan, runtime);
+    if (!plan.slots.some(slot => slot.environment === runtime.environment)) {
+      throw new Error('视觉取证环境不一致，不能复用另一环境的计划');
+    }
+    if (plan.scope === 'routine' && !plan.slots.some(slot => slot.slotId === slotId)) {
+      return { captured: false, reason: 'outside-routine-plan', slotId };
+    }
     const slot = findSlot(plan, slotId, runtime.environment);
     const actual = validatePageForSlot(page, slot);
     const manifestPath = join(outputPath, 'manifest.json');

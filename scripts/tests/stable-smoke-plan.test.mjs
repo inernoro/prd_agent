@@ -34,9 +34,11 @@ test('48 小时调度属于本地自动化而非 GitHub Actions', () => {
   const promptPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/local-automation-prompt.md');
   const workflowPath = resolve(repoRoot, '.github/workflows/stable-smoke-48h.yml');
   const prompt = readFileSync(promptPath, 'utf8');
-  assert.match(prompt, /execution_environment.*local|执行环境：`local`/);
-  assert.match(prompt, /RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=2;BYMINUTE=17/);
-  assert.match(prompt, /正式环境固定为 `https:\/\/map\.ebcone\.net`/);
+  assert.match(prompt, /本地执行环境/);
+  assert.match(prompt, /保留既有.*48 小时周期/);
+  assert.match(prompt, /正式固定 https:\/\/map\.ebcone\.net/);
+  assert.match(prompt, /automation_update/);
+  assert.match(prompt, /--profile routine --capture-visual/);
   assert.equal(existsSync(workflowPath), false);
 });
 

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadBusinessContract, readPools, pendingRetests } from './stable-smoke-memory.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -162,7 +163,11 @@ export function buildPlan({
   matrixCaseIds = [],
   mode,
   commit,
+  profile = 'full',
+  businessContract,
+  pools,
 }) {
+  if (!['routine', 'full'].includes(profile)) throw new Error('巡检范围必须为 routine 或 full');
   const catalogErrors = validateCatalog(catalog);
   const { selected, unmappedFiles } = selectFeatureLines(catalog, changedFiles, activeRegressions, mode);
   const incomplete = selected.filter((feature) => feature.automationStatus === 'planned');
@@ -201,6 +206,21 @@ export function buildPlan({
       ...functionalRegressions.filter((caseId) => !cdsOnlyRegressionSet.has(caseId)),
     ])].sort(),
   };
+  let cdsCoreCaseIds = [];
+  if (profile === 'routine') {
+    const contract = businessContract || loadBusinessContract();
+    const state = pools || readPools();
+    const core = new Set(contract.features.filter(feature => feature.cdsCore).flatMap(feature => feature.caseIds));
+    cdsCoreCaseIds = requiredCaseIdsByEnvironment.cds.filter(caseId => core.has(caseId));
+    const followups = new Set(pendingRetests(state, 'cds'));
+    const localRegressions = new Set(catalog.localRegressionCaseIds || []);
+    requiredCaseIdsByEnvironment.cds = requiredCaseIdsByEnvironment.cds.filter(caseId => core.has(caseId) || followups.has(caseId) || localRegressions.has(caseId));
+    // 正式矩阵不缩减。近期重点只调整执行优先级，不增加正式禁止操作。
+    for (const environment of ['cds', 'production']) {
+      const priority = new Set(pendingRetests(state, environment));
+      requiredCaseIdsByEnvironment[environment].sort((a, b) => Number(priority.has(b)) - Number(priority.has(a)) || a.localeCompare(b));
+    }
+  }
   const requiredCaseIds = [...new Set([
     ...requiredCaseIdsByEnvironment.cds,
     ...requiredCaseIdsByEnvironment.production,
@@ -209,6 +229,8 @@ export function buildPlan({
     schemaVersion: '1.1',
     generatedAt: new Date().toISOString(),
     mode,
+    profile,
+    cdsCoreCaseIds,
     commit,
     catalogVersion: catalog.catalogVersion,
     verdict,
@@ -290,6 +312,7 @@ async function main() {
     matrixCases,
     mode,
     commit: gitCommit(),
+    profile: readArg(argv, '--profile', mode === 'scheduled' ? 'routine' : 'full'),
   });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');

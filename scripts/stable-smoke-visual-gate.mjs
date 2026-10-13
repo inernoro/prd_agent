@@ -182,6 +182,43 @@ export function validateVisualEvidence(
   expectedPlan = null,
   validationNow = new Date(),
 ) {
+  if (expectedPlan?.scope === 'routine') {
+    const envs = normalizeVisualEnvironments(requestedEnvironments);
+    const hashes = new Set();
+    const crossEnvironmentDuplicates = [];
+    for (const row of manifest) {
+      const integrity = inspectEvidenceFile(row);
+      if (integrity.error || !integrity.hash) continue;
+      if (hashes.has(integrity.hash)) crossEnvironmentDuplicates.push(String(row.name || '未命名截图'));
+      hashes.add(integrity.hash);
+    }
+    const parts = envs.map(environment => {
+      const slots = expectedPlan.slots.filter(slot => slot.environment === environment);
+      const canonical = buildVisualPlan(catalog, [environment], { ...expectedPlan, scope: 'routine' });
+      if (slots.length !== canonical.slots.length || canonical.slots.some(slot => !slots.some(item => item.slotId === slot.slotId && item.primaryState === slot.primaryState))) {
+        throw new Error('例行视觉计划与固定核心合同不一致，拒绝缩减门禁');
+      }
+      const selectedModules = catalog.modules.filter(module => slots.some(slot => slot.moduleId === module.id)).map(module => {
+        const selected = slots.filter(slot => slot.moduleId === module.id);
+        return { ...module, uniqueScreenshotFloor: selected.length, requiredStates: [...new Set(selected.map(slot => slot.primaryState))], requiredThemes: [...new Set(selected.map(slot => slot.theme))], requiredViewportClasses: [...new Set(selected.map(slot => slot.viewportClass))] };
+      });
+      const partCatalog = { ...catalog, modules: selectedModules, uniqueScreenshotFloor: slots.length, plannedScreenshotTarget: slots.length };
+      return validateVisualEvidence(partCatalog, manifest.filter(item => item.environment === environment), [environment], { ...expectedPlan, scope: 'full', slots }, validationNow);
+    });
+    if (!parts.length) throw new Error('例行视觉门禁缺少环境');
+    const groups = new Map();
+    for (const part of parts) for (const module of part.modules) groups.set(module.id, [...(groups.get(module.id) || []), module]);
+    const modules = [...groups.values()].map(children => {
+      const merged = { ...children[0] };
+      for (const field of ['screenshotFloor', 'collectedScreenshotCount', 'screenshotCount', 'invalidEvidenceCount', 'requiredStateCount', 'coveredStateCount']) merged[field] = children.reduce((sum, child) => sum + child[field], 0);
+      for (const field of ['missingStates', 'missingSlots', 'missingThemes', 'missingViewportClasses', 'fieldErrors', 'evidenceRows']) merged[field] = children.flatMap(child => child[field]);
+      for (const field of ['floorPassed', 'metadataPassed', 'statePassed']) merged[field] = children.every(child => child[field]);
+      merged.statusCounts = Object.fromEntries(Object.keys(merged.statusCounts).map(status => [status, children.reduce((sum, child) => sum + child.statusCounts[status], 0)]));
+      merged.verdict = strictestVisualStatus(...children.map(child => child.verdict));
+      return merged;
+    });
+    return { ...parts[0], scope: 'routine', environments: envs, modules, screenshotFloor: parts.reduce((sum, part) => sum + part.screenshotFloor, 0), screenshotCount: parts.reduce((sum, part) => sum + part.screenshotCount, 0), collectedScreenshotCount: parts.reduce((sum, part) => sum + part.collectedScreenshotCount, 0), rawScreenshotCount: manifest.length, duplicateNames: crossEnvironmentDuplicates, statusCounts: Object.fromEntries(Object.keys(parts[0].statusCounts).map(status => [status, parts.reduce((sum, part) => sum + part.statusCounts[status], 0)])), blockingModules: modules.filter(module => module.verdict !== '通过').length, passedModules: modules.filter(module => module.verdict === '通过').length, verdict: parts.every(part => part.verdict === '通过') && !crossEnvironmentDuplicates.length ? '通过' : '不通过' };
+  }
   const environments = normalizeVisualEnvironments(requestedEnvironments);
   const requiredFields = [...(catalog.evidenceItemRequiredFields || [
     'coverageStates',

@@ -8,6 +8,7 @@ import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
+import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -6833,11 +6834,31 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIS-009][REG-visual-policy-001] 真实触控手机使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+  test('[CORE-010][REG-visual-mobile-entry-001] 手机从首页生图真实触控进入视觉创作，不直达路由', async ({ browser, request }, testInfo) => {
+    const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    try {
+      const page = await context.newPage();
+      await loginAndReadToken(page, request, '/');
+      expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
+      const navigation = await enterVisualFromHome(page, { touch: true });
+      expect(navigation).toEqual({ label: '生图', path: '/visual-agent', realClick: true, touch: true });
+      const create = page.getByRole('button', { name: '新建项目', exact: true }).first();
+      await expect(create).toBeVisible();
+      await create.scrollIntoViewIfNeeded();
+      const bounds = await create.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.y).toBeGreaterThanOrEqual(0);
+      expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+      await testInfo.attach('mobile-real-navigation', { body: await page.screenshot(), contentType: 'image/png' });
+    } finally { await context.close(); }
+  });
+
+  test('[VIS-009][REG-visual-policy-001] 真实触控手机从首页生图进入并使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
     test.setTimeout(720_000);
     const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
     const page = await context.newPage();
-    const token = await loginAndReadToken(page, request, '/visual-agent');
+    const token = await loginAndReadToken(page, request, '/');
+    await enterVisualFromHome(page, { touch: true });
     const { workspace } = await createVisualWorkspace(page, token, 'mobile-business-policy');
     let runId = '';
     try {
@@ -6848,7 +6869,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const capability = await readEnvelope<{ matched: boolean; sizesByResolution?: Record<string, Array<{size:string;aspectRatio:string}>> }>(
         await page.request.get(`/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(model.code)}`, { headers: authHeaders(token) }));
       expect(capability.matched).toBe(true);
-      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await openOwnVisualWorkspace(page, workspace.id, { touch: true });
       await dismissBlockingTutorial(page);
       expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
       await expect(page.getByText(model.name, { exact: true }).first()).toBeVisible();

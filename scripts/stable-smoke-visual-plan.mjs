@@ -4,6 +4,12 @@ import { pathToFileURL } from 'node:url';
 
 const DEFAULT_CATALOG = '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json';
 
+// 48 小时例行计划只核销真实核心状态；完整发布/专项验收仍使用 full 的 148 项合同。
+export const routineVisualSequences = {
+  cds: { 'identity-profile': [1, 2], 'recording-audio': [4, 9, 11], 'file-parsing': [4, 7, 11], 'single-image-creation': [3, 5, 8, 10, 14, 16] },
+  production: { 'identity-profile': [1, 2], 'recording-audio': [4, 9, 11, 12], 'file-parsing': [4, 7, 11, 12], 'short-video-parsing': [1, 6, 8], 'literary-creation': [5, 7, 9], 'single-image-creation': [3, 5, 8, 10, 14, 16], 'multi-image-creation': [2, 3, 8, 11, 14], 'video-creation': [4, 6, 9, 11], 'image-model-routing': [7, 8, 9], 'errors-progress-responsive': [4, 5, 10] },
+};
+
 function readArg(argv, name, fallback = '') {
   const index = argv.indexOf(name);
   return index >= 0 ? argv[index + 1] || fallback : fallback;
@@ -69,6 +75,15 @@ function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmen
 export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity = {}) {
   const environments = normalizeVisualEnvironments(requestedEnvironments);
   const scope = String(runIdentity.scope || 'full').trim() || 'full';
+  if (scope === 'routine') {
+    const full = buildVisualPlan(catalog, requestedEnvironments, { ...runIdentity, scope: 'full' });
+    const slots = full.slots.filter(slot => {
+      const sequence = Number(slot.slotId.split('-').at(-1));
+      return routineVisualSequences[slot.environment]?.[slot.moduleId]?.includes(sequence);
+    });
+    if (!slots.length) throw new Error('例行视觉计划没有真实核心状态');
+    return { ...full, scope, plannedScreenshotTarget: slots.length, slots, modules: full.modules.filter(module => slots.some(slot => slot.moduleId === module.id)).map(module => ({ ...module, planned: slots.filter(slot => slot.moduleId === module.id).length })) };
+  }
   const runId = String(runIdentity.runId || '').trim();
   const commit = String(runIdentity.commit || '').trim();
   const captureStartedAt = String(runIdentity.captureStartedAt || '').trim();

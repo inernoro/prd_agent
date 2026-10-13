@@ -45,6 +45,7 @@ import {
   resolveNotificationBaseUrl,
   readCdsBranchStatusWithRetries,
   resolveCdsPreviewUrls,
+  resolveExistingCdsBranchId,
   requireAuthoritativeCdsAddress,
   runFolderRegressionTests,
   runCdsVersionEvidence,
@@ -63,6 +64,17 @@ import {
   validateSelectedEnvironmentConfig,
   visualGateExecutionMatchesResult,
 } from '../stable-smoke-run.mjs';
+
+test('例行直接读取已有CDS分支身份，不依赖工具分支发布且不猜域名', () => {
+  const command = (program, args) => {
+    assert.equal(program, 'python3');
+    assert.deepEqual(args.slice(1), ['branch', 'list', '--project', 'prd-agent']);
+    return { status: 0, stdout: JSON.stringify({ data: { branches: [{ projectId: 'other', branch: 'main', id: 'foreign' }, { projectId: 'prd-agent', branch: 'main', id: 'canonical-from-server' }] } }) };
+  };
+  assert.equal(resolveExistingCdsBranchId(command, 'prd-agent'), 'canonical-from-server');
+  assert.throws(() => resolveExistingCdsBranchId(command, 'prd-agent', 'not-deployed'), /拒绝猜测/);
+  assert.throws(() => resolveExistingCdsBranchId(() => ({ status: 1 }), 'prd-agent'), /拒绝猜测/);
+});
 
 test('COMMON-004 只在清理回读与报告通知门禁全部通过时成立', () => {
   const base = [
@@ -195,7 +207,7 @@ test('自动视觉取证把本轮计划和统一输出目录注入真实 Playwri
   assert.match(source, /STABLE_SMOKE_VISUAL_PLAN:\s*visualCapture\.planPath/);
   assert.match(source, /STABLE_SMOKE_VISUAL_OUTPUT:\s*visualCapture\.outputPath/);
   assert.match(source, /requestedVisualManifest\s*=\s*resolve\(automaticCdsVisualOutput, 'manifest\.json'\)/);
-  assert.match(source, /captureVisual\s*&&\s*environment\s*===\s*'cds'/);
+  assert.match(source, /captureVisual\s*&&\s*\(environment === 'cds' \|\| !productionSafetyGate.restricted\)/);
 });
 
 test('dry-run 只产出计划摘要且不宣称功能或视觉验收通过', () => {
@@ -966,15 +978,14 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /scripts\/stable-smoke-notify\.mjs/);
   assert.match(source, /完整稳定冒烟缺少本轮视觉取证清单/);
   assert.doesNotMatch(source, /if \(!existsSync\(visualManifestPath\)\) writeFileSync\(visualManifestPath, '\[\]\\n'/);
-  assert.match(automationPrompt, /--dry-run --run-id <runId>/);
-  assert.match(automationPrompt, /\/验收/);
-  assert.match(automationPrompt, /--visual-manifest <CDS manifest\.json绝对路径>/);
-  assert.match(automationPrompt, /--production-visual-manifest <正式环境 manifest\.json绝对路径>/);
+  assert.match(automationPrompt, /--profile routine --capture-visual/);
+  assert.match(automationPrompt, /CDS 核心功能、清理与对应视觉证据通过后解锁正式/);
+  assert.match(automationPrompt, /create-visual-test-to-kb/);
   assert.match(source, /visual-plan-production\.json/);
   assert.match(source, /production-visual-unlock\.json/);
   assert.match(source, /requiredCaseIdsByEnvironment/);
   assert.match(source, /buildEnvironmentGrep/);
-  assert.match(automationPrompt, /人工 `--grep` 只能取本环境允许集合的交集/);
+  assert.match(automationPrompt, /grep 必须精确选中/);
   assert.match(source, /initialVisualEnvironments = selected\.includes\('cds'\) \? \['cds'\] : selected/);
   assert.ok(source.indexOf('evaluateProductionSafetyGate(') < source.indexOf("'visual-plan-production.json'"));
   assert.ok(source.indexOf('cdsVisualGate.result.verdict') < source.indexOf('const productionVisualPlanResult'));
@@ -1189,9 +1200,9 @@ test('环境模板账号与凭据注册表保持一致', () => {
 
 test('48 小时合同先保留正式只读基线再用 CDS 解锁正式写入', () => {
   const contract = readFileSync('.claude/skills/stable-smoke/SKILL.md', 'utf8');
-  assert.match(contract, /正式环境 `CORE-001` 只读基线先行并独立记账/);
-  assert.match(contract, /CDS 门禁通过后，再运行正式环境限额写入安全矩阵/);
-  assert.match(contract, /不得因 CDS 控制面阻塞而把正式环境标成未测/);
+  assert.match(contract, /正式只读基线先行/);
+  assert.match(contract, /例行 CDS 核心安全集通过后，正式完整安全矩阵/);
+  assert.match(contract, /工具分支尚未部署不得阻止检查当前线上功能/);
 
   const runner = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
   const main = runner.slice(runner.indexOf('async function main()'));
