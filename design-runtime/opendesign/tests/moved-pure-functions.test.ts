@@ -1085,14 +1085,20 @@ describe('every quality rejection must reach the repair loop', () => {
     // 上面证明的是「每条消息都分得出类」。还差一句：执行器里除了分类器之外没有别的内容判据
     // 会把一条拒绝挡在修复回路之外——否则「分得出类」与「真的会去修」仍是两回事
     // （`predicate-and-wiring-discipline.md` 形状 2）。这里把那个入口条件本身钉住：
-    // 只许按「不是运行时错误 / 不是质量拒绝 / 修复次数已用尽」三项提前重抛。
+    // 只许按「不是运行时错误 / 不是质量拒绝」两项在分类前提前重抛。修复次数已用尽时也要先
+    // 分类，才能把稳定 issueCode 和预算状态放进终态错误，不能再把原始错误直接抛回去。
     const repairEntry = source.slice(
       source.indexOf('} catch (error) {', source.indexOf('hardenedHtml = checkArtifactQuality(')),
-    ).slice(0, 400);
+    ).slice(0, 900);
     expect(repairEntry).toContain('error.code !== \'design_output_quality_rejected\'');
     expect(repairEntry).toContain('qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS');
-    // 条件里出现第四个 `||` 就说明多了一条内容判据，必须回来重新审。
-    expect((repairEntry.slice(0, repairEntry.indexOf('throw error;')).match(/\|\|/g) ?? []).length).toBe(2);
+    const classifierIndex = repairEntry.indexOf('const repairReason = classifyQualityRepairReason(error);');
+    const attemptLimitIndex = repairEntry.indexOf('qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS');
+    expect(classifierIndex).toBeGreaterThan(0);
+    expect(attemptLimitIndex).toBeGreaterThan(classifierIndex);
+    expect(repairEntry.slice(attemptLimitIndex)).toContain('traceableDeterministicQualityRejection(');
+    // 分类前出现第二个 `||` 就说明多了一条内容判据，必须回来重新审。
+    expect((repairEntry.slice(0, repairEntry.indexOf('throw error;')).match(/\|\|/g) ?? []).length).toBe(1);
   });
 });
 

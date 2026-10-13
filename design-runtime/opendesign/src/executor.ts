@@ -78,6 +78,25 @@ import {
   type WorkspaceTransferRequest,
 } from './workspace/transfer.js';
 
+function traceableDeterministicQualityRejection(
+  error: AgentWorkspaceRuntimeError,
+  issueCode: string,
+  repairAttempts: number,
+  repairBudgetExhausted: boolean,
+): AgentWorkspaceRuntimeError {
+  return new AgentWorkspaceRuntimeError(
+    error.code,
+    error.message,
+    error.retryable,
+    {
+      ...error.details,
+      issueCodes: [issueCode],
+      repairAttempts,
+      repairBudgetExhausted,
+    },
+  );
+}
+
 /**
  * OpenDesign 自己认定的交付文件，不是 `index.html`（DELIVERABLE_ENTRY_NOTE）。
  *
@@ -615,15 +634,22 @@ export class DesignTaskExecutor {
           if (
             !(error instanceof AgentWorkspaceRuntimeError)
             || error.code !== 'design_output_quality_rejected'
-            || qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS
           ) {
             throw error;
+          }
+          const repairReason = classifyQualityRepairReason(error);
+          if (!repairReason) throw error;
+          if (qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS) {
+            throw traceableDeterministicQualityRejection(
+              error,
+              repairReason.code,
+              qualityRepairAttempt,
+              false,
+            );
           }
           if (Date.now() >= executionDeadline) {
             throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
           }
-          const repairReason = classifyQualityRepairReason(error);
-          if (!repairReason) throw error;
           const preserveMeasuredFacts = repairReason.code === 'measured_claim_context_unresolved'
             || repairReason.code === 'retained_measured_claim_missing';
           const stableRunId = finalRunId;
@@ -639,7 +665,12 @@ export class DesignTaskExecutor {
               remainingSeconds: Math.max(0, Math.floor(remainingRepairMs / 1000)),
               issueCodes: [repairReason.code],
             });
-            throw error;
+            throw traceableDeterministicQualityRejection(
+              error,
+              repairReason.code,
+              qualityRepairAttempt,
+              true,
+            );
           }
           const repairDeadline = Date.now() + allottedRepairMs;
           try {
@@ -684,7 +715,12 @@ export class DesignTaskExecutor {
               retainedRunId: stableRunId,
               issueCodes: [repairReason.code],
             });
-            throw error;
+            throw traceableDeterministicQualityRejection(
+              error,
+              repairReason.code,
+              qualityRepairAttempt + 1,
+              true,
+            );
           }
         }
       }

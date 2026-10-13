@@ -509,6 +509,11 @@ describe('collecting the deliverable', () => {
 
     expect(view.state).toBe('failed');
     expect(view.error.code).toBe('design_output_quality_rejected');
+    expect(view.error.details).toMatchObject({
+      issueCodes: ['missing_fragment_target'],
+      repairAttempts: 1,
+      repairBudgetExhausted: true,
+    });
     expect(harness.daemon.cancels).toContain('od-run-3');
     expect(harness.daemon.freezes).toBe(harness.daemon.thaws);
     expect(map!.commits).toHaveLength(0);
@@ -516,6 +521,13 @@ describe('collecting the deliverable', () => {
       'open_design_quality_repairing',
       'open_design_quality_repair_budget_exhausted',
     ]));
+    const events = (await harness.request('GET', `/v1/tasks/${pkg.runId}/events`, undefined, auth)).body.events;
+    const terminal = events.find((event: { type: string }) => event.type === 'error');
+    expect(terminal.payload.details).toMatchObject({
+      issueCodes: ['missing_fragment_target'],
+      repairAttempts: 1,
+      repairBudgetExhausted: true,
+    });
   });
 
   it('isolates quality work from generation history and keeps browser repairs in the quality conversation', async () => {
