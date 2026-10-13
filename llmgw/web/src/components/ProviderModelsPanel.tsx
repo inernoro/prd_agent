@@ -74,7 +74,7 @@ export function ProviderModelsPanel({ rows, onRegister }: { rows: ProviderModelR
         {publicIds.length ? <button type="button" onClick={(event) => { triggerRef.current = event.currentTarget; setSelectedId(model.id); }} style={linkButton}>登记详情</button> : <Chip label="未登记" color="var(--warn)" bg="var(--warn-bg)" />}
       </div>)}</>}
     </CollectionView>
-    {selected ? <><div className="lg-collection-toolbar"><button ref={returnRef} type="button" style={linkButton} onClick={() => setSelectedId(null)}>返回名下模型</button><span style={HINT_TEXT}>{selected.publicIds.length} 个公开模型</span></div><CollectionView key={selected.model.id} items={selected.publicIds} searchText={(id) => id} placeholder="搜索登记的公开模型">{(ids) => <>{ids.map((id) => <div className="lg-collection-code" key={id}>{id}</div>)}</>}</CollectionView></> : null}
+    {selected ? <><div className="lg-collection-toolbar"><button ref={returnRef} type="button" style={linkButton} onClick={() => setSelectedId(null)}>返回名下模型</button><span style={HINT_TEXT}>{selected.publicIds.length} 个公开模型</span></div><CollectionView key={selected.model.id} items={selected.publicIds} searchText={(id) => id} placeholder="搜索登记的公开模型">{(ids) => <>{ids.map((id) => <div className="lg-collection-code" key={id}><Link to={`/models/view?model=${encodeURIComponent(id)}`}>{id}</Link></div>)}</>}</CollectionView></> : null}
   </>;
 }
 const linkButton: React.CSSProperties = { background: 'none', border: 'none', padding: 0, color: 'var(--accent)', fontSize: 'var(--fs-secondary)', cursor: 'pointer' };

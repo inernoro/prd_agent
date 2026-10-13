@@ -475,14 +475,14 @@ export function LogicalModelsPage() {
                       <CollectionView items={routes} placeholder="搜索上游模型、供应方或备注" searchText={(route) => [route.label, route.upstreamModelId, route.providerName, route.offering.targetName, route.offering.notes, route.protocol].filter(Boolean).join(' ')}>
                         {(pageRoutes) => <>{pageRoutes.map((route) => (
                         <div className="lg-logical-model-route-detail" key={`detail-${route.id}`} style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, width: 200, flexShrink: 0 }}>
+                          <span className="lg-logical-model-route-target" style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
                             <RouteDot health={route.health} />
                             <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                               <strong style={{ fontSize: 'var(--fs-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{route.upstreamModelId || route.offering.targetName || route.label}</strong>
                               <span style={HINT_TEXT}>{route.label} · {route.roleLabel} · 协议 {route.protocol}</span>
                             </span>
                           </span>
-                          <span className="lg-logical-model-route-info" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                          <span className="lg-logical-model-route-info" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                             <span style={HINT_TEXT}>{route.priceOrigin}</span>
                             <span style={HINT_TEXT}>优先级 {route.priority} · 权重 {route.weight} · {route.governance}</span>
                           </span>
@@ -721,7 +721,7 @@ export function LogicalModelsPage() {
 const ROW_GRID: React.CSSProperties = {
   display: 'grid',
   alignItems: 'center',
-  gap: GAP.page,
+  gap: GAP.normal,
   padding: `${GAP.section}px ${CARD_PADDING}px`,
 };
 const ROW_HEAD: React.CSSProperties = { background: 'var(--bg-base)', paddingTop: GAP.normal, paddingBottom: GAP.normal };

@@ -5,7 +5,8 @@ export function providerForDetail(items: readonly PlatformItem[], id: string, na
 }
 export function logicalForDetail(items: readonly LogicalModelItem[], logicalId: string, physicalId: string, name: string) {
   if (physicalId) return null;
-  return items.find((item) => logicalId ? item.id === logicalId : item.publicId === name || item.name === name) ?? null;
+  if (logicalId) return items.find((item) => item.id === logicalId) ?? null;
+  return items.find((item) => item.publicId === name) ?? items.find((item) => item.name === name) ?? null;
 }
 export function physicalForDetail(items: readonly ModelItem[], id: string, platformId: string, name: string) {
   return items.filter((item) => (id ? item.id === id : item.id === name || item.modelName === name || item.name === name) && (!platformId || item.platformId === platformId));

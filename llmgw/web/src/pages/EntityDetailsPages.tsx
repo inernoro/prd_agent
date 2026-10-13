@@ -92,7 +92,7 @@ function EntityDetailsShell({
             {sections.map((section) => {
               const collection = bounded && (section.id === 'providers' || section.id === 'models');
               return <section key={section.id} id={section.id} className={`lg-entity-detail-section${collection ? ' lg-entity-detail-collection' : ''}`}>
-                {bounded && !collection ? <details open={section.id === 'activity'}><summary>{section.title}</summary><div>{section.description ? <p>{section.description}</p> : null}{section.content}</div></details> : <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}{section.content}</>}
+                {bounded && !collection ? <details><summary>{section.title}</summary><div>{section.description ? <p>{section.description}</p> : null}{section.content}</div></details> : <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}{section.content}</>}
               </section>;
             })}
           </main>

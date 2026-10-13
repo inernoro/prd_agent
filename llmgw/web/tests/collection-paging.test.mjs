@@ -56,6 +56,11 @@ test('同名Provider详情以ID为准，不能混入另一家的元信息', () =
   assert.equal(providerForDetail(providers, 'p2', '同名').id, 'p2');
   assert.equal(providerForDetail(providers, 'missing', '同名'), null);
 });
+test('公开模型入口优先按公开标识定位，不被另一个模型的显示名遮住', () => {
+  const logicals = [{ id: 'a', publicId: 'other', name: 'default-chat' }, { id: 'b', publicId: 'default-chat', name: '对话默认池' }];
+  assert.equal(logicalForDetail(logicals, '', '', 'default-chat').id, 'b');
+  assert.equal(logicalForDetail(logicals, 'missing', '', 'default-chat'), null);
+});
 test('物理模型ID不被同名逻辑模型或另一家供应方覆盖', () => {
   const models = [{ id: 'm1', modelName: 'same', platformId: 'p1' }, { id: 'm2', modelName: 'same', platformId: 'p2' }];
   assert.equal(logicalForDetail([{ id: 'l1', publicId: 'same' }], '', 'm2', 'same'), null);

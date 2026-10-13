@@ -616,9 +616,9 @@ export function ServiceKeysPage() {
                 <td style={td}><strong>{item.name}</strong><div style={mutedMono}>{item.keyPrefix} · {rotationLabel(item.rotationState)}</div></td>
                 <td style={td}><strong>{item.clientCode}</strong><div style={mutedMono}>{item.environment} · {item.sourceSystem}</div></td>
                 <td style={td}><Button size="sm" variant="ghost" onClick={() => { setScopeCopied(false); setSelectedKeyId(item.id); }}>{item.appCallerCodes.length} 个调用用途</Button><div style={HINT_TEXT}>协议 {item.ingressProtocols.length} · Scope {item.scopes.length}</div></td>
-                <td style={td}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
-                <td style={td}>{formatTime(item.lastUsedAt)}</td>
-                <td style={td}>{formatTime(item.expiresAt)}</td>
+                <td style={td} title={item.teamId || '租户级'}>{item.teamId || '租户级'}<div style={mutedMono}>{item.createdByUsername || '历史密钥'}</div></td>
+                <td style={td} title={formatTime(item.lastUsedAt)}>{formatTime(item.lastUsedAt)}</td>
+                <td style={td} title={formatTime(item.expiresAt)}>{formatTime(item.expiresAt)}</td>
                 <td style={td}><Chip label={item.enabled ? '有效' : '已撤销'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} /></td>
                 <td style={{ ...td, textAlign: 'right' }}><Button size="sm" variant="ghost" onClick={() => { setScopeCopied(false); setSelectedKeyId(item.id); }}>详情</Button></td>
               </tr>)}</tbody>
