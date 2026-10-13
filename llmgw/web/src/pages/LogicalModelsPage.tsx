@@ -625,9 +625,9 @@ export function LogicalModelsPage() {
               return (
                 <div key={item.id} style={{
                   borderTop: '1px solid var(--border-subtle)',
-                  background: health.tone === 'warn' ? 'var(--warn-bg)' : item.isDefaultForType ? 'var(--accent-soft)' : undefined,
-                  // 异常优先于默认：一个模型既是默认又出了问题时，先让人看见出问题那件事
-                  boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : item.isDefaultForType ? 'inset 3px 0 0 var(--accent)' : undefined,
+                  background: selectedItem?.id === item.id ? 'var(--accent-soft)' : health.tone === 'warn' ? 'var(--warn-bg)' : undefined,
+                  // 选中行与详情对应；未选中异常保留风险提示，默认身份仍由标签完整说明。
+                  boxShadow: selectedItem?.id === item.id ? 'inset 3px 0 0 var(--accent)' : health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : undefined,
                 }}>
                   <div className="lg-logical-model-grid" style={ROW_GRID}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>

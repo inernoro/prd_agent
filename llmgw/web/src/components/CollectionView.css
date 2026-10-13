@@ -85,7 +85,7 @@
 .lg-collection-pane [data-testid="call-trace-panel"] > div { min-width: 0; }
 .lg-collection-pane .lg-collection-detail-card { flex-wrap: wrap; }
 @container (min-width:750px) {
-  .lg-collection-list .lg-logical-model-grid { grid-template-columns: minmax(0,2fr) minmax(0,1.4fr) minmax(0,1fr) minmax(0,.8fr) 130px; }
+  .lg-collection-list .lg-collection-scroll .lg-logical-model-grid { grid-template-columns: minmax(0,2fr) minmax(0,1.4fr) minmax(0,1fr) minmax(0,.8fr) 130px; }
   .lg-collection-list .lg-logical-model-heading { display: grid !important; }
   .lg-collection-list .lg-logical-model-grid > :first-child, .lg-collection-list .lg-logical-model-actions { grid-column: auto; }
 }
