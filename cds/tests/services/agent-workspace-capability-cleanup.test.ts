@@ -11,7 +11,7 @@ const result = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({ stdout
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
 function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean;
-  removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean } = {}) {
+  removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean; delayedRemovalReply?: boolean; keepRemovalVisible?: boolean } = {}) {
   const accepted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
   const events: any[] = []; let visible = false; let pendingName = ''; let operationId = ''; let journalAtAdmission: any;
   const containerId = 'a'.repeat(64); let aborted = false, removalAttempts = 0;
@@ -39,7 +39,7 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
         });
       }
       if (command.startsWith('docker inspect')) {
-        if (!visible) return result('', 'No such object', 1);
+        if (!visible) return result('', `No such object: ${command.match(/'([^']+)'$/)?.[1] || pendingName}`, 1);
         return result(JSON.stringify({ Id: containerId, Name: '/' + pendingName,
           Config: { Labels: { 'cds.instance': config.foreignOwner ? 'other-owner' : 'cancel-owner', 'cds.type': 'agent-session', 'cds.agent.probe.operation': operationId } } }));
       }
@@ -51,7 +51,10 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
         if (config.removeFailure) return result('', 'permission denied', 1);
         if (config.neverCompletesRemoval || removalAttempts <= (config.removingReplies ?? 0))
           return result('', `Error response from daemon: removal of container ${containerId} is already in progress`, 1);
-        visible = false;
+        if (!config.keepRemovalVisible) visible = false;
+        if (config.delayedRemovalReply) return new Promise<ExecResult>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('reply cancelled after confirmed deletion'), { code: 'cancelled' })), { once: true });
+        });
         return config.removingReplies ? result('', 'No such container: ' + containerId, 1) : result('removed');
       }
       throw new Error('unexpected command: ' + command);
@@ -65,6 +68,31 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 }
 
 describe('capability probe cancellation reconciliation', () => {
+  it('a delayed removal reply with the exact CID still present remains unconfirmed at the original deadline', async () => {
+    const f = fixture(true, { delayedRemovalReply: true, keepRemovalVisible: true });
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await expect(f.runtime.closeCapabilityProbes()).rejects.toMatchObject({ code: 'workspace_probe_cleanup_unconfirmed' }); await probe;
+      expect(f.visible).toBe(true);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.removal-confirmed-by-id')).toBe(false);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.unconfirmed')).toBe(true);
+    } finally { fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
+
+  it('confirms the exact acknowledged CID disappeared while removal reply is delayed, within the original cleanup budget', async () => {
+    const f = fixture(true, { delayedRemovalReply: true });
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined(); await probe;
+      expect(f.visible).toBe(false);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.removal-confirmed-by-id')).toBe(true);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmed')).toBe(true);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.unconfirmed')).toBe(false);
+      expect(f.calls.filter(call => call.command.startsWith('docker rm -f'))).toHaveLength(1);
+      expect(f.calls.some(call => call.command.startsWith('docker inspect') && call.command.endsWith(`'${f.containerId}'`))).toBe(true);
+    } finally { fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
+
   it('shutdown does not restart the exhausted cleanup budget; unknown creation stays durable and unconfirmed', async () => {
     const f = fixture(false);
     try {

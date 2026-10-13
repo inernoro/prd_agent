@@ -2228,8 +2228,9 @@ export class AgentWorkspaceSessionRuntime {
       }
     }
     for (;;) {
-      const removed = await this.execProbeCleanup(generation, lease, 'remove', lease.kind === 'storage-volume'
-        ? `docker volume rm ${shellQuote(lease.name)}` : `docker rm -f ${shellQuote(lease.containerId!)}`, deadline);
+      const removed = lease.kind === 'storage-volume'
+        ? await this.execProbeCleanup(generation, lease, 'remove', `docker volume rm ${shellQuote(lease.name)}`, deadline)
+        : await this.removeConfirmedProbeContainer(generation, lease, deadline);
       const outcome = this.probeCleanupOutcome(removed);
       if (outcome === 'ok' || outcome === 'absent') break;
       // The daemon can finish an already accepted removal after the original
@@ -2243,20 +2244,49 @@ export class AgentWorkspaceSessionRuntime {
     this.probeEvent(generation, lease, 'agent.probe.cleanup.confirmed');
   }
 
+  private async removeConfirmedProbeContainer(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, deadline: number): Promise<ExecResult> {
+    if (!lease.creationAcknowledged || !/^[a-f0-9]{64}$/.test(lease.containerId || '')) throw this.probeCleanupError();
+    const abort = new AbortController();
+    let settled = false;
+    const removal = this.execProbeCleanup(generation, lease, 'remove', `docker rm -f ${shellQuote(lease.containerId!)}`, deadline, abort.signal)
+      .finally(() => { settled = true; });
+    // 原命令失败仍由调用方处理；并行观察失败也不能吞掉命令异常。
+    const completion = removal.then(() => undefined, () => undefined);
+    try {
+      while (!settled) {
+        await Promise.race([completion, delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())))]);
+        if (settled) break;
+        const view = await this.execProbeCleanup(generation, lease, 'inspect',
+          `docker inspect --format ${shellQuote('{{json .}}')} ${shellQuote(lease.containerId!)}`, deadline);
+        // 只对已经确认且唯一的完整CID适用；未收到创建回执的名称不能走此路径。
+        if (this.probeCleanupOutcome(view) === 'absent' && `${view.stderr}\n${view.stdout}`.includes(lease.containerId!)) {
+          this.probeEvent(generation, lease, 'agent.probe.cleanup.removal-confirmed-by-id', { confirmation: 'exact-container-id-absent' });
+          abort.abort();
+          return view;
+        }
+      }
+      return await removal;
+    } catch (error) {
+      abort.abort();
+      throw error;
+    }
+  }
+
   private probeCleanupOutcome(result: ExecResult): 'ok' | 'absent' | 'removing' | 'failed' {
     const diagnostic = `${result.stderr}\n${result.stdout}`;
     return result.exitCode === 0 ? 'ok' : /No such (?:container|volume|object)/i.test(diagnostic) ? 'absent'
       : /already in progress/i.test(diagnostic) ? 'removing' : 'failed';
   }
 
-  private async execProbeCleanup(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, step: 'inspect' | 'remove', command: string, deadline: number): Promise<ExecResult> {
+  private async execProbeCleanup(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, step: 'inspect' | 'remove', command: string, deadline: number, signal?: AbortSignal): Promise<ExecResult> {
     const requestedAt = Date.now(), remaining = deadline - requestedAt;
     if (remaining <= 0) throw this.probeCleanupError();
     let assignment: ExecAssignment | undefined;
     const detail = () => ({ cleanupStep: step, requestedAt, deadline, cleanupExecutorAssignment: assignment ?? null });
     this.probeEvent(generation, lease, 'agent.probe.cleanup.step.requested', detail());
     try {
-      const result = await this.shell.exec(command, { timeout: remaining, signal: AbortSignal.timeout(remaining),
+      const timeoutSignal = AbortSignal.timeout(remaining);
+      const result = await this.shell.exec(command, { timeout: remaining, signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
         ...(step === 'inspect' ? { executionLane: 'observation' as const } : lease.kind === 'storage-volume' ? {} : { executionPurpose: 'temporary-cleanup' as const }),
         onAssigned: value => { assignment = value; this.probeEvent(generation, lease, 'agent.probe.cleanup.step.assigned', detail()); },
         beforeStart: () => { if (Date.now() >= deadline) throw this.probeCleanupError();
