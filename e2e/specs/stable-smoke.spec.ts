@@ -8217,15 +8217,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await composer.press('ControlOrMeta+V');
       await expect(composer.locator('.image-chip-node'), '历史引用文字粘贴后必须还原图片卡片').toHaveCount(1);
       await expect(composer).not.toContainText('@img1');
-      await composer.press('ControlOrMeta+A');
-      await composer.press('ControlOrMeta+C');
-      const copied = await page.evaluate(() => navigator.clipboard.readText());
-      expect(copied).toContain('[@image:#1:');
-      expect(copied).toContain('保留原有构图');
-      await composer.press('Backspace');
-      await composer.press('ControlOrMeta+V');
-      await expect(composer.locator('.image-chip-node')).toHaveCount(1);
-      await expect(composer).not.toContainText('[@image:');
+      let copied = '';
+      for (let round = 0; round < 3; round += 1) {
+        // 不插入延迟：覆盖全选后立即复制、selectionchange 尚未同步的真实快捷操作。
+        await composer.press('ControlOrMeta+A');
+        await composer.press('ControlOrMeta+C');
+        copied = await page.evaluate(() => navigator.clipboard.readText());
+        expect(copied).toContain('[@image:#1:');
+        expect(copied).toContain('保留原有构图');
+        await composer.press('Backspace');
+        await composer.press('ControlOrMeta+V');
+        await expect(composer.locator('.image-chip-node')).toHaveCount(1);
+        await expect(composer).not.toContainText('[@image:');
+      }
       await expect(page.getByText(/已把 1 张图片加入画板/)).not.toContainText('@imgN');
       await expect(page.getByText(/已把 1 张图片加入画板/)).toContainText('参考图');
       await capture(page, '02-clipboard-card', '图片引用：旧文字与复制占位符粘贴后均恢复为可读图片卡片', composer);

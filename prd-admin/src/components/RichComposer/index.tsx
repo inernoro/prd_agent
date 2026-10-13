@@ -12,12 +12,14 @@ import { useLexicalComposerContext } from '@lexical/react/LexicalComposerContext
 import type { EditorState, LexicalEditor } from 'lexical';
 import {
   $createParagraphNode,
+  $createRangeSelectionFromDom,
   $getRoot,
   $getSelection,
   $isElementNode,
   $isParagraphNode,
   $isRangeSelection,
   $isTextNode,
+  $setSelection,
   COMMAND_PRIORITY_HIGH,
   COPY_COMMAND,
   CUT_COMMAND,
@@ -288,6 +290,13 @@ function EditorInner({
   //   防陈旧 token 造幻觉引用），未命中显示失效卡片；旧编号文字共用恢复入口，图片文件仍走 onPasteImage。
   useEffect(() => {
     const $serializeSelection = (): string | null => {
+      // 浏览器全选先于 Lexical 的 selectionchange 同步，紧接着复制/剪切时必须读取当前真实选区。
+      const domSelection = editor.getRootElement()?.ownerDocument.defaultView?.getSelection() ?? null;
+      const rootElement = editor.getRootElement();
+      if (domSelection && rootElement?.contains(domSelection.anchorNode) && rootElement.contains(domSelection.focusNode)) {
+        const liveSelection = $createRangeSelectionFromDom(domSelection, editor);
+        if (liveSelection) $setSelection(liveSelection);
+      }
       const selection = $getSelection();
       if (!$isRangeSelection(selection) || selection.isCollapsed()) return null;
       const chipMeta = new Map<number, { canvasKey: string; src: string }>();
