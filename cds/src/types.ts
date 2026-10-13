@@ -549,7 +549,9 @@ export interface BuildProfileOverride {
 
 /** A shared cache mount to avoid duplicating packages across branches */
 export interface CacheMount {
-  /** Host path (absolute) for the shared cache */
+  /** 未标记的存量条目沿用 bind 缓存迁移；volume 是 Docker 命名卷，不能改写为宿主机目录。 */
+  kind?: 'volume' | 'bind';
+  /** bind 的宿主机路径，或 volume 的 Docker 卷名。 */
   hostPath: string;
   /** Container path where it gets mounted */
   containerPath: string;
