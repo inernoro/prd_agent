@@ -4263,6 +4263,7 @@ function ResourceConnection({
   const externalAddress = resource.externalUrl || resource.externalAccess?.address || '';
   const externalEnabled = resource.externalAccess?.enabled || resource.access === 'external';
   const dependentApps = resource.consumers || [];
+  const savedAllowlist = (resource.externalAccess?.allowlist || []).join('\n');
   const [allowlistDraft, setAllowlistDraft] = useState((resource.externalAccess?.allowlist || []).join('\n'));
   const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
   const [connectionBusy, setConnectionBusy] = useState<'external' | 'internal' | null>(null);
@@ -4273,6 +4274,14 @@ function ResourceConnection({
   const [sshGuide, setSshGuide] = useState<{ sshCommand: string; maskedConnectionString: string; localPort: number } | null>(null);
   const [sshBusy, setSshBusy] = useState(false);
   const infraLocalOnly = resource.source === 'infra';
+  const [tcpCapability, setTcpCapability] = useState<{ enabled: boolean; host: string; reason: string } | null>(null);
+  useEffect(() => {
+    setTcpCapability(null);
+    if (!resource.branchId || !infraLocalOnly) return;
+    let cancelled = false;
+    void apiRequest<{ enabled: boolean; host: string; reason: string }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
+    return () => { cancelled = true; };
+  }, [resource.branchId, resource.id, infraLocalOnly]);
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
   const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
   const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
@@ -4307,15 +4316,15 @@ function ResourceConnection({
       copyLabel: '复制容器内用',
       help: '只给同一 CDS 网络里的应用容器使用；本地电脑、DataGrip、redis-cli 不能直接使用。',
     },
-  ].filter((row) => !infraLocalOnly || !row.label.startsWith('外部'));
+  ].filter((row) => !infraLocalOnly || externalEnabled || !row.label.startsWith('外部'));
   useEffect(() => {
     setExternalError('');
     setSshGuide(null);
     setConnectionMessage(null);
     setSshLocalPort(resource.runtime === 'PostgreSQL' ? '15432' : resource.runtime === 'MongoDB' ? '27018' : resource.runtime === 'Redis' ? '16379' : '13306');
-    setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
+    setAllowlistDraft(savedAllowlist);
     setTtlDraft(resource.externalAccess?.expiresAt ? '120' : '120');
-  }, [resource.id, resource.externalAccess?.allowlist, resource.externalAccess?.expiresAt]);
+  }, [resource.id, savedAllowlist, resource.externalAccess?.expiresAt]);
   async function generateSshGuide(copyString = false): Promise<void> {
     if (!resource.branchId) return;
     setSshBusy(true);
@@ -4334,7 +4343,9 @@ function ResourceConnection({
   }
   async function toggleExternal(input: ResourceExternalAccessInput): Promise<void> {
     setExternalError('');
-    try { await onToggleExternalAccess(input); }
+    setConnectionMessage(null);
+    if (input.enabled && infraLocalOnly && (!input.allowlist?.length || !Number.isInteger(input.ttlMinutes) || input.ttlMinutes! < 1 || input.ttlMinutes! > 1440)) { setExternalError('请填写至少一个 IPv4/CIDR 白名单，并设置 1–1440 分钟有效期。'); return; }
+    try { await onToggleExternalAccess(input); setConnectionMessage(input.enabled ? '临时直连已开启，只有白名单 IP 可以连接，到期自动断开。' : '临时直连已关闭。'); }
     catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
   }
   async function resetCredentials(): Promise<void> {
@@ -4395,7 +4406,7 @@ function ResourceConnection({
       {infraLocalOnly ? (
         <div className="space-y-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs leading-5">
           <div className="font-semibold">本地数据库客户端 · SSH 隧道</div>
-          <p className="text-muted-foreground">数据库数据端口不直接发布到公网。使用已有 SSH 账号连接 CDS 宿主，把数据库映射到本机；DataGrip、Navicat 等客户端连接本地地址。</p>
+          <p className="text-muted-foreground">也可使用已有 SSH 账号把数据库映射到本机；DataGrip、Navicat 等客户端连接本地地址。</p>
           <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem]">
             <label className="grid gap-1">SSH 主机或配置别名<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" placeholder="user@server 或 SSH 别名" value={sshTarget} onChange={(event) => { setSshTarget(event.target.value); setSshGuide(null); }} /></label>
             <label className="grid gap-1">本地端口<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" inputMode="numeric" value={sshLocalPort} onChange={(event) => { setSshLocalPort(event.target.value); setSshGuide(null); }} /></label>
@@ -4412,13 +4423,15 @@ function ResourceConnection({
             <code className="block break-all font-mono">{sshGuide.maskedConnectionString}</code>
             <Button type="button" size="sm" variant="outline" disabled={sshBusy} onClick={() => void generateSshGuide(true)}><Copy />复制本地连接串</Button>
           </div> : null}
-          {externalEnabled ? <Button type="button" size="sm" variant="outline" disabled={externalBusy || !canTemporaryExternal} onClick={() => void toggleExternal({ enabled: false })}>关闭已有公网访问</Button> : null}
+          {externalEnabled ? <Button type="button" size="sm" variant="outline" disabled={externalBusy || !canTemporaryExternal || (!externalEnabled && infraLocalOnly && !tcpCapability?.enabled)} onClick={() => void toggleExternal({ enabled: false })}>关闭已有公网访问</Button> : null}
         </div>
-      ) : <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+      ) : null}
+      <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className="font-semibold">外部访问控制</div>
-            <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时必须填写 IP allowlist、临时有效期和凭据重置记录。</div>
+            <div className="font-semibold">临时 TCP 直连</div>
+            <div className="mt-1">填写白名单 IP 和有效期后，本地数据库工具可直接连接。到期会断开已有连接并关闭入口，数据库账号密码沿用当前配置。</div>
+            {infraLocalOnly ? <div className="mt-1">{tcpCapability?.enabled ? `直连主机：${tcpCapability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。` : tcpCapability?.reason || '正在读取实例直连配置…'}</div> : null}
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
               <div className="mt-1 font-mono">
@@ -4436,7 +4449,7 @@ function ResourceConnection({
             type="button"
             size="sm"
             variant="outline"
-            disabled={externalBusy || !canTemporaryExternal}
+            disabled={externalBusy || !canTemporaryExternal || (!externalEnabled && infraLocalOnly && !tcpCapability?.enabled)}
             title={!canTemporaryExternal ? resourcePermissionReason(permissions, 'external-temporary-access') : undefined}
             onClick={() => {
               const allowlist = allowlistDraft
@@ -4452,22 +4465,23 @@ function ResourceConnection({
             }}
           >
             {externalBusy ? <Loader2 className="animate-spin" /> : externalEnabled ? <PowerOff /> : <ExternalLink />}
-            {externalEnabled ? '关闭公网' : '临时开启'}
+            {externalEnabled ? '关闭直连' : '临时开启'}
           </Button>
         </div>
         <div className="grid gap-2 md:grid-cols-[8.75rem_minmax(0,1fr)]">
           <label className="grid gap-1">
-            <span className="text-[0.6875rem] text-warn/80 /80">有效期（分钟）</span>
+            <span className="text-[0.6875rem] text-warn/80">有效期（分钟）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
               className="h-8 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
               inputMode="numeric"
               placeholder="120"
+              type="number" min={1} max={1440} step={1}
             />
           </label>
           <label className="grid gap-1">
-            <span className="text-[0.6875rem] text-warn/80 /80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
+            <span className="text-[0.6875rem] text-warn/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}
@@ -4477,7 +4491,7 @@ function ResourceConnection({
             />
           </label>
         </div>
-      </div>}
+      </div>
       {resource.kind === 'database' ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3 text-xs leading-5">
           <div className="mb-2 flex items-center justify-between gap-3">

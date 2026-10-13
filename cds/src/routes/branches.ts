@@ -51,6 +51,7 @@ import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWeb
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { normalizeReadOnlyStatement, normalizeConsoleWrite, isSqlScript } from '../services/sql-statement-policy.js';
 import { parseSqlConsoleResults, SqlConsoleExecutionError, type SqlConsoleResult } from '../services/sql-console-results.js';
+import { RESOURCE_TCP_PROXY_SCRIPT, resourceTcpAccessConfig } from '../services/resource-tcp-access.js';
 import { operatorOpRegistry } from '../services/operator-console.js';
 import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
 import {
@@ -1567,18 +1568,21 @@ async function allocateResourceExternalPort(shell: IShellExecutor, preferred?: n
 
 function normalizeIpv4Allowlist(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
+  if (input.length > 20) throw new Error('IP allowlist 最多允许 20 项');
   const result: string[] = [];
   for (const raw of input.slice(0, 20)) {
     const item = String(raw || '').trim();
     if (!item) continue;
-    const [ip, prefixRaw] = item.split('/');
+    const parts = item.split('/');
+    if (parts.length > 2) throw new Error(`IP allowlist 格式不正确：${item}`);
+    const [ip, prefixRaw] = parts;
     if (isIP(ip) !== 4) {
       throw new Error(`IP allowlist 目前仅支持 IPv4/CIDR：${item}`);
     }
     if (prefixRaw !== undefined) {
       const prefix = Number(prefixRaw);
-      if (!Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
-        throw new Error(`CIDR 前缀必须在 0-32 之间：${item}`);
+      if (!Number.isInteger(prefix) || prefix < 1 || prefix > 32) {
+        throw new Error(`CIDR 前缀必须在 1-32 之间，禁止向所有 IP 开放：${item}`);
       }
       result.push(`${ip}/${prefix}`);
     } else {
@@ -1622,8 +1626,13 @@ async function applyResourceExternalFirewall(
   if (probe.exitCode !== 0) {
     throw new Error(`IP allowlist 需要主机 iptables DOCKER-USER 链，但当前不可用：${combinedOutput(probe).slice(0, 240)}`);
   }
-  await shell.exec(`iptables -N ${chain} 2>/dev/null || true`, { timeout: 5000 });
-  await shell.exec(`iptables -F ${chain}`, { timeout: 5000 });
+  const exists = await shell.exec(`iptables -L ${chain} -n`, { timeout: 5000 });
+  if (exists.exitCode !== 0) {
+    const create = await shell.exec(`iptables -N ${chain}`, { timeout: 5000 });
+    if (create.exitCode !== 0) throw new Error('无法创建白名单防火墙链，未开放端口');
+  }
+  const flush = await shell.exec(`iptables -F ${chain}`, { timeout: 5000 });
+  if (flush.exitCode !== 0) throw new Error('无法刷新白名单防火墙链，未开放端口');
   for (const cidr of allowlist) {
     const add = await shell.exec(`iptables -A ${chain} -s ${cidr} -j ACCEPT`, { timeout: 5000 });
     if (add.exitCode !== 0) {
@@ -1644,40 +1653,6 @@ async function applyResourceExternalFirewall(
   return { enforced: true, chain };
 }
 
-const RESOURCE_TCP_PROXY_SCRIPT = `
-const net = require('net');
-const targetHost = process.env.TARGET_HOST;
-const targetPort = Number(process.env.TARGET_PORT || 0);
-const listenPort = Number(process.env.LISTEN_PORT || 15432);
-const allowlist = (process.env.ALLOWLIST || '').split(',').map((x) => x.trim()).filter(Boolean);
-const block = new net.BlockList();
-if (allowlist.length === 0) {
-  throw new Error('ALLOWLIST is required for CDS resource TCP proxy');
-}
-for (const rule of allowlist) {
-  const [ip, prefixRaw] = rule.split('/');
-  const prefix = Number(prefixRaw || '32');
-  if (Number.isInteger(prefix) && prefix >= 0 && prefix <= 32) block.addSubnet(ip, prefix, 'ipv4');
-}
-function normalizeIp(ip) {
-  return String(ip || '').replace(/^::ffff:/, '');
-}
-const server = net.createServer((client) => {
-  const ip = normalizeIp(client.remoteAddress);
-  if (!block.check(ip, 'ipv4')) {
-    client.destroy();
-    return;
-  }
-  const upstream = net.connect({ host: targetHost, port: targetPort });
-  upstream.on('error', () => client.destroy());
-  client.on('error', () => upstream.destroy());
-  client.pipe(upstream);
-  upstream.pipe(client);
-});
-server.listen(listenPort, '0.0.0.0');
-process.on('SIGTERM', () => server.close(() => process.exit(0)));
-process.on('SIGINT', () => server.close(() => process.exit(0)));
-`;
 
 function resourceTcpProxyImage(): string {
   const image = process.env.CDS_RESOURCE_TCP_PROXY_IMAGE || 'node:20-alpine';
@@ -8851,11 +8826,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return `${host}:${port}`;
   }
 
+  const resourceExternalMutations = new Set<string>();
+  const externalMutationKey = (projectId: string, branchId: string, resourceId: string) => JSON.stringify([projectId, branchId, resourceId]);
+
   async function disableTcpResourceExternalAccess(policy?: ResourceExternalAccessPolicy | null): Promise<void> {
     if (!policy) return;
     const proxyContainerName = policy.proxyContainerName;
     if (proxyContainerName && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(proxyContainerName)) {
-      await shell.exec(`docker rm -f ${routeShellQuote(proxyContainerName)} 2>/dev/null || true`, { timeout: 15_000 });
+      const result = await shell.exec(`docker rm -f ${routeShellQuote(proxyContainerName)}`, { timeout: 15_000 });
+      if (result.exitCode !== 0 && !/No such container/i.test(combinedOutput(result))) throw new Error('临时访问代理未能关闭，请重试或联系管理员');
     }
     if (policy.firewallChain) {
       await cleanupResourceExternalFirewall(shell, policy.firewallChain, policy.port);
@@ -8875,37 +8854,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
     policy?: ResourceExternalAccessPolicy,
   ): Promise<ResourceExternalAccessPolicy | undefined> {
     if (!policy || !isResourceExternalAccessExpired(policy)) return policy;
-    await disableTcpResourceExternalAccess(policy).catch(() => undefined);
-    const expired = stateService.upsertResourceExternalAccess({
-      projectId,
-      branchId: branch.id,
-      resourceId,
-      enabled: false,
-      kind: policy.kind,
-      address: policy.address,
-      host: policy.host,
-      port: policy.port,
-      connectionString: policy.connectionString,
-      proxyContainerName: undefined,
-      targetHost: undefined,
-      targetPort: undefined,
-      allowlistEnforced: false,
-      firewallChain: undefined,
-      allowlist: policy.allowlist || [],
-      expiresAt: policy.expiresAt,
-      updatedBy: 'system:ttl-expired',
-    });
-    stateService.appendActivityLog(projectId, {
-      type: 'resource-external-access',
-      branchId: branch.id,
-      branchName: branch.branch,
-      actor: 'system:ttl-expired',
-      resourceId,
-      result: 'success',
-      note: `资源外部访问已在 ${policy.expiresAt} 到期并自动关闭`,
-    });
-    stateService.save();
-    return expired;
+    const mutationKey = externalMutationKey(projectId, branch.id, resourceId);
+    if (resourceExternalMutations.has(mutationKey)) return policy;
+    resourceExternalMutations.add(mutationKey);
+    try {
+      await disableTcpResourceExternalAccess(policy);
+      const expired = stateService.upsertResourceExternalAccess({
+        projectId,
+        branchId: branch.id,
+        resourceId,
+        enabled: false,
+        kind: policy.kind,
+        address: policy.address,
+        host: policy.host,
+        port: policy.port,
+        connectionString: policy.connectionString,
+        proxyContainerName: undefined,
+        targetHost: undefined,
+        targetPort: undefined,
+        allowlistEnforced: false,
+        firewallChain: undefined,
+        allowlist: policy.allowlist || [],
+        expiresAt: policy.expiresAt,
+        updatedBy: 'system:ttl-expired',
+      });
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-external-access',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor: 'system:ttl-expired',
+        resourceId,
+        result: 'success',
+        note: `资源外部访问已在 ${policy.expiresAt} 到期并自动关闭`,
+      });
+      stateService.save();
+      return expired;
+    } finally { resourceExternalMutations.delete(mutationKey); }
   }
 
   async function getActiveResourceExternalAccessForBranch(projectId: string, branch: BranchEntry): Promise<ResourceExternalAccessPolicy[]> {
@@ -8950,6 +8934,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     resource: UnifiedBranchResource;
     allowlist: string[];
     currentPolicy?: ResourceExternalAccessPolicy;
+    expiresAt: string;
   }): Promise<{
     address: string;
     host: string;
@@ -8978,8 +8963,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!targetPort || targetPort < 1 || targetPort > 65535) {
       throw new Error(`资源 "${input.resource.displayName}" 缺少可代理的容器端口`);
     }
-    const host = resourcePublicHost();
-    if (!host) throw new Error('CDS 未配置 previewDomain/rootDomains，无法生成公网 TCP host');
+    const tcpConfig = resourceTcpAccessConfig();
+    if (!tcpConfig.enabled) throw new Error(tcpConfig.reason);
+    const host = tcpConfig.host;
     if (input.allowlist.length === 0) {
       throw new Error('开启数据库/缓存公网 TCP 访问必须填写 IP allowlist，禁止空 allowlist 暴露到公网');
     }
@@ -8993,7 +8979,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const port = await allocateResourceExternalPort(shell, reusePort, reusePort);
     await disableTcpResourceExternalAccess(input.currentPolicy);
     await ensureDockerNetwork(shell, network);
-    const firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist);
+    let firewall: { enforced: boolean; chain?: string };
+    try { firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist); }
+    catch (err) { await cleanupResourceExternalFirewall(shell, firewallChain, port); throw err; }
 
     const scriptB64 = Buffer.from(RESOURCE_TCP_PROXY_SCRIPT, 'utf8').toString('base64');
     const evalScript = "eval(Buffer.from(process.env.CDS_PROXY_SCRIPT_B64,'base64').toString('utf8'))";
@@ -9014,14 +9002,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ...workloadCgroupFlags(),
       `--name ${routeShellQuote(proxyContainerName)}`,
       `--network ${routeShellQuote(network)}`,
-      // 纵深防御：即使上层路由门禁将来被误删，这个代理也只能绑定回环，
-      // 不能重新形成公网数据端口。
-      `-p 127.0.0.1:${port}:${listenPort}`,
+      // 仅实例显式配置的网卡可发布临时端口；数据库本身的端口保持内部访问。
+      `-p ${tcpConfig.bindIp}:${port}:${listenPort}`,
       ...labels.map((label) => `--label ${routeShellQuote(label)}`),
       `-e ${routeShellQuote(`TARGET_HOST=${targetContainer}`)}`,
       `-e ${routeShellQuote(`TARGET_PORT=${targetPort}`)}`,
       `-e ${routeShellQuote(`LISTEN_PORT=${listenPort}`)}`,
       `-e ${routeShellQuote(`ALLOWLIST=${input.allowlist.join(',')}`)}`,
+      `-e ${routeShellQuote(`EXPIRES_AT=${input.expiresAt}`)}`,
       `-e ${routeShellQuote(`CDS_PROXY_SCRIPT_B64=${scriptB64}`)}`,
       '--restart unless-stopped',
       resourceTcpProxyImage(),
@@ -9159,6 +9147,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  router.get('/branches/:id/resources/:resourceId/external-access', async (req, res) => {
+    const ctx = await resolveResourceForRequest(req, res);
+    if (!ctx) return;
+    const capability = resourceTcpAccessConfig();
+    res.json({ enabled: capability.enabled, host: capability.host, maxTtlMinutes: 1440, reason: capability.reason });
+  });
+
   router.put('/branches/:id/resources/:resourceId/external-access', async (req, res) => {
     const branch = stateService.getBranch(req.params.id);
     if (!branch) {
@@ -9177,10 +9172,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const enabled = Boolean(req.body?.enabled);
-    if (enabled && resource.source === 'infra') {
-      res.status(409).json({
-        error: '基础设施数据端口禁止直接发布到公网。请通过 CDS 数据面板或 HTTPS 管理入口访问。',
-      });
+    if (enabled && resource.source === 'infra' && !resourceTcpAccessConfig().enabled) {
+      res.status(409).json({ error: resourceTcpAccessConfig().reason });
       return;
     }
     let allowlist: string[];
@@ -9195,6 +9188,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const ttlMinutesRaw = Number(req.body?.ttlMinutes);
+    if (enabled && resource.source === 'infra' && (!Number.isInteger(ttlMinutesRaw) || ttlMinutesRaw < 1 || ttlMinutesRaw > 1440)) {
+      res.status(400).json({ error: '临时数据库直连必须设置 1–1440 分钟的有效期，不能永久开放。' });
+      return;
+    }
     const ttlMinutes = Number.isFinite(ttlMinutesRaw) && ttlMinutesRaw > 0
       ? Math.min(ttlMinutesRaw, 7 * 24 * 60)
       : null;
@@ -9205,79 +9202,85 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ? 'external-policy-admin'
       : 'external-temporary-access';
     if (!requireResourcePermission(req, res, externalAction, branch, resource)) return;
-    const previewHost = resourcePublicHost();
-    const currentPolicy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
-    let runtime: Partial<ResourceExternalAccessPolicy> = {};
-    if (resource.source === 'infra') {
-      try {
-        if (enabled) {
-          runtime = await enableTcpResourceExternalAccess({
-            branch,
-            projectId,
-            resourceId,
-            resource,
-            allowlist,
-            currentPolicy,
-          });
-        } else {
-          await disableTcpResourceExternalAccess(currentPolicy);
-          runtime = {
-            address: currentPolicy?.address || resource.externalAccess?.address,
-            host: currentPolicy?.host || resource.externalAccess?.host || previewHost,
-            port: currentPolicy?.port || resource.externalAccess?.port,
-            connectionString: currentPolicy?.connectionString || resource.externalAccess?.connectionString,
-            proxyContainerName: undefined,
-            targetHost: undefined,
-            targetPort: undefined,
-            allowlistEnforced: false,
-            firewallChain: undefined,
-          };
+    const mutationKey = externalMutationKey(projectId, branch.id, resourceId);
+    if (resourceExternalMutations.has(mutationKey)) { res.status(409).json({ error: '该资源的访问策略正在更新，请稍后重试。' }); return; }
+    resourceExternalMutations.add(mutationKey);
+    try {
+      const previewHost = resourcePublicHost();
+      const currentPolicy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
+      let runtime: Partial<ResourceExternalAccessPolicy> = {};
+      if (resource.source === 'infra') {
+        try {
+          if (enabled) {
+            runtime = await enableTcpResourceExternalAccess({
+              branch,
+              projectId,
+              resourceId,
+              resource,
+              allowlist,
+              currentPolicy,
+              expiresAt: expiresAt!,
+            });
+          } else {
+            await disableTcpResourceExternalAccess(currentPolicy);
+            runtime = {
+              address: currentPolicy?.address || resource.externalAccess?.address,
+              host: currentPolicy?.host || resource.externalAccess?.host || previewHost,
+              port: currentPolicy?.port || resource.externalAccess?.port,
+              connectionString: currentPolicy?.connectionString || resource.externalAccess?.connectionString,
+              proxyContainerName: undefined,
+              targetHost: undefined,
+              targetPort: undefined,
+              allowlistEnforced: false,
+              firewallChain: undefined,
+            };
+          }
+        } catch (err) {
+          res.status(500).json({ error: (err as Error).message });
+          return;
         }
-      } catch (err) {
-        res.status(500).json({ error: (err as Error).message });
+      }
+      const fallbackAddress = resource.source === 'app'
+        ? resource.externalUrl || resource.externalAccess?.address || ''
+        : runtime.address || resource.externalAccess?.address || (previewHost && runtime.port ? `tcp://${previewHost}:${runtime.port}` : '');
+      if (enabled && !fallbackAddress) {
+        res.status(409).json({ error: `资源 "${resource.displayName}" 没有可用的外部地址或端口` });
         return;
       }
-    }
-    const fallbackAddress = resource.source === 'app'
-      ? resource.externalUrl || resource.externalAccess?.address || ''
-      : runtime.address || resource.externalAccess?.address || (previewHost && runtime.port ? `tcp://${previewHost}:${runtime.port}` : '');
-    if (enabled && !fallbackAddress) {
-      res.status(409).json({ error: `资源 "${resource.displayName}" 没有可用的外部地址或端口` });
-      return;
-    }
-    const actor = resolveActorFromRequest(req);
-    const policy = stateService.upsertResourceExternalAccess({
-      projectId,
-      branchId: branch.id,
-      resourceId,
-      enabled,
-      kind: resource.source === 'app' ? 'https' : 'tcp',
-      address: enabled ? fallbackAddress : resource.externalAccess?.address || fallbackAddress || undefined,
-      host: runtime.host || previewHost || resource.externalAccess?.host,
-      port: runtime.port || resource.externalAccess?.port || resource.port,
-      connectionString: runtime.connectionString || resource.externalAccess?.connectionString,
-      proxyContainerName: enabled ? runtime.proxyContainerName || resource.externalAccess?.proxyContainerName : undefined,
-      targetHost: enabled ? runtime.targetHost || resource.externalAccess?.targetHost : undefined,
-      targetPort: enabled ? runtime.targetPort || resource.externalAccess?.targetPort : undefined,
-      allowlistEnforced: Boolean(runtime.allowlistEnforced),
-      firewallChain: enabled ? runtime.firewallChain || resource.externalAccess?.firewallChain : undefined,
-      allowlist,
-      expiresAt,
-      updatedBy: actor,
-    });
-    stateService.appendActivityLog(projectId, {
-      type: 'resource-external-access',
-      branchId: branch.id,
-      branchName: branch.branch,
-      actor,
-      resourceId,
-      resourceName: resource.displayName,
-      result: 'success',
-      note: `${enabled ? '开启' : '关闭'} ${resource.displayName} 外部访问${expiresAt ? `，有效期至 ${expiresAt}` : ''}`,
-    });
-    stateService.save();
-    const nextResources = await getBranchResourceSnapshot(branch);
-    res.json({ policy, resource: nextResources.find((item) => item.id === resourceId) || null });
+      const actor = resolveActorFromRequest(req);
+      const policy = stateService.upsertResourceExternalAccess({
+        projectId,
+        branchId: branch.id,
+        resourceId,
+        enabled,
+        kind: resource.source === 'app' ? 'https' : 'tcp',
+        address: enabled ? fallbackAddress : resource.externalAccess?.address || fallbackAddress || undefined,
+        host: runtime.host || previewHost || resource.externalAccess?.host,
+        port: runtime.port || resource.externalAccess?.port || resource.port,
+        connectionString: runtime.connectionString || resource.externalAccess?.connectionString,
+        proxyContainerName: enabled ? runtime.proxyContainerName || resource.externalAccess?.proxyContainerName : undefined,
+        targetHost: enabled ? runtime.targetHost || resource.externalAccess?.targetHost : undefined,
+        targetPort: enabled ? runtime.targetPort || resource.externalAccess?.targetPort : undefined,
+        allowlistEnforced: Boolean(runtime.allowlistEnforced),
+        firewallChain: enabled ? runtime.firewallChain || resource.externalAccess?.firewallChain : undefined,
+        allowlist,
+        expiresAt,
+        updatedBy: actor,
+      });
+      stateService.appendActivityLog(projectId, {
+        type: 'resource-external-access',
+        branchId: branch.id,
+        branchName: branch.branch,
+        actor,
+        resourceId,
+        resourceName: resource.displayName,
+        result: 'success',
+        note: `${enabled ? '开启' : '关闭'} ${resource.displayName} 外部访问${expiresAt ? `，有效期至 ${expiresAt}` : ''}`,
+      });
+      stateService.save();
+      const nextResources = await getBranchResourceSnapshot(branch);
+      res.json({ policy, resource: nextResources.find((item) => item.id === resourceId) || null });
+    } finally { resourceExternalMutations.delete(mutationKey); }
   });
 
   router.get('/branches/:id/resources/:resourceId/connection-string', async (req, res) => {
@@ -9323,7 +9326,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let host = service.id;
     let port = service.containerPort || resource.containerPort || resource.port;
     if (scope === 'external') {
-      if (!policy?.enabled || !policy.host || !policy.port) {
+      if (!policy?.enabled || !policy.host || !policy.port || isResourceExternalAccessExpired(policy)) {
         res.status(409).json({ error: '资源尚未开启公网访问，无法生成外部连接串' });
         return;
       }
