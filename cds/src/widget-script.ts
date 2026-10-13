@@ -911,8 +911,8 @@ export function buildWidgetScript(
       var profileRes=res.profileRes||{};
       var found=res.found||null;
       branchStatus=found?found.status:'';
-      // 页面渲染时注入的是该服务真实产物；未知时只读运行版本，禁止用推送目标兜底。
-      commitSha=commitSha||(found&&found.runningCommitSha)||'';
+      // 每次刷新采用最新运行事实；缺证据时清空，不能保留注入的旧版本。
+      commitSha=(found&&found.runningCommitSha)||'';
       commitMsg=found&&found.githubCommitSha===commitSha&&found.subject?found.subject:'';
       branchTags=(found&&found.tags)||[];
       var sourceProfiles=(profileRes&&profileRes.profiles)||[];

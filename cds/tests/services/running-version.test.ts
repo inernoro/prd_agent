@@ -11,11 +11,20 @@ describe('运行版本只由真实产物证明', () => {
   it('回滚到 A 后即使仓库仍 B 也只显示 A', () => {
     expect(runningCommitSha(branch({ ciImageStatus: 'ready' }), version)).toBe(A);
   });
-  it('源码产物使用匹配的不可变版本，未知产物不回退到目标', () => {
+  it('分支版本匹配也不能证明无提交号的服务产物', () => {
     const b = branch({ services: { web: { profileId: 'web', status: 'running', deployedImage: 'managed:immutable-A' } } });
-    expect(runningCommitSha(b, version)).toBe(A);
+    expect(runningCommitSha(b, version)).toBeUndefined();
     expect(runningCommitSha(b)).toBeUndefined();
     expect(runningCommitSha(b, { ...version, branchId: 'other' })).toBeUndefined();
+  });
+  it('只部署源码服务 B 后，同名基础镜像不能证明 A 已重启', () => {
+    const b = branch({ services: {
+      web: { profileId: 'web', status: 'running', deployedImage: 'node:22' },
+      api: { profileId: 'api', status: 'running', deployedImage: 'node:22' },
+    } });
+    const latest = { ...version, commitSha: B, profiles: ['web', 'api'].map(profileId => ({ profileId, artifactImage: 'node:22', artifactKind: 'legacy-runtime' })) } as DeploymentVersion;
+    expect(runningCommitSha(b, latest)).toBeUndefined();
+    expect(runningCommitSha(b, latest, 'web')).toBeUndefined();
   });
   it('服务分别运行 A/B 时分支不谎报统一版本，服务角标各取自身', () => {
     const b = branch();
