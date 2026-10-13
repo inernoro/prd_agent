@@ -4706,6 +4706,14 @@ async function shutdown(signal: string): Promise<void> {
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
   branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
+  // 已禁止新部署。尽早释放长日志/事件的空闲进程与内存，实际资源确认
+  // 继续使用保留的operation/observation执行器及原来的清理期限。
+  const logReadersShutdown = Promise.all([
+    userLogHub.close().catch(() => console.warn('[shutdown] 用户日志清理未确认；继续关键状态保存。'))
+      .then(() => userLogStreams.close()).catch(() => console.warn('[shutdown] 用户日志执行槽清理未确认；继续关键状态保存。')),
+    eventStreams.close().catch(() => console.warn('[shutdown] 事件执行槽清理未确认；继续关键状态保存。')),
+    startupStreams.close().catch(() => console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。')),
+  ]);
   // Stop capability producers immediately, while observation and reserved cleanup
   // slots remain available; cancelling a CLI alone cannot revoke daemon creation.
   const resourceShutdown = Promise.allSettled([...resourceShutdownTasks].map(close => close()));
@@ -4743,13 +4751,8 @@ async function shutdown(signal: string): Promise<void> {
     console.warn(`[shutdown] graceful drain failed: ${(err as Error).message}`);
   }
   await closeHttpServerForShutdown(workerHttpServer, 'worker');
-  await userLogHub.close().catch(() => console.warn('[shutdown] 用户日志清理未确认；继续关键状态保存。'));
-  await userLogStreams.close().catch(() => console.warn('[shutdown] 用户日志执行槽清理未确认；继续关键状态保存。'));
+  await logReadersShutdown;
   await journalStreams.close().catch(() => console.warn('[shutdown] 系统日志执行槽清理未确认；继续关键状态保存。'));
-  await eventStreams.close().catch(() => console.warn('[shutdown] 事件执行槽清理未确认；继续关键状态保存。'));
-  await startupStreams.close().catch(() => {
-    console.warn('[observation] 启动日志执行器清理未确认；继续关键状态保存。');
-  });
   const resourceShutdownResults = await resourceShutdown;
   const resourceCleanupUnconfirmed = resourceShutdownResults.some(result => result.status === 'rejected');
   if (resourceCleanupUnconfirmed) console.warn('[shutdown] 能力探针资源收尾未确认；本次退出不会报告成功。');
