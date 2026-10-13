@@ -1653,7 +1653,6 @@ function closePreviewTarget(target: PreviewTarget): void {
 }
 
 export function BranchListPage(): JSX.Element {
-  const canManageConsole = useCanManageConsole();
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
   // 从授权回执或项目切换器进入另一项目时，不能保留旧项目的分支抽屉与在途页面状态。
@@ -1661,6 +1660,7 @@ export function BranchListPage(): JSX.Element {
 }
 
 function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
