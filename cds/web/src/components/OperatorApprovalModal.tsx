@@ -149,7 +149,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
             {pending.args && Object.keys(pending.args).length > 0 ? (
               <details className="mt-2" open={pending.opId === 'database.sql' ? true : undefined}>
                 <summary className="cursor-pointer text-xs text-foreground/70">参数</summary>
-                <pre className="mt-1 max-h-40 overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
+                <pre className="mt-1 max-h-40 whitespace-pre-wrap break-words overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
                   {JSON.stringify(pending.args, null, 2)}
                 </pre>
               </details>
@@ -158,7 +158,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
           <p className="text-xs leading-5 text-muted-foreground">
             选择「<strong>允许本次</strong>」只放行这一次请求。<br />
-            选择「<strong>授权 7 天</strong>」放行接下来 7 天内同一发起方(同一 access key)+ 同一 op 的所有请求,免重复点击。
+            选择「<strong>授权 7 天</strong>」仅放行接下来 7 天内同一发起方、同一操作且参数完全相同的请求；更换目标或 SQL 需要重新批准。
           </p>
         </div>
 
