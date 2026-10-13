@@ -2,6 +2,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { MessageContentRenderer } from './MessageContentRenderer';
+import { ChatMessageItem } from './ChatMessageItem';
 
 describe('图片引用的消息回读', () => {
   it('复制占位符显示为图片卡片，画布删除后仍保留原引用', () => {
@@ -21,5 +22,17 @@ describe('图片引用的消息回读', () => {
     }));
     expect(html).toContain('https://example.com/original.png');
     expect(html).not.toContain('replacement.png');
+  });
+
+  it('生成失败说明也使用可读引用，不把后台图片标记显示给用户', () => {
+    const html = renderToStaticMarkup(createElement(ChatMessageItem, {
+      msg: { id: 'failure', role: 'Assistant', ts: 0,
+        content: '[GEN_ERROR]' + JSON.stringify({ msg: '参考图 @img2 无法使用。其他输入已保留，请重新上传这张参考图后再生成。' }) },
+      allMessages: [], canvas: [], sizeToAspectMap: new Map(), onPreview: () => {}, onRetry: () => {},
+    }));
+    expect(html).toContain('生成失败');
+    expect(html).toContain('其他输入已保留');
+    expect(html).toContain('图2');
+    expect(html).not.toContain('@img2');
   });
 });

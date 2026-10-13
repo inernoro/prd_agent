@@ -326,7 +326,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             <div className="min-w-0 flex-1">
               <div className="text-[12px] font-medium" style={{ color: 'rgba(239,68,68,0.92)' }}>生成失败</div>
               <div className="mt-0.5 text-[11px]" style={{ color: 'rgba(239,68,68,0.72)', wordBreak: 'break-word' }}>
-                {genError.msg}
+                <MessageContentRenderer content={genError.msg} canvasItems={canvas}
+                  onPreview={(src, prompt) => onPreview(src, prompt)} />
               </div>
             </div>
           </div>
