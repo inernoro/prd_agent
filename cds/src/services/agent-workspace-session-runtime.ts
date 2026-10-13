@@ -4692,7 +4692,10 @@ function measuredClaimContexts(text: string): MeasuredClaimContext[] {
       // 「1 个月」「2 个小时」是时长，与 MAP 的 HostedSiteRevisionRules 同口径，不当成「1 个（计数）」。
       { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
       { regex: /([￥¥$])\s*(\d+(?:[.,]\d+)*)/gi, numberIndex: 2, unitIndex: 1 },
-      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])(?!\s*(?:月|小时))/gi, numberIndex: 1, unitIndex: 2 },
+      // 中文没有通用的正则词界；量词同时可能是名词词首。没有这组窄边界时，
+      // `12.16项目代号` 会被读成数量 `12.16项`。这里只排除确定的复合词，
+      // `3项`、`3项项目`、`3个项目` 等真实数量仍会进入事实核对。
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条(?!款|例|目)|次(?!数|要)|篇(?!章)|字(?!段|体|数)|人|位(?!置)|家|项(?!目|链)|例(?!如|会)|份(?!额)|种(?!类|植)|类(?!型|目|似)|层(?!级|次)|步(?!骤|行)|章(?!节)|节(?!点|目|奏|日)|页(?!面|码))(?![A-Za-z])(?!\s*(?:月|小时))/gi, numberIndex: 1, unitIndex: 2 },
     ];
     for (const [patternOrder, pattern] of patterns.entries()) {
       for (const match of segment.matchAll(pattern.regex)) {
@@ -5104,9 +5107,9 @@ function validateArtifactQuality(
 }
 
 /**
- * 日期统一成「年-月[-日]」再比；作证据时完整日期同时支撑它的「年-月」，中文写法「2026 年 9 月 24 日」
- * 也算证据。与 MAP 发布闸 HostedSiteRevisionRules.ExtractSensitiveFacts 同一口径（2026-09-24 真人验收：
- * 页面写「2026-09」取自来源里的 9 月 24 日，被判成来源里没有的日期）。页面侧仍只认数字写法。
+ * 日期统一成「年-月[-日]」或「月-日」再比；作证据时完整日期同时支撑它的「年-月」，中文写法
+ * 「2026 年 9 月 24 日」与「12 月 16 日」也算证据。与 MAP 发布闸
+ * HostedSiteRevisionRules.ExtractSensitiveFacts 同一口径。页面侧仍只认数字写法。
  */
 export function sensitiveFacts(text: string, asEvidence = false): Set<string> {
   const facts = new Set<string>();
@@ -5119,18 +5122,31 @@ export function sensitiveFacts(text: string, asEvidence = false): Set<string> {
     facts.add(`${yearMonth}-${String(Number(day)).padStart(2, '0')}`);
     if (evidence) facts.add(yearMonth);
   };
-  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)/gi)) {
+  const addMonthDay = (month: string, day: string): boolean => {
+    const monthNumber = Number(month);
+    const dayNumber = Number(day);
+    const maximumDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][monthNumber - 1];
+    if (!maximumDays || dayNumber < 1 || dayNumber > maximumDays) return false;
+    facts.add(`month-day:${String(monthNumber).padStart(2, '0')}-${String(dayNumber).padStart(2, '0')}`);
+    return true;
+  };
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?!\d)|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)/gi)) {
     const value = match[0].replace(/[.,;:，。；：)\]}>`]+$/g, '').toLowerCase();
     const date = /^((?:19|20)\d{2})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$/.exec(value);
-    if (!date) {
-      facts.add(value);
+    if (date) {
+      addDate(date[1], date[2], date[3], asEvidence);
       continue;
     }
-    addDate(date[1], date[2], date[3], asEvidence);
+    const monthDay = /^(\d{1,2})[-/.](\d{1,2})$/.exec(value);
+    if (monthDay && addMonthDay(monthDay[1], monthDay[2])) continue;
+    facts.add(value);
   }
   if (asEvidence) {
     for (const match of text.matchAll(/((?:19|20)\d{2})\s*年\s*(\d{1,2})\s*月(?:\s*(\d{1,2})\s*[日号])?/g)) {
       addDate(match[1], match[2], match[3], true);
+    }
+    for (const match of text.matchAll(/(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/g)) {
+      addMonthDay(match[1], match[2]);
     }
   }
   return facts;

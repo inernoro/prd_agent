@@ -662,6 +662,41 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     )).not.toThrow();
   });
 
+  it('keeps a supported Chinese month-day when dotted output touches inline noun labels', () => {
+    const evidence = '唯一主按钮写“查看 12 月 16 日评审安排”，项目代号为 NOVA-04。';
+    for (const noun of ['项目代号', '页面结构', '章节安排', '步骤说明', '类型说明']) {
+      expect(() => hardenSelfContainedHtml(
+        `<!doctype html><html><body><span>评审日期</span><strong>12.16</strong><span>${noun}</span></body></html>`,
+        evidence,
+      )).not.toThrow();
+    }
+
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><span>评审日期</span><strong>12.17</strong><span>项目代号</span></body></html>',
+      evidence,
+    )).toThrowError(/unsupported date, contact, or URL/);
+
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>本轮新增 12.16项待办。</p></body></html>',
+      evidence,
+    )).toThrowError(expect.objectContaining({
+      code: 'design_output_quality_rejected',
+      details: expect.objectContaining({ measuredClaimToken: '12.16项' }),
+    }));
+  });
+
+  it.each(['3项', '3项项目', '3个项目', '12人'])(
+    'still rejects a real unsupported measured claim after Chinese noun boundary handling: %s',
+    (claim) => {
+      expect(() => hardenSelfContainedHtml(
+        `<!doctype html><html><body><p>本轮新增${claim}。</p></body></html>`,
+        '本轮没有数量承诺。',
+      )).toThrowError(expect.objectContaining({
+        code: 'design_output_quality_rejected',
+      }));
+    },
+  );
+
   it.each(['0周', '5周'])('still rejects an actual unsupported duration beside a clock: %s', (duration) => {
     expect(() => hardenSelfContainedHtml(
       `<!doctype html><html><body>周二至周五：14:00—19:00 活动持续${duration}。</body></html>`,
