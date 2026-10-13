@@ -1033,6 +1033,63 @@ describe('MongoSplitStateBackingStore', () => {
     expect(handle.activityLogs.docs.size).toBe(2);
   });
 
+  async function hotMutatorFixture() {
+    const handle = new FakeSplitHandle(), store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+    const seed = emptyState();
+    seed.projects = [{ id: 'p', slug: 'p', name: 'P', kind: 'git', createdAt: 't', updatedAt: 't',
+      agentKeys: [{ id: 'key', label: 'test', hash: 'unused', createdAt: 't' }] } as Project];
+    seed.globalAgentKeys = [{ id: 'global-key', label: 'test', hash: 'unused', createdAt: 't' } as never];
+    seed.deploymentRuns = { unrelated: makeRun('unrelated', 'unused') };
+    seed.deploymentRuns.unrelated.events![0].message = 'large-unrelated-log'.repeat(60000);
+    store.save(seed); await store.flush();
+    const state = new StateService('/tmp/cds-hot-mutator-unused/state.json', undefined, store);
+    state.load(); await state.flush();
+    handle.branches.bulkWrites = []; handle.deploymentRuns.bulkWrites = [];
+    return { handle, store, state };
+  }
+
+  it.each(['deploy-duration', 'release-duration', 'webhook', 'project-key', 'global-key'])('真实%s调用只保存相关集合且冷读保留结果', async (kind) => {
+    const { handle, store, state } = await hotMutatorFixture();
+    const cloneSpy = vi.spyOn(globalThis, 'structuredClone');
+    try {
+      if (kind === 'deploy-duration') state.recordDeployDuration('p', 'release', 1234);
+      if (kind === 'release-duration') state.recordReleaseDuration('target', 2345, 9999);
+      if (kind === 'webhook') state.recordGithubWebhookDelivery(makeDelivery('new-hook', '2026-10-13T00:00:00Z'));
+      if (kind === 'project-key') state.touchAgentKeyLastUsed('p', 'key');
+      if (kind === 'global-key') state.touchGlobalAgentKeyLastUsed('global-key');
+      await state.flush();
+      expect(cloneSpy.mock.calls.some(call => call[0] === state.getState())).toBe(false);
+      expect(handle.branches.bulkWrites).toHaveLength(0);
+      expect(handle.deploymentRuns.bulkWrites).toHaveLength(0);
+    } finally { cloneSpy.mockRestore(); }
+    const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+    const cold = new StateService('/tmp/cds-hot-mutator-unused/cold.json', undefined, reopened); cold.load();
+    if (kind === 'deploy-duration') expect(cold.getDeployEstimate('p', 'release').medianMs).toBe(1234);
+    if (kind === 'release-duration') expect(cold.getReleaseEstimate('target').medianMs).toBe(2345);
+    if (kind === 'webhook') expect(cold.getGithubWebhookDeliveries()[0].id).toBe('new-hook');
+    if (kind === 'project-key') expect(cold.getState().projects![0].agentKeys![0].lastUsedAt).toBeTruthy();
+    if (kind === 'global-key') expect(cold.getState().globalAgentKeys![0].lastUsedAt).toBeTruthy();
+    await reopened.close(); await store.close();
+  });
+
+  it.each(['narrow-save', 'critical-flush'])('发布日志尾部在%s后冷读不丢失', async (mode) => {
+    const { handle, store, state } = await hotMutatorFixture();
+    state.addReleaseRun({ releaseId: 'release-tail', projectId: 'p', branchId: 'unused', commitSha: 'a'.repeat(40),
+      artifact: { type: 'branch-preview', commitSha: 'a'.repeat(40), branchId: 'unused', branchName: 'main' },
+      targetId: 'target', planId: 'plan', status: 'running', startedAt: '2026-10-13T00:00:00Z', logs: [], seq: 0 });
+    await state.flush();
+    state.appendReleaseRunLog('release-tail', { level: 'info', message: 'first', at: '2026-10-13T00:00:00.000Z' });
+    await state.flush();
+    state.appendReleaseRunLog('release-tail', { level: 'info', message: 'pending-tail', at: '2026-10-13T00:00:00.100Z' });
+    if (mode === 'narrow-save') state.touchAgentKeyLastUsed('p', 'key');
+    await state.flush();
+    const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+    const cold = new StateService('/tmp/cds-hot-mutator-unused/tail-cold.json', undefined, reopened); cold.load();
+    expect(cold.getReleaseRun('release-tail')!.logs.map(x => x.message)).toEqual(['first', 'pending-tail']);
+    await reopened.close(); await store.close();
+  });
+
   it('hint-scoped save clones and diffs only the hinted entity, leaving other collections untouched', async () => {
     // 回归 2026-07-21 增量快照重构：save 带 (kind, id) hint 时，takeSnapshot
     // 只克隆被点名的实体（不再 structuredClone 整个 state），persist 只对该

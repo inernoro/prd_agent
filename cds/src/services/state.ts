@@ -1035,7 +1035,10 @@ export class StateService {
     // hints（2026-07-21 增量快照）：mutator 确定本次只改了哪块 state 时传入，
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
-    this.backingStore.save(this.state, hints);
+    // 未到日志批次阈值的发布尾部仍在内存；一次实体级保存不能把它误当已落盘。
+    const completeHints = this.pendingReleaseLogLines > 0 && hints?.length && !hints.some(hint => hint.kind === 'global')
+      ? [...hints, ...HINT_GLOBAL] : hints;
+    this.backingStore.save(this.state, completeHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
 
@@ -1048,6 +1051,7 @@ export class StateService {
   }
 
   async flush(): Promise<void> {
+    this.flushPendingReleaseLogs();
     const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
     if (typeof maybeFlush === 'function') {
       await maybeFlush.call(this.backingStore);
@@ -3245,7 +3249,7 @@ export class StateService {
       if (next) entry.expiresAt = next;
     }
     // Save is best-effort — a failed save here shouldn't block the request.
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save([{ kind: 'projects', id: projectId }]); } catch { /* ignore */ }
   }
 
   // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
@@ -3379,7 +3383,7 @@ export class StateService {
     const entry = (this.state.globalAgentKeys || []).find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save(HINT_GLOBAL); } catch { /* ignore */ }
   }
 
   // ── Pending imports (agent-submitted CDS compose awaiting approval) ──
@@ -4471,7 +4475,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.deployDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordDeployDuration save failed:', (err as Error).message);
     }
@@ -4534,7 +4538,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.releaseDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordReleaseDuration save failed:', (err as Error).message);
     }
@@ -4574,7 +4578,7 @@ export class StateService {
     list.push(delivery);
     this.state.githubWebhookDeliveries = pruneWebhookDeliveries(list);
     try {
-      this.save();
+      this.save([{ kind: 'webhookDeliveries' }]);
     } catch (err) {
       // 写盘失败不影响 webhook 主链路 - 顶多丢这条日志
       console.warn('[state] recordGithubWebhookDelivery save failed:', (err as Error).message);
