@@ -6118,7 +6118,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         // 每一次投递都记账：面板上「铃通不通」这句话的唯一数据源。
         ?.then((r) => {
           alarmChannel.record(r, 'alert', Date.now());
-          if (r.ok && type === 'uptime.target.down') uptimeMonitor.markAlarmDelivered(data.targetId, 'legacy-map', data.detectedAt);
+          if (r.ok && type === 'uptime.target.down') return uptimeMonitor.markAlarmDelivered(data.targetId, 'legacy-map', data.detectedAt)
+            .catch(() => console.warn('[uptime] 已投递通知的历史回执保存未确认。'));
         })
         .catch((err) => {
           const reason = `未捕获的投递异常: ${(err as Error).message}`;
@@ -6146,8 +6147,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         void sendAlarm(channel, event, { boardUrl, history: activeServerEventLogStore })
           .then((r) => {
             alarmLedger.record(channel.id, r, 'alert', Date.now());
-            if (r.ok && type === 'uptime.target.down') uptimeMonitor.markAlarmDelivered(data.targetId, channel.id, data.detectedAt);
             if (!r.ok) console.warn(`[alarm] 通道「${channel.name}」投递失败: ${r.reason ?? '原因不明'}`);
+            if (r.ok && type === 'uptime.target.down') return uptimeMonitor.markAlarmDelivered(data.targetId, channel.id, data.detectedAt)
+              .catch(() => console.warn('[uptime] 已投递通知的历史回执保存未确认。'));
           })
           .catch((err) => {
             const reason = `未捕获的投递异常: ${(err as Error).message}`;
@@ -6447,6 +6449,15 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       };
     });
   }
+  // 停止新增探测、等在途结果，再确认历史写链；不延长既有关键保存的3秒预算。
+  resourceShutdownTasks.add(async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([uptimeMonitor.stop(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('uptime history flush timeout')), 3000);
+      })]);
+    } finally { if (timer) clearTimeout(timer); }
+  });
   uptimeMonitor.start();
   console.log(
     uptimeMonitor.config.enabled

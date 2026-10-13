@@ -51,7 +51,7 @@ describe('零采样与真实故障的边界', () => {
       outcome.up = false;
       await svc.probeNow('monitor@m');
       expect(alerts).toHaveLength(1);
-      svc.markAlarmDelivered('monitor@m', 'phone', new Date(at).toISOString());
+      await svc.markAlarmDelivered('monitor@m', 'phone', new Date(at).toISOString());
       svc = create();
       at += 5 * MIN; outcome = { up: false, noData: true, ms: 1 };
       expect(await svc.probeNow('monitor@m')).toMatchObject({ status: 'down', sample: { noData: true } });

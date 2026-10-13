@@ -112,7 +112,8 @@ describe('主线程诊断接线', () => {
       "'sse.branches.snapshot.all'",
       "'sse.branches.event'",
     ]],
-    ['services/uptime-monitor.ts', ["'uptime.persist'"]],
+    ['services/uptime-monitor.ts', ['writeUptimeHistory(this.deps.config.storePath']],
+    ['services/uptime-history-write.ts', ["'uptime.persist'"]],
     ['index.ts', ['startMainThreadDiagnostics();']],
     ['server.ts', [
       "'sse.state.broadcast'",

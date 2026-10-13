@@ -38,7 +38,7 @@ import { createHash } from 'node:crypto';
 import { isSelfCheckEndpoint, SELF_PROJECT_ID } from './self-monitoring-bootstrap.js';
 import http from 'node:http';
 import path from 'node:path';
-import { timeMainThreadSection } from './main-thread-diagnostics.js';
+import { writeUptimeHistory } from './uptime-history-write.js';
 import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
 import { normalizeReleaseEnvironment, type ReleaseEnvironment } from './release-environment.js';
 import {
@@ -278,6 +278,9 @@ interface UptimeStoreFile {
   savedAt: number;
   targets: UptimeTargetRecord[];
 }
+
+type ImmediateProbeResult = { ok: true; sample: UptimeSample; status: UptimeStatus }
+  | { ok: false; skipped: string } | null;
 
 export interface UptimeMonitorConfig {
   enabled: boolean;
@@ -1183,6 +1186,11 @@ export class UptimeMonitorService {
   private watchdogResets = 0;
   private probeDeadlineHits = 0;
   private customLaneRunning = false;
+  private persistDirty = false;
+  private persistTask: Promise<void> | null = null;
+  private persistError: Error | null = null;
+  private stopping = false;
+  private activeProbes = new Set<Promise<unknown>>();
 
   constructor(
     private readonly deps: {
@@ -1228,6 +1236,7 @@ export class UptimeMonitorService {
   start(): void {
     if (!this.deps.config.enabled) return;
     if (this.timer) return;
+    this.stopping = false;
     this.startedAt = this.now();
     this.timer = setInterval(() => {
       void this.runCycle().catch((err) => {
@@ -1241,12 +1250,15 @@ export class UptimeMonitorService {
     });
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    this.stopping = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    await Promise.allSettled([...this.activeProbes]);
     this.persist();
+    await this.flush();
   }
 
   /**
@@ -1321,7 +1333,25 @@ export class UptimeMonitorService {
     });
   }
 
-  async runCycle(): Promise<void> {
+  runCycle(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    return this.trackProbe(this.confirmProbeHistory(this.runCycleOnce()));
+  }
+
+  private async confirmProbeHistory<T>(probe: Promise<T>): Promise<T> {
+    const result = await probe;
+    // 保留原普通探测的返回契约：成功写入已可冷读，失败仍只警告、不误判目标。
+    await this.flush().catch(() => {});
+    return result;
+  }
+
+  private trackProbe<T>(probe: Promise<T>): Promise<T> {
+    this.activeProbes.add(probe);
+    void probe.then(() => this.activeProbes.delete(probe), () => this.activeProbes.delete(probe));
+    return probe;
+  }
+
+  private async runCycleOnce(): Promise<void> {
     if (this.cycleRunning) {
       // 看门狗：上一轮开始已久却没结束 → 视为卡死，强制复位再跑本轮。
       const startedAgo = this.cycleStartedAt === null ? 0 : this.now() - this.cycleStartedAt;
@@ -1385,7 +1415,7 @@ export class UptimeMonitorService {
       for (const t of targets) {
         if (t.active && dueSelfUrls.has(t.url) && (t.collection || isSelfMetric(t)) && !customTargets.some(m => m.id === t.id)) customTargets.push(t);
       }
-      customLane = this.runCustomLane(customTargets);
+      customLane = this.trackProbe(this.runCustomLane(customTargets));
 
       // 轮次预算（Codex PR #1514 第四轮 P1）：用户视角与直连探测都是按并发分批
       // 串行 await 的，全站预览域名同时超时（网关挂了）时 100 条分支的用户视角
@@ -1724,11 +1754,12 @@ export class UptimeMonitorService {
    * 都照常生效——它只是把「等下一轮」变成「现在」，不是另一套判定。
    * 返回 null = 目标不存在；skipped = 目标此刻不该探（暂停 / 排除），原因随附。
    */
-  async probeNow(targetId: string): Promise<
-    | { ok: true; sample: UptimeSample; status: UptimeStatus }
-    | { ok: false; skipped: string }
-    | null
-  > {
+  probeNow(targetId: string): Promise<ImmediateProbeResult> {
+    if (this.stopping) return Promise.resolve({ ok: false, skipped: '服务正在停止，请稍后重试' });
+    return this.trackProbe(this.confirmProbeHistory(this.probeNowOnce(targetId)));
+  }
+
+  private async probeNowOnce(targetId: string): Promise<ImmediateProbeResult> {
     const target = this.selectTargets().find((t) => t.id === targetId);
     if (!target) return null;
     const now = this.now();
@@ -1833,12 +1864,13 @@ export class UptimeMonitorService {
   }
 
   /** 投递成功后记下通道，失败/演练不会让后续恢复通知获得发送资格。 */
-  markAlarmDelivered(targetId: string, channelId: string, detectedAt: string): void {
+  async markAlarmDelivered(targetId: string, channelId: string, detectedAt: string): Promise<void> {
     const record = this.records.get(targetId);
     if (!record?.notification?.open || record.notification.lastDownAttemptAt !== Date.parse(detectedAt)) return;
     const channels = record.notification.acceptedChannels ??= [];
     if (!channels.includes(channelId)) channels.push(channelId);
     this.persist();
+    await this.flush();
   }
 
   /** 把状态翻转转发给接线方（未接线时静默，见构造参数 onAlert 注释）。 */
@@ -2208,7 +2240,7 @@ export class UptimeMonitorService {
     return removed;
   }
 
-  // ── 持久化：独立文件 + 原子写，失败静默（监控不能拖垮主流程） ──
+  // ── 持久化：独立文件 + 原子异步写；普通探测不等待，明确flush不吞错 ──
 
   private load(): void {
     const fp = this.deps.config.storePath;
@@ -2231,25 +2263,34 @@ export class UptimeMonitorService {
   }
 
   private persist(): void {
-    const fp = this.deps.config.storePath;
-    if (!fp) return;
-    const payload: UptimeStoreFile = {
-      version: 1,
-      savedAt: this.now(),
-      targets: [...this.records.values()],
-    };
-    try {
-      fs.mkdirSync(path.dirname(fp), { recursive: true });
-      const tmp = `${fp}.tmp`;
-      // 整份历史同步 stringify + 写盘，每轮探活都来一次；目标与样本越多越重。
-      timeMainThreadSection('uptime.persist', () => {
-        const json = JSON.stringify(payload);
-        fs.writeFileSync(tmp, json);
-        fs.renameSync(tmp, fp);
-        return json;
-      }, (json) => json.length);
-    } catch (err) {
+    if (!this.deps.config.storePath) return;
+    this.persistDirty = true;
+    this.beginPersist();
+  }
+
+  private beginPersist(): void {
+    if (this.persistTask) return;
+    this.persistError = null;
+    // 同一tick只开一条链；在途变化只记dirty，不排队保存大对象快照。
+    this.persistTask = Promise.resolve().then(async () => {
+      while (this.persistDirty) {
+        this.persistDirty = false;
+        await writeUptimeHistory(this.deps.config.storePath, this.now(), [...this.records.values()]);
+      }
+    }).catch(err => {
+      this.persistDirty = true;
+      this.persistError = err as Error;
       this.deps.logger?.warn?.(`[uptime] 落盘失败（仅内存保留）: ${(err as Error).message}`);
-    }
+    }).finally(() => {
+      this.persistTask = null;
+      if (this.persistDirty && !this.persistError) this.beginPersist();
+    });
+  }
+
+  /** 确认已请求的历史写入；失败保留dirty，下一次请求或flush可以重试。 */
+  async flush(): Promise<void> {
+    if (this.persistDirty && !this.persistTask) this.beginPersist();
+    while (this.persistTask) await this.persistTask;
+    if (this.persistError) throw this.persistError;
   }
 }

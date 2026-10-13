@@ -1090,6 +1090,23 @@ describe('MongoSplitStateBackingStore', () => {
     await reopened.close(); await store.close();
   });
 
+  it('关键flush提交日志失败时不确认成功，重试后冷读恢复同一尾部', async () => {
+    const { handle, store, state } = await hotMutatorFixture();
+    state.addReleaseRun({ releaseId: 'retry-tail', projectId: 'p', branchId: 'unused', commitSha: 'a'.repeat(40),
+      artifact: { type: 'branch-preview', commitSha: 'a'.repeat(40), branchId: 'unused', branchName: 'main' },
+      targetId: 'target', planId: 'plan', status: 'running', startedAt: '2026-10-13T00:00:00Z', logs: [], seq: 0 });
+    state.appendReleaseRunLog('retry-tail', { level: 'info', message: 'first', at: '2026-10-13T00:00:00.000Z' });
+    await state.flush();
+    state.appendReleaseRunLog('retry-tail', { level: 'info', message: 'retry-me', at: '2026-10-13T00:00:00.100Z' });
+    const failedSave = vi.spyOn(store, 'save').mockImplementationOnce(() => { throw new Error('fixture write admission failed'); });
+    await expect(state.flush()).rejects.toThrow('fixture write admission failed');
+    await state.flush(); failedSave.mockRestore();
+    const reopened = new MongoSplitStateBackingStore(handle); await reopened.init();
+    const cold = new StateService('/tmp/cds-hot-mutator-unused/retry-cold.json', undefined, reopened); cold.load();
+    expect(cold.getReleaseRun('retry-tail')!.logs.map(x => x.message)).toEqual(['first', 'retry-me']);
+    await reopened.close(); await store.close();
+  });
+
   it('hint-scoped save clones and diffs only the hinted entity, leaving other collections untouched', async () => {
     // 回归 2026-07-21 增量快照重构：save 带 (kind, id) hint 时，takeSnapshot
     // 只克隆被点名的实体（不再 structuredClone 整个 state），persist 只对该
