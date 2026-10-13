@@ -4740,7 +4740,7 @@ function CodeEditor({
         <pre
           aria-hidden
           className="pointer-events-none absolute inset-0 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs leading-5"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
         >
           {value ? highlightedCode(value, language) : <span className="text-muted-foreground/55">{placeholder || ''}</span>}
         </pre>
@@ -4748,7 +4748,7 @@ function CodeEditor({
           value={value}
           onChange={(event) => onChange(event.target.value)}
           className="relative z-10 w-full resize-y bg-transparent px-3 py-2 font-mono text-xs leading-5 text-transparent caret-foreground outline-none selection:bg-primary/20"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
           spellCheck={false}
           placeholder={placeholder}
         />
@@ -5014,9 +5014,9 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">数据库 / collection</div>
-                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={resource.displayName}>{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
                   <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5828,9 +5828,9 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">{adapter.treeLabel}</div>
-                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={`${resource.displayName} · ${tablesState.database || '-'}`}>{resource.displayName} · {tablesState.database || '-'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
                   <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5874,8 +5874,8 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
           </aside>
 
           <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
-            <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
-              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
                   <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
@@ -5886,7 +5886,8 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                 </Button>
               </div>
               <div
-                className="p-3"
+                className="min-h-0 flex-1 overflow-y-auto p-3"
+                style={{ overscrollBehavior: 'contain' }}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                     event.preventDefault();
@@ -5899,7 +5900,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   value={sql}
                   onChange={setSql}
                   language="sql"
-                  minHeight={158}
+                  minHeight={120}
                   placeholder="SELECT * FROM users LIMIT 50"
                 />
               </div>

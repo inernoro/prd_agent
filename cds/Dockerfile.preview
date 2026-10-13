@@ -1,0 +1,16 @@
+# CI 编译好的 CDS 预览运行镜像；与只搬运产物的 Dockerfile.dist 分开。
+FROM node:20-slim
+RUN corepack enable && corepack prepare pnpm@9 --activate
+WORKDIR /app/cds
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
+COPY dist ./dist
+COPY web/dist ./web/dist
+COPY web-legacy ./web-legacy
+COPY cds-prebuilt-manifest.json ./cds-prebuilt-manifest.json
+# 独立 JSON 状态；不挂宿主 Docker socket，也不携带父实例配置或密钥。
+RUN mkdir -p /app/.cds && chown -R node:node /app
+ENV CDS_PREVIEW_INSTANCE=1 CDS_STORAGE_MODE=json CDS_REPO_ROOT=/app
+USER node
+EXPOSE 9900
+CMD ["node", "dist/index.js"]

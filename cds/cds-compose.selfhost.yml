@@ -51,6 +51,20 @@ x-cds-project:
   description: "CDS 预览实例（CDS 托管 CDS）：验收 CDS 自身改动，不执行真实部署"
   repo: https://github.com/inernoro/prd_agent.git
 
+x-cds-deploy-modes:
+  cds:
+    express:
+      label: "极速版（CI 预构建预览）"
+      image: "ghcr.io/inernoro/prd_agent/cds-preview:sha-${CDS_COMMIT_SHA}"
+      command: "cd /app/cds && node dist/index.js"
+      prebuilt: true
+      containerPort: 9900
+      env:
+        CDS_REPO_ROOT: /app
+      buildScope:
+        - "cds/**"
+        - ".github/workflows/cds-prebuilt.yml"
+
 services:
   cds:
     image: node:20-slim
