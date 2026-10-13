@@ -15,6 +15,7 @@ export const OPEN_DESIGN_ENGINE_VERSION = '0.21.1';
 export const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
 /** OpenDesign 0.21.1 sandbox-mode.ts 在数据目录下为会话隔离出的 CODEX_HOME（相对 OD_DATA_DIR）。 */
 export const OPEN_DESIGN_CODEX_HOME_RELATIVE = 'sandbox/agent-home/.codex';
+const CSS_GENERATED_TEXT_RULE = 'All readable text must be ordinary visible HTML text nodes. CSS content declarations and pseudo-elements may contain decorative symbols only; never put letters, digits, Chinese characters, or escaped forms of any of them in CSS content. Inspect every content declaration and move any readable text into visible HTML before stopping.';
 
 export function buildOpenDesignCodexConfig(baseUrl: string, model: string): string {
   return [
@@ -336,6 +337,7 @@ export function buildPlatformRules(input: { knowledgeFiles: readonly string[]; e
     'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
     'Work in three explicit production steps: first plan the hierarchy, required facts, brand constraints, and responsive structure from the frozen task package; then form the page using the selected OpenDesign design system; finally inspect the saved file and correct proven mismatches before stopping.',
     'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Correct visible placeholders, empty links, missing fragment targets, and nonfunctional buttons while preserving all requested behavior. Do not remove or disable requested controls to silence a validation gate; if the publication policy cannot support their behavior, report the incompatibility.',
+    CSS_GENERATED_TEXT_RULE,
     knowledgeFiles.length > 0
       ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
       : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
@@ -359,6 +361,7 @@ export function buildReviewMessage(input: { reviewPass: number; editingExistingP
   return reviewPass === 0 ? [
     'Perform a strict final review of /workspace/index.html against every constraint and the qualityContract in /workspace/brief/task.json.',
     'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims. Correct every proven mismatch in the file before stopping.',
+    CSS_GENERATED_TEXT_RULE,
     editingExistingPage
       ? 'Use only the smallest targeted edit operations needed. Never use broad or global string replacement. Never alter CSS values, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.'
       : 'For this newly generated page, correct every unsupported element. Do not retain sample copy, fake actions, missing targets, invented measured claims, or incomplete sections merely to preserve the first draft. Never remove or disable requested functionality to bypass a platform limitation; report that incompatibility instead.',

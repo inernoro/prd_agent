@@ -15,6 +15,8 @@ import {
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
 import {
+  buildPlatformRules,
+  buildReviewMessage,
   buildOpenDesignCodexConfig,
   composeOpenDesignPrompts,
   parseBrandPackage,
@@ -38,6 +40,30 @@ function digest(value: Buffer | string): string {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
+
+describe('OpenDesign prompt quality contracts', () => {
+  const assertNoGeneratedReadableText = (prompt: string) => {
+    expect(prompt).toContain('All readable text must be ordinary visible HTML text nodes.');
+    expect(prompt).toContain('CSS content declarations and pseudo-elements may contain decorative symbols only');
+    expect(prompt).toContain('never put letters, digits, Chinese characters, or escaped forms of any of them in CSS content');
+    expect(prompt).toContain('Inspect every content declaration and move any readable text into visible HTML before stopping.');
+  };
+
+  it('forbids CSS-generated readable text in generation and strict final review', () => {
+    const generation = buildPlatformRules({ knowledgeFiles: [], editingExistingPage: false }).join(' ');
+    const finalReview = buildReviewMessage({ reviewPass: 0, editingExistingPage: false, reviewAddendum: '' });
+
+    assertNoGeneratedReadableText(generation);
+    assertNoGeneratedReadableText(finalReview);
+  });
+
+  it('keeps the aesthetic pass from changing facts or requested behavior', () => {
+    const aestheticReview = buildReviewMessage({ reviewPass: 1, editingExistingPage: false, reviewAddendum: '' });
+
+    expect(aestheticReview).toContain('Keep every fact, link, section, and requested behavior exactly as it is');
+    expect(aestheticReview).toContain('improve only hierarchy, spacing, typography, color consistency, and mobile layout');
+  });
+});
 
 describe('frozen MAP design brief and brand package', () => {
   const brief = {
