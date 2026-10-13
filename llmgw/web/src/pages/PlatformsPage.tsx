@@ -1,6 +1,7 @@
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
+import { CollectionView, CollectionDetailPane } from '@/components/CollectionView';
 import { Fragment, useEffect, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
@@ -77,6 +78,13 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       alive = false;
     };
   }, []);
+
+  const selectedProvider = items?.find((p) => expandedModelsFor === p.id);
+  function renderOwnedModels() {
+    if (!selectedProvider) return null;
+    const p = selectedProvider;
+    return <CollectionDetailPane key={p.id} title={p.name} identifier="名下模型" onClose={() => setExpandedModelsFor(null)}><ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} /></CollectionDetailPane>;
+  }
 
   /** 某个上游名下的模型 + 登记状态。判据是「有没有线路指向它」，不是名字像不像。 */
   const ownedRows = (platformId: string) => collectProviderModels(platformId, ownedModels, logicalModels);
@@ -379,7 +387,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   return (
     <PageShell>
       {section === 'provider' ? (
-      <PageBody>
+      <PageBody className="lg-collection-page">
       <header className="lg-page-heading">
         <div style={{ maxWidth: 720 }}>
           <h1>Provider（模型供应方）</h1>
@@ -521,8 +529,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       {providerItems.length === 0 ? (
         <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
       ) : (
-      <div className="lg-config-table-shell" style={{ flexShrink: 0, minHeight: 160, overflowX: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-        <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className="lg-collection-workspace">
+      <div className="lg-config-table-shell lg-collection-list" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
+        <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`}>
+        {(pageProviders) => <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
               {/* 主表只摆要拿来做决定的东西。接口类型、API 地址、并发都是选完平台就定下来的
@@ -537,7 +547,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
             </tr>
           </thead>
           <tbody>
-            {providerItems.map((p) => {
+            {pageProviders.map((p) => {
               const en = boolChip(p.enabled, '启用', '停用');
               // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
               // 那会让人以为这条上游能用，实际每次调用都会失败
@@ -547,7 +557,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
               return (
                 // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
                 <Fragment key={p.id}>
-                <tr>
+                <tr className="lg-collection-provider-row">
                   <td style={td}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                       <span style={{ fontWeight: 600 }}>{p.name}</span>
@@ -686,20 +696,6 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
-                {expandedModelsFor === p.id ? (
-                  <tr>
-                    {/* 名下模型占满整行：这是「模型属于上游」这件事的落地位置，
-                        窄列里塞不下「登记为哪几个公开名」这句结论 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={6}>
-                      <ProviderModelsPanel
-                        rows={ownedRows(p.id)}
-                        onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude'
-                          ? () => void openDiscovery(p)
-                          : undefined}
-                      />
-                    </td>
-                  </tr>
-                ) : null}
                 {editId === p.id ? (
                   <tr>
                     {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
@@ -772,7 +768,10 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
               );
             })}
           </tbody>
-        </table>
+        </table>}
+        </CollectionView>
+      </div>
+      {renderOwnedModels()}
       </div>
       )}
 

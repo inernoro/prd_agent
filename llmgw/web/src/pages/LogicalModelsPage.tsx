@@ -51,6 +51,7 @@ import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
 import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
 import { CallTracePanel } from '@/components/CallTracePanel';
 import './LogicalModelsPage.css';
+import { CollectionView, CollectionDetailPane } from '@/components/CollectionView';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
@@ -329,196 +330,15 @@ export function LogicalModelsPage() {
     () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.unpricedCalls || 0), 0),
     [usage]);
 
-  return (
-    <PageShell>
-      <PageHeader
-        title="模型"
-        subtitle={attention.length === 0
-          ? '名单外的调用一律拒绝。应用只选择稳定的模型标识，接哪个上游由它下面的线路决定。'
-          : `${attention.map((x) => x.item.name).join('、')} 需要看一眼，其余线路正常。`}
-        summary={items ? (
-          <>
-            <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
-            <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
-            {usage ? <span>近 30 天 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
-            {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
-            <span>已设默认 <strong>{items.filter((x) => x.isDefaultForType).length}</strong> 个用途</span>
-          </>
-        ) : undefined}
-        actions={canWrite ? (
-          <>
-            {/* 批量登记是主路径：一次把上游的模型清单拉回来勾选登记，比一个个手建快一个量级。
-                它落在 Provider 页（凭据在那儿配、清单从那儿拉），这里给直达入口，不让用户自己找。 */}
-            <Button variant="primary" size="sm" onClick={() => navigate('/platforms')}>从上游批量登记</Button>
-            <Button size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '手动新建'}</Button>
-          </>
-        ) : null}
-      />
-
-      <PageBody>
-        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
-        {!canWrite ? <ReadOnlyNotice /> : null}
-
-        {createOpen && canWrite ? (
-          <Card style={CARD_BODY}>
-            <form onSubmit={submitLogical}>
-              <FormGrid>
-                <label style={labelStyle}>
-                  <span>公开模型标识</span>
-                  <input required value={draft.publicId} onChange={(e) => setDraft((x) => ({ ...x, publicId: e.target.value }))} placeholder="例如 image2" style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  <span>显示名称</span>
-                  <input required value={draft.name} onChange={(e) => setDraft((x) => ({ ...x, name: e.target.value }))} placeholder="例如 GPT Image 2" style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  <span>模型类型</span>
-                  <select value={draft.modelType} onChange={(e) => setDraft((x) => ({ ...x, modelType: e.target.value }))} style={inputStyle}>
-                    <option value="generation">generation</option>
-                    <option value="vision">vision</option>
-                    <option value="chat">chat</option>
-                    <option value="video-gen">video-gen</option>
-                  </select>
-                </label>
-                <label style={labelStyle}>
-                  <span>
-                    路由策略
-                    <HelpPopover label="路由策略">
-                      优先级与故障切换按 priority 从小到大依次尝试，上一个上游不可用才轮到下一个；
-                      权重负载均衡按 weight 在健康的上游之间分配流量。建好之后随时可以在卡片右上角改。
-                    </HelpPopover>
-                  </span>
-                  <select value={draft.routingStrategy} onChange={(e) => setDraft((x) => ({ ...x, routingStrategy: e.target.value as 'priority' | 'weighted' }))} style={inputStyle}>
-                    <option value="priority">优先级与故障切换</option>
-                    <option value="weighted">按权重负载均衡</option>
-                  </select>
-                </label>
-                <label style={labelStyle}>
-                  <span>
-                    能力，逗号分隔
-                    <HelpPopover label="图片生成场景能力">
-                      图片生成默认覆盖文生图、图生图和视觉参考生成；删除某个细分能力即可限制对应场景。
-                    </HelpPopover>
-                  </span>
-                  <input value={draft.capabilities.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, capabilities: e.target.value.split(',') }))} style={inputStyle} />
-                </label>
-                <label style={labelStyle}>
-                  <span>
-                    允许的 appCaller
-                    <HelpPopover label="允许的 appCaller" align="end">
-                      多个用逗号分隔。留空表示当前租户里的全部 appCaller 都能用这个模型标识；
-                      填了就只有列出来的调用方能用，其余请求会被拒绝。
-                    </HelpPopover>
-                  </span>
-                  <input value={draft.allowedAppCallerCodes.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, allowedAppCallerCodes: e.target.value.split(',').filter(Boolean) }))} style={inputStyle} />
-                </label>
-                <Button type="submit" variant="primary" size="sm" disabled={busy === 'create-logical'}>{busy === 'create-logical' ? '保存中' : '保存逻辑模型'}</Button>
-              </FormGrid>
-            </form>
-          </Card>
-        ) : null}
-
-        {items === null ? <SectionLoader text="正在加载逻辑模型目录" /> : null}
-
-        {items !== null && items.length === 0 ? (
-          <Card style={{ ...CARD_BODY, flex: 1, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
-            <Prose>尚无逻辑模型。先创建模型，再把一个或多个上游模型或 Exchange 绑定为 Offering。</Prose>
-          </Card>
-        ) : null}
-
-        {items !== null && items.length > 0 ? (
-          <Card
-            className="lg-logical-model-list"
-            style={{ padding: 0, overflow: 'hidden', flexShrink: 0 }}
-          >
-            <div className="lg-logical-model-grid lg-logical-model-heading" style={{ ...ROW_GRID, ...ROW_HEAD }}>
-              <span style={COL_CAP}>模型</span>
-              <span style={COL_CAP}>上游线路与单价</span>
-              <span style={COL_CAP}>近 30 天</span>
-              <span style={COL_CAP}>状态</span>
-              <span />
-            </div>
-
-            {(items ?? []).map((item) => {
-              const routes = describeRoutes(item, models);
-              const stat = usage?.get(item.publicId) ?? null;
-              const open = expanded === item.id;
-              const tracing = traceFor === item.id;
-              const health = summarizeHealth(item, routes);
-              return (
-                <div key={item.id} style={{
-                  borderTop: '1px solid var(--border-subtle)',
-                  background: health.tone === 'warn' ? 'var(--warn-bg)' : item.isDefaultForType ? 'var(--accent-soft)' : undefined,
-                  // 异常优先于默认：一个模型既是默认又出了问题时，先让人看见出问题那件事
-                  boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : item.isDefaultForType ? 'inset 3px 0 0 var(--accent)' : undefined,
-                }}>
-                  <div className="lg-logical-model-grid" style={ROW_GRID}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
-                      <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
-                      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0, flexWrap: 'wrap' }}>
-                          <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
-                          {item.isDefaultForType
-                            ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
-                            : null}
-                          {item.defaultForAppCallerCodes.length > 0
-                            ? <Chip
-                                label={`${item.defaultForAppCallerCodes.length} 个调用方指定它`}
-                                color="var(--ok)"
-                                bg="var(--ok-bg)"
-                                title={`这些调用方不点名时走它，优先于用途默认：\n${item.defaultForAppCallerCodes.join('\n')}`}
-                              />
-                            : null}
-                        </span>
-                        <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {item.publicId} · {describeScope(item.allowedAppCallerCodes)}
-                        </span>
-                      </span>
-                    </span>
-
-                    <span className="lg-logical-model-routes" style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
-                      {routes.length === 0
-                        ? <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>没有上游线路，这个模型不承接请求</span>
-                        : routes.map((route) => (
-                          <span key={route.id} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', opacity: route.health === 'live' ? 1 : 0.66, minWidth: 0 }}>
-                            <RouteDot health={route.health} />
-                            <span style={{ fontSize: 'var(--fs-caption)', whiteSpace: 'nowrap' }}>{route.label}</span>
-                            <span style={route.priced ? { ...MONO_META, whiteSpace: 'nowrap' } : { ...HINT_TEXT, whiteSpace: 'nowrap' }}>{route.price}</span>
-                            <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>{route.roleLabel}</span>
-                          </span>
-                        ))}
-                    </span>
-
-                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }} aria-label="近 30 天用量">
-                      {stat ? (
-                        <>
-                          <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
-                          <span style={{ display: 'flex', flexDirection: 'column' }}>
-                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsd(stat.totalCostUsd)}</span>
-                            <span style={HINT_TEXT}>{formatCount(stat.totalCalls)} 次</span>
-                          </span>
-                        </>
-                      ) : <span style={HINT_TEXT}>暂无</span>}
-                    </span>
-
-                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
-                      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, flexShrink: 0, background: health.dot }} />
-                      <span style={{ fontSize: 'var(--fs-secondary)', color: health.tone === 'warn' ? 'var(--warn)' : 'var(--text-secondary)' }}>{health.text}</span>
-                    </span>
-
-                    <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                      {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
-                          「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
-                      <Button size="sm" variant="ghost" aria-expanded={tracing} onClick={() => setTraceFor((x) => (x === item.id ? null : item.id))}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{tracing ? '收起全貌' : '调用全貌'}</span>
-                      </Button>
-                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setExpanded((x) => (x === item.id ? null : item.id))}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '展开'}</span>
-                      </Button>
-                    </span>
-                  </div>
-
+  const selectedItem = items?.find((item) => item.id === (expanded || traceFor));
+  function renderSelectedDetails() {
+    if (!selectedItem) return null;
+    const item = selectedItem;
+    const routes = describeRoutes(item, models);
+    const health = summarizeHealth(item, routes);
+    const tracing = traceFor === item.id;
+    const open = expanded === item.id;
+    return <>
                   {tracing ? (
                     <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)` }}>
                       <CallTracePanel logicalModelId={item.id} />
@@ -652,13 +472,14 @@ export function LogicalModelsPage() {
                         </form>
                       ) : null}
 
-                      {routes.map((route) => (
+                      <CollectionView items={routes} placeholder="搜索上游模型、供应方或备注" searchText={(route) => [route.label, route.upstreamModelId, route.providerName, route.offering.targetName, route.offering.notes, route.protocol].filter(Boolean).join(' ')}>
+                        {(pageRoutes) => <>{pageRoutes.map((route) => (
                         <div className="lg-logical-model-route-detail" key={`detail-${route.id}`} style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
                           <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, width: 200, flexShrink: 0 }}>
                             <RouteDot health={route.health} />
                             <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                              <strong style={{ fontSize: 'var(--fs-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{route.label}</strong>
-                              <span style={HINT_TEXT}>{route.roleLabel} · 协议 {route.protocol}</span>
+                              <strong style={{ fontSize: 'var(--fs-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{route.upstreamModelId || route.offering.targetName || route.label}</strong>
+                              <span style={HINT_TEXT}>{route.label} · {route.roleLabel} · 协议 {route.protocol}</span>
                             </span>
                           </span>
                           <span className="lg-logical-model-route-info" style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
@@ -677,13 +498,206 @@ export function LogicalModelsPage() {
                             </>
                           ) : null}
                         </div>
-                      ))}
+                      ))}</>}
+                      </CollectionView>
                     </div>
                   ) : null}
+    </>;
+  }
+
+  return (
+    <PageShell>
+      <PageHeader
+        title="模型"
+        subtitle={attention.length === 0
+          ? '名单外的调用一律拒绝。应用只选择稳定的模型标识，接哪个上游由它下面的线路决定。'
+          : `${attention.map((x) => x.item.name).join('、')} 需要看一眼，其余线路正常。`}
+        summary={items ? (
+          <>
+            <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
+            <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
+            {usage ? <span>近 30 天 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
+            {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
+            <span>已设默认 <strong>{items.filter((x) => x.isDefaultForType).length}</strong> 个用途</span>
+          </>
+        ) : undefined}
+        actions={canWrite ? (
+          <>
+            {/* 批量登记是主路径：一次把上游的模型清单拉回来勾选登记，比一个个手建快一个量级。
+                它落在 Provider 页（凭据在那儿配、清单从那儿拉），这里给直达入口，不让用户自己找。 */}
+            <Button variant="primary" size="sm" onClick={() => navigate('/platforms')}>从上游批量登记</Button>
+            <Button size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '手动新建'}</Button>
+          </>
+        ) : null}
+      />
+
+      <PageBody className="lg-collection-page">
+        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
+        {!canWrite ? <ReadOnlyNotice /> : null}
+
+        {createOpen && canWrite ? (
+          <Card style={CARD_BODY}>
+            <form onSubmit={submitLogical}>
+              <FormGrid>
+                <label style={labelStyle}>
+                  <span>公开模型标识</span>
+                  <input required value={draft.publicId} onChange={(e) => setDraft((x) => ({ ...x, publicId: e.target.value }))} placeholder="例如 image2" style={inputStyle} />
+                </label>
+                <label style={labelStyle}>
+                  <span>显示名称</span>
+                  <input required value={draft.name} onChange={(e) => setDraft((x) => ({ ...x, name: e.target.value }))} placeholder="例如 GPT Image 2" style={inputStyle} />
+                </label>
+                <label style={labelStyle}>
+                  <span>模型类型</span>
+                  <select value={draft.modelType} onChange={(e) => setDraft((x) => ({ ...x, modelType: e.target.value }))} style={inputStyle}>
+                    <option value="generation">generation</option>
+                    <option value="vision">vision</option>
+                    <option value="chat">chat</option>
+                    <option value="video-gen">video-gen</option>
+                  </select>
+                </label>
+                <label style={labelStyle}>
+                  <span>
+                    路由策略
+                    <HelpPopover label="路由策略">
+                      优先级与故障切换按 priority 从小到大依次尝试，上一个上游不可用才轮到下一个；
+                      权重负载均衡按 weight 在健康的上游之间分配流量。建好之后随时可以在卡片右上角改。
+                    </HelpPopover>
+                  </span>
+                  <select value={draft.routingStrategy} onChange={(e) => setDraft((x) => ({ ...x, routingStrategy: e.target.value as 'priority' | 'weighted' }))} style={inputStyle}>
+                    <option value="priority">优先级与故障切换</option>
+                    <option value="weighted">按权重负载均衡</option>
+                  </select>
+                </label>
+                <label style={labelStyle}>
+                  <span>
+                    能力，逗号分隔
+                    <HelpPopover label="图片生成场景能力">
+                      图片生成默认覆盖文生图、图生图和视觉参考生成；删除某个细分能力即可限制对应场景。
+                    </HelpPopover>
+                  </span>
+                  <input value={draft.capabilities.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, capabilities: e.target.value.split(',') }))} style={inputStyle} />
+                </label>
+                <label style={labelStyle}>
+                  <span>
+                    允许的 appCaller
+                    <HelpPopover label="允许的 appCaller" align="end">
+                      多个用逗号分隔。留空表示当前租户里的全部 appCaller 都能用这个模型标识；
+                      填了就只有列出来的调用方能用，其余请求会被拒绝。
+                    </HelpPopover>
+                  </span>
+                  <input value={draft.allowedAppCallerCodes.join(', ')} onChange={(e) => setDraft((x) => ({ ...x, allowedAppCallerCodes: e.target.value.split(',').filter(Boolean) }))} style={inputStyle} />
+                </label>
+                <Button type="submit" variant="primary" size="sm" disabled={busy === 'create-logical'}>{busy === 'create-logical' ? '保存中' : '保存逻辑模型'}</Button>
+              </FormGrid>
+            </form>
+          </Card>
+        ) : null}
+
+        {items === null ? <SectionLoader text="正在加载逻辑模型目录" /> : null}
+
+        {items !== null && items.length === 0 ? (
+          <Card style={{ ...CARD_BODY, flex: 1, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+            <Prose>尚无逻辑模型。先创建模型，再把一个或多个上游模型或 Exchange 绑定为 Offering。</Prose>
+          </Card>
+        ) : null}
+
+        {items !== null && items.length > 0 ? (
+          <div className="lg-collection-workspace">
+          <Card className="lg-logical-model-list lg-collection-list" style={{ padding: 0 }}>
+            <CollectionView items={items} placeholder="搜索模型名称或公开标识" searchText={(item) => `${item.name} ${item.publicId}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
+            {(pageItems) => <>
+            <div className="lg-logical-model-grid lg-logical-model-heading" style={{ ...ROW_GRID, ...ROW_HEAD }}>
+              <span style={COL_CAP}>模型</span>
+              <span style={COL_CAP}>上游线路与单价</span>
+              <span style={COL_CAP}>近 30 天</span>
+              <span style={COL_CAP}>状态</span>
+              <span />
+            </div>
+
+            {pageItems.map((item) => {
+              const routes = describeRoutes(item, models);
+              const stat = usage?.get(item.publicId) ?? null;
+              const open = expanded === item.id;
+              const tracing = traceFor === item.id;
+              const health = summarizeHealth(item, routes);
+              return (
+                <div key={item.id} style={{
+                  borderTop: '1px solid var(--border-subtle)',
+                  background: health.tone === 'warn' ? 'var(--warn-bg)' : item.isDefaultForType ? 'var(--accent-soft)' : undefined,
+                  // 异常优先于默认：一个模型既是默认又出了问题时，先让人看见出问题那件事
+                  boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : item.isDefaultForType ? 'inset 3px 0 0 var(--accent)' : undefined,
+                }}>
+                  <div className="lg-logical-model-grid" style={ROW_GRID}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
+                      <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
+                      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0, flexWrap: 'wrap' }}>
+                          <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                          {item.isDefaultForType
+                            ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
+                            : null}
+                          {item.defaultForAppCallerCodes.length > 0
+                            ? <Chip
+                                label={`${item.defaultForAppCallerCodes.length} 个调用方指定它`}
+                                color="var(--ok)"
+                                bg="var(--ok-bg)"
+                                title={`这些调用方不点名时走它，优先于用途默认：\n${item.defaultForAppCallerCodes.join('\n')}`}
+                              />
+                            : null}
+                        </span>
+                        <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {item.publicId} · {describeScope(item.allowedAppCallerCodes)}
+                        </span>
+                      </span>
+                    </span>
+
+                    <span className="lg-collection-routes-summary">
+                      <span>{routes.length} 条线路 · {item.routingStrategy === 'weighted' ? '权重负载均衡' : '主备切换'}</span>
+                      <span style={HINT_TEXT}>{routes[0] ? `${routes[0].label} · ${routes[0].price}` : '没有上游线路'}</span>
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }} aria-label="近 30 天用量">
+                      {stat ? (
+                        <>
+                          <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
+                          <span style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsd(stat.totalCostUsd)}</span>
+                            <span style={HINT_TEXT}>{formatCount(stat.totalCalls)} 次</span>
+                          </span>
+                        </>
+                      ) : <span style={HINT_TEXT}>暂无</span>}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
+                      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, flexShrink: 0, background: health.dot }} />
+                      <span style={{ fontSize: 'var(--fs-secondary)', color: health.tone === 'warn' ? 'var(--warn)' : 'var(--text-secondary)' }}>{health.text}</span>
+                    </span>
+
+                    <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                      {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
+                          「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
+                      <Button size="sm" variant="ghost" aria-expanded={tracing} onClick={() => { setExpanded(null); setTraceFor((x) => (x === item.id ? null : item.id)); }}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{tracing ? '收起全貌' : '调用全貌'}</span>
+                      </Button>
+                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setTraceFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '展开'}</span>
+                      </Button>
+                    </span>
+                  </div>
+
+
                 </div>
               );
             })}
+            </>}
+            </CollectionView>
           </Card>
+          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); }} tabs={<><Button size="sm" variant={expanded ? 'primary' : 'ghost'} onClick={() => { setTraceFor(null); setExpanded(selectedItem.id); }}>线路与配置</Button><Button size="sm" variant={traceFor ? 'primary' : 'ghost'} onClick={() => { setExpanded(null); setTraceFor(selectedItem.id); }}>调用全貌</Button></>}>
+            {renderSelectedDetails()}
+          </CollectionDetailPane> : null}
+          </div>
         ) : null}
 
         <DetailsBlock title="工作原理：逻辑模型、Offering 与模型池的分工">
@@ -753,12 +767,13 @@ function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[
   // 这里**不再自己判**谁在扛流量：此前那份「enabled && healthStatus === 0」比运行时严——
   // 运行时照样会用降级线路，只是把它排在健康的后面，于是全部降级时页面显示「没有主」，
   // 而实际一直有一条在承接。判据分裂三份，漂了也没人发现。
+  const modelById = new Map(models.map((model) => [model.id, model]));
   const ordered = [...item.offerings].sort(
     (a, b) => (a.queuePosition || 999) - (b.queuePosition || 999) || a.priority - b.priority || a.id.localeCompare(b.id));
   const liveId = ordered.find((x) => x.queuePosition === 1)?.id ?? null;
 
   return ordered.map((offering) => {
-    const model = offering.targetKind === 'model' ? models.find((x) => x.id === offering.targetId) : undefined;
+    const model = offering.targetKind === 'model' ? modelById.get(offering.targetId) : undefined;
     /*
       不参与排队有三种成因，下一步完全不同，所以不能合成一个「熔断」：
         线路自己被停用  → 去把这条线路启用回来；

@@ -1,3 +1,4 @@
+import { CollectionView } from '@/components/CollectionView';
 // 调用全貌：点名这个模型之后会发生什么，用当前真实状态逐步回答。
 //
 // 为什么值得单开一屏：列表能告诉人「有几条线路」，告诉不了人「现在发一个请求会落到谁」。
@@ -93,7 +94,8 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
             data-testid="call-trace-unnamed-callers"
             style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, paddingTop: GAP.tight }}
           >
-            {data.unnamed.callers.map((caller) => (
+            <CollectionView className="lg-collection-trace" items={data.unnamed.callers.map((caller) => ({ ...caller, searchText: `${caller.appCallerCode} ${caller.verdict}` }))} placeholder="搜索调用方或推演结果" searchText={(caller) => caller.searchText}>
+            {(callers) => <>{callers.map((caller) => (
               <div key={caller.appCallerCode} style={{
                 ...INSET_BLOCK,
                 display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap',
@@ -110,7 +112,8 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
                   {caller.verdict}
                 </span>
               </div>
-            ))}
+            ))}</>}
+            </CollectionView>
           </div>
         ) : (
           <p style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)', paddingTop: GAP.tight }}>
@@ -151,13 +154,9 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
             ? '按权重分到各条线路。每次请求的落点由请求本身决定，所以这里只给比例，不指名道姓。'
             : '健康的排在降级的前面，然后按顺位。队首就是这次会落到的那一条。'}
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, paddingTop: GAP.tight }}>
-          {data.routes.length === 0
-            ? <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>一条线路都没有，现在调它一定失败。</span>
-            : data.routes
-              .slice()
-              .sort((a, b) => (a.queuePosition || 999) - (b.queuePosition || 999))
-              .map((route) => {
+        <CollectionView className="lg-collection-trace" items={[...data.routes].sort((a, b) => (a.queuePosition || 999) - (b.queuePosition || 999))} placeholder="搜索线路模型、供应方或状态" searchText={(route) => [route.providerName, route.upstreamModelId, route.targetName, route.skipReason].filter(Boolean).join(' ')}>
+          {(routes) => <>
+          {routes.map((route) => {
                 const extra = extraById.get(route.id);
                 const skipped = Boolean(route.skipReason);
                 const head = !weighted && route.queuePosition === 1;
@@ -198,7 +197,8 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
                   </div>
                 );
               })}
-        </div>
+          </>}
+        </CollectionView>
       </Step>
 
       <Step index={5} title="翻译成这家上游的方言">

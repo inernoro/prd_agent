@@ -1,3 +1,6 @@
+import { HINT_TEXT } from '@/lib/typography';
+import { CollectionView } from '@/components/CollectionView';
+import { groupModelProviders } from '@/lib/modelProviderGroups';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowUpRight, Check, CircleDollarSign, Clock3, Gauge, KeyRound, Route, Server, ShieldCheck } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -47,8 +50,9 @@ function EntityDetailsShell({
   primaryHref,
   primaryLabel,
 }: ShellProps) {
+  const bounded = kind === 'model' || kind === 'provider';
   return (
-    <div className="lg-entity-detail-page">
+    <div className={`lg-entity-detail-page${bounded ? ' lg-entity-detail-bounded' : ''}`}>
       <div className="lg-entity-detail-content">
         <Link className="lg-entity-detail-back" to={backHref}><ArrowLeft size={15} />{backLabel}</Link>
         <header className="lg-entity-detail-hero">
@@ -63,10 +67,11 @@ function EntityDetailsShell({
           </div>
         </header>
 
-        <p className="lg-entity-detail-description">{description}</p>
         <div className="lg-entity-detail-status">
           {status.map((item) => <StatusPill key={item.label} label={item.label} tone={item.tone} />)}
         </div>
+        {bounded ? <details className="lg-entity-detail-properties"><summary>完整属性与运行统计</summary>        <p className="lg-entity-detail-description">{description}</p>
+
 
         <div className="lg-entity-detail-metrics">
           {metrics.map((metric) => (
@@ -76,6 +81,18 @@ function EntityDetailsShell({
             </article>
           ))}
         </div>
+</details> : <>        <p className="lg-entity-detail-description">{description}</p>
+
+
+        <div className="lg-entity-detail-metrics">
+          {metrics.map((metric) => (
+            <article key={metric.label}>
+              <span>{metric.icon}</span>
+              <div><small>{metric.label}</small><strong>{metric.value}</strong>{metric.hint ? <p>{metric.hint}</p> : null}</div>
+            </article>
+          ))}
+        </div>
+</>}
 
         <div className="lg-entity-detail-layout">
           <aside aria-label="详情章节">
@@ -84,13 +101,12 @@ function EntityDetailsShell({
             </nav>
           </aside>
           <main>
-            {sections.map((section) => (
-              <section key={section.id} id={section.id} className="lg-entity-detail-section">
-                <h2>{section.title}</h2>
-                {section.description ? <p>{section.description}</p> : null}
-                {section.content}
-              </section>
-            ))}
+            {sections.map((section) => {
+              const collection = bounded && (section.id === 'providers' || section.id === 'models');
+              return <section key={section.id} id={section.id} className={`lg-entity-detail-section${collection ? ' lg-entity-detail-collection' : ''}`}>
+                {bounded && !collection ? <details open={section.id === 'activity'}><summary>{section.title}</summary><div>{section.description ? <p>{section.description}</p> : null}{section.content}</div></details> : <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}{section.content}</>}
+              </section>;
+            })}
           </main>
         </div>
       </div>
@@ -234,6 +250,8 @@ export function ModelDetailsPage() {
     ].filter(Boolean));
     return platforms.filter((item) => ids.has(item.id));
   }, [physicalModels, platforms, requestedPlatformId]);
+  const providerGroups = useMemo(() => groupModelProviders(logical?.offerings || [], models, platforms), [logical, models, platforms]);
+  const providerGroupByRoute = new Map(providerGroups.flatMap((group) => group.offerings.map((route) => [route.id, group] as const)));
   const title = logical?.name || primaryModel?.name || primaryModel?.modelName || requestedModel;
   const identifier = logical?.publicId || primaryModel?.modelName || requestedModel;
   const capabilities = logical?.capabilities.length
@@ -272,24 +290,23 @@ export function ModelDetailsPage() {
           id: 'providers',
           title: 'Providers',
           description: '同一逻辑模型可以绑定多个上游。Gateway 按优先级、权重、健康和限流选择实际调用目标。',
-          content: relatedPlatforms.length || logical?.offerings.length ? (
-            <div className="lg-entity-detail-card-list">
-              {(logical?.offerings.length ? logical.offerings : physicalModels).map((item) => {
-                const targetId = 'targetId' in item ? item.targetId : item.id;
-                const platform = 'targetId' in item
-                  ? relatedPlatforms.find((candidate) => candidate.name === item.providerName)
-                  : relatedPlatforms.find((candidate) => candidate.id === item.platformId);
-                const providerName = 'targetId' in item ? item.providerName || item.targetName : platform?.name || item.platformId || '未标注 Provider';
-                return (
-                  <Link key={targetId} to={`/platforms/view?id=${encodeURIComponent(platform?.id || '')}&name=${encodeURIComponent(providerName)}`}>
-                    <ProviderEntityIcon provider={providerName} />
-                    <div><strong>{providerName}</strong><span>{'protocol' in item ? item.protocol || '继承协议' : item.protocol || platform?.platformType || '继承协议'}</span></div>
-                    <ArrowUpRight size={15} />
-                  </Link>
-                );
-              })}
+          content: logical?.offerings.length ? <>
+            <div className="lg-collection-provider-groups">
+              {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : `/platforms/view?id=${encodeURIComponent(group.platformId || '')}&name=${encodeURIComponent(group.name)}`}><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></Link>)}
+              {providerGroups.length > 2 ? <span style={HINT_TEXT}>全部供应方见下方线路清单</span> : null}
             </div>
-          ) : <div className="lg-entity-detail-empty">尚未解析到该模型的 Provider 配置。</div>,
+            <CollectionView items={logical.offerings} placeholder="搜索上游模型、供应方或协议" searchText={(item) => [item.providerName, item.targetName, item.upstreamModelId, item.protocol, item.notes].filter(Boolean).join(' ')}>
+              {(routes) => <>{routes.map((route) => {
+                const group = providerGroupByRoute.get(route.id)!;
+                return <div key={route.id} className="lg-collection-detail-card"><div><strong>{route.upstreamModelId || route.targetName}</strong><span>{route.protocol || '继承协议'} · 顺位 {route.priority} · 权重 {route.weight} · {route.enabled ? '已启用' : '已停用'}</span>{route.skipReason ? <span>{route.skipReason}</span> : null}</div><Link to={route.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(route.targetId)}` : `/platforms/view?id=${encodeURIComponent(group.platformId || '')}&name=${encodeURIComponent(group.name)}`}>{group.name}<ArrowUpRight size={15} /></Link></div>;
+              })}</>}
+            </CollectionView>
+          </> : <CollectionView items={physicalModels} placeholder="搜索上游模型或协议" searchText={(item) => `${item.name} ${item.modelName} ${item.protocol || ''}`}>
+            {(pageModels) => <>{pageModels.map((model) => {
+              const platform = platforms.find((item) => item.id === model.platformId);
+              return <div key={model.id} className="lg-collection-detail-card"><div><strong>{model.name || model.modelName}</strong><span>{model.protocol || '继承协议'}</span></div><Link to={`/platforms/view?id=${encodeURIComponent(model.platformId || '')}&name=${encodeURIComponent(platform?.name || '')}`}>{platform?.name || model.platformId || '未标注 Provider'}</Link></div>;
+            })}</>}
+          </CollectionView>,
         },
         {
           id: 'capabilities',
@@ -426,27 +443,11 @@ export function ProviderDetailsPage() {
           id: 'models',
           title: 'Models',
           description: registered ? '该 Provider 下当前可见的模型。点击模型可继续进入模型详情。' : '从最近请求中观察到的模型；只证明实际请求经过这里，不补造托管关系。',
-          content: registered && models.length ? (
-            <div className="lg-entity-detail-card-list">
-              {models.map((model) => (
-                <Link key={model.id} to={`/models/view?model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(provider.id)}`}>
-                  <ModelEntityIcon model={model.modelName || model.name} />
-                  <div><strong>{model.name || model.modelName}</strong><span>{model.modelName} · {model.protocol || '继承协议'}</span></div>
-                  <ArrowUpRight size={15} />
-                </Link>
-              ))}
-            </div>
-          ) : !registered && observedModels.length ? (
-            <div className="lg-entity-detail-card-list">
-              {observedModels.map((model) => (
-                <Link key={model} to={`/models/view?model=${encodeURIComponent(model)}`}>
-                  <ModelEntityIcon model={model} />
-                  <div><strong>{model}</strong><span>日志观测 · 非配置关系</span></div>
-                  <ArrowUpRight size={15} />
-                </Link>
-              ))}
-            </div>
-          ) : <div className="lg-entity-detail-empty">该 Provider 尚未关联或观察到模型。</div>,
+          content: registered ? <CollectionView items={models} placeholder="搜索模型名称、标识或协议" searchText={(item) => `${item.name} ${item.modelName} ${item.protocol || ''}`}>
+            {(pageModels) => <>{pageModels.map((model) => <Link className="lg-collection-detail-card" key={model.id} to={`/models/view?model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(provider.id)}`}><ModelEntityIcon model={model.modelName || model.name} /><div><strong>{model.name || model.modelName}</strong><span>{model.modelName} · {model.protocol || '继承协议'}</span></div><ArrowUpRight size={15} /></Link>)}</>}
+          </CollectionView> : <CollectionView items={observedModels} placeholder="搜索日志观察到的模型" searchText={(model) => model}>
+            {(pageModels) => <>{pageModels.map((model) => <Link className="lg-collection-detail-card" key={model} to={`/models/view?model=${encodeURIComponent(model)}`}><ModelEntityIcon model={model} /><div><strong>{model}</strong><span>日志观测 · 非配置关系</span></div><ArrowUpRight size={15} /></Link>)}</>}
+          </CollectionView>,
         },
         {
           id: 'activity',
