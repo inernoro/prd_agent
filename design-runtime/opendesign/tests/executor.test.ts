@@ -271,6 +271,12 @@ describe('design direction, review passes and live preview', () => {
     expect(systemPrompt).toContain('/workspace/reference/');
     expect(String(runBodies[1].message)).toContain('EDITABLE-REVIEW-MARKER');
     expect(String(runBodies[2].message)).toContain('visual quality pass');
+    expect(harness.daemon.conversations).toEqual([{
+      title: 'MAP quality review map-run-1',
+      sessionMode: 'design',
+    }]);
+    expect(runBodies[0].conversationId).toBe('od-conversation');
+    expect(runBodies.slice(1).every((body) => body.conversationId === 'od-quality-conversation-1')).toBe(true);
     expect(map!.previews.length).toBeGreaterThanOrEqual(1);
     expect(map!.previews[0].html).toContain('Product facts');
     expect(map!.previews.map((item) => item.revision)).toEqual(map!.previews.map((_, index) => index + 1));
@@ -289,6 +295,7 @@ describe('design direction, review passes and live preview', () => {
     const view = await runToEnd(pkg);
     expect(view.state).toBe('succeeded');
     expect(harness.daemon.runBodies).toHaveLength(1);
+    expect(harness.daemon.conversations).toHaveLength(0);
     expect(view.result.openDesignRunId).toBe('od-run-1');
   });
 
@@ -420,7 +427,7 @@ describe('collecting the deliverable', () => {
     expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
   });
 
-  it('runs at most two browser hard-gate repairs in the same OpenDesign conversation and serializes bounded evidence', async () => {
+  it('isolates quality work from generation history and keeps browser repairs in the quality conversation', async () => {
     const seenAttempts: number[] = [];
     const seenEvidenceDirs: string[] = [];
     harness = await startHarness({ overrides: {
@@ -470,7 +477,10 @@ describe('collecting the deliverable', () => {
     expect(seenEvidenceDirs.every((dir) => !dir.startsWith(harness!.config.odDataDir))).toBe(true);
     expect(harness.daemon.runBodies).toHaveLength(4);
     expect(harness.daemon.runBodies.slice(2).every((body) => String(body.message).includes('isolated browser quality gate'))).toBe(true);
-    expect(new Set(harness.daemon.runBodies.map((body) => body.conversationId)).size).toBe(1);
+    expect(harness.daemon.runBodies[0].conversationId).toBe('od-conversation');
+    expect(new Set(harness.daemon.runBodies.slice(1).map((body) => body.conversationId))).toEqual(
+      new Set(['od-quality-conversation-1']),
+    );
     const reportFile = map!.commits[0].files.find((file: { path: string }) => file.path === 'assets/visual-quality-report.json');
     const reportText = Buffer.from(reportFile.contentBase64, 'base64').toString('utf8');
     const report = JSON.parse(reportText);

@@ -59,6 +59,7 @@ export class FakeOpenDesign implements EngineDaemon {
   version = '0.21.1';
   readonly runBodies: Array<Record<string, unknown>> = [];
   readonly imports: Array<Record<string, unknown>> = [];
+  readonly conversations: Array<Record<string, unknown>> = [];
   readonly cancels: string[] = [];
   readonly tokensSeen: string[] = [];
   onRun: (context: FakeRunContext) => Promise<FakeRunOutcome> | FakeRunOutcome = () => ({ status: 'succeeded' });
@@ -149,6 +150,12 @@ export class FakeOpenDesign implements EngineDaemon {
     if (url.pathname === '/api/import/folder' && req.method === 'POST') {
       this.imports.push(JSON.parse((await readBody(req)).toString('utf8')));
       json(res, 200, { project: { id: 'od-project', skillId: 'web-prototype' }, conversationId: 'od-conversation' });
+      return;
+    }
+    if (url.pathname === '/api/projects/od-project/conversations' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)).toString('utf8')) as Record<string, unknown>;
+      this.conversations.push(body);
+      json(res, 200, { conversation: { id: `od-quality-conversation-${this.conversations.length}` } });
       return;
     }
     if (url.pathname === '/api/runs' && req.method === 'POST') {

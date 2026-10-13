@@ -407,9 +407,10 @@ export class DesignTaskExecutor {
         hasReferenceImages,
       });
       // designSystemId 让 OpenDesign 把 /app/design-systems/<id> 的 DESIGN.md、tokens 与组件注入它自己的提示词。
+      let activeConversationId = conversationId;
       const buildRunBody = (message: string) => ({
         projectId,
-        conversationId,
+        conversationId: activeConversationId,
         agentId: 'codex',
         model: model.model,
         message,
@@ -447,6 +448,19 @@ export class DesignTaskExecutor {
       // light 一轮终审；strict 在终审之后再加一轮只看视觉质量的审美复查。旧运行没有方向，按 light。
       const reviewMode = designDirection?.reviewMode ?? 'light';
       const reviewPasses = reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
+      if (reviewPasses > 0) {
+        // Quality work needs the same project and live workspace, but not the generation transcript.
+        // Reusing the imported conversation made every review request resend the complete generation
+        // history. A real strict run reached 132k input tokens and exhausted the 15-minute task
+        // deadline before browser quality could start. Keep review and all targeted repairs in one
+        // fresh quality conversation so they can inspect the authoritative workspace without carrying
+        // the generation tool transcript forward.
+        activeConversationId = await client.createConversation(
+          projectId,
+          `MAP quality review ${sessionId.slice(-12)}`,
+          signalForDeadline(executionDeadline, signal),
+        );
+      }
       for (let reviewPass = 0; reviewPass < reviewPasses; reviewPass += 1) {
         assertExecutionDeadline(executionDeadline);
         const review = await client.odJson('/api/runs', {

@@ -21,7 +21,9 @@
 | test | prd-api | 覆盖生成版本到修改及重开的上下文继承、旧站点回退和跨用户隔离 |
 | fix | prd-api | 修改网页时从生成站点的权威来源任务继承冻结品牌，不再依赖是否已发布版本 |
 | test | prd-api | 覆盖未发布 baseline、已分享站点、后续修改、重开及跨部署隔离 |
-| feat | design-runtime | 在隔离 Chromium 子进程对桌面与移动视口执行浏览器质量门禁，并在同一 OpenDesign 会话内限次修复 |
+| feat | design-runtime | 在隔离 Chromium 子进程对桌面与移动视口执行浏览器质量门禁，并在同一 OpenDesign 项目与工作区内限次修复 |
 | feat | prd-api | 持久化有界浏览器质量摘要，并在现有耗时统计中暴露首次预览、静止间隔、恢复、发布与修复效果 |
 | test | design-runtime | 覆盖八类浏览器硬问题、视口差异、限次修复、浏览器不可用与证据脱敏 |
 | test | prd-api | 覆盖浏览器质量证据校验、Run 投影与效果指标聚合 |
+| fix | design-runtime | 将终审与质量修复迁入独立 OpenDesign 会话，避免主生成工具历史耗尽任务预算 |
+| test | design-runtime | 覆盖主生成与质量会话隔离、严格终审及浏览器修复会话复用 |
