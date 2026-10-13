@@ -1,0 +1,114 @@
+{
+  "checkedAt": "2026-10-13",
+  "timezone": "Asia/Shanghai",
+  "cdsBaseline": "07076e5549d2b560f0fdf6e80fdceba38695f415",
+  "scope": "空白项目工作区首次授权、静默复用、权限隔离、真实 CI 失败拦截、恢复发布、代码回滚保留数据",
+  "projectId": "8e3b69770497",
+  "branchId": "small-steps-closure-main",
+  "repository": "inernoro/cds-small-steps-closure-lab",
+  "previewUrl": "https://main-small-steps-closure.miduo.org",
+  "previewSource": "cdscli preview-url / GET /api/branches",
+  "authorization": {
+    "provenance": "integration-live",
+    "projectId": "8e3b69770497",
+    "credentialMode": "0o600",
+    "bootstrapCredentialAbsent": true,
+    "credentialUnchangedAcrossProcesses": true,
+    "gitIgnored": true,
+    "assertions": [
+      {
+        "assertion": "新进程静默复用",
+        "attempt": 1,
+        "passed": true
+      },
+      {
+        "assertion": "新进程静默复用",
+        "attempt": 2,
+        "passed": true
+      },
+      {
+        "assertion": "不能读原教学项目",
+        "passed": true,
+        "httpStatus": 403
+      },
+      {
+        "assertion": "项目凭据不能再创建项目",
+        "passed": true,
+        "httpStatus": 403
+      }
+    ]
+  },
+  "approvalActor": "用户确认具体申请后，委托 Agent 在 CDS 页面点击批准一次建项目",
+  "bootstrapRevoked": true,
+  "failure": {
+    "passed": true,
+    "provenance": "preview-live + integration-live",
+    "failedCommit": "b6f2804fb28ca801586a6c255e80a8498c3c0255",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38293403321",
+    "imageJobSkipped": true,
+    "actualImageUnchanged": true,
+    "versionUnchanged": true,
+    "noNewDeployment": true,
+    "htmlVersion": "A",
+    "tasks": {
+      "tasks": [
+        {
+          "id": "d2452c5e-c678-4f96-ba5f-f978f0872259",
+          "title": "版本 A：确认完成状态跨发布保留",
+          "done": true
+        }
+      ]
+    }
+  },
+  "recovery": {
+    "commit": "f8d98e586e31c2bb8e10ba5d836a0d84d961b8b9",
+    "workflowUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38293553642",
+    "deploymentRun": "dr_203419ce670419caae474f3f",
+    "trigger": "webhook",
+    "version": "dv_d16d8ef964a4fa43e845983c",
+    "deployedImage": "ghcr.io/inernoro/cds-small-steps-closure-lab:sha-f8d98e586e31c2bb8e10ba5d836a0d84d961b8b9",
+    "originalTaskPreserved": true
+  },
+  "rollback": {
+    "passed": true,
+    "provenance": "preview-live + integration-live",
+    "htmlVersion": "A",
+    "actualImage": "ghcr.io/inernoro/cds-small-steps-closure-lab:sha-83dfdf3a1d4c45353e29af204e300d9b773274ed",
+    "deploymentVersion": "dv_13cb23f211634fa5e9610d86",
+    "rollbackRun": "dr_51a1e575aed2a69661e30352",
+    "tasks": {
+      "tasks": [
+        {
+          "id": "4e0ce55a-3641-4ec9-979c-133eb7ca2ada",
+          "title": "版本 B 新增：回滚后也必须保留",
+          "done": false
+        },
+        {
+          "id": "d2452c5e-c678-4f96-ba5f-f978f0872259",
+          "title": "版本 A：确认完成状态跨发布保留",
+          "done": true
+        }
+      ]
+    },
+    "originalCompletedTaskPreserved": true,
+    "taskCreatedOnBPreserved": true
+  },
+  "recording": {
+    "file": "media/closure-walkthrough.mp4",
+    "seconds": 65.2,
+    "source": "真实浏览器帧，剪去等待；CLI/API 证据单独收录",
+    "sha256": "cad6a773011be4a178e50966acfbea9a4ba17afa83ab13cd17a47bcf38b19947"
+  },
+  "knownIssues": [
+    "CI 失败时提示切换源码模式",
+    "失败推送号显示为可验收的当前提交",
+    "批准后缺少清晰的项目落地回执",
+    "已打开部署历史需要刷新"
+  ],
+  "unverified": [
+    "新账号开通、凭据丢失或撤销后恢复",
+    "多服务与多分支隔离",
+    "不兼容数据库迁移、数据误删恢复"
+  ],
+  "acceptanceReport": "https://cds.miduo.org/reports?project=8e3b69770497&folder=00a096d2f0a44af1af109f2991dcd8fc&report=c2d76aa47467464d84a8170ca9ebb39a"
+}

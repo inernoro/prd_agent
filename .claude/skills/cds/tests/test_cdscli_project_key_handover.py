@@ -180,6 +180,9 @@ def test_connect_can_create_project_in_one_command(workspace, monkeypatch):
                      fatal_network_errors=True):
         calls.append((method, path))
         if method == "POST" and path == "/api/bootstrap-access-requests":
+            assert body["requestedProject"] == {
+                "name": "demo", "repository": "https://github.com/example/demo.git",
+            }
             return 201, {"requestId": "req1", "pollToken": "poll1", "status": "pending"}, {}
         if method == "GET" and path.startswith("/api/bootstrap-access-requests/"):
             return 200, {"status": "approved",
@@ -198,7 +201,7 @@ def test_connect_can_create_project_in_one_command(workspace, monkeypatch):
 
     code, output = run_command([
         "connect", "--host", "https://cds.example", "--new-project",
-        "--create-project", "demo", "--agent", "TestAgent",
+        "--create-project", "demo", "--git-url", "https://github.com/example/demo.git", "--agent", "TestAgent",
     ])
     assert code == 0, output
 

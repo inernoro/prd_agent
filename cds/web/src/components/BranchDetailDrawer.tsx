@@ -87,6 +87,10 @@ interface BranchDetailData {
   replicaSets?: Record<string, ProfileReplicaSetView>;
   resources?: BranchResource[];
   createdAt?: string;
+  runningCommitSha?: string | null;
+  targetCommitSha?: string | null;
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  ciWorkflowRunUrl?: string;
   commitSha?: string;
   subject?: string;
   githubRepoFullName?: string;
@@ -1096,8 +1100,11 @@ export function BranchDetailDrawer({
   } | null>(null);
   const [copiedFailurePrompt, setCopiedFailurePrompt] = useState(false);
 
+  const [factsUpdatedAt, setFactsUpdatedAt] = useState<number | null>(null);
+  const factsGateRef = useRef(createLatestWinsGate());
   const load = useCallback(async () => {
     if (!branchId) return;
+    const ticket = factsGateRef.current.begin();
     setLoading(true);
     setError('');
     try {
@@ -1122,16 +1129,21 @@ export function BranchDetailDrawer({
         apiRequest<{ primaryEntry?: WebEntryUrl; webEntries?: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] }>(`/api/branches/${encodeURIComponent(branchId)}/subdomain-aliases`)
           .catch((): { primaryEntry?: WebEntryUrl; webEntries: WebEntryUrl[]; gatewayUrls?: WebEntryUrl[] } => ({ webEntries: [] })),
       ]);
+      if (branchIdRef.current !== branchId) return;
+      const acceptFacts = factsGateRef.current.accept(ticket);
       const found = (branchesRes.branches || []).find((b) => b.id === branchId);
-      if (!found) {
+      if (acceptFacts && !found) {
         setError('branch_not_found');
         setBranch(null);
-      } else {
+      } else if (acceptFacts && found) {
         setBranch(found);
       }
-      setLogs(logsRes.logs || []);
-      setDeploymentRuns(runsRes.runs || []);
-      setDeploymentVersions(versionsRes.versions || []);
+      if (acceptFacts) {
+        setFactsUpdatedAt(Date.now());
+        setLogs(logsRes.logs || []);
+        setDeploymentRuns(runsRes.runs || []);
+        setDeploymentVersions(versionsRes.versions || []);
+      }
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
@@ -1280,6 +1292,8 @@ export function BranchDetailDrawer({
   const failureAutoSwitchedRef = useRef(false);
   useEffect(() => {
     if (!open || !branchId) return;
+    factsGateRef.current.newSession();
+    setFactsUpdatedAt(null);
     failureAutoSwitchedRef.current = false;
     setActiveTab(initialResourceId ? 'services' : 'overview');
     setLogsMode('system');
@@ -1323,20 +1337,34 @@ export function BranchDetailDrawer({
   }, [open, branchId, load]);
 
   useEffect(() => {
-    if (!open || activeTab !== 'deployments' || !branchId || !projectId) return;
-    const refreshRuns = async (): Promise<void> => {
+    if (!open || !branchId || !projectId) return;
+    let cancelled = false;
+    let inFlight = false;
+    const refreshFacts = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
+      const ticket = factsGateRef.current.begin();
       try {
-        const response = await apiRequest<{ runs: DeploymentRunSummary[] }>(
-          `/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`,
-        );
-        if (branchIdRef.current === branchId) setDeploymentRuns(response.runs || []);
+        const [branches, runs, versions, history] = await Promise.all([
+          apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
+          apiRequest<{ runs: DeploymentRunSummary[] }>(`/api/deployment-runs?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`),
+          apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`),
+          apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`),
+        ]);
+        if (cancelled || branchIdRef.current !== branchId || !factsGateRef.current.accept(ticket)) return;
+        const current = branches.branches.find(b => b.id === branchId);
+        if (current) setBranch(current);
+        setFactsUpdatedAt(Date.now());
+        setDeploymentRuns(runs.runs || []);
+        setDeploymentVersions(versions.versions || []);
+        setLogs(history.logs || []);
       } catch {
-        // 保留最近一次成功快照，短暂控制面抖动不清空事实账本。
-      }
+        // 短暂失败保留最近事实，下一轮自动恢复。
+      } finally { inFlight = false; }
     };
-    const timer = window.setInterval(() => void refreshRuns(), 2_000);
-    return () => window.clearInterval(timer);
-  }, [activeTab, branchId, open, projectId]);
+    const timer = window.setInterval(() => void refreshFacts(), 2_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [branchId, open, projectId]);
 
   useEffect(() => {
     if (!open || !initialResourceId) return;
@@ -2230,6 +2258,7 @@ export function BranchDetailDrawer({
         className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl md:w-2/3 md:border-l md:border-[hsl(var(--hairline))]"
         style={{ minHeight: 0 }}
       >
+        {factsUpdatedAt ? <div className="shrink-0 px-4 pt-2 text-right text-[0.625rem] text-muted-foreground" aria-label="部署事实更新时间">事实更新于 {new Date(factsUpdatedAt).toLocaleTimeString('zh-CN')} · 自动刷新</div> : null}
         <header className="cds-branch-detail-header flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span className="shrink-0 whitespace-nowrap text-sm font-semibold">分支详情</span>
@@ -2253,7 +2282,7 @@ export function BranchDetailDrawer({
                     data-testid="drawer-mirror-badge"
                   >镜像 · 采集于 {new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
                 ) : null}
-                {branch.commitSha ? <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}</span>
                 {(() => {
                   const svcList = Object.values(branch.services || {});
                   if (!svcList.length) return null;
@@ -2789,6 +2818,13 @@ export function BranchDetailDrawer({
 
                 {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
+                {branch.ciImageStatus === 'failed' ? (
+                  <div role="status" className="mx-4 my-2 rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">
+                    <p>待发布版本 {branch.targetCommitSha?.slice(0, 7) || '未确认'} 未通过 CI，未替换当前运行版本。</p>
+                    <p className="mt-1 text-muted-foreground">查看 CI 日志，修复后重试；检查通过后再部署。</p>
+                    {branch.ciWorkflowRunUrl ? <a className="mt-2 inline-block underline" href={branch.ciWorkflowRunUrl} target="_blank" rel="noreferrer">查看 CI 日志</a> : null}
+                  </div>
+                ) : null}
                 {activeTab === 'overview' ? (
                   <OverviewPanel
                     services={overviewServices}
@@ -2806,8 +2842,9 @@ export function BranchDetailDrawer({
                     // 变成同一件事，部署途中总览会谎报「分支未运行」（Codex P2）。
                     lifecycle={branchStatus || branch.status}
                     branchName={branch.branch}
-                    commitSha={branch.commitSha}
-                    commitMessage={branch.subject}
+                    commitSha={branch.runningCommitSha || undefined}
+                    targetCommitSha={branch.targetCommitSha || undefined}
+                    ciImageStatus={branch.ciImageStatus}
                     lastReadyAt={branch.lastReadyAt}
                     lastDeployAt={branch.lastDeployAt}
                     deployDurationMs={latestDeployDurationMs}

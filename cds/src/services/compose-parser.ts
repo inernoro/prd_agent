@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, CacheMount, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole } from '../types.js';
 import { SERVICE_ROLES } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
 import { parseWebEntryLabels } from './web-entry.js';
@@ -210,7 +210,7 @@ export interface CdsComposeConfig {
     command?: string;
     containerPort: number;
     env?: Record<string, string>;
-    cacheMounts?: Array<{ hostPath: string; containerPath: string }>;
+    cacheMounts?: CacheMount[];
     buildTimeout?: number;
     pathPrefixes?: string[];
     dependsOn?: string[];
@@ -740,7 +740,7 @@ export function toCdsCompose(
       for (const cm of p.cacheMounts) {
         volumes.push(`${cm.hostPath}:${cm.containerPath}`);
         // Named volumes need top-level declaration
-        if (!cm.hostPath.startsWith('/') && !cm.hostPath.startsWith('.')) {
+        if (cm.kind === 'volume' || (!cm.kind && !cm.hostPath.startsWith('/') && !cm.hostPath.startsWith('.'))) {
           volumeNames.add(cm.hostPath);
         }
       }
@@ -1206,16 +1206,16 @@ function extractBuildContext(build: unknown): string | undefined {
 }
 
 /** Extract non-relative named volume mounts as cache mounts */
-function extractCacheMounts(volumes?: string[]): Array<{ hostPath: string; containerPath: string }> | undefined {
+function extractCacheMounts(volumes?: string[]): CacheMount[] | undefined {
   if (!volumes) return undefined;
-  const mounts: Array<{ hostPath: string; containerPath: string }> = [];
+  const mounts: CacheMount[] = [];
   for (const v of volumes) {
     const parts = v.split(':');
     if (parts.length >= 2) {
       const source = parts[0];
-      // Skip relative mounts (source code) and absolute paths
-      if (!source.startsWith('./') && source !== '.' && !source.startsWith('/')) {
-        mounts.push({ hostPath: source, containerPath: parts[1] });
+      // Only Docker volume names; relative and absolute bind paths are not named volumes.
+      if (/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(source)) {
+        mounts.push({ kind: 'volume', hostPath: source, containerPath: parts[1] });
       }
     }
   }
