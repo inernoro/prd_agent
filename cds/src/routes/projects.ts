@@ -28,6 +28,7 @@ import express, { Router } from 'express';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { hasActiveGrant } from '../services/identity.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
@@ -3222,6 +3223,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
       if (callerKey?.oneTime && issuedProjectKey) {
         stateService.revokeGlobalAgentKey(callerAccess.keyId);
+        const accessRequest = stateService.listAccessRequests().find((item) =>
+          item.kind === 'bootstrap' && item.status === 'approved' && item.issuedKeyId === callerAccess.keyId);
+        if (accessRequest) {
+          stateService.updateAccessRequest(accessRequest.id, {
+            createdProject: { id: newProject.id, name: newProject.name, createdAt: newProject.createdAt },
+          });
+          cdsEventsBus.publish('access-request.progress', {
+            requestId: accessRequest.id, stage: 'project-created', projectId: newProject.id,
+          });
+        }
       }
     }
 

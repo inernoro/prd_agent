@@ -4218,12 +4218,18 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
+  /** Agent 申报的建项目目标，仅供审批核对，不改变一次建项目的权限范围。 */
+  requestedProject?: { name: string; repository?: string };
+  /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
+  createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
   status: 'pending' | 'approved' | 'rejected';
   /** ISO submit time. */
   createdAt: string;
   /** Set when status flips away from 'pending'. */
   decidedAt?: string;
+  /** 此次批准已启用建项目回执；存量已批准记录不反推未采集过的进度。 */
+  creationReceiptEnabled?: boolean;
   /** GitHub login / 'cookie' / 'global-key' — who decided. */
   decidedBy?: string;
   /** 拒绝原因(status='rejected' 时可选)。 */

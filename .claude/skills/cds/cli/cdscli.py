@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.16.8"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.9"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3804,7 +3804,13 @@ def cmd_connect(args: argparse.Namespace) -> None:
     status, body, _ = _request(
         "POST",
         request_path,
-        body={"agentName": agent_name, "purpose": purpose},
+        body={
+            "agentName": agent_name, "purpose": purpose,
+            **({"requestedProject": {
+                "name": create_name,
+                "repository": str(getattr(args, "git_url", "") or "").strip(),
+            }} if new_project and create_name else {}),
+        },
         # 创建请求会触发持久化与事件通知；共享控制面忙时可能超过 10 秒，
         # 但该 POST 不能盲目重试，否则响应丢失时会生成重复审批单。
         timeout=30,
