@@ -24,10 +24,12 @@ describe('图片引用的消息回读', () => {
     expect(html).not.toContain('replacement.png');
   });
 
-  it('生成失败说明也使用可读引用，不把后台图片标记显示给用户', () => {
+  it.each([
+    { kind: '结构化', content: '[GEN_ERROR]' + JSON.stringify({ msg: '参考图 @img2 无法使用。其他输入已保留，请重新上传这张参考图后再生成。' }) },
+    { kind: '旧文本', content: '生成失败：参考图 @img2 无法使用。其他输入已保留，请重新上传这张参考图后再生成。' },
+  ])('$kind 失败说明使用可读引用，不把后台图片标记显示给用户', ({ content }) => {
     const html = renderToStaticMarkup(createElement(ChatMessageItem, {
-      msg: { id: 'failure', role: 'Assistant', ts: 0,
-        content: '[GEN_ERROR]' + JSON.stringify({ msg: '参考图 @img2 无法使用。其他输入已保留，请重新上传这张参考图后再生成。' }) },
+      msg: { id: 'failure', role: 'Assistant', ts: 0, content },
       allMessages: [], canvas: [], sizeToAspectMap: new Map(), onPreview: () => {}, onRetry: () => {},
     }));
     expect(html).toContain('生成失败');
