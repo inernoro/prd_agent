@@ -8271,6 +8271,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(userMessage.locator('img')).toHaveCount(1);
       await expect(userMessage).not.toContainText('[@image:');
       await expect(userMessage).not.toContainText('@img1');
+      await expect(userMessage.getByRole('button', { name: '展开', exact: true })).toHaveCount(0);
+      await expect(page.locator('[title*="@img"], [title*="[@image:"], img[alt*="@img"], img[alt*="[@image:"]'), '悬浮说明与辅助阅读也不得暴露内部引用格式').toHaveCount(0);
       await userMessage.getByRole('button', { name: '复制', exact: true }).click();
       expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('[@image:');
       await capture(page, '04-generated-restored', '消息回读：真实生成后刷新仍显示正确参考图，再次复制保留图片身份', userMessage);
@@ -8282,8 +8284,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         const mobile = await mobileContext.newPage();
         harness.attachAutoCapture(mobile);
         await loginAndReadToken(mobile, request, '/');
-        await mobile.getByRole('searchbox', { name: '搜索智能体、工具或平台能力' }).fill('视觉创作');
-        await mobile.getByText('视觉创作智能体', { exact: true }).first().tap();
+        await mobile.getByText('生图', { exact: true }).first().tap();
         await expect(mobile).toHaveURL(/\/visual-agent(?:\?|$)/);
         const mobileCreation = mobile.waitForResponse(response => response.request().method() === 'POST'
           && new URL(response.url()).pathname === '/api/visual-agent/image-master/workspaces');

@@ -7154,7 +7154,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       // 其他类型（shape/text 等）：仅选中
                       setSelectionWithoutChip([it.key]);
                     }}
-                    title={it.prompt}
+                    title={cleanDisplayTitle(it.prompt, 300)}
                   >
                     {/* 多选 checkbox（开放世界也保留） */}
                     {/* 已移除：左上角“+选择引用”按钮（用户反馈不需要） */}
@@ -7214,7 +7214,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <img
                               data-testid="canvas-image"
                               src={it.src}
-                              alt={it.prompt}
+                              alt={cleanDisplayTitle(it.prompt, 300) || '画板图片'}
                               className="w-full h-full block"
                               style={{ objectFit: 'contain', borderRadius: 14 }}
                               onLoad={(e) => {
@@ -7363,7 +7363,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <img
                               data-testid="canvas-image"
                               src={it.src}
-                              alt={it.prompt}
+                              alt={cleanDisplayTitle(it.prompt, 300) || '画板图片'}
                               className="w-full h-full block"
                               style={{
                                 objectFit: 'contain',
@@ -10215,7 +10215,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div className="w-full h-full flex items-center justify-center">
                   <img
                     src={preview.src}
-                    alt={preview.prompt}
+                    alt={cleanDisplayTitle(preview.prompt, 300) || '图片预览'}
                     className="block"
                     style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }}
                   />

@@ -1,8 +1,8 @@
 import { memo, useMemo, useCallback, useState } from 'react';
 import { Copy as CopyIcon, Check } from 'lucide-react';
 import { MessageContentRenderer } from './MessageContentRenderer';
-import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
-import { inlineMarksToTokens } from '@/lib/chipTokenText';
+import { cleanDisplayTitle, extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
+import { inlineMarksToTokens, parseChipTokenText } from '@/lib/chipTokenText';
 import { parseVisualMessageDisplay, normalizeHistoricalVisualNotice } from '@/lib/visualMessageDisplay';
 import { copyToClipboard } from '@/lib/clipboard';
 import { resolveVisualResultModelLabel } from '../visualAgentModelOptions';
@@ -289,7 +289,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         >
           {genError.prompt ? (
             <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
-              <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }} title={genError.prompt}>
+              <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }} title={cleanDisplayTitle(genError.prompt, 300)}>
                 <MessageContentRenderer
                   content={genError.prompt}
                   canvasItems={canvas}
@@ -387,7 +387,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         >
           {(genDone.prompt || genDone.refSrc) ? (
             <div className="px-2.5 pb-2 pt-1 flex items-center gap-2 border-b border-b-token-subtle" >
-              <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'var(--text-secondary)' }} title={genDone.prompt}>
+              <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'var(--text-secondary)' }} title={cleanDisplayTitle(genDone.prompt || '', 300)}>
                 <MessageContentRenderer
                   content={genDone.prompt || ''}
                   canvasItems={canvas}
@@ -419,7 +419,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
           >
             <img
               src={genDone.src}
-              alt={genDone.prompt || '生成结果'}
+              alt={cleanDisplayTitle(genDone.prompt || '', 300) || '生成结果'}
               style={{ width: '100%', maxHeight: 160, objectFit: 'contain', display: 'block' }}
             />
           </button>
@@ -468,7 +468,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   const modeledMsg = isUser ? extractModelToken(sizedMsg.cleanText) : { model: null as string | null, cleanText: String(sizedMsg.cleanText ?? '') };
   const msgBody = String(modeledMsg.cleanText ?? '');
   const MSG_COLLAPSE_THRESHOLD = 100;
-  const isLongMsg = msgBody.length > MSG_COLLAPSE_THRESHOLD;
+  const isLongMsg = parseChipTokenText(msgBody).reduce((length, segment) => length + (segment.type === 'text' ? segment.text.length : 3), 0) > MSG_COLLAPSE_THRESHOLD;
 
   // 用户消息气泡下方的"用户期望：xxx 模型"标签：从 @model:xxx token 解析
   const expectedModelForUser = isUser ? String(modeledMsg.model ?? '').trim() : '';
