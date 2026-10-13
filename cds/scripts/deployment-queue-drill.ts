@@ -6,6 +6,7 @@ import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import express from 'express';
+import { assertOwnedQueueNetworkMutation } from './owned-queue-network-guard.js';
 import type { CdsConfig, IShellExecutor, ExecOptions } from '../src/types.js';
 
 const sourcePaths = ['src/routes/branches.ts', 'src/services/container.ts', 'src/services/state.ts',
@@ -14,7 +15,7 @@ const sourcePaths = ['src/routes/branches.ts', 'src/services/container.ts', 'src
   'src/services/artifact-admission-wait.ts', 'src/services/worktree.ts', 'src/services/deploy-runtime.ts',
   'src/services/build-gate.ts', 'src/services/deploy-layer-runner.ts', 'src/services/env-provenance.ts',
   'src/services/service-runtime.ts', 'src/services/service-replacement.ts', 'src/services/deployment-phase-budget.ts',
-  'src/services/isolated-shell-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'scripts/deployment-queue-drill.ts'];
+  'src/services/isolated-shell-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/observation-executor-process.ts', 'src/services/observation-process-launcher.ts', 'src/services/observation-process.ts', 'src/services/observation-process-group.ts', 'src/services/shell-executor.ts', 'scripts/deployment-queue-drill.ts', 'scripts/owned-queue-network-guard.ts'];
 const m = {
   router: await import(new URL('../dist/routes/branches.js', import.meta.url).href) as typeof import('../src/routes/branches.js'),
   container: await import(new URL('../dist/services/container.js', import.meta.url).href) as typeof import('../src/services/container.js'),
@@ -54,7 +55,8 @@ async function main(): Promise<void> {
   const shell: IShellExecutor = { exec: async (command: string, options?: ExecOptions) => {
     if (/^docker (?:system|container|image|network) prune\b/.test(command)) throw new Error('Global prune forbidden in owned queue drill');
     if (options?.cwd) assert.ok(path.resolve(options.cwd).startsWith(temp + path.sep));
-    if (/^docker (?:run|create|rm|stop|start|restart|cp|exec|commit|network (?:create|rm|disconnect|connect)|image rm)\b/.test(command) && !command.includes(owner)) {
+    const qualifiedNetwork = assertOwnedQueueNetworkMutation(command, owner, branchId, network, docker);
+    if (!qualifiedNetwork && /^docker (?:run|create|rm|stop|start|restart|cp|exec|commit|network (?:create|rm|disconnect|connect)|image rm)\b/.test(command) && !command.includes(owner)) {
       const ids = [...command.matchAll(/\b[a-f0-9]{64}\b/g)].map(match => match[0]);
       const networkName = command.match(/^docker network (?:rm|disconnect|connect).*? '([a-zA-Z0-9_.-]+)'/)?.[1];
       if (ids.length) {
@@ -202,13 +204,17 @@ async function main(): Promise<void> {
     if (network) { try { const view = JSON.parse(docker(['network', 'inspect', network]))[0]; assert.equal(view.Labels['cds.acceptance.owner'], owner); docker(['network', 'rm', network]); report.ownedNetworkRemoved = true; } catch (error) { cleanupErrors.push(String(error)); } }
     try {
       const replacements = docker(['network', 'ls', '-q', '--filter', `label=cds.project.id=${owner}`, '--filter', `label=cds.branch.id=${branchId}`]).split('\n').filter(Boolean);
+      report.replacementNetworkCleanup = { enumeratedIds: replacements, removed: [] as unknown[], remainingIds: [] as string[] };
       for (const id of replacements) {
         const view = JSON.parse(docker(['network', 'inspect', id]))[0];
         assert.equal(view.Labels['cds.type'], 'replacement-network');
         assert.equal(view.Labels['cds.project.id'], owner); assert.equal(view.Labels['cds.branch.id'], branchId);
         assert.equal(Object.keys(view.Containers || {}).length, 0);
-        docker(['network', 'rm', id]);
+        const reply = docker(['network', 'rm', id]);
+        report.replacementNetworkCleanup.removed.push({ id: view.Id, name: view.Name, labels: view.Labels, reply });
       }
+      report.replacementNetworkCleanup.remainingIds = docker(['network', 'ls', '-q', '--filter', `label=cds.project.id=${owner}`, '--filter', `label=cds.branch.id=${branchId}`]).split('\n').filter(Boolean);
+      assert.deepEqual(report.replacementNetworkCleanup.remainingIds, []);
       report.ownedReplacementNetworksRemoved = true;
     } catch (error) { cleanupErrors.push(String(error)); }
     try { await fs.rm(temp, { recursive: true, force: true }); report.isolatedFilesRemoved = true; } catch (error) { cleanupErrors.push(String(error)); }
