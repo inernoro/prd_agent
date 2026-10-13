@@ -87,7 +87,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     const p = selectedProvider;
     return <CollectionDetailPane key={p.id} title={p.name} icon={<Server size={18}/>} identifier={summarizeProviderModels(ownedRows(p.id))} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>名下模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
       <div className={providerTab === 'models' ? 'lg-collection-provider-models' : 'lg-collection-hidden'}><ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} /></div>
-      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)}]}/>{canWrite && p.authority === 'llm_gateway' ? <Button size="sm" onClick={() => beginEdit(p)}>编辑连接</Button> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
+      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)},{label:'导入时间',value:p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? <Button size="sm" onClick={() => beginEdit(p)}>编辑连接</Button> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
       {providerTab === 'activity' ? <div className="lg-collection-key-facts"><h3>调用记录<HelpPopover label="调用记录">查看这条供应方的真实请求、响应状态与最近调用。</HelpPopover></h3><Link className="lg-text-link" to={`/logs?platformId=${encodeURIComponent(p.id)}`}>查看全部请求记录</Link></div> : null}
     </CollectionDetailPane>;
   }
@@ -615,36 +615,12 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                       {summarizeProviderModels(ownedRows(p.id))}
                     </button>
                   </td>
-                  <td style={td}><div className="lg-collection-provider-key" title={p.keyFingerprint ? `密钥指纹 ${p.keyFingerprint}` : undefined}><Chip label={key.label} color={key.color} bg={key.bg}/><span style={HINT_TEXT}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
+                  <td style={td}><div className="lg-collection-provider-key" title={p.keyFingerprint ? `密钥指纹 ${p.keyFingerprint}` : undefined}><Chip label={key.label} color={key.color} bg={key.bg}/><span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
                   <td style={td}><Chip label={en.label} color={en.color} bg={en.bg}/></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      {keyEditId === p.id ? (
-                        <>
-                          <input
-                            type="password"
-                            autoComplete="new-password"
-                            value={keyValue}
-                            onChange={(e) => setKeyValue(e.target.value)}
-                            placeholder="apiKey"
-                            style={inputStyle}
-                          />
-                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveApiKey(p)}>
-                            保存
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => { setKeyEditId(null); setKeyValue(''); }}>
-                            取消
-                          </Button>
-                        </>
-                      ) : (
-                        /*
-                         * 主操作留在行内，其余收进「更多」。原来八个操作平铺一行，
-                         * 横向排成一堵墙、主次不分，删除这种不可逆动作还和日常操作等权并排。
-                         * 留在外面的判据：这条上游刚配好密钥时，用户下一步会点的是什么。
-                         *   - GW 自有：测试连接（当场验证）→ 查看模型（拉清单导入），正是控制台
-                         *     自己在测试结果里写的「下一步」；
-                         *   - MAP 来源：只有「导入到平台」一个动作，本来就该是主操作。
-                         */
+
+
                         <RowActions
                           primary={p.authority === 'llm_gateway' ? (
                             <>
@@ -677,10 +653,27 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                             ] : []),
                           ]}
                         />
-                      )}
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
+                {keyEditId === p.id && canWrite ? <tr><td colSpan={5} style={td}><div className="lg-collection-provider-edit">
+                        <>
+                          <input
+                            type="password"
+                            autoComplete="new-password"
+                            value={keyValue}
+                            onChange={(e) => setKeyValue(e.target.value)}
+                            placeholder="apiKey"
+                            style={inputStyle}
+                          />
+                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveApiKey(p)}>
+                            保存
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => { setKeyEditId(null); setKeyValue(''); }}>
+                            取消
+                          </Button>
+                        </>
+</div></td></tr> : null}
                 {editId === p.id ? (
                   <tr>
                     {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
