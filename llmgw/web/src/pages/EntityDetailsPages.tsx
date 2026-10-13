@@ -94,12 +94,16 @@ function EntityDetailsShell({
             </nav>
           </aside> : null}
           <main>
-            {sections.filter((section) => !(bounded && kind === 'provider' && section.id === 'connection')).map((section) => {
-              const collection = bounded && (section.id === 'providers' || section.id === 'models');
+            {sections.filter((section) => !bounded || section.id === 'providers' || section.id === 'models').map((section) => {
+              const collection = bounded;
               return <section key={section.id} id={section.id} title={section.hideHeading ? section.description : undefined} className={`lg-entity-detail-section${collection ? ' lg-entity-detail-collection' : ''}`}>
-                {bounded && !collection ? <details><summary>{section.title}</summary><div>{section.description ? <p>{section.description}</p> : null}{section.content}</div></details> : <>{!section.hideHeading ? <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}</> : null}{section.content}</>}
+                {!section.hideHeading ? bounded ? <div className="lg-collection-section-heading"><h2>{section.title}</h2>{kind === 'provider' ? <Link to="/models">去模型页看全部</Link> : null}</div> : <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}</> : null}{section.content}
               </section>;
             })}
+            {bounded ? <div className={`lg-collection-entity-extras lg-collection-entity-extras-${kind}`}>
+              {kind === 'model' ? <section className="lg-collection-summary-card"><h3>能力与路由</h3><div id="capabilities">{sections.find((section) => section.id === 'capabilities')?.content}</div><details id="routing"><summary>完整路由配置</summary><div>{sections.find((section) => section.id === 'routing')?.content}</div></details></section> : null}
+              {sections.filter((section) => section.id === 'activity').map((section) => <section key={section.id} id={section.id} className="lg-collection-summary-card"><div className="lg-collection-section-heading"><h3>{section.title}</h3><Link to={primaryHref}>查看全部请求</Link></div><div className="lg-collection-summary-scroll">{section.content}</div></section>)}
+            </div> : null}
           </main>
         </div>
       </div>
@@ -280,10 +284,10 @@ export function ModelDetailsPage() {
           hideHeading: Boolean(logical?.offerings.length),
           description: '同一逻辑模型可以绑定多个上游。Gateway 按优先级、权重、健康和限流选择实际调用目标。',
           content: logical?.offerings.length ? <>
-            <h3 className="lg-collection-section-title">供应方 · {providerGroups.length}</h3><div className="lg-collection-provider-groups">
-              {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></Link>)}
+            <div className="lg-collection-supplier-section"><h3 className="lg-collection-section-title">供应方 · {providerGroups.length}</h3><div className="lg-collection-provider-groups">
+              {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}><Server size={20}/><div><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></div><small>供应方详情</small></Link>)}
               {providerGroups.length > 2 ? <span style={HINT_TEXT}>全部供应方见下方线路清单</span> : null}
-            </div>
+            </div></div>
             <h3 className="lg-collection-section-title">上游线路 · {logical.offerings.length}</h3><CollectionView items={logical.offerings} filterLabel="供应方筛选" allFilterLabel="全部供应方" filters={providerGroups.map((group) => ({ value: group.id, label: group.name, matches: (route: ModelOfferingItem) => providerGroupByRoute.get(route.id)?.id === group.id }))} placeholder="搜索上游模型、供应方或协议" searchText={(item) => [providerGroupByRoute.get(item.id)?.name, item.providerName, item.targetName, item.upstreamModelId, item.protocol, item.notes].filter(Boolean).join(' ')}>
               {(routes) => <table className="lg-collection-entity-table lg-collection-route-table"><colgroup><col style={{width: '38%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '17%'}}/></colgroup><thead><tr><th>上游模型</th><th>供应方</th><th>协议</th><th>顺位 / 权重</th><th>状态</th></tr></thead><tbody>{routes.map((route) => {
                 const group = providerGroupByRoute.get(route.id)!;
@@ -421,7 +425,7 @@ export function ProviderDetailsPage() {
       primaryHref={`/logs?provider=${encodeURIComponent(provider.name)}`}
       primaryLabel="查看 Provider 日志"
       management={registered ? { href: "/platforms?view=provider", label: "管理供应方" } : undefined}
-      connectionSummary={registered ? <div className="lg-collection-connection-summary"><span>{provider.platformType || "未配置协议"}</span><code title={provider.apiUrl || "未配置"}>{provider.apiUrl || "未配置"}</code><span>{models.length} 个托管模型</span></div> : undefined}
+      connectionSummary={registered ? <div className="lg-collection-connection-summary"><Server size={20}/><div><strong>{provider.platformType === "openai" ? "OpenAI compatible" : provider.platformType || "未配置协议"}</strong><code title={provider.apiUrl || "未配置"}>{provider.apiUrl || "未配置"}</code></div><span>{models.length} 个托管模型</span></div> : undefined}
       sections={[
         {
           id: 'connection',
@@ -441,7 +445,7 @@ export function ProviderDetailsPage() {
           title: '托管模型',
           description: registered ? '该 Provider 下当前可见的模型。点击模型可继续进入模型详情。' : '从最近请求中观察到的模型；只证明实际请求经过这里，不补造托管关系。',
           content: registered ? <CollectionView items={providerRows} placeholder="搜索模型名称、标识或协议" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${model.protocol || ''} ${publicIds.join(' ')}`} filters={logicalModels ? [{ value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }, { value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }] : []}>
-            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}><td><strong title={model.name || model.modelName}>{model.name || model.modelName}</strong><small title={model.modelName}>{model.modelName}</small></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(provider.id)}`}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
+            {(pageRows) => <table className="lg-collection-entity-table lg-collection-hosted-table"><colgroup><col style={{width: '47%'}}/><col style={{width: '19%'}}/><col style={{width: '19%'}}/><col style={{width: '15%'}}/></colgroup><thead><tr><th>模型</th><th>协议</th><th>登记状态</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}><td><strong className="lg-collection-model-id" title={`${model.modelName} · ${model.name}`}>{model.modelName || model.name}</strong></td><td>{model.protocol || '继承协议'}</td><td><StatusPill label={logicalModels ? publicIds.length ? `已登记 · ${publicIds.length}` : '未登记' : '登记状态未读取'} tone={logicalModels ? publicIds.length ? 'good' : 'warning' : 'neutral'} /></td><td><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(provider.id)}`}>模型详情<ArrowUpRight size={13} /></Link></td></tr>)}</tbody></table>}
           </CollectionView> : <CollectionView items={observedModels} placeholder="搜索日志观察到的模型" searchText={(model) => model}>
             {(pageModels) => <>{pageModels.map((model) => <Link className="lg-collection-detail-card" key={model} to={`/models/view?model=${encodeURIComponent(model)}`}><ModelEntityIcon model={model} /><div><strong>{model}</strong><span>日志观测 · 非配置关系</span></div><ArrowUpRight size={15} /></Link>)}</>}
           </CollectionView>,

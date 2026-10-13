@@ -51,7 +51,7 @@ import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
 import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
 import { CallTracePanel } from '@/components/CallTracePanel';
 import './LogicalModelsPage.css';
-import { CollectionView, CollectionDetailPane } from '@/components/CollectionView';
+import { CollectionView, CollectionDetailPane, CollectionPaneTab } from '@/components/CollectionView';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
@@ -75,6 +75,7 @@ export function LogicalModelsPage() {
   // 不画一条假的平滑曲线——「没数据」和「用量平稳」是两件事，画成一样会误导。
   const [usage, setUsage] = useState<Map<string, LogicalModelUsageItem> | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [configurationOpen, setConfigurationOpen] = useState(false);
   /** 正在看调用全貌的那个模型。和「展开」分开：一个给配置，一个给推演。 */
   const [traceFor, setTraceFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -349,6 +350,7 @@ export function LogicalModelsPage() {
                     <div className="lg-logical-model-detail" style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px var(--logical-detail-indent, 46px)`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
                       {health.tone === 'warn' && health.advice ? <InlineAlert tone="info">{health.advice}</InlineAlert> : null}
 
+                      <div className={configurationOpen ? "lg-collection-model-config" : "lg-collection-hidden"}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
                         <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
                         <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
@@ -405,6 +407,8 @@ export function LogicalModelsPage() {
                         </div>
                       ) : null}
 
+                      </div>
+                      {!configurationOpen ? <div className="lg-collection-subhead"><Chip label={`${routes.length} 条线路`} color="var(--accent)" bg="var(--accent-soft)" /><span style={HINT_TEXT}>{item.routingStrategy === "weighted" ? "权重负载均衡" : "主备与故障切换"}</span><span style={{flex:1}} />{canWrite ? <Button size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>添加上游</Button> : null}</div> : null}
                       {offeringFor === item.id && canWrite ? (
                         <form onSubmit={(e) => submitOffering(e, item)} style={INSET_BLOCK}>
                           <FormGrid>
@@ -472,31 +476,13 @@ export function LogicalModelsPage() {
                         </form>
                       ) : null}
 
-                      <CollectionView items={routes} placeholder="搜索上游模型、供应方或备注" searchText={(route) => [route.label, route.upstreamModelId, route.providerName, route.offering.targetName, route.offering.notes, route.protocol].filter(Boolean).join(' ')}>
+                      <CollectionView className={configurationOpen ? "lg-collection-hidden" : "lg-collection-route-list"} filters={[{value: "enabled", label: "线路启用", matches: (route) => route.offering.enabled}, {value: "disabled", label: "线路停用", matches: (route) => !route.offering.enabled}]} allFilterLabel="全部线路" items={routes} placeholder="搜索上游模型、供应方或备注" searchText={(route) => [route.label, route.upstreamModelId, route.providerName, route.offering.targetName, route.offering.notes, route.protocol].filter(Boolean).join(' ')}>
                         {(pageRoutes) => <>{pageRoutes.map((route) => (
-                        <div className="lg-logical-model-route-detail" key={`detail-${route.id}`} style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
-                          <span className="lg-logical-model-route-target" style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
-                            <RouteDot health={route.health} />
-                            <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                              <strong style={{ fontSize: 'var(--fs-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{route.upstreamModelId || route.offering.targetName || route.label}</strong>
-                              <span style={HINT_TEXT}>{route.label} · {route.roleLabel} · 协议 {route.protocol}</span>
-                            </span>
-                          </span>
-                          <span className="lg-logical-model-route-info" style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                            <span style={HINT_TEXT}>{route.priceOrigin}</span>
-                            <span style={HINT_TEXT}>优先级 {route.priority} · 权重 {route.weight} · {route.governance}</span>
-                          </span>
-                          {canWrite ? (
-                            <>
-                              <Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>
-                              {/* 只给「连续失败被摘掉」那一档：线路自己被停用要点启用，
-                                  上游被停用要去上游页——对那两种而言半开资格给了也没用。 */}
-                              {route.health === 'down' ? (
-                                <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button>
-                              ) : null}
-                              <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button>
-                            </>
-                          ) : null}
+                        <div className="lg-logical-model-route-detail" key={`detail-${route.id}`}>
+                          <div className="lg-collection-route-heading"><strong title={route.upstreamModelId || route.offering.targetName || route.label}>{route.upstreamModelId || route.offering.targetName || route.label}</strong><Chip label={route.roleLabel} color="var(--accent)" bg="var(--accent-soft)" /></div>
+                          <div className="lg-collection-route-meta"><span title={route.label}>{route.providerName || route.label} · 优先级 {route.priority}</span><span title={route.priceOrigin}>{route.price}</span></div>
+                          <div className="lg-collection-route-actions"><RouteDot health={route.health} /><span style={HINT_TEXT}>{route.protocol}</span><span style={{flex:1}} />{canWrite ? <><Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>{route.health === 'down' ? <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button> : null}<Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button></> : null}</div>
+                          <details className="lg-collection-route-properties"><summary>线路参数</summary><div>{route.label} · {route.priceOrigin}<br />优先级 {route.priority} · 权重 {route.weight} · {route.governance}</div></details>
                         </div>
                       ))}</>}
                       </CollectionView>
@@ -620,7 +606,6 @@ export function LogicalModelsPage() {
               const routes = describeRoutes(item, models);
               const stat = usage?.get(item.publicId) ?? null;
               const open = expanded === item.id;
-              const tracing = traceFor === item.id;
               const health = summarizeHealth(item, routes);
               return (
                 <div key={item.id} style={{
@@ -633,23 +618,8 @@ export function LogicalModelsPage() {
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
                       <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0, flexWrap: 'wrap' }}>
-                          <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
-                          {item.isDefaultForType
-                            ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
-                            : null}
-                          {item.defaultForAppCallerCodes.length > 0
-                            ? <Chip
-                                label={`${item.defaultForAppCallerCodes.length} 个调用方指定它`}
-                                color="var(--ok)"
-                                bg="var(--ok-bg)"
-                                title={`这些调用方不点名时走它，优先于用途默认：\n${item.defaultForAppCallerCodes.join('\n')}`}
-                              />
-                            : null}
-                        </span>
-                        <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {item.publicId} · {describeScope(item.allowedAppCallerCodes)}
-                        </span>
+                        <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                        <span className="lg-collection-model-identity" title={`${item.publicId} · ${describeScope(item.allowedAppCallerCodes)}`}><code>{item.publicId}</code>{item.isDefaultForType ? <Chip label="默认" color="var(--accent)" bg="var(--accent-soft)" title="没点名时用它" /> : null}{item.defaultForAppCallerCodes.length ? <Chip label={`指定 ${item.defaultForAppCallerCodes.length}`} color="var(--ok)" bg="var(--ok-bg)" title={item.defaultForAppCallerCodes.join('\n')} /> : null}</span>
                       </span>
                     </span>
 
@@ -678,11 +648,8 @@ export function LogicalModelsPage() {
                     <span className="lg-logical-model-actions" style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
                           「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
-                      <Button size="sm" variant="ghost" aria-expanded={tracing} onClick={() => { setExpanded(null); setTraceFor((x) => (x === item.id ? null : item.id)); }}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{tracing ? '收起全貌' : '调用全貌'}</span>
-                      </Button>
-                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setTraceFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '展开'}</span>
+                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => { setConfigurationOpen(false); setTraceFor(null); setExpanded((x) => (x === item.id ? null : item.id)); }}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '查看'}</span>
                       </Button>
                     </span>
                   </div>
@@ -694,7 +661,7 @@ export function LogicalModelsPage() {
             </>}
             </CollectionView>
           </Card>
-          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); }} tabs={<><Button size="sm" variant={expanded ? 'primary' : 'ghost'} onClick={() => { setTraceFor(null); setExpanded(selectedItem.id); }}>线路与配置</Button><Button size="sm" variant={traceFor ? 'primary' : 'ghost'} onClick={() => { setExpanded(null); setTraceFor(selectedItem.id); }}>调用全貌</Button></>}>
+          {selectedItem ? <CollectionDetailPane key={selectedItem.id} title={selectedItem.name} identifier={selectedItem.publicId} onClose={() => { setExpanded(null); setTraceFor(null); }} tabs={<><CollectionPaneTab active={Boolean(expanded) && !configurationOpen} onClick={() => {setConfigurationOpen(false);setTraceFor(null);setExpanded(selectedItem.id);}}>上游线路</CollectionPaneTab><CollectionPaneTab active={Boolean(expanded) && configurationOpen} onClick={() => {setConfigurationOpen(true);setTraceFor(null);setExpanded(selectedItem.id);}}>模型配置</CollectionPaneTab><CollectionPaneTab active={Boolean(traceFor)} onClick={() => {setExpanded(null);setTraceFor(selectedItem.id);}}>调用全貌</CollectionPaneTab></>}>
             {renderSelectedDetails()}
           </CollectionDetailPane> : null}
           </div>

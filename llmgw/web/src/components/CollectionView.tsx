@@ -4,7 +4,7 @@ import { Button } from '@/components/ui';
 import { collectionPage } from '@/lib/collectionPaging';
 import './CollectionView.css';
 
-export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态' }: {
+export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态', afterToolbar }: {
   items: readonly T[];
   searchText: (item: T) => string;
   placeholder: string;
@@ -12,6 +12,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   pageSize?: number;
   emptyText?: string;
   className?: string;
+  afterToolbar?: ReactNode;
   filterLabel?: string;
   allFilterLabel?: string;
   filters?: Array<{ value: string; label: string; matches: (item: T) => boolean }>;
@@ -32,6 +33,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
         <input type="search" aria-label={placeholder} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
         {filters.length ? <select aria-label={filterLabel} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}><option value="">{allFilterLabel}</option>{filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : null}
       </div>
+      {afterToolbar}
       <div className="lg-collection-scroll" ref={scrollRef}>
         {result.total ? children(result.items) : <div className="lg-collection-empty">{emptyText}{query || filter ? <Button size="sm" variant="ghost" onClick={() => { setQuery(''); setFilter(''); setPage(1); }}>清除筛选</Button> : null}</div>}
       </div>
@@ -47,7 +49,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
 }
 
 /** 桌面并列、窄屏独立详情态。保持真实编辑表单内联在页面，不复制写入逻辑。 */
-export function CollectionDetailPane({ title, identifier, onClose, children, tabs }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode }) {
+export function CollectionDetailPane({ title, identifier, onClose, children, tabs, icon }: { title: ReactNode; identifier?: string; onClose: () => void; children: ReactNode; tabs?: ReactNode; icon?: ReactNode }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -55,8 +57,17 @@ export function CollectionDetailPane({ title, identifier, onClose, children, tab
     return () => { if (trigger?.isConnected) trigger.focus({ preventScroll: true }); };
   }, []);
   return <aside className="lg-collection-pane" aria-label="清单详情" onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } }}>
-    <header className="lg-collection-pane-heading"><div><h2>{title}</h2>{identifier ? <code>{identifier}</code> : null}</div><button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button></header>
+    <header className="lg-collection-pane-heading">{icon ? <span className="lg-collection-pane-icon">{icon}</span> : null}<div><h2>{title}</h2>{identifier ? <code>{identifier}</code> : null}</div><button ref={closeRef} type="button" className="lg-collection-close" aria-label="关闭详情" onClick={onClose}><X size={16} /></button></header>
     {tabs ? <div className="lg-collection-pane-tabs">{tabs}</div> : null}
     <div className="lg-collection-pane-body">{children}</div>
   </aside>;
+}
+
+/** 页签只切换现有内容，权限与写入回调由原页面负责。 */
+export function CollectionPaneTab({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {
+  return <button type="button" aria-pressed={active} className="lg-collection-pane-tab" onClick={onClick}>{children}</button>;
+}
+
+export function CollectionFacts({ items }: { items: Array<{ label: string; value: ReactNode }> }) {
+  return <dl className="lg-collection-facts">{items.map((item) => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl>;
 }
