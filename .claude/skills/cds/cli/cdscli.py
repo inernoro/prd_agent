@@ -33,6 +33,7 @@ import hashlib
 import http.client  # noqa: F401  -- 用于 IncompleteRead 类型捕获
 import json
 import os
+import pathlib
 import re
 import secrets
 import shlex
@@ -46,7 +47,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.7"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -1002,6 +1003,47 @@ def cmd_branch_status(args: argparse.Namespace) -> None:
         if b.get("id") == args.id:
             ok(b)
     die(f"分支不存在: {args.id}", code=2)
+
+
+def cmd_db(args: argparse.Namespace) -> None:
+    """复用数据库工作台与具体 SQL 审批，不获取数据库密码或自行提升权限。"""
+    if args.db_action == "status":
+        payload = _call("GET", f"/api/cds-system/operator/requests/{urllib.parse.quote(args.request_id, safe='')}")
+        request = payload.get("request", {})
+        if request.get("opId") != "database.sql":
+            die("该请求不是数据库操作", code=2)
+        status = request.get("status")
+        if status in ("failed", "rejected", "expired"):
+            die(request.get("error") or f"数据库请求 {status}", extra={"request": request})
+        ok(request, note="SQL 已执行" if status == "completed" else "SQL 尚未执行完成", code=0 if status == "completed" else 3)
+    project = args.project
+    branch_id = urllib.parse.quote(args.branch, safe="")
+    branch = _call("GET", f"/api/branches/{branch_id}").get("branch", {})
+    if branch.get("projectId") != project:
+        die("分支不属于指定项目，未执行数据库操作", code=2)
+    base = f"/api/branches/{branch_id}/resources"
+    if args.db_action == "resources":
+        ok(_call("GET", base))
+    base += f"/{urllib.parse.quote(args.resource, safe='')}/data"
+    if args.db_action == "tables":
+        ok(_call("GET", base + "/tables", timeout=30))
+    try:
+        sql = pathlib.Path(args.sql_file).read_text(encoding="utf-8") if args.sql_file else args.sql
+    except (OSError, UnicodeError) as error:
+        die(f"无法读取 UTF-8 SQL 文件：{error}", code=2)
+    if not sql or not sql.strip() or len(sql) > 100_000:
+        die("SQL 不能为空，且不能超过 100KB", code=2)
+    if args.db_action == "query":
+        ok(_call("POST", base + "/query", body={"sql": sql}, timeout=45))
+    payload = _call("POST", "/api/cds-system/operator/request", body={
+        "opId": "database.sql", "args": {
+            "projectId": project, "branchId": args.branch, "resourceId": args.resource, "sql": sql,
+        },
+    })
+    request = payload.get("request", {})
+    if request.get("status") == "rejected":
+        die(request.get("error") or "数据库请求被拒绝", extra={"request": request})
+    ok(request, note="写 SQL 已提交 CDS 审批，尚未执行；批准后用 db status 查询结果", code=3)
 
 
 def cmd_branch_deploy(args: argparse.Namespace) -> None:
@@ -9296,6 +9338,22 @@ def _build_parser() -> argparse.ArgumentParser:
     pd = proj.add_parser("delete", help="级联删除项目(branches/profiles/infra/routing 一起清)")
     pd.add_argument("id", help="projectId")
     pd.set_defaults(func=cmd_project_delete)
+
+    db = sub.add_parser("db", help="项目数据库：查询或提交具体 SQL 审批").add_subparsers(dest="db_action", required=True)
+    for action in ("resources", "tables", "query", "execute"):
+        command = db.add_parser(action)
+        command.add_argument("branch", help="CDS canonical branch id")
+        command.add_argument("--project", required=True, help="明确的目标项目 ID")
+        if action != "resources":
+            command.add_argument("resource", help="数据库资源 ID（由 db resources 返回）")
+        if action in ("query", "execute"):
+            sql_input = command.add_mutually_exclusive_group(required=True)
+            sql_input.add_argument("--sql-file", help="UTF-8 SQL 文件（推荐）")
+            sql_input.add_argument("--sql", help="不含凭据的 SQL")
+        command.set_defaults(func=cmd_db)
+    db_status = db.add_parser("status", help="读取本次 SQL 审批与执行结果")
+    db_status.add_argument("request_id")
+    db_status.set_defaults(func=cmd_db)
 
     br = sub.add_parser("branch", help="分支").add_subparsers(dest="sub", required=True)
     bl = br.add_parser("list"); bl.add_argument("--project"); bl.set_defaults(func=cmd_branch_list)

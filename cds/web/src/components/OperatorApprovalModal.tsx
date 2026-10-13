@@ -147,7 +147,7 @@ export function OperatorApprovalModal(): JSX.Element | null {
               <code className="font-mono">{pending.opId}</code>
             </div>
             {pending.args && Object.keys(pending.args).length > 0 ? (
-              <details className="mt-2">
+              <details className="mt-2" open={pending.opId === 'database.sql' ? true : undefined}>
                 <summary className="cursor-pointer text-xs text-foreground/70">参数</summary>
                 <pre className="mt-1 max-h-40 overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
                   {JSON.stringify(pending.args, null, 2)}

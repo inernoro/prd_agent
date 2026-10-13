@@ -223,8 +223,8 @@ function transactionControlError(): Error {
   );
 }
 
-function assertSingleStatement(body: string, label: string): void {
-  if (body.includes(';')) {
+function assertSingleStatement(body: string, label: string, dialect?: SqlDialect): void {
+  if (isSqlScript(body, dialect)) {
     throw new Error(`${label}一次只允许执行一条语句；要跑多条语句请用工作台的「初始化 SQL」输入框。`);
   }
 }
@@ -237,7 +237,7 @@ export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): s
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-  assertSingleStatement(body, '只读 SQL Console ');
+  assertSingleStatement(body, '只读 SQL Console ', dialect);
   const { head, kind } = classifySqlStatement(body, dialect);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
@@ -256,7 +256,7 @@ export function normalizeWriteStatement(sql: string, dialect?: SqlDialect): stri
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-  assertSingleStatement(body, '写 SQL ');
+  assertSingleStatement(body, '写 SQL ', dialect);
   const { head, kind } = classifySqlStatement(body, dialect);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
@@ -268,5 +268,28 @@ export function normalizeWriteStatement(sql: string, dialect?: SqlDialect): stri
     throw new Error(`无法识别的语句 "${head || body.slice(0, 12)}"，已拒绝执行。`);
   }
   assertNoHostEscape(body, dialect);
+  return body;
+}
+
+/** 批量修改由一个客户端连接执行，不拆成若干独立的 query 请求。 */
+export function isSqlScript(sql: string, dialect?: SqlDialect): boolean {
+  return stripSqlComments(normalizeStatementBody(sql), { maskLiterals: true, dialect }).includes(';');
+}
+
+export function normalizeConsoleWrite(sql: string, dialect?: SqlDialect): string {
+  const body = normalizeStatementBody(sql);
+  if (!body) throw new Error('SQL 不能为空');
+  if (body.length > 100_000) throw new Error('SQL 过长（上限 100KB）');
+  if (!isSqlScript(body, dialect)) return normalizeWriteStatement(body, dialect);
+  assertNoHostEscape(body, dialect);
+  const code = stripSqlComments(body, { maskLiterals: true, dialect });
+  // 工作台接受 SQL，不接受 mysql/psql 的本地命令或脚本文件指令。
+  if (code.includes('\\') || /(^|;)\s*(source|delimiter)\b/i.test(code)) {
+    throw new Error('执行框只接受 SQL 语句，不支持客户端命令或外部脚本文件。');
+  }
+  const head = code.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
+  if (![...READ_STATEMENT_HEADS, ...WRITE_STATEMENT_HEADS, ...TRANSACTION_CONTROL_HEADS, ...CONNECTION_SCOPED_HEADS].includes(head)) {
+    throw new Error('无法识别 SQL 脚本的首条语句，未执行。');
+  }
   return body;
 }

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createBranchRouter } from '../../src/routes/branches.js';
+import { createOperatorConsoleRouter } from '../../src/routes/operator-console.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
@@ -114,8 +115,8 @@ function makeHarness(): {
         authProvider: 'legacy',
       };
     }
-    if (req.headers['x-test-project-key'] === '1') {
-      (req as any).cdsProjectKey = { projectId: 'prd-agent', keyId: 'test-key' };
+    if (req.headers['x-test-project-key']) {
+      (req as any).cdsProjectKey = { projectId: req.headers['x-test-project-key'] === '1' ? 'prd-agent' : 'other-project', keyId: 'test-key' };
     }
     if (req.headers['x-test-ai-session'] === '1') {
       (req as any)._aiSession = { id: 'test-ai', agentName: 'test', token: 'token', approvedAt: '', expiresAt: '' };
@@ -745,6 +746,62 @@ describe('resource database access', () => {
     expect(preview.body.schema).toBe('audit');
     expect(preview.body.table).toBe('events');
     expect(harness.shell.commands.some((cmd) => cmd.includes('SELECT * FROM "audit"."events" LIMIT 50'))).toBe(true);
+  });
+
+  it('批量修改只启动一个数据库连接，输出原始结果；失败和普通项目 Key 不能报成功', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-batch', projectId: 'prd-agent', name: 'MySQL batch', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 3306, containerName: 'cds-mysql-batch', status: 'running', dbName: 'app', env: { MYSQL_ROOT_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    harness.shell.addResponsePattern(/docker exec .* mysql /, (match) => (match.input || '').includes('missing_table')
+      ? { stdout: '', stderr: 'ERROR 1146 missing_table', exitCode: 1 }
+      : { stdout: 'Query OK, 1 row affected\nQuery OK, 1 row affected\n', stderr: '', exitCode: 0 });
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const base = '/api/branches/main-branch/resources/infra%3Amysql-batch/data/query-write';
+    const sql = 'UPDATE sample SET n=1; UPDATE sample SET n=2';
+    const body = { sql, confirmResourceName: 'MySQL batch' };
+    const denied = await request(server!, 'POST', base, body, { 'x-test-project-key': '1' });
+    expect(denied.status).toBe(403);
+    expect(harness.shell.commands.filter((cmd) => cmd.includes(' mysql '))).toHaveLength(0);
+    const success = await request(server!, 'POST', base, body, { 'x-test-cookie-auth': '1' });
+    expect(success.status).toBe(200);
+    expect(success.body.output).toContain('1 row affected');
+    const commands = harness.shell.commands.filter((cmd) => cmd.includes(' mysql '));
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain(sql);
+    expect(commands[0]).toContain('--binary-mode');
+    const failure = await request(server!, 'POST', base, { ...body, sql: 'UPDATE sample SET n=1; UPDATE missing_table SET n=2' }, { 'x-test-cookie-auth': '1' });
+    expect(failure.status).toBe(500);
+    expect(failure.body.error).toContain('missing_table');
+  });
+
+  it('Agent 只能申请自己项目的具体 SQL，批准前不执行，不能自批，批准后返回实际结果', async () => {
+    const harness = makeHarness();
+    tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-approval', projectId: 'prd-agent', name: 'MySQL approval', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 3306, containerName: 'cds-mysql-approval', status: 'running', dbName: 'app', env: { MYSQL_ROOT_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    harness.shell.addResponsePattern(/docker exec .* mysql /, () => ({ stdout: 'Query OK, 1 row affected', stderr: '', exitCode: 0 }));
+    harness.app.use('/api', createOperatorConsoleRouter({ stateService: harness.stateService, shell: harness.shell, repoRoot: harness.tmpDir }));
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const body = { opId: 'database.sql', args: { projectId: 'prd-agent', branchId: 'main-branch', resourceId: 'infra:mysql-approval', sql: 'UPDATE sample SET n=1; UPDATE sample SET n=2' } };
+    const endpoint = '/api/cds-system/operator/request';
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-project-key': 'other' })).status).toBe(403);
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-ai-session': '1' })).status).toBe(403);
+    const pending = await request(server!, 'POST', endpoint, body, { 'x-test-project-key': '1' });
+    expect(pending.status).toBe(202);
+    expect(pending.body.request.status).toBe('pending');
+    expect(harness.shell.commands.filter((cmd) => cmd.includes(' mysql '))).toHaveLength(0);
+    const id = pending.body.request.id;
+    const approve = `/api/cds-system/operator/requests/${id}/approve`;
+    expect((await request(server!, 'POST', approve, { scope: 'once' }, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', approve, { scope: 'once' }, { 'x-test-cookie-auth': '1' })).status).toBe(200);
+    let done;
+    for (let i = 0; i < 50; i += 1) {
+      done = await request(server!, 'GET', `/api/cds-system/operator/requests/${id}`, undefined, { 'x-test-cookie-auth': '1' });
+      if (done.body.request.status === 'completed') break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(done!.body.request.status).toBe('completed');
+    expect(done!.body.request.result.details.output).toContain('1 row affected');
+    expect(harness.shell.commands.filter((cmd) => cmd.includes(' mysql '))).toHaveLength(1);
   });
 
   it('runs MySQL DDL and CRUD against the branch-selected database', async () => {

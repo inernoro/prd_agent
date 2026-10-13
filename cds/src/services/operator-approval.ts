@@ -324,7 +324,7 @@ export class OperatorApprovalService {
           details: { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr },
         };
       } else {
-        result = await op.run(ctx);
+        result = await op.run(ctx, req.args);
       }
       req.status = 'completed';
       req.result = result;

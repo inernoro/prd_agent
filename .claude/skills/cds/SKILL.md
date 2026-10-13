@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.16.6
+  version: 0.16.7
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.5 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.16.7 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -78,6 +78,19 @@ $CLI branch set-mode <branchId> <profileId> dev  # 单分支部署模式覆盖�
 # 项目开了「Agent 只允许极速版部署」门禁时，非极速版的 deploy / set-mode / profile deploy-mode 会被 409 agent_prebuilt_only 拒绝，按响应里的可切模式改正后重试。
 # 注：就绪超时是「每服务/每 profile」级（无系统全局默认值），无标签时运行时默认 180s。
 #     改完都需要重新部署生效（$CLI branch deploy <id>）。
+
+# 数据库通道：必须明确项目、分支、资源，不复制数据库密码，不绕过角色门禁。
+$CLI db resources <branchId> --project <projectId>
+$CLI db tables <branchId> <resourceId> --project <projectId>
+$CLI db query <branchId> <resourceId> --project <projectId> --sql-file read.sql
+$CLI db execute <branchId> <resourceId> --project <projectId> --sql-file change.sql
+$CLI db status <requestId>
+# query 复用只读工作台。execute 支持 MySQL/PostgreSQL 多条 SQL，在一条连接内执行。
+# 写入需要目标项目 Key，提交具体 SQL 后由系统所有者在 CDS 批准；机器不能自审自批。
+# pending/approved 返回退出码 3，表示尚未完成；只有 status=completed 才能报告已执行。
+# 批准仅针对该请求的项目、分支、资源和 SQL。不得改成任意 shell 或转向别的数据库。
+# 遇错即停；MySQL 的已提交修改和 DDL 不保证自动回滚，实际修改前确认范围与恢复方式。
+# JSON 隔离预览没有真实数据库；对当前主机的真实数据库工作台执行，不借用别的环境。
 
 # Key 管理
 $CLI global-key list                     # 全局 bootstrap key

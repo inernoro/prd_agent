@@ -4464,6 +4464,8 @@ interface DbQueryResult {
   columns: string[];
   rows: string[][];
   rowCount: number;
+  output?: string;
+  truncated?: boolean;
 }
 
 interface WorkbenchCommandResult {
@@ -5800,7 +5802,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       });
       setResultState({ status: 'ok', result });
       setResultMode(result.columns.length > 0 ? 'table' : 'output');
-      if (!readOnly) {
+      if (!readOnly && !result.output) {
         void loadTables();
         if (selectedTable) void loadTablePreview(selectedTable);
       }
@@ -5885,6 +5887,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   执行
                 </Button>
               </div>
+              <p className="shrink-0 px-3 pt-2 text-[0.6875rem] text-muted-foreground">多条修改 SQL 可一起执行，使用同一连接；遇错停止，已提交的修改不会自动回滚。</p>
               <div
                 className="min-h-0 flex-1 overflow-y-auto p-3"
                 style={{ overscrollBehavior: 'contain' }}
@@ -5983,7 +5986,9 @@ function DbResultTable({
   const outputText = state.status === 'error'
     ? state.message || '执行失败'
     : state.result
-      ? state.result.columns.length > 0
+      ? state.result.output
+        ? `${state.result.output}${state.result.truncated ? '\n输出已截断。' : ''}`
+        : state.result.columns.length > 0
         ? `返回 ${state.result.rowCount} 行。`
         : `执行完成，返回 ${state.result.rowCount} 行。`
       : emptyLabel;

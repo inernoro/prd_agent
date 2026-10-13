@@ -49,7 +49,8 @@ import {
 } from '../services/preview-entrypoints.js';
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
-import { normalizeReadOnlyStatement, normalizeWriteStatement } from '../services/sql-statement-policy.js';
+import { normalizeReadOnlyStatement, normalizeConsoleWrite, isSqlScript } from '../services/sql-statement-policy.js';
+import { operatorOpRegistry } from '../services/operator-console.js';
 import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
 import {
   branchDbAccountName,
@@ -6548,6 +6549,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     columns: string[];
     rows: string[][];
     rowCount: number;
+    output?: string;
+    truncated?: boolean;
   }
 
   interface SqlTableRef {
@@ -6682,7 +6685,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }
 
   function normalizeDangerousWriteSql(sql: string, runtime: SqlDataRuntime): string {
-    return normalizeWriteStatement(sql, runtime);
+    return normalizeConsoleWrite(sql, runtime);
   }
 
   async function runMysqlDataQuery(service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
@@ -6694,7 +6697,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
     }
     const result = await shell.exec(
-      `docker exec ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --batch --raw --default-character-set=utf8mb4 ${shq(creds.database)} -e ${shq(sql)}`,
+      `docker exec ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --batch --raw --binary-mode${isSqlScript(sql, 'mysql') ? ' --verbose --verbose' : ''} --default-character-set=utf8mb4 ${shq(creds.database)} -e ${shq(sql)}`,
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
@@ -6708,7 +6711,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         adminAvailable: mysqlAdminAvailable(service, branch),
       }));
     }
-    return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
+    const output = maskTextSecrets(result.stdout, creds.secrets);
+    return isSqlScript(sql, 'mysql')
+      ? { columns: [], rows: [], rowCount: 0, output: output.slice(0, 256 * 1024) || 'SQL 脚本执行完成。', truncated: output.length > 256 * 1024 }
+      : parseDbTsv(output);
   }
 
   function postgresDatabaseForBranch(service: InfraService, branch: BranchEntry): string {
@@ -6742,7 +6748,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
     }
     const result = await shell.exec(
-      `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -A -F ${shq('\t')} -P footer=off -X -q -c ${shq(sql)}`,
+      `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -A -F ${shq('\t')} -P footer=off -v ON_ERROR_STOP=1 -X${isSqlScript(sql, 'postgres') ? '' : ' -q'} -c ${shq(sql)}`,
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
@@ -6753,7 +6759,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         rawError: maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets),
       }));
     }
-    return parseDbTsv(maskTextSecrets(result.stdout, creds.secrets));
+    const output = maskTextSecrets(result.stdout, creds.secrets);
+    return isSqlScript(sql, 'postgres')
+      ? { columns: [], rows: [], rowCount: 0, output: output.slice(0, 256 * 1024) || 'SQL 脚本执行完成。', truncated: output.length > 256 * 1024 }
+      : parseDbTsv(output);
   }
 
   async function runSqlDataQuery(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000): Promise<DbDataQueryResult> {
@@ -9432,6 +9441,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
+  });
+
+  operatorOpRegistry.register({
+    id: 'database.sql',
+    name: '执行项目数据库 SQL',
+    description: '项目 Agent 提交明确的项目、分支、数据库资源与 SQL；系统所有者批准后在同一连接执行，失败即停止。',
+    danger: 'destructive',
+    confirmText: '确认执行数据库 SQL',
+    estimatedSeconds: 10,
+    run: async ({ actor, log }, args) => {
+      const branch = stateService.getBranch(String(args?.branchId || ''));
+      if (!branch || !args?.projectId || branch.projectId !== args.projectId) throw new Error('项目与分支不匹配，未执行 SQL。');
+      const resource = (await getBranchResourceSnapshot(branch)).find((item) => item.id === args?.resourceId);
+      if (!resource || resource.source !== 'infra' || resource.kind !== 'database') throw new Error('数据库资源不存在，未执行 SQL。');
+      const runtime = resourceRuntimeKey(resource.runtime);
+      if (runtime !== 'mysql' && runtime !== 'postgres') throw new Error('此通道当前支持 MySQL / PostgreSQL。');
+      const sql = normalizeConsoleWrite(String(args?.sql || ''), runtime);
+      const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+      log('info', `在 ${resource.displayName} 执行已批准的 SQL`);
+      try {
+        const result = await runSqlDataQuery(runtime, service, branch, sql, 120_000);
+        stateService.recordDestructiveOp({ type: 'purge-database', projectId: branch.projectId, summary: `已批准数据库 SQL：${resource.displayName}`, triggeredBy: actor });
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'success', note: '执行已批准的数据库 SQL' });
+        stateService.save();
+        return { summary: `${resource.displayName} SQL 执行完成`, details: result as unknown as Record<string, unknown> };
+      } catch (error) {
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'failed', note: `已批准 SQL 执行失败：${(error as Error).message}` });
+        stateService.save();
+        throw error;
+      }
+    },
   });
 
   router.get('/branches/:id/resources/:resourceId/data/tables', async (req, res) => {

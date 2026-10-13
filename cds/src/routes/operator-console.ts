@@ -14,6 +14,7 @@ import { operatorOpRegistry, type OperatorOpContext } from '../services/operator
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { operatorApprovalService } from '../services/operator-approval.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
+import { assertProjectAccess } from './projects.js';
 
 export function createOperatorConsoleRouter(deps: {
   stateService: StateService;
@@ -77,6 +78,23 @@ export function createOperatorConsoleRouter(deps: {
     if (!opId || typeof opId !== 'string') {
       res.status(400).json({ ok: false, error: 'opId 必填' });
       return;
+    }
+    if (opId === 'database.sql') {
+      const branch = deps.stateService.getBranch(String(args?.branchId || ''));
+      if (!branch || !args?.projectId || branch.projectId !== args.projectId || !args?.resourceId || !args?.sql) {
+        res.status(400).json({ error: '必须提供匹配的项目、分支、数据库资源与 SQL。' });
+        return;
+      }
+      if (typeof args.sql !== 'string' || args.sql.length > 100_000) {
+        res.status(400).json({ error: 'SQL 必须为文本且不能超过 100KB。' });
+        return;
+      }
+      if (!isHumanSystemOwner(req) && !(req as Request & { cdsProjectKey?: unknown }).cdsProjectKey) {
+        res.status(403).json({ error: 'database_project_key_required', message: '数据库请求需要目标项目的 Agent Key；全局密钥不能申请数据库写入。' });
+        return;
+      }
+      const mismatch = assertProjectAccess(req as any, branch.projectId || 'default');
+      if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
     }
     const actor =
       (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
@@ -236,7 +254,7 @@ export function createOperatorConsoleRouter(deps: {
           details: { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr },
         };
       } else {
-        result = await op.run(ctx);
+        result = await op.run(ctx, args);
       }
       const durationMs = Date.now() - startedAt;
       send('done', { opId: op.id, durationMs, ...result });

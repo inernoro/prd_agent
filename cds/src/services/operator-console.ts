@@ -37,7 +37,7 @@ export interface OperatorOpDef {
   /** 估时秒数,UI 显示进度提示 */
   estimatedSeconds?: number;
   /** 执行函数;throw 视为失败 */
-  run: (ctx: OperatorOpContext) => Promise<{ summary: string; details?: Record<string, unknown> }>;
+  run: (ctx: OperatorOpContext, args?: Record<string, unknown>) => Promise<{ summary: string; details?: Record<string, unknown> }>;
 }
 
 class OperatorOpRegistry {

@@ -12,6 +12,8 @@ import {
   normalizeReadOnlyStatement,
   stripSqlComments,
   normalizeWriteStatement,
+  normalizeConsoleWrite,
+  isSqlScript,
 } from '../../src/services/sql-statement-policy.js';
 import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation.js';
 
@@ -238,6 +240,26 @@ describe('工作台 SQL 准入：该拦的仍拦', () => {
   });
 });
 
+describe('执行框的批量修改', () => {
+  it('多条修改与事务在同一脚本放行，单独事务仍拒绝', () => {
+    for (const dialect of ['mysql', 'postgres'] as const) {
+      const sql = 'BEGIN; UPDATE demo SET n=1; UPDATE demo SET n=2; COMMIT;';
+      expect(normalizeConsoleWrite(sql, dialect)).toBe(sql.slice(0, -1));
+      expect(() => normalizeConsoleWrite('BEGIN', dialect)).toThrow();
+    }
+  });
+  it('字面量和注释内的分号不产生第二条语句', () => {
+    const sql = "UPDATE demo SET name='a;b' /* ; */";
+    expect(isSqlScript(sql, 'mysql')).toBe(false);
+    expect(normalizeConsoleWrite(sql, 'mysql')).toBe(sql);
+  });
+  it('批量语句不能绕过宿主逃逸与客户端命令边界', () => {
+    for (const sql of ["UPDATE demo SET n=1; SELECT 1 INTO OUTFILE '/tmp/data'", 'UPDATE demo SET n=1; \\! id', 'UPDATE demo SET n=1; source /tmp/evil.sql']) {
+      expect(() => normalizeConsoleWrite(sql, 'mysql')).toThrow();
+    }
+  });
+});
+
 describe('前后端判据不许漂移', () => {
   function frontendHeads(): string[] {
     const source = fs.readFileSync(path.join(CDS_ROOT, 'web/src/components/BranchDetailDrawer.tsx'), 'utf8');
@@ -254,7 +276,7 @@ describe('前后端判据不许漂移', () => {
     const source = fs.readFileSync(path.join(CDS_ROOT, 'src/routes/branches.ts'), 'utf8');
     // 必须把方言一起传下去：不传就用「# 不是注释」的兜底，MySQL 的真注释会被当代码
     expect(source).toMatch(/return normalizeReadOnlyStatement\(sql, runtime\);/);
-    expect(source).toMatch(/return normalizeWriteStatement\(sql, runtime\);/);
+    expect(source).toMatch(/return normalizeConsoleWrite\(sql, runtime\);/);
     expect(source, '路由里不应再自己维护一份语句头白名单')
       .not.toContain("['select', 'show', 'describe', 'desc', 'explain'].includes(head)");
   });
