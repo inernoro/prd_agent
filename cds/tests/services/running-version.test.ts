@@ -33,6 +33,10 @@ describe('运行版本只由真实产物证明', () => {
     expect(runningCommitSha(b, undefined, 'web')).toBe(A);
     expect(runningCommitSha(b, undefined, 'api')).toBe(B);
   });
+  it('托管应用的构建指纹不被当成 Git 提交', () => {
+    const b = branch({ services: { web: { profileId: 'web', status: 'running', deployedImage: `cds-managed/lab-web:sha-${A}` } } });
+    expect(branchVersionFacts(b)).toEqual({ runningCommitSha: null, targetCommitSha: B });
+  });
   it('停止后保留历史镜像不代表还在运行，缺证据保持未知', () => {
     const b = branch(); b.services.web.status = 'stopped';
     expect(runningCommitSha(b, version)).toBeUndefined();

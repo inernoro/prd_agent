@@ -1404,7 +1404,7 @@ export function OverviewPanel({
     lifecycle,
     running,
     ciImageStatus,
-    pendingVersion: Boolean(targetCommitSha && targetCommitSha !== commitSha),
+    pendingVersion: Boolean(commitSha && targetCommitSha && targetCommitSha !== commitSha),
     serviceCount: services.length,
     readyCount: okCount,
     badCount: badServices.length,
