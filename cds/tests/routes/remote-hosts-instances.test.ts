@@ -1769,6 +1769,12 @@ describe('Remote hosts project instances route', () => {
     await startServer({
       config: { portStart: 19000 },
       containerService: {
+        async inspectOwnedRuntime(_entry, _profileId, runtime) {
+          return { ...runtime, containerId: 'a'.repeat(64), networkName: runtime.networkName || 'old-sdk-network' };
+        },
+        async connectReplacementPeer() {},
+        async removeOwnedRuntime() {},
+        async cleanupUnusedReplacementNetworks() {},
         async runService(branch, profile, service, onOutput, customEnv) {
           containerCalls.push({ kind: 'runService', branch, profile, service: { ...service }, customEnv });
           expect(branch.worktreePath).toBe(path.dirname(process.cwd()));
@@ -1851,6 +1857,36 @@ describe('Remote hosts project instances route', () => {
       'runService',
       'waitForReadiness',
     ]);
+  });
+
+  it('较新的受管运行更新已就绪时，迟到旧更新不得覆盖其服务记录', async () => {
+    let release!: () => void, started!: () => void, calls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    await startServer({ config: { portStart: 19000 }, containerService: {
+      async runService() { calls++; if (calls === 1) { started(); await gate; } },
+      async waitForReadiness() { return true; },
+      async inspectOwnedRuntime(_entry, _profile, runtime) { return runtime; },
+      async connectReplacementPeer() {}, async removeOwnedRuntime() {}, async cleanupUnusedReplacementNetworks() {},
+    } });
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const first = request(server, 'POST', `/api/projects/${projectId}/runtime-capacity/reconcile`, longToken,
+      { apply: true, liveApply: true, force: true });
+    try {
+      await entered;
+      const newer = await request(server, 'POST', `/api/projects/${projectId}/runtime-capacity/reconcile`, longToken,
+        { apply: true, liveApply: true, force: true });
+      expect(newer.body.liveApply?.status).toBe('running');
+      const branch = stateService.findBranchByProjectAndName(projectId, 'cds-managed-runtime')!;
+      const latest = Object.values(branch.services)[0];
+      release();
+      const older = await first;
+      expect(older.body.liveApply?.status).toBe('superseded');
+      expect(Object.values(branch.services)[0]).toBe(latest);
+      expect(latest.status).toBe('running');
+      expect(branch.status).toBe('running');
+      expect(calls).toBe(2);
+    } finally { release(); await first; }
   });
 
   it('does not expose branch services for regular projects through instance discovery', async () => {

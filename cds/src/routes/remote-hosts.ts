@@ -22,6 +22,8 @@
  * 命名规范：路径走 `/api/cds-system/*` 前缀（系统级），符合
  * .claude/rules/scope-naming.md §3。
  */
+import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { prepareServiceReplacement, reserveServiceReplacements, replacementLaunchEntry, preserveReplacementNames, commitServiceReplacements } from '../services/service-replacement.js';
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -70,7 +72,7 @@ const AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS = [0, 250, 750] as const;
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
   config?: Pick<CdsConfig, 'portStart'>;
   shell?: IShellExecutor;
   agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
@@ -2332,7 +2334,7 @@ interface CdsManagedRuntimeReconcileOptions {
   force?: boolean;
   hostPort?: number;
   now: string;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
   portStart?: number;
 }
 
@@ -2482,13 +2484,15 @@ async function reconcileCdsManagedRuntimeCapacity(
 
   const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
   const existingService = branch?.services?.[profileId];
+  if (options.liveApply && existingService) preserveServingRuntime(existingService);
   const hostPort = options.hostPort
     || existingService?.hostPort
     || (options.liveApply && options.portStart ? stateService.allocatePort(options.portStart) : 0);
   const hostPortReady = !options.liveApply && hostPort ? await probeCdsManagedRuntimeHostPort(hostPort) : false;
   const initialServiceStatus = hostPortReady ? 'running' : 'starting';
-  const initialBranchStatus = hostPortReady ? 'running' : 'idle';
+  const initialBranchStatus = existingService?.servingRuntime && options.liveApply ? 'building' : hostPortReady ? 'running' : 'idle';
   const serviceState: ServiceState = {
+    ...existingService,
     profileId,
     containerName,
     hostPort,
@@ -2645,22 +2649,42 @@ async function startCdsManagedRuntimeContainer(
 
   const logs: string[] = [];
   const startedAt = Date.now();
+  const isCurrent = () => stateService.getBranch(branch.id) === branch && branch.services[profile.id] === serviceState
+    && !['stopped', 'stopping'].includes(branch.status) && !['stopped', 'stopping'].includes(serviceState.status);
+  const assertCurrent = () => { if (!isCurrent()) throw new Error('服务更新已由较新的操作接管'); };
+  assertCurrent();
+  preserveServingRuntime(serviceState);
+  reserveServiceReplacements({ entry: branch, profileIds: [profile.id], state: stateService, portStart: serviceState.hostPort });
   serviceState.status = 'building';
   branch.status = 'building';
   branch.lastDeployAt = options.now;
   stateService.save();
 
   try {
+    const target = await prepareServiceReplacement({ entry: branch, service: serviceState, profile, state: stateService,
+      container: options.containerService, portStart: serviceState.hostPort, assertCurrent });
+    if (target !== serviceState) {
+      serviceState.pendingRuntime = runtimeRef(target);
+      stateService.save([{ kind: 'branches', id: branch.id }]); await stateService.flush();
+    }
     await options.containerService.runService(
-      branch,
+      replacementLaunchEntry(branch),
       profile,
-      serviceState,
+      target,
       (chunk) => {
         logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
         if (logs.length > 20) logs.splice(0, logs.length - 20);
       },
       stateService.getCustomEnv(project.id),
+      { preserveContainerNames: preserveReplacementNames(branch, target), assertCurrent,
+        onRuntimeCreated: target !== serviceState ? async runtime => {
+          assertCurrent();
+          serviceState.pendingRuntime = runtimeRef(runtime); stateService.save([{ kind: 'branches', id: branch.id }]); await stateService.flush();
+          assertCurrent();
+        } : undefined },
     );
+    assertCurrent();
+    if (target !== serviceState) { Object.assign(serviceState, target); serviceState.pendingRuntime = undefined; }
 
     serviceState.status = 'starting';
     branch.status = 'starting';
@@ -2679,6 +2703,7 @@ async function startCdsManagedRuntimeContainer(
       },
     );
 
+    assertCurrent();
     if (!ready) {
       serviceState.status = 'error';
       serviceState.errorMessage = 'CDS-managed official SDK runtime readiness probe failed';
@@ -2698,6 +2723,7 @@ async function startCdsManagedRuntimeContainer(
 
     serviceState.status = 'running';
     serviceState.errorMessage = undefined;
+    await commitServiceReplacements({ entry: branch, profileIds: [profile.id], state: stateService, container: options.containerService, assertCurrent });
     branch.status = 'running';
     branch.errorMessage = undefined;
     branch.lastAccessedAt = new Date().toISOString();
@@ -2713,6 +2739,8 @@ async function startCdsManagedRuntimeContainer(
       fallbackScope: 'operator-debug-only',
     };
   } catch (err) {
+    if (!isCurrent()) return { requested: true, attempted: true, status: 'superseded',
+      durationMs: Date.now() - startedAt, fallbackScope: 'operator-debug-only' };
     const message = (err as Error).message;
     serviceState.status = 'error';
     serviceState.errorMessage = message;

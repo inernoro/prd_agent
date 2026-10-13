@@ -3,6 +3,7 @@ import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSite
 import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
+import { servingRuntime } from './service-runtime.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
@@ -31,9 +32,10 @@ export function resolveBranchUpstream(branch: BranchEntry | undefined, profileId
   if (!branch) return null;
   const service = profileId
     ? branch.services[profileId]
-    : Object.values(branch.services).find((candidate) => candidate.status === 'running');
-  return service?.status === 'running' && service.hostPort > 0
-    ? `http://127.0.0.1:${service.hostPort}`
+    : Object.values(branch.services).find((candidate) => servingRuntime(candidate));
+  const runtime = servingRuntime(service);
+  return runtime
+    ? `http://127.0.0.1:${runtime.hostPort}`
     : null;
 }
 
@@ -668,7 +670,11 @@ export class ProxyService {
       return;
     }
 
-    if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status)) {
+    const selectedProfileId = forcedProfileId && branch.services[forcedProfileId]
+      ? forcedProfileId : this.detectProfileFromRequest(req, branch);
+    const preservedRuntime = ['building', 'starting', 'running', 'error', 'restarting'].includes(branch.status) && selectedProfileId
+      && branch.services[selectedProfileId]?.servingRuntime ? servingRuntime(branch.services[selectedProfileId]) : null;
+    if (branch.status !== 'running' && !LOADING_BRANCH_STATUSES.has(branch.status) && !preservedRuntime) {
       // 墓碑优先：PR 合并/关闭后分支若**未被自动删除**（仓库保留 PR 分支），停止的
       // BranchEntry 仍在，否则会落到下面的泛化「分支已停止」状态页，永远走不到
       // serveBranchGonePage。先查墓碑：命中则与「分支已删除」走同一套合并/放弃页。
@@ -752,7 +758,7 @@ export class ProxyService {
     }
 
     // Branch-level loading: container creating / building / restarting
-    if (LOADING_BRANCH_STATUSES.has(branch.status)) {
+    if (LOADING_BRANCH_STATUSES.has(branch.status) && !preservedRuntime) {
       this.serveBranchStatusResponse(req, res, branchSlug, branch);
       return;
     }
@@ -775,7 +781,7 @@ export class ProxyService {
     // (prevents CSS MIME type errors from Vite returning HTML before ready).
     if (profileId) {
       const svc = branch.services[profileId];
-      if (svc && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
+      if (svc && !svc.servingRuntime && (svc.status === 'starting' || svc.status === 'building' || svc.status === 'restarting')) {
         this.serveBranchStatusResponse(req, res, branchSlug, branch, profileId);
         return;
       }
@@ -2813,12 +2819,16 @@ ${shouldAutoRefresh ? `;(function(){
     // Same canonical-id fallback as routeToBranch: subdomain hits on
     // non-legacy projects must resolve to `${projectSlug}-${slug}` entries.
     const branch = this.resolveBranchEntry(branchSlug);
-    if (!branch || branch.status !== 'running') {
+    if (!branch) {
       socket.destroy();
       return;
     }
 
     const profileId = this.detectProfileFromRequest(req, branch);
+    if (branch.status !== 'running' && !(profileId && branch.services[profileId]?.servingRuntime
+      && servingRuntime(branch.services[profileId]) && ['building', 'starting', 'restarting', 'error'].includes(branch.status))) {
+      socket.destroy(); return;
+    }
     const upstream = this.resolveUpstream(branch.id, profileId);
     if (!upstream) {
       socket.destroy();

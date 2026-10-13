@@ -15,6 +15,9 @@ import { topoSortLayers } from '../services/topo-sort.js';
 import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError, type BranchOperationTrigger } from '../services/branch-operation-coordinator.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
+import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { prepareServiceReplacement, reserveServiceReplacements, replacementLaunchEntry, preserveReplacementNames, commitServiceReplacements } from '../services/service-replacement.js';
+import { applyDeployReadinessFloor, resolveDeployReadinessFloorSeconds } from '../services/container.js';
 
 export interface ExecutorRouterDeps {
   stateService: StateService;
@@ -248,6 +251,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // 副本仍是上一轮的 running/idle，心跳会把它同步到 master、覆盖 master 派发时钉的 building，UI 在大半个
       // 部署期看不出「构建中」。在拆容器/pull 之前就钉 building，让心跳同步过去的也是 building。
       assertCurrent(); executionStarted = true;
+      for (const service of Object.values(entry.services)) preserveServingRuntime(service);
       entry.status = 'building';
       stateService.save();
 
@@ -260,7 +264,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         if (payloadProfileIds.has(sid)) continue;
         assertCurrent();
         try {
-          await containerService.remove(svc.containerName, {
+          await containerService.removeRuntimeGroup(svc, {
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: sid,
@@ -337,6 +341,9 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       }
       stateService.save();
 
+      reserveServiceReplacements({ entry, profileIds: profilesData.map(profile => profile.id), state: stateService,
+        portStart: config.portStart, operationId: operationId || undefined });
+      await stateService.flush();
       // Build and run each profile
       // PR #498 round-6 review (Bugbot): env scope must follow the
       // entry's actual projectId (preserved as source of truth), not
@@ -381,7 +388,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           // 没有这个字段 — 用 resolvedProjectId（与 entry.projectId 同源）补上。
           const profileWithProject = { ...profile, projectId: resolvedProjectId };
           try {
-            await containerService.runService(entry, profileWithProject, svc, (chunk) => {
+            const target = await prepareServiceReplacement({ entry, service: svc, profile: profileWithProject,
+              state: stateService, container: containerService, portStart: config.portStart,
+              operationId: operationId || undefined, assertCurrent });
+            if (target !== svc) {
+              svc.pendingRuntime = runtimeRef(target);
+              stateService.save([{ kind: 'branches', id: entry.id }]); await stateService.flush();
+            }
+            await containerService.runService(replacementLaunchEntry(entry), profileWithProject, target, (chunk) => {
               sendEvent('log', { profileId: profile.id, chunk });
             }, mergedEnv, {
               requestId: requestId || null,
@@ -391,9 +405,25 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
               sourceCheckout: artifactOnly ? undefined : { path: pullResult.sourcePath, commitSha: pullResult.afterFull },
               actor: actor || 'executor',
               trigger: trigger || 'executor-deploy',
+              preserveContainerNames: preserveReplacementNames(entry, target),
+              onRuntimeCreated: target !== svc ? async runtime => {
+                assertCurrent(); svc.pendingRuntime = runtimeRef(runtime);
+                stateService.save([{ kind: 'branches', id: entry.id }]); await stateService.flush(); assertCurrent();
+              } : undefined,
             });
 
             assertCurrent();
+            if (target !== svc) { Object.assign(svc, target); svc.pendingRuntime = undefined; }
+            svc.status = 'starting';
+            stateService.save([{ kind: 'branches', id: entry.id }]); await stateService.flush();
+            const signalReady = !profile.startupSignal || await containerService.waitForStartupSignal(svc.containerName, profile.startupSignal);
+            const ready = signalReady && await containerService.waitForReadiness(svc.hostPort,
+              applyDeployReadinessFloor(profile.readinessProbe, resolveDeployReadinessFloorSeconds(
+                stateService.getState().deployReadinessFloorSeconds,
+                stateService.getProject(entry.projectId || resolvedProjectId)?.deployReadinessFloorSeconds)),
+              undefined, undefined, svc.containerName);
+            assertCurrent();
+            if (!ready) throw new Error('候选服务未通过就绪检查，保留旧入口');
             svc.status = 'running';
             svc.errorMessage = undefined;
             sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}` });
@@ -417,6 +447,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
       // Update overall status
       assertCurrent();
+      await commitServiceReplacements({ entry, profileIds: profilesData.map(profile => profile.id), state: stateService,
+        container: containerService, assertCurrent });
       const statuses = Object.values(entry.services).map(s => s.status);
       // 无服务(期望清单为空 / 已全部收敛拆除) → idle，与 master 端空清单清理一致（Bugbot Medium）：
       // 否则空 services 会落到 'error'，心跳同步把一次成功的「清空」误标为失败。
@@ -492,7 +524,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         // （Codex P1，与 coolFn / auto-lifecycle / 手动 /stop 同款修复）。
         svc.status = 'stopping';
         try {
-          await containerService.stop(svc.containerName, '执行器停止（保留容器，可秒级唤醒）', {
+          await containerService.stopRuntimeGroup(svc, '执行器停止（保留容器，可秒级唤醒）', {
             kind: 'cds-stop',
             projectId: entry.projectId,
             branchId: entry.id,
@@ -577,7 +609,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     try {
       for (const svc of Object.values(entry.services)) {
         try {
-          await containerService.remove(svc.containerName, {
+          await containerService.removeRuntimeGroup(svc, {
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -596,7 +628,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // 分支专属网(cds-br-<id>)是在**本执行器**的 docker host 上创建的;主节点的 finalizeBranchDelete
       // 只清主节点那张(本地不存在=no-op),清不到这里。必须由执行器自己删,否则 worker 节点上隔离网
       // 随分支删除不断堆积(Bugbot Medium,2026-06-29)。容器上面已 remove,此时网可安全删;best-effort。
-      try { await containerService.removeBranchNetwork(branchId); } catch { /* ok */ }
+      try { await containerService.removeBranchNetwork(branchId, entry.replacementNetworks); } catch { /* ok */ }
       stateService.removeLogs(branchId);
       stateService.removeBranch(branchId);
       stateService.save();

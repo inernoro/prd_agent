@@ -1,3 +1,6 @@
+import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
+import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
 import { serveContainerLogStream } from '../services/container-log-stream-response.js';
 import http from 'node:http';
@@ -1797,14 +1800,22 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
     onOutput: (line) => options.onOutput?.(`${line}\n`),
   });
   if (dbInit.kind === 'refused') options.onOutput?.(`── 分支独立库未做时间点克隆：${dbInit.reason} ──\n`);
+  const target = await prepareServiceReplacement({ entry: options.entry, service: options.service,
+    profile: options.profile, state: options.stateService, container: options.containerService,
+    portStart: options.config.portStart, operationId: options.operationId ?? undefined, assertCurrent: options.assertCurrent });
+  const replacing = target !== options.service;
   const maxAttempts = 4;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       options.assertCurrent?.(`before-run-${options.profile.id}`);
+      if (replacing) {
+        options.service.pendingRuntime = runtimeRef(target);
+        options.stateService.save([{ kind: 'branches', id: options.entry.id }]); await options.stateService.flush();
+      }
       await options.containerService.runService(
-        options.entry,
+        replacing ? replacementLaunchEntry(options.entry) : options.entry,
         options.profile,
-        options.service,
+        target,
         options.onOutput,
         options.customEnv,
         {
@@ -1813,6 +1824,13 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           actor: options.actor ?? null,
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
+          preserveContainerNames: replacing ? preserveReplacementNames(options.entry, target) : undefined,
+          onRuntimeCreated: replacing ? async runtime => {
+            options.assertCurrent?.('before created runtime receipt');
+            options.service.pendingRuntime = runtimeRef(runtime);
+            options.stateService.save([{ kind: 'branches', id: options.entry.id }]); await options.stateService.flush();
+            options.assertCurrent?.('after created runtime receipt');
+          } : undefined,
           sourceCheckout: options.sourceCheckout,
           onSourceCompileFallback: options.onSourceCompileFallback,
           ledgerImages: options.ledgerImages,
@@ -1822,14 +1840,24 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           artifactCommitSha: options.artifactCommitSha,
         },
       );
+      options.assertCurrent?.(`after candidate start ${options.profile.id}`);
+      if (replacing) {
+        Object.assign(options.service, target); options.service.pendingRuntime = undefined;
+        options.stateService.save([{ kind: 'branches', id: options.entry.id }]); await options.stateService.flush();
+      }
       return;
     } catch (err) {
+      if (replacing && options.service.pendingRuntime?.containerName === target.containerName) {
+        options.service.pendingRuntime = runtimeRef(target);
+        options.stateService.save([{ kind: 'branches', id: options.entry.id }]);
+      }
       if (!isPortConflictError(err) || attempt === maxAttempts) throw err;
-      const oldPort = options.service.hostPort;
+      const oldPort = target.hostPort;
       const listeningPorts = await collectListeningPorts(options.shell);
       listeningPorts.add(oldPort);
       const newPort = options.stateService.allocatePort(options.config.portStart, listeningPorts);
-      options.service.hostPort = newPort;
+      target.hostPort = newPort;
+      if (replacing) options.service.pendingRuntime = runtimeRef(target);
       options.service.errorMessage = undefined;
       options.stateService.save();
       options.serverEventLogStore?.record({
@@ -5917,7 +5945,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const [profileId, svc] of Object.entries(branch.services || {})) {
           if (!svc.containerName) continue;
           assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before ${profileId}`);
-          await containerService.remove(svc.containerName, {
+          await containerService.removeRuntimeGroup(svc, {
             projectId: branch.projectId,
             branchId: branch.id,
             profileId,
@@ -5950,7 +5978,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         assertBranchOperationCurrent(branchOperationLease, `cleanup-stopped before remove ${branch.id}`);
         // 删分支即删分支网：隔离的 cds-br-* 网随删，避免在 worker/host 堆积（Codex P2「Remove branch
         // networks from all cleanup flows」——此前仅 DELETE 路径删网，批量清理/孤儿/恢复出厂都漏了）。
-        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
+        await containerService.removeBranchNetwork(branch.id, branch.replacementNetworks).catch(() => { /* best-effort */ });
         stateService.removeLogs(branch.id);
         stateService.removeBranch(branch.id);
         removed.push({ branchId: branch.id, branch: branch.branch, projectId: branch.projectId });
@@ -12199,7 +12227,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
       // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
       // 下面 removeBranch 一并清除,无需单独处理。
-      await containerService.removeBranchNetwork(id).catch(() => { /* best-effort */ });
+      await containerService.removeBranchNetwork(id, entry.replacementNetworks).catch(() => { /* best-effort */ });
       stateService.removeLogs(id);
       stateService.removeBranch(id);
       stateService.save();
@@ -12396,7 +12424,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         sendSSE(res, 'step', { step: 'stop', status: 'running', title: `正在停止 ${svc.containerName}...` });
         try {
-          await containerService.remove(svc.containerName, {
+          await containerService.removeRuntimeGroup(svc, {
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -12887,7 +12915,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             appendDeploymentRunEvent(cleanupRun?.id, startingEvent);
             sendSSE(res, 'step', startingEvent);
             try {
-              await containerService.remove(svc.containerName, {
+              await containerService.removeRuntimeGroup(svc, {
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: sid,
@@ -13306,6 +13334,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         if (svc.errorMessage) svc.errorMessage = undefined;
       }
+      for (const service of Object.values(entry.services)) preserveServingRuntime(service);
       const __prevStatus = entry.status;
       entry.status = 'building';
       entry.lastAccessedAt = new Date().toISOString();
@@ -13705,6 +13734,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
+      reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+        portStart: config.portStart, operationId: branchOperationLease?.operationId });
+      await stateService.flush();
       // ── Execute layer by layer (parallel within each layer) ──
       for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
         const layer = layers[layerIdx];
@@ -14021,6 +14053,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   if (line.trim()) logDeploy(id, line);
                 }
               });
+              if (ready) buildSlot?.release();
             }
 
             // Always run the port-level readiness probe (even after a
@@ -14162,7 +14195,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 让「移除即下掉」成立(分支级额外服务的对称半:加能起、删能下)。此前只对 error 态打 warning、
       // 容器残留(2026-06-29 实测:清掉额外服务后 demo-extra 容器仍在跑)。best-effort:remove 失败也
       // 继续删条目,避免卡住整次部署;profiles 非空已由上方 400 守卫保证,不会误删全部。
-      if (zombieServices.length > 0) {
+      if (zombieServices.length > 0 && activeServices.every(([, service]) => service.status === 'running')) {
         const zActor = resolveActorFromRequest(req);
         const zTrigger = triggerFromRequest(req);
         for (const [sid, svc] of zombieServices) {
@@ -14180,7 +14213,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             timestamp: new Date().toISOString(),
           });
           try {
-            await containerService.remove(svc.containerName, {
+            await containerService.removeRuntimeGroup(svc, {
               projectId: entry.projectId,
               branchId: entry.id,
               profileId: sid,
@@ -14202,6 +14235,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
         stateService.save();
       }
+      await commitServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+        container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
       const hasStarting = activeStatuses.some((s) => s === 'starting');
@@ -14832,6 +14867,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       const svc = entry.services[profile.id];
+      preserveServingRuntime(svc);
+      reserveServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
+        portStart: config.portStart, operationId: branchOperationLease?.operationId });
       svc.status = 'building';
       // 分支本身不在运行（停止 / 出错后重试）时，聚合状态跟着进入部署中间态，结束时照常重算。
       // 否则卡片只能从服务状态去猜：分支 idle 却有服务在探测、分支 error 却有服务在重建，
@@ -15047,6 +15085,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
           });
           ready = signalReady;
+          if (signalReady) buildSlot?.release();
         }
         if (!profile.startupSignal || ready) {
           advanceDeploymentRun(deploymentRun?.id, 'verifying', {
@@ -15114,6 +15153,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         deployQueueTracker.dispose();
       }
 
+      await commitServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
+        container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       // Update overall status
       assertBranchOperationCurrent(branchOperationLease, 'before-profile-deploy-finalize');
       const statuses = Object.values(entry.services).map(s => s.status);
@@ -15571,7 +15612,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         assertBranchOperationCurrent(branchOperationLease, `before-stop-${svc.profileId}`);
         try {
-          await containerService.stop(svc.containerName, stopAttribution.reason, {
+          await containerService.stopRuntimeGroup(svc, stopAttribution.reason, {
             kind: stopIntentKindFrom(stopAttribution.source),
             projectId: entry.projectId,
             branchId: entry.id,
@@ -18682,7 +18723,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             assertBranchOperationCurrent(branchOperationLease, `delete build profile before ${entry.id}/${removedProfileId}`);
             if (svc?.containerName) {
               try {
-                await containerService.remove(svc.containerName, {
+                await containerService.removeRuntimeGroup(svc, {
                   projectId: entry.projectId,
                   branchId: entry.id,
                   profileId: removedProfileId,
@@ -20166,7 +20207,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'cleanup before state delete');
           // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
-          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
+          await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           removedCount += 1;
@@ -20367,7 +20408,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // State mutations are serial (state is in-memory, no async needed)
       for (const entry of cleanedOrphans) {
         // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
-        await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
+        await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
         stateService.removeLogs(entry.id);
         stateService.removeBranch(entry.id);
       }
@@ -20570,7 +20611,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch { /* ok */ }
           assertBranchOperationCurrent(branchOperationLease, 'factory reset before state delete');
           // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
-          await containerService.removeBranchNetwork(entry.id).catch(() => { /* best-effort */ });
+          await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
           stateService.removeLogs(entry.id);
           stateService.removeBranch(entry.id);
           } catch (err) {
@@ -22105,6 +22146,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
+        for (const service of Object.values(entry.services)) preserveServingRuntime(service);
         entry.status = 'building';
         // 本轮（首次 clone 后）构建起点锚点，供预览等待页 ETA（见 BranchEntry.lastDeployStartedAt）。
         entry.lastDeployStartedAt = new Date().toISOString();
@@ -22131,6 +22173,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         }
         stateService.save();
 
+        reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+          portStart: config.portStart });
+        await stateService.flush();
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
 
         for (const profile of profiles) {
@@ -22182,6 +22227,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           }
         }
 
+        await commitServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService, container: containerService });
         const hasError = Object.values(entry.services).some(s => s.status === 'error');
         entry.status = hasError ? 'error' : 'running';
         stateService.save();
@@ -25962,6 +26008,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       build,
       eventLoop,
       buildGate: { active: gate.active, queued: gate.queued, max: gate.max, load: gate.load },
+      deploymentPhases: deploymentPhaseBudget.snapshot(),
+      deploymentMemoryReservations: deploymentPhaseBudget.memorySnapshot(),
       warnings,
       generatedAt: new Date().toISOString(),
     });

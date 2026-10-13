@@ -29,6 +29,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { StateService } from './state.js';
+import { servingRuntime } from './service-runtime.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
@@ -218,7 +219,10 @@ export class ForwarderRoutePublisher {
       // 这时删除 host route 会让用户看到 unknown-host 503。
       const routableServices: Array<{ profileId: string; hostPort: number; status: string }> = [];
       for (const [profileId, svc] of Object.entries(branch.services ?? {})) {
-        if (svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status))) {
+        const active = svc?.servingRuntime ? servingRuntime(svc) : null;
+        if (active) {
+          routableServices.push({ profileId, hostPort: active.hostPort, status: 'running' });
+        } else if (svc?.hostPort && ROUTABLE_SERVICE_STATUSES.has(String(svc.status))) {
           routableServices.push({ profileId, hostPort: svc.hostPort, status: String(svc.status) });
         }
       }

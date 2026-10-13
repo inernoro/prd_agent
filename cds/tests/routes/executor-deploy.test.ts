@@ -162,6 +162,15 @@ describe('Executor /exec/deploy', () => {
       stdout: /^[0-9a-f]{7,40}$/i.test(match[1]) ? match[1].padEnd(40, '0') : 'a'.repeat(40), stderr: '', exitCode: 0,
     }));
     mock.addResponsePattern(/git rev-parse HEAD/, () => ({ stdout: 'a'.repeat(40), stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker inspect --format '\{\{.Id\}\}' '[a-f0-9]{64}'$/, () => ({ stdout: '', stderr: 'No such object: removed-owned-id', exitCode: 1 }));
+    mock.addResponsePattern(/docker inspect.*"running".* '([^']+)'$/, match => {
+      for (const entry of stateService.getAllBranches()) for (const [profileId, service] of Object.entries(entry.services)) {
+        if ([service.containerName, service.servingRuntime?.containerName, service.containerId, service.servingRuntime?.containerId].includes(match[1])) return {
+          stdout: JSON.stringify({ id: 'a'.repeat(64), running: true, branch: entry.id, project: entry.projectId || '_unknown',
+            profile: profileId, networks: { [service.networkName || 'old-network']: { Aliases: [profileId] } } }), stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: 'No such container', exitCode: 1 };
+    });
     // Make every git/docker/mkdir/etc shell-out succeed silently.
     mock.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 

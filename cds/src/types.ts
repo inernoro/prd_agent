@@ -923,6 +923,10 @@ export interface BranchEntry {
   worktreePath: string;
   /** Per-profile container state */
   services: Record<string, ServiceState>;
+  /** 当前部署候选的独立网络，不改变既有服务网络。 */
+  replacementNetwork?: string;
+  replacementOperationId?: string;
+  replacementNetworks?: string[];
   /**
    * Overall branch status.
    * `restarting` is a transient state entered when a container is being
@@ -1264,11 +1268,28 @@ export interface BranchEntry {
 }
 
 /** State of a single service (one build profile instance) within a branch */
+/** 可切换入口的实际运行身份；不保存环境变量或构建日志。 */
+export interface ServiceRuntimeRef {
+  containerName: string;
+  hostPort: number;
+  containerId?: string;
+  creationIssued?: boolean;
+  networkName?: string;
+  connectedNetworks?: string[];
+  aliasNetworks?: string[];
+  deployedMode?: string;
+  deployedImage?: string;
+  sourceCheckoutPath?: string;
+  sourceCommitSha?: string;
+}
+
 export interface ServiceState {
   profileId: string;
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
+  containerId?: string;
+  creationIssued?: boolean;
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
@@ -1286,6 +1307,15 @@ export interface ServiceState {
   sourceCheckoutPath?: string;
   /** 部署专用目录的实际完整 Git 提交。 */
   sourceCommitSha?: string;
+  networkName?: string;
+  connectedNetworks?: string[];
+  aliasNetworks?: string[];
+  /** 实际继续服务的已确认版本；切换后保存新版本身份，主动停止时清除。 */
+  servingRuntime?: ServiceRuntimeRef;
+  /** 已保留端口和身份的新容器；不会成为公网入口。 */
+  pendingRuntime?: ServiceRuntimeRef;
+  /** 仍被同网的旧服务使用的版本；实际占用继续纳入容量。 */
+  retainedRuntimes?: ServiceRuntimeRef[];
 }
 
 /** 分支部署的触发来源。 */

@@ -2,6 +2,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { worktreePathActivity } from './worktree-path-activity.js';
+import { serviceRuntimeRefs } from './service-runtime.js';
 import type {
   DbLedgerEntry,
   CdsState,
@@ -1489,7 +1490,7 @@ export class StateService {
     const usedPorts = new Set<number>();
     for (const b of Object.values(this.state.branches)) {
       for (const svc of Object.values(b.services)) {
-        if (svc.hostPort) usedPorts.add(svc.hostPort);
+        for (const runtime of serviceRuntimeRefs(svc)) if (runtime.hostPort) usedPorts.add(runtime.hostPort);
       }
       // 复制集成员/专用隔离实例的端口同样保留（Codex 第二十五轮 P2）：stopped/
       // provisioning 成员不在 ss 可见集合里，分配序列绕回后会把它们保留的

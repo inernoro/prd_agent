@@ -4,6 +4,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createHash } from 'node:crypto';
+import { serviceRuntimeRefs } from '../../src/services/service-runtime.js';
 import { execFileSync } from 'node:child_process';
 import {
   clearRunningServiceErrorMessages,
@@ -130,6 +132,10 @@ async function request(
   });
 }
 
+function isAppLaunchCommand(command: string): boolean {
+  return /^(?:docker run -d|docker create) /.test(command) && command.includes('--label cds.type=app');
+}
+
 function seedLegacyDefaultProject(stateService: StateService): void {
   const now = new Date().toISOString();
   stateService.addProject({
@@ -215,9 +221,32 @@ describe('Branch Routes', () => {
     // 分支级网络隔离（默认开）：runService 会 ensure 分支网 + 跑后 network connect 共享网。
     mock.addResponsePattern(/docker network create/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    const cid = (name: string) => createHash('sha256').update(name).digest('hex');
+    const removed = new Set<string>();
+    mock.addResponsePattern(/docker create .*--label cds.type=app/, match => ({ stdout: cid(/--name ([^ ]+)/.exec(match[0])![1]), stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/^docker start /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid123', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-    mock.addResponsePattern(/docker rm/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    mock.addResponsePattern(/docker rm.* ([^ ]+)$/, match => { removed.add(match[1].replaceAll("'", '')); return { stdout: '', stderr: '', exitCode: 0 }; });
+    // 本套件的remove替身表示已成功删除；回收失败及真实ID证明由容器专项/原生演练覆盖。
+    mock.addResponsePattern(/docker inspect --format '\{\{.Id\}\}' '([^']+)'$/, () => ({ stdout: '', stderr: 'No such object: removed-owned-id', exitCode: 1 }));
+    mock.addResponsePattern(/docker inspect.*"running".* '([^']+)'$/, match => {
+      for (const entry of stateService.getAllBranches()) for (const [profileId, service] of Object.entries(entry.services)) {
+        const runtime = serviceRuntimeRefs(service).find(runtime => runtime.containerName === match[1] || runtime.containerId === match[1] || cid(runtime.containerName) === match[1]);
+        if (runtime && (!removed.has(match[1]) || !/^[a-f0-9]{64}$/.test(match[1]))) {
+          return { stdout: JSON.stringify({ id: runtime.containerId || cid(runtime.containerName), running: true, branch: entry.id,
+            project: entry.projectId || '_unknown', profile: profileId,
+            networks: { [runtime.networkName || 'cds-test-network']: { Aliases: [profileId] } } }), stderr: '', exitCode: 0 };
+        }
+      }
+      return { stdout: '', stderr: 'No such container', exitCode: 1 };
+    });
+    mock.addResponsePattern(/docker inspect.*Config.Labels/, match => {
+      const entry = stateService.getAllBranches().find(entry => Object.values(entry.services).some(service => match[0].includes(service.containerName)));
+      const profile = entry && Object.entries(entry.services).find(([, service]) => match[0].includes(service.containerName))?.[0];
+      return { stdout: JSON.stringify({ 'cds.branch.id': entry?.id, 'cds.project.id': entry?.projectId || '_unknown', 'cds.profile.id': profile }), stderr: '', exitCode: 0 };
+    });
+    mock.addResponsePattern(/docker network (create|connect)/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker inspect/, () => ({ stdout: 'true', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker logs/, () => ({ stdout: 'log output', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -364,7 +393,7 @@ describe('Branch Routes', () => {
           if (mount) migrationMounts.push(fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8'));
           return { stdout: '', stderr: '', exitCode: 0 };
         }
-        if (command.startsWith('docker run -d')) {
+        if (isAppLaunchCommand(command)) {
           const mount = command.match(/-v '([^']+)':'\/app'/);
           if (mount) mounts.push({ path: mount[1], version: fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8') });
         }
@@ -3527,7 +3556,7 @@ describe('Branch Routes', () => {
       stateService.save();
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('cds-structured-failure-api')) {
+        if (isAppLaunchCommand(command) && command.includes('cds-structured-failure-api')) {
           return { stdout: '', stderr: 'src/index.ts(4,2): error TS2322: Type string is not assignable', exitCode: 1 };
         }
         return originalExec(command, options);
@@ -3749,7 +3778,7 @@ describe('Branch Routes', () => {
       let actualRuns = 0;
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-replay-fence-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-replay-fence-api')) {
           if (actualRuns++ === 0) { markStarted(); await hold; }
           return { stdout: `cid-replay-fence-${actualRuns}`, stderr: '', exitCode: 0 };
         }
@@ -3802,7 +3831,7 @@ describe('Branch Routes', () => {
       const started = new Promise<void>(resolve => { markStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-service-pending-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-service-pending-api')) {
           markStarted();
           await hold;
           return { stdout: 'cid-service-pending-api', stderr: '', exitCode: 0 };
@@ -3861,7 +3890,7 @@ describe('Branch Routes', () => {
       let actualRuns = 0;
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-latest-target-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-latest-target-api')) {
           const index = actualRuns++;
           marks[index]?.();
           await waits[index];
@@ -3917,7 +3946,7 @@ describe('Branch Routes', () => {
       const apiDone = new Promise<void>((r) => { apiFinished = r; });
       const original = mock.exec.bind(mock); let actualRuns = 0; const replayIds: string[] = [];
       mock.exec = async (command, options) => {
-        if (command.startsWith('docker run -d') && command.includes('cds-scope-barrier-api')) {
+        if (isAppLaunchCommand(command) && command.includes('cds-scope-barrier-api')) {
           actualRuns++; if (actualRuns === 1) { activeStarted(); await activeGate; }
         }
         return original(command, options);
@@ -3976,7 +4005,7 @@ describe('Branch Routes', () => {
       const gate = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });
       const original = mock.exec.bind(mock); let actualRuns = 0;
       mock.exec = async (command, options) => {
-        if (command.startsWith('docker run -d') && command.includes('cds-return-current-api')) { actualRuns++; started(); await gate; }
+        if (isAppLaunchCommand(command) && command.includes('cds-return-current-api')) { actualRuns++; started(); await gate; }
         return original(command, options);
       };
       const fetches = vi.fn(async () => new Response('event: complete\ndata: {}\n\n')); vi.stubGlobal('fetch', fetches);
@@ -4008,7 +4037,7 @@ describe('Branch Routes', () => {
         expect(latest.status).toBe(200); release(); expect((await previous).status).toBe(409);
         expect(branchOperationCoordinator.getPendingWebhookDeploy('admission-replaced')?.request.commitSha).toBe('c'.repeat(40));
         expect(deploymentRunService.get(String(latest.headers['x-cds-deployment-run-id']))?.status).toBe('queued');
-        expect(mock.commands.some((command) => command.startsWith('docker run -d'))).toBe(false);
+        expect(mock.commands.some((command) => isAppLaunchCommand(command))).toBe(false);
       } finally { release(); await previous; flush.mockRestore(); branchOperationCoordinator.cancelBranch('admission-replaced', '测试结束'); }
     });
 
@@ -4030,7 +4059,7 @@ describe('Branch Routes', () => {
       const cdsEnv = vi.spyOn(stateService, 'getCdsEnvVars').mockImplementation(() => ({ CDS_MONGODB_PORT: infrastructurePort }));
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.startsWith('docker run -d')) {
+        if (isAppLaunchCommand(command)) {
           const envFile = command.match(/--env-file "([^"]+)"/)?.[1];
           if (envFile) environments.push(fs.readFileSync(envFile, 'utf8'));
         }
@@ -4045,7 +4074,7 @@ describe('Branch Routes', () => {
         infrastructurePort = '18082';
         release(); const result = await deploy;
         expect(result.status).toBe(200);
-        const commands = mock.commands.filter((command) => command.startsWith('docker run -d'));
+        const commands = mock.commands.filter((command) => isAppLaunchCommand(command));
         expect(commands).toHaveLength(1);
         expect(commands[0]).toContain('override-before.js');
         expect(environments).toHaveLength(1);
@@ -4080,7 +4109,7 @@ describe('Branch Routes', () => {
         stateService.setCustomEnvVar('CONFIG_VALUE', 'remote-after', id); release(); const response = await deploy;
         expect(response.status).toBe(200); expect(dispatched.profiles[0].command).toBe('node remote-before.js');
         expect(dispatched.env.CONFIG_VALUE).toBe('remote-before');
-        expect(mock.commands.some((command) => command.startsWith('docker run -d'))).toBe(false);
+        expect(mock.commands.some((command) => isAppLaunchCommand(command))).toBe(false);
       } finally { release(); await deploy; flush.mockRestore(); vi.unstubAllGlobals(); }
     });
 
@@ -4097,7 +4126,7 @@ describe('Branch Routes', () => {
       const done = new Promise<void>((resolve) => { replayed = resolve; });
       const originalExec = mock.exec.bind(mock); const runs: Array<{ command: string; env: string }> = [];
       mock.exec = async (command, options) => {
-        if (command.startsWith('docker run -d')) {
+        if (isAppLaunchCommand(command)) {
           const envFile = command.match(/--env-file "([^"]+)"/)?.[1];
           runs.push({ command, env: envFile ? fs.readFileSync(envFile, 'utf8') : '' });
           if (runs.length === 1) { started(); await hold; }
@@ -4140,7 +4169,7 @@ describe('Branch Routes', () => {
       const gate = new Promise<void>((resolve) => { release = resolve; }); const start = new Promise<void>((resolve) => { started = resolve; });
       const originalExec = mock.exec.bind(mock); let actualRuns = 0;
       mock.exec = async (command, options) => {
-        if (command.startsWith('docker run -d')) { actualRuns++; if (actualRuns === 1) { started(); await gate; } }
+        if (isAppLaunchCommand(command)) { actualRuns++; if (actualRuns === 1) { started(); await gate; } }
         return originalExec(command, options);
       };
       setBuildGateHostLoadProvider(async () => ({ loadAvg1: 0, cpuCores: 16, usedMemPercent: 10, memAvailableMB: 32000 }));
@@ -4298,10 +4327,10 @@ describe('Branch Routes', () => {
       expect(resumed.status).toBe(200); expect(resumed.headers['x-cds-deployment-run-id']).toBe(run.id);
       expect(deploymentRunService.list({ branchId: id })).toHaveLength(1);
       expect(deploymentRunService.get(run.id)?.status).toBe('running');
-      const executions = mock.commands.filter(command => command.startsWith('docker run -d')).length;
+      const executions = mock.commands.filter(command => isAppLaunchCommand(command)).length;
       expect(executions).toBe(2);
       expect(await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService, getBranch: id => stateService.getBranch(id), recheckMs: 0 })).toEqual([]);
-      expect(mock.commands.filter(command => command.startsWith('docker run -d'))).toHaveLength(executions);
+      expect(mock.commands.filter(command => isAppLaunchCommand(command))).toHaveLength(executions);
     });
 
     it('单服务预构建原记录和版本必须记录本次目标而非分支旧缓存', async () => {
@@ -4336,7 +4365,7 @@ describe('Branch Routes', () => {
       await requestArtifactWaitRefresh(branchOperationCoordinator);
       expect(mock.commands.some(c => c.startsWith('docker pull ') && c.includes(requested))).toBe(true);
       expect(mock.commands.some(c => c.startsWith('docker pull ') && c.includes(previous))).toBe(false);
-      expect(mock.commands.some(c => c.startsWith('docker run -d'))).toBe(false);
+      expect(mock.commands.some(c => isAppLaunchCommand(c))).toBe(false);
       expect(deploymentRunService.list({ branchId: id })[0].status).toBe('queued');
     });
 
@@ -4364,7 +4393,7 @@ describe('Branch Routes', () => {
         expect(preflight.profiles[0].dockerImage).toBe(`ghcr.io/owned/api:sha-${requested}`);
         expect(dispatched.profiles[0].dockerImage).toBe(digest);
         expect(dispatched.commitSha).toBe(requested); expect(dispatched.artifactCommitSha).toBe(requested);
-        expect(mock.commands.some(c => c.startsWith('docker run -d'))).toBe(false);
+        expect(mock.commands.some(c => isAppLaunchCommand(c))).toBe(false);
       } finally { vi.unstubAllGlobals(); }
     });
 
@@ -4403,10 +4432,10 @@ describe('Branch Routes', () => {
         await new Promise((resolve) => setTimeout(resolve, 30));
         expect(duplicateAnswered).toBe(false);
         expect(addRun).toHaveBeenCalledTimes(1); expect(flush).toHaveBeenCalledTimes(1);
-        expect(mock.commands.filter((command) => command.startsWith('docker run -d'))).toHaveLength(0);
+        expect(mock.commands.filter((command) => isAppLaunchCommand(command))).toHaveLength(0);
         release(); const [a, b] = await Promise.all([first, duplicate]);
         expect(a.headers['x-cds-deployment-run-id']).toBe(b.headers['x-cds-deployment-run-id']);
-        expect(mock.commands.filter((command) => command.startsWith('docker run -d'))).toHaveLength(1);
+        expect(mock.commands.filter((command) => isAppLaunchCommand(command))).toHaveLength(1);
       } finally { release(); await Promise.allSettled([first, duplicate]); flush.mockRestore(); addRun.mockRestore(); }
     });
 
@@ -4421,7 +4450,7 @@ describe('Branch Routes', () => {
       const replayDone = new Promise<void>((resolve) => { replayed = resolve; });
       const original = mock.exec.bind(mock); let actualRuns = 0; const replayRunIds: string[] = [];
       mock.exec = async (command, options) => {
-        if (command.startsWith('docker run -d') && command.includes('cds-queued-run-api')) {
+        if (isAppLaunchCommand(command) && command.includes('cds-queued-run-api')) {
           actualRuns++;
           if (actualRuns === 1) { started(); await hold; }
         }
@@ -4484,7 +4513,7 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-joined-run-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-joined-run-api')) {
           markRunStarted();
           await runRelease;
           return { stdout: 'cid-joined-run', stderr: '', exitCode: 0 };
@@ -4544,7 +4573,7 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-pending-latest-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-pending-latest-api')) {
           markRunStarted();
           await runRelease;
           return { stdout: 'cid-pending-latest', stderr: '', exitCode: 0 };
@@ -4652,7 +4681,7 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-pending-gone-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-pending-gone-api')) {
           markRunStarted();
           await runRelease;
           return { stdout: 'cid-pending-gone', stderr: '', exitCode: 0 };
@@ -4747,7 +4776,7 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-stop-pending-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-stop-pending-api')) {
           markRunStarted();
           await runRelease;
           return { stdout: 'cid-stop-pending', stderr: '', exitCode: 0 };
@@ -5330,7 +5359,7 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-race-delete-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-race-delete-api')) {
           markRunStarted();
           await runRelease;
           return { stdout: 'cid-race-delete', stderr: '', exitCode: 0 };
@@ -5406,7 +5435,7 @@ describe('Branch Routes', () => {
           await resetRelease;
           return originalExec(command, options);
         }
-        if (command.includes('docker run -d') && command.includes('--name cds-race-delete-before-run-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-race-delete-before-run-api')) {
           dockerRunCount += 1;
         }
         return originalExec(command, options);
@@ -5490,7 +5519,7 @@ describe('Branch Routes', () => {
       expect(deploy.status).toBe(200);
       expect(String(deploy.body)).toContain('no longer current');
       expect(mock.commands.some((command) =>
-        command.includes('docker run -d') && command.includes('--name cds-race-delete-during-runservice-api'),
+        isAppLaunchCommand(command) && command.includes('--name cds-race-delete-during-runservice-api'),
       )).toBe(false);
     });
 
@@ -5609,7 +5638,7 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-race-stop-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-race-stop-api')) {
           markRunStarted();
           await runRelease;
           return { stdout: 'cid-race-stop', stderr: '', exitCode: 0 };
@@ -6027,7 +6056,7 @@ describe('Branch Routes', () => {
       const runStarted = new Promise<void>((resolve) => { markRunStarted = resolve; });
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker run -d') && command.includes('--name cds-profile-delete-busy-api')) {
+        if (isAppLaunchCommand(command) && command.includes('--name cds-profile-delete-busy-api')) {
           markRunStarted();
           await runRelease;
           return { stdout: 'cid-profile-delete-busy', stderr: '', exitCode: 0 };

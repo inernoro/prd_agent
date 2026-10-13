@@ -113,6 +113,7 @@ import { AsyncStuckDeployReconciler } from './services/async-stuck-deploy-reconc
 import { createReleaseGitRunner } from './services/release-git-reader.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
 import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
+import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
@@ -2085,6 +2086,7 @@ async function initStateService(): Promise<void> {
 }
 
 await initStateService();
+restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch));
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2887,7 +2889,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       // 还 docker start 抢跑（Cursor Bugbot High）。与手动 /stop 处理一致。
       svc.status = 'stopping';
       try {
-        await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+        await containerService.stopRuntimeGroup(svc, '调度器降温（保留容器，可秒级唤醒）', {
           kind: 'cds-stop-idle',
           projectId: branch.projectId,
           branchId: branch.id,
@@ -3290,7 +3292,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           // 这段回滚是后加的，漏了同一道。
           lease?.assertCurrent(`auto-wake revert before ${svc.profileId}`);
           try {
-            await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
+            await containerService.stopRuntimeGroup(svc, '项目已暂停，撤销本次自动唤醒', {
               kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
@@ -3611,7 +3613,7 @@ const autoLifecycleService = new AutoLifecycleService(
           // （Cursor Bugbot High）。
           svc.status = 'stopping';
           try {
-            await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+            await containerService.stopRuntimeGroup(svc, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
               kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
@@ -3890,7 +3892,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   for (const svc of Object.values(branch.services)) {
     branchOperationLease?.assertCurrent(`janitor remove before ${svc.profileId}`);
     try {
-      await containerService.remove(svc.containerName, {
+      await containerService.removeRuntimeGroup(svc, {
         projectId: branch.projectId,
         branchId: branch.id,
         profileId: svc.profileId,
@@ -3910,7 +3912,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   // 分支专属网络（cds-br-*）随分支回收：不清会缓慢堆积空网络
   //（debt.cds.branch-isolation BNI-cleanup，2026-07-09 接线）。内部已容错
   // not-found/仍被占用，失败不阻断删除主流程。
-  await containerService.removeBranchNetwork(slug).catch(() => { /* best-effort */ });
+  await containerService.removeBranchNetwork(slug, branch.replacementNetworks).catch(() => { /* best-effort */ });
   branchOperationLease?.assertCurrent('janitor remove before state delete');
   stateService.removeBranch(slug);
   stateService.save();
@@ -4014,7 +4016,7 @@ janitorService.setRemoveFn(async (slug: string) => {
           stateService.removeLogs(branch.id);
         } catch { /* best-effort */ }
         // 启动残留 prune 同样带走分支专属网络（BNI-cleanup，2026-07-09 接线）
-        await containerService.removeBranchNetwork(branch.id).catch(() => { /* best-effort */ });
+        await containerService.removeBranchNetwork(branch.id, branch.replacementNetworks).catch(() => { /* best-effort */ });
         try {
           stateService.removeBranch(branch.id);
           appReconciled++;

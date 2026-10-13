@@ -3,6 +3,8 @@ import net from 'node:net';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { serviceRuntimeRefs, runtimeRef } from './service-runtime.js';
+import { deploymentPhaseBudget, type DeploymentPhaseOwner } from './deployment-phase-budget.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { ContainerLogStreamHub, ContainerLogStreamEnd } from './container-log-stream-hub.js';
@@ -697,6 +699,90 @@ export class ContainerStopUnconfirmedError extends Error {
 }
 
 export class ContainerService {
+  private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
+  async inspectOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, requireRunning = true): Promise<import('../types.js').ServiceRuntimeRef | null> {
+    const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}},"networks":{{json .NetworkSettings.Networks}}}';
+    const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`, { timeout: 5000, executionLane: 'observation' });
+    if (result.exitCode !== 0) {
+      if (/No such (?:container|object)/i.test(combinedOutput(result))) return null;
+      throw new Error('旧服务运行身份读取失败，保持旧入口');
+    }
+    const value = JSON.parse(result.stdout);
+    if (requireRunning && value.running === false) return null;
+    if (typeof value.running !== 'boolean' || !/^[a-f0-9]{64}$/.test(value.id) || value.branch !== entry.id
+      || value.profile !== profileId || value.project !== (entry.projectId || '_unknown')) throw new Error('旧服务运行归属无法确认，保持旧入口');
+    const aliases = computeProfileAliases(profileId, this.getProjectMarkers(entry.projectId));
+    const networks = Object.entries(value.networks || {}) as Array<[string, { Aliases?: string[] }]>;
+    const own = networks.filter(([, settings]) => settings.Aliases?.some(alias => aliases.includes(alias)));
+    const main = runtime.networkName && networks.some(([name]) => name === runtime.networkName)
+      ? runtime.networkName : own.length === 1 ? own[0][0] : undefined;
+    if (!main) throw new Error('旧服务网络关系无法确认，保持旧入口');
+    return { ...runtimeRef(runtime), containerId: value.id, networkName: main, aliasNetworks: own.map(([name]) => name), connectedNetworks: networks.map(([name]) => name).filter(name => name !== main) };
+  }
+  async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
+    context: ContainerRemoveContext = {}): Promise<void> {
+    const owned = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
+    context.assertCurrent?.('after runtime retirement identity');
+    if (!owned) {
+      if (!runtime.containerId && runtime.creationIssued) throw new Error('迟到创建身份未确认，保留回收责任');
+      deploymentPhaseBudget.releaseMemory(runtime.containerName);
+      return;
+    }
+    await this.remove(owned.containerId!, context);
+    context.assertCurrent?.('after runtime retirement remove');
+    const after = await this.shell.exec(`docker inspect --format ${this.shellQuote('{{.Id}}')} ${this.shellQuote(owned.containerId!)}`,
+      { timeout: 5000, executionLane: 'observation' });
+    if (after.exitCode === 0 || !/No such (?:container|object):/i.test(combinedOutput(after))) throw new Error('旧运行身份回收未确认，保留责任及容量占用');
+    deploymentPhaseBudget.releaseMemory(runtime.containerName);
+  }
+  async connectReplacementPeer(
+    entry: BranchEntry, profile: BuildProfile, service: ServiceState, network: string,
+    assertCurrent?: (step: string) => void,
+  ): Promise<void> {
+    const shell = this.qualifiedShell(assertCurrent);
+    assertCurrent?.('before replacement peer network');
+    await ensureDockerNetworkWithReclaim(shell, network);
+    const view = await shell.exec(`docker inspect --format ${this.shellQuote('{{json .Config.Labels}}')} ${this.shellQuote(service.containerName)}`);
+    if (view.exitCode !== 0) throw new Error('旧服务身份无法确认，入口保持原版本');
+    const labels = JSON.parse(view.stdout);
+    if (labels?.['cds.branch.id'] !== entry.id || labels?.['cds.profile.id'] !== profile.id
+      || labels?.['cds.project.id'] !== (entry.projectId || '_unknown')) throw new Error('旧服务归属不匹配，已拒绝连接新网络');
+    const aliases = computeProfileAliases(profile.id, this.getProjectMarkers(entry.projectId))
+      .map(alias => `--alias ${this.shellQuote(alias)}`).join(' ');
+    // 低网关优先级不改变旧服务现有默认路由；Docker不支持时明确失败并保旧。
+    const result = await shell.exec(`docker network connect --gw-priority -1 ${aliases} ${this.shellQuote(network)} ${this.shellQuote(service.containerName)}`);
+    if (result.exitCode !== 0 && !/already exists/i.test(combinedOutput(result))) throw new Error('新服务网络准备失败，旧入口保持原版本');
+    service.connectedNetworks = [...new Set([...(service.connectedNetworks || []), network])];
+    service.aliasNetworks = [...new Set([...(service.aliasNetworks || []), ...(service.networkName ? [service.networkName] : []), network])];
+  }
+
+  async stopRuntimeGroup(service: ServiceState, reason?: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
+    const failures: unknown[] = [];
+    for (const runtime of serviceRuntimeRefs(service)) {
+      try { await this.stop(runtime.containerId || runtime.containerName, reason, context); }
+      catch (error) { failures.push(error); }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length) throw new ContainerStopUnconfirmedError(failures.some(error =>
+      error instanceof ContainerStopUnconfirmedError && error.running === true) ? true : undefined);
+    if (service.servingRuntime) {
+      if (service.servingRuntime.containerName !== service.containerName) {
+        const failed = runtimeRef(service);
+        Object.assign(service, runtimeRef(service.servingRuntime));
+        service.retainedRuntimes = [...(service.retainedRuntimes || []), failed];
+      }
+      service.servingRuntime = undefined;
+    }
+  }
+
+  async removeRuntimeGroup(service: ServiceState, context: ContainerRemoveContext = {}): Promise<void> {
+    for (const runtime of serviceRuntimeRefs(service)) {
+      if (runtime.containerId || runtime.creationIssued) await this.removeOwnedRuntime({ id: context.branchId!, projectId: context.projectId || undefined } as BranchEntry,
+        context.profileId || service.profileId, runtime, context);
+      else await this.remove(runtime.containerName, context);
+    }
+  }
+
   constructor(
     private readonly shell: IShellExecutor,
     private readonly config: CdsConfig,
@@ -1072,7 +1158,7 @@ export class ContainerService {
     network: string,
     aliases: string[],
     onOutput?: (chunk: string) => void,
-    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & { assertCurrent?: (step: string) => void } = {},
+    context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & { assertCurrent?: (step: string) => void; preserveContainerNames?: readonly string[] } = {},
   ): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
     if (aliases.length === 0) return;
@@ -1082,7 +1168,7 @@ export class ContainerService {
     const removeStale = async (name: string, staleAliases: string[], source: string, id?: string): Promise<void> => {
       const cleanName = name.replace(/^\/+/, '');
       const target = id || cleanName;
-      if (cleanName === service.containerName || removed.has(target)) return;
+      if (cleanName === service.containerName || context.preserveContainerNames?.includes(cleanName) || removed.has(target)) return;
       onOutput?.(`── 清理同 alias 的旧 endpoint(${source}): ${cleanName} (${staleAliases.join(', ')}) ──\n`);
       const reason = `清理同 alias 的旧 endpoint(${source})`;
       this.noteLifecycleIntent(cleanName, 'cds-stale-cleanup', reason, {
@@ -1243,6 +1329,8 @@ export class ContainerService {
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
       assertCurrent?: (step: string) => void;
+      preserveContainerNames?: readonly string[];
+      onRuntimeCreated?: (service: ServiceState) => Promise<void>;
       sourceCheckout?: { path: string; commitSha: string };
       /**
        * 极速版镜像拉取失败、即将回退**源码编译**前调用。极速版部署不占全局
@@ -1275,6 +1363,9 @@ export class ContainerService {
     } = {},
   ): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
+    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
+    const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
+    let releaseStart: (() => void) | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -1336,12 +1427,16 @@ export class ContainerService {
     // 运行后再连共享网（无别名，仅为可达共享 infra mysql/redis）。这样一个分支随便部署多少
     // 容器都只落在自己的分支网，杜绝「app 别名跨分支串流」（apigateway 拆服务案例）。未隔离时
     // netPlan 退化为「共享网 + app 别名」= 现状，零回归。详见 branch-network.ts / design 文档。
-    const netPlan = resolveAppNetworkPlan({
+    const baseNetPlan = resolveAppNetworkPlan({
       isolated: branchNetworkIsolationEnabled(process.env),
       sharedNetwork: network,
       branchId: entry.id,
       aliases: profileAliases,
     });
+    const netPlan = service.networkName && service.networkName !== baseNetPlan.runNetwork
+      ? { ...baseNetPlan, runNetwork: service.networkName,
+        connectNetworks: [...new Set([network, ...baseNetPlan.connectNetworks])].filter(value => value !== service.networkName) }
+      : baseNetPlan;
     if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
     // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
@@ -1427,7 +1522,8 @@ export class ContainerService {
           // 来自 resolved profile 的 dockerImage,而 profile-overrides PUT 可对分支额外服务覆盖 dockerImage,
           // 绕过 extra-services 的严格镜像校验;裸拼进宿主机 `docker pull` 时 `alpine; touch /tmp/pwn` 这类值
           // 会在 CDS 宿主机执行。这里单引号兜底关掉注入面(入口另有镜像引用白名单作边界防御)。
-          const pull = await shell.exec(`docker pull ${this.shellQuote(cand.image)}`);
+          const pull = await deploymentPhaseBudget.run('pull', phaseOwner,
+            () => shell.exec(`docker pull ${this.shellQuote(cand.image)}`), { check: phaseCheck });
           if (pull.stdout) onOutput?.(pull.stdout + '\n');
           if (pull.exitCode === 0 && cand.kind === 'latest') {
             pulledImage = cand.image;
@@ -1582,7 +1678,8 @@ export class ContainerService {
           const localHit = await shell.exec(`docker image inspect ${this.shellQuote(picked.image)}`);
           let usable = localHit.exitCode === 0;
           if (!usable) {
-            const rePull = await shell.exec(`docker pull ${this.shellQuote(picked.image)}`);
+            const rePull = await deploymentPhaseBudget.run('pull', phaseOwner,
+              () => shell.exec(`docker pull ${this.shellQuote(picked.image)}`), { check: phaseCheck });
             usable = rePull.exitCode === 0;
           }
           if (usable) {
@@ -1785,6 +1882,13 @@ export class ContainerService {
       ].join(' ');
 
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
+      releaseStart = await deploymentPhaseBudget.acquire('start', phaseOwner,
+        { check: phaseCheck, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+      phaseCheck();
+      this.runtimePhaseOwners.set(service.containerName, { owner: phaseOwner, check: phaseCheck });
+      service.creationIssued = true;
+      await context.onRuntimeCreated?.(service);
+      phaseCheck();
       const result = await shell.exec(runCmd);
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
@@ -1813,16 +1917,22 @@ export class ContainerService {
         });
         throw new Error(`启动服务 "${service.containerName}" 失败:\n${combinedOutput(result)}`);
       }
+      const acknowledgedId = result.stdout.trim();
+      if (/^[a-f0-9]{64}$/.test(acknowledgedId)) service.containerId = acknowledgedId;
       // 2026-06-24（Bugbot Medium「Fallback mode not recorded」）：在 runService 内
       // 权威钉住**实际**启动用的 deploy mode —— profile 此刻已是回退后的真实 profile
       // （极速版镜像缺失自动回退源码时 = static）。否则上层用未变的 effectiveProfile.
       // activeDeployMode（仍是 express）钉 deployedMode，预览 widget 会把实际跑源码的
       // 分支误标「极速」。下游 deploy 路径改为优先采纳这里钉的值。
       service.deployedMode = profile.activeDeployMode || '';
+      service.networkName = netPlan.runNetwork;
+      service.aliasNetworks = [netPlan.runNetwork];
+      service.connectedNetworks = [];
       service.deployedImage = runImage;
       worktreePathActivity.assertClaimable(sourceCheckout?.path ? [sourceCheckout.path] : []);
       service.sourceCheckoutPath = !profile.prebuiltImage ? sourceCheckout?.path : undefined;
       service.sourceCommitSha = !profile.prebuiltImage ? sourceCheckout?.commitSha : undefined;
+      await context.onRuntimeCreated?.(service);
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
@@ -1836,6 +1946,8 @@ export class ContainerService {
           operationId: context.operationId ?? undefined,
           assertCurrent: context.assertCurrent,
         });
+        service.connectedNetworks.push(sharedNet);
+        await context.onRuntimeCreated?.(service);
       }
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
       if (attachSharedBeforeStart) {
@@ -1922,7 +2034,11 @@ export class ContainerService {
         });
         throw err;
       }
+    } catch (error) {
+      this.runtimePhaseOwners.delete(service.containerName);
+      throw error;
     } finally {
+      releaseStart?.();
       this.removeEnvFile(envFilePath);
     }
   }
@@ -2210,6 +2326,22 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     containerName?: string,
   ): Promise<boolean> {
+    const scope = containerName ? this.runtimePhaseOwners.get(containerName) : undefined;
+    try {
+      const ready = await deploymentPhaseBudget.run('ready', scope?.owner || {},
+        () => this.waitForReadinessUnbudgeted(hostPort, probe, onAttempt, onOutput, containerName), { check: scope?.check });
+      if (ready && containerName) deploymentPhaseBudget.releaseMemory(containerName);
+      return ready;
+    } finally { if (containerName) this.runtimePhaseOwners.delete(containerName); }
+  }
+
+  private async waitForReadinessUnbudgeted(
+    hostPort: number,
+    probe: ReadinessProbe | undefined,
+    onAttempt?: (info: { attempt: number; max: number; stage: 'tcp' | 'http'; ok: boolean; error?: string }) => void,
+    onOutput?: (chunk: string) => void,
+    containerName?: string,
+  ): Promise<boolean> {
     const intervalMs = Math.max(1, (probe?.intervalSeconds ?? 2)) * 1000;
     const timeoutMs = Math.max(intervalMs, (probe?.timeoutSeconds ?? 180) * 1000);
     const maxAttempts = Math.max(1, Math.ceil(timeoutMs / intervalMs));
@@ -2266,6 +2398,7 @@ export class ContainerService {
       onOutput?.(`── 就绪探测: noHttp 模式(跳过 HTTP,仅 TCP 探测 ${host}:${hostPort})──\n`);
       let lastErr = '';
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (containerName) this.runtimePhaseOwners.get(containerName)?.check?.();
         const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
         onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
         if (tcp.ok) {
@@ -2285,6 +2418,7 @@ export class ContainerService {
     let lastError = '';
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (containerName) this.runtimePhaseOwners.get(containerName)?.check?.();
       if (!tcpOk) {
         const tcp = await this.probeTcp(host, hostPort, Math.min(3000, intervalMs));
         onAttempt?.({ attempt, max: maxAttempts, stage: 'tcp', ok: tcp.ok, error: tcp.error });
@@ -2523,6 +2657,12 @@ export class ContainerService {
     // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
     context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
   ): Promise<void> {
+    return deploymentPhaseBudget.run('terminal', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
+      profileId: context.profileId || undefined, operationId: context.operationId },
+      () => this.stopUnbudgeted(containerName, reason, context));
+  }
+
+  private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
@@ -2592,6 +2732,7 @@ export class ContainerService {
       },
     });
     if (!confirmed) throw new ContainerStopUnconfirmedError(typeof state?.running === 'boolean' ? state.running : undefined);
+    deploymentPhaseBudget.releaseMemory(containerName);
   }
 
   /**
@@ -2601,6 +2742,13 @@ export class ContainerService {
    * (这是 2026-05 重构前 stop() 的原始行为,改名以显式暴露"删"的语义。)
    */
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
+    const terminal = ['branch-delete', 'executor-delete-branch', 'build-profile-delete', 'cleanup-stopped'].includes(context.operation || '');
+    return deploymentPhaseBudget.run(terminal ? 'terminal' : 'cleanup', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
+      profileId: context.profileId || undefined, operationId: context.operationId },
+      () => this.removeUnbudgeted(containerName, context), { check: () => context.assertCurrent?.('cleanup phase admission') });
+  }
+
+  private async removeUnbudgeted(containerName: string, context: ContainerRemoveContext): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
@@ -2635,6 +2783,7 @@ export class ContainerService {
     const stopResult = await shell.exec(`docker stop ${containerName}`);
     const rmResult = await shell.exec(`docker rm ${containerName}`);
     const completion = classifyRemoveCompletion(rmResult);
+    if (completion.severity !== 'error') deploymentPhaseBudget.releaseMemory(containerName);
     this.recordContainerEvent({
       severity: completion.severity,
       source: 'cds-container-service',
@@ -3491,8 +3640,40 @@ export class ContainerService {
    * 分支删除时尽力清理其专属分支网（cds-br-<id>）。应在该分支所有容器 rm 之后调用。
    * 网络仍被占用 / 不存在 → 吞掉（空网无害，下次再清）。共享 infra 网（cds-proj-<id>）绝不删。
    */
-  async removeBranchNetwork(branchId: string): Promise<void> {
-    const net = branchAppNetworkName(branchId);
+  async cleanupUnusedReplacementNetworks(entry: BranchEntry, context: ContainerRemoveContext = {}): Promise<void> {
+    const prefix = `${branchAppNetworkName(entry.id).slice(0, 27)}-r-`;
+    for (const network of [...(entry.replacementNetworks || [])]) {
+      if (!network.startsWith(prefix) || !/^[a-f0-9]{32}$/.test(network.slice(prefix.length))) continue;
+      const refs = Object.values(entry.services).flatMap(service => serviceRuntimeRefs(service).map(runtime => ({ service, runtime })));
+      if (refs.some(({ runtime }) => runtime.networkName === network)) continue;
+      const shell = this.qualifiedShell(context.assertCurrent);
+      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id }, async () => {
+        for (const { service, runtime } of refs) {
+          if (!runtime.aliasNetworks?.includes(network) && !runtime.connectedNetworks?.includes(network)) continue;
+          const owned = await this.inspectOwnedRuntime(entry, service.profileId, runtime, false);
+          context.assertCurrent?.('after unused replacement network identity');
+          if (!owned) continue;
+          const disconnected = await shell.exec(`docker network disconnect ${this.shellQuote(network)} ${this.shellQuote(owned.containerId!)}`);
+          if (disconnected.exitCode !== 0 && !/not connected|No such network/i.test(combinedOutput(disconnected))) return;
+          context.assertCurrent?.('after unused replacement network disconnect');
+          runtime.aliasNetworks = runtime.aliasNetworks?.filter(name => name !== network);
+          runtime.connectedNetworks = runtime.connectedNetworks?.filter(name => name !== network);
+        }
+        const removed = await shell.exec(`docker network rm ${this.shellQuote(network)}`);
+        context.assertCurrent?.('after unused replacement network remove');
+        if (removed.exitCode === 0 || /No such network|not found/i.test(combinedOutput(removed))) {
+          entry.replacementNetworks = entry.replacementNetworks?.filter(name => name !== network);
+        }
+      }, { check: () => context.assertCurrent?.('before unused replacement network cleanup') });
+    }
+  }
+
+  async removeBranchNetwork(branchId: string, replacementNetworks: readonly string[] = []): Promise<void> {
+    const canonical = branchAppNetworkName(branchId);
+    const prefix = `${canonical.slice(0, 27)}-r-`;
+    const names = [canonical, ...replacementNetworks.filter(name => name.startsWith(prefix)
+      && /^[a-f0-9]{32}$/.test(name.slice(prefix.length)))];
+    for (const net of new Set(names)) {
     try {
       const r = await this.shell.exec(`docker network rm ${net}`);
       if (r.exitCode !== 0) {
@@ -3503,6 +3684,7 @@ export class ContainerService {
       }
     } catch (err) {
       console.warn(`[branch-network] 清理分支网 ${net} 异常(忽略): ${(err as Error).message}`);
+    }
     }
   }
 
