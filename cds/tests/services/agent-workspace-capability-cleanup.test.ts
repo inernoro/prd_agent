@@ -11,7 +11,7 @@ const result = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({ stdout
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
 function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean;
-  removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean; delayedRemovalReply?: boolean; keepRemovalVisible?: boolean } = {}) {
+  removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean; delayedRemovalReply?: boolean; keepRemovalVisible?: boolean; delayedRemovalMs?: number } = {}) {
   const accepted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
   const events: any[] = []; let visible = false; let pendingName = ''; let operationId = ''; let journalAtAdmission: any;
   const containerId = 'a'.repeat(64); let aborted = false, removalAttempts = 0;
@@ -48,6 +48,14 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
       if (command.startsWith('docker kill')) return result('', 'container is not running', 1);
       if (command.startsWith('docker rm -f')) {
         removalAttempts++;
+        if (config.delayedRemovalMs) {
+          if (!visible) return result('', `No such container: ${containerId}`, 1);
+          if (removalAttempts > 1) return result('', `removal of container ${containerId} is already in progress`, 1);
+          setTimeout(() => { visible = false; }, config.delayedRemovalMs);
+          return new Promise<ExecResult>((_resolve, reject) => {
+            options?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('original step deadline'), { code: 'deadline' })), { once: true });
+          });
+        }
         if (config.removeFailure) return result('', 'permission denied', 1);
         if (config.neverCompletesRemoval || removalAttempts <= (config.removingReplies ?? 0))
           return result('', `Error response from daemon: removal of container ${containerId} is already in progress`, 1);
@@ -68,6 +76,21 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 }
 
 describe('capability probe cancellation reconciliation', () => {
+  it('uses the fixed confirmed-resource window after one step expires, without extending any step or reissuing a name', async () => {
+    const f = fixture(true, { delayedRemovalMs: 80 });
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined(); await probe;
+      const window = f.events.find(event => event.action === 'agent.probe.cleanup.confirmation-window.started');
+      expect(window.details.confirmationDeadline - window.details.originalDeadline).toBe(60);
+      const steps = f.events.filter(event => event.action === 'agent.probe.cleanup.step.requested');
+      expect(steps.every(event => event.details.deadline - event.details.requestedAt > 0 && event.details.deadline - event.details.requestedAt <= 60)).toBe(true);
+      expect(f.calls.filter(call => call.command.startsWith('docker rm -f')).every(call => call.command === `docker rm -f '${f.containerId}'`)).toBe(true);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmed')).toBe(true);
+      expect(f.visible).toBe(false);
+    } finally { fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
+
   it('a delayed removal reply with the exact CID still present remains unconfirmed at the original deadline', async () => {
     const f = fixture(true, { delayedRemovalReply: true, keepRemovalVisible: true });
     try {

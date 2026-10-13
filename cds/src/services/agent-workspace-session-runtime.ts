@@ -2160,12 +2160,17 @@ export class AgentWorkspaceSessionRuntime {
   private async cleanupProbeGeneration(generation: CapabilityProbeGeneration): Promise<void> {
     if (generation.cleanup) return generation.cleanup;
     const cleanup = (async () => {
-      const deadline = Date.now() + this.probeCleanupTimeoutMs;
+      const began = Date.now();
+      const deadline = began + this.probeCleanupTimeoutMs;
+      // 已确认资源的停机确认沿原十秒验收上限，单步骤仍最多五秒。
+      // 未收到创建回执的名称只用原窗口；总窗口预先固定，不在重试时重开。
+      const confirmedDeadline = this.probeAbort.signal.aborted
+        ? began + Math.min(10_000, this.probeCleanupTimeoutMs * 2) : deadline;
       try {
         // Each name is issued once. A confirmed container ID cannot be resurrected
         // by a second create; an absent unacknowledged name cannot prove cleanup.
-        for (const lease of generation.leases.filter(lease => lease.kind !== 'storage-volume')) await this.cleanupProbeLease(generation, lease, deadline);
-        for (const lease of generation.leases.filter(lease => lease.kind === 'storage-volume')) await this.cleanupProbeLease(generation, lease, deadline);
+        for (const lease of generation.leases.filter(lease => lease.kind !== 'storage-volume')) await this.cleanupProbeLease(generation, lease, deadline, confirmedDeadline);
+        for (const lease of generation.leases.filter(lease => lease.kind === 'storage-volume')) await this.cleanupProbeLease(generation, lease, deadline, confirmedDeadline);
         await fs.promises.rm(generation.root, { recursive: true, force: true });
         this.probeGenerations.delete(generation.id);
         if (this.probeGenerations.size === 0) this.probeRecoveryAttempts = 0;
@@ -2184,7 +2189,7 @@ export class AgentWorkspaceSessionRuntime {
     }
   }
 
-  private async cleanupProbeLease(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, deadline: number): Promise<void> {
+  private async cleanupProbeLease(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, deadline: number, confirmedDeadline: number): Promise<void> {
     if (lease.cleaned) return;
     if (!lease.issued) { lease.cleaned = true; return; }
     let cid: string | undefined;
@@ -2227,10 +2232,30 @@ export class AgentWorkspaceSessionRuntime {
         await delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())));
       }
     }
+    const originalDeadline = deadline;
+    let confirmationStarted = false;
+    const beginConfirmation = () => {
+      if (confirmationStarted || confirmedDeadline <= originalDeadline || Date.now() < originalDeadline || Date.now() >= confirmedDeadline) return false;
+      confirmationStarted = true; deadline = confirmedDeadline;
+      this.probeEvent(generation, lease, 'agent.probe.cleanup.confirmation-window.started', { originalDeadline, confirmationDeadline: confirmedDeadline });
+      return true;
+    };
     for (;;) {
-      const removed = lease.kind === 'storage-volume'
-        ? await this.execProbeCleanup(generation, lease, 'remove', `docker volume rm ${shellQuote(lease.name)}`, deadline)
-        : await this.removeConfirmedProbeContainer(generation, lease, deadline);
+      beginConfirmation();
+      let removed: ExecResult;
+      try {
+        removed = lease.kind === 'storage-volume'
+          ? await this.execProbeCleanup(generation, lease, 'remove', `docker volume rm ${shellQuote(lease.name)}`, deadline)
+          : await this.removeConfirmedProbeContainer(generation, lease, deadline);
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        const expiration = ['deadline', 'cancelled'].includes(code || '')
+          || code === 'workspace_probe_cleanup_unconfirmed' && Date.now() >= originalDeadline;
+        if (!lease.creationAcknowledged || lease.kind === 'storage-volume' || !expiration
+          || !(beginConfirmation() || confirmationStarted && Date.now() < deadline)) throw error;
+        await delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())));
+        continue;
+      }
       const outcome = this.probeCleanupOutcome(removed);
       if (outcome === 'ok' || outcome === 'absent') break;
       // The daemon can finish an already accepted removal after the original

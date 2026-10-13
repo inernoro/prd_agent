@@ -955,6 +955,11 @@ async function main(): Promise<void> {
       },
       exercise: async (context: ApplicationBootstrapContext) => {
         const { request, requestRaw } = context;
+        // 原两分钟保留期与业务演练重叠；同一租约/原期限/全部过期断言不变。
+        // 夹具是独立scratch镜像，不替应用核心镜像提供保护。
+        assert.equal(finiteCache, undefined);
+        finiteCache = await prepareFiniteCoreCache(directImageId);
+        report.finiteCachePreparedAtExerciseStart = true;
         report.stage = 'real-project-create';
         const compose = 'services:\n' + ['api', 'web', 'worker'].map(role => `  ${role}:\n    image: "${registry}/owned-${role === 'web' ? 'web' : 'api'}:sha-\${CDS_COMMIT_SHA}"\n    ports: ["8080"]\n    environment:\n      SERVICE_NAME: "${role}"\n    labels:\n      cds.prebuilt-image: "true"\n      cds.subdomain: "${role}"\n      cds.readiness-path: "/"\n      cds.readiness-timeout: "30"\n`).join('');
         const created = await request('/api/projects', 'POST', { name: '完整应用隔离部署前提', slug: source.owner.replaceAll('_', '-'), composeYaml: compose,
@@ -1466,8 +1471,6 @@ async function main(): Promise<void> {
         context.report.actualOwnedDockerApplicationPreflightVerified = true;
         context.report.dockerExerciseReport = { file: 'docker-report.json', genericFixtureOnly: true, representativeBusinessCiVerified: false, shortReadSamples: report.readSamples.length };
         await checkpoint('original-infra-observation-and-recovery-complete');
-        assert.equal(finiteCache, undefined);
-        finiteCache = await prepareFiniteCoreCache(directImageId);
       } });
     report.stage = 'finite-core-image-cache';
     await checkpoint('original-application-shutdown-and-restart-complete');
