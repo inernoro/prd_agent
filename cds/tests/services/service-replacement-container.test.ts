@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
+import { branchAppNetworkName } from '../../src/services/branch-network.js';
 
 function fixture() {
   const shell = new MockShellExecutor();
@@ -16,6 +17,26 @@ function fixture() {
 }
 
 describe('替换运行身份与回收证明', () => {
+  it.each(['absent', 'foreign', 'unknown', 'owned'] as const)('预约未创建网络及归属核验：%s', async mode => {
+    const f = fixture();
+    const network = `${branchAppNetworkName(f.entry.id).slice(0, 27)}-r-${'b'.repeat(32)}`;
+    f.entry.services = {};
+    f.entry.replacementNetworks = [network];
+    f.shell.addResponsePattern(/docker network rm/, () => ({ stdout: network, stderr: '', exitCode: 0 }));
+    f.shell.addResponsePattern(/docker network inspect/, () => mode === 'absent'
+      ? { stdout: '', stderr: `Error response from daemon: network ${network} not found`, exitCode: 1 }
+      : mode === 'unknown' ? { stdout: '', stderr: 'Cannot connect to Docker daemon', exitCode: 1 }
+      : { stdout: JSON.stringify({ 'cds.type': 'replacement-network', 'cds.project.id': mode === 'foreign' ? 'other' : 'project', 'cds.branch.id': 'branch' }), stderr: '', exitCode: 0 });
+    if (mode === 'foreign' || mode === 'unknown') {
+      await expect(f.container.cleanupUnusedReplacementNetworks(f.entry)).rejects.toThrow(mode === 'foreign' ? '归属不匹配' : '状态未确认');
+      expect(f.entry.replacementNetworks).toEqual([network]);
+    } else {
+      await f.container.cleanupUnusedReplacementNetworks(f.entry);
+      expect(f.entry.replacementNetworks).toEqual([]);
+    }
+    expect(f.shell.commands.some(command => command.startsWith('docker network rm'))).toBe(mode === 'owned');
+  });
+
   it('使用完整CID和归属确认回收，名称被重用也不删新同名容器', async () => {
     const f = fixture();
     f.shell.addResponsePattern(/docker inspect --format '\{\{.Id\}\}'/, () => ({ stdout: '', stderr: 'Error: No such object: exact-id', exitCode: 1 }));

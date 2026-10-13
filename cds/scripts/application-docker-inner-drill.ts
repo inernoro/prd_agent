@@ -1080,7 +1080,8 @@ async function main(): Promise<void> {
           assert.equal(view.State.Running, true);
           const initialScheduler = await request('/api/scheduler/state'); assert.equal(initialScheduler.status, 200);
           assert.equal(initialScheduler.json.enabled, false);
-          const gate = probeProxy!.holdNextStop(firstService.containerName);
+          // 替换容器按已确认的完整CID停机；拦截同一实际容器的回复。
+          const gate = probeProxy!.holdNextStop(firstService.containerId || firstService.containerName);
           let cooling: Promise<Response> | undefined, queuedBackgroundId: string | null = null;
           try {
             const enabled = await request('/api/scheduler/enabled', 'PUT', { enabled: true }); assert.equal(enabled.status, 200);

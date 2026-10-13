@@ -103,7 +103,10 @@ describe('owned Docker probe proxy wire conformance', () => {
     }
   });
 
-  it.each(['release', 'deadline', 'close'] as const)('holds only the exact original successful stop reply until %s', async mode => {
+  it.each([
+    ['release', 'owned-app-worker'], ['deadline', 'owned-app-worker'], ['close', 'owned-app-worker'],
+    ['release', 'a'.repeat(64)],
+  ] as const)('holds only the exact original successful stop reply until %s (%s)', async (mode, target) => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-stop-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
     const requests: Array<{ method?: string; url?: string; body: string }> = [], sockets = new Set<net.Socket>();
@@ -114,19 +117,19 @@ describe('owned Docker probe proxy wire conformance', () => {
     backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
     await new Promise<void>(resolve => backend.listen(backendPath, resolve));
     const proxy = await createProbeDaemonProxy(proxyPath, backendPath);
-    const gate = proxy.holdNextStop('owned-app-worker');
+    const gate = proxy.holdNextStop(target);
     const stop = (name: string, body: string) => new Promise<number | null>(resolve => {
       const request = http.request({ socketPath: proxyPath, method: 'POST', path: `/v1.53/containers/${name}/stop?t=10` },
         response => { response.resume(); response.once('end', () => resolve(response.statusCode || null)); });
       request.once('error', () => resolve(null)); request.end(body);
     });
     try {
-      expect(await stop('owned-app-worker-other', 'other-body')).toBe(204);
-      let received = false; const original = stop('owned-app-worker', 'exact-original-body').then(status => { received = true; return status; });
+      expect(await stop(`${target}-other`, 'other-body')).toBe(204);
+      let received = false; const original = stop(target, 'exact-original-body').then(status => { received = true; return status; });
       const reply = await gate.caught; expect(reply.status).toBe(204); expect(received).toBe(false);
       expect(requests).toEqual([
-        { method: 'POST', url: '/v1.53/containers/owned-app-worker-other/stop?t=10', body: 'other-body' },
-        { method: 'POST', url: '/v1.53/containers/owned-app-worker/stop?t=10', body: 'exact-original-body' },
+        { method: 'POST', url: `/v1.53/containers/${target}-other/stop?t=10`, body: 'other-body' },
+        { method: 'POST', url: `/v1.53/containers/${target}/stop?t=10`, body: 'exact-original-body' },
       ]);
       if (mode === 'release') { gate.release(); gate.release(); }
       else if (mode === 'close') await proxy.close();

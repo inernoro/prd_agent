@@ -3674,6 +3674,17 @@ export class ContainerService {
       if (refs.some(({ runtime }) => runtime.networkName === network)) continue;
       const shell = this.qualifiedShell(context.assertCurrent);
       await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id }, async () => {
+        const networkView = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(network)}`,
+          { timeout: 5000, executionLane: 'observation' });
+        context.assertCurrent?.('after unused replacement network ownership');
+        if (networkView.exitCode !== 0) {
+          if (!/No such network|not found/i.test(combinedOutput(networkView))) throw new Error('待回收网络状态未确认，保留回收责任');
+          entry.replacementNetworks = entry.replacementNetworks?.filter(name => name !== network);
+          return;
+        }
+        const labels = JSON.parse(networkView.stdout);
+        if (labels?.['cds.type'] !== 'replacement-network' || labels?.['cds.project.id'] !== (entry.projectId || '_unknown')
+          || labels?.['cds.branch.id'] !== entry.id) throw new Error('待回收网络归属不匹配，拒绝回收');
         for (const { service, runtime } of refs) {
           if (!runtime.aliasNetworks?.includes(network) && !runtime.connectedNetworks?.includes(network)) continue;
           const owned = await this.inspectOwnedRuntime(entry, service.profileId, runtime, false);
