@@ -4,7 +4,7 @@ import { Button } from '@/components/ui';
 import { collectionPage } from '@/lib/collectionPaging';
 import './CollectionView.css';
 
-export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [] }: {
+export function CollectionView<T>({ items, searchText, placeholder, children, pageSize = 10, emptyText = '没有匹配结果', className = '', filters = [], filterLabel = '清单状态筛选', allFilterLabel = '全部状态' }: {
   items: readonly T[];
   searchText: (item: T) => string;
   placeholder: string;
@@ -12,6 +12,8 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
   pageSize?: number;
   emptyText?: string;
   className?: string;
+  filterLabel?: string;
+  allFilterLabel?: string;
   filters?: Array<{ value: string; label: string; matches: (item: T) => boolean }>;
 }) {
   const [query, setQuery] = useState('');
@@ -28,7 +30,7 @@ export function CollectionView<T>({ items, searchText, placeholder, children, pa
     <div className={`lg-collection-view ${className}`}>
       <div className="lg-collection-toolbar">
         <input type="search" aria-label={placeholder} placeholder={placeholder} value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} />
-        {filters.length ? <select aria-label="清单状态筛选" value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}><option value="">全部状态</option>{filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : null}
+        {filters.length ? <select aria-label={filterLabel} value={filter} onChange={(event) => { setFilter(event.target.value); setPage(1); }}><option value="">{allFilterLabel}</option>{filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select> : null}
       </div>
       <div className="lg-collection-scroll" ref={scrollRef}>
         {result.total ? children(result.items) : <div className="lg-collection-empty">{emptyText}{query || filter ? <Button size="sm" variant="ghost" onClick={() => { setQuery(''); setFilter(''); setPage(1); }}>清除筛选</Button> : null}</div>}

@@ -73,3 +73,14 @@ test('调用全貌的健康与降级状态可用同一展示值进行检索', ()
   assert.equal(collectionPage(routes, '降级', traceRouteStatus, 1, 10).items[0].id, 'b');
   assert.equal(collectionPage(routes, '停用', traceRouteStatus, 1, 10).items[0].id, 'c');
 });
+
+const { offeringParticipationStatus } = await import('../src/lib/modelDetailIdentity.ts');
+test('线路开关启用但上游已停用时，状态必须警告不可参与，不能绿色报启用', () => {
+  const status = offeringParticipationStatus({ enabled: true, skipReason: '上游那个模型被停用了', healthStatus: 0 });
+  assert.equal(status.label, '不可参与');
+  assert.equal(status.tone, 'warning');
+  assert.equal(status.detail, '上游那个模型被停用了');
+  assert.equal(offeringParticipationStatus({ enabled: false, skipReason: null, healthStatus: 0 }).label, '线路停用');
+  assert.equal(offeringParticipationStatus({ enabled: true, skipReason: null, healthStatus: 1, consecutiveFailures: 3 }).label, '降级');
+  assert.equal(offeringParticipationStatus({ enabled: true, skipReason: null, healthStatus: 0 }).label, '线路启用');
+});

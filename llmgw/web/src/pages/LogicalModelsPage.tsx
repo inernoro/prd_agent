@@ -634,7 +634,7 @@ export function LogicalModelsPage() {
                       <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
                         <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0, flexWrap: 'wrap' }}>
-                          <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                          <strong title={item.name} style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
                           {item.isDefaultForType
                             ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
                             : null}

@@ -405,6 +405,45 @@ export function ServiceKeysPage() {
   };
 
   const selectedKey = items?.find((item) => item.id === selectedKeyId);
+  const keyOverview = <>
+        {items ? <div className="lg-collection-key-overview" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
+          {isInternalTenant ? <div style={coverageCardStyle}>
+            <strong style={SECTION_TITLE}>MAP 生产 key 覆盖</strong><HelpPopover label="MAP 生产 key 覆盖">runtime、release-gate、canary 各用一把 production scoped key。</HelpPopover>
+            <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
+
+          </div> : null}
+          <div style={coverageCardStyle}>
+            <strong style={SECTION_TITLE}>外部平台独立身份</strong><HelpPopover label="外部平台独立身份">每个 clientCode 与环境各一把 key，不跨 purpose 或 environment。</HelpPopover>
+            <div style={chipRowStyle}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={HINT_TEXT}>暂无外部平台 key</span>}</div>
+
+          </div>
+        </div> : null}
+
+        {legacy ? <details className="lg-collection-key-legacy" style={legacyBlockStyle}>
+          <summary style={legacySummaryStyle}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
+          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
+            <span style={HINT_TEXT}>
+              收口判定
+              <HelpPopover label="legacy 收口">
+                外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。
+                每把后继 key 必须是 production MAP runtime 身份，并完整覆盖调用方、四协议和运行时 scope；
+                只有真实业务调用观测达标才能显式撤销。
+              </HelpPopover>
+            </span>
+            <span style={HINT_TEXT}>必需协议 {legacy.requiredIngressProtocols.join(', ')} · 必需 scope {legacy.requiredScopes.join(', ')}</span>
+          </div>
+          <FormGrid style={{ marginTop: GAP.normal }}>
+            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
+            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
+            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={setLegacyAllowedCallers} placeholder="逗号分隔；空表示先盘点" />
+            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={setLegacySuccessorIds} placeholder="逗号分隔" />
+            <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
+            <Button variant="primary" size="sm" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
+          </FormGrid>
+          {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
+        </details> : null}
+
+  </>;
 
   const renderActions = (item: ServiceKeyItem) => item.enabled ? <div className="lg-service-key-actions">
     {item.rotationState === 'active' || item.rotationState === 'completed' ? <Button size="sm" variant="ghost" onClick={() => startRotation(item)}>轮换</Button> : null}
@@ -558,42 +597,7 @@ export function ServiceKeysPage() {
           </div>
         ) : null}
 
-        {items ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
-          {isInternalTenant ? <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>MAP 生产 key 覆盖</strong>
-            <div style={chipRowStyle}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? 'var(--ok)' : 'var(--warn)'} bg={item.ready ? 'var(--ok-bg)' : 'var(--warn-bg)'} />)}</div>
-            <p style={{ ...BODY_TEXT, margin: `${GAP.normal}px 0 0` }}>runtime、release-gate、canary 各用一把 production scoped key。</p>
-          </div> : null}
-          <div style={coverageCardStyle}>
-            <strong style={SECTION_TITLE}>外部平台独立身份</strong>
-            <div style={chipRowStyle}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={HINT_TEXT}>暂无外部平台 key</span>}</div>
-            <p style={{ ...BODY_TEXT, margin: `${GAP.normal}px 0 0` }}>每个 clientCode 与环境各一把 key，不跨 purpose 或 environment。</p>
-          </div>
-        </div> : null}
-
-        {legacy ? <details style={legacyBlockStyle}>
-          <summary style={legacySummaryStyle}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
-          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', marginTop: GAP.section }}>
-            <span style={HINT_TEXT}>
-              收口判定
-              <HelpPopover label="legacy 收口">
-                外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。
-                每把后继 key 必须是 production MAP runtime 身份，并完整覆盖调用方、四协议和运行时 scope；
-                只有真实业务调用观测达标才能显式撤销。
-              </HelpPopover>
-            </span>
-            <span style={HINT_TEXT}>必需协议 {legacy.requiredIngressProtocols.join(', ')} · 必需 scope {legacy.requiredScopes.join(', ')}</span>
-          </div>
-          <FormGrid style={{ marginTop: GAP.normal }}>
-            <label style={labelStyle}><span>截止时间</span><input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
-            <label style={labelStyle}><span>状态</span><select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
-            <Field label="允许的 appCaller 清单" value={legacyAllowedCallers} onChange={setLegacyAllowedCallers} placeholder="逗号分隔；空表示先盘点" />
-            <Field label="后继 scoped key IDs" value={legacySuccessorIds} onChange={setLegacySuccessorIds} placeholder="逗号分隔" />
-            <Field label="最低观测次数" value={legacyRequired} onChange={setLegacyRequired} placeholder="1" type="number" />
-            <Button variant="primary" size="sm" disabled={legacyBusy || !legacyDeadline} onClick={() => void saveLegacyCutover()}>{legacyBusy ? '保存中' : '保存收口策略'}</Button>
-          </FormGrid>
-          {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: GAP.section }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
-        </details> : null}
+        {!items || items.length === 0 ? keyOverview : null}
 
         {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (
           <div className="lg-service-key-empty">
@@ -604,7 +608,7 @@ export function ServiceKeysPage() {
           </div>
         ) : (
           <>
-          <div className="lg-collection-workspace"><div className="lg-collection-list">
+          <div className="lg-collection-workspace lg-collection-key-workspace"><div className="lg-collection-list">{keyOverview}
           <CollectionView items={items} placeholder="搜索密钥名称、客户端或调用用途" searchText={(item) => [item.name, item.keyPrefix, item.clientCode, item.environment, item.purpose, ...item.appCallerCodes].join(' ')} filters={[{ value: 'active', label: '有效', matches: (item) => item.enabled }, { value: 'revoked', label: '已撤销', matches: (item) => !item.enabled }]}>
           {(pageItems) => <>
           <div className="lg-service-key-desktop">
@@ -648,9 +652,9 @@ export function ServiceKeysPage() {
           </>}
           </CollectionView></div>
           {selectedKey ? <CollectionDetailPane key={selectedKey.id} title={selectedKey.name} identifier={selectedKey.keyPrefix} onClose={() => setSelectedKeyId(null)}>
-            <div className="lg-collection-key-facts"><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p><p>{rotationLabel(selectedKey.rotationState)} · 过期 {formatTime(selectedKey.expiresAt)}</p><h3>调用用途 · {selectedKey.appCallerCodes.length}</h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div>
+            <div className="lg-collection-key-facts"><div className="lg-collection-key-meta"><div><span>客户端 / 环境</span><p>{selectedKey.clientCode} · {selectedKey.environment} · {selectedKey.purpose}</p></div><div><span>状态 / 过期</span><p>{rotationLabel(selectedKey.rotationState)} · {formatTime(selectedKey.expiresAt)}</p></div></div><div className="lg-collection-key-heading"><h3>调用用途 · {selectedKey.appCallerCodes.length}</h3><Button size="sm" variant="ghost" onClick={() => void navigator.clipboard.writeText(selectedKey.appCallerCodes.join('\n')).then(() => setScopeCopied(true), () => setError('复制失败，请选中调用用途后手动复制'))}>{scopeCopied ? '已复制' : '复制全部调用用途'}</Button></div></div>
             <CollectionView className="lg-collection-codes" items={selectedKey.appCallerCodes} searchText={(code) => code} placeholder="搜索 appCaller 标识">{(codes) => <>{codes.map((code) => <div key={code} className="lg-collection-code">{code}</div>)}</>}</CollectionView>
-            <div className="lg-collection-key-facts"><div><h3>入口协议</h3><p>{selectedKey.ingressProtocols.join('、')}</p></div><div><h3>Scope</h3><p>{selectedKey.scopes.join('、')}</p></div><div><h3>网络与速率</h3><p>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</p></div><div><h3>团队与使用</h3><p>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</p><p>最后使用 {formatTime(selectedKey.lastUsedAt)}</p><p>前钥 {selectedKey.rotatesKeyId || '无'} · 后钥 {selectedKey.rotatedByKeyId || '无'}</p></div></div>
+            <div className="lg-collection-key-facts lg-collection-key-permission-summary"><div><h3>入口协议</h3><p>{selectedKey.ingressProtocols.join('、')}</p></div><div><h3>Scope</h3><p>{selectedKey.scopes.join('、')}</p></div></div><details className="lg-collection-key-usage"><summary>网络与速率 · 团队与使用</summary><div className="lg-collection-key-facts"><div><h3>网络与速率</h3><p>{selectedKey.allowedCidrs.length ? selectedKey.allowedCidrs.join('、') : '不限 CIDR'} · {selectedKey.rateLimitPerMinute ? `${selectedKey.rateLimitPerMinute}/分钟` : '不限速'}</p></div><div><h3>团队与使用</h3><p>{selectedKey.teamId || '租户级'} · {selectedKey.createdByUsername || '历史密钥'}</p><p>最后使用 {formatTime(selectedKey.lastUsedAt)}</p><p>前钥 {selectedKey.rotatesKeyId || '无'} · 后钥 {selectedKey.rotatedByKeyId || '无'}</p></div></div></details>
             <div className="lg-collection-key-actions">{renderActions(selectedKey)}</div>
           </CollectionDetailPane> : null}
 </div>

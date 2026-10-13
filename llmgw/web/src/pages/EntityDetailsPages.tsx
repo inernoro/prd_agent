@@ -1,4 +1,4 @@
-import { providerForDetail, logicalForDetail, physicalForDetail } from '@/lib/modelDetailIdentity';
+import { providerForDetail, logicalForDetail, physicalForDetail, offeringParticipationStatus } from '@/lib/modelDetailIdentity';
 import { HINT_TEXT } from '@/lib/typography';
 import { CollectionView } from '@/components/CollectionView';
 import { collectProviderModels } from '@/components/ProviderModelsPanel';
@@ -14,6 +14,7 @@ import type {
   LlmLogListItem,
   LogicalModelItem,
   ModelItem,
+  ModelOfferingItem,
   ModelPool,
   PlatformItem,
 } from '@/lib/types';
@@ -283,10 +284,11 @@ export function ModelDetailsPage() {
               {providerGroups.slice(0, 2).map((group) => <Link key={group.id} to={group.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(group.offerings[0].targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}><strong>{group.name}</strong><span>{group.offerings.length} 条线路</span></Link>)}
               {providerGroups.length > 2 ? <span style={HINT_TEXT}>全部供应方见下方线路清单</span> : null}
             </div>
-            <h3 className="lg-collection-section-title">上游线路 · {logical.offerings.length}</h3><CollectionView items={logical.offerings} placeholder="搜索上游模型、供应方或协议" searchText={(item) => [providerGroupByRoute.get(item.id)?.name, item.providerName, item.targetName, item.upstreamModelId, item.protocol, item.notes].filter(Boolean).join(' ')}>
+            <h3 className="lg-collection-section-title">上游线路 · {logical.offerings.length}</h3><CollectionView items={logical.offerings} filterLabel="供应方筛选" allFilterLabel="全部供应方" filters={providerGroups.map((group) => ({ value: group.id, label: group.name, matches: (route: ModelOfferingItem) => providerGroupByRoute.get(route.id)?.id === group.id }))} placeholder="搜索上游模型、供应方或协议" searchText={(item) => [providerGroupByRoute.get(item.id)?.name, item.providerName, item.targetName, item.upstreamModelId, item.protocol, item.notes].filter(Boolean).join(' ')}>
               {(routes) => <table className="lg-collection-entity-table lg-collection-route-table"><colgroup><col style={{width: '38%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '15%'}}/><col style={{width: '17%'}}/></colgroup><thead><tr><th>上游模型</th><th>供应方</th><th>协议</th><th>顺位 / 权重</th><th>状态</th></tr></thead><tbody>{routes.map((route) => {
                 const group = providerGroupByRoute.get(route.id)!;
-                return <tr key={route.id}><td><strong title={route.upstreamModelId || route.targetName}>{route.upstreamModelId || route.targetName}</strong>{route.skipReason ? <small title={route.skipReason}>{route.skipReason}</small> : null}</td><td><Link to={route.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(route.targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}>{group.name}</Link></td><td>{route.protocol || '继承协议'}</td><td>{route.priority} / {route.weight}</td><td><StatusPill label={route.enabled ? '已启用' : '已停用'} tone={route.enabled ? 'good' : 'warning'} /></td></tr>;
+                const participation = offeringParticipationStatus(route);
+                return <tr key={route.id}><td><strong title={route.upstreamModelId || route.targetName}>{route.upstreamModelId || route.targetName}</strong>{route.skipReason ? <small title={route.skipReason}>{route.skipReason}</small> : null}</td><td><Link to={route.targetKind === 'exchange' ? `/platforms?view=exchange&exchangeId=${encodeURIComponent(route.targetId)}` : group.platformId ? `/platforms/view?id=${encodeURIComponent(group.platformId)}&name=${encodeURIComponent(group.name)}` : '/models'}>{group.name}</Link></td><td>{route.protocol || '继承协议'}</td><td>{route.priority} / {route.weight}</td><td><span title={participation.detail}><StatusPill label={participation.label} tone={participation.tone} /></span></td></tr>;
               })}</tbody></table>}
 
             </CollectionView>
