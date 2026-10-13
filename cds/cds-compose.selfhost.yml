@@ -61,6 +61,7 @@ x-cds-deploy-modes:
       containerPort: 9900
       env:
         CDS_REPO_ROOT: /app
+        CDS_BIND_HOST: 0.0.0.0
       buildScope:
         - "cds/**"
         - ".github/workflows/cds-prebuilt.yml"
