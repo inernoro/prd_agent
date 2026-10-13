@@ -532,7 +532,8 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       <div className="lg-collection-workspace">
       <div className="lg-config-table-shell lg-collection-list" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
         <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`}>
-        {(pageProviders) => <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        {(pageProviders) => <table className="lg-data-table lg-collection-provider-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <colgroup><col style={{ width: '22%' }}/><col style={{ width: '24%' }}/><col style={{ width: '12%' }}/><col style={{ width: '10%' }}/><col style={{ width: '14%' }}/><col style={{ width: '18%' }}/></colgroup>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
               {/* 主表只摆要拿来做决定的东西。接口类型、API 地址、并发都是选完平台就定下来的

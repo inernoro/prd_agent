@@ -77,3 +77,6 @@
 .lg-collection-pane [data-testid="call-trace-panel"] > div { min-width: 0; }
 .lg-collection-pane .lg-collection-detail-card { flex-wrap: wrap; }
 @container (max-width:1000px) { .lg-collection-list .lg-logical-model-grid:not(.lg-logical-model-heading) { grid-template-columns: minmax(0,1fr) minmax(0,1fr); } }
+.lg-collection-provider-table { min-width: 960px; }
+.lg-entity-detail-bounded .lg-entity-detail-heading code { white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
+.lg-collection-pane .lg-logical-model-route-detail strong { white-space: normal !important; overflow-wrap: anywhere; overflow: visible !important; text-overflow: clip !important; }

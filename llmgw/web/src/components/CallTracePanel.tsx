@@ -1,3 +1,4 @@
+import { traceRouteStatus } from '@/lib/modelDetailIdentity';
 import { CollectionView } from '@/components/CollectionView';
 // 调用全貌：点名这个模型之后会发生什么，用当前真实状态逐步回答。
 //
@@ -154,7 +155,7 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
             ? '按权重分到各条线路。每次请求的落点由请求本身决定，所以这里只给比例，不指名道姓。'
             : '健康的排在降级的前面，然后按顺位。队首就是这次会落到的那一条。'}
         </p>
-        <CollectionView className="lg-collection-trace" items={[...data.routes].sort((a, b) => (a.queuePosition || 999) - (b.queuePosition || 999))} placeholder="搜索线路模型、供应方或状态" searchText={(route) => [route.providerName, route.upstreamModelId, route.targetName, route.skipReason].filter(Boolean).join(' ')}>
+        <CollectionView className="lg-collection-trace" items={[...data.routes].sort((a, b) => (a.queuePosition || 999) - (b.queuePosition || 999))} placeholder="搜索线路模型、供应方或状态" searchText={(route) => [route.providerName, route.upstreamModelId, route.targetName, route.skipReason, traceRouteStatus(route)].filter(Boolean).join(' ')}>
           {(routes) => <>
           {routes.map((route) => {
                 const extra = extraById.get(route.id);
@@ -188,11 +189,11 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
                       <Chip label="可能先试探它" color="var(--accent)" bg="var(--accent-soft)" />
                     ) : null}
                     {skipped ? (
-                      <Chip label={route.skipReason || '不参与'} color="var(--warn)" bg="var(--warn-bg)" />
+                      <Chip label={traceRouteStatus(route)} color="var(--warn)" bg="var(--warn-bg)" />
                     ) : route.healthStatus === 1 ? (
-                      <Chip label={`降级 · 连续失败 ${route.consecutiveFailures} 次`} color="var(--warn)" bg="var(--warn-bg)" />
+                      <Chip label={traceRouteStatus(route)} color="var(--warn)" bg="var(--warn-bg)" />
                     ) : (
-                      <Chip label="健康" color="var(--ok)" bg="var(--ok-bg)" />
+                      <Chip label={traceRouteStatus(route)} color="var(--ok)" bg="var(--ok-bg)" />
                     )}
                   </div>
                 );

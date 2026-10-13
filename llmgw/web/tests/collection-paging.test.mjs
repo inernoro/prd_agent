@@ -49,3 +49,22 @@ test('万条Offering聚合成两家供应方，但全部线路均可独立检索
   assert.equal(groups.reduce((n, x) => n + x.offerings.length, 0), routes.length);
   assert.equal(collectionPage(routes, 'o9999', x => x.id, 1, 10).items[0].id, 'o9999');
 });
+
+import { providerForDetail, logicalForDetail, physicalForDetail, traceRouteStatus } from '../src/lib/modelDetailIdentity.ts';
+test('同名Provider详情以ID为准，不能混入另一家的元信息', () => {
+  const providers = [{ id: 'p1', name: '同名' }, { id: 'p2', name: '同名' }];
+  assert.equal(providerForDetail(providers, 'p2', '同名').id, 'p2');
+  assert.equal(providerForDetail(providers, 'missing', '同名'), null);
+});
+test('物理模型ID不被同名逻辑模型或另一家供应方覆盖', () => {
+  const models = [{ id: 'm1', modelName: 'same', platformId: 'p1' }, { id: 'm2', modelName: 'same', platformId: 'p2' }];
+  assert.equal(logicalForDetail([{ id: 'l1', publicId: 'same' }], '', 'm2', 'same'), null);
+  assert.deepEqual(physicalForDetail(models, 'm2', 'p2', 'same'), [models[1]]);
+  assert.deepEqual(physicalForDetail(models, '', 'p2', 'same'), [models[1]]);
+});
+test('调用全貌的健康与降级状态可用同一展示值进行检索', () => {
+  const routes = [{ id: 'a', healthStatus: 0 }, { id: 'b', healthStatus: 1, consecutiveFailures: 3 }, { id: 'c', skipReason: '上游已停用' }];
+  assert.equal(collectionPage(routes, '健康', traceRouteStatus, 1, 10).items[0].id, 'a');
+  assert.equal(collectionPage(routes, '降级', traceRouteStatus, 1, 10).items[0].id, 'b');
+  assert.equal(collectionPage(routes, '停用', traceRouteStatus, 1, 10).items[0].id, 'c');
+});
