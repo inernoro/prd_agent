@@ -2324,6 +2324,20 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
 
   // SSE 连接状态只用于故障兜底。在线状态不再渲染绿点,避免无意义状态噪音。
   const [sseConnected, setSseConnected] = useState(true);
+  useEffect(() => {
+    if (sseConnected) return;
+    // 控制面重启后 SSE 会主动关闭；低频读取权威快照，避免卡片永远停在构建中。
+    // 保留既有的手动重连入口，不恢复浏览器每 3 秒重连造成的请求风暴。
+    let inFlight = false;
+    const sync = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try { await refreshLiveBranches(); } finally { inFlight = false; }
+    };
+    void sync();
+    const timer = window.setInterval(() => { void sync(); }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [sseConnected, refreshLiveBranches]);
   /*
    * 卡片生命周期动效(2026-06-23 用户反馈「webhook 回收分支没有动效」):
    *   - 新分支(branch.created)→ enteringIds → 卡片淡入长出来
