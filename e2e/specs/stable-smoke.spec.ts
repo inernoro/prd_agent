@@ -8314,13 +8314,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await mobile.getByRole('dialog').getByRole('button', { name: '创建', exact: true }).tap();
         mobileWorkspaceId = (await (await mobileCreation).json() as ApiEnvelope<{ workspace: { id: string } }>).data.workspace.id;
         await expect(mobile.getByRole('button', { name: '上传参考图', exact: true })).toBeEnabled({ timeout: 30_000 });
-        // 使用预览工具自己的关闭按钮，不修改业务布局或隐藏产品内容。
-        const previewWidget = mobile.locator('[data-cds-widget-root]');
-        if (await previewWidget.isVisible()) {
-          const expandWidget = previewWidget.getByRole('button', { name: /^显示分支信息/ });
-          if (await expandWidget.isVisible()) await expandWidget.tap();
-          await previewWidget.getByRole('button', { name: '关闭 CDS 调试工具', exact: true }).tap();
-        }
+        // 复用既有平台浮层隔离：只隐藏 CDS 调试小部件，不改产品布局或业务内容。
+        // 该小部件会自动替换紧凑态按钮，关闭按钮定位本身不属于图片验收。
+        await dismissCdsPreviewWidget(mobile);
         await capture(mobile, '05-mobile-entry', '移动端入口：独立触控登录与导航后上传参考图操作可达', mobile.getByRole('button', { name: '上传参考图', exact: true }));
         await mobile.locator('input[type="file"][accept="image/*"]').setInputFiles({ name: '移动蓝色参考.png', mimeType: 'image/png',
           buffer: Buffer.from(solidPngDataUrl(35, 90, 190, 32).split(',')[1]!, 'base64') });
