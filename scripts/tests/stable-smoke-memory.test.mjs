@@ -54,6 +54,8 @@ test('原通知缺陷沿用编号并记持续阻塞，不虚构多个产品事�
   assert.equal(state.defects[0].defectId, 'DEF-STSMK-NOTIFY-001');
   assert.equal(state.defects[0].classification, 'configuration');
   assert.equal(state.defects[0].status, 'blocked');
+  const historical = updatePools({ defects: [{ defectId: 'DEF-STSMK-NOTIFY-001', environment: 'production', status: 'blocked', firstRunId: '历史源未提供，禁止用导入轮次替代' }] }, { ...input, notification: { status: 'blocked' } }, contract);
+  assert.match(historical.defects.find(item => item.defectId === 'DEF-STSMK-NOTIFY-001').firstRunId, /历史源未提供/);
 });
 test('重试仍失败不能伪装flaky；近期窗口按上海14个自然日', () => {
   const old = updatePools({}, { ...input, completedAt: '2026-09-29T16:00:00Z', rows: [{ environment: 'production', caseId: 'VIS-009', status: 'fail', retryCount: 1 }] }, contract);

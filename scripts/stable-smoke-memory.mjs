@@ -52,7 +52,7 @@ export function readPools(path = defaultMemoryPath) {
       if (!status) continue;
       const topic = cells[2].match(/#(h\d+)/)?.[1];
       const features = contract.features.filter(feature => feature.history.some(link => link.includes('#' + topic)));
-      state.defects.push({ defectId: cells[0], status, environment: /-NOTIFY-/.test(cells[0]) ? 'production' : /-CDS-/.test(cells[0]) ? 'cds' : 'unknown', caseIds: features.flatMap(feature => feature.caseIds), featureIds: features.map(feature => feature.id), rootCause: '沿用原历史诊断，未重新推断', history: cells[2], closingCondition: cells[3] });
+      state.defects.push({ defectId: cells[0], status, environment: /-NOTIFY-/.test(cells[0]) ? 'production' : /-CDS-/.test(cells[0]) ? 'cds' : 'unknown', caseIds: features.flatMap(feature => feature.caseIds), featureIds: features.map(feature => feature.id), firstRunId: '历史源未提供，禁止用导入轮次替代', rootCause: '沿用原历史诊断，未重新推断', history: cells[2], closingCondition: cells[3] });
     }
   }
   return state;
