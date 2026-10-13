@@ -239,3 +239,14 @@
 .lg-collection-key-row td:nth-child(3) button { height: 24px !important; }
 .lg-collection-key-row td > div { line-height: 1.35 !important; }
 .lg-collection-key-permissions { overflow: auto; overscroll-behavior: contain; }
+/* 窄列操作不得被摘要的省略规则截字；列头允许在42px内分两行。 */
+.lg-service-key-table th:nth-child(5) { padding-inline: 4px !important; white-space: normal !important; line-height: 1.35 !important; font-size: var(--fs-secondary) !important; }
+.lg-service-key-table th:last-child, .lg-collection-key-row td:last-child { padding-inline: 2px !important; }
+.lg-collection-key-row td > .lg-collection-key-status { overflow: visible; }
+.lg-collection-key-status button { flex-shrink: 0; }
+@media (min-width: 1001px) and (max-width: 1450px) {
+  .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer button { padding-inline: 4px; gap: 4px; }
+  .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer button > span { white-space: nowrap; flex-shrink: 0; font-size: var(--fs-secondary); }
+  .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer svg { flex-shrink: 0; }
+  .lg-console-body:has(.lg-collection-page, .lg-entity-detail-bounded) .lg-sidebar-footer kbd { font-size: var(--fs-micro); }
+}
