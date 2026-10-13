@@ -7537,7 +7537,7 @@ const BranchCard = memo(function BranchCard({
                 </span>
               </span>
             ) : footerSha ? (
-              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；仓库最新提交 ${footerSha}`}>
+              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；待发布目标 ${branch.targetCommitSha || '未确认'}`}>
                 运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}{branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? ` · 待发布 ${branch.targetCommitSha.slice(0, 7)}` : ''}
               </span>
             ) : null}
