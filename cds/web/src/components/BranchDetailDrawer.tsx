@@ -4311,7 +4311,7 @@ function ResourceConnection({
     },
     {
       label: '内部连接串（容器内）',
-      value: resource.connectionString || resource.internalUrl || '-',
+      value: externalEnabled ? resource.internalUrl || '-' : resource.connectionString || resource.internalUrl || '-',
       connectionScope: resource.source === 'infra' ? 'internal' as const : undefined,
       copyLabel: '复制容器内用',
       help: '只给同一 CDS 网络里的应用容器使用；本地电脑、DataGrip、redis-cli 不能直接使用。',
@@ -4423,7 +4423,6 @@ function ResourceConnection({
             <code className="block break-all font-mono">{sshGuide.maskedConnectionString}</code>
             <Button type="button" size="sm" variant="outline" disabled={sshBusy} onClick={() => void generateSshGuide(true)}><Copy />复制本地连接串</Button>
           </div> : null}
-          {externalEnabled ? <Button type="button" size="sm" variant="outline" disabled={externalBusy || !canTemporaryExternal || (!externalEnabled && infraLocalOnly && !tcpCapability?.enabled)} onClick={() => void toggleExternal({ enabled: false })}>关闭已有公网访问</Button> : null}
         </div>
       ) : null}
       <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
@@ -4470,7 +4469,7 @@ function ResourceConnection({
         </div>
         <div className="grid gap-2 md:grid-cols-[8.75rem_minmax(0,1fr)]">
           <label className="grid gap-1">
-            <span className="text-[0.6875rem] text-warn/80">有效期（分钟）</span>
+            <span className="text-[0.6875rem] text-warn/80">有效期（分钟，开启时生效）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
