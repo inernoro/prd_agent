@@ -70,7 +70,8 @@ import {
   tryParseWxH,
 } from '@/lib/visualAgentPromptUtils';
 import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
-import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { parseVisualMessageDisplay, visualUploadNotice } from '@/lib/visualMessageDisplay';
+import { serializeImageReferenceMessage } from '@/lib/chipTokenText';
 import { glassToolbar } from '@/lib/glassStyles';
 import { canvasSaveCooldownRemaining, CANVAS_SAVE_DEBOUNCE_MS } from '@/lib/canvasSaveSchedule';
 import {
@@ -5782,6 +5783,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       inlineImage: opts?.inlineImage,
       canvas: contractCanvas,
     });
+    if (!resolveResult.ok) {
+      toast.error('这次没有生成', resolveResult.errors.join(' '));
+      return false;
+    }
 
     // 使用新的 buildRequestText
     const { requestText } = buildRequestText(
@@ -5800,7 +5805,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const sizeOverride = sized.size ?? composerSize ?? autoSizeForSelectedImage ?? null;
     const job: GenJob = {
       id: `job_${Date.now()}_${Math.random().toString(16).slice(2)}`,
-      displayText: cleanDisplay,
+      displayText: serializeImageReferenceMessage(resolveResult.cleanText, resolveResult.refs),
       requestText,
       imageRefs,
       seedSelectedKey,
@@ -5822,6 +5827,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         }).catch(() => { /* ignore */ });
       }
     }
+    return true;
   };
 
   // ── Keep retryRef in sync with latest sendText + canvas ──────────
@@ -5883,13 +5889,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const clean = String(extractSizeToken(text).cleanText ?? '').trim();
     if (!clean) return;
 
+    // 引用校验通过后再清空，失效图片的恢复操作需要保留原输入。
+    if (!await sendText(text, { chipRefs: imageRefs })) return;
     composer.clear();
     setInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
 
-    // 传递 chipRefs 给统一守门员
-    await sendText(text, { chipRefs: imageRefs });
   };
 
   const onSendQuick = async () => {
@@ -5897,10 +5903,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!raw) return;
     const clean = String(extractSizeToken(raw).cleanText ?? '').trim();
     if (!clean) return;
+    if (!await sendText(raw)) return;
     setQuickInput('');
     composerSizeAutoRef.current = true;
     if (selectedSingleImageForComposer) setComposerSize(autoSizeForSelectedImage ?? '1024x1024');
-    await sendText(raw);
   };
 
   const onUploadImages = async (files: File[]) => {
@@ -6051,9 +6057,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (placedAlongsideSelection) showUploadToast(`已在选中图旁新增 ${added.length} 张，原图保留`);
     pushMsg(
       'Assistant',
-      placedAlongsideSelection
-        ? `已在选中图旁新增 ${added.length} 张（原图保留，不会被覆盖）。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
-        : `已把 ${added.length} 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。`
+      visualUploadNotice(added.length, placedAlongsideSelection)
     );
 
     // 持久化：上传到后端并替换为自托管 URL（避免 dataURL 过大、也方便跨设备恢复）

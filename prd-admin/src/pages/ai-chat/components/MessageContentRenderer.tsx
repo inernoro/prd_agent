@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { ReadOnlyImageChip } from '@/components/RichComposer/ReadOnlyImageChip';
 import { parseVisualMessageDisplay, cleanChipLabel } from '@/lib/visualMessageDisplay';
+import { parseChipTokenText } from '@/lib/chipTokenText';
 
 interface CanvasItemSubset {
   refId?: number;
@@ -94,52 +95,37 @@ export function MessageContentRenderer({ content, canvasItems, onPreview }: Mess
       renderRefChip(refId, 'blk', i)
     );
 
-    const text = parsed.text;
     const result: React.ReactNode[] = [];
-    let lastIndex = 0;
-    let match;
-
-    COMBINED_REGEX.lastIndex = 0;
-
-    while ((match = COMBINED_REGEX.exec(text)) !== null) {
-      const fullMatch = match[0];
-      const index = match.index;
-
-      // 添加前面的文本
-      if (index > lastIndex) {
-        result.push(text.slice(lastIndex, index));
+    for (const segment of parseChipTokenText(parsed.text)) {
+      if (segment.type === 'chip') {
+        const item = canvasItems.find((candidate) => candidate.key === segment.canvasKey);
+        const src = item?.src || segment.src;
+        result.push(/^(?:https?:\/\/|data:image\/)/i.test(src)
+          ? <ReadOnlyImageChip key={`token-${result.length}`} refId={segment.refId} src={src}
+              label={cleanChipLabel(item?.prompt, segment.refId)}
+              onClick={() => onPreview?.(src, item?.prompt || '')} />
+          : <NeutralRefChip key={`token-${result.length}`} refId={segment.refId} />);
+        continue;
       }
-
-      if (match[1]) {
-        // @imgN 引用 → 从 canvas 查找；找不到渲染中性 chip
-        const refId = parseInt(match[1], 10);
-        result.push(renderRefChip(refId, 'chip', index));
-      } else if (match[2]) {
-        // [IMG:url|label] → 嵌入式图片 URL
-        const imgUrl = match[2];
-        const imgLabel = cleanChipLabel(match[3] || '', 0);
-
-        result.push(
-          <ReadOnlyImageChip
-            key={`emb-${index}`}
-            refId={0}
-            src={imgUrl}
-            label={imgLabel}
-            style={{ margin: '0 2px', verticalAlign: 'middle', cursor: 'pointer' }}
-            onClick={(e) => {
-              e.stopPropagation();
+      const text = segment.text;
+      let lastIndex = 0;
+      for (const match of text.matchAll(new RegExp(COMBINED_REGEX.source, COMBINED_REGEX.flags))) {
+        const index = match.index!;
+        if (index > lastIndex) result.push(text.slice(lastIndex, index));
+        if (match[1]) {
+          result.push(renderRefChip(Number(match[1]), 'chip', result.length));
+        } else if (match[2]) {
+          const imgUrl = match[2];
+          const imgLabel = cleanChipLabel(match[3] || '', 0);
+          result.push(<ReadOnlyImageChip key={`emb-${result.length}`} refId={0} src={imgUrl}
+            label={imgLabel} onClick={(event) => {
+              event.stopPropagation();
               onPreview?.(imgUrl, imgLabel);
-            }}
-          />
-        );
+            }} />);
+        }
+        lastIndex = index + match[0].length;
       }
-
-      lastIndex = index + fullMatch.length;
-    }
-
-    // 添加剩余文本
-    if (lastIndex < text.length) {
-      result.push(text.slice(lastIndex));
+      if (lastIndex < text.length) result.push(text.slice(lastIndex));
     }
 
     return { parts: result, blockChips };

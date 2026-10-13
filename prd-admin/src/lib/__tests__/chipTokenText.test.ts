@@ -4,6 +4,8 @@ import {
   hasChipToken,
   inlineMarksToTokens,
   parseChipTokenText,
+  parseComposerImageReferences,
+  serializeImageReferenceMessage,
 } from '../chipTokenText';
 
 describe('chipTokenText', () => {
@@ -11,6 +13,32 @@ describe('chipTokenText', () => {
   const KEY2 = 'img-7-ef34gh';
   const SRC1 = 'https://cdn.example.com/a/b.png?x=1';
   const SRC2 = 'data-free://path/c.jpg';
+  it('只选中图片再写正文时，消息仍保留这次实际使用的参考图', () => {
+    expect(serializeImageReferenceMessage('保留构图', [{ refId: 1, canvasKey: KEY1, src: SRC1 }]))
+      .toBe(`${chipToken(1, KEY1, SRC1)} 保留构图`);
+  });
+  it('消息快照不嵌入大图片字节，复制格式与图片身份仍可回读', () => {
+    const message = serializeImageReferenceMessage('@img1 保持构图', [{ refId: 1, canvasKey: KEY1, src: `data:image/png;base64,${'a'.repeat(70_000)}` }]);
+    expect(message).toBe(`[@image:#1:${KEY1}:] 保持构图`);
+    expect(parseChipTokenText(message)[0]).toMatchObject({ canvasKey: KEY1, refId: 1 });
+  });
+  it('旧文字和复制占位符均恢复卡片；编号变化时绑定图片身份', () => {
+    const options = [{ key: KEY1, refId: 12, src: SRC1, label: '蓝色参考' }];
+    const segments = parseComposerImageReferences(`@img12 与 ${chipToken(1, KEY1, SRC1)}`, options);
+    const images = segments.filter((segment) => segment.type === 'image');
+    expect(images).toHaveLength(2);
+    for (const image of images) {
+      expect(image.option.refId).toBe(12);
+      expect(image.option.key).toBe(KEY1);
+      expect(image.valid).toBe(true);
+    }
+    expect(segments.map((segment) => segment.type === 'text' ? segment.text : '').join('')).toBe(' 与 ');
+  });
+
+  it('失效占位符显示提示卡片，不按数字编号换成别的图', () => {
+    const segments = parseComposerImageReferences(chipToken(1, 'removed', SRC1), [{ key: KEY1, refId: 1, src: SRC1, label: '另一张图' }]);
+    expect(segments[0]).toMatchObject({ type: 'image', valid: false, option: { key: 'removed', label: '参考图已移除', src: '' } });
+  });
 
   it('chipToken 生成 Lovart 形态 token', () => {
     expect(chipToken(1, KEY1, SRC1)).toBe(`[@image:#1:${KEY1}:${SRC1}]`);

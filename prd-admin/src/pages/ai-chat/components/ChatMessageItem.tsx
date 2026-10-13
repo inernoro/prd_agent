@@ -3,7 +3,7 @@ import { Copy as CopyIcon, Check } from 'lucide-react';
 import { MessageContentRenderer } from './MessageContentRenderer';
 import { extractInlineImageToken, extractSizeToken } from '@/lib/visualAgentPromptUtils';
 import { inlineMarksToTokens } from '@/lib/chipTokenText';
-import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
+import { parseVisualMessageDisplay, normalizeHistoricalVisualNotice } from '@/lib/visualMessageDisplay';
 import { copyToClipboard } from '@/lib/clipboard';
 import { resolveVisualResultModelLabel } from '../visualAgentModelOptions';
 
@@ -463,7 +463,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   // ── Plain text message ─────────────────────────────────────────────
 
   const parsed = isUser ? extractInlineImageToken(m.content) : null;
-  const contentText = parsed ? parsed.clean : m.content;
+  const contentText = parsed ? parsed.clean : isUser ? m.content : normalizeHistoricalVisualNotice(m.content);
   const sizedMsg = isUser ? extractSizeToken(contentText) : { size: null as string | null, cleanText: String(contentText ?? '') };
   const modeledMsg = isUser ? extractModelToken(sizedMsg.cleanText) : { model: null as string | null, cleanText: String(sizedMsg.cleanText ?? '') };
   const msgBody = String(modeledMsg.cleanText ?? '');
@@ -474,7 +474,8 @@ export const ChatMessageItem = memo(function ChatMessageItem({
   const expectedModelForUser = isUser ? String(modeledMsg.model ?? '').trim() : '';
 
   return (
-    <div className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
+    <div data-testid="visual-chat-message" data-message-role={m.role}
+      className={`flex flex-col gap-0.5 ${isUser ? 'items-end' : 'items-start'}`}>
       <div
         className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
         style={{
@@ -545,7 +546,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               color: copied ? 'rgba(74,222,128,0.9)' : 'var(--text-secondary)',
               cursor: 'pointer',
             }}
-            title="复制消息（图片引用序列化为 [@image:#N:...] 文本，粘回输入框可还原）"
+            title="复制文字和参考图片，粘贴回输入框可继续编辑"
             onClick={() => copyUserMessage(msgBody)}
           >
             {copied ? <Check size={11} /> : <CopyIcon size={11} />}
