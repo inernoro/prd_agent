@@ -803,6 +803,25 @@ describe('Branch Routes', () => {
       expect(res.status).not.toBe(409);
     });
 
+    it('切回源码模式清除旧 CI 目标，保留极速版时不清除', async () => {
+      seedGateProject(true);
+      const old = 'a'.repeat(40), next = 'b'.repeat(40);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.updateBranchGithubMeta('b1', { githubCommitSha: next, ciTargetSha: old, ciImageStatus: 'failed', ciImageError: 'old failure' });
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'express' });
+      expect(stateService.getBranch('b1')?.ciTargetSha).toBe(old);
+      const source = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'dev' });
+      expect(source.status).toBe(200);
+      const detail = await request(server, 'GET', '/api/branches/b1');
+      expect(detail.body.branch.targetCommitSha).toBe(next);
+      expect(detail.body.branch.ciImageStatus).toBeUndefined();
+      expect(detail.body.branch.ciImageError).toBeUndefined();
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.updateBranchGithubMeta('b1', { ciTargetSha: old, ciImageStatus: 'failed' });
+      expect((await request(server, 'DELETE', '/api/branches/b1/profile-overrides/api')).status).toBe(200);
+      expect(stateService.getBranch('b1')?.ciTargetSha).toBeUndefined();
+    });
+
     it('真人（无机器凭据）仍可把分支切成 dev，门禁只管 Agent', async () => {
       seedGateProject(true);
       const res = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'dev' });

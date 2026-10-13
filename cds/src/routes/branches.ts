@@ -15863,6 +15863,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.json({ branchId: id, profiles: payload });
   });
 
+  function clearSourceModeCiMetadata(id: string): void {
+    const branch = stateService.getBranch(id);
+    if (!branch) return;
+    const profiles = stateService.getEffectiveProfilesForBranch(branch);
+    if (branchUsesPrebuiltMode(profiles, branch)
+      || profiles.some(profile => resolveEffectiveProfile(profile, branch).prebuiltImage === true)) return;
+    stateService.updateBranchGithubMeta(id, {
+      ciImageStatus: undefined, ciTargetSha: undefined,
+      ciWorkflowConclusion: undefined, ciWorkflowRunUrl: undefined,
+      ciWaitingSince: undefined, ciImageError: undefined,
+    });
+  }
+
   router.put('/branches/:id/profile-overrides/:profileId', (req, res) => {
     const { id, profileId } = req.params;
     const entry = stateService.getBranch(id);
@@ -16006,6 +16019,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           ? { webEntry: prevOverride.webEntry } : {}),
       };
       stateService.setBranchProfileOverride(id, profileId, { ...override, ...preserved });
+      clearSourceModeCiMetadata(id);
       stateService.save();
 
       // Return the new effective profile so the UI can show the merged result
@@ -17053,6 +17067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } else {
         stateService.clearBranchProfileOverride(id, profileId);
       }
+      clearSourceModeCiMetadata(id);
       stateService.save();
       res.json({ message: '已恢复为公共配置', profileId, needsRedeploy: true });
     } catch (err) {
