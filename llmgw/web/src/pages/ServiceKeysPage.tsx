@@ -609,10 +609,10 @@ export function ServiceKeysPage() {
           {(pageItems) => <>
           <div className="lg-service-key-desktop">
             <table className="lg-service-key-table lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <colgroup><col style={{width: '20%'}}/><col style={{width: '14%'}}/><col style={{width: '18%'}}/><col style={{width: '11%'}}/><col style={{width: '12%'}}/><col style={{width: '9%'}}/><col style={{width: '7%'}}/><col style={{width: '9%'}}/></colgroup><thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}><tr>
+              <colgroup><col style={{width: '20%'}}/><col style={{width: '14%'}}/><col style={{width: '18%'}}/><col style={{width: '11%'}}/><col style={{width: '12%'}}/><col style={{width: '9%'}}/><col style={{width: '9%'}}/><col style={{width: '7%'}}/></colgroup><thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}><tr>
                 {['API Key', '客户端', 'AppCaller 与权限', '团队', '最后使用', '过期', '状态', ''].map((label) => <th key={label} style={th}>{label}</th>)}
               </tr></thead>
-              <tbody>{pageItems.map((item) => <tr key={item.id} className="lg-collection-key-row">
+              <tbody>{pageItems.map((item) => <tr key={item.id} className={`lg-collection-key-row${selectedKeyId === item.id ? ' lg-collection-selected-row' : ''}`}>
                 <td style={td}><strong>{item.name}</strong><div style={mutedMono}>{item.keyPrefix} · {rotationLabel(item.rotationState)}</div></td>
                 <td style={td}><strong>{item.clientCode}</strong><div style={mutedMono}>{item.environment} · {item.sourceSystem}</div></td>
                 <td style={td}><Button size="sm" variant="ghost" onClick={() => { setScopeCopied(false); setSelectedKeyId(item.id); }}>{item.appCallerCodes.length} 个调用用途</Button><div style={HINT_TEXT}>协议 {item.ingressProtocols.length} · Scope {item.scopes.length}</div></td>

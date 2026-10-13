@@ -84,17 +84,30 @@
 .lg-collection-trace { height: 400px; flex: none; border: 1px solid var(--border-subtle); border-radius: var(--radius); }
 .lg-collection-pane [data-testid="call-trace-panel"] > div { min-width: 0; }
 .lg-collection-pane .lg-collection-detail-card { flex-wrap: wrap; }
-@container (min-width:750px) {
-  .lg-collection-list .lg-collection-scroll .lg-logical-model-grid { grid-template-columns: minmax(0,2fr) minmax(0,1.4fr) minmax(0,1fr) minmax(0,.8fr) 130px; }
-  .lg-collection-list .lg-logical-model-heading { display: grid !important; }
-  .lg-collection-list .lg-logical-model-grid > :first-child, .lg-collection-list .lg-logical-model-actions { grid-column: auto; }
-}
-@container (max-width:749px) {
-  .lg-collection-list .lg-logical-model-grid:not(.lg-logical-model-heading) { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
-  .lg-collection-list .lg-logical-model-grid > :first-child { grid-column: 1 / -1; }
-  .lg-collection-list .lg-logical-model-grid > :nth-child(4) { grid-column: 1; }
-  .lg-collection-list .lg-logical-model-actions { grid-column: 2; }
-}
+/* 父清单在窄列仍保持紧凑表格，宽度不足时只在清单内横向滚动。 */
+.lg-collection-list .lg-collection-scroll .lg-logical-model-grid { grid-template-columns: minmax(0,2fr) minmax(0,1.4fr) minmax(0,1fr) minmax(0,.8fr) 130px; min-width: 750px; }
+.lg-collection-list .lg-logical-model-heading { display: grid !important; }
+.lg-collection-list .lg-logical-model-grid > :first-child, .lg-collection-list .lg-logical-model-actions { grid-column: auto; }
 .lg-collection-provider-table { min-width: 960px; }
 .lg-entity-detail-bounded .lg-entity-detail-heading code { white-space: normal; overflow-wrap: anywhere; overflow: visible; text-overflow: clip; }
 .lg-collection-pane .lg-logical-model-route-detail strong { white-space: normal !important; overflow-wrap: anywhere; overflow: visible !important; text-overflow: clip !important; }
+
+.lg-collection-selected-row { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.lg-collection-key-row td:nth-child(7) { white-space: nowrap; }
+.lg-collection-section-title { flex-shrink: 0; margin: 0 0 8px; font-size: var(--fs-heading); }
+.lg-collection-entity-table { min-width: 720px; font-size: var(--fs-secondary); }
+.lg-collection-entity-table th, .lg-collection-entity-table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); }
+.lg-collection-entity-table th { color: var(--text-muted); font-weight: var(--fw-medium); }
+.lg-collection-entity-table td { height: 60px; vertical-align: middle; }
+.lg-collection-entity-table strong, .lg-collection-entity-table small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lg-collection-entity-table strong { font-weight: var(--fw-strong); color: var(--text-primary); }
+.lg-collection-entity-table small { font-size: var(--fs-caption); color: var(--text-muted); }
+.lg-collection-entity-table a { color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.lg-collection-entity-table a:hover { text-decoration: underline; }
+.lg-collection-connection-summary { display: flex; flex-shrink: 0; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius); font-size: var(--fs-secondary); }
+.lg-collection-connection-summary code { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+[data-theme='light'] .lg-collection-page, [data-theme='light'] .lg-entity-detail-bounded { --ok: #15803d; --warn: #a16207; --info: #0369a1; }
+
+.lg-entity-detail-bounded .lg-entity-detail-pill { border-radius: var(--radius-sm); font-size: var(--fs-caption); }
+.lg-entity-detail-bounded .lg-entity-detail-pill-good { color: var(--ok); background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 28%, var(--border-subtle)); }
+.lg-entity-detail-bounded .lg-entity-detail-pill-warning { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 28%, var(--border-subtle)); }

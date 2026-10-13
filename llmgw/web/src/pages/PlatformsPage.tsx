@@ -531,7 +531,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       ) : (
       <div className="lg-collection-workspace">
       <div className="lg-config-table-shell lg-collection-list" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-        <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`}>
+        <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
         {(pageProviders) => <table className="lg-data-table lg-collection-provider-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <colgroup><col style={{ width: '22%' }}/><col style={{ width: '24%' }}/><col style={{ width: '12%' }}/><col style={{ width: '10%' }}/><col style={{ width: '14%' }}/><col style={{ width: '18%' }}/></colgroup>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
@@ -558,7 +558,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
               return (
                 // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
                 <Fragment key={p.id}>
-                <tr className="lg-collection-provider-row">
+                <tr className={`lg-collection-provider-row${expandedModelsFor === p.id ? ' lg-collection-selected-row' : ''}`}>
                   <td style={td}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                       <span style={{ fontWeight: 600 }}>{p.name}</span>
