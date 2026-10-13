@@ -74,6 +74,7 @@ import {
 } from '../services/branch-protection.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
+import { countReservedContainers } from '../services/resource-usage-sampler.js';
 import { getEventLoopLag } from '../services/event-loop-lag.js';
 import { recordMainThreadSection, timeMainThreadSection } from '../services/main-thread-diagnostics.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
@@ -4701,14 +4702,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function computeCapacity(): { current: number; max: number; totalMemGB: number } {
     const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
     const max = Math.max(2, (totalMemGB - 1) * 2);
-    let current = 0;
-    for (const b of stateService.getAllBranches()) {
-      for (const svc of Object.values(b.services)) {
-        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
-          current++;
-        }
-      }
-    }
+    const current = countReservedContainers(stateService.getAllBranches());
     return { current, max, totalMemGB };
   }
 
@@ -5291,14 +5285,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // project B has 10 additional containers running (actual free = 171/186).
     const totalMemGB = Math.round(os.totalmem() / (1024 * 1024 * 1024));
     const maxContainers = Math.max(2, (totalMemGB - 1) * 2);
-    let runningContainers = 0;
-    for (const b of Object.values(state.branches)) {
-      for (const svc of Object.values(b.services)) {
-        if (svc.status === 'running' || svc.status === 'building' || svc.status === 'starting') {
-          runningContainers++;
-        }
-      }
-    }
+    const runningContainers = countReservedContainers(Object.values(state.branches));
     markTiming('capacity');
     timings.total = Date.now() - startedAt;
     const slowThresholdRaw = Number.parseInt(process.env.CDS_BRANCHES_SLOW_MS || '1000', 10);

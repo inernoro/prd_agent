@@ -398,6 +398,8 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
 async function main(): Promise<void> {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux'); assert.equal(path.resolve('.'), '/owned/source');
   const cancelBoundary = process.argv.includes('--cancel-after-daemon-create') ? 'daemon-created' : 'client-disconnect';
+  const qualifyUnknownCreationShutdown = process.argv.includes('--qualify-unknown-create-shutdown');
+  assert.ok(!qualifyUnknownCreationShutdown || cancelBoundary === 'client-disconnect');
   const source = JSON.parse(await fs.readFile('owned-source.json', 'utf8')); assert.match(source.sourceHead, /^[a-f0-9]{40}$/); assert.match(source.owner, /^cds_app_[a-f0-9]{16}$/);
   for (const [name, hash] of Object.entries(source.hashes)) {
     assert.ok(!path.isAbsolute(name) && !name.split(path.sep).includes('..'));
@@ -801,6 +803,7 @@ async function main(): Promise<void> {
     report.proxyPinnedImagePreflight = { daemonId: info.ID, imageReference: capabilityImage, imageId: proxyImageId, matchedDirectBackend: true };
     let capabilityProjectId: string | undefined;
     await runApplicationBootstrap({ sourceHead: source.sourceHead, mongoUri: `mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, dockerHost: host, output: '/owned/output',
+      qualifyUnknownCreationShutdown,
       dockerRequestProxy: { socketPath: path.join(root, 'probe-daemon-proxy.sock'), daemonId: info.ID, owner: source.owner },
       beforeShutdown: async context => {
         report.stage = 'original-application-shutdown-and-restart';

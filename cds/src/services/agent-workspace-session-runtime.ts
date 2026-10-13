@@ -2176,7 +2176,12 @@ export class AgentWorkspaceSessionRuntime {
       }
     })();
     generation.cleanup = cleanup;
-    try { await cleanup; } finally { generation.cleanup = undefined; }
+    try { await cleanup; } finally {
+      // 停机期间同一代只执行一次原期限内的清理。重开一轮期限既不能撤销
+      // 已发出的create，又把已知“未确认”拖到全局停机deadline；保留原回执
+      // 供下一进程恢复。正常运行中的恢复仍可重试。
+      if (!this.probeAbort.signal.aborted) generation.cleanup = undefined;
+    }
   }
 
   private async cleanupProbeLease(generation: CapabilityProbeGeneration, lease: CapabilityProbeLease, deadline: number): Promise<void> {

@@ -65,6 +65,22 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 }
 
 describe('capability probe cancellation reconciliation', () => {
+  it('shutdown does not restart the exhausted cleanup budget; unknown creation stays durable and unconfirmed', async () => {
+    const f = fixture(false);
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await expect(f.runtime.closeCapabilityProbes()).rejects.toMatchObject({ code: 'workspace_probe_cleanup_unconfirmed' });
+      await probe;
+      expect(f.events.filter(x => x.action === 'agent.probe.cleanup.unconfirmed')).toHaveLength(1);
+      expect(f.events.some(x => x.action === 'agent.probe.cleanup.confirmed')).toBe(false);
+      const receipts = fs.readdirSync(f.rootDir).flatMap(instance =>
+        fs.readdirSync(path.join(f.rootDir, instance)).filter(name => name.startsWith('capability-'))
+          .map(name => path.join(f.rootDir, instance, name, 'probe.json')));
+      expect(receipts).toHaveLength(1);
+      expect(JSON.parse(fs.readFileSync(receipts[0], 'utf8')).leases).toMatchObject([{ issued: true, cleaned: false }]);
+      expect(f.calls.some(x => x.command.startsWith('docker rm -f'))).toBe(false);
+    } finally { await f.runtime.closeCapabilityProbes().catch(() => undefined); fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+  });
   it('confirms a daemon deletion that is still in progress without failing shutdown before its original deadline', async () => {
     const f = fixture(true, { emptyCidFile: true, removingReplies: 2 });
     try {

@@ -26,6 +26,8 @@ async function hashes(root: string, prefix = ''): Promise<Record<string, string>
 async function main(): Promise<void> {
   assert.equal(process.env.GITHUB_ACTIONS, 'true'); assert.equal(os.platform(), 'linux'); assert.match(process.env.GITHUB_RUN_ID || '', /^\d+$/);
   const cancelAfterDaemonCreate = process.argv.includes('--cancel-after-daemon-create');
+  const qualifyUnknownCreationShutdown = process.argv.includes('--qualify-unknown-create-shutdown');
+  assert.ok(!qualifyUnknownCreationShutdown || !cancelAfterDaemonCreate);
   const sourceHead = (await execute('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' })).stdout.trim(); assert.match(sourceHead, /^[a-f0-9]{40}$/);
   const owner = `cds_app_${randomBytes(8).toString('hex')}`;
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-application-docker-ci-')); await fs.chmod(root, 0o700);
@@ -109,7 +111,8 @@ async function main(): Promise<void> {
     });
     try { result = await execute('docker', ['--host', primaryHost, 'exec', '-w', '/owned/source', containerId,
       'node', '--import', 'tsx', 'scripts/application-docker-inner-drill.ts', '--native',
-      ...(cancelAfterDaemonCreate ? ['--cancel-after-daemon-create'] : [])],
+      ...(cancelAfterDaemonCreate ? ['--cancel-after-daemon-create'] : []),
+      ...(qualifyUnknownCreationShutdown ? ['--qualify-unknown-create-shutdown'] : [])],
     { encoding: 'utf8', timeout: 600_000, maxBuffer: 2 * 1024 * 1024 }); }
     catch (error) { const failed = error as Error & { code?: unknown; signal?: unknown; killed?: unknown; stdout?: string; stderr?: string };
       report.innerCommand = commandEvidence(failed);
@@ -119,6 +122,11 @@ async function main(): Promise<void> {
     const application = JSON.parse(await fs.readFile(path.join(output, 'report.json'), 'utf8')); assert.equal(application.verdict, 'passed');
     assert.equal(application.actualFullIndexBootstrapVerified, true); assert.equal(application.actualOwnedDockerApplicationPreflightVerified, true);
     if (cancelAfterDaemonCreate) assert.equal(application.actualBudgetProbeCancellationVerified, true);
+    if (qualifyUnknownCreationShutdown) {
+      assert.equal(application.originalFirstShutdownVerdict, 'failed');
+      assert.equal(application.unknownCreationShutdownSafetyVerified, true);
+      assert.equal(application.failureRecoveryVerified, true);
+    }
     assert.equal(application.actualWholeFirstStageVerified, false); assert.equal(application.formalAcceptancePassed, false);
     report.applicationReportSha256 = createHash('sha256').update(await fs.readFile(path.join(output, 'report.json'))).digest('hex');
     report.verdict = 'passed';

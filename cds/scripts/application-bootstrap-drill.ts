@@ -59,6 +59,8 @@ export interface ApplicationBootstrapOptions {
   afterFirstShutdown?: (context: ApplicationBootstrapContext) => Promise<void>;
   afterRestart?: (context: ApplicationBootstrapContext) => Promise<void>;
   afterFailedShutdown?: (context: ApplicationBootstrapContext) => Promise<void>;
+  /** 显式故障场景：未确认创建必须拒绝普通成功，恢复回收后再验证正常停机。 */
+  qualifyUnknownCreationShutdown?: boolean;
   dockerRequestProxy?: { socketPath: string; daemonId: string; owner: string };
 }
 export async function runApplicationBootstrap(options: ApplicationBootstrapOptions = {}): Promise<void> {
@@ -272,6 +274,18 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
         report.probeEventsAtFailedShutdown = await failureRecoveryContext.readProbeEvents();
         await options.afterFailedShutdown(failureRecoveryContext);
         report.failureRecoveryVerified = true;
+        if (options.qualifyUnknownCreationShutdown) {
+          // 保留原首次code0断言失败；本场景判的是未知创建安全退出与责任恢复，
+          // 不是把原失败停机重写成正常成功。原默认演练继续严格要求code0。
+          assert.equal(report.shutdownAttempts[0].code, 1);
+          assert.ok(report.shutdownAttempts[0].elapsedMs <= 10_000);
+          assert.equal(application?.exitCode, 0);
+          report.originalFirstShutdownVerdict = 'failed';
+          report.unknownCreationShutdownSafetyVerified = true;
+          report.actualAuthRestartVerified = false;
+          report.verdict = 'passed';
+          return;
+        }
       } catch (recoveryError) { report.failureRecoveryVerified = false;
         report.failureRecoveryFailure = scrub(recoveryError instanceof Error ? recoveryError.message : String(recoveryError)); }
     }

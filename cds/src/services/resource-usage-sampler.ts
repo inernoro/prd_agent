@@ -56,6 +56,7 @@ interface ContainerStatLite {
 }
 interface StatsProvider {
   getServiceStats(names: string[]): Promise<Map<string, ContainerStatLite>>;
+  getRunningContainerNames?(): Promise<Set<string>>;
 }
 
 const DEFAULT_INTERVAL_MS = Math.max(
@@ -64,6 +65,21 @@ const DEFAULT_INTERVAL_MS = Math.max(
 );
 
 let latest: ResourceUsageSnapshot | null = null;
+let observedRunningNames: ReadonlySet<string> | null = null;
+
+/** 被动容量读取复用最后一次真实盘点；读取失败不能把既知活容器释放为零。 */
+export function countReservedContainers(branches: ReadonlyArray<BranchEntry>): number {
+  const names = new Set<string>();
+  for (const branch of branches) {
+    for (const [id, svc] of Object.entries(branch.services || {})) {
+      if (['running', 'building', 'starting', 'restarting'].includes(svc.status)
+        || (svc.containerName && observedRunningNames?.has(svc.containerName))) {
+        names.add(svc.containerName || `${branch.id}::${id}`);
+      }
+    }
+  }
+  return names.size;
+}
 
 /** 路由 / 项目摘要读取最近一次采样快照（首个 tick 前为 null）。 */
 export function getLatestResourceUsage(): ResourceUsageSnapshot | null {
@@ -73,6 +89,7 @@ export function getLatestResourceUsage(): ResourceUsageSnapshot | null {
 /** 测试隔离用。 */
 export function __setLatestResourceUsageForTests(snapshot: ResourceUsageSnapshot | null): void {
   latest = snapshot;
+  if (!snapshot) observedRunningNames = null;
 }
 
 function round1(n: number): number {
@@ -89,6 +106,7 @@ export function computeResourceSnapshot(
   buildSummary: Map<string, BuildActivitySummary>,
   nowMs: number,
   intervalMs: number,
+  actualRunningNames?: ReadonlySet<string>,
 ): ResourceUsageSnapshot {
   const byProject = new Map<string, ProjectResourceUsage>();
   const ensure = (projectId: string): ProjectResourceUsage => {
@@ -111,7 +129,7 @@ export function computeResourceSnapshot(
   for (const branch of branches) {
     const projectId = branch.projectId || 'default';
     for (const svc of Object.values(branch.services || {})) {
-      if (svc.status !== 'running') continue;
+      if (actualRunningNames ? !actualRunningNames.has(svc.containerName) : svc.status !== 'running') continue;
       const stat = svc.containerName ? statsByContainer.get(svc.containerName) : undefined;
       const entry = ensure(projectId);
       entry.runningContainers++;
@@ -180,14 +198,16 @@ export class ResourceUsageSampler {
     this.running = true;
     try {
       const branches = this.stateService.getAllBranches();
-      const runningNames: string[] = [];
+      const actualRunningNames = await this.containerService.getRunningContainerNames?.();
+      if (actualRunningNames) observedRunningNames = actualRunningNames;
+      const runningNames = new Set<string>();
       for (const branch of branches) {
         for (const svc of Object.values(branch.services || {})) {
-          if (svc.status === 'running' && svc.containerName) runningNames.push(svc.containerName);
+          if (svc.containerName && (actualRunningNames ? actualRunningNames.has(svc.containerName) : svc.status === 'running')) runningNames.add(svc.containerName);
         }
       }
-      const statsByContainer = runningNames.length
-        ? await this.containerService.getServiceStats(runningNames)
+      const statsByContainer = runningNames.size
+        ? await this.containerService.getServiceStats([...runningNames])
         : new Map<string, ContainerStatLite>();
       const nowMs = Date.now();
       // 同一帧同时供两处用：项目汇总（下面）与按容器的历史序列。
@@ -210,6 +230,7 @@ export class ResourceUsageSampler {
         summarizeBuildActivity(nowMs),
         nowMs,
         this.intervalMs,
+        actualRunningNames,
       );
       latest = snapshot;
       return snapshot;

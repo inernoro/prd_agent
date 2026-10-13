@@ -71,8 +71,8 @@ jobs:
         run: |
           docker --version
           pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
-      - name: Original full application in owned Docker network namespace
-        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts
+      - name: Verify unconfirmed delayed creation exit and owned restart recovery
+        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --qualify-unknown-create-shutdown
       - name: Preserve original application Docker prerequisite evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { computeResourceSnapshot } from '../../src/services/resource-usage-sampler.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { computeResourceSnapshot, ResourceUsageSampler, countReservedContainers, __setLatestResourceUsageForTests } from '../../src/services/resource-usage-sampler.js';
+import type { StateService } from '../../src/services/state.js';
 import type { BranchEntry } from '../../src/types.js';
 import type { BuildActivitySummary } from '../../src/services/build-activity-tracker.js';
 
@@ -18,8 +19,31 @@ function branch(projectId: string, services: Array<{ status: string; containerNa
 }
 
 const MB = 1024 * 1024;
+afterEach(() => __setLatestResourceUsageForTests(null));
 
 describe('computeResourceSnapshot', () => {
+  it('sampler queries the actual running inventory for error services, and a failed read retains their reservation', async () => {
+    const branches = [branch('p1', [{ status: 'error', containerName: 'alive-error' }, { status: 'stopped', containerName: 'stopped' }])];
+    const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['alive-error'])),
+      getServiceStats: vi.fn().mockResolvedValue(new Map([['alive-error', { cpuPercent: 25, memUsedBytes: 128 * MB }]])) };
+    const sampler = new ResourceUsageSampler({ getAllBranches: () => branches } as StateService, provider);
+    expect((await sampler.sampleOnce())?.totals.runningContainers).toBe(1);
+    expect(provider.getServiceStats).toHaveBeenCalledWith(['alive-error']);
+    expect(countReservedContainers(branches)).toBe(1);
+    provider.getRunningContainerNames.mockRejectedValueOnce(new Error('owned observation unavailable'));
+    expect((await sampler.sampleOnce())?.totals.runningContainers).toBe(1);
+    expect(countReservedContainers(branches)).toBe(1);
+    provider.getRunningContainerNames.mockResolvedValueOnce(new Set());
+    await sampler.sampleOnce(); expect(countReservedContainers(branches)).toBe(0);
+    expect(branches[0].services.svc0.status).toBe('error');
+  });
+  it('counts a physically running error service and excludes an observed stopped service', () => {
+    const branches = [branch('p1', [{ status: 'error', containerName: 'alive-error' }, { status: 'stopped', containerName: 'stopped' }])];
+    const stats = new Map([['alive-error', { cpuPercent: 25, memUsedBytes: 128 * MB }],
+      ['stopped', { cpuPercent: 0, memUsedBytes: 0 }]]);
+    const snap = computeResourceSnapshot(branches, stats, new Map(), Date.now(), 45000, new Set(['alive-error']));
+    expect(snap.totals).toEqual({ cpuPercent: 25, memUsedMB: 128, runningContainers: 1 });
+  });
   it('rolls up running-container CPU/mem per project and merges build churn', () => {
     const branches = [
       branch('p1', [
