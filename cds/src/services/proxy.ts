@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { runningCommitSha } from './running-version.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
 import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
@@ -1261,11 +1262,11 @@ export class ProxyService {
     // 的等待页（「预览环境准备中 · 极速版正在拉取分支」+ 自动刷新）。
     if (branch.ciImageStatus === 'waiting') return null;
     // 极速版 CI 构建失败（conclusion 非 success / 看门狗等待超时）：这才是需要人工介入的终态，
-    // 给出明确的 CI 归因 + 下一步（切回源码编译或重跑 CI），而不是泛化的「未运行」。
+    // 给出明确的 CI 归因 + 下一步（修复后重跑 CI），而不是泛化的「未运行」。
     if (branch.ciImageStatus === 'failed') {
       return {
         heading: '极速版镜像未就绪',
-        description: '该分支为极速版（CI 预构建镜像）模式，但本次 commit 的镜像构建未成功或等待超时，因此没有可用的运行环境。可在分支详情切回源码编译，或重跑 GitHub Actions 构建后重新部署。',
+        description: '该分支为极速版（CI 预构建镜像）模式，但本次 commit 的镜像构建未成功或等待超时，因此没有可用的运行环境。请查看 CI 日志并修复后重试，或重跑 GitHub Actions 构建后重新部署。',
         detail: branch.ciImageError || branch.errorMessage || branch.lastStopReason,
       };
     }
@@ -2638,14 +2639,9 @@ ${shouldAutoRefresh ? `;(function(){
           const modeLabel = anyMode
             ? (/express|prebuilt/i.test(anyMode) ? '极速' : '发布')
             : '';
-          // 徽章 sha 跟随实际部署模式（Codex/Bugbot）：
-          //  - 极速（CI 预构建镜像）：用 ciTargetSha —— 镜像 tag 按它解析，docs-only push 只动
-          //    githubCommitSha、不动 ciTargetSha，显 ciTargetSha 才是容器实际跑的镜像 commit。
-          //  - 发布（源码编译，含极速版缺镜像自动回退）：容器是从 worktree 编译的，跑的就是
-          //    githubCommitSha，**不能**显 ciTargetSha（那是个根本没在跑的镜像 commit）。
-          const badgeSha = (modeLabel === '极速'
-            ? (entry?.ciTargetSha || entry?.githubCommitSha)
-            : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
+          const badgeSha = entry ? runningCommitSha(entry,
+            entry.currentVersionId ? this.stateService.getDeploymentVersion(entry.currentVersionId) : undefined,
+            branchCtx.profileId) || '' : '';
           // 托管态：这条分支起的是 CDS 预览实例（CDS 托管 CDS），徽章换成深绿的
           // 「CDS 托管 CDS」变体，子实例侦测到它就不再画自己的橙 pill。判据看 profile.env
           // 里 compose 声明的 CDS_PREVIEW_INSTANCE（cds-compose.selfhost.yml），

@@ -49,6 +49,8 @@ describe('事实 → 状态（八档全覆盖）', () => {
     ['redeploying', facts({ lifecycle: 'building', serviceCount: 2, readyCount: 2 })],
     ['deploying', facts({ lifecycle: 'starting', serviceCount: 2, readyCount: 1 })],
     ['healthy', facts({ running: true, serviceCount: 2, readyCount: 2 })],
+    ['publish-blocked', facts({ running: true, serviceCount: 2, readyCount: 2, ciImageStatus: 'failed' })],
+    ['publish-pending', facts({ running: true, serviceCount: 2, readyCount: 2, pendingVersion: true })],
     ['partial', facts({ running: true, serviceCount: 3, readyCount: 1 })],
     ['stopped', facts({ running: false, serviceCount: 2, readyCount: 0 })],
   ];
@@ -60,7 +62,7 @@ describe('事实 → 状态（八档全覆盖）', () => {
   it('九档一个不少，且这张表真的覆盖了全部档位', () => {
     const covered = new Set(cases.map(([s]) => s));
     const produced = new Set(cases.map(([, f]) => deriveOverviewState(f)));
-    expect(covered.size).toBe(9);
+    expect(covered.size).toBe(11);
     expect([...produced].sort()).toEqual([...covered].sort());
   });
 
