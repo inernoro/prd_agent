@@ -21,18 +21,57 @@ export interface BrowserQualityProbe {
   observation: string;
 }
 
+export interface BrowserQualityProbeOptions {
+  env?: NodeJS.ProcessEnv;
+  engineHome?: string;
+  engineUid?: number;
+  engineGid?: number;
+}
+
 export function resolveBrowserExecutablePath(env: NodeJS.ProcessEnv = process.env): string {
   return env.DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH?.trim() || chromium.executablePath();
 }
 
-export function probeBrowserQuality(env: NodeJS.ProcessEnv = process.env): BrowserQualityProbe {
+function directoryWritableBy(stat: fs.Stats, uid?: number, gid?: number): boolean {
+  if (uid === undefined) return true;
+  if (stat.uid === uid) return (stat.mode & 0o200) !== 0;
+  if (gid !== undefined && stat.gid === gid) return (stat.mode & 0o020) !== 0;
+  return (stat.mode & 0o002) !== 0;
+}
+
+export function probeBrowserQuality(options: BrowserQualityProbeOptions = {}): BrowserQualityProbe {
+  const env = options.env ?? process.env;
   const executablePath = resolveBrowserExecutablePath(env);
-  const ready = fs.existsSync(executablePath);
+  const engineHome = options.engineHome ?? (env.DESIGN_RUNTIME_ENGINE_HOME?.trim() || '/home/open-design');
+  const executableReady = fs.existsSync(executablePath);
+  let homeReady = false;
+  try {
+    const stat = fs.statSync(engineHome);
+    homeReady = stat.isDirectory() && directoryWritableBy(stat, options.engineUid, options.engineGid);
+  } catch {
+    homeReady = false;
+  }
+  const ready = executableReady && homeReady;
   return {
     ready,
     executablePath,
-    observation: ready ? path.basename(executablePath) : 'Playwright Chromium executable is missing',
+    observation: !executableReady
+      ? 'Playwright Chromium executable is missing'
+      : !homeReady
+        ? `Browser HOME is missing or not writable by the engine identity: ${engineHome}`
+        : `${path.basename(executablePath)} with writable browser HOME`,
   };
+}
+
+export function summarizeBrowserWorkerFailure(error: unknown, maxLength = 300): string {
+  const message = error instanceof Error ? error.message : String(error || 'unknown');
+  const lines = message.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const diagnostic = lines.find((line) => /\[pid=.*\]\[err\]/.test(line))
+    ?? lines.find((line) => /ERROR|FATAL|SIG[A-Z]+|permission|denied|timeout/i.test(line));
+  const exit = lines.find((line) => /process did exit|exitCode=|signal=/.test(line));
+  return [...new Set([lines[0] || 'unknown', diagnostic, exit].filter((line): line is string => Boolean(line)))]
+    .join(' | ')
+    .slice(0, maxLength);
 }
 
 export class SubprocessBrowserQualityRunner implements BrowserQualityRunner {

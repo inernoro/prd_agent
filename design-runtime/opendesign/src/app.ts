@@ -90,6 +90,9 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     codexBin: config.codexBin,
     webPrototypeSourceDir: config.webPrototypeSourceDir,
     designSystemsDir: config.designSystemsDir,
+    engineHome: config.engineHome,
+    engineUid: config.engineUid,
+    engineGid: config.engineGid,
   });
   const server = createServer({
     apiKey: config.apiKey,

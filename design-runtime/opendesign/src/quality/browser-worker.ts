@@ -14,7 +14,7 @@ import {
   type BrowserQualityWorkerResult,
   type BrowserViewportMeasurement,
 } from './browser-contract.js';
-import { resolveBrowserExecutablePath } from './browser-runner.js';
+import { resolveBrowserExecutablePath, summarizeBrowserWorkerFailure } from './browser-runner.js';
 
 const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -304,7 +304,7 @@ if (process.send && process.env.MAP_BROWSER_QUALITY_WORKER === '1') {
   process.once('message', (job: BrowserQualityWorkerJob) => {
     runBrowserWorker(job)
       .then((result) => process.send?.({ ok: true, result }))
-      .catch((error) => process.send?.({ ok: false, error: error instanceof Error ? error.message.slice(0, 300) : 'unknown' }))
+      .catch((error) => process.send?.({ ok: false, error: summarizeBrowserWorkerFailure(error) }))
       .finally(() => setImmediate(() => process.exit(0)));
   });
 }

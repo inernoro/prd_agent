@@ -48,12 +48,12 @@ COPY --from=build /build/dist /opt/map-design-runtime/dist
 
 # 工作目录与引擎数据目录归引擎用户；浏览器质量证据由同一个降权用户写入专用目录。
 # 产物导出目录仍只归本服务（root），引擎与浏览器子进程读不到也写不进。
-RUN mkdir -p /workspace /app/design-templates /app/.od \
+RUN mkdir -p /home/open-design /workspace /app/design-templates /app/.od \
         /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality \
-    && chown open-design:open-design /workspace /app/design-templates /app/.od \
+    && chown open-design:open-design /home/open-design /workspace /app/design-templates /app/.od \
         /var/lib/map-design-runtime/browser-quality \
     && chmod 0711 /var/lib/map-design-runtime \
-    && chmod 0700 /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality
+    && chmod 0700 /home/open-design /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality
 
 # 基础镜像的 NODE_OPTIONS（192 MB 堆上限）是给 daemon 的，daemon 的环境由本服务显式传入；
 # 本服务自己要处理最大 64 MB 的任务包与 128 MB 的产物，堆上限在启动命令里单独给。

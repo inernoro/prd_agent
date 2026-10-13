@@ -21,7 +21,11 @@ import {
   prepareWebPrototypeResources,
 } from '../src/engine/web-prototype.js';
 import { OPEN_DESIGN_CODEX_VERSION, buildOpenDesignCodexConfig } from '../src/prompts.js';
-import { resolveBrowserExecutablePath } from '../src/quality/browser-runner.js';
+import {
+  probeBrowserQuality,
+  resolveBrowserExecutablePath,
+  summarizeBrowserWorkerFailure,
+} from '../src/quality/browser-runner.js';
 import { FIXTURES, waitFor } from './helpers.js';
 
 const SERVICE_ROOT = path.resolve(__dirname, '..');
@@ -433,10 +437,13 @@ describe('wiring guards', () => {
     const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
     expect(dockerfile).toContain('apk add --no-cache chromium=152.0.7977.82-r0');
     expect(dockerfile).toContain('DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser');
+    expect(dockerfile).toContain('mkdir -p /home/open-design');
+    expect(dockerfile).toContain('chown open-design:open-design /home/open-design');
+    expect(dockerfile).toContain('chmod 0700 /home/open-design');
     expect(dockerfile).toContain('chown open-design:open-design');
     expect(dockerfile).toContain('/var/lib/map-design-runtime/browser-quality');
     expect(dockerfile).toContain('chmod 0711 /var/lib/map-design-runtime');
-    expect(dockerfile).toContain('chmod 0700 /var/lib/map-design-runtime/output /var/lib/map-design-runtime/browser-quality');
+    expect(dockerfile).toMatch(/chmod 0700 [^\n]*\/var\/lib\/map-design-runtime\/output \/var\/lib\/map-design-runtime\/browser-quality/);
   });
 
   it('uses the image-provided Chromium path without changing local Playwright tests', () => {
@@ -444,6 +451,38 @@ describe('wiring guards', () => {
       DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: ' /usr/bin/chromium-browser ',
     })).toBe('/usr/bin/chromium-browser');
     expect(resolveBrowserExecutablePath({})).toContain('chromium');
+  });
+
+  it('rejects an image whose browser HOME is absent and keeps the Chromium crash reason', () => {
+    const root = tempDir('design-runtime-browser-probe-');
+    const browser = path.join(root, 'chromium');
+    fs.writeFileSync(browser, 'binary');
+    const missingHome = path.join(root, 'missing-home');
+    expect(probeBrowserQuality({
+      env: { DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: browser },
+      engineHome: missingHome,
+      engineUid: process.getuid?.(),
+      engineGid: process.getgid?.(),
+    })).toMatchObject({
+      ready: false,
+      observation: expect.stringContaining('Browser HOME is missing or not writable'),
+    });
+    fs.mkdirSync(missingHome, { mode: 0o700 });
+    expect(probeBrowserQuality({
+      env: { DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH: browser },
+      engineHome: missingHome,
+      engineUid: process.getuid?.(),
+      engineGid: process.getgid?.(),
+    }).ready).toBe(true);
+
+    const summary = summarizeBrowserWorkerFailure(new Error([
+      'browserType.launch: Target page, context or browser has been closed',
+      'Browser logs:',
+      '[pid=716][err] chrome_crashpad_handler: --database is required',
+      '[pid=716] <process did exit: exitCode=null, signal=SIGTRAP>',
+    ].join('\n')));
+    expect(summary).toContain('chrome_crashpad_handler: --database is required');
+    expect(summary).toContain('signal=SIGTRAP');
   });
 
   it('keeps the production defaults on the layout the image provides', () => {

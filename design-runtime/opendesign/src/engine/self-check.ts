@@ -49,6 +49,9 @@ export async function runEngineSelfCheck(input: {
   codexBin: string;
   webPrototypeSourceDir: string;
   designSystemsDir: string;
+  engineHome?: string;
+  engineUid?: number;
+  engineGid?: number;
 }): Promise<EngineSelfCheck> {
   const codex = await readCodexVersion(input.codexBin);
   return {
@@ -57,6 +60,10 @@ export async function runEngineSelfCheck(input: {
     codexObservation: codex.observation,
     missingSkillFiles: missingWebPrototypeSourceFiles(input.webPrototypeSourceDir),
     designSystems: listDesignSystems(input.designSystemsDir),
-    browserQuality: probeBrowserQuality(),
+    browserQuality: probeBrowserQuality({
+      engineHome: input.engineHome,
+      engineUid: input.engineUid,
+      engineGid: input.engineGid,
+    }),
   };
 }

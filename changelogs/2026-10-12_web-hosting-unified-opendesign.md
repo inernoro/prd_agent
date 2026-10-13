@@ -31,3 +31,5 @@
 | fix | prd-api | 模型终审按预算收口后展示明确进度，不再让用户误以为终审静止卡住 |
 | test | design-runtime | 覆盖慢终审取消、完整产物恢复、浏览器硬门禁继续执行与原运行追溯 |
 | test | prd-api | 覆盖终审预算收口阶段的稳定进度与用户文案映射 |
+| fix | design-runtime | 补齐隔离 Chromium 的可写 HOME，并让启动能力探针拒绝浏览器运行目录缺失的假健康镜像 |
+| test | design-runtime | 覆盖浏览器 HOME 镜像合同、能力探针与 Chromium 关键退出原因摘要 |
