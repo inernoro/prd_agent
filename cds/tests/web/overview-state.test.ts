@@ -1,3 +1,6 @@
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { OverviewPanel } from '@/components/branch/OverviewPanel';
 import { describe, expect, it } from 'vitest';
 import {
   deriveOverviewState,
@@ -217,5 +220,21 @@ describe('反例：旧写法会被上面的不变量抓住（形状 4b 自证）
   it('把旧写法喂给不变量，「不许说 0 个」这条会红', () => {
     const violations = allFacts().filter((f) => claimedMissing(legacyVerdict(f)) === 0);
     expect(violations.length, '不变量抓不到旧写法，说明它已经失效').toBeGreaterThan(0);
+  });
+});
+
+
+describe('未知运行版本与已知差异的总览接线', () => {
+  const render = (commitSha?: string, ciImageStatus?: string) => renderToStaticMarkup(createElement(OverviewPanel, {
+    services: [{ profileId: 'web', containerName: 'web', status: 'running' as const }],
+    running: true, branchName: 'main', commitSha, targetCommitSha: 'b'.repeat(40), ciImageStatus,
+    entries: [], deployments: [], metricSeries: {}, liveStats: {}, metricsReady: true,
+    replicaSummary: '', infraSummary: '', windowMinutes: 30, onRefreshMetrics: () => {}, now: 0,
+  }));
+  it('源码运行号未知时不谎报尚未发布，已知不同或检查等待仍展示待发布', () => {
+    expect(render()).toContain('运行版本未确认');
+    expect(render()).not.toContain('新版本尚未发布');
+    expect(render('a'.repeat(40))).toContain('新版本尚未发布');
+    expect(render(undefined, 'waiting')).toContain('新版本尚未发布');
   });
 });
