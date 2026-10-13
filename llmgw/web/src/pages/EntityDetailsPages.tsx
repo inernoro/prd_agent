@@ -30,7 +30,7 @@ type ShellProps = {
   icon: ReactNode;
   status: Array<{ label: string; tone: 'good' | 'warning' | 'neutral' }>;
   metrics: Array<{ label: string; value: ReactNode; hint?: string; icon: ReactNode }>;
-  sections: Array<{ id: string; title: string; description?: string; content: ReactNode }>;
+  sections: Array<{ id: string; title: string; description?: string; hideHeading?: boolean; content: ReactNode }>;
   backHref: string;
   backLabel: string;
   primaryHref: string;
@@ -97,8 +97,8 @@ function EntityDetailsShell({
           <main>
             {sections.map((section) => {
               const collection = bounded && (section.id === 'providers' || section.id === 'models');
-              return <section key={section.id} id={section.id} className={`lg-entity-detail-section${collection ? ' lg-entity-detail-collection' : ''}`}>
-                {bounded && !collection ? <details><summary>{section.title}</summary><div>{section.description ? <p>{section.description}</p> : null}{section.content}</div></details> : <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}{section.content}</>}
+              return <section key={section.id} id={section.id} title={section.hideHeading ? section.description : undefined} className={`lg-entity-detail-section${collection ? ' lg-entity-detail-collection' : ''}`}>
+                {bounded && !collection ? <details><summary>{section.title}</summary><div>{section.description ? <p>{section.description}</p> : null}{section.content}</div></details> : <>{!section.hideHeading ? <><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}</> : null}{section.content}</>}
               </section>;
             })}
           </main>
@@ -278,6 +278,7 @@ export function ModelDetailsPage() {
         {
           id: 'providers',
           title: '供应方与上游线路',
+          hideHeading: Boolean(logical?.offerings.length),
           description: '同一逻辑模型可以绑定多个上游。Gateway 按优先级、权重、健康和限流选择实际调用目标。',
           content: logical?.offerings.length ? <>
             <h3 className="lg-collection-section-title">供应方 · {providerGroups.length}</h3><div className="lg-collection-provider-groups">

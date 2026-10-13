@@ -13,7 +13,6 @@ import { ImageGenContractsSection } from '@/components/ImageGenContractsSection'
 import { ModelCatalogSection } from '@/components/ModelCatalogSection';
 import { PageBody, PageShell } from '@/components/PageShell';
 import { RowActions } from '@/components/RowActions';
-import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
@@ -549,12 +548,12 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
           </thead>
           <tbody>
             {pageProviders.map((p) => {
-              const en = boolChip(p.enabled, '启用', '停用');
+              const en = { label: p.enabled ? '启用' : '停用', color: p.enabled ? 'var(--ok)' : 'var(--text-muted)', bg: p.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)' };
               // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
               // 那会让人以为这条上游能用，实际每次调用都会失败
               const key = p.keyStatus === 'unreadable'
                 ? { label: '解不开', color: 'var(--semantic-warning-text, #b45309)', bg: 'rgba(180,83,9,0.14)' }
-                : boolChip(p.hasKey, '已配置', '未配置');
+                : { label: p.hasKey ? '已配置' : '未配置', color: p.hasKey ? 'var(--ok)' : 'var(--text-muted)', bg: p.hasKey ? 'var(--ok-bg)' : 'var(--bg-elevated)' };
               return (
                 // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
                 <Fragment key={p.id}>
@@ -612,7 +611,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                   </td>
                   <td style={td}>
                     {p.authority === 'llm_gateway' ? (
-                      <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
+                      <Chip label="平台配置" color="var(--info)" bg="var(--info-bg)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
                     ) : (
                       <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
                     )}
@@ -624,7 +623,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                       {/* 指纹：同名同 URL 的两条上游只有密钥不同时，这是唯一能分清谁是谁的线索 */}
                       {p.keyFingerprint ? (
                         <code
-                          style={{ fontSize: 'var(--fs-tertiary)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}
+                          style={{ fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}
                           title="密钥指纹（头尾各留几位，中间打码），用于分辨是哪一把，不是完整密钥">
                           {p.keyFingerprint}
                         </code>

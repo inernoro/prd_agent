@@ -111,3 +111,5 @@
 .lg-entity-detail-bounded .lg-entity-detail-pill { border-radius: var(--radius-sm); font-size: var(--fs-caption); }
 .lg-entity-detail-bounded .lg-entity-detail-pill-good { color: var(--ok); background: var(--ok-bg); border-color: color-mix(in srgb, var(--ok) 28%, var(--border-subtle)); }
 .lg-entity-detail-bounded .lg-entity-detail-pill-warning { color: var(--warn); background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 28%, var(--border-subtle)); }
+
+.lg-collection-route-table td:first-child strong { font-family: var(--font-mono); }
