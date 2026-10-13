@@ -1164,6 +1164,10 @@ test('[REG-stsmk-notify-evidence-001] 非 dry-run 异常也不得借通知中心
     assert.equal(result.summary.archive.status, 'unavailable');
     assert.equal(result.summary.notification.status, 'withheld-unverified-report');
     assert.equal(result.summary.notification.actionUrl, undefined);
+    const pools = JSON.parse(readFileSync(resolve(directory, 'pools.json'), 'utf8'));
+    assert.equal(pools.changes.runId, 'fatal-proof-test');
+    assert.equal(pools.hotspots.length, 31);
+    assert.ok(pools.runs[0].results.every(row => row.status === 'not-run'));
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
