@@ -100,7 +100,8 @@ public sealed record FailDesignArtifactSessionRequest(
     string RunId,
     string UserId,
     DesignArtifactLifecycleExpectation Expected,
-    string FailureCode);
+    string FailureCode,
+    DesignArtifactRuntimeFailure? RuntimeFailure = null);
 
 public sealed record RequestDesignArtifactCancellationRequest(
     string RunId,

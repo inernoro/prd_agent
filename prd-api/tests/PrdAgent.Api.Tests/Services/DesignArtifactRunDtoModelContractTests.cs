@@ -39,5 +39,7 @@ public sealed class DesignArtifactRunDtoModelContractTests
             $"{projection}（{file}）没有带上 ResolvedModel，刷新之后模型徽章会消失");
         Assert.True(source.Contains("run.ResolvedPlatform", StringComparison.Ordinal),
             $"{projection}（{file}）没有带上 ResolvedPlatform");
+        Assert.True(source.Contains("run.RuntimeFailure", StringComparison.Ordinal),
+            $"{projection}（{file}）没有带上 RuntimeFailure，刷新后会丢失稳定质量问题码");
     }
 }

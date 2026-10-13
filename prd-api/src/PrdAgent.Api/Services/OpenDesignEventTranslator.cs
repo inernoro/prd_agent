@@ -12,6 +12,9 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 internal sealed class OpenDesignEventTranslator
 {
+    private const int MaxIssueCodes = 16;
+    private const int MaxIssueCodeLength = 64;
+    private const int MaxRepairAttempts = 1_000;
     internal const string Status = "status";
     internal const string TextDelta = "text_delta";
     internal const string Thinking = "thinking";
@@ -63,7 +66,69 @@ internal sealed class OpenDesignEventTranslator
         OpenDesignFailureMessage.Failure(
             OpenDesignFailureStage.RemoteRun,
             ReadPayloadString(payloadJson, "message"),
-            ReadPayloadString(payloadJson, "code"));
+            ReadPayloadStableToken(payloadJson, "code"),
+            ReadFailureDetails(payloadJson));
+
+    internal static OpenDesignRemoteFailureDetails? ReadFailureDetails(string payloadJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object
+                || !doc.RootElement.TryGetProperty("details", out var details)
+                || details.ValueKind != JsonValueKind.Object)
+                return null;
+
+            var issueCodes = new List<string>();
+            if (details.TryGetProperty("issueCodes", out var issueCodeValues)
+                && issueCodeValues.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var value in issueCodeValues.EnumerateArray())
+                {
+                    if (issueCodes.Count >= MaxIssueCodes) break;
+                    if (value.ValueKind != JsonValueKind.String) continue;
+                    var issueCode = value.GetString();
+                    if (!IsStableToken(issueCode) || issueCodes.Contains(issueCode!, StringComparer.Ordinal)) continue;
+                    issueCodes.Add(issueCode!);
+                }
+            }
+
+            int? repairAttempts = null;
+            if (details.TryGetProperty("repairAttempts", out var attemptsValue)
+                && attemptsValue.ValueKind == JsonValueKind.Number
+                && attemptsValue.TryGetInt32(out var attempts)
+                && attempts is >= 0 and <= MaxRepairAttempts)
+                repairAttempts = attempts;
+
+            bool? repairBudgetExhausted = null;
+            if (details.TryGetProperty("repairBudgetExhausted", out var budgetValue)
+                && budgetValue.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                repairBudgetExhausted = budgetValue.GetBoolean();
+
+            return issueCodes.Count > 0 || repairAttempts.HasValue || repairBudgetExhausted.HasValue
+                ? new OpenDesignRemoteFailureDetails(issueCodes, repairAttempts, repairBudgetExhausted)
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    internal static string? ReadPayloadStableToken(string payloadJson, string field)
+    {
+        var value = ReadPayloadString(payloadJson, field);
+        return IsStableToken(value) ? value : null;
+    }
+
+    private static bool IsStableToken(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > MaxIssueCodeLength || value[0] is < 'a' or > 'z')
+            return false;
+        return value.All(character => character is >= 'a' and <= 'z'
+                                      || character is >= '0' and <= '9'
+                                      || character == '_');
+    }
 
     internal static int? ReadPayloadInt(string payloadJson, string field)
     {

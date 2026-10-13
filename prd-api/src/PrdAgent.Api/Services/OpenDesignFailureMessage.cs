@@ -1,3 +1,5 @@
+using PrdAgent.Core.Models;
+
 namespace PrdAgent.Api.Services;
 
 /// <summary>
@@ -76,17 +78,40 @@ internal sealed record OpenDesignFailureStage
 /// </summary>
 internal sealed class OpenDesignRemoteDiagnosticException : Exception
 {
-    internal OpenDesignRemoteDiagnosticException(string? code, string diagnostic)
+    internal OpenDesignRemoteDiagnosticException(
+        string? code,
+        string diagnostic,
+        OpenDesignRemoteFailureDetails? details = null)
         : base(string.IsNullOrWhiteSpace(code) ? diagnostic : $"[{code}] {diagnostic}")
     {
         RemoteCode = code;
         Diagnostic = diagnostic;
+        Details = details;
     }
 
     internal string? RemoteCode { get; }
 
     internal string Diagnostic { get; }
+
+    internal OpenDesignRemoteFailureDetails? Details { get; }
+
+    internal DesignArtifactRuntimeFailure? ToRuntimeFailure()
+    {
+        if (string.IsNullOrWhiteSpace(RemoteCode)) return null;
+        return new DesignArtifactRuntimeFailure
+        {
+            Code = RemoteCode,
+            IssueCodes = Details?.IssueCodes.ToList() ?? [],
+            RepairAttempts = Details?.RepairAttempts,
+            RepairBudgetExhausted = Details?.RepairBudgetExhausted,
+        };
+    }
 }
+
+internal sealed record OpenDesignRemoteFailureDetails(
+    IReadOnlyList<string> IssueCodes,
+    int? RepairAttempts,
+    bool? RepairBudgetExhausted);
 
 internal static class OpenDesignFailureMessage
 {
@@ -134,12 +159,21 @@ internal static class OpenDesignFailureMessage
     internal static InvalidOperationException Failure(
         OpenDesignFailureStage stage,
         string? remoteReason,
-        string? remoteCode = null)
+        string? remoteCode = null,
+        OpenDesignRemoteFailureDetails? details = null)
     {
         var diagnostic = string.IsNullOrWhiteSpace(remoteReason) ? null : remoteReason.Trim();
+        var structuredDiagnostic = diagnostic != null
+                                   || !string.IsNullOrWhiteSpace(remoteCode)
+                                   || details != null
+            ? new OpenDesignRemoteDiagnosticException(
+                remoteCode?.Trim(),
+                diagnostic ?? "remote failure without diagnostic text",
+                details)
+            : null;
         return new InvalidOperationException(
             Describe(stage, remoteReason, remoteCode),
-            diagnostic == null ? null : new OpenDesignRemoteDiagnosticException(remoteCode?.Trim(), diagnostic));
+            structuredDiagnostic);
     }
 
     internal static string Describe(OpenDesignFailureStage stage, string? remoteReason, string? remoteCode = null)

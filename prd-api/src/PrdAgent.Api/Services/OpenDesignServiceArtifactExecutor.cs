@@ -380,7 +380,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                             yield break;
                         case OpenDesignEventTranslator.Error:
                             remoteTerminal = true;
-                            var code = OpenDesignEventTranslator.ReadPayloadString(evt.PayloadJson, "code");
+                            var code = OpenDesignEventTranslator.ReadPayloadStableToken(evt.PayloadJson, "code");
                             _logger.LogWarning(
                                 "设计执行服务报告任务失败 transport={Transport} run={RunId} code={Code} message={RemoteMessage}",
                                 TransportLogName, run.Id, code ?? "unknown",

@@ -1305,9 +1305,22 @@ public sealed class DesignArtifactLifecycleServiceTests
             failureRun.Id,
             failureRun.UserId,
             Expected(failureRun),
-            "adapter_failed"));
+            "design_output_quality_rejected",
+            new DesignArtifactRuntimeFailure
+            {
+                Code = "untrusted_remote_code_is_replaced",
+                IssueCodes = ["css_generated_text"],
+                RepairAttempts = 1,
+                RepairBudgetExhausted = true,
+            }));
         Assert.Equal(RunStatuses.Error, failed.Status);
-        Assert.Equal("adapter_failed", failed.LifecycleFailureCode);
+        Assert.Equal("design_output_quality_rejected", failed.LifecycleFailureCode);
+        Assert.Equal("design_output_quality_rejected", failed.RuntimeFailure?.Code);
+        Assert.Equal(["css_generated_text"], failed.RuntimeFailure?.IssueCodes);
+        Assert.Equal(1, failed.RuntimeFailure?.RepairAttempts);
+        Assert.True(failed.RuntimeFailure?.RepairBudgetExhausted);
+        Assert.Equal(failed.RuntimeFailure?.Code, failed.LifecycleEvents[^1].RuntimeFailure?.Code);
+        Assert.Equal(["css_generated_text"], failed.LifecycleEvents[^1].RuntimeFailure?.IssueCodes);
         Assert.DoesNotContain("provider", failed.ToJson(), StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1430,6 +1443,23 @@ public sealed class DesignArtifactLifecycleServiceTests
             UserId = current.UserId,
             ContractVersion = 3,
         });
+        var failedPublic = await service.CreateSessionAsync(Session(
+            "public-failed-run",
+            DesignArtifactTypes.WebPage,
+            DesignArtifactWorkspaceKinds.RemotePackage,
+            "open-design"));
+        failedPublic = await service.FailAsync(new FailDesignArtifactSessionRequest(
+            failedPublic.Id,
+            failedPublic.UserId,
+            Expected(failedPublic),
+            "design_output_quality_rejected",
+            new DesignArtifactRuntimeFailure
+            {
+                Code = "design_output_quality_rejected",
+                IssueCodes = ["css_generated_text"],
+                RepairAttempts = 1,
+                RepairBudgetExhausted = true,
+            }));
 
         var controller = Controller(fixture, events, current.UserId);
         var contract = Data(Assert.IsType<OkObjectResult>(await controller.GetContract(current.Id)));
@@ -1453,6 +1483,22 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.DoesNotContain("payload", serialized, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("baseUrl", serialized, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("apiKey", serialized, StringComparison.OrdinalIgnoreCase);
+
+        var failedContract = Data(Assert.IsType<OkObjectResult>(await controller.GetContract(failedPublic.Id)));
+        var runtimeFailure = failedContract.GetProperty("runtimeFailure");
+        Assert.Equal("design_output_quality_rejected", runtimeFailure.GetProperty("code").GetString());
+        Assert.Equal("css_generated_text", runtimeFailure.GetProperty("issueCodes")[0].GetString());
+        Assert.Equal(1, runtimeFailure.GetProperty("repairAttempts").GetInt32());
+        Assert.True(runtimeFailure.GetProperty("repairBudgetExhausted").GetBoolean());
+        var failedEvents = Data(Assert.IsType<OkObjectResult>(await controller.GetContractEvents(failedPublic.Id)));
+        var failureEvent = failedEvents.GetProperty("items").EnumerateArray().Last();
+        Assert.Equal("css_generated_text",
+            failureEvent.GetProperty("runtimeFailure").GetProperty("issueCodes")[0].GetString());
+        var failureSerialized = JsonSerializer.Serialize(
+            new { failedContract, failedEvents },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.DoesNotContain("quality gate rejected", failureSerialized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<style", failureSerialized, StringComparison.OrdinalIgnoreCase);
 
         var legacy = Data(Assert.IsType<OkObjectResult>(await controller.GetContract("legacy-run")));
         Assert.Equal(DesignArtifactContractVersions.Legacy, legacy.GetProperty("contractVersion").GetInt32());

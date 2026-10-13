@@ -471,7 +471,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 run.Runtime,
                 runId,
                 ex.Message);
-            await MarkErrorAsync(runId, ex.Message, leaseOwner);
+            await MarkErrorAsync(
+                runId,
+                ex.Message,
+                leaseOwner,
+                ex.InnerException as OpenDesignRemoteDiagnosticException);
         }
         catch (OperationCanceledException) when (executionCts.IsCancellationRequested)
         {
@@ -621,14 +625,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             CancellationToken.None));
     }
 
-    private Task MarkErrorAsync(string runId, string message, string leaseOwner)
+    private Task MarkErrorAsync(
+        string runId,
+        string message,
+        string leaseOwner,
+        OpenDesignRemoteDiagnosticException? remoteDiagnostic = null)
         => MarkTerminalAsync(
             runId,
             message,
             leaseOwner,
             RunStatuses.Error,
             "error",
-            "DESIGN_ARTIFACT_FAILED");
+            "DESIGN_ARTIFACT_FAILED",
+            remoteDiagnostic);
 
     private async Task MarkCancelledAsync(string runId, string message, string leaseOwner)
     {
@@ -716,7 +725,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string leaseOwner,
         string status,
         string eventName,
-        string? errorCode)
+        string? errorCode,
+        OpenDesignRemoteDiagnosticException? remoteDiagnostic = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
@@ -727,14 +737,27 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         if (usesPublicLifecycle)
         {
             var publicLifecycle = scope.ServiceProvider.GetRequiredService<IWebPageDesignArtifactLifecycleAdapter>();
+            var runtimeFailure = remoteDiagnostic?.ToRuntimeFailure();
             var stableCode = errorCode == null
                 ? "open_design_run_cancelled"
-                : WebPageDesignArtifactLifecycleAdapter.ExecutionFailureCode;
-            await publicLifecycle.FailAsync(
-                runId,
-                stableCode,
-                new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
-                CancellationToken.None);
+                : WebPageDesignArtifactLifecycleAdapter.NormalizeFailureCode(runtimeFailure?.Code);
+            if (runtimeFailure == null)
+            {
+                await publicLifecycle.FailAsync(
+                    runId,
+                    stableCode,
+                    new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                    CancellationToken.None);
+            }
+            else
+            {
+                await publicLifecycle.FailWithDetailsAsync(
+                    runId,
+                    stableCode,
+                    runtimeFailure,
+                    new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                    CancellationToken.None);
+            }
             status = RunStatuses.Error;
             eventName = "error";
             errorCode = stableCode;
@@ -768,9 +791,29 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             RunKinds.DesignArtifact,
             runId,
             eventName,
-            new { code = errorCode, message },
+            BuildTerminalProjection(errorCode, message, remoteDiagnostic?.ToRuntimeFailure()),
             RunTtl,
             CancellationToken.None));
+    }
+
+    private static object BuildTerminalProjection(
+        string? errorCode,
+        string message,
+        DesignArtifactRuntimeFailure? runtimeFailure)
+    {
+        if (runtimeFailure == null)
+            return new { code = errorCode, message };
+        return new
+        {
+            code = errorCode,
+            message,
+            details = new
+            {
+                issueCodes = runtimeFailure.IssueCodes,
+                runtimeFailure.RepairAttempts,
+                runtimeFailure.RepairBudgetExhausted,
+            },
+        };
     }
 
     // Redis 只投影当前执行的界面事件。一次失败后停止本次执行的投影，

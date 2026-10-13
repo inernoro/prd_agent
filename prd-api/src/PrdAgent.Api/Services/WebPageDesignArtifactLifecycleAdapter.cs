@@ -34,6 +34,13 @@ public interface IWebPageDesignArtifactLifecycleAdapter
         DesignArtifactLifecycleLeaseAuthority lease,
         CancellationToken ct = default);
 
+    Task FailWithDetailsAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure runtimeFailure,
+        DesignArtifactLifecycleLeaseAuthority lease,
+        CancellationToken ct = default);
+
     Task BindPublishedAsync(
         string runId,
         string siteId,
@@ -266,10 +273,35 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         string failureCode,
         DesignArtifactLifecycleLeaseAuthority lease,
         CancellationToken ct = default)
+        => await FailCoreAsync(runId, failureCode, null, lease);
+
+    public async Task FailWithDetailsAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure runtimeFailure,
+        DesignArtifactLifecycleLeaseAuthority lease,
+        CancellationToken ct = default)
+        => await FailCoreAsync(runId, failureCode, runtimeFailure, lease);
+
+    private async Task FailCoreAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure? runtimeFailure,
+        DesignArtifactLifecycleLeaseAuthority lease)
     {
         var current = await RequireCurrentAsync(runId);
         if (!IsManaged(current)) return;
-        if (!AllowedFailureCodes.Contains(failureCode)) failureCode = ExecutionFailureCode;
+        failureCode = NormalizeFailureCode(failureCode);
+        if (runtimeFailure != null)
+        {
+            runtimeFailure = new DesignArtifactRuntimeFailure
+            {
+                Code = failureCode,
+                IssueCodes = runtimeFailure.IssueCodes.ToList(),
+                RepairAttempts = runtimeFailure.RepairAttempts,
+                RepairBudgetExhausted = runtimeFailure.RepairBudgetExhausted,
+            };
+        }
         for (var attempt = 0; attempt < 3; attempt++)
         {
             if (current.Status == RunStatuses.Error) return;
@@ -282,7 +314,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                         current.Id,
                         current.UserId,
                         Expected(current, lease),
-                        failureCode),
+                        failureCode,
+                        runtimeFailure),
                     CancellationToken.None);
                 return;
             }
@@ -294,6 +327,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         }
         throw Conflict();
     }
+
+    internal static string NormalizeFailureCode(string? failureCode) =>
+        !string.IsNullOrWhiteSpace(failureCode) && AllowedFailureCodes.Contains(failureCode)
+            ? failureCode
+            : ExecutionFailureCode;
 
     public async Task BindPublishedAsync(
         string runId,

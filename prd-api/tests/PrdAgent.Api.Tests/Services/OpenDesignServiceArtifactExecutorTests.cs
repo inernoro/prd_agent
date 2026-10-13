@@ -84,6 +84,12 @@ public sealed class OpenDesignServiceArtifactExecutorTests
                 ["code"] = "design_output_quality_rejected",
                 ["message"] = "quality gate rejected index.html",
                 ["retryable"] = false,
+                ["details"] = new JsonObject
+                {
+                    ["issueCodes"] = new JsonArray("css_generated_text"),
+                    ["repairAttempts"] = 1,
+                    ["repairBudgetExhausted"] = true,
+                },
             })));
         var executor = BuildExecutor(service, BuildBroker().Object);
 
@@ -92,8 +98,53 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         error.Message.ShouldContain("没有通过发布前的校验");
         // 远端原文不进用户读的那句话，挂在异常链里进日志（与 CDS 路径同一口径）。
         error.Message.ShouldNotContain("quality gate rejected");
-        error.InnerException.ShouldNotBeNull();
+        var diagnostic = error.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>();
+        diagnostic.RemoteCode.ShouldBe("design_output_quality_rejected");
+        diagnostic.Details.ShouldNotBeNull();
+        diagnostic.Details!.IssueCodes.ShouldBe(["css_generated_text"]);
+        diagnostic.Details.RepairAttempts.ShouldBe(1);
+        diagnostic.Details.RepairBudgetExhausted.ShouldBe(true);
         service.CancelCalls.ShouldBe(0);
+    }
+
+    [Fact]
+    public void ErrorDetails_OnlyAcceptBoundedStableFields()
+    {
+        var issueCodes = new JsonArray();
+        for (var index = 0; index < 20; index++)
+            issueCodes.Add($"quality_issue_{index}");
+        issueCodes.Add("quality_issue_0");
+        issueCodes.Add("css</script>");
+        issueCodes.Add(new string('a', 65));
+        var payload = new JsonObject
+        {
+            ["details"] = new JsonObject
+            {
+                ["issueCodes"] = issueCodes,
+                ["repairAttempts"] = 1001,
+                ["repairBudgetExhausted"] = "true",
+                ["rawHtml"] = "<style>body::before{content:'secret'}</style>",
+                ["provider"] = "private-provider",
+            },
+        }.ToJsonString();
+
+        var details = OpenDesignEventTranslator.ReadFailureDetails(payload);
+
+        details.ShouldNotBeNull();
+        details!.IssueCodes.Count.ShouldBe(16);
+        details.IssueCodes.ShouldAllBe(code => code.StartsWith("quality_issue_", StringComparison.Ordinal));
+        details.RepairAttempts.ShouldBeNull();
+        details.RepairBudgetExhausted.ShouldBeNull();
+        OpenDesignEventTranslator.ReadPayloadStableToken(
+            "{\"code\":\"design_output_quality_rejected<script>\"}", "code").ShouldBeNull();
+
+        var noMessage = OpenDesignEventTranslator.RemoteFailure(
+            "{\"code\":\"design_output_quality_rejected\",\"details\":{" +
+            "\"issueCodes\":[\"css_generated_text\"],\"repairAttempts\":1," +
+            "\"repairBudgetExhausted\":true}}");
+        var diagnostic = noMessage.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>();
+        diagnostic.RemoteCode.ShouldBe("design_output_quality_rejected");
+        diagnostic.Details!.IssueCodes.ShouldBe(["css_generated_text"]);
     }
 
     [Fact]

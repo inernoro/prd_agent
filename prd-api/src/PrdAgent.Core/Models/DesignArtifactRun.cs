@@ -136,6 +136,12 @@ public class DesignArtifactRun
     public string? LifecycleFailureCode { get; set; }
 
     /// <summary>
+    /// 远端执行器经过白名单收敛的失败事实。旧任务缺失时保持 null；不得放入原始诊断或页面正文。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactRuntimeFailure? RuntimeFailure { get; set; }
+
+    /// <summary>
     /// 远程执行器在能力探针通过时冻结的 CDS 连接。Worker 只能使用该连接，
     /// 禁止按更新时间重新选择另一个基础设施目标。
     /// </summary>

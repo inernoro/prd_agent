@@ -314,22 +314,27 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         if (current.Status is not (RunStatuses.Running or RunStatuses.Committing))
             throw Conflict();
         var failureCode = SafeToken(request.FailureCode, "failureCode", 64);
+        var runtimeFailure = NormalizeRuntimeFailure(request.RuntimeFailure, failureCode);
         var now = DateTime.UtcNow;
+        var updates = new BsonDocument
+        {
+            { nameof(DesignArtifactRun.Status), RunStatuses.Error },
+            { nameof(DesignArtifactRun.LifecycleFailureCode), failureCode },
+            { nameof(DesignArtifactRun.Phase), "设计任务未完成" },
+            { nameof(DesignArtifactRun.CompletedAt), now },
+            { nameof(DesignArtifactRun.UpdatedAt), now },
+        };
+        if (runtimeFailure != null)
+            updates[nameof(DesignArtifactRun.RuntimeFailure)] = runtimeFailure.ToBsonDocument();
         var updated = await AtomicUpdateWithEventAsync(
             CasFilter(current, request.Expected, current.Status),
             current,
-            new BsonDocument
-            {
-                { nameof(DesignArtifactRun.Status), RunStatuses.Error },
-                { nameof(DesignArtifactRun.LifecycleFailureCode), failureCode },
-                { nameof(DesignArtifactRun.Phase), "设计任务未完成" },
-                { nameof(DesignArtifactRun.CompletedAt), now },
-                { nameof(DesignArtifactRun.UpdatedAt), now },
-            },
+            updates,
             DesignArtifactLifecycleEventTypes.Error,
             "设计任务未完成",
             current.Progress,
-            true);
+            true,
+            runtimeFailure: runtimeFailure);
         if (updated == null) throw Conflict();
         await ProjectRunMetaBestEffortAsync(updated);
         return updated;
@@ -615,7 +620,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         int? progress,
         bool authoritative,
         bool incrementLifecycle = true,
-        string? phaseCode = null)
+        string? phaseCode = null,
+        DesignArtifactRuntimeFailure? runtimeFailure = null)
     {
         if (updates.TryGetValue(nameof(DesignArtifactRun.LastProgressAt), out var progressAtValue)
             && progressAtValue is BsonDateTime progressAt)
@@ -644,6 +650,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             { nameof(DesignArtifactEventEnvelope.OccurredAt), DateTime.UtcNow },
             { nameof(DesignArtifactEventEnvelope.Authoritative), authoritative },
         };
+        if (runtimeFailure != null)
+            eventDocument[nameof(DesignArtifactEventEnvelope.RuntimeFailure)] = runtimeFailure.ToBsonDocument();
         updates[nameof(DesignArtifactRun.LifecycleEventSequence)] = nextSequence;
         updates[nameof(DesignArtifactRun.LifecycleEvents)] = new BsonDocument("$concatArrays", new BsonArray
         {
@@ -1056,6 +1064,29 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         if (normalized.Count == 0 || normalized.Count > 32)
             throw Invalid($"{name} 数量无效");
         return normalized;
+    }
+
+    private static DesignArtifactRuntimeFailure? NormalizeRuntimeFailure(
+        DesignArtifactRuntimeFailure? value,
+        string failureCode)
+    {
+        if (value == null) return null;
+        var issueCodes = (value.IssueCodes ?? [])
+            .Take(16)
+            .Select(code => SafeToken(code, "runtimeFailure.issueCodes", 64))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(code => code, StringComparer.Ordinal)
+            .ToList();
+        var repairAttempts = value.RepairAttempts is >= 0 and <= 1_000
+            ? value.RepairAttempts
+            : null;
+        return new DesignArtifactRuntimeFailure
+        {
+            Code = failureCode,
+            IssueCodes = issueCodes,
+            RepairAttempts = repairAttempts,
+            RepairBudgetExhausted = value.RepairBudgetExhausted,
+        };
     }
 
     private static void ValidateCapability(

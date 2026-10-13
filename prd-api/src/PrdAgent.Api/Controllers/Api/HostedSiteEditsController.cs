@@ -639,13 +639,11 @@ public sealed class HostedSiteEditsController : ControllerBase
                 }
                 if (snapshot.Status == RunStatuses.Error)
                 {
-                    await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
-                    {
-                        code = "DESIGN_ARTIFACT_FAILED",
-                        message = string.IsNullOrWhiteSpace(snapshot.Error)
-                            ? "页面修改未完成，请重新发起"
-                            : snapshot.Error,
-                    }), ct);
+                    await WriteEventAsync(
+                        null,
+                        "error",
+                        JsonSerializer.Serialize(BuildRunFailurePayload(snapshot, "页面修改未完成，请重新发起")),
+                        ct);
                     return;
                 }
 
@@ -1008,6 +1006,13 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.ResolvedModel,
         run.ResolvedPlatform,
         run.Error,
+        runtimeFailure = run.RuntimeFailure == null ? null : new
+        {
+            run.RuntimeFailure.Code,
+            run.RuntimeFailure.IssueCodes,
+            run.RuntimeFailure.RepairAttempts,
+            run.RuntimeFailure.RepairBudgetExhausted,
+        },
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,
         run.CancelledAt,
@@ -1053,6 +1058,20 @@ public sealed class HostedSiteEditsController : ControllerBase
             item.Title,
             item.ContentHash,
         }),
+    };
+
+    private static object BuildRunFailurePayload(DesignArtifactRun run, string fallbackMessage) => new
+    {
+        code = run.RuntimeFailure?.Code
+               ?? run.LifecycleFailureCode
+               ?? WebPageDesignArtifactLifecycleAdapter.ExecutionFailureCode,
+        message = string.IsNullOrWhiteSpace(run.Error) ? fallbackMessage : run.Error,
+        details = run.RuntimeFailure == null ? null : new
+        {
+            issueCodes = run.RuntimeFailure.IssueCodes,
+            run.RuntimeFailure.RepairAttempts,
+            run.RuntimeFailure.RepairBudgetExhausted,
+        },
     };
 
     private static object ToPublicCapability(DesignArtifactProviderCapability item) => new

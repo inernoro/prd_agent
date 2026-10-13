@@ -646,6 +646,7 @@ public sealed class DesignArtifactsController : ControllerBase
             producedArtifactSiteId = isCurrentContract ? run.ProducedArtifactSiteId : null,
             producedArtifactRevisionId = isCurrentContract ? run.ProducedArtifactRevisionId : null,
             failureCode = isCurrentContract ? run.LifecycleFailureCode : null,
+            runtimeFailure = isCurrentContract ? ToRuntimeFailureDto(run.RuntimeFailure) : null,
             run.CreatedAt,
             run.UpdatedAt,
             run.CompletedAt,
@@ -978,17 +979,14 @@ public sealed class DesignArtifactsController : ControllerBase
                 }
                 if (snapshot.Status is RunStatuses.Error or RunStatuses.Cancelled)
                 {
-                    await WriteEventAsync(null, snapshot.Status == RunStatuses.Cancelled ? "cancelled" : "error", JsonSerializer.Serialize(new
-                    {
-                        code = snapshot.Status == RunStatuses.Cancelled
-                            ? "DESIGN_ARTIFACT_CANCELLED"
-                            : "DESIGN_ARTIFACT_FAILED",
-                        message = snapshot.Status == RunStatuses.Cancelled
-                            ? "网页生成已取消，未保存或发布新页面"
-                            : string.IsNullOrWhiteSpace(snapshot.Error)
-                                ? "网页生成未完成，请重新发起"
-                                : snapshot.Error,
-                    }), ct);
+                    object payload = snapshot.Status == RunStatuses.Cancelled
+                        ? new { code = "DESIGN_ARTIFACT_CANCELLED", message = "网页生成已取消，未保存或发布新页面" }
+                        : BuildRunFailurePayload(snapshot, "网页生成未完成，请重新发起");
+                    await WriteEventAsync(
+                        null,
+                        snapshot.Status == RunStatuses.Cancelled ? "cancelled" : "error",
+                        JsonSerializer.Serialize(payload),
+                        ct);
                     return;
                 }
 
@@ -1080,6 +1078,7 @@ public sealed class DesignArtifactsController : ControllerBase
         run.LinkedRunId,
         run.RestartedFromRunId,
         run.Error,
+        runtimeFailure = ToRuntimeFailureDto(run.RuntimeFailure),
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,
         run.CancelledAt,
@@ -1193,7 +1192,32 @@ public sealed class DesignArtifactsController : ControllerBase
         record.PhaseCode,
         record.Progress,
         record.OccurredAt,
-        record.Authoritative);
+        record.Authoritative,
+        record.RuntimeFailure);
+
+    private static object? ToRuntimeFailureDto(DesignArtifactRuntimeFailure? failure) => failure == null
+        ? null
+        : new
+        {
+            failure.Code,
+            failure.IssueCodes,
+            failure.RepairAttempts,
+            failure.RepairBudgetExhausted,
+        };
+
+    private static object BuildRunFailurePayload(DesignArtifactRun run, string fallbackMessage) => new
+    {
+        code = run.RuntimeFailure?.Code
+               ?? run.LifecycleFailureCode
+               ?? WebPageDesignArtifactLifecycleAdapter.ExecutionFailureCode,
+        message = string.IsNullOrWhiteSpace(run.Error) ? fallbackMessage : run.Error,
+        details = run.RuntimeFailure == null ? null : new
+        {
+            issueCodes = run.RuntimeFailure.IssueCodes,
+            run.RuntimeFailure.RepairAttempts,
+            run.RuntimeFailure.RepairBudgetExhausted,
+        },
+    };
 
     private static string? TrimOptional(string? value, int maxLength)
     {
@@ -1357,4 +1381,5 @@ public sealed record DesignArtifactPublicEvent(
     string? PhaseCode,
     int? Progress,
     DateTime OccurredAt,
-    bool Authoritative);
+    bool Authoritative,
+    DesignArtifactRuntimeFailure? RuntimeFailure);

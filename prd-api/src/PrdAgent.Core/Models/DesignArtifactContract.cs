@@ -122,6 +122,21 @@ public sealed class DesignArtifactPlanReceipt
 }
 
 /// <summary>
+/// 远端设计执行器允许穿过 MAP 边界的稳定失败事实。
+/// 这里只接受有限问题码与计数，不保存远端原文、HTML、CSS、路径、模型输出或供应商诊断。
+/// </summary>
+public sealed class DesignArtifactRuntimeFailure
+{
+    public string Code { get; set; } = string.Empty;
+
+    public List<string> IssueCodes { get; set; } = new();
+
+    public int? RepairAttempts { get; set; }
+
+    public bool? RepairBudgetExhausted { get; set; }
+}
+
+/// <summary>
 /// 跨 adapter 的公共事件信封。正文、凭证和任意 payload 不属于此合同。
 /// </summary>
 public sealed class DesignArtifactEventEnvelope
@@ -143,6 +158,10 @@ public sealed class DesignArtifactEventEnvelope
     public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
 
     public bool Authoritative { get; set; }
+
+    /// <summary>仅 error 终态携带；旧事件缺失时保持 null。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignArtifactRuntimeFailure? RuntimeFailure { get; set; }
 }
 
 public static class DesignArtifactContractVersions
