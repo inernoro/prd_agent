@@ -299,6 +299,70 @@ describe('design direction, review passes and live preview', () => {
     expect(view.result.openDesignRunId).toBe('od-run-1');
   });
 
+  it('bounds a slow review, restores the last verified output, and still runs the browser hard gate', async () => {
+    const browserInputs: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          browserInputs.push(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8'));
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          return {
+            browserVersion: 'test-chromium',
+            measurements: [
+              { viewport: 'desktop' as const, width: 1440, height: 900 },
+              { viewport: 'mobile' as const, width: 390, height: 844 },
+            ].map((viewport) => {
+              const screenshotPath = `assets/quality/${viewport.viewport}.png`;
+              fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+              return {
+                ...viewport,
+                documentWidth: viewport.width,
+                h1Count: 1,
+                visibleHeadingCount: 1,
+                visibleCtaCount: 1,
+                visibleLandmarkCount: 1,
+                issues: [],
+                screenshotPath,
+              };
+            }),
+          };
+        },
+      },
+    } });
+    const pkg = buildPackage([], { taskExtras: { designDirection: direction } });
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      fs.mkdirSync(path.join(workspaceDir, 'assets'), { recursive: true });
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>verified-main</h1></main></body></html>');
+        fs.writeFileSync(path.join(workspaceDir, 'assets/site.css'), 'main { display: block; }');
+        return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+      }
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-review</main></body></html>');
+      fs.writeFileSync(path.join(workspaceDir, 'assets/site.css'), 'partial-review');
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      return { status: 'succeeded' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    expect(harness.daemon.cancels).toContain('od-run-2');
+    expect(view.result.openDesignRunId).toBe('od-run-1');
+    expect(browserInputs).toHaveLength(1);
+    expect(browserInputs[0]).toContain('verified-main');
+    expect(browserInputs[0]).not.toContain('partial-review');
+    const committedIndex = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    const committedCss = map!.commits[0].files.find((file: { path: string }) => file.path === 'assets/site.css');
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('verified-main');
+    expect(Buffer.from(committedCss.contentBase64, 'base64').toString('utf8')).toBe('main { display: block; }');
+    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
+      'open_design_reviewing',
+      'open_design_review_budget_exhausted',
+      'open_design_browser_quality_checking',
+    ]));
+  }, 15_000);
+
   it('writes the session Codex configuration into the engine data directory, pointing only at the local relay', async () => {
     harness = await startHarness();
     const pkg = buildPackage([]);
@@ -351,7 +415,7 @@ describe('collecting the deliverable', () => {
     // 会被产物预检按白名单拒收——这与 CDS 现行实现一致，是否属实要在真实引擎上确认，
     // 记在 doc/debt.platform.open-design.md，这里不把它锁成期望。
     const events = (await harness.request('GET', `/v1/tasks/${pkg.runId}/events`, undefined, auth)).body.events;
-    const resolved = events.find((event: { payload: { reason?: string; promoted?: boolean } }) => event.payload.reason === 'deliverable_entry_resolved' && event.payload.promoted);
+    const resolved = events.find((event: { payload: { reason?: string; promoted?: boolean } }) => event.payload.reason === 'deliverable_entry_checkpointed' && event.payload.promoted);
     expect(resolved.payload).toMatchObject({ entryFile: 'launch-page.html', promoted: true, bytes: 74 });
   });
 

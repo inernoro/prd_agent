@@ -88,6 +88,32 @@ import {
  */
 const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
 
+// 十五分钟是产品总承诺，不是每个 OpenDesign run 各自可用的预算。最后 10% 固定留给
+// 浏览器硬门禁与向 MAP 提交；模型终审单轮最多占 1/15，且至少要有 1/30 才值得启动。
+// 默认 900 秒对应 90 秒收尾、30–60 秒终审。短任务按同一比例缩放，测试与兼容调用不会
+// 因硬编码分钟数失去全部执行时间。
+const FINALIZATION_RESERVE_RATIO = 0.1;
+const MIN_REVIEW_PASS_RATIO = 1 / 30;
+const MAX_REVIEW_PASS_RATIO = 1 / 15;
+
+interface ExecutionBudget {
+  executionDeadline: number;
+  finalizationDeadline: number;
+  minimumReviewPassMs: number;
+  maximumReviewPassMs: number;
+}
+
+function buildExecutionBudget(startedAt: number, timeoutSeconds: number): ExecutionBudget {
+  const totalMs = Math.max(1, timeoutSeconds) * 1000;
+  const finalizationReserveMs = Math.max(1, Math.floor(totalMs * FINALIZATION_RESERVE_RATIO));
+  return {
+    executionDeadline: startedAt + totalMs,
+    finalizationDeadline: startedAt + totalMs - finalizationReserveMs,
+    minimumReviewPassMs: Math.max(1, Math.floor(totalMs * MIN_REVIEW_PASS_RATIO)),
+    maximumReviewPassMs: Math.max(1, Math.floor(totalMs * MAX_REVIEW_PASS_RATIO)),
+  };
+}
+
 export interface ExecutorPaths {
   workspaceDir: string;
   dataDir: string;
@@ -302,7 +328,8 @@ export class DesignTaskExecutor {
     const { workspaceDir } = this.options.paths;
     const sessionId = task.taskId;
     const instruction = task.instruction;
-    const executionDeadline = Date.now() + Math.max(1, task.timeoutSeconds) * 1000;
+    const budget = buildExecutionBudget(Date.now(), task.timeoutSeconds);
+    const { executionDeadline } = budget;
     if (!instruction.trim() || instruction.length > 12_000) {
       throw new AgentWorkspaceRuntimeError('design_instruction_invalid', 'design instruction must contain 1 to 12000 characters');
     }
@@ -396,6 +423,11 @@ export class DesignTaskExecutor {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
       const designContext = collectDesignTaskContext(workspaceDir);
       const designDirection = designContext.direction;
+      const reviewMode = designDirection?.reviewMode ?? 'light';
+      const reviewPasses = reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
+      const mainRunDeadline = reviewPasses > 0
+        ? budget.finalizationDeadline - budget.minimumReviewPassMs
+        : budget.finalizationDeadline;
       const hasReferenceImages = prepared.inputFiles.some((file) => file.path.startsWith('reference/'));
       const platformRules = buildPlatformRules({ knowledgeFiles, editingExistingPage });
       const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
@@ -437,7 +469,7 @@ export class DesignTaskExecutor {
       }
       activeRunId = runId;
       let finalRunId = runId;
-      let runOutcome: OpenDesignRunOutcome = await client.waitForRun(runId, executionDeadline, signal, onStage, previewPusher.poll);
+      let runOutcome: OpenDesignRunOutcome = await client.waitForRun(runId, mainRunDeadline, signal, onStage, previewPusher.poll);
       // 交付文件由 OpenDesign 指名，一轮里只有产出的那几次会带上它——终审与修复常报
       // no_artifact（它们没新建产物），那不等于上一轮指名的文件失效。所以只往前记，不清空。
       let deliverableEntryFile = runOutcome.deliverableEntryFile;
@@ -446,8 +478,6 @@ export class DesignTaskExecutor {
       }
       // 自查强度（MAP 设置冻结进任务书）：off 跳过模型终审，只留确定性发布闸门与修复回路；
       // light 一轮终审；strict 在终审之后再加一轮只看视觉质量的审美复查。旧运行没有方向，按 light。
-      const reviewMode = designDirection?.reviewMode ?? 'light';
-      const reviewPasses = reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
       if (reviewPasses > 0) {
         // Quality work needs the same project and live workspace, but not the generation transcript.
         // Reusing the imported conversation made every review request resend the complete generation
@@ -462,11 +492,29 @@ export class DesignTaskExecutor {
         );
       }
       for (let reviewPass = 0; reviewPass < reviewPasses; reviewPass += 1) {
-        assertExecutionDeadline(executionDeadline);
+        const stableRunId = finalRunId;
+        const stableOutcome = runOutcome;
+        const stableDeliverableEntryFile = deliverableEntryFile;
+        this.promoteDeliverableEntry(stableDeliverableEntryFile, (stage, detail) => {
+          onStage(stage === 'deliverable_entry_resolved' ? 'deliverable_entry_checkpointed' : stage, detail);
+        });
+        this.exportOutputs(transfer, prepared);
+        const stableOutputs = this.collectOutputs(transfer);
+        const remainingReviewMs = budget.finalizationDeadline - Date.now();
+        const allottedReviewMs = Math.min(budget.maximumReviewPassMs, remainingReviewMs);
+        if (allottedReviewMs < budget.minimumReviewPassMs) {
+          onStage('open_design_review_budget_exhausted', {
+            completedPasses: reviewPass,
+            skippedPasses: reviewPasses - reviewPass,
+            remainingSeconds: Math.max(0, Math.floor(remainingReviewMs / 1000)),
+          });
+          break;
+        }
+        const reviewDeadline = Date.now() + allottedReviewMs;
         const review = await client.odJson('/api/runs', {
           method: 'POST',
           body: buildRunBody(buildReviewMessage({ reviewPass, editingExistingPage, reviewAddendum })),
-          signal: signalForDeadline(executionDeadline, signal),
+          signal: signalForDeadline(reviewDeadline, signal),
           acceptedStatuses: [200, 202],
         });
         finalRunId = typeof review.runId === 'string'
@@ -478,9 +526,32 @@ export class DesignTaskExecutor {
           throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
         }
         activeRunId = finalRunId;
-        onStage('open_design_reviewing', { runId: finalRunId, pass: reviewPass + 1 });
-        runOutcome = await client.waitForRun(finalRunId, executionDeadline, signal, onStage, previewPusher.poll);
-        deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+        onStage('open_design_reviewing', {
+          runId: finalRunId,
+          pass: reviewPass + 1,
+          allottedSeconds: Math.floor(allottedReviewMs / 1000),
+        });
+        try {
+          runOutcome = await client.waitForRun(finalRunId, reviewDeadline, signal, onStage, previewPusher.poll);
+          deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+        } catch (error) {
+          const reviewBudgetExpired = error instanceof AgentWorkspaceRuntimeError
+            && error.code === 'open_design_run_timeout'
+            && !signal.aborted
+            && Date.now() < executionDeadline;
+          if (!reviewBudgetExpired) throw error;
+          this.restoreOutputCheckpoint(transfer, stableOutputs);
+          finalRunId = stableRunId;
+          runOutcome = stableOutcome;
+          deliverableEntryFile = stableDeliverableEntryFile;
+          onStage('open_design_review_budget_exhausted', {
+            completedPasses: reviewPass,
+            skippedPasses: reviewPasses - reviewPass,
+            allottedSeconds: Math.floor(allottedReviewMs / 1000),
+            retainedRunId: stableRunId,
+          });
+          break;
+        }
       }
       let collectedFiles: WorkspacePackageFile[] = [];
       let indexFile: WorkspacePackageFile | undefined;
@@ -950,6 +1021,41 @@ export class DesignTaskExecutor {
     };
     walk(outputDir);
     return results.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  /**
+   * 模型终审超出它自己的预算时，不能把半写状态交给浏览器门禁。终审开始前的输出已经过
+   * output-preflight；这里冻结引擎、清空声明过的输出根，再把那份受信快照原样恢复。
+   * brief、knowledge、current、reference 等冻结输入不在输出白名单里，因此不会被触碰。
+   */
+  private restoreOutputCheckpoint(
+    transfer: WorkspaceTransferRequest,
+    checkpoint: WorkspacePackageFile[],
+  ): void {
+    const workspaceDir = this.options.paths.workspaceDir;
+    this.options.daemon.freeze();
+    try {
+      for (const allowed of transfer.allowedOutputPaths) {
+        const outputPath = allowed.endsWith('/**') ? allowed.slice(0, -3) : allowed;
+        const normalized = normalizeRelativePath(outputPath);
+        fs.rmSync(path.join(workspaceDir, ...normalized.split('/')), { recursive: true, force: true });
+      }
+      for (const file of checkpoint) {
+        const normalized = normalizeRelativePath(file.path);
+        if (!isAllowedOutput(normalized, transfer.allowedOutputPaths)) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_invalid',
+            `review checkpoint contains a path outside the output allowlist: ${normalized}`,
+          );
+        }
+        const target = path.join(workspaceDir, ...normalized.split('/'));
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'));
+      }
+      this.chownForEngine(workspaceDir);
+    } finally {
+      this.options.daemon.thaw();
+    }
   }
 
   /**

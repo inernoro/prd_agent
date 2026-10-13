@@ -198,6 +198,21 @@ public sealed class OpenDesignStageProgressTests
         Assert.Equal(40, update!.Progress);
     }
 
+    [Fact]
+    public void 模型终审按预算收口后明确转入浏览器检查而不是继续显示卡住()
+    {
+        var tracker = new OpenDesignStageProgress(editing: false, startProgress: 18);
+        tracker.Observe("open_design_reviewing", null, null);
+
+        var converged = tracker.Observe("open_design_review_budget_exhausted", null, null);
+
+        Assert.NotNull(converged);
+        Assert.Equal(75, converged!.Progress);
+        Assert.Equal(DesignArtifactPhaseCodes.ReviewingPage, converged.PhaseCode);
+        Assert.Contains("按时间预算收口", converged.Phase);
+        Assert.Contains("浏览器检查", converged.Phase);
+    }
+
     [Theory]
     [InlineData(0, "0 秒")]
     [InlineData(59, "59 秒")]
