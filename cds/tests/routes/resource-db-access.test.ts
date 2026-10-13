@@ -748,12 +748,44 @@ describe('resource database access', () => {
     expect(harness.shell.commands.some((cmd) => cmd.includes('SELECT * FROM "audit"."events" LIMIT 50'))).toBe(true);
   });
 
+  it('只读多查询返回独立结果集，写入混入被拦且一个进程执行全部查询', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-results', projectId: 'prd-agent', name: 'MySQL results', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 19001, containerName: 'cds-mysql-results', status: 'running', dbName: 'app', env: { MYSQL_ROOT_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    harness.shell.addResponsePattern(/docker exec .* mysql /, () => ({ stdout: '<resultset statement="SELECT 1 AS a"><row><field name="a">1</field></row></resultset>\n<resultset statement="SELECT 2 AS b"><row><field name="b">2</field></row></resultset>', stderr: '', exitCode: 0 }));
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const url = '/api/branches/main-branch/resources/infra%3Amysql-results/data/query';
+    const result = await request(server!, 'POST', url, { sql: 'SELECT 1 AS a; SELECT 2 AS b' }, { 'x-test-project-key': '1' });
+    expect(result.status).toBe(200);
+    expect(result.body.resultSets.map((item: any) => item.rows)).toEqual([[['1']], [['2']]]);
+    expect(harness.shell.commands.filter((cmd) => cmd.includes(' mysql '))).toHaveLength(1);
+    expect(harness.shell.commands.find((cmd) => cmd.includes(' mysql '))).toContain('--xml');
+    const denied = await request(server!, 'POST', url, { sql: 'SELECT 1; UPDATE sample SET n=2' }, { 'x-test-project-key': '1' });
+    expect(denied.status).toBe(400);
+    expect(harness.shell.commands.filter((cmd) => cmd.includes(' mysql '))).toHaveLength(1);
+  });
+
+  it('SSH 连接说明只生成本地转发命令，保留凭据权限且拒绝非法目标', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mysql-ssh', projectId: 'prd-agent', name: 'MySQL SSH', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 19001, containerName: 'cds-mysql-ssh', status: 'running', dbName: 'app', env: { MYSQL_USER: 'app_user', MYSQL_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const url = '/api/branches/main-branch/resources/infra%3Amysql-ssh/connection-string?scope=ssh&localPort=13306&sshTarget=root%40mycds';
+    expect((await request(server!, 'GET', url, undefined, { 'x-test-ai-session': '1' })).status).toBe(403);
+    expect((await request(server!, 'GET', url, undefined, { 'x-test-project-key': 'other' })).status).toBe(403);
+    const result = await request(server!, 'GET', url, undefined, { 'x-test-cookie-auth': '1' });
+    expect(result.status).toBe(200);
+    expect(result.body.sshCommand).toContain('127.0.0.1:13306:127.0.0.1:19001');
+    expect(result.body.connectionString).toContain('@127.0.0.1:13306/');
+    expect(result.body.maskedConnectionString).not.toContain(':pw@');
+    expect((await request(server!, 'GET', url.replace('root%40mycds', 'root%40mycds%3Btouch'), undefined, { 'x-test-cookie-auth': '1' })).status).toBe(400);
+    expect(harness.shell.commands.some((cmd) => cmd.includes('docker run') || cmd.startsWith('ssh '))).toBe(false);
+  });
+
   it('批量修改只启动一个数据库连接，输出原始结果；失败和普通项目 Key 不能报成功', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;
     harness.stateService.addInfraService({ id: 'mysql-batch', projectId: 'prd-agent', name: 'MySQL batch', dockerImage: 'mysql:8', containerPort: 3306, hostPort: 3306, containerName: 'cds-mysql-batch', status: 'running', dbName: 'app', env: { MYSQL_ROOT_PASSWORD: 'pw', MYSQL_DATABASE: 'app' }, volumes: [] });
     harness.shell.addResponsePattern(/docker exec .* mysql /, (match) => (match.input || '').includes('missing_table')
-      ? { stdout: '', stderr: 'ERROR 1146 missing_table', exitCode: 1 }
+      ? { stdout: 'Query OK, 1 row affected\n', stderr: 'ERROR 1146 missing_table', exitCode: 1 }
       : { stdout: 'Query OK, 1 row affected\nQuery OK, 1 row affected\n', stderr: '', exitCode: 0 });
     await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
     const base = '/api/branches/main-branch/resources/infra%3Amysql-batch/data/query-write';
@@ -772,6 +804,7 @@ describe('resource database access', () => {
     const failure = await request(server!, 'POST', base, { ...body, sql: 'UPDATE sample SET n=1; UPDATE missing_table SET n=2' }, { 'x-test-cookie-auth': '1' });
     expect(failure.status).toBe(500);
     expect(failure.body.error).toContain('missing_table');
+    expect(failure.body.partialResult.output).toContain('Query OK');
   });
 
   it('Agent 只能申请自己项目的具体 SQL，批准前不执行，不能自批，批准后返回实际结果', async () => {

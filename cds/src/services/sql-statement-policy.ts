@@ -203,7 +203,7 @@ function lockingReadError(): Error {
   return new Error(
     '加锁读（SELECT ... FOR UPDATE / FOR SHARE）在这里不成立：每执行一条语句就是一条新连接，'
     + '行锁在这条语句返回时就已经释放，保护不了你接下来那条 UPDATE，可这一条还会报「成功」。'
-    + '要在同一个事务里加锁再改，请把整段脚本放进工作台的「初始化 SQL」执行。',
+    + '要在同一个事务里加锁再改，请把完整事务脚本放在当前执行框一起执行。',
   );
 }
 
@@ -211,7 +211,7 @@ function connectionScopedError(head: string): Error {
   return new Error(
     `${head.toUpperCase()} 只对当前连接生效，而这里每执行一条语句就是一条新连接：`
     + '设置、选中的库、表锁都会随进程退出立刻消失，下一条语句拿不到它们，可这一条还会报「成功」。'
-    + '要让它生效，请把它和依赖它的语句一起放进工作台的「初始化 SQL」执行。',
+    + '要让它生效，请把它和依赖它的语句放在当前执行框一起执行。',
   );
 }
 
@@ -219,7 +219,7 @@ function transactionControlError(): Error {
   return new Error(
     '事务控制语句（BEGIN / COMMIT / ROLLBACK / SAVEPOINT）在这里不成立：每次执行都是一条独立连接，'
     + 'BEGIN 之后的语句会在别的连接里自动提交，ROLLBACK 也回滚不了任何东西——三条都会「成功」，数据却改了回不去。'
-    + '要用事务，请把整段脚本放进工作台的「初始化 SQL」一起执行（那边是同一个进程跑完整个脚本）。',
+    + '要用事务，请把完整事务脚本放在当前执行框一起执行。',
   );
 }
 
@@ -237,7 +237,14 @@ export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): s
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
-  assertSingleStatement(body, '只读 SQL Console ', dialect);
+  // 只读脚本逐条检查准入，执行仍由一个客户端连接完成。
+  if (isSqlScript(body, dialect)) {
+    if (/\/\*!/.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');
+    const statements = stripSqlComments(body, { maskLiterals: true, dialect }).split(';').filter((part) => part.trim());
+    for (const statement of statements) normalizeReadOnlyStatement(statement, dialect);
+    assertNoHostEscape(body, dialect);
+    return body;
+  }
   const { head, kind } = classifySqlStatement(body, dialect);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
   if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);

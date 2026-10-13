@@ -50,6 +50,7 @@ import {
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { normalizeReadOnlyStatement, normalizeConsoleWrite, isSqlScript } from '../services/sql-statement-policy.js';
+import { parseSqlConsoleResults, SqlConsoleExecutionError, type SqlConsoleResult } from '../services/sql-console-results.js';
 import { operatorOpRegistry } from '../services/operator-console.js';
 import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
 import {
@@ -6545,13 +6546,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   type ResourceDatabaseRuntime = 'mysql' | 'postgres' | 'mongodb' | 'redis';
 
-  interface DbDataQueryResult {
-    columns: string[];
-    rows: string[][];
-    rowCount: number;
-    output?: string;
-    truncated?: boolean;
-  }
+  type DbDataQueryResult = SqlConsoleResult;
 
   interface SqlTableRef {
     schema?: string;
@@ -6697,23 +6692,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
     }
     const result = await shell.exec(
-      `docker exec ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --batch --raw --binary-mode${isSqlScript(sql, 'mysql') ? ' --verbose --verbose' : ''} --default-character-set=utf8mb4 ${shq(creds.database)} -e ${shq(sql)}`,
+      `docker exec ${shq(service.containerName || '')} mysql -u${shq(creds.user)}${mysqlPasswordArg(creds.password)} --batch --raw --binary-mode${isSqlScript(sql, 'mysql') ? ' --xml --verbose --verbose' : ''} --default-character-set=utf8mb4 ${shq(creds.database)} -e ${shq(sql)}`,
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
       // 裸的 `ERROR 1045` 对用户等于没说：它既可能是口令被兄弟分支改过，也可能是账号
       // 已被删掉，而两种情况的下一步是同一个「重置连接凭据」。把这句话说出来。
-      throw new Error(explainBranchDbAuthFailure({
+      throw new SqlConsoleExecutionError(explainBranchDbAuthFailure({
         runtime: 'mysql',
         branchId: branch.id,
         user: creds.user,
         rawError: maskTextSecrets((result.stderr || result.stdout || 'MySQL 查询失败').trim(), creds.secrets),
         adminAvailable: mysqlAdminAvailable(service, branch),
-      }));
+      }), parseSqlConsoleResults(maskTextSecrets(result.stdout, creds.secrets), 'mysql'));
     }
     const output = maskTextSecrets(result.stdout, creds.secrets);
     return isSqlScript(sql, 'mysql')
-      ? { columns: [], rows: [], rowCount: 0, output: output.slice(0, 256 * 1024) || 'SQL 脚本执行完成。', truncated: output.length > 256 * 1024 }
+      ? parseSqlConsoleResults(output, 'mysql')
       : parseDbTsv(output);
   }
 
@@ -6748,20 +6743,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       throw new Error(`数据库名不合法: ${creds.database || '(empty)'}`);
     }
     const result = await shell.exec(
-      `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -A -F ${shq('\t')} -P footer=off -v ON_ERROR_STOP=1 -X${isSqlScript(sql, 'postgres') ? '' : ' -q'} -c ${shq(sql)}`,
+      `docker exec -e PGPASSWORD=${shq(creds.password)} ${shq(service.containerName || '')} psql -U ${shq(creds.user)} -d ${shq(creds.database)} -A -F ${shq('\t')} -P footer=off -v ON_ERROR_STOP=1 -X${isSqlScript(sql, 'postgres') ? ' -H' : ' -q'} -c ${shq(sql)}`,
       { timeout: timeoutMs },
     );
     if (result.exitCode !== 0) {
-      throw new Error(explainBranchDbAuthFailure({
+      throw new SqlConsoleExecutionError(explainBranchDbAuthFailure({
         runtime: 'postgres',
         branchId: branch.id,
         user: creds.user,
         rawError: maskTextSecrets((result.stderr || result.stdout || 'PostgreSQL 查询失败').trim(), creds.secrets),
-      }));
+      }), parseSqlConsoleResults(maskTextSecrets(result.stdout, creds.secrets), 'postgres'));
     }
     const output = maskTextSecrets(result.stdout, creds.secrets);
     return isSqlScript(sql, 'postgres')
-      ? { columns: [], rows: [], rowCount: 0, output: output.slice(0, 256 * 1024) || 'SQL 脚本执行完成。', truncated: output.length > 256 * 1024 }
+      ? parseSqlConsoleResults(output, 'postgres')
       : parseDbTsv(output);
   }
 
@@ -9308,7 +9303,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!requireSecretRevealAccess(req, res, projectId)) return;
     if (!requireResourcePermission(req, res, 'connection-inject', branch, resource)) return;
     const service = getUnifiedResourceInternalRaw(resource) as InfraService;
-    const scope = String(req.query.scope || 'internal') === 'external' ? 'external' : 'internal';
+    const scope = req.query.scope === 'ssh' ? 'ssh' : req.query.scope === 'external' ? 'external' : 'internal';
+    const localPort = Number(req.query.localPort || 13306);
+    const sshTarget = String(req.query.sshTarget || '').trim();
+    if (scope === 'ssh' && (!/^[a-zA-Z0-9_][a-zA-Z0-9_.@:\[\]-]*$/.test(sshTarget) || !Number.isInteger(localPort) || localPort < 1024 || localPort > 65535)) {
+      res.status(400).json({ error: '请填写 SSH 主机（例如 user@server 或 SSH 配置别名），本地端口须为 1024–65535。' });
+      return;
+    }
+    if (scope === 'ssh' && (service.status !== 'running' || !service.hostPort)) {
+      res.status(409).json({ error: '资源没有运行中的宿主端口，暂时无法通过 SSH 隧道连接。请先启动资源。' });
+      return;
+    }
     const policy = await expireResourceExternalAccessIfNeeded(
       projectId,
       branch,
@@ -9325,6 +9330,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       host = policy.host;
       port = policy.port;
     }
+    if (scope === 'ssh') { host = '127.0.0.1'; port = localPort; }
     if (!host || !port) {
       res.status(409).json({ error: `资源 "${resource.displayName}" 缺少可用 host/port` });
       return;
@@ -9339,7 +9345,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       resourceId,
       resourceName: resource.displayName,
       result: 'success',
-      note: `${resource.displayName} 复制${scope === 'external' ? '外部' : '内部'}连接串`,
+      note: `${resource.displayName} 复制${scope === 'ssh' ? 'SSH 隧道' : scope === 'external' ? '外部' : '内部'}连接串`,
     });
     stateService.save();
     res.json({
@@ -9348,6 +9354,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       scope,
       connectionString,
       maskedConnectionString,
+      ...(scope === 'ssh' ? { localHost: '127.0.0.1', localPort, remotePort: service.hostPort, database: resolvedServiceDbName(service), sshCommand: `ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:${localPort}:127.0.0.1:${service.hostPort} ${shq(sshTarget)}` } : {}),
       expiresAt: scope === 'external' ? policy?.expiresAt || null : null,
     });
   });
@@ -9662,7 +9669,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: `${ctx.resourceName} 只读 SQL 失败：${(err as Error).message}`,
       });
       stateService.save();
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({ error: (err as Error).message, ...(err instanceof SqlConsoleExecutionError ? { partialResult: err.partialResult } : {}) });
     }
   });
 
@@ -9722,7 +9729,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: `${ctx.resourceName} 写 SQL 失败：${(err as Error).message}`,
       });
       stateService.save();
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json({ error: (err as Error).message, ...(err instanceof SqlConsoleExecutionError ? { partialResult: err.partialResult } : {}) });
     }
   });
 

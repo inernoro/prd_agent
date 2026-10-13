@@ -4267,6 +4267,12 @@ function ResourceConnection({
   const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
   const [connectionBusy, setConnectionBusy] = useState<'external' | 'internal' | null>(null);
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [externalError, setExternalError] = useState('');
+  const [sshTarget, setSshTarget] = useState('');
+  const [sshLocalPort, setSshLocalPort] = useState('13306');
+  const [sshGuide, setSshGuide] = useState<{ sshCommand: string; maskedConnectionString: string; localPort: number } | null>(null);
+  const [sshBusy, setSshBusy] = useState(false);
+  const infraLocalOnly = resource.source === 'infra';
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
   const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
   const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
@@ -4301,15 +4307,42 @@ function ResourceConnection({
       copyLabel: '复制容器内用',
       help: '只给同一 CDS 网络里的应用容器使用；本地电脑、DataGrip、redis-cli 不能直接使用。',
     },
-  ];
+  ].filter((row) => !infraLocalOnly || !row.label.startsWith('外部'));
   useEffect(() => {
+    setExternalError('');
+    setSshGuide(null);
+    setConnectionMessage(null);
+    setSshLocalPort(resource.runtime === 'PostgreSQL' ? '15432' : resource.runtime === 'MongoDB' ? '27018' : resource.runtime === 'Redis' ? '16379' : '13306');
     setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
     setTtlDraft(resource.externalAccess?.expiresAt ? '120' : '120');
   }, [resource.id, resource.externalAccess?.allowlist, resource.externalAccess?.expiresAt]);
+  async function generateSshGuide(copyString = false): Promise<void> {
+    if (!resource.branchId) return;
+    setSshBusy(true);
+    setExternalError('');
+    setConnectionMessage(null);
+    try {
+      const result = await apiRequest<{ sshCommand: string; maskedConnectionString: string; connectionString: string; localPort: number }>(
+        `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/connection-string?scope=ssh&localPort=${encodeURIComponent(sshLocalPort)}&sshTarget=${encodeURIComponent(sshTarget)}`,
+      );
+      setSshGuide({ sshCommand: result.sshCommand, maskedConnectionString: result.maskedConnectionString, localPort: result.localPort });
+      if (copyString) { await onCopy(result.connectionString); setConnectionMessage('本地连接串已复制。请先在终端保持 SSH 隧道运行，再用数据库客户端连接。'); }
+    } catch (err) {
+      setSshGuide(null);
+      setExternalError(err instanceof ApiError ? err.message : String(err));
+    } finally { setSshBusy(false); }
+  }
+  async function toggleExternal(input: ResourceExternalAccessInput): Promise<void> {
+    setExternalError('');
+    try { await onToggleExternalAccess(input); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
+  }
   async function resetCredentials(): Promise<void> {
     const confirmResourceName = window.prompt(`重置会让 ${resource.displayName} 的旧连接失效。请输入资源名确认：${resource.serviceName}`);
     if (!confirmResourceName) return;
-    await onResetCredentials(confirmResourceName);
+    setExternalError('');
+    try { await onResetCredentials(confirmResourceName); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
   }
   async function copyConnectionString(scope: 'external' | 'internal'): Promise<void> {
     if (!resource.branchId) return;
@@ -4358,7 +4391,30 @@ function ResourceConnection({
         </div>
       ))}
       {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
-      <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+      {externalError ? <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">{externalError}</div> : null}
+      {infraLocalOnly ? (
+        <div className="space-y-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs leading-5">
+          <div className="font-semibold">本地数据库客户端 · SSH 隧道</div>
+          <p className="text-muted-foreground">数据库数据端口不直接发布到公网。使用已有 SSH 账号连接 CDS 宿主，把数据库映射到本机；DataGrip、Navicat 等客户端连接本地地址。</p>
+          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem]">
+            <label className="grid gap-1">SSH 主机或配置别名<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" placeholder="user@server 或 SSH 别名" value={sshTarget} onChange={(event) => { setSshTarget(event.target.value); setSshGuide(null); }} /></label>
+            <label className="grid gap-1">本地端口<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" inputMode="numeric" value={sshLocalPort} onChange={(event) => { setSshLocalPort(event.target.value); setSshGuide(null); }} /></label>
+          </div>
+          <Button type="button" size="sm" variant="outline" disabled={sshBusy || !canInjectConnection} onClick={() => void generateSshGuide()}>
+            {sshBusy ? <Loader2 className="animate-spin" /> : <Terminal />}生成连接说明
+          </Button>
+          {!canInjectConnection ? <p className="text-muted-foreground">{resourcePermissionReason(permissions, 'connection-inject')}</p> : null}
+          {sshGuide ? <div className="space-y-2">
+            <p>1. 在本机终端执行并保持运行；关闭终端即可断开隧道：</p>
+            <pre className="overflow-auto rounded border border-[hsl(var(--hairline))] bg-background p-2 font-mono">{sshGuide.sshCommand}</pre>
+            <Button type="button" size="sm" variant="outline" onClick={() => void onCopy(sshGuide.sshCommand)}><Copy />复制 SSH 命令</Button>
+            <p>2. 客户端地址：127.0.0.1，端口：{sshGuide.localPort}。使用数据库账号密码；也可复制完整连接串。</p>
+            <code className="block break-all font-mono">{sshGuide.maskedConnectionString}</code>
+            <Button type="button" size="sm" variant="outline" disabled={sshBusy} onClick={() => void generateSshGuide(true)}><Copy />复制本地连接串</Button>
+          </div> : null}
+          {externalEnabled ? <Button type="button" size="sm" variant="outline" disabled={externalBusy || !canTemporaryExternal} onClick={() => void toggleExternal({ enabled: false })}>关闭已有公网访问</Button> : null}
+        </div>
+      ) : <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
         <div className="flex items-center justify-between gap-3">
           <div>
             <div className="font-semibold">外部访问控制</div>
@@ -4388,7 +4444,7 @@ function ResourceConnection({
                 .map((item) => item.trim())
                 .filter(Boolean);
               const ttlMinutes = Number(ttlDraft);
-              void onToggleExternalAccess({
+              void toggleExternal({
                 enabled: !externalEnabled,
                 ttlMinutes: !externalEnabled && Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : undefined,
                 allowlist,
@@ -4421,7 +4477,7 @@ function ResourceConnection({
             />
           </label>
         </div>
-      </div>
+      </div>}
       {resource.kind === 'database' ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3 text-xs leading-5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -4462,8 +4518,10 @@ interface DbTableSummary {
 
 interface DbQueryResult {
   columns: string[];
-  rows: string[][];
+  rows: Array<Array<string | null>>;
   rowCount: number;
+  statement?: string;
+  resultSets?: DbQueryResult[];
   output?: string;
   truncated?: boolean;
 }
@@ -5695,7 +5753,9 @@ function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
   if (!READ_STATEMENT_HEADS.includes(head)) return false;
   // CTE 后面可以跟 DELETE/UPDATE，头是 with 不代表只读；但字面量/注释里的那些词不算
   // ——判据看代码本身，与后端同一条。`#` 只有 MySQL 才是注释。
-  return !WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'));
+  if (WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'))) return false;
+  if (/\/\*!/.test(body)) return false;
+  return stripSqlCommentsAndLiterals(body, runtime === 'MySQL').split(';').filter((part) => part.trim()).every((part) => READ_STATEMENT_HEADS.includes(part.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase() || ''));
 }
 
 function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
@@ -5706,6 +5766,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   const [sql, setSql] = useState('SELECT 1');
   const [resultState, setResultState] = useState<DbResultState>({ status: 'idle' });
   const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
+  const [activeResult, setActiveResult] = useState(0);
   const [initSql, setInitSql] = useState('');
   const [migrationCommand, setMigrationCommand] = useState('');
   const [initBusy, setInitBusy] = useState<'init-sql' | 'migration' | null>(null);
@@ -5739,6 +5800,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       const schemaQs = table.schema ? `&schema=${encodeURIComponent(table.schema)}` : '';
       const preview = await apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table.name)}${schemaQs}&limit=50`);
       setResultState({ status: 'ok', result: preview });
+      setActiveResult(0);
       setResultMode(preview.columns.length > 0 ? 'table' : 'output');
     } catch (err) {
       setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
@@ -5753,7 +5815,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   useEffect(() => {
     if (!selectedTable) return;
     void loadTablePreview(selectedTable);
-  }, [loadTablePreview, selectedTable]);
+  }, [loadTablePreview, selectedTable?.name, selectedTable?.schema]);
 
   async function runInitializationSql(): Promise<void> {
     if (!canManageConsole || !basePath || !initSql.trim()) return;
@@ -5793,6 +5855,8 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
 
   async function runSqlCommand(): Promise<void> {
     if (!basePath || !sql.trim() || (!canManageConsole && !sqlReadOnly)) return;
+    if (resultState.status === 'loading') return;
+    setActiveResult(0);
     setResultState({ status: 'loading' });
     try {
       const readOnly = sqlReadOnly;
@@ -5801,13 +5865,14 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
       });
       setResultState({ status: 'ok', result });
-      setResultMode(result.columns.length > 0 ? 'table' : 'output');
+      setResultMode(result.columns.length > 0 || result.resultSets?.length ? 'table' : 'output');
       if (!readOnly && !result.output) {
         void loadTables();
         if (selectedTable) void loadTablePreview(selectedTable);
       }
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const partialResult = err instanceof ApiError ? (err.body as { partialResult?: DbQueryResult })?.partialResult : undefined;
+      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err), result: partialResult });
       setResultMode('output');
     }
   }
@@ -5817,7 +5882,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       <ResourceWorkbenchLauncher
         resource={resource}
         title={adapter.label}
-        description={`${adapter.treeLabel}，右上执行一条命令，右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
+        description={`${adapter.treeLabel}，右上执行 SQL，多个查询按页签查看，修改结果连续显示；右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
         onOpen={() => setWorkbenchOpen(true)}
       />
       <ResourceWorkbenchModal
@@ -5887,7 +5952,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   执行
                 </Button>
               </div>
-              <p className="shrink-0 px-3 pt-2 text-[0.6875rem] text-muted-foreground">多条修改 SQL 可一起执行，使用同一连接；遇错停止，已提交的修改不会自动回滚。</p>
+              <p className="shrink-0 px-3 pt-2 text-[0.6875rem] text-muted-foreground">多条 SQL 使用同一连接执行；查询结果按页签展示，修改结果连续显示。遇错停止，已提交修改不会自动回滚。</p>
               <div
                 className="min-h-0 flex-1 overflow-y-auto p-3"
                 style={{ overscrollBehavior: 'contain' }}
@@ -5909,12 +5974,31 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
               </div>
             </section>
 
-            <DbResultTable
-              state={resultState}
-              emptyLabel="选择表或执行 SQL 后在这里显示结果。"
-              viewMode={resultMode}
-              onViewModeChange={setResultMode}
-            />
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              {resultState.result?.resultSets?.length ? (
+                <div role="tablist" aria-label="SQL 查询结果" className="flex shrink-0 gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3 py-1">
+                  {resultState.result.resultSets.map((item, index) => (
+                    <button key={index} role="tab" aria-selected={activeResult === index} title={item.statement} type="button"
+                      className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === index ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                      onClick={() => { setActiveResult(index); setResultMode('table'); }}>
+                      查询 {index + 1} · {item.rowCount} 行
+                    </button>
+                  ))}
+                  <button role="tab" aria-selected={activeResult === -1} type="button"
+                    className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === -1 ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                    onClick={() => { setActiveResult(-1); setResultMode('output'); }}>执行记录</button>
+                </div>
+              ) : null}
+              {resultState.status === 'error' ? <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{resultState.message} 执行已停止；此前已提交的修改可能仍然生效。</div> : null}
+              <div className="grid min-h-0 flex-1">
+                <DbResultTable
+                  state={resultState.result?.resultSets?.[activeResult] ? { status: 'ok', result: resultState.result.resultSets[activeResult] } : resultState}
+                  emptyLabel="选择表或执行 SQL 后在这里显示结果。"
+                  viewMode={resultMode}
+                  onViewModeChange={setResultMode}
+                />
+              </div>
+            </div>
           </main>
           {canManageConsole ? <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
             <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
@@ -5984,7 +6068,7 @@ function DbResultTable({
     ? state.result.rows.map((row) => Object.fromEntries(state.result!.columns.map((column, index) => [column, row[index] ?? null])))
     : [];
   const outputText = state.status === 'error'
-    ? state.message || '执行失败'
+    ? [state.result?.output, state.message || '执行失败'].filter(Boolean).join('\n\n')
     : state.result
       ? state.result.output
         ? `${state.result.output}${state.result.truncated ? '\n输出已截断。' : ''}`
@@ -6036,7 +6120,7 @@ function DbResultTable({
                 >
                   {state.result!.columns.map((column, columnIndex) => (
                     <td key={`${column}-${columnIndex}`} className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
-                      {row[columnIndex] || 'NULL'}
+                      {row[columnIndex] ?? 'NULL'}
                     </td>
                   ))}
                 </tr>

@@ -324,9 +324,9 @@ describe('branches.ts 真的用上了这套身份与解释', () => {
       real,
       mutate(
         real,
-        `      throw new Error(explainBranchDbAuthFailure({
+        `      throw new SqlConsoleExecutionError(explainBranchDbAuthFailure({
         runtime: 'mysql',`,
-        `      throw new Error(String({
+        `      throw new SqlConsoleExecutionError(String({
         runtime: 'mysql',`,
       ),
     );

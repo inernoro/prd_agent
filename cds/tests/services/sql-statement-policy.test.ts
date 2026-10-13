@@ -107,10 +107,10 @@ describe('工作台 SQL 准入：该放的都放行', () => {
    * 事务控制两条路都不收：每次执行是独立连接，BEGIN / UPDATE / ROLLBACK 三条全「成功」
    * 而数据回不去，等于给了一个假的安全信号（Codex P1）。
    */
-  it('事务控制语句被拒绝，并指向初始化 SQL', () => {
+  it('事务控制语句被拒绝，并提示把完整脚本放进当前执行框', () => {
     for (const sql of ['BEGIN', 'START TRANSACTION', 'COMMIT', 'ROLLBACK', 'SAVEPOINT s1']) {
-      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
-      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/当前执行框/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/当前执行框/);
     }
     expect(TRANSACTION_CONTROL_HEADS).toContain('begin');
     for (const head of TRANSACTION_CONTROL_HEADS) {
@@ -122,10 +122,10 @@ describe('工作台 SQL 准入：该放的都放行', () => {
    * 连接作用域语句和事务控制同理：设置/选中的库/表锁随进程退出消失，下一条语句拿不到，
    * 可这一条还报「成功」（Codex P1，第二轮）。
    */
-  it('连接作用域语句被拒绝，并指向初始化 SQL', () => {
+  it('连接作用域语句被拒绝，并提示把完整脚本放进当前执行框', () => {
     for (const sql of ['SET SESSION sql_mode = ""', 'USE other_db', 'LOCK TABLES demo WRITE', 'UNLOCK TABLES', 'RESET QUERY CACHE']) {
-      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
-      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/当前执行框/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/当前执行框/);
     }
     for (const head of CONNECTION_SCOPED_HEADS) {
       expect(WRITE_STATEMENT_HEADS, `${head} 不该再出现在写白名单里`).not.toContain(head);
@@ -153,15 +153,15 @@ describe('工作台 SQL 准入：该放的都放行', () => {
    * 加锁读同属连接作用域：行锁在语句返回时就释放，保护不了随后那条 UPDATE，
    * 却会报「成功」（Codex P1，第三轮）。两条通道都不收。
    */
-  it('加锁读两条通道都拒，并指向初始化 SQL', () => {
+  it('加锁读两条通道都拒，并提示把完整脚本放进当前执行框', () => {
     for (const sql of [
       'SELECT * FROM demo WHERE id = 1 FOR UPDATE',
       'SELECT * FROM demo FOR SHARE',
       'SELECT * FROM demo LOCK IN SHARE MODE',
       'SELECT * FROM demo FOR NO KEY UPDATE',
     ]) {
-      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
-      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/初始化 SQL/);
+      expect(() => normalizeReadOnlyStatement(sql), `读通道应拒绝：${sql}`).toThrow(/当前执行框/);
+      expect(() => normalizeWriteStatement(sql), `写通道应拒绝：${sql}`).toThrow(/当前执行框/);
     }
     // 字面量里的 for update 不算加锁读
     expect(isLockingRead("SELECT * FROM demo WHERE note = 'for update'")).toBe(false);
@@ -229,8 +229,11 @@ describe('工作台 SQL 准入：该拦的仍拦', () => {
     }
   });
 
-  it('多语句被拒绝，并指向初始化 SQL 输入框', () => {
-    expect(() => normalizeReadOnlyStatement('SELECT 1; SELECT 2')).toThrow(/初始化 SQL/);
+  it('只读脚本逐条准入，混入修改、会话或锁语句仍拒绝', () => {
+    expect(normalizeReadOnlyStatement("SELECT 'a;b'; SELECT 2", 'mysql')).toContain('SELECT 2');
+    for (const sql of ['SELECT 1; UPDATE sample SET n=2', 'SELECT 1; SET @x=2', 'SELECT 1; SELECT * FROM sample FOR UPDATE', 'SELECT 1; /*! DELETE FROM sample */ SELECT 2']) {
+      expect(() => normalizeReadOnlyStatement(sql, 'mysql')).toThrow();
+    }
     expect(() => normalizeWriteStatement('DELETE FROM a; DELETE FROM b')).toThrow(/初始化 SQL/);
   });
 
