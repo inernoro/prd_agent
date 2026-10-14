@@ -1,5 +1,6 @@
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
+import { AlarmRelay, registerAlarmRelayRoutes } from './services/alarm-relay.js';
 import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
@@ -159,7 +160,7 @@ import { backfillReportReadScope } from './services/connection/pairing-service.j
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
-import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
+import { channelConfigured, classifyAlert, routeAlarm, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
@@ -6024,6 +6025,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
    * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
    */
+  const alarmRelay = new AlarmRelay(path.join(config.repoRoot, '.cds', 'alarm-relay.json'));
   const alarmLedger = new AlarmLedger({
     // 最近一次投递结果写回通道配置：进程重启后台账清空，已验证过的通道不该退回「未知」。
     persist: (channelId, last) => {
@@ -6128,6 +6130,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
       if (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map')) void sendLegacyAlarm({
         type,
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         targetId: data.targetId,
         targetName: data.targetName,
         projectId: data.projectId,
@@ -6155,8 +6158,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 上游已去抖，重试会把一次翻转变成多条通知）。
       const event = {
         identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
+        correlationKey: data.assessment === 'observation-unavailable'
+          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
+          : data.targetId,
         targetId: data.targetId,
         kind: classifyAlert(type, data.source),
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         projectId: data.projectId,
         targetName: data.targetName,
         message: data.message,
@@ -6167,6 +6174,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       const boardUrl = alarmBoardUrl(data.targetId);
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
+        if (alarmRelay.owns(channel.id)) {
+          alarmRelay.enqueue(channel.id, { ...event, recoveryConfirmed: data.recoveryChannelIds?.includes(channel.id) }, boardUrl);
+          continue;
+        }
         void sendAlarm(channel, event, { boardUrl, history: activeServerEventLogStore })
           .then((r) => {
             alarmLedger.record(channel.id, r, 'alert', Date.now());
@@ -6422,7 +6433,29 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // 通知通道的读写与演练。挂在同一个 /api 前缀下，与监控摘要同一条身份闸。
   app.use('/api', (() => {
     const r = express.Router();
+    registerAlarmRelayRoutes(r, alarmRelay, {
+      channels: () => stateService.listAlarmChannels(),
+      acknowledged: async (item, result) => {
+        if (result.merged) activeServerEventLogStore?.record({
+          category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',
+          operationId: item.id, projectId: item.event.projectId, message: '同源检查已归入已有事故',
+          details: { kind: 'policy', targetId: item.event.targetId, targetName: item.event.targetName, reason: 'shared-incident' },
+        });
+        else alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
+        const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
+        const message = renderAlarmMessage(item.event);
+        if (channel && !result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
+          channelId: channel.id, channelName: channel.name, channelKind: channel.kind,
+          kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
+          targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
+          title: message.title, body: message.body,
+        }, async () => result);
+        if (result.ok && item.event.kind.endsWith('-down') && item.event.targetId && !item.event.drill)
+          await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channelId, item.event.detectedAt);
+      },
+    });
     registerAlarmChannelRoutes(r, {
+      relay: alarmRelay,
       getIdentity: () => stateService.getAlarmIdentity(),
       setIdentity: (identity) => stateService.setAlarmIdentity(identity),
       list: () => stateService.listAlarmChannels(),
