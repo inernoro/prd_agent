@@ -1,3 +1,4 @@
+import { GenerationBoundary } from '@/components/motion/GenerationBoundary';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
@@ -4146,6 +4147,7 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             the old left "tracked / remote" two-list panel which the user
             said wasn't useful. Daily flow: focus the input, see all branches,
             type a few characters, click a row OR press Enter to preview. */}
+        <GenerationBoundary key={projectId} loading={state.status === 'loading'} ready={state.status === 'ok'}>
         {state.status === 'loading' ? (
           <div className="mt-6">
             {/* 骨架屏镜像真实分支卡网格(cds-branch-card-grid + 固定 15.25rem 卡形状),
@@ -4435,6 +4437,8 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             )}
           </div>
         ) : null}
+
+        </GenerationBoundary>
 
         {/* Ops drawer — slide-in panel for capacity / hosts / executors /
             batch / activity. Triggered by the "运维" button in the topbar. */}
