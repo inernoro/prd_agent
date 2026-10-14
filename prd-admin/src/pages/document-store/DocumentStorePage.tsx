@@ -3156,8 +3156,6 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         <div
           data-testid="document-upload-progress"
           data-phase={uploadProgress.phase}
-          role="status"
-          aria-live="polite"
           className="fixed left-1/2 z-[70] -translate-x-1/2 rounded-[14px] px-4 py-3"
           style={{
             width: 'min(360px,88vw)',
@@ -3167,7 +3165,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             boxShadow: '0 8px 28px rgba(0,0,0,0.45)',
           }}>
           <div className="mb-1.5 flex items-center justify-between gap-2 text-[12px]">
-            <span className="truncate font-semibold text-token-primary" title={uploadProgress.name}>{view.title}</span>
+            <span role="status" aria-live="polite" className="truncate font-semibold text-token-primary" title={uploadProgress.name}>{view.title}</span>
             <span data-testid="document-upload-status" className="flex shrink-0 items-center gap-1.5 tabular-nums text-token-muted">
               {uploadProgress.total > 1 ? `${uploadProgress.index}/${uploadProgress.total} · ` : ''}
               {uploadProgress.phase === 'parsing' ? <MapSpinner size={12} /> : null}

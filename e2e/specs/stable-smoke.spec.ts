@@ -2078,15 +2078,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-003] 请求体传完后明确解析阶段并持续计时', { tag: '@cleanup' }, async ({ page, request }) => {
-    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不注入响应延迟，慢路径仅在 CDS 验证');
+  test('[FILE-003] 大文件上传和解析持续反馈，正式环境使用安全小文件', { tag: '@cleanup' }, async ({ page, request }) => {
+    const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
     test.setTimeout(90_000);
     const token = await loginAndReadToken(page, request, '/');
     await page.getByRole('button', { name: '知识库', exact: true }).click();
     await page.waitForURL((url) => url.pathname === '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
     let storeId = '';
-    const session = await page.context().newCDPSession(page);
+    const session = production ? null : await page.context().newCDPSession(page);
+    let requestPausedId = '';
     let pausedRequestId = '';
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
@@ -2099,27 +2100,50 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.getByText(runKey, { exact: true }).click();
       await expect(page.getByText(runKey, { exact: true })).toBeVisible({ timeout: 15_000 });
 
-      // 仅延后真实响应交付，不替换回执、正文或页面状态。该证据证明 UI 慢路径，不证明解析性能。
       const uploadPath = `/api/document-store/stores/${storeId}/upload`;
-      session.on('Fetch.requestPaused', (event) => { pausedRequestId = event.requestId; });
-      await session.send('Fetch.enable', {
-        patterns: [{ urlPattern: new URL(uploadPath, page.url()).href, requestStage: 'Response' }],
-      });
+      const input = page.locator('input[type="file"][accept*=".pdf"]').first();
+      if (session) {
+        // 超限仅在 CDS 前端预检；不得真的把超限文件提交到服务端。
+        let uploadRequests = 0;
+        const countUpload = (item: import('@playwright/test').Request) => {
+          if (new URL(item.url()).pathname === uploadPath) uploadRequests++;
+        };
+        page.on('request', countUpload);
+        await input.setInputFiles({ name: `${runKey}-超限.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(21 * 1024 * 1024, 65) });
+        await expect(page.getByText(/单文件上限 20MB/)).toBeVisible();
+        expect(uploadRequests, '超限文件必须在上传前拒绝').toBe(0);
+        page.off('request', countUpload);
+        // 只暂停本轮真实请求与响应，不替换回执、正文或页面状态。
+        session.on('Fetch.requestPaused', (event) => {
+          if (event.responseStatusCode !== undefined) pausedRequestId = event.requestId;
+          else requestPausedId = event.requestId;
+        });
+        const urlPattern = new URL(uploadPath, page.url()).href;
+        await session.send('Fetch.enable', { patterns: [
+          { urlPattern, requestStage: 'Request' }, { urlPattern, requestStage: 'Response' },
+        ] });
+      }
       const name = `${runKey}.txt`;
-      await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
+      const response = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath);
+      await input.setInputFiles({
         name,
         mimeType: 'text/plain',
-        buffer: Buffer.alloc(2 * 1024 * 1024, 65),
+        buffer: Buffer.alloc(production ? 256 : 2 * 1024 * 1024, 65),
       });
-      await expect.poll(() => pausedRequestId, { timeout: 20_000 }).not.toBe('');
-      await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeVisible();
-      const status = page.getByTestId('document-upload-status');
-      await expect(status).toContainText('解析中 · 已等待');
-      const firstStatus = await status.innerText();
-      await expect.poll(() => status.innerText(), { timeout: 3000 }).not.toBe(firstStatus);
-      const response = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath);
-      await session.send('Fetch.continueRequest', { requestId: pausedRequestId });
-      pausedRequestId = '';
+      if (session) {
+        await expect.poll(() => requestPausedId, { timeout: 10_000 }).not.toBe('');
+        await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible();
+        await expect(page.getByText(/^\d+%$/)).toBeVisible();
+        await session.send('Fetch.continueRequest', { requestId: requestPausedId }); requestPausedId = '';
+        await expect.poll(() => pausedRequestId, { timeout: 20_000 }).not.toBe('');
+        await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeVisible();
+        const status = page.getByTestId('document-upload-status');
+        await expect(status).toContainText('解析中 · 已等待');
+        expect(await status.evaluate((element) => Boolean(element.closest('[aria-live="polite"], [role="status"]')))).toBe(false);
+        const firstStatus = await status.innerText();
+        await expect.poll(() => status.innerText(), { timeout: 3000 }).not.toBe(firstStatus);
+        await session.send('Fetch.continueRequest', { requestId: pausedRequestId }); pausedRequestId = '';
+      }
       const uploadResponse = await response;
       expect(uploadResponse.ok()).toBe(true);
       const uploadedBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
@@ -2130,8 +2154,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ));
       expect(content.content).toContain('AAAA');
     } finally {
-      if (pausedRequestId) await session.send('Fetch.continueRequest', { requestId: pausedRequestId }).catch(() => {});
-      await session.detach();
+      if (session) {
+        for (const requestId of [requestPausedId, pausedRequestId].filter(Boolean)) {
+          await session.send('Fetch.continueRequest', { requestId }).catch(() => {});
+        }
+        await session.detach();
+      }
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
