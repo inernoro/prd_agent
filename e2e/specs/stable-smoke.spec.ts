@@ -3470,10 +3470,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const canary = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-non-credential-canary`;
       const reporterInput = { errors: [{ message: JSON.stringify({ success: true, data: { item: { id: apiKeyId }, apiKey: canary } }) }] };
       writeFileSync(resolve(output, 'reporter-canary.json'), JSON.stringify(reporterInput));
+      writeFileSync(resolve(output, 'reporter-canary-truncated.json'), JSON.stringify(reporterInput).slice(0, -2));
       const sanitized = sanitizeStableSmokeArtifactTree(output);
-      expect(sanitized.changed, '转义 reporter JSON 的文件兜底必须实际改写').toBe(1);
+      expect(sanitized.changed, '完整和截断的 reporter 文件兜底都必须实际改写').toBe(2);
       const retained = readFileSync(resolve(output, 'actual-response-redacted.json'), 'utf8')
-        + readFileSync(resolve(output, 'reporter-canary.json'), 'utf8');
+        + readFileSync(resolve(output, 'reporter-canary.json'), 'utf8')
+        + readFileSync(resolve(output, 'reporter-canary-truncated.json'), 'utf8');
       expect(retained.includes(liveKey), '真实保留文件不得含活跃凭据').toBe(false);
       expect(retained.includes(canary), '转义保留文件不得含未脱敏 canary').toBe(false);
       expect(retained.includes(apiKeyId), '排障 ID 不得丢失').toBe(true);

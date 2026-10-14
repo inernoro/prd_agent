@@ -122,6 +122,30 @@ test('REG-stsmk-diagnostic-api-key-001：保留产物覆盖原始响应和 repor
   }
 });
 
+test('REG-stsmk-diagnostic-api-key-001：中断截断的真实 reporter 转义层仍脱敏', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-api-key-truncated-'));
+  try {
+    const issued = { item: { id: 'test-key-id' }, apiKey: 'issued-api-key-marker' };
+    const reporter = JSON.stringify({ errors: [{ message: 'HTTP 503 /api/agent-api-keys 响应：' + JSON.stringify(issued) }] });
+    const samples = [
+      reporter.slice(0, -2),
+      reporter.slice(0, reporter.indexOf('issued-api-key-marker') + 'issued-api-key-marker'.length),
+    ];
+    for (const [index, sample] of samples.entries()) writeFileSync(resolve(directory, index + '.json'), sample);
+    assert.deepEqual(sanitizeStableSmokeArtifactTree(directory), { scanned: 2, changed: 2 });
+    for (const index of [0, 1]) {
+      const retained = readFileSync(resolve(directory, index + '.json'), 'utf8');
+      assert.doesNotMatch(retained, /issued-api-key-marker/);
+      assert.match(retained, /\[REDACTED\]/);
+      assert.match(retained, /test-key-id/);
+      assert.match(retained, /HTTP 503 \/api\/agent-api-keys/);
+    }
+    assert.deepEqual(sanitizeStableSmokeArtifactTree(directory), { scanned: 2, changed: 0 });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('稳定冒烟不生成 HTML 网络归档且关闭 trace', () => {
   assert.deepEqual(stableSmokeReporterConfig({ jsonOutput: '/tmp/results.json', htmlOutput: '/tmp/report', stableRun: true }), [
     ['list', {}],

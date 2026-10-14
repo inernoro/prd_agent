@@ -100,6 +100,16 @@ function redactMutable(value, seen = new WeakSet()) {
   return changed;
 }
 
+function redactInterruptedReporterText(value) {
+  const names = sensitiveValueNames.map(escapeRegExp).join('|');
+  // JSON reporter 的 message 只有这一层已证实的 JSON 转义。
+  // 闭引号或文件末尾均收敛，进程中断在敏感值内部也不能留下明文。
+  const quote = '(?<!\\\\)\\\\"';
+  const pattern = new RegExp('(' + quote + '(?:' + names + ')' + quote + '\\s*:\\s*' + quote
+    + ')[\\s\\S]*?(?=' + quote + '|$)', 'gi');
+  return value.replace(pattern, '$1' + redacted);
+}
+
 export function sanitizeStableSmokeTestInfo(testInfo) {
   for (const error of testInfo?.errors || []) redactMutable(error);
 }
@@ -175,7 +185,8 @@ export function sanitizeStableSmokeArtifactFile(path) {
       const data = JSON.parse(original);
       if (redactMutable(data)) sanitized = `${JSON.stringify(data, null, 2)}\n`;
     } catch {
-      // 截断的诊断 JSON 仍走已有文本兜底，不因解析失败漏掉可识别凭据。
+      // 保留 reporter 的真实转义层，截断 JSON 也不漏凭据。
+      sanitized = redactInterruptedReporterText(original);
     }
   }
   sanitized = redactStableSmokeDiagnosticText(sanitized);
