@@ -866,7 +866,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
         aria-modal="true"
         aria-label="版本号申领"
         className="flex w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-token-subtle shadow-2xl"
-        style={{ height: '90vh', maxHeight: '90vh', background: 'var(--bg-primary, #1a1a2e)' }}
+        style={{ height: '90vh', maxHeight: '90vh', background: 'var(--bg-primary)' }}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="flex items-start justify-between gap-4 border-b border-token-subtle px-5 py-4 sm:px-6">
@@ -905,19 +905,19 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
           ) : null}
 
           {view === 'apply' && issuedResult ? (
-            <section aria-live="polite" className="mb-5 rounded-xl border border-emerald-500/35 bg-emerald-500/[0.08] p-4 sm:p-5">
+            <section aria-live="polite" className="mb-5 rounded-xl border border-emerald-500/35 bg-token-nested p-4 sm:p-5">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex min-w-0 items-start gap-3">
-                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[color:var(--accent-fg-success)]" />
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-token-primary">版本号申领完成</p>
-                    <p className="mt-1 font-mono text-2xl font-semibold tracking-tight text-emerald-300">{issuedResult.code}</p>
+                    <p className="mt-1 font-mono text-2xl font-semibold tracking-tight text-[color:var(--accent-fg-success)]">{issuedResult.code}</p>
                     <p className="mt-1 text-xs leading-5 text-token-secondary">
                       {issuedResult.autoCopied ? '版本号已自动复制，可直接粘贴使用。' : '当前浏览器未允许自动复制，请点击“复制版本号”。'}
                     </p>
                   </div>
                 </div>
-                <button type="button" onClick={() => void copyWithFeedback(issuedResult.code, { successMessage: '版本号已复制', label: '版本号' })} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/35 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10">
+                <button type="button" onClick={() => void copyWithFeedback(issuedResult.code, { successMessage: '版本号已复制', label: '版本号' })} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/35 px-3 py-2 text-sm font-medium text-[color:var(--accent-fg-success)] transition-colors hover-bg-soft">
                   <Copy className="h-4 w-4" />复制版本号
                 </button>
               </div>

@@ -273,6 +273,11 @@ public static class DataSyncScope
             new DataSyncCollection("review_webhook_configs", new[] { "WebhookUrl" }),
             new DataSyncCollection("submission_likes", System.Array.Empty<string>()),
             new DataSyncCollection("submissions", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registration_sequences", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registration_snapshots", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registrations", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registry_applications", System.Array.Empty<string>()),
+            new DataSyncCollection("version_registry_systems", System.Array.Empty<string>()),
         }),
         new DataSyncGroup("creation", "创作与素材", new[]
         {
