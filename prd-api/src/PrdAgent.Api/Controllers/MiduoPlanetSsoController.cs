@@ -95,11 +95,20 @@ public class MiduoPlanetSsoController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "clientType 必须是 admin 或 desktop"));
         }
 
-        var profile = await ValidateLoginTokenAsync(options, token, ct);
-        if (profile == null || string.IsNullOrWhiteSpace(profile.SubjectValue))
+        var validation = await ValidateLoginTokenAsync(options, token, ct);
+        if (validation.ErrorCode != null)
         {
-            return Unauthorized(ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "米多星球令牌无效或用户信息不完整"));
+            var message = validation.ErrorCode switch
+            {
+                "SSO_PROVIDER_UNAVAILABLE" => "米多星球登录校验暂时不可用，请稍后重试；若持续失败，请联系管理员检查登录服务。",
+                "SSO_USER_UNAVAILABLE" => "米多星球无法提供当前账号的身份信息，请联系米多星球管理员检查账号。",
+                "SSO_PROFILE_INCOMPLETE" => "米多星球未提供有效的账号绑定信息，请联系米多星球管理员检查账号资料和授权字段。",
+                _ => "米多星球登录凭证校验未通过，请点击米多星球重新发起登录；若持续失败，请联系米多星球管理员。"
+            };
+            return StatusCode(validation.ErrorCode == "SSO_PROVIDER_UNAVAILABLE" ? 502 : 401,
+                ApiResponse<object>.Fail(validation.ErrorCode, message));
         }
+        var profile = validation.Profile!;
 
         var subjectHash = HashSsoSubject(options.AppCode, options.SubjectType, profile.SubjectValue);
         var users = await _db.Users
@@ -279,7 +288,7 @@ public class MiduoPlanetSsoController : ControllerBase
             || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<MiduoPlanetProfile?> ValidateLoginTokenAsync(MiduoPlanetSsoOptions options, string token, CancellationToken ct)
+    private async Task<(MiduoPlanetProfile? Profile, string? ErrorCode)> ValidateLoginTokenAsync(MiduoPlanetSsoOptions options, string token, CancellationToken ct)
     {
         var client = _httpClientFactory.CreateClient("SafeOutbound");
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
@@ -297,26 +306,57 @@ public class MiduoPlanetSsoController : ControllerBase
         if (!resp.IsSuccessStatusCode)
         {
             _logger.LogWarning("Miduo Planet SSO validate-login-token failed with status {StatusCode}", (int)resp.StatusCode);
-            return null;
+            return (null, "SSO_PROVIDER_UNAVAILABLE");
         }
 
         await using var stream = await resp.Content.ReadAsStreamAsync(ct);
         using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-        if (!ReadJsonBool(doc.RootElement, "return_data.valid"))
+        var errorCode = GetValidationError(doc.RootElement, options.SubjectType);
+        if (errorCode != null)
         {
-            return null;
+            // 不记录令牌、签名、手机号或上游原文；只记录固定分类与所需字段。
+            long? upstreamCode = long.TryParse(ReadJsonPath(doc.RootElement, "return_code"), out var code) ? code : null;
+            _logger.LogWarning("Miduo Planet SSO validation failed. errorCode={ErrorCode}, subjectType={SubjectType}, upstreamCode={UpstreamCode}",
+                errorCode, options.SubjectType, upstreamCode);
+            return (null, errorCode);
         }
 
         var subject = ReadJsonPath(doc.RootElement, $"return_data.{options.SubjectType}");
         var displayName = ReadJsonPath(doc.RootElement, "return_data.userName");
 
-        return string.IsNullOrWhiteSpace(subject)
-            ? null
-            : new MiduoPlanetProfile
+        return (new MiduoPlanetProfile
             {
-                SubjectValue = NormalizeSubjectValue(options.SubjectType, subject),
+                SubjectValue = NormalizeSubjectValue(options.SubjectType, subject!),
                 DisplayName = displayName?.Trim()
-            };
+            }, null);
+    }
+
+    internal static string? GetValidationError(JsonElement root, string subjectType)
+    {
+        // 上游业务拒绝或响应缺失校验结果不等于用户的登录凭证失效。
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("return_data", out var data)
+            || data.ValueKind != JsonValueKind.Object
+            || !data.TryGetProperty("valid", out var valid)
+            || !(valid.ValueKind is JsonValueKind.True or JsonValueKind.False
+                 || (valid.ValueKind == JsonValueKind.String && bool.TryParse(valid.GetString(), out _))))
+            return "SSO_PROVIDER_UNAVAILABLE";
+
+        if (!ReadJsonBool(root, "return_data.valid"))
+        {
+            var upstreamCode = ReadJsonPath(root, "return_code");
+            if (upstreamCode != null && upstreamCode != "0") return "SSO_PROVIDER_UNAVAILABLE";
+            // 固定协议文案只用于区分身份信息不可用；其他拒绝均保持登录失败。
+            return ReadJsonPath(root, "return_data.message") == "用户不存在或不可用"
+                ? "SSO_USER_UNAVAILABLE"
+                : "SSO_TOKEN_INVALID";
+        }
+
+        var subject = ReadJsonPath(root, $"return_data.{subjectType}");
+        return string.IsNullOrWhiteSpace(subject)
+            || string.IsNullOrWhiteSpace(NormalizeSubjectValue(subjectType, subject))
+                ? "SSO_PROFILE_INCOMPLETE"
+                : null;
     }
 
     private static string ComputeSignature(string appCode, string appSecret, string timestamp, string nonce, string signedValue)
