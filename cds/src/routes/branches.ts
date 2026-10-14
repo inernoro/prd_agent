@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { DatabasePassService, databasePassClientIp, type DatabasePass } from '../services/database-pass.js';
+import type { DatabasePassTarget } from '../services/database-pass-accounts.js';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { resolvePreviewDispatch, type PreviewProjectFacts } from '../services/preview-dispatch.js';
@@ -9103,11 +9105,63 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  async function databasePassTarget(scope: Pick<DatabasePass, 'projectId'|'branchId'|'resourceId'>): Promise<DatabasePassTarget> {
+    const branch=stateService.getBranch(scope.branchId);
+    if(!branch || (branch.projectId||'default')!==scope.projectId)throw new Error('通行证目标项目或分支已不存在');
+    const resource=(await getBranchResourceSnapshot(branch)).find(r=>r.id===scope.resourceId);
+    if(!resource || resource.source!=='infra')throw new Error('通行证仅支持当前项目基础数据库');
+    const service=getUnifiedResourceInternalRaw(resource) as InfraService;
+    const runtime=resourceRuntimeKey(resource.runtime);
+    if(!['mysql','postgres','mongodb'].includes(runtime)||service.status!=='running'||!service.hostPort)throw new Error('目标数据库未运行或不支持通行证');
+    const env=resolvedInfraEnv(service,branch);
+    let mysqlCa:string|undefined;
+    if(runtime==='mysql'){
+      const read=await shell.exec(`docker exec ${routeShellQuote(resourceContainerName(resource))} cat /var/lib/mysql/ca.pem`,{timeout:5000});
+      if(read.exitCode===0&&read.stdout.includes('BEGIN CERTIFICATE'))mysqlCa=read.stdout;
+    }
+    return {runtime:runtime as DatabasePassTarget['runtime'],port:service.hostPort,
+      database:runtime==='mongodb'?mongoDatabaseForBranch(service,branch):sqlDataDatabase(runtime as SqlDataRuntime,service,branch),
+      adminUser:runtime==='mysql'?'root':runtime==='postgres'?(env.POSTGRES_USER||'postgres'):(env.MONGO_INITDB_ROOT_USERNAME||''),
+      adminPassword:runtime==='mysql'?mysqlRootPassword(service,branch):runtime==='postgres'?(env.POSTGRES_PASSWORD||''):(env.MONGO_INITDB_ROOT_PASSWORD||''),mysqlCa};
+  }
+  const databasePasses=new DatabasePassService(path.join(stateService.getCacheBase(),'database-passes'),databasePassTarget);
+  async function databasePassContext(req:Request,res:Response){
+    const context=await resolveResourceForRequest(req,res);if(!context)return null;
+    if(!requireResourcePermission(req,res,'external-temporary-access',context.branch,context.resource))return null;
+    const user=(req as Request & {cdsUser?:{id:string}}).cdsUser;
+    const owner=user?.id?`human:${user.id}`:isHumanSystemOwner(req)?'human:system-owner':'';
+    if(!owner){res.status(403).json({error:'请由已授权的项目管理员登录后签发通行证。'});return null;}
+    return {scope:{projectId:context.projectId,branchId:context.branch.id,resourceId:context.resourceId},owner};
+  }
+  const passRoute='/branches/:id/resources/:resourceId/database-passes';
+  router.get(passRoute,async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;res.json({capability:databasePasses.capability(),currentIp:databasePassClientIp(req),passes:await databasePasses.list(context.scope,context.owner),events:await databasePasses.events(context.scope,context.owner)});}
+    catch{res.status(503).json({error:'无法读取通行证或审计记录，请稍后重试。'});}
+  });
+  router.post(passRoute,async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;
+      const allowlist=normalizeIpv4Allowlist(req.body?.allowlist ?? [databasePassClientIp(req)]);
+      res.json({pass:await databasePasses.prepare(context.scope,context.owner,allowlist,req.body?.ttlMinutes===undefined?30:Number(req.body.ttlMinutes))});}
+    catch(error){res.status(409).json({error:maskTextSecrets((error as Error).message,[])});}
+  });
+  router.post(passRoute+'/:passId/activate',async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;res.json({pass:await databasePasses.activate(req.params.passId,context.owner,context.scope)});}
+    catch(error){res.status(409).json({error:maskTextSecrets((error as Error).message,[])});}
+  });
+  router.get(passRoute+'/:passId/credentials',async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;res.setHeader('Cache-Control','no-store');res.json(await databasePasses.credentials(req.params.passId,context.owner,context.scope));}
+    catch{res.status(409).json({error:'通行证已失效或当前用户不能复制该凭据。'});}
+  });
+  router.delete(passRoute+'/:passId',async(req,res)=>{
+    try{const context=await databasePassContext(req,res);if(!context)return;res.json({pass:await databasePasses.revoke(req.params.passId,context.owner,context.scope)});}
+    catch{res.status(409).json({error:'撤销未完成，请刷新状态；入口关闭与账号回收分别显示。'});}
+  });
+
   router.get('/branches/:id/resources/:resourceId/external-access', async (req, res) => {
     const ctx = await resolveResourceForRequest(req, res);
     if (!ctx) return;
     const capability = resourceTcpAccessConfig();
-    res.json({ enabled: capability.enabled, host: capability.host, maxTtlMinutes: 1440, reason: capability.reason });
+    res.json({ enabled: capability.enabled, host: capability.host, maxTtlMinutes: 1440, reason: capability.reason, passportEnabled: databasePasses.capability().enabled });
   });
 
   router.put('/branches/:id/resources/:resourceId/external-access', async (req, res) => {
@@ -9128,6 +9182,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const enabled = Boolean(req.body?.enabled);
+    if(enabled && databasePasses.capability().enabled && ['mysql','postgres','mongodb'].includes(resourceRuntimeKey(resource.runtime))) {
+      res.status(409).json({error:'本实例数据库直连需使用独立临时账号通行证，请在连接页申请通行证。'});return;
+    }
     if (enabled && resource.source === 'infra' && !resourceTcpAccessConfig().enabled) {
       res.status(409).json({ error: resourceTcpAccessConfig().reason });
       return;

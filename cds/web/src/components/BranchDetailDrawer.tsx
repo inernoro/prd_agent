@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { DatabasePassPanel } from '@/components/branch/DatabasePassPanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -4274,12 +4275,12 @@ function ResourceConnection({
   const [sshGuide, setSshGuide] = useState<{ sshCommand: string; maskedConnectionString: string; localPort: number } | null>(null);
   const [sshBusy, setSshBusy] = useState(false);
   const infraLocalOnly = resource.source === 'infra';
-  const [tcpCapability, setTcpCapability] = useState<{ enabled: boolean; host: string; reason: string } | null>(null);
+  const [tcpCapability, setTcpCapability] = useState<{ enabled: boolean; host: string; reason: string; passportEnabled?: boolean } | null>(null);
   useEffect(() => {
     setTcpCapability(null);
     if (!resource.branchId || !infraLocalOnly) return;
     let cancelled = false;
-    void apiRequest<{ enabled: boolean; host: string; reason: string }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
+    void apiRequest<{ enabled: boolean; host: string; reason: string; passportEnabled?: boolean }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
     return () => { cancelled = true; };
   }, [resource.branchId, resource.id, infraLocalOnly]);
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
@@ -4373,6 +4374,7 @@ function ResourceConnection({
   }
   return (
     <div className="space-y-3">
+      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={onCopy} /> : null}
       {rows.map((row) => (
         <div key={row.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
           <div className="mb-1 text-xs text-muted-foreground">{row.label}</div>
@@ -4425,7 +4427,7 @@ function ResourceConnection({
           </div> : null}
         </div>
       ) : null}
-      <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+      {(!tcpCapability?.passportEnabled || !['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) || externalEnabled) ? <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="font-semibold">临时 TCP 直连</div>
@@ -4491,7 +4493,7 @@ function ResourceConnection({
             />
           </label>
         </div>
-      </div>
+      </div> : null}
       {resource.kind === 'database' ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3 text-xs leading-5">
           <div className="mb-2 flex items-center justify-between gap-3">
