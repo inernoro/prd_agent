@@ -118,6 +118,20 @@ test('REG-stsmk-report-risk-001 两次业务失败不能写成重试通过或已
   assert.doesNotMatch(result.error, /确定性重试通过|静态资源网关 502|控制面网关 504|已确认污染/);
 });
 
+test('REG-stsmk-report-risk-001 例行非核心失败不能替代核心判定且真实风险仍阻断', () => {
+  const execution={status:'failed',resultPath:'已解析的本轮结果'};
+  const core=[{caseId:'CORE-001',status:'pass'},{caseId:'REC-003',status:'pass'}];
+  const required=['CORE-001','REC-003'];
+  const other={caseId:'WEB-005',status:'fail',error:'非核心问答失败'};
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,other],false,required,'routine').restricted,false);
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,other],false,required,'full').restricted,true);
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,{...other,error:'P0 数据污染'}],false,required,'routine').restricted,true);
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,{...other,tags:['@cleanup']}],false,required,'routine').restricted,true);
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,{...other,tags:['@cleanup'],cleanupStatus:'passed'}],false,required,'routine').restricted,false);
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,{caseId:'REC-003',status:'fail'}],false,required,'routine').restricted,true);
+  assert.equal(evaluateProductionSafetyGate({status:'failed'},core,false,required,'routine').restricted,true);
+});
+
 function gatewayToken(securityVersion = '7') {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ user_security_version: securityVersion })}.signature`;

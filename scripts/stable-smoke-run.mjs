@@ -1408,21 +1408,27 @@ export function evaluateProductionSafetyGate(
   cdsRows = [],
   cdsWasFiltered = false,
   requiredCaseIds = [],
+  profile = 'full',
 ) {
   const hazardousFailures = [...new Map(cdsRows.filter((row) => {
     const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
     const isCleanupCase = Array.isArray(row.tags) && row.tags.some((tag) => ['cleanup', '@cleanup'].includes(tag));
-    const isCleanupHazard = isCleanupCase || /\bP0\b|数据污染|清理失败|pollution/i.test(
+    const isCleanupHazard = (isCleanupCase && row.cleanupStatus !== 'passed') || /\bP0\b|数据污染|清理失败|pollution/i.test(
       `${row.error || ''} ${attemptErrors}`,
     );
     return isCleanupHazard && (row.status === 'fail' || row.hadFailedAttempt === true || row.retryCount > 0);
   }).map((row) => [String(row.caseId || '').toUpperCase(), row])).values()];
-  const processFailed = !cdsExecution || !['executed', 'dry-run'].includes(cdsExecution.status);
+  // routine 的历史加测可失败，但不能代替五项核心结果；没有可解析结果仍熔断。
+  const routineEvidenceAvailable = profile === 'routine' && cdsExecution?.status === 'failed'
+    && Boolean(cdsExecution.resultPath) && requiredCaseIds.length > 0 && cdsRows.length > 0;
+  const processFailed = !cdsExecution || (!['executed', 'dry-run'].includes(cdsExecution.status) && !routineEvidenceAvailable);
   const passingCaseIds = new Set(cdsRows
     .filter((row) => row.status === 'pass')
     .map((row) => String(row.caseId || '').toUpperCase()));
+  const nonPassingCaseIds = new Set(cdsRows.filter(row=>row.status !== 'pass' || row.hadFailedAttempt || row.retryCount > 0)
+    .map(row=>String(row.caseId || '').toUpperCase()));
   const incompleteRequiredCaseIds = [...new Set(requiredCaseIds.map((caseId) => String(caseId).toUpperCase()))]
-    .filter((caseId) => !passingCaseIds.has(caseId));
+    .filter((caseId) => !passingCaseIds.has(caseId) || nonPassingCaseIds.has(caseId));
   const restricted = cdsWasFiltered
     || processFailed
     || hazardousFailures.length > 0
@@ -1433,7 +1439,7 @@ export function evaluateProductionSafetyGate(
     grep: restricted ? productionReadOnlyGrep : '',
     reasons: [
       ...(cdsWasFiltered ? ['CDS 仅执行了筛选用例，未满足正式环境写入所需的全量验证'] : []),
-      ...(processFailed ? [`CDS 全量测试未完成（${cdsExecution?.status || 'missing'}）`] : []),
+      ...(processFailed ? [`CDS ${profile === 'routine' ? '核心执行证据' : '全量测试'}未完成（${cdsExecution?.status || 'missing'}）`] : []),
       ...(incompleteRequiredCaseIds.length > 0 ? [
         `CDS 必测覆盖不完整：${incompleteRequiredCaseIds.length} 项没有通过证据（${incompleteRequiredCaseIds.slice(0, 5).join('、')}${incompleteRequiredCaseIds.length > 5 ? ' 等' : ''}）`,
       ] : []),
@@ -2201,6 +2207,7 @@ async function main() {
           cdsRows,
           profile === 'full' && Boolean(grep),
           profile === 'routine' ? plan.cdsCoreCaseIds : plannedCaseIdsForEnvironment(plan, 'cds'),
+          profile,
         );
         cdsVisualGate = runVisualGate({
           manifestPath: resolve(requestedVisualManifest),
