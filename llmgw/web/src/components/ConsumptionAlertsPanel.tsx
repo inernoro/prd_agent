@@ -19,6 +19,10 @@ export function ConsumptionAlertsPanel({ refreshToken }: { refreshToken: number 
         setAlerts([]);
         setError(res.error?.message || '请求预警暂时无法读取，请刷新重试。');
       }
+    }).catch(() => {
+      if (!active) return;
+      setAlerts([]);
+      setError('请求预警暂时无法读取，请刷新重试。');
     });
     return () => { active = false; };
   }, [refreshToken]);
@@ -40,7 +44,9 @@ export function ConsumptionAlertsPanel({ refreshToken }: { refreshToken: number 
           <li key={alert.id} style={{ marginBottom: 8, overflowWrap: 'anywhere' }}>
             <strong>{alert.kind === 'blocked' ? '已拦截' : '接近上限'}</strong>{' · '}
             {alert.scope === 'tenant' ? '租户合计' : alert.appCallerCode}{' · '}
-            {alert.origin === 'automatic' ? '后台自动任务' : '全部调用'}{' · '}
+            <span title={alert.origin === 'automatic' ? undefined : '一般基线与自动基线独立；已明确配置的共享限额仍汇总全部调用。'}>
+              {alert.origin === 'automatic' ? '后台自动任务' : '一般调用'}
+            </span>{' · '}
             {alert.windowSeconds === 86400 ? '每日' : alert.windowSeconds === 3600 ? '每小时' : '每分钟'}{' '}
             {alert.count} / {alert.limit}{' · '}{fmtDate(alert.windowStart)}
             {alert.sourceDeployment ? <span title="触发此预警的来源标签；计数合并了全部实例与版本。" style={{ color: 'var(--text-muted)' }}> · 来源 {alert.sourceDeployment}</span> : null}

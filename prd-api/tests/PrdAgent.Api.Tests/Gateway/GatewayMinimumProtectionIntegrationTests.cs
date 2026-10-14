@@ -122,7 +122,25 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         {
             { "Origin", "general" }, { "Scope", "app-caller" }, { "WindowSeconds", 3600 },
         }).SingleAsync();
-        counter["Count"].ToInt64().ShouldBe(2, "被 automatic 闸拒绝的重试不能占用人工操作额度");
+        counter["Count"].ToInt64().ShouldBe(1, "自动调用与被 automatic 闸拒绝的重试不能占用人工操作额度");
+    }
+
+    [Fact]
+    public async Task SuccessfulAutomaticRequestCannotConsumeLastNormalUserFallbackAdmission()
+    {
+        await using var database = await DiagnosticDatabase.CreateAsync();
+        await database.AddCallerAsync(Tenant);
+        await using var app = await Serving(database, new() { ["AppCallerPerHour"] = 2, ["TenantPerHour"] = 2 });
+        var client = app.GetTestClient();
+        (await Send(client, false)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Send(client, true)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Send(client, false)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        database.UpstreamCalls.ShouldBe(3);
+        var counter = await database.Windows.Find(new BsonDocument
+        {
+            { "Origin", "general" }, { "Scope", "app-caller" }, { "WindowSeconds", 3600 },
+        }).SingleAsync();
+        counter["Count"].ToInt64().ShouldBe(2, "一般基线的最后一次准入必须留给正常用户，自动成功调用只占 automatic 窗口");
     }
 
     [Theory]

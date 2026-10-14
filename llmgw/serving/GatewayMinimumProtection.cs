@@ -99,11 +99,15 @@ public sealed class GatewayMinimumProtectionCoordinator
             AddLimits(limits, "app-caller", "automatic", "AutomaticAppCaller", 20, 100, 500);
             AddLimits(limits, "tenant", "automatic", "AutomaticTenant", 60, 300, 1500);
         }
-        // 正数配置继续由既有共享限流执行；无配置或零值不再表示无限制。
-        if (tenantRateLimitPerMinute is null or <= 0)
-            AddLimits(limits, "tenant", "general", "Tenant", 600, 6000, 20000);
-        if (callerRateLimitPerMinute is null or <= 0)
-            AddLimits(limits, "app-caller", "general", "AppCaller", 120, 1000, 5000);
+        // 一般与自动基线独立，自动任务成功也不占用正常用户的 fallback 额度。
+        // 已明确配置的正数 RPM 继续由既有共享限流执行，仍覆盖全部调用。
+        if (!identity.Automatic)
+        {
+            if (tenantRateLimitPerMinute is null or <= 0)
+                AddLimits(limits, "tenant", "general", "Tenant", 600, 6000, 20000);
+            if (callerRateLimitPerMinute is null or <= 0)
+                AddLimits(limits, "app-caller", "general", "AppCaller", 120, 1000, 5000);
+        }
 
         var now = DateTime.UtcNow;
         foreach (var (scope, origin, seconds, limit) in limits)
