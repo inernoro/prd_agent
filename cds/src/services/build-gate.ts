@@ -25,7 +25,7 @@
  *   在上调后立即唤醒排队者（旧实现只在 release 时唤醒，上调不生效）。
  *
  * 语义要点：
- * - FIFO：先排队先得槽位，保证「前面还有 N 个」是真实位置、不会饿死。
+ * - 按项目最近准入轮转，同项目保留先进先出；排队数是等待总数，不是跨项目固定名次。
  * - 槽位转移（slot transfer）：release 时若有等待者，直接把槽位交给它而**不**
  *   先 active--，避免「release 与被唤醒者的 active++ 之间插入一个快路径 acquire」
  *   导致瞬时超额（over-subscription）。active 只在快路径 acquire 与 pumpWaiters
@@ -35,6 +35,7 @@
  */
 
 import os from 'node:os';
+import { ProjectAdmissionOrder } from './project-admission-order.js';
 
 const DEFAULT_MAX_CONCURRENT_BUILDS = 3;
 
@@ -144,6 +145,7 @@ export function maxConcurrentBuilds(): number {
 
 /** 槽位持有者/等待者身份，用于运维可观测（「这 3 个槽被谁占着」）。 */
 export interface BuildGateHolder {
+  projectId?: string;
   branchId?: string;
   profileId?: string;
   runId?: string;
@@ -171,6 +173,11 @@ interface Waiter {
 
 let active = 0;
 const waiters: Waiter[] = [];
+const projectOrder = new ProjectAdmissionOrder();
+function takeNextWaiter(): Waiter | undefined {
+  const index = projectOrder.next(waiters, item => item.holder?.projectId);
+  return index < 0 ? undefined : waiters.splice(index, 1)[0];
+}
 /** 活跃持有者明细（token → 身份 + 拿到槽的时刻）。 */
 const holders = new Map<symbol, BuildGateHolder & { acquiredAt: string }>();
 
@@ -181,15 +188,15 @@ export interface BuildSlot {
 
 export interface AcquireOptions {
   /**
-   * 仅当调用方需要排队时触发一次，带当前排队位置信息。
-   * @param info.ahead  在我前面、同样在等待的构建数（不含正在构建的）
+   * 仅当调用方需要排队时触发一次，带当前等待总数。
+   * @param info.ahead  当前其他等待构建数（按项目轮转，不是固定排队名次）
    * @param info.active 当前正在构建的数量
    * @param info.max    并发上限
    */
   onQueued?(info: { ahead: number; active: number; max: number; throttledByLoad?: boolean; load?: BuildLoadPressure }): void;
   /** 等待结束、拿到槽位时触发（仅排过队的调用方会收到）。 */
   onStart?(info: { waitedMs: number }): void;
-  /** 持有者身份（观测用，不参与调度决策）。 */
+  /** 持有者身份（projectId参与项目轮转，其他字段用于观测）。 */
   holder?: BuildGateHolder;
   /** 排队中被 abort → 立即从队列摘除并以 BuildSlotCancelledError 拒绝。 */
   signal?: AbortSignal;
@@ -227,16 +234,16 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
         return;
       }
       // 槽位转移：跳过（并拒绝）已取消的等待者，交给第一个仍存活的。
-      let next = waiters.shift();
+      let next = takeNextWaiter();
       while (next) {
         next.cleanup?.();
         if (next.isCancelled?.()) {
           next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
-          next = waiters.shift();
+          next = takeNextWaiter();
           continue;
         }
         // 槽位直接转移给下一个等待者：不动 active（它继承当前这把槽位）。
-        next.resolve();
+        projectOrder.grant(next.holder?.projectId); next.resolve();
         return;
       }
       active -= 1;
@@ -257,8 +264,9 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
     throw new BuildSlotCancelledError('进入排队前操作已失效');
   }
   const max = maxConcurrentBuilds();
-  if (admissionAllowed()) {
+  if (waiters.length === 0 && admissionAllowed()) {
     active += 1;
+    projectOrder.grant(opts?.holder?.projectId);
     return grantSlot(opts?.holder);
   }
   const enqueuedAt = Date.now();
@@ -288,6 +296,7 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
       waiter.cleanup = () => signal.removeEventListener('abort', onAbort);
     }
     waiters.push(waiter);
+    pumpWaiters();
   });
   // 被唤醒 = 槽位已转移给我（或 pumpWaiters 已 active++），不再重复 ++。
   opts?.onStart?.({ waitedMs: Date.now() - enqueuedAt });
@@ -302,7 +311,7 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
 export function pumpWaiters(): number {
   let woken = 0;
   while (admissionAllowed() && waiters.length > 0) {
-    const next = waiters.shift()!;
+    const next = takeNextWaiter()!;
     next.cleanup?.();
     if (next.isCancelled?.()) {
       next.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代'));
@@ -310,7 +319,7 @@ export function pumpWaiters(): number {
     }
     active += 1;
     woken += 1;
-    next.resolve();
+    projectOrder.grant(next.holder?.projectId); next.resolve();
   }
   // 还有人排着、且这一轮是被负载挡住（不是被上限挡住），就得有定时器在负载回落时
   // 回来放人。否则出现这条死路：waiter 当初因 active === max 入队（那条路径不开定时器），
@@ -349,6 +358,7 @@ export function __resetBuildGateForTest(): void {
   }
   waiters.length = 0;
   holders.clear();
+  projectOrder.clear();
   maxProvider = null;
   hostLoadProvider = defaultHostLoad;
   if (loadPumpTimer) {

@@ -167,8 +167,12 @@ export function classifyDockerLifecycleEvent(
       reason: say({
         initiator: { kind: 'cds-intent', intent },
         happening: narrative.happening,
-        clarification: narrative.clarification,
-        verdict: narrative.verdict,
+        clarification: exitCode === 137
+          ? '容器被强制终止，停止已确认，但在途写入和任务确认是否完成仍需核对'
+          : narrative.clarification,
+        verdict: exitCode === 137
+          ? { kind: 'inspect', where: '核对应用停机日志、在途任务和持久化结果，确认后再恢复服务' }
+          : narrative.verdict,
         // 上游记录的原因原文不许被固定文案盖掉。
         recordedReason: intent.reason || undefined,
         evidence: [

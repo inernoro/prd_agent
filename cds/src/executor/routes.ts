@@ -3,6 +3,7 @@
  * These endpoints are the "hands" that do the actual Docker/Git work.
  */
 import { Router } from 'express';
+import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
 import type { BuildProfile } from '../types.js';
@@ -424,6 +425,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
               undefined, undefined, svc.containerName);
             assertCurrent();
             if (!ready) throw new Error('候选服务未通过就绪检查，保留旧入口');
+            deploymentPhaseBudget.releaseMemory(svc.containerName);
             svc.status = 'running';
             svc.errorMessage = undefined;
             sendEvent('step', { step: `build-${profile.id}`, status: 'done', title: `${profile.name} 运行于 :${svc.hostPort}` });
