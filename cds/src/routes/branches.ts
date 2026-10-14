@@ -13453,7 +13453,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha);
+        : await worktreeService.prepareDeploymentSource(
+          stateService.getProjectRepoRoot(entry.projectId, config.repoRoot),
+          entry.branch,
+          entry.worktreePath,
+          requestCommitSha,
+        );
       const deploymentSourceEntry = 'sourcePath' in pullResult
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
@@ -14815,7 +14820,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha);
+        : await worktreeService.prepareDeploymentSource(
+          stateService.getProjectRepoRoot(entry.projectId, config.repoRoot),
+          entry.branch,
+          entry.worktreePath,
+          profileRequestCommitSha,
+        );
       const deploymentSourceEntry = 'sourcePath' in pullResult
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
