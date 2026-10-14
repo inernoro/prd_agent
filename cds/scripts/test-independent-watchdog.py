@@ -97,6 +97,7 @@ class WatchdogTest(unittest.TestCase):
     def test_drill_is_one_clear_notice_even_after_restart(self):
         for _ in range(2): m.tick(CONFIG, self.state, BAD, 1000, self.save, self.sender, drill=True)
         self.assertEqual(len(self.sent), 1); self.assertTrue(self.sent[0]['title'].startswith('演练｜'))
+        self.assertIn('实际监控未暂停', self.sent[0]['body'])
 
 
 if __name__ == '__main__': unittest.main()

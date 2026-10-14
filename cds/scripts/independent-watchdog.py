@@ -97,6 +97,8 @@ def payload(config, event, recovered=False, drill=False):
     data = {'device_key': config['bark']['key'], 'title': ('演练｜' if drill else '') + label + ('：心跳已恢复' if recovered else '：心跳中断'),
         'body': n['finding'] + (' 点击查看记录。' if recovered else ' 请检查外部监控服务，点击查看处理建议。'),
         'url': url, 'group': label + ' · 心跳', 'level': 'passive' if recovered or drill else 'active'}
+    if drill:
+        data['body'] = '这是模拟心跳中断的验收通知，实际监控未暂停。点击查看独立提醒与重复通知防护的说明。'
     icon = config.get('iconUrl', '')
     parsed = urllib.parse.urlsplit(icon)
     if parsed.scheme == 'https' and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment:
