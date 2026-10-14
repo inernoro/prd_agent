@@ -18,6 +18,7 @@ on:
       - cds/scripts/filesystem-removal-drill.ts
       - cds/scripts/default-regression-drill.ts
       - cds/scripts/branch-claim-entry-drill.ts
+      - cds/scripts/current-source-qualification.ts
       - cds/scripts/application-bootstrap-drill.ts
       - cds/scripts/application-docker-host-drill.ts
       - cds/scripts/application-docker-inner-drill.ts
