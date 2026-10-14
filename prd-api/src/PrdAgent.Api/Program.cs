@@ -1550,6 +1550,8 @@ builder.Services.AddScoped<IGapNotificationService>(sp =>
     return new GapNotificationService(cache, groupService);
 });
 
+// 平台最终启动总闸：新增 HostedService 漏写保护，也必须经过登记与部署准入。
+PrdAgent.Api.Services.BackgroundTasks.BackgroundTaskAdmissionRegistration.EnforceBackgroundTaskAdmission(builder.Services);
 var app = builder.Build();
 
 // 初始化数据库（创建管理员账号和初始邀请码）

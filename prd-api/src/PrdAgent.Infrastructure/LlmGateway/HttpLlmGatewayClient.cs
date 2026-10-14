@@ -499,6 +499,14 @@ public sealed class HttpLlmGatewayClient
         message.Headers.TryAddWithoutValidation("X-Gateway-App-Caller", appCallerCode);
         message.Headers.Remove("X-Gateway-Source");
         message.Headers.TryAddWithoutValidation("X-Gateway-Source", context?.SourceSystem ?? "map");
+        // 仅平台获权自动服务的执行流携带此来源。普通用户处理器不继承自动额度。
+        message.Headers.Remove("X-Gateway-Execution-Origin");
+        message.Headers.Remove("X-Gateway-Source-Deployment");
+        if (PrdAgent.Infrastructure.Security.AutomaticTaskExecutionContext.SourceDeployment is { } source)
+        {
+            message.Headers.TryAddWithoutValidation("X-Gateway-Execution-Origin", "automatic");
+            message.Headers.TryAddWithoutValidation("X-Gateway-Source-Deployment", source);
+        }
         if (!string.IsNullOrWhiteSpace(context?.RequestId))
         {
             message.Headers.Remove("X-Request-Id");
