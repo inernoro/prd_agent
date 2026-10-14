@@ -160,7 +160,7 @@ import { backfillReportReadScope } from './services/connection/pairing-service.j
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
-import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
+import { channelConfigured, classifyAlert, routeAlarm, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
@@ -6443,11 +6443,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         });
         else alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
         const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
+        const message = renderAlarmMessage(item.event);
         if (channel && !result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
           channelId: channel.id, channelName: channel.name, channelKind: channel.kind,
           kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
           targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
-          title: item.event.targetName, body: '由独立监控统一投递，详细证据保留在事件记录中。',
+          title: message.title, body: message.body,
         }, async () => result);
         if (result.ok && item.event.kind.endsWith('-down') && item.event.targetId && !item.event.drill)
           await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channelId, item.event.detectedAt);
