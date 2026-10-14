@@ -65,4 +65,19 @@ class IndependentMonitorTest(unittest.TestCase):
         url=m.incident_url({'publicUrl':'https://example.com/#feed=https%3A%2F%2Fstorage.example%2Fstatus.json'},'sample')
         self.assertIn('incident=sample',url);self.assertIn('#feed=',url)
 
+    def test_avatar_uses_observer_private_configuration(self):
+        state={'incident':{'id':'test','reason':'unreachable'}}
+        config={'bark':{'key':'fixture','iconUrl':'https://static.example/observer-b.png'},'publicUrl':'https://status.example/', 'identity':{'observer':{'name':'B'},'subject':{'name':'A'}}}
+        class Response:
+            status=200
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,*args):return b'{"code":200}'
+        with patch.object(m.urllib.request,'urlopen',return_value=Response()) as request:
+            self.assertTrue(m.notify(config,state,'down',1000))
+            payload=m.json.loads(request.call_args[0][0].data)
+            self.assertEqual(payload['icon'],'https://static.example/observer-b.png')
+            self.assertNotIn('CDS B',payload['body'])
+            self.assertNotIn('fixture',str(m.public_snapshot(state,config,1000)))
+
 if __name__=='__main__':unittest.main()
