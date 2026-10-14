@@ -1,3 +1,4 @@
+import { GenerationBoundary } from '@/components/motion/GenerationBoundary';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, useMotionValue, useSpring, useTransform, type MotionValue } from 'motion/react';
@@ -506,7 +507,7 @@ export function ProjectListPage(): JSX.Element {
   }, []);
 
   const refresh = useCallback(async (showLoading = false) => {
-    if (showLoading) setState({ status: 'loading' });
+    if (showLoading) setState((previous) => previous.status === 'ok' ? previous : { status: 'loading' });
     try {
       const projectsRes = await apiRequest<ProjectsResponse>('/api/projects');
       const nextProjects = projectsRes.projects || [];
@@ -838,6 +839,7 @@ export function ProjectListPage(): JSX.Element {
 
         {/* Project tile grid — only content in the workspace, like Railway. */}
         <section>
+          <GenerationBoundary loading={state.status === 'loading'} ready={state.status === 'ok'}>
           {state.status === 'loading' ? <ProjectListSkeleton /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
@@ -859,6 +861,7 @@ export function ProjectListPage(): JSX.Element {
               ))}
             </div>
           ) : null}
+          </GenerationBoundary>
         </section>
 
         {canManageProjects ? <CreateProjectDialog

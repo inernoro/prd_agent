@@ -1,0 +1,32 @@
+/* Adapted from transitions.dev. License and source are retained alongside. */
+:root {
+  --gen-line: hsl(var(--muted-foreground) / .6);
+  --gen-strong: hsl(var(--primary));
+  --gen-ink: hsl(var(--muted-foreground) / .22);
+  --gen-surface: hsl(var(--surface-raised));
+  --gen-dot: 1.6px;
+  --gen-font: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* the overlay sits exactly over the element, above the page, and never takes input */
+.t-gen { position: absolute; z-index: 30; clip-path: inset(-24px 0); pointer-events: none; }
+.t-gen-svg { position: absolute; left: 0; top: 0; overflow: visible; }
+
+.t-gen-dot { fill: var(--gen-ink); }
+.t-gen-dot.is-lit { fill: var(--gen-strong); }
+.t-gen-wireframe { stroke-width: var(--gen-dot); }
+.t-gen-wire { fill: none; stroke: var(--gen-line); stroke-linecap: round; stroke-linejoin: round; } /* drawn as round dots */
+.t-gen-guide { fill: none; stroke: var(--gen-line); stroke-width: 1.6; stroke-linecap: round; }
+.t-gen-guide--dashed, .t-gen-guide--scan { stroke-dasharray: 0 5; }
+.t-gen-head { fill: var(--gen-strong); }
+.t-gen-flyer { fill: var(--gen-strong); }
+.t-gen-handle { fill: var(--gen-surface); stroke: var(--gen-strong); stroke-width: 1; }
+.t-gen-reticle { fill: none; stroke: var(--gen-strong); stroke-width: 1.2; stroke-linecap: round; }
+.t-gen-glow-stop { stop-color: var(--gen-line); }
+.t-gen-label { font-family: var(--gen-font); font-size: 9px; fill: var(--gen-line); letter-spacing: 0.02em; }
+.t-gen-label--small { font-size: 7.5px; fill: var(--gen-strong); }
+.t-gen-label--tag { font-size: 7.5px; fill: var(--gen-strong); letter-spacing: 0.05em; text-transform: uppercase; }
+
+
+@media (prefers-reduced-motion: reduce) {
+  .t-gen { display: none; }
+}
