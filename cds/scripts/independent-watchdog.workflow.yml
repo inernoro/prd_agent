@@ -1,0 +1,41 @@
+name: 外部监控心跳检查
+on:
+  schedule:
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: 发送一次隔离的心跳失联演练通知，重复执行不重发
+        type: boolean
+        default: false
+permissions:
+  contents: read
+# 所有正式检查与人工演练共用串行队列；部署只有一个写入者，禁止另建发送副本。
+concurrency:
+  group: independent-monitor-heartbeat
+  cancel-in-progress: false
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 自测心跳、故障隔离与重复通知防护
+        run: |
+          python3 watchdog/test-independent-watchdog.py
+          node watchdog/test-independent-status.mjs index.html
+      - name: 安装固定版本存储客户端
+        run: pip install --disable-pip-version-check cos-python-sdk-v5==1.9.44
+      - name: 检查心跳并维护私有事件台账
+        env:
+          WATCHDOG_CONFIG: ${{ secrets.WATCHDOG_CONFIG }}
+          WATCHDOG_DRILL: ${{ inputs.drill }}
+        run: |
+          if [ "$WATCHDOG_DRILL" = "true" ]; then
+            python3 watchdog/independent-watchdog.py --drill
+          else
+            python3 watchdog/independent-watchdog.py
+          fi
