@@ -5,6 +5,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.DefectAgent;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -4988,6 +4989,9 @@ public class DefectAgentController : ControllerBase
         }
 
         // 标记为评分中
+        var taskIdentity = await HttpContext.RequestServices.GetRequiredService<TaskAdmissionService>()
+            .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
+        using var task = TaskExecutionContext.Enter(taskIdentity with { RunId = shareId });
         await _db.DefectShareLinks.UpdateOneAsync(
             x => x.Id == shareId,
             Builders<DefectShareLink>.Update

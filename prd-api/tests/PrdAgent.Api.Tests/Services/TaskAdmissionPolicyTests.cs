@@ -63,6 +63,33 @@ public sealed class TaskAdmissionPolicyTests
     }
 
     [Fact]
+    public void MixedCrudAction_UsesExplicitPaidBranchAdmission_WhileExistingPaidActionsUseMiddleware()
+    {
+        const string reportController = "PrdAgent.Api.Controllers.Api.ReportAgentController";
+        Assert.Equal(TaskAdmissionTiming.AuthenticatedPaidBranch,
+            TaskAdmissionPolicies.Find(reportController, "CreateReport")!.Timing);
+        Assert.Equal(TaskAdmissionTiming.Middleware,
+            TaskAdmissionPolicies.Find(reportController, "GenerateReport")!.Timing);
+        var onDemand = TaskAdmissionPolicies.Operations.Where(operation =>
+        {
+            var dot = operation.LastIndexOf('.');
+            return TaskAdmissionPolicies.Find(operation[..dot], operation[(dot + 1)..])!.Timing
+                == TaskAdmissionTiming.AuthenticatedPaidBranch;
+        }).ToArray();
+        Assert.Equal(new[]
+        {
+            "PrdAgent.Api.Controllers.GroupsController.Create",
+            reportController + ".CreateReport",
+            "PrdAgent.Api.Controllers.Api.DefectAgentController.StreamScores",
+            "PrdAgent.Api.Controllers.Api.ReviewAgentController.StreamReviewResult",
+            "PrdAgent.Api.Controllers.Api.MarketplaceSkillsController.Upload",
+        }, onDemand);
+        // 上传与重置评审仅处理普通数据，不能在模型调用之前要求治理库可用。
+        Assert.Null(TaskAdmissionPolicies.Find("PrdAgent.Api.Controllers.Api.ReviewAgentController", "CreateSubmission"));
+        Assert.Null(TaskAdmissionPolicies.Find("PrdAgent.Api.Controllers.Api.ReviewAgentController", "RerunSubmission"));
+    }
+
+    [Fact]
     public void NestedLoggingScope_CannotReplaceVerifiedOriginOrOperator()
     {
         var accessor = new LLMRequestContextAccessor();

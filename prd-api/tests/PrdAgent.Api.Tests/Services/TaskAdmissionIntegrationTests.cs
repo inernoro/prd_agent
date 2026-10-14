@@ -1,17 +1,27 @@
 using System.Reflection;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
+using Moq;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Middleware;
 using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Api.Services.Mcp;
+using PrdAgent.Api.Services.ReportAgent;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
+using ReportCreationMode = PrdAgent.Api.Controllers.Api.ReportAgentController.ReportCreationMode;
 
 namespace PrdAgent.Api.Tests.Services;
 
@@ -19,8 +29,10 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
 {
     private const string Controller = "PrdAgent.Api.Controllers.Api.ModelLabController";
+    private const string ReportController = "PrdAgent.Api.Controllers.Api.ReportAgentController";
     private const string Caller = "prd-agent-web.model-lab.run::chat";
     private LlmGatewayDataContext _data = null!;
+    private MongoDbContext _business = null!;
     private IConfiguration _config = null!;
     private string _database = "";
     private IMongoCollection<GatewayTaskPermitRecord> Permits =>
@@ -36,6 +48,7 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         Assert.Null(address.Username);
         _database = "phase1_admission_" + Guid.NewGuid().ToString("N");
         _data = new(connection, _database);
+        _business = new(connection, _database);
         _config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["Deployment:Identity"] = "synthetic-branch" }).Build();
         return Task.CompletedTask;
@@ -77,6 +90,214 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         Assert.Equal(["actual-run"], permit.BoundRunIds);
         Assert.InRange(permit.MaxCalls, 1, 256);
         Assert.Equal(TimeSpan.FromHours(24), permit.ExpiresAt - permit.CreatedAt);
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("PrdAgent.Api.Controllers.Api.ImageMasterController", "GenerateArticleMarkers", AppCallerRegistry.LiteraryAgent.Content.Chat)]
+    [InlineData("PrdAgent.Api.Controllers.Api.ImageMasterController", "DrawingBoardChat", AppCallerRegistry.VisualAgent.DrawingBoard.Chat)]
+    [InlineData("PrdAgent.Api.Controllers.Api.MdToPptController", "CreateTemplate", AppCallerRegistry.MdToPptAgent.Template.Extract)]
+    [InlineData("PrdAgent.Api.Controllers.IntentController", "SuggestGroupName", AppCallerRegistry.Desktop.GroupName.SuggestIntent)]
+    [InlineData("PrdAgent.Api.Controllers.Api.PrReviewController", "StreamSummary", AppCallerRegistry.PrReview.Summary.Chat)]
+    [InlineData("PrdAgent.Api.Controllers.Api.PrReviewController", "StreamAlignment", AppCallerRegistry.PrReview.Alignment.Chat)]
+    public async Task ExistingPaidEntrypoints_MiddlewareAuthorizesTheirActualCallerWithoutGrantingOtherCapabilities(
+        string controller, string action, string caller)
+    {
+        var http = HttpAction(action, controller: controller);
+        var context = new GatewayRequestContext { UserId = "actor" };
+        var authorizer = new TaskExecutionAuthorizer(_data, _config);
+        await new TaskAdmissionMiddleware(async _ =>
+        {
+            Assert.NotNull(TaskExecutionContext.Current);
+            using var run = TaskExecutionContext.Enter(TaskExecutionContext.Current! with { RunId = "user-operation" });
+            using var accepted = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
+            await authorizer.AuthorizeOutboundAsync(accepted, caller, context, default);
+            Assert.True(accepted.Headers.Contains("X-Gateway-Task-Permit"));
+            using var unrelated = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
+            var denied = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+                authorizer.AuthorizeOutboundAsync(unrelated, Caller, new GatewayRequestContext { UserId = "actor" }, default));
+            Assert.Equal("TASK_PERMIT_SCOPE_DENIED", denied.Code);
+            Assert.False(unrelated.Headers.Contains("X-Gateway-Task-Permit"));
+        }).InvokeAsync(http, new TaskAdmissionService(_data, _config));
+        Assert.Null(TaskExecutionContext.Current);
+        var permit = await Permits.Find(FilterDefinition<GatewayTaskPermitRecord>.Empty).SingleAsync();
+        Assert.Equal(TaskExecutionOrigins.Interactive, permit.Origin);
+        Assert.Equal("actor", context.TriggerActorUserId);
+        Assert.Equal([caller], permit.AllowedAppCallerCodes);
+        Assert.Equal(["user-operation"], permit.BoundRunIds);
+        Assert.Equal(0, permit.CallCount);
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData(ReportCreationMode.Manual)]
+    [InlineData(ReportCreationMode.AiDraft)]
+    public async Task RealReportCreation_OfflineGovernanceKeepsManualCrudAndExistingAiFailureFallback(string mode)
+    {
+        var offline = new LlmGatewayDataContext(
+            "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=200&connectTimeoutMS=200", "phase1_offline");
+        var admission = new TaskAdmissionService(offline, _config);
+        using var services = new ServiceCollection().AddSingleton(admission).BuildServiceProvider();
+        var http = HttpAction("CreateReport", controller: ReportController);
+        http.RequestServices = services;
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        var controller = await RealReportControllerAsync(http, gateway.Object);
+        IActionResult? result = null;
+        await new TaskAdmissionMiddleware(async _ =>
+        {
+            Assert.Null(TaskExecutionContext.Current);
+            result = await controller.CreateReport(ReportRequest(mode));
+        }).InvokeAsync(http, admission);
+        var payload = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var error = payload.GetProperty("data").GetProperty("aiGenerationError");
+        if (mode == ReportCreationMode.Manual) Assert.Equal(JsonValueKind.Null, error.ValueKind);
+        else Assert.False(string.IsNullOrWhiteSpace(error.GetString()));
+        Assert.Null(TaskExecutionContext.Current);
+        gateway.VerifyNoOtherCalls();
+        Assert.Equal(0, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+        var report = await _business.WeeklyReports.Find(FilterDefinition<WeeklyReport>.Empty).SingleAsync();
+        Assert.Equal(WeeklyReportStatus.Draft, report.Status);
+        Assert.Null(report.AutoGeneratedBy);
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("Bearer", null, TaskExecutionOrigins.Interactive, 128)]
+    [InlineData("ApiKey", "agent-apikey", TaskExecutionOrigins.Agent, 16)]
+    public async Task RealAiReportCreation_ReceivesFinitePermitOnlyInsideValidatedPaidBranch(
+        string scheme, string? auth, string origin, int maxCalls)
+    {
+        var admission = new TaskAdmissionService(_data, _config);
+        using var services = new ServiceCollection().AddSingleton(admission).BuildServiceProvider();
+        var http = HttpAction("CreateReport", scheme, auth, ReportController);
+        http.RequestServices = services;
+        http.Request.Headers["X-Gateway-Execution-Origin"] = origin == TaskExecutionOrigins.Agent ? "interactive" : "agent";
+        http.Request.Headers["X-Gateway-Task-Permit"] = Guid.NewGuid().ToString("N");
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        var sends = 0;
+        gateway.Setup(item => item.SendAsync(It.IsAny<GatewayRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async (GatewayRequest request, CancellationToken ct) =>
+            {
+                Assert.NotNull(TaskExecutionContext.Current);
+                Assert.Equal(AppCallerRegistry.ReportAgent.Generate.Draft, request.AppCallerCode);
+                using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
+                await new TaskExecutionAuthorizer(_data, _config).AuthorizeOutboundAsync(
+                    message, request.AppCallerCode, request.Context, ct);
+                Assert.Equal("actor", request.Context!.UserId);
+                Assert.Equal("actor", request.Context.TriggerActorUserId);
+                Assert.Equal(origin, request.Context.ExecutionOrigin);
+                sends++;
+                return new GatewayResponse
+                {
+                    Success = true,
+                    Content = """{"sections":[{"items":["完成既有工作"]}]}""",
+                };
+            });
+        var controller = await RealReportControllerAsync(http, gateway.Object);
+        IActionResult? result = null;
+        await new TaskAdmissionMiddleware(async _ =>
+        {
+            Assert.Null(TaskExecutionContext.Current); // 混合动作不在入口处预领付费许可。
+            Assert.Equal(0, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+            result = await controller.CreateReport(ReportRequest(ReportCreationMode.AiDraft));
+        }).InvokeAsync(http, admission);
+        var payload = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(result).Value,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(JsonValueKind.Null, payload.GetProperty("data").GetProperty("aiGenerationError").ValueKind);
+        Assert.Equal(1, sends);
+        Assert.Null(TaskExecutionContext.Current);
+        var permit = await Permits.Find(FilterDefinition<GatewayTaskPermitRecord>.Empty).SingleAsync();
+        Assert.Equal(ReportController + ".CreateReport", permit.SourceTask);
+        Assert.Equal(origin, permit.Origin);
+        Assert.Equal("actor", permit.ActorUserId);
+        Assert.Equal(["actor"], permit.SubjectUserIds);
+        Assert.Equal(maxCalls, permit.MaxCalls);
+        Assert.Equal(0, permit.CallCount);
+        Assert.All(permit.AllowedAppCallerCodes, caller => Assert.True(
+            caller.StartsWith("report-agent.", StringComparison.Ordinal)
+            || caller.StartsWith("workflow-agent.", StringComparison.Ordinal)));
+        var report = await _business.WeeklyReports.Find(FilterDefinition<WeeklyReport>.Empty).SingleAsync();
+        Assert.Equal("llm", report.AutoGeneratedBy);
+        Assert.Equal("完成既有工作", Assert.Single(Assert.Single(report.Sections).Items).Content);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RealAiReportCreation_FailedBusinessCheckNeverClaimsPermitOrInvokesGeneration()
+    {
+        var admission = new TaskAdmissionService(_data, _config);
+        using var services = new ServiceCollection().AddSingleton(admission).BuildServiceProvider();
+        var http = HttpAction("CreateReport", controller: ReportController);
+        http.RequestServices = services;
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        var controller = await RealReportControllerAsync(http, gateway.Object, member: false);
+        IActionResult? result = null;
+        await new TaskAdmissionMiddleware(async _ =>
+        {
+            result = await controller.CreateReport(ReportRequest(ReportCreationMode.AiDraft));
+        }).InvokeAsync(http, admission);
+        Assert.IsType<BadRequestObjectResult>(result);
+        gateway.VerifyNoOtherCalls();
+        Assert.Equal(0, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("FutureUnregisteredPaidAction")]
+    [InlineData("FuturePlainCrud")]
+    [InlineData("GenerateReport")]
+    public async Task PaidBranchAdmission_CannotBeClaimedByUnknownActionsOrDifferentIssuanceTiming(string action)
+    {
+        var admission = new TaskAdmissionService(_data, _config);
+        var http = HttpAction(action, controller: ReportController);
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+            admission.AdmitAuthenticatedPaidBranchAsync(http, default));
+        Assert.Equal("TASK_SOURCE_NOT_REGISTERED", error.Code);
+        Assert.Equal(0, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+        if (action.StartsWith("Future", StringComparison.Ordinal))
+            Assert.Null(await admission.AdmitRequestAsync(http, default));
+    }
+
+    [DesignScopeMongoFact]
+    public async Task PaidBranchAdmission_RequiresAuthenticationBeforeClaimingRegisteredAction()
+    {
+        var http = HttpAction("CreateReport", controller: ReportController);
+        http.User = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, "actor")]));
+        var admission = new TaskAdmissionService(_data, _config);
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+            admission.AdmitAuthenticatedPaidBranchAsync(http, default));
+        Assert.Equal("TASK_TRIGGER_IDENTITY_MISSING", error.Code);
+        Assert.Null(await admission.AdmitRequestAsync(http, default));
+        Assert.Equal(0, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+    }
+
+    [DesignScopeMongoFact]
+    public async Task VerifiedMcpPaidBranch_ReusesOriginalSourceAndBudget_WhileUnknownActionCannotClaimIt()
+    {
+        var signal = new McpLoopbackSignal();
+        var admission = new TaskAdmissionService(_data, _config, signal);
+        var root = (await admission.AdmitRequestAsync(HttpAction("Handle", "ApiKey", "agent-apikey",
+            "PrdAgent.Api.Controllers.McpGatewayController"), default))!;
+        await Permits.UpdateOneAsync(item => item.Id == root.PermitId,
+            Builders<GatewayTaskPermitRecord>.Update.Set(item => item.CallCount, 3));
+        using var scope = TaskExecutionContext.Enter(root);
+        using var message = new HttpRequestMessage();
+        signal.AttachTaskContinuation(message);
+        var continuation = HttpAction("CreateReport", controller: ReportController);
+        foreach (var header in message.Headers) continuation.Request.Headers[header.Key] = header.Value.ToArray();
+        var paidBranch = await admission.AdmitAuthenticatedPaidBranchAsync(continuation, default);
+        Assert.Equal(root.PermitId, paidBranch.PermitId);
+        var context = new GatewayRequestContext { UserId = "actor" };
+        using (TaskExecutionContext.Enter(paidBranch))
+        using (var outgoing = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send"))
+            await new TaskExecutionAuthorizer(_data, _config).AuthorizeOutboundAsync(outgoing,
+                AppCallerRegistry.ReportAgent.Generate.Draft, context, default);
+        Assert.Equal(TaskExecutionOrigins.Agent, context.ExecutionOrigin);
+        Assert.Equal("agent-apikey:actor", context.TriggerCredentialId);
+        var unchanged = await Permits.Find(item => item.Id == root.PermitId).SingleAsync();
+        Assert.Equal(3, unchanged.CallCount);
+        Assert.Equal(1, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+        var unknown = HttpAction("FutureUnregisteredPaidAction", controller: ReportController);
+        foreach (var header in message.Headers) unknown.Request.Headers[header.Key] = header.Value.ToArray();
+        await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
+            admission.AdmitAuthenticatedPaidBranchAsync(unknown, default));
+        Assert.Equal(1, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
     }
 
     [DesignScopeMongoFact]
@@ -303,6 +524,31 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
 
     private Task Authorize(HttpRequestMessage request, GatewayRequestContext context) =>
         new TaskExecutionAuthorizer(_data, _config).AuthorizeOutboundAsync(request, Caller, context, default);
+
+    private async Task<ReportAgentController> RealReportControllerAsync(HttpContext http, ILlmGateway gateway, bool member = true)
+    {
+        var db = _business;
+        await db.ReportTeams.InsertOneAsync(new ReportTeam { Id = "test-team", Name = "测试团队" });
+        await db.ReportTemplates.InsertOneAsync(new ReportTemplate
+        {
+            Id = "test-template", Name = "既有模板", Sections = [new ReportTemplateSection { Title = "本周工作" }],
+        });
+        if (member)
+            await db.ReportTeamMembers.InsertOneAsync(new ReportTeamMember { TeamId = "test-team", UserId = "actor" });
+        var collector = new MapActivityCollector(db);
+        var generation = new ReportGenerationService(db, gateway, collector, NullLogger<ReportGenerationService>.Instance,
+            null!, null!, null!);
+        return new ReportAgentController(db, Mock.Of<IAssetStorage>(), NullLogger<ReportAgentController>.Instance,
+            _config, collector, generation, null!, null!, null!, null!, null!, null!)
+        {
+            ControllerContext = new ControllerContext { HttpContext = http },
+        };
+    }
+
+    private static ReportAgentController.CreateReportRequest ReportRequest(string mode) => new()
+    {
+        TeamId = "test-team", TemplateId = "test-template", CreationMode = mode, WeekYear = 2026, WeekNumber = 1,
+    };
     private async Task<GatewayTaskPermitRecord> SeedAsync()
     {
         var permit = NewPermit();

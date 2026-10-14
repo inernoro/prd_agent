@@ -11,8 +11,10 @@ using PrdAgent.Api.Controllers.Api.MarketplaceSkills;
 using PrdAgent.Api.Controllers.Api.OfficialSkills;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
@@ -531,6 +533,8 @@ public class MarketplaceSkillsController : ControllerBase
             {
                 try
                 {
+                    using var task = TaskExecutionContext.Enter(await HttpContext.RequestServices
+                        .GetRequiredService<TaskAdmissionService>().AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None));
                     finalDescription = await GenerateSummaryAsync(userId, meta.SkillMdContent!, ct);
                 }
                 catch (Exception ex)

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.Infrastructure.Services;
 
@@ -27,9 +28,17 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
 
     public void EnqueueGroupNameSuggestion(string groupId, string? fileName, string prdDocumentId)
     {
+        var identity = TaskExecutionContext.Current;
+        if (identity is null || string.IsNullOrWhiteSpace(identity.PermitId))
+        {
+            _logger.LogWarning("群组已创建，AI 群名建议未排队：缺少任务执行许可；请重新明确提交操作: groupId={GroupId}", groupId);
+            return;
+        }
+        var taskIdentity = identity with { RunId = groupId };
         // 使用 Task.Run 将任务放到后台线程池执行，不阻塞当前请求
         _ = Task.Run(async () =>
         {
+            using var taskExecution = TaskExecutionContext.Enter(taskIdentity);
             try
             {
                 await SuggestAndUpdateGroupNameAsync(groupId, fileName, prdDocumentId);
@@ -98,6 +107,11 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
             await _groupService.UpdateGroupNameAsync(groupId, suggestedName);
             _logger.LogInformation("Successfully updated group {GroupId} name to: {GroupName}", 
                 groupId, suggestedName);
+        }
+        catch (TaskExecutionAdmissionException error)
+        {
+            _logger.LogWarning("群组已创建，AI 群名建议已停止；可稍后重试: groupId={GroupId}, code={Code}, reason={Reason}",
+                groupId, error.Code, error.Message);
         }
         catch (Exception ex)
         {

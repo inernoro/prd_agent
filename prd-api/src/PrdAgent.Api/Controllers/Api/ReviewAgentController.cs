@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -1101,7 +1102,22 @@ public class ReviewAgentController : ControllerBase
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(submission.ExtractedContent))
+        {
+            await WriteSseEventAsync("error", new { message = "无法读取方案内容，请确认上传的文件包含文本内容" });
+            await _db.ReviewSubmissions.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<ReviewSubmission>.Update
+                    .Set(x => x.Status, ReviewStatuses.Error)
+                    .Set(x => x.ErrorMessage, "文件内容为空"),
+                cancellationToken: CancellationToken.None);
+            return;
+        }
+
         // 标记为评审中
+        var taskIdentity = await HttpContext.RequestServices.GetRequiredService<TaskAdmissionService>()
+            .AdmitAuthenticatedPaidBranchAsync(HttpContext, CancellationToken.None);
+        using var task = TaskExecutionContext.Enter(taskIdentity with { RunId = id });
         await _db.ReviewSubmissions.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReviewSubmission>.Update
@@ -1146,18 +1162,7 @@ public class ReviewAgentController : ControllerBase
         // 推送阶段：准备中
         await WriteSseEventAsync("phase", new { phase = "preparing", message = "正在准备评审..." });
 
-        var content = submission.ExtractedContent;
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            await WriteSseEventAsync("error", new { message = "无法读取方案内容，请确认上传的文件包含文本内容" });
-            await _db.ReviewSubmissions.UpdateOneAsync(
-                x => x.Id == submissionId,
-                Builders<ReviewSubmission>.Update
-                    .Set(x => x.Status, ReviewStatuses.Error)
-                    .Set(x => x.ErrorMessage, "文件内容为空"),
-                cancellationToken: CancellationToken.None);
-            return;
-        }
+        var content = submission.ExtractedContent!;
 
         // 构建评审提示词
         var systemPrompt = BuildReviewSystemPrompt(dims);

@@ -18,9 +18,30 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
         var action = http.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>();
         if (action is null || http.User.Identity?.IsAuthenticated != true) return null;
         var policy = TaskAdmissionPolicies.Find(action.ControllerTypeInfo.FullName!, action.ActionName);
-        if (policy is null) return null;
+        if (policy is null || policy.Timing != TaskAdmissionTiming.Middleware) return null;
         var actor = ResolveActor(http.User);
         if (actor is null || policy.AppCallers.Count == 0) return null;
+        return await AdmitAuthenticatedActionAsync(http, policy, actor, ct);
+    }
+
+    /// <summary>已登记的混合 CRUD/付费动作只在业务检查通过且确实进入付费分支时领取许可。</summary>
+    public async Task<TaskExecutionIdentity> AdmitAuthenticatedPaidBranchAsync(HttpContext http, CancellationToken ct)
+    {
+        if (http.User.Identity?.IsAuthenticated != true)
+            throw new TaskExecutionAdmissionException("TASK_TRIGGER_IDENTITY_MISSING", "本次操作缺少有效登录身份，已停止付费任务；请登录后重新提交。");
+        var action = http.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>();
+        var policy = action is null ? null : TaskAdmissionPolicies.Find(action.ControllerTypeInfo.FullName!, action.ActionName);
+        if (policy is null || policy.Timing != TaskAdmissionTiming.AuthenticatedPaidBranch || policy.AppCallers.Count == 0)
+            throw new TaskExecutionAdmissionException("TASK_SOURCE_NOT_REGISTERED", "此操作尚未登记按需执行策略，已停止付费任务；请联系管理员核对入口。");
+        var actor = ResolveActor(http.User);
+        if (actor is null)
+            throw new TaskExecutionAdmissionException("TASK_TRIGGER_IDENTITY_MISSING", "本次操作缺少可核验的登录身份，已停止付费任务；请登录后重新提交。");
+        return await AdmitAuthenticatedActionAsync(http, policy, actor, ct);
+    }
+
+    private async Task<TaskExecutionIdentity> AdmitAuthenticatedActionAsync(
+        HttpContext http, TaskAdmissionPolicy policy, string actor, CancellationToken ct)
+    {
         if (loopback?.IsGatewayContinuation(http.Request) == true)
         {
             // 已验证的同进程回环沿用父任务额度；外部自写相同头不能证明续跳。
