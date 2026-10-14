@@ -76,7 +76,8 @@ public sealed class BackgroundTaskAdmissionRegistry
     {
         var source = $"{_configuration[DeploymentAuthority.DeploymentIdentityKey]}/{type.Name}/{SourceDeployment}";
         // HTTP 来源头是诊断标签，长度有界且只保留可打印 ASCII，不参与额度分区。
-        return new string(source.Take(240).Select(ch => ch is >= ' ' and <= '~' ? ch : '_').ToArray());
+        return new string(source.Take(200).Select(ch => char.IsAsciiLetterOrDigit(ch)
+            || ch is '-' or '_' or '.' or '/' or ':' or '@' ? ch : '_').ToArray());
     }
 
     internal static bool IsFramework(Type type)
