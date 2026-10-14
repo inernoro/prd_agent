@@ -118,11 +118,19 @@ public sealed class GatewayServiceKeyDirectoryRecord
 [BsonIgnoreExtraElements]
 public sealed class GatewayRuntimeGrantRecord
 {
+    /// <summary>空值与旧记录仍仅是设计Responses授权；task-sidecar为受控兼容SDK通道。</summary>
+    public string Purpose { get; set; } = "design";
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string TenantId { get; set; } = string.Empty;
     public string KeyPrefix { get; set; } = string.Empty;
     public string KeyHash { get; set; } = string.Empty;
     public string RunId { get; set; } = string.Empty;
+    /// <summary>设计执行器仅继承发起任务的服务端许可，不能凭短期模型密钥扩大任务范围。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+    /// <summary>新执行器短凭据必须绑定发行环境；旧设计凭据仍从父许可恢复来源。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? SourceDeployment { get; set; }
     public string UserId { get; set; } = string.Empty;
     public string AppCallerCode { get; set; } = string.Empty;
     public string Environment { get; set; } = string.Empty;

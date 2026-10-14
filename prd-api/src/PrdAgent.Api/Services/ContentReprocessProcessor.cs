@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -34,6 +35,8 @@ public class ContentReprocessProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
         // 防御：旧 BSON 文档可能没 Messages 字段 → 反序列化为 null。
         // 这一行必须在第一次访问 run.Messages 之前（包括下面日志里 Count）（Bugbot #1 五轮 High）
         run.Messages ??= new List<ReprocessChatMessage>();

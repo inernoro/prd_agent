@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
@@ -88,6 +89,8 @@ public class VideoToDocRunWorker : BackgroundService
 
     private async Task ProcessRunAsync(VideoToDocRun run, IServiceProvider sp)
     {
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
         var db = sp.GetRequiredService<MongoDbContext>();
         var runStore = sp.GetRequiredService<IRunEventStore>();
         var gateway = sp.GetRequiredService<ILlmGateway>();

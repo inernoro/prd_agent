@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using PrdAgent.Core.Interfaces;
 
 namespace PrdAgent.Api.Services;
@@ -28,6 +29,8 @@ public sealed class InfraAgentRuntimeWorker : BackgroundService
         {
             try
             {
+                using var taskExecutionScope = TaskExecutionContext.Enter(job.TaskPermitId == null
+                    ? null : new TaskExecutionIdentity(job.TaskPermitId, job.MessageId));
                 using var scope = _scopeFactory.CreateScope();
                 var sessions = scope.ServiceProvider.GetRequiredService<IInfraAgentSessionService>();
                 await sessions.RunRuntimeJobAsync(

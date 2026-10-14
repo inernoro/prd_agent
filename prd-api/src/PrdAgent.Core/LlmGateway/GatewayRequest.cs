@@ -161,6 +161,14 @@ public class GatewayRequest
 /// </summary>
 public class GatewayRequestContext
 {
+    /// <summary>网关核验后写入的任务准入与触发来源，禁止相信请求自报值。</summary>
+    public string? TaskPermitId { get; set; }
+    public string? ExecutionOrigin { get; set; }
+    public string? TriggerCredentialId { get; set; }
+    public string? TriggerActorUserId { get; set; }
+    public string? SourceDeployment { get; set; }
+    public string? SourceTask { get; set; }
+
     /// <summary>
     /// 仅由 serving 的已验证会话或 service key 上下文写入。入口适配器不得信任请求自报值。
     /// </summary>
@@ -187,12 +195,12 @@ public class GatewayRequestContext
     /// <summary>
     /// MAP 业务运行 ID。用于从 GW 请求日志反查到业务 run。
     /// </summary>
-    public string? RunId { get; init; }
+    public string? RunId { get; set; }
 
     /// <summary>
     /// 一次用户动作或异步任务的稳定关联 ID。同一任务的 submit/status/download 必须共用。
     /// </summary>
-    public string? LogicalRequestId { get; init; }
+    public string? LogicalRequestId { get; set; }
 
     /// <summary>
     /// 供应商异步任务 ID。不得与每次 HTTP 往返的 RequestId 混用。
@@ -207,7 +215,7 @@ public class GatewayRequestContext
     /// <summary>
     /// 用户 ID
     /// </summary>
-    public string? UserId { get; init; }
+    public string? UserId { get; set; }
 
     /// <summary>
     /// 查看角色
@@ -336,6 +344,12 @@ public class GatewayRequestContext
             PromptPolicyHash = source?.PromptPolicyHash,
             ImageReferences = source?.ImageReferences,
             GatewayTransport = transport,
+            TaskPermitId = source?.TaskPermitId,
+            ExecutionOrigin = source?.ExecutionOrigin,
+            TriggerCredentialId = source?.TriggerCredentialId,
+            TriggerActorUserId = source?.TriggerActorUserId,
+            SourceDeployment = source?.SourceDeployment,
+            SourceTask = source?.SourceTask,
             SourceSystem = source?.SourceSystem,
             IngressProtocol = source?.IngressProtocol,
             AppCallerTitle = source?.AppCallerTitle,
@@ -354,7 +368,7 @@ public class GatewayRequestContext
 public sealed class GatewayIngressRequest
 {
     public required string RequestId { get; init; }
-    public string SourceSystem { get; init; } = "external";
+    public string SourceSystem { get; set; } = "external";
     public required string IngressProtocol { get; init; }
     public required string AppCallerCode { get; init; }
     public string? AppCallerTitle { get; init; }
@@ -396,6 +410,12 @@ public sealed class GatewayIngressRequest
                 RequestId = Context?.RequestId ?? RequestId,
                 SessionId = Context?.SessionId,
                 RunId = Context?.RunId,
+                TaskPermitId = Context?.TaskPermitId,
+                ExecutionOrigin = Context?.ExecutionOrigin,
+                TriggerCredentialId = Context?.TriggerCredentialId,
+                TriggerActorUserId = Context?.TriggerActorUserId,
+                SourceDeployment = Context?.SourceDeployment,
+                SourceTask = Context?.SourceTask,
                 LogicalRequestId = Context?.LogicalRequestId,
                 ProviderTaskId = Context?.ProviderTaskId,
                 GroupId = Context?.GroupId,

@@ -94,6 +94,7 @@ public partial class LlmGateway
                 outcome = admissionError;
                 return outcome;
             }
+            _invocationAuthority?.AssertAuthorized(request.AppCallerCode, request.Context);
             using var client = CreateOutboundClient(request.Context?.TenantId);
             // 本次 deadline 管理完整请求；不使用 HttpClient 的默认 100 秒截断原生长流。
             client.Timeout = Timeout.InfiniteTimeSpan;

@@ -9,7 +9,6 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Transformers;
 using PrdAgent.Infrastructure.Security;
-using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -27,7 +26,6 @@ public class ExchangeController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ILogger<ExchangeController> _logger;
     private readonly IConfiguration _config;
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ExchangeTransformerRegistry _transformerRegistry = new();
 
     /// <summary>
@@ -42,12 +40,11 @@ public class ExchangeController : ControllerBase
         WriteIndented = true
     };
 
-    public ExchangeController(MongoDbContext db, ILogger<ExchangeController> logger, IConfiguration config, IHttpClientFactory httpClientFactory)
+    public ExchangeController(MongoDbContext db, ILogger<ExchangeController> logger, IConfiguration config)
     {
         _db = db;
         _logger = logger;
         _config = config;
-        _httpClientFactory = httpClientFactory;
     }
 
     /// <summary>
@@ -388,6 +385,9 @@ public class ExchangeController : ControllerBase
     [HttpPost("{id}/test")]
     public async Task<IActionResult> TestExchange(string id, [FromBody] ExchangeTestRequest request, CancellationToken ct)
     {
+        if (!request.DryRun)
+            return StatusCode(StatusCodes.Status410Gone, ApiResponse<object>.Fail("MDS_WRITE_RETIRED",
+                "模型测试入口已迁入模型网关，请从「模型网关」进入控制台执行测试。"));
         var exchange = await _db.ModelExchanges.Find(e => e.Id == id).FirstOrDefaultAsync(ct);
         if (exchange == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "Exchange 不存在"));
@@ -430,223 +430,17 @@ public class ExchangeController : ControllerBase
 
         var transformedJson = transformedRequest.ToJsonString(IndentedJsonOptions);
 
-        // 3. 如果只做转换预览（不实际发送），直接返回
-        if (request.DryRun)
-        {
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
-                transformedRequest = transformedJson,
-                rawResponse = (string?)null,
-                transformedResponse = (string?)null,
-                error = (string?)null,
-                httpStatus = (int?)null,
-                durationMs = (long?)null,
-                isDryRun = true
-            }));
-        }
-
-        // 4. 智能路由：URL 模版替换 + 根据请求内容决定实际目标 URL
-        // 对于 {model} 占位符：优先用 standardBody.model；否则回退到 Exchange 的第一个有效模型
-        string? testModel = null;
-        if (standardBody["model"] is JsonValue modelVal && modelVal.TryGetValue<string>(out var mv))
-            testModel = mv;
-        if (string.IsNullOrEmpty(testModel))
-        {
-            var firstModel = exchange.GetEffectiveModels().FirstOrDefault(m => m.Enabled);
-            testModel = firstModel?.ModelId ?? exchange.ModelAlias;
-        }
-        var templatedUrl = PrdAgent.Infrastructure.LlmGateway.LlmGateway.ResolveEndpointTemplate(exchange.TargetUrl, testModel);
-        var actualTargetUrl = transformer.ResolveTargetUrl(templatedUrl, standardBody, exchange.TransformerConfig)
-                              ?? templatedUrl;
-
-        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config) ?? string.Empty;
-        var httpRequest = new HttpRequestMessage(HttpMethod.Post, actualTargetUrl)
-        {
-            Content = new StringContent(transformedRequest.ToJsonString(), System.Text.Encoding.UTF8, "application/json")
-        };
-
-        // 设置认证头
-        SetTestAuthHeader(httpRequest, exchange.TargetAuthScheme, apiKey);
-
-        // 设置转换器额外 headers
-        var extraHeaders = transformer.GetExtraHeaders(exchange.TransformerConfig);
-        if (extraHeaders != null)
-        {
-            foreach (var (key, value) in extraHeaders)
-                httpRequest.Headers.TryAddWithoutValidation(key, value);
-        }
-
-        string rawResponseBody;
-        int httpStatus;
-        long durationMs;
-
-        try
-        {
-            var httpClient = _httpClientFactory.CreateClient();
-            httpClient.Timeout = TimeSpan.FromSeconds(120);
-
-            var startedAt = DateTime.UtcNow;
-            var response = await httpClient.SendAsync(httpRequest, ct);
-            rawResponseBody = await response.Content.ReadAsStringAsync(ct);
-            httpStatus = (int)response.StatusCode;
-
-            // 异步转换器：submit+query 轮询
-            if (transformer is IAsyncExchangeTransformer asyncTx)
-            {
-                var respHeaders = new Dictionary<string, string>();
-                foreach (var h in response.Headers)
-                    respHeaders[h.Key] = string.Join(", ", h.Value);
-
-                if (asyncTx.IsTaskFailed(httpStatus, respHeaders, rawResponseBody, out var failError))
-                {
-                    durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                    return Ok(ApiResponse<object>.Ok(new
-                    {
-                        standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
-                        transformedRequest = transformedJson,
-                        rawResponse = rawResponseBody,
-                        transformedResponse = (string?)null,
-                        error = failError,
-                        httpStatus = (int?)httpStatus,
-                        durationMs = (long?)durationMs,
-                        isAsync = true
-                    }));
-                }
-
-                // submit 成功只表示异步任务已受理。豆包 submit 与 query 完成都可能返回
-                // 20000000，不能在 submit 响应上调用 IsTaskComplete 后跳过 query。
-                if (response.IsSuccessStatusCode)
-                {
-                    var (queryUrl, queryBody, queryExtraHeaders) = asyncTx.BuildQueryRequest(
-                        actualTargetUrl, httpStatus, respHeaders, rawResponseBody, exchange.TransformerConfig);
-
-                    // 获取 submit 时的 X-Api-Request-Id
-                    string? submitRequestId = null;
-                    if (httpRequest.Headers.TryGetValues("X-Api-Request-Id", out var reqIds))
-                        submitRequestId = reqIds.FirstOrDefault();
-
-                    var maxAttempts = Math.Min(asyncTx.MaxPollAttempts, 120); // 测试模式最多 120 次
-                    var taskCompleted = false;
-                    for (var i = 0; i < maxAttempts; i++)
-                    {
-                        await Task.Delay(asyncTx.PollIntervalMs, ct);
-
-                        var qReq = new HttpRequestMessage(HttpMethod.Post, queryUrl)
-                        {
-                            Content = new StringContent(queryBody?.ToJsonString() ?? "{}", System.Text.Encoding.UTF8, "application/json")
-                        };
-                        SetTestAuthHeader(qReq, exchange.TargetAuthScheme, apiKey);
-                        foreach (var (k, v) in queryExtraHeaders)
-                            qReq.Headers.TryAddWithoutValidation(k, v);
-                        if (submitRequestId != null)
-                            qReq.Headers.TryAddWithoutValidation("X-Api-Request-Id", submitRequestId);
-
-                        var qResp = await httpClient.SendAsync(qReq, ct);
-                        rawResponseBody = await qResp.Content.ReadAsStringAsync(ct);
-                        httpStatus = (int)qResp.StatusCode;
-
-                        var qHeaders = new Dictionary<string, string>();
-                        foreach (var h in qResp.Headers)
-                            qHeaders[h.Key] = string.Join(", ", h.Value);
-
-                        if (asyncTx.IsTaskComplete(httpStatus, qHeaders, rawResponseBody))
-                        {
-                            taskCompleted = true;
-                            break;
-                        }
-
-                        if (asyncTx.IsTaskFailed(httpStatus, qHeaders, rawResponseBody, out var qErr))
-                        {
-                            durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                            return Ok(ApiResponse<object>.Ok(new
-                            {
-                                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
-                                transformedRequest = transformedJson,
-                                rawResponse = rawResponseBody,
-                                transformedResponse = (string?)null,
-                                error = qErr,
-                                httpStatus = (int?)httpStatus,
-                                durationMs = (long?)durationMs,
-                                isAsync = true
-                            }));
-                        }
-                    }
-                    if (!taskCompleted)
-                    {
-                        durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-                        return Ok(ApiResponse<object>.Ok(new
-                        {
-                            standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
-                            transformedRequest = transformedJson,
-                            rawResponse = rawResponseBody,
-                            transformedResponse = (string?)null,
-                            error = $"异步任务超时，已轮询 {maxAttempts} 次",
-                            httpStatus = (int?)408,
-                            durationMs = (long?)durationMs,
-                            isAsync = true
-                        }));
-                    }
-                }
-            }
-
-            durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
-        }
-        catch (Exception ex)
-        {
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
-                transformedRequest = transformedJson,
-                rawResponse = (string?)null,
-                transformedResponse = (string?)null,
-                error = $"HTTP 请求失败: {ex.Message}",
-                httpStatus = (int?)null,
-                durationMs = (long?)null
-            }));
-        }
-
-        // 5. 转换响应
-        string? transformedResponseJson = null;
-        string? responseError = null;
-        try
-        {
-            if (httpStatus >= 200 && httpStatus < 300)
-            {
-                var rawJson = JsonNode.Parse(rawResponseBody)?.AsObject();
-                if (rawJson != null)
-                {
-                    var transformedResp = transformer.TransformResponse(rawJson, exchange.TransformerConfig);
-                    transformedResponseJson = transformedResp.ToJsonString(IndentedJsonOptions);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            responseError = $"响应转换失败: {ex.Message}";
-        }
-
-        // 格式化原始响应
-        string formattedRawResponse;
-        try
-        {
-            var parsed = JsonNode.Parse(rawResponseBody);
-            formattedRawResponse = parsed?.ToJsonString(IndentedJsonOptions) ?? rawResponseBody;
-        }
-        catch
-        {
-            formattedRawResponse = rawResponseBody;
-        }
-
+        // 只保留纯计算的转换预览，永不发送供应商请求。
         return Ok(ApiResponse<object>.Ok(new
         {
             standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
             transformedRequest = transformedJson,
-            rawResponse = formattedRawResponse,
-            transformedResponse = transformedResponseJson,
-            error = responseError,
-            httpStatus = (int?)httpStatus,
-            durationMs = (long?)durationMs
+            rawResponse = (string?)null,
+            transformedResponse = (string?)null,
+            error = (string?)null,
+            httpStatus = (int?)null,
+            durationMs = (long?)null,
+            isDryRun = true
         }));
     }
 
@@ -863,34 +657,7 @@ public class ExchangeController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { exchange.Id, exchange.Name, modelCount = exchange.Models.Count }));
     }
 
-    private static void SetTestAuthHeader(HttpRequestMessage req, string? authScheme, string? apiKey)
-    {
-        if (string.IsNullOrWhiteSpace(apiKey)) return;
-        switch ((authScheme ?? "Bearer").ToLowerInvariant())
-        {
-            case "x-api-key":
-            case "xapikey":
-                req.Headers.TryAddWithoutValidation("x-api-key", apiKey);
-                break;
-            case "x-goog-api-key":
-            case "xgoogapikey":
-                req.Headers.TryAddWithoutValidation("x-goog-api-key", apiKey);
-                break;
-            case "key":
-                req.Headers.Authorization = new AuthenticationHeaderValue("Key", apiKey);
-                break;
-            case "doubao-asr":
-                var parts = apiKey.Split('|', 2);
-                var appId = parts.Length > 1 ? parts[0] : "";
-                var accessToken = parts.Length > 1 ? parts[1] : apiKey;
-                req.Headers.TryAddWithoutValidation("X-Api-App-Key", appId);
-                req.Headers.TryAddWithoutValidation("X-Api-Access-Key", accessToken);
-                break;
-            default:
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-                break;
-        }
-    }
+
 }
 
 // ========== Exchange 导入模板（硬编码） ==========

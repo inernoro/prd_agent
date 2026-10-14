@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Runtime.CompilerServices;
 using MongoDB.Driver;
@@ -102,10 +103,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             LeaseDuration,
             ct);
         if (run == null) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
 
         var projection = new RunProjection(_logger, runId);
         var meta = new RunMeta
         {
+            TaskPermitId = run.TaskPermitId,
             RunId = runId,
             Kind = RunKinds.DesignArtifact,
             CreatedByUserId = run.UserId,
@@ -655,8 +659,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         if (cancelled == null) return;
 
         var projection = new RunProjection(_logger, runId);
-        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
-            CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt };
+        var meta = new RunMeta
+        {
+            TaskPermitId = cancelled.TaskPermitId, RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt,
+        };
         meta.Status = RunStatuses.Cancelled;
         meta.EndedAt = cancelled.CancelledAt ?? DateTime.UtcNow;
         meta.ErrorCode = null;
@@ -718,8 +725,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         if (write.ModifiedCount == 0) return;
 
         var projection = new RunProjection(_logger, runId);
-        var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
-            CreatedByUserId = current!.UserId, CreatedAt = current.CreatedAt };
+        var meta = new RunMeta
+        {
+            TaskPermitId = current!.TaskPermitId, RunId = runId, Kind = RunKinds.DesignArtifact,
+            CreatedByUserId = current.UserId, CreatedAt = current.CreatedAt,
+        };
         meta.Status = status;
         meta.EndedAt = DateTime.UtcNow;
         meta.ErrorCode = errorCode;
@@ -1711,6 +1721,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var meta = await events.GetRunAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = candidate.TaskPermitId,
                            RunId = candidate.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = candidate.UserId,
@@ -1959,6 +1970,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var meta = await events.GetRunAsync(RunKinds.DesignArtifact, candidate.Id, CancellationToken.None)
                        ?? new RunMeta
                        {
+                           TaskPermitId = candidate.TaskPermitId,
                            RunId = candidate.Id,
                            Kind = RunKinds.DesignArtifact,
                            CreatedByUserId = candidate.UserId,

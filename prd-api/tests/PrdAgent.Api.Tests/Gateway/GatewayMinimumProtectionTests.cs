@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
@@ -8,26 +9,26 @@ namespace PrdAgent.Api.Tests.Gateway;
 public sealed class GatewayMinimumProtectionTests
 {
     [Theory]
-    [InlineData(false, "map", "gw-native", "automatic", "general")]
-    [InlineData(true, "external", "gw-native", "automatic", "general")]
-    [InlineData(true, "map", "openai-compatible", "automatic", "general")]
-    [InlineData(true, "map", "gw-native", "", "general")]
-    [InlineData(true, "map", "gw-native", "automatic", "automatic")]
-    public void OriginRequiresVerifiedInternalCredentialAndMapNativeIngress(
-        bool internalCredential, string source, string protocol, string origin, string expected)
+    [InlineData(null, "automatic")]
+    [InlineData("interactive", "general")]
+    [InlineData("agent", "automatic")]
+    [InlineData("scheduled", "automatic")]
+    public void OriginUsesServerVerifiedPermitAndNeverSelfReportedHeaders(string? origin, string expected)
     {
         var http = new DefaultHttpContext();
-        http.Request.Headers["X-Gateway-Execution-Origin"] = origin;
-        http.Request.Headers["X-Gateway-Source-Deployment"] = "cds:branch-one/rev-a";
+        http.Request.Headers["X-Gateway-Execution-Origin"] = "interactive";
+        http.Request.Headers["X-Gateway-Source-Deployment"] = "forged-deployment";
         http.Request.Headers["X-Gateway-User-Id"] = "business-owner";
         var authorization = new GatewayKeyAuthorization(true, true, 200, "", "",
-            TenantId: "tenant", LegacySharedKey: internalCredential,
-            ClientCode: internalCredential ? "map-internal" : "external-client");
+            TenantId: "tenant", LegacySharedKey: true, ClientCode: "map-internal");
+        if (origin is not null)
+            http.Items[GatewayTaskAdmission.HttpContextPermitKey] = new GatewayTaskPermitRecord
+                { Origin = origin, SourceDeployment = "cds:branch-one/rev-a" };
 
-        var identity = GatewayMinimumRequestIdentity.Resolve(http, authorization, source, protocol);
+        var identity = GatewayMinimumRequestIdentity.Resolve(http, authorization, "map", "gw-native");
 
         identity.Origin.ShouldBe(expected);
-        identity.SourceDeployment.ShouldBe(expected == "automatic" ? "cds:branch-one/rev-a" : null);
+        identity.SourceDeployment.ShouldBe(expected == "automatic" && origin is not null ? "cds:branch-one/rev-a" : null);
     }
 
     [Fact]

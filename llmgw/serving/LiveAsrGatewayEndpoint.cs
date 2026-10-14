@@ -11,6 +11,7 @@ using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.LlmGateway.Asr;
+using PrdAgent.Core.Security;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -65,6 +66,12 @@ public static class LiveAsrGatewayEndpoint
             admission.Ingress.AppCallerCode);
         var orchestrator = http.RequestServices.GetRequiredService<LiveAsrSessionOrchestrator>();
         var logWriter = http.RequestServices.GetRequiredService<ILlmRequestLogWriter>();
+        // 普通客户端断开仍只控制接收；平台授权期限单独终止供应商与批量降级，不能无限持有付费会话。
+        var permit = http.Items[GatewayTaskAdmission.HttpContextPermitKey] as GatewayTaskPermitRecord;
+        var deadline = permit?.ExpiresAt ?? DateTime.UtcNow.Add(GatewayTaskPermitRecord.MaximumLifetime);
+        using var platformLifetime = new CancellationTokenSource();
+        var remainingLifetime = deadline - DateTime.UtcNow;
+        platformLifetime.CancelAfter(remainingLifetime > TimeSpan.Zero ? remainingLifetime : TimeSpan.Zero);
         using var socket = await http.WebSockets.AcceptWebSocketAsync();
         using var writeLock = new SemaphoreSlim(1, 1);
         var startedAt = DateTime.UtcNow;
@@ -117,7 +124,16 @@ public static class LiveAsrGatewayEndpoint
                     ?? throw new InvalidOperationException("实时 ASR 缺少已验证请求上下文"),
                 EmitAsync,
                 () => Interlocked.Exchange(ref paidUpstreamAttempted, 1),
-                http.RequestAborted);
+                http.RequestAborted,
+                platformLifetime.Token,
+                async token =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    var service = http.RequestServices.GetRequiredService<IGatewayTaskAdmission>();
+                    var next = await service.ReserveContinuationAsync(http, admission.Authorization,
+                        admission.Ingress.AppCallerCode, CancellationToken.None);
+                    if (!next.Allowed) throw new TaskExecutionAdmissionException(next.ErrorCode, next.Message, next.StatusCode);
+                }, admission.Ingress.AppCallerCode);
         }
         finally
         {
@@ -159,7 +175,7 @@ public static class LiveAsrGatewayEndpoint
                         outcome.Failure
                             ?? outcome.SessionResult?.Error
                             ?? "实时转写未完成，已交由完整录音校准",
-                        StatusCodes.Status502BadGateway);
+                        outcome.StatusCode ?? StatusCodes.Status502BadGateway);
                 }
             }
             if (socket.State == WebSocketState.Open)
@@ -219,7 +235,13 @@ public static class LiveAsrGatewayEndpoint
             ServiceKeyId: admission.Authorization.KeyId,
             ClientCode: admission.Authorization.ClientCode,
             Environment: admission.Authorization.Environment,
-            ServiceKeyPrefix: admission.Authorization.KeyPrefixSnapshot);
+            ServiceKeyPrefix: admission.Authorization.KeyPrefixSnapshot,
+            TaskPermitId: admission.Ingress.Context?.TaskPermitId,
+            ExecutionOrigin: admission.Ingress.Context?.ExecutionOrigin,
+            TriggerCredentialId: admission.Ingress.Context?.TriggerCredentialId,
+            SourceDeployment: admission.Ingress.Context?.SourceDeployment,
+            SourceTask: admission.Ingress.Context?.SourceTask,
+            TriggerActorUserId: admission.Ingress.Context?.TriggerActorUserId);
 
     private sealed class WebSocketLiveAsrTransport : ILiveAsrSessionTransport
     {

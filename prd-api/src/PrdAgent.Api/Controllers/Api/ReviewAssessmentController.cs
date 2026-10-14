@@ -129,6 +129,7 @@ public class ReviewAssessmentController : ControllerBase
 
         var run = new RequirementAssessmentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerUserId = userId,
             OwnerName = GetDisplayName() ?? userId,
             Title = string.IsNullOrWhiteSpace(title)
@@ -266,6 +267,7 @@ public class ReviewAssessmentController : ControllerBase
             x => x.Id == id,
             Builders<RequirementAssessmentRun>.Update
                 .Set(x => x.Status, RequirementAssessmentStatuses.Queued)
+                .Set(x => x.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                 .Set(x => x.ErrorMessage, null),
             cancellationToken: CancellationToken.None);
 
@@ -371,6 +373,8 @@ public class ReviewAssessmentController : ControllerBase
 
     private async Task RunAssessmentAsync(RequirementAssessmentRun run)
     {
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
         var userId = run.OwnerUserId;
 
         // 1) 列映射 LLM 精化（仅首次；失败保留启发式结果，不阻塞评估）

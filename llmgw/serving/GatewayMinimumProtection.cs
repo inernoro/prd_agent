@@ -8,6 +8,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -26,22 +27,13 @@ public sealed record GatewayMinimumRequestIdentity(string Origin, string? Source
         string sourceSystem,
         string ingressProtocol)
     {
-        // SourceSystem 是密钥门已核对的请求实际来源。外部 scoped key 即使自报 map/native
-        // 也不是内部 MAP 凭据；UserId 仅表示业务归属，不能证明操作是人工发起的。
-        if (!authorization.Allowed || !authorization.Authenticated || !authorization.LegacySharedKey
-            || !string.Equals(authorization.ClientCode, "map-internal", StringComparison.Ordinal)
-            || !string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(http.Request.Headers["X-Gateway-Execution-Origin"].ToString(), "automatic", StringComparison.OrdinalIgnoreCase))
+        if (!authorization.Allowed || !authorization.Authenticated)
             return General;
-
-        var deployment = http.Request.Headers["X-Gateway-Source-Deployment"].ToString();
-        // 诊断标签不是权限、额度或分桶依据；只接受有限长度的部署标识，不保存任意头内容。
-        deployment = deployment.Length is > 0 and <= 200
-                     && deployment.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' or '/' or ':' or '@')
-            ? deployment
-            : null;
-        return new("automatic", deployment);
+        if (http.Items[GatewayTaskAdmission.HttpContextPermitKey] is GatewayTaskPermitRecord permit)
+            return permit.Origin == TaskExecutionOrigins.Interactive
+                ? General : new("automatic", permit.SourceDeployment);
+        // 无内部任务事实的服务key归入自动额度。用户头、来源头和UserId不能借到人工额度。
+        return new("automatic", null);
     }
 }
 

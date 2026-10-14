@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Diagnostics;
 using System.Text.Json;
 using MongoDB.Driver;
@@ -87,6 +88,9 @@ public sealed class WorkflowRunWorker : BackgroundService
             _logger.LogWarning("Execution not found: {ExecutionId}", executionId);
             return;
         }
+
+        using var taskExecutionScope = TaskExecutionContext.Enter(execution.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(execution.TaskPermitId, execution.Id));
 
         if (execution.Status is WorkflowExecutionStatus.Completed
             or WorkflowExecutionStatus.Failed

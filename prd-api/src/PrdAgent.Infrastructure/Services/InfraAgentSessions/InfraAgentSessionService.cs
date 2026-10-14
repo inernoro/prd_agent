@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text;
@@ -812,7 +813,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                         session.Id,
                         outboundMessage.Id,
                         request.Content.Trim(),
-                        DateTime.UtcNow),
+                        DateTime.UtcNow) { TaskPermitId = outboundMessage.TaskPermitId },
                     enqueueCt),
                 ex => _logger.LogWarning(
                     ex,
@@ -866,7 +867,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                     session.Id,
                     outboundMessage.Id,
                     request.Content.Trim(),
-                    DateTime.UtcNow),
+                    DateTime.UtcNow) { TaskPermitId = outboundMessage.TaskPermitId },
                 enqueueCt),
             ex => _logger.LogWarning(
                 ex,
@@ -1008,6 +1009,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var session = await FindOwnedSessionAsync(userId, id, ct);
         if (session == null) return;
+        var turn = await _db.InfraAgentMessages.Find(message => message.Id == messageId
+            && message.SessionId == id && message.Role == InfraAgentMessageRoles.User).FirstOrDefaultAsync(ct);
+        using var taskExecutionScope = TaskExecutionContext.Enter(turn?.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(turn.TaskPermitId, messageId));
 
         if (!IsMapDirectRuntimeFallbackEnabled())
         {
@@ -2725,6 +2730,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         _ = RequireDispatchableCdsSessionId(sessionStatus, cdsSessionId);
         return new InfraAgentMessage
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             SessionId = sessionId,
             Role = InfraAgentMessageRoles.User,
             Content = content,
@@ -4043,7 +4049,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             MaxTokens = 4096,
             MaxTurns = ResolveMaxTurns(content),
             TimeoutSeconds = NormalizeRuntimeTimeout(session.TimeoutSeconds),
-            AppCallerCode = "infra-agent-session::agent",
+            AppCallerCode = AppCallerRegistry.InfraAgent.Runtime.Chat,
             StickyKey = session.CdsSessionId ?? session.Id,
             BaseUrl = runtimeProfile?.BaseUrl ?? session.ModelBaseUrl,
             ApiKey = runtimeProfile?.ApiKey,

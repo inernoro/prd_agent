@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using PrdAgent.Api.Json;
@@ -192,6 +193,8 @@ public sealed class ChatRunWorker : BackgroundService
     {
         var meta = await _runStore.GetRunAsync(RunKinds.Chat, runId, stoppingToken);
         if (meta == null) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(meta.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(meta.TaskPermitId, meta.RunId));
         if (meta.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled) return;
 
         var input = ParseInput(meta.InputJson);

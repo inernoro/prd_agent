@@ -5632,6 +5632,12 @@ function safeChart(canvasId, config) {
         }
 
         var runId = Guid.NewGuid().ToString("N");
+        // 单舱即时执行已有入口许可，服务端新 runId 只补任务绑定，绝不重签额度。
+        var admittedTask = PrdAgent.Core.Security.TaskExecutionContext.Current;
+        using var runtimeTaskScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(
+            admittedTask is not null && string.IsNullOrWhiteSpace(admittedTask.RunId)
+                ? new PrdAgent.Core.Security.TaskExecutionIdentity(admittedTask.PermitId, runId)
+                : admittedTask);
         var appCallerCode = AppCallerRegistry.PageAgent.Generate;
         var effectiveModel = string.IsNullOrWhiteSpace(model) ? "claude-opus-4-5" : model;
 

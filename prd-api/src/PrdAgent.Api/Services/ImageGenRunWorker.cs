@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -263,6 +264,8 @@ public class ImageGenRunWorker : BackgroundService
         // 重新读取最新 run（避免 claim 返回的字段不完整/过旧）
         var run = await _db.ImageGenRuns.Find(x => x.Id == claimed.Id).FirstOrDefaultAsync(ct);
         if (run == null) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
 
         // 若 ConfigModelId 存在且 run 未填平台信息，则尝试补齐（用于事件输出与后续查询）
         if (!string.IsNullOrWhiteSpace(run.ConfigModelId) && (string.IsNullOrWhiteSpace(run.PlatformId) || string.IsNullOrWhiteSpace(run.ModelId)))

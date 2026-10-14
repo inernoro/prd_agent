@@ -19,6 +19,15 @@ public sealed class McpLoopbackSignal
 {
     /// <summary>续跳标记头。值是本进程的令牌，只有我们自己填得出来。</summary>
     public const string HeaderName = "X-Map-Mcp-Loopback";
+    public const string TaskPermitHeaderName = "X-Map-Task-Permit";
+
+    public void AttachTaskContinuation(HttpRequestMessage message)
+    {
+        message.Headers.TryAddWithoutValidation(HeaderName, Token);
+        message.Headers.Remove(TaskPermitHeaderName);
+        if (PrdAgent.Core.Security.TaskExecutionContext.Current is { } task)
+            message.Headers.TryAddWithoutValidation(TaskPermitHeaderName, task.PermitId);
+    }
 
     private readonly byte[] _tokenBytes;
 

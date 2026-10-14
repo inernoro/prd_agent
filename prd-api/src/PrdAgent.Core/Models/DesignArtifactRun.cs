@@ -22,8 +22,12 @@ public sealed class DesignArtifactLlmRequestPolicy
 /// v2 权威生命周期事件与状态保存在同一 Mongo 文档；Redis 仅服务历史流程和兼容投影。
 /// </summary>
 [MongoDB.Bson.Serialization.Attributes.BsonIgnoreExtraElements]
-public class DesignArtifactRun
+public class DesignArtifactRun : PrdAgent.Core.Interfaces.ITaskAuthorizedRun
 {
+    /// <summary>仅由服务端新任务创建点写入；旧记录缺失时必须保持未准入。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskPermitId { get; set; }
+
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     /// <summary>创建时冻结的项目、分支和 revision 执行范围。历史读取不补写，缺失保留 null。</summary>

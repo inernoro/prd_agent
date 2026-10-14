@@ -1847,6 +1847,7 @@ public class ImageGenController : ControllerBase
 
         var run = new ImageGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = adminId,
             Status = ImageGenRunStatus.ScopedQueued,
             DeploymentSlug = DeploymentScope.Current,

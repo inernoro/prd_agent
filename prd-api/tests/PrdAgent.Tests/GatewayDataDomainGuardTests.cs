@@ -4269,7 +4269,8 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("Channel.CreateBounded", liveEndpoint);
         Assert.DoesNotContain("TranscribeLivePcmAsync", liveEndpoint);
         Assert.DoesNotContain("LiveAsrBatchFallbackService", liveEndpoint);
-        Assert.Contains("AddScoped<LiveAsrSessionOrchestrator>", servingProgram);
+        Assert.Contains("AddScoped(sp => new LiveAsrSessionOrchestrator(", servingProgram);
+        Assert.Contains("GetRequiredService<IGatewayInvocationAuthority>()", servingProgram);
         Assert.True(
             liveEndpoint.IndexOf("AdmitSpecializedRequestAsync", StringComparison.Ordinal)
             < liveEndpoint.IndexOf("AcceptWebSocketAsync", StringComparison.Ordinal),

@@ -111,6 +111,11 @@ jobs:
               - 'scripts/tests/test_skills_audit_contract.py'
               - '.github/workflows/ci.yml'
             release_scripts:
+              # 模型出口守卫读取所有 MAP 发送入口；漏登记新业务也必须触发构建检查。
+              - 'prd-api/src/**'
+              - 'llmgw/serving/**'
+              - 'scripts/check-map-model-egress.py'
+              - 'scripts/fixtures/map-model-egress-audit.json'
               - 'exec_dep.sh'
               - 'scripts/lib/static-release.sh'
               - 'scripts/lib/gateway-bind-mount.sh'
@@ -340,6 +345,9 @@ jobs:
             echo "--- $t"
             python3 "$t"
           done
+
+      - name: MAP model egress guard
+        run: python3 scripts/check-map-model-egress.py
 
       - name: Prototype export audit tests
         run: python3 .agents/skills/prototype-export/tests/test_audit_prototype_package.py

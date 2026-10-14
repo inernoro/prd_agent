@@ -39,7 +39,9 @@ public sealed record GatewayKeyAuthorization(
     /// 把授权集合带出去，让清单端点自己判；鉴权那一档的豁免不动（预检本来就该放行）。
     /// </summary>
     IReadOnlyList<string>? AuthorizedAppCallerCodes = null,
-    GatewayRuntimeGrantRecord? RuntimeGrant = null);
+    GatewayRuntimeGrantRecord? RuntimeGrant = null,
+    /// <summary>密钥存储中的来源，绝不读取用户自报的Source头来判断内部人工操作。</summary>
+    string? AuthenticatedSourceSystem = null);
 
 public interface IGatewayScopedKeyAuthorizer
 {
@@ -69,6 +71,13 @@ public interface IGatewayRuntimeGrantCallCounter
         CancellationToken ct);
 }
 
+public static class GatewayRuntimeGrantPurposePolicy
+{
+    public const string TaskSidecar = "task-sidecar";
+    public static bool IsTaskSidecar(GatewayRuntimeGrantRecord? grant)
+        => grant is not null && string.Equals(grant.Purpose, TaskSidecar, StringComparison.Ordinal);
+}
+
 public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) : IGatewayRuntimeGrantCallCounter
 {
     public async Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
@@ -83,6 +92,7 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TenantId, grant.TenantId),
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.RunId, grant.RunId),
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, grant.AppCallerCode),
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TaskPermitId, grant.TaskPermitId),
             Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
             new BsonDocumentFilterDefinition<GatewayRuntimeGrantRecord>(
                 new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$CallCount", "$MaxCalls" }))));
@@ -202,6 +212,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 ingressProtocol,
                 requiredScope,
                 requestPath,
+                allowSingleAppCallerInference,
                 ct);
         var effectiveAppCallerCode = allowSingleAppCallerInference
             ? ResolveSingleAppCallerCode(record) ?? appCallerCode
@@ -404,7 +415,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             AuthorizedAppCallerCodes: record.AppCallerCodes
                 .Select(x => (x ?? string.Empty).Trim())
                 .Where(x => x.Length > 0)
-                .ToList());
+                .ToList(),
+            AuthenticatedSourceSystem: record.SourceSystem == "*" ? "external" : record.SourceSystem);
     }
 
     private async Task<GatewayKeyAuthorization> AuthorizeRuntimeGrantAsync(
@@ -414,6 +426,7 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
         string ingressProtocol,
         string requiredScope,
         string? requestPath,
+        bool allowSingleAppCallerInference,
         CancellationToken ct)
     {
         var grants = _data.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
@@ -431,17 +444,33 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 403,
                 "GATEWAY_RUNTIME_GRANT_TENANT_INACTIVE",
                 "runtime grant tenant is not active");
-        var allowedScope = requiredScope is "invoke" or "stream:invoke";
-        var allowedPath = string.Equals(requestPath, "/gw/v1/responses", StringComparison.OrdinalIgnoreCase);
+        var known = await grants.Find(x => x.KeyHash == keyHash && x.TenantId == _internalTenantId).FirstOrDefaultAsync(ct);
+        if (known is null || known.ExpiresAt <= now)
+            return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
+        if (known.CallCount >= known.MaxCalls)
+            return new(false, true, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded");
+        var sidecar = GatewayRuntimeGrantPurposePolicy.IsTaskSidecar(known);
+        var design = string.IsNullOrEmpty(known.Purpose) || known.Purpose == "design";
+        var path = GatewayTaskRoutePolicy.Normalize(requestPath ?? string.Empty);
+        var resolve = sidecar && path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase);
+        var allowedScope = requiredScope is "invoke" or "stream:invoke" || resolve && requiredScope == "route:read";
+        var allowedPath = sidecar
+            ? path.ToLowerInvariant() is "/v1/messages" or "/v1/responses" or "/v1/chat/completions" or "/gw/v1/resolve"
+            : design && path.Equals("/gw/v1/responses", StringComparison.OrdinalIgnoreCase);
+        var caller = sidecar && (allowSingleAppCallerInference || resolve && string.IsNullOrWhiteSpace(appCallerCode))
+            ? known.AppCallerCode : appCallerCode;
+        var allowedTransport = sidecar
+            ? ingressProtocol is "openai-compatible" or "claude-compatible" || resolve && ingressProtocol == "gw-native"
+            : string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase);
         var filter = Builders<GatewayRuntimeGrantRecord>.Filter.And(
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.KeyHash, keyHash),
             Builders<GatewayRuntimeGrantRecord>.Filter.Gt(x => x.ExpiresAt, now),
             new BsonDocumentFilterDefinition<GatewayRuntimeGrantRecord>(
                 new BsonDocument("$expr", new BsonDocument("$lt", new BsonArray { "$CallCount", "$MaxCalls" }))),
             Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.TenantId, _internalTenantId),
-            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, appCallerCode));
-        if (!string.Equals(sourceSystem, "map", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(ingressProtocol, "gw-native", StringComparison.OrdinalIgnoreCase)
+            Builders<GatewayRuntimeGrantRecord>.Filter.Eq(x => x.AppCallerCode, caller));
+        if (!allowedTransport
             || !allowedScope
             || !allowedPath)
         {
@@ -460,19 +489,15 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 KeyId: grant.Id,
                 TenantId: grant.TenantId,
                 LegacySharedKey: false,
-                ClientCode: "design-opendesign",
+                ClientCode: sidecar ? GatewayRuntimeGrantPurposePolicy.TaskSidecar : "design-opendesign",
                 Environment: grant.Environment,
                 KeyPrefixSnapshot: grant.KeyPrefix,
                 ResolvedAppCallerCode: grant.AppCallerCode,
                 AuthorizedAppCallerCodes: [grant.AppCallerCode],
-                RuntimeGrant: grant);
+                RuntimeGrant: grant,
+                AuthenticatedSourceSystem: "map");
         }
 
-        var known = await grants.Find(x => x.KeyHash == keyHash).FirstOrDefaultAsync(ct);
-        if (known is null || known.ExpiresAt <= now)
-            return new(false, false, 401, "GATEWAY_KEY_INVALID", "invalid or expired gateway key");
-        if (known.CallCount >= known.MaxCalls)
-            return new(false, true, 429, "GATEWAY_RUNTIME_GRANT_EXHAUSTED", "runtime grant call limit exceeded");
         if (!allowedPath)
             return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_ROUTE_DENIED", "runtime grant only allows the Responses endpoint");
         return new(false, true, 403, "GATEWAY_RUNTIME_GRANT_SCOPE_DENIED", "runtime grant does not allow this request");
@@ -536,7 +561,8 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
                 LegacySharedKey: true,
                 ClientCode: "map-internal",
                 Environment: "production",
-                KeyPrefixSnapshot: "internal");
+                KeyPrefixSnapshot: "internal",
+                AuthenticatedSourceSystem: "map");
         }
 
         return new(

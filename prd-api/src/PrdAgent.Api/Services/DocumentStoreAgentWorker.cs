@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.Extensions.Configuration;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -494,6 +495,8 @@ public class DocumentStoreAgentWorker : BackgroundService
                 ReturnDocument = ReturnDocument.After,
             });
         if (run == null) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
 
         _currentRunId = run.Id;
         _currentExecutionId = run.ExecutionId;

@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -2263,6 +2264,7 @@ public class MdToPptController : ControllerBase
     {
         var run = new MdToPptRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId.Trim(),
             UserId = userId,
             Status = "running",

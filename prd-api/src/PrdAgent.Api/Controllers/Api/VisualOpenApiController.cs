@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
@@ -206,6 +207,7 @@ public class VisualOpenApiController : ControllerBase
 
         var run = new ImageGenRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = userId,
             WorkspaceId = workspaceId,
             Status = ImageGenRunStatus.ScopedQueued,

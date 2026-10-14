@@ -60,6 +60,7 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
         {
             RunId = Norm(runId),
             Kind = Norm(kind),
+            TaskPermitId = map.TryGetValue("taskPermitId", out var permitId) && !string.IsNullOrWhiteSpace(permitId) ? permitId : null,
             Status = map.TryGetValue("status", out var st) ? st : RunStatuses.Queued,
             GroupId = map.TryGetValue("groupId", out var gid) ? gid : null,
             SessionId = map.TryGetValue("sessionId", out var sid) ? sid : null,
@@ -89,6 +90,7 @@ public sealed class RedisRunEventStore : IRunEventStore, IDisposable
         var entries = new List<HashEntry>
         {
             new("status", meta.Status ?? RunStatuses.Queued),
+            new("taskPermitId", meta.TaskPermitId ?? string.Empty),
             new("lastSeq", meta.LastSeq),
             new("cancelRequested", meta.CancelRequested ? "true" : "false"),
             new("createdAt", meta.CreatedAt.ToString("O")),

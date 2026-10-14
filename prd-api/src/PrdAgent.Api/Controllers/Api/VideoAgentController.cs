@@ -1043,6 +1043,7 @@ public class VideoAgentController : ControllerBase
 
         var run = new VideoToDocRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             OwnerAdminId = adminId,
             Status = VideoToDocRunStatus.Queued,
             VideoUrl = videoUrl,

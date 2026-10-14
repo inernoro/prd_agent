@@ -41,6 +41,8 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabase
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
 builder.Services.AddSingleton<IGatewayRuntimeGrantCallCounter, GatewayRuntimeGrantCallCounter>();
+builder.Services.AddSingleton<IGatewayTaskAdmission, GatewayTaskAdmission>();
+builder.Services.AddSingleton<IGatewayInvocationAuthority, GatewayInvocationAuthority>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();
 builder.Services.AddSingleton<GatewayMinimumProtectionCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
@@ -304,7 +306,10 @@ builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
 builder.Services.AddScoped<DoubaoStreamAsrService>();
 builder.Services.AddScoped<LiveAsrBatchFallbackService>();
-builder.Services.AddScoped<LiveAsrSessionOrchestrator>();
+builder.Services.AddScoped(sp => new LiveAsrSessionOrchestrator(
+    sp.GetRequiredService<PrdAgent.Core.LlmGateway.IModelResolver>(), sp.GetRequiredService<DoubaoStreamAsrService>(),
+    sp.GetRequiredService<LiveAsrBatchFallbackService>(), sp.GetRequiredService<ILogger<LiveAsrSessionOrchestrator>>(),
+    sp.GetRequiredService<IGatewayInvocationAuthority>()));
 
 // serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
 // 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。

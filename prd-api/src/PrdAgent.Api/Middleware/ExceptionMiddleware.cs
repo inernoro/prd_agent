@@ -57,6 +57,8 @@ public class ExceptionMiddleware
         
         var (statusCode, errorCode, message) = exception switch
         {
+            PrdAgent.Core.Security.TaskExecutionAdmissionException admission =>
+                ((HttpStatusCode)admission.StatusCode, admission.Code, admission.Message),
             ArgumentException => (HttpStatusCode.BadRequest, ErrorCodes.INVALID_FORMAT, exception.Message),
             UnauthorizedAccessException => (HttpStatusCode.Unauthorized, ErrorCodes.UNAUTHORIZED, "未授权的访问"),
             KeyNotFoundException => (HttpStatusCode.NotFound, ErrorCodes.SESSION_NOT_FOUND, "资源不存在"),

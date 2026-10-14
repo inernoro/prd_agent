@@ -31,7 +31,7 @@ public sealed class CanonicalImageBoundaryTests
     public async Task MapSendsOnlyCanonicalParameters_NoPreResolveOrWireParameters()
     {
         var transport = new Transport();
-        var client = new HttpLlmGatewayClient(transport, new ConfigurationBuilder().Build(), NullLogger<HttpLlmGatewayClient>.Instance);
+        var client = new HttpLlmGatewayClient(transport, new ConfigurationBuilder().Build(), NullLogger<HttpLlmGatewayClient>.Instance, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
         var result = await client.GenerateImageAsync(new GatewayRawRequest
         {
             AppCallerCode = AppCallerRegistry.VisualAgent.Image.Text2Img, ModelType = ModelTypes.ImageGen,

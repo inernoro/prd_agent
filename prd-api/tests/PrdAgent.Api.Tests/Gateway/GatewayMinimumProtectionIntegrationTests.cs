@@ -39,6 +39,8 @@ public sealed class GatewayMinimumProtectionIntegrationTests
     private const string InternalKey = "phase0-local-internal-key";
     private const string Tenant = "tenant_map_internal";
     private const string Caller = "future-business.omitted-protection::chat";
+    private static readonly string ManualPermitId = Guid.NewGuid().ToString("N");
+    private static readonly string AutomaticPermitId = Guid.NewGuid().ToString("N");
 
     [Fact]
     public async Task MissingPoliciesAreBoundedAcrossTwoServingInstancesBeforeUpstream()
@@ -172,7 +174,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
     }
 
     [Fact]
-    public async Task ExternalCredentialCannotSelfAssertAutomaticEvenAtMapNativeIngress()
+    public async Task ExternalCredentialCannotBorrowInteractiveQuotaEvenAtMapNativeIngress()
     {
         await using var database = await DiagnosticDatabase.CreateAsync();
         const string externalTenant = "tenant-external";
@@ -191,9 +193,9 @@ public sealed class GatewayMinimumProtectionIntegrationTests
             .InsertOneAsync(new GatewayServiceKeyDirectoryRecord { TenantId = externalTenant, KeyHash = record.KeyHash, ServiceKeyId = record.Id });
         await using var app = await Serving(database, new() { ["AutomaticAppCallerPerHour"] = 1 });
         (await Send(app.GetTestClient(), true, key: externalKey)).StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await Send(app.GetTestClient(), true, key: externalKey)).StatusCode.ShouldBe(HttpStatusCode.OK);
-        (await database.Windows.CountDocumentsAsync(new BsonDocument { { "Origin", "automatic" } })).ShouldBe(0);
-        database.UpstreamCalls.ShouldBe(2);
+        (await Send(app.GetTestClient(), true, key: externalKey)).StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+        (await database.Windows.CountDocumentsAsync(new BsonDocument { { "Origin", "general" } })).ShouldBe(0);
+        database.UpstreamCalls.ShouldBe(1);
     }
 
     [Fact]
@@ -255,6 +257,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         };
         request.Headers.Add("X-Gateway-Key", key);
         request.Headers.Add("X-Gateway-Source", "map");
+        request.Headers.Add(GatewayTaskAdmission.HeaderName, automatic ? AutomaticPermitId : ManualPermitId);
         if (automatic)
         {
             request.Headers.Add("X-Gateway-Execution-Origin", "automatic");
@@ -279,6 +282,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         builder.Services.AddSingleton<GatewayMinimumProtectionCoordinator>();
         builder.Services.AddSingleton<GatewayBudgetCoordinator>();
         builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
+        builder.Services.AddSingleton<IGatewayTaskAdmission, GatewayTaskAdmission>();
         builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
         var gateway = new Mock<PrdAgent.Core.LlmGateway.ILlmGateway>();
         gateway.Setup(g => g.SendAsync(It.IsAny<GatewayRequest>(), It.IsAny<CancellationToken>()))
@@ -347,6 +351,15 @@ public sealed class GatewayMinimumProtectionIntegrationTests
             BsonClassMapRegistration.RegisterConventionsOnly();
             var database = new DiagnosticDatabase(connection);
             await database.Data.Database.RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
+            foreach (var (id, origin) in new[] { (ManualPermitId, TaskExecutionOrigins.Interactive), (AutomaticPermitId, TaskExecutionOrigins.Agent) })
+                await database.Data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName).InsertOneAsync(new GatewayTaskPermitRecord
+                {
+                    Id = id, TenantId = Tenant, ActorUserId = "normal-user", SubjectUserIds = ["normal-user"],
+                    TriggerCredentialId = "phase0-test-task", Origin = origin, SourceDeployment = "prd-agent:production",
+                    SourceTask = "request:minimum-protection-fixture", MaxCalls = GatewayTaskPermitRecord.MaximumCalls, MaxRuns = 1,
+                    ExpiresAt = DateTime.UtcNow.AddHours(1),
+                    AllowedAppCallerCodes = [Caller, "future-business.first::chat", "future-business.second::chat", "future-business.third::chat"],
+                });
             return database;
         }
         public Task AddCallerAsync(string tenantId, int? rate = null)

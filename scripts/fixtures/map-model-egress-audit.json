@@ -1,0 +1,803 @@
+{
+  "version": 1,
+  "scope": "prd-api/src 与 llmgw/serving；有限既有调用指纹，不豁免整目录",
+  "files": {
+    "llmgw/serving/LiveAsrGatewayEndpoint.cs": {
+      "calls": {
+        "call:SendAsync:c59a53b24c4a50b349a20022": 1,
+        "dependency:GetRequiredService:a53524fdd4ba634ec62691f1": 1
+      },
+      "purpose": "已治理实时转写端点解析唯一 ASR 编排器并向浏览器发送事件；付费源在可信授权叶子核验，不允许新原始连接"
+    },
+    "llmgw/serving/Program.cs": {
+      "calls": {
+        "dependency:AddScoped:3e19105912c496b6de25f20c": 1,
+        "dependency:AddScoped:79617fcc62df341cc14f82af": 1,
+        "dependency:AddScoped:87deb1e0730f71b4eabeb930": 1,
+        "dependency:GetRequiredService:664d0f011014dc1ca726026f": 1,
+        "dependency:GetRequiredService:90d2dee49fdf73bb2e4c8f6d": 1,
+        "new:LiveAsrSessionOrchestrator:fc2ec2ba096a6114bcf089ba": 1
+      },
+      "purpose": "既有 serving 宿主底层网关/ASR DI 装配，首发发送权限 IGatewayInvocationAuthority 强制注入编排器并沿可信 scope/context 校验；注册、解析与构造逐调用指纹锁定，新后台业务不能借宿主新增直连"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/AdminPeerNodesController.cs": {
+      "calls": {
+        "call:CreateClient:84815a312d0eaebc157871c8": 4,
+        "call:PostAsync:2a66f7e5be32d01ff089c39e": 1,
+        "call:PostAsync:4d2ff191fb58d7814deccf17": 1,
+        "call:PostAsync:7d0eb745d704c5c102f24fb4": 1,
+        "call:SendAsync:11b2d514619c251abd0151be": 1,
+        "call:SendAsync:17cfc18951c937ec9ca6dd7c": 1,
+        "call:SendAsync:ec801ed3cff02ad94d47b32c": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/DataSyncConsumerController.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 4,
+        "call:GetAsync:cecd3767fc9e3a65b35a01e7": 1,
+        "call:GetAsync:e11b00bdd507c2d337087a6c": 1,
+        "call:PostAsJsonAsync:881f06c0e1bb16b3fc2c3ed9": 1,
+        "call:SendAsync:da50051f364d81673860bc86": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:GetStreamAsync:22e94c739530da230a0eb0f8": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/DesignArtifactRuntimeController.cs": {
+      "calls": {
+        "call:CreateClient:f2fbeaaa74e8ae854b61a3fb": 1,
+        "call:SendAsync:942cf60857b756607a5b2346": 1
+      },
+      "purpose": "设计运行模型票据代理：恢复持久任务许可后走统一网关；保留原 runtime quota 与平台任务双重上限"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 1,
+        "call:GetAsync:3a0088a3e8e889e9a5330f24": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreSyncController.cs": {
+      "calls": {
+        "call:CreateClient:58c3490c46726a8d5ee23d73": 1,
+        "call:SendAsync:9f591cb7d718979daa29a5b3": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/ImageGenController.cs": {
+      "calls": {
+        "call:CreateClient:c13d6545a26a13bd9b9c99dc": 1,
+        "call:SendAsync:03da1cbe5c8a4bdbfbd9ea69": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs": {
+      "calls": {
+        "call:CreateClient:c13d6545a26a13bd9b9c99dc": 1,
+        "call:SendAsync:03da1cbe5c8a4bdbfbd9ea69": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/MarketplaceSkillsController.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:GetAsync:ea11472f8ee24193c9b5b40d": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/ModelsController.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:GetAsync:ca1494d05f767fa21b642e38": 1
+      },
+      "purpose": "供应商models目录只读查询与配置核验；实际生成走统一网关"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/PlatformsController.cs": {
+      "calls": {
+        "call:CreateClient:c13d6545a26a13bd9b9c99dc": 1,
+        "call:GetAsync:ca1494d05f767fa21b642e38": 1
+      },
+      "purpose": "供应商models目录只读查询与配置核验；实际生成走统一网关"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/StorageSyncController.cs": {
+      "calls": {
+        "call:CreateClient:83a9ad4640a406a3480ac751": 2,
+        "call:GetAsync:55eadb2be0958a5b3ddcd133": 2
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/StreamAsrTestController.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:GetByteArrayAsync:b95f78b5ee2d1b339287c517": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/TechDocFormatAgentController.cs": {
+      "calls": {
+        "call:CreateClient:93a4857c3cc9689991141dde": 1,
+        "call:GetAsync:033bc1099874b039d193dbe0": 1,
+        "call:GetAsync:42749c7c9c6e6c92b969ea3e": 1,
+        "call:GetAsync:a68df8f60c8d878e622048aa": 1,
+        "call:GetAsync:e4937086cac59b914cd0bc7d": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/VideoAgentController.cs": {
+      "calls": {
+        "call:CreateClient:b35a0daaa75c77fb3d7a0723": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/VideoDownloadController.cs": {
+      "calls": {
+        "call:CreateClient:b35a0daaa75c77fb3d7a0723": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:GetAsync:7ca8a10f2741caeb050bd3ae": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/Api/WorkflowAgentController.cs": {
+      "calls": {
+        "call:CreateClient:c3dbeb32338105b6c2256b11": 1,
+        "call:SendAsync:11b2d514619c251abd0151be": 3
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/DiagnosticsController.cs": {
+      "calls": {
+        "call:ConnectAsync:e9a6aebe3f273c36a34baa74": 2,
+        "call:CreateClient:86be3be12ce50e82474c5315": 2,
+        "call:GetAsync:0ccdd398807e66ec8f29bec6": 1,
+        "call:GetAsync:968da4ad70b31c06c045252b": 1,
+        "new:TcpClient:edac88419cf48464e7bc278a": 2
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/McpGatewayController.cs": {
+      "calls": {
+        "call:CreateClient:b3fc135c027a270e262559da": 1,
+        "call:SendAsync:b645a48f8f22a082cbb84f3f": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/MiduoPlanetSsoController.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 1,
+        "call:SendAsync:11b2d514619c251abd0151be": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Controllers/ShortcutsController.cs": {
+      "calls": {
+        "new:ProcessStartInfo:c0a3df2a00cbc1bdd26863d3": 1,
+        "static:Process.Start:28798614b60ba466184a7833": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝；保留既有系统 shortcuts sign 签名 CLI，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Program.cs": {
+      "calls": {
+        "new:HttpClientHandler:7bea2d90c3b06fea1ad75704": 1,
+        "new:SocketsHttpHandler:0a19d9f99aa8623e7c16a558": 1,
+        "new:SocketsHttpHandler:d00295f24a464f73b6417fea": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/AdminPushNotificationService.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 1,
+        "call:SendAsync:ec6b61d9aeb369b7789c2ed7": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ArenaRunWorker.cs": {
+      "calls": {
+        "call:CreateClient:499f3ccee209ab00560cb1b2": 1,
+        "call:GetByteArrayAsync:ace998515564f9404d4bad56": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/AssetStorageReadinessProbe.cs": {
+      "calls": {
+        "call:CreateClient:9996f7e492ebe63cc3f8d2bb": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs": {
+      "calls": {
+        "call:CreateClient:007bf574b64ef30dbfccf6fc": 1,
+        "call:CreateClient:355242b0cace4c3cdbb5268d": 1,
+        "call:CreateClient:637a4a39555a3beffc9d654b": 2,
+        "call:CreateClient:c3dbeb32338105b6c2256b11": 12,
+        "call:GetAsync:3cdd03f8994d0ce67f1785e7": 1,
+        "call:GetAsync:9a6d2065c882d5d4b43f5fcb": 3,
+        "call:GetAsync:9c4130db876eeb03b3f17cc3": 2,
+        "call:GetAsync:f10f486d847966642d98c3e2": 1,
+        "call:GetAsync:fdda1dddcd5525a65e863859": 1,
+        "call:GetStringAsync:5a6b56efc2f96425d25aaaf9": 1,
+        "call:GetStringAsync:89c71ef67b0ab23009956efb": 1,
+        "call:PostAsync:a10f568be567235d82983db9": 2,
+        "call:PostAsync:ca6e83b18439974406d4123c": 1,
+        "call:PostAsync:f1c22b3b3f289cec384e8359": 1,
+        "call:PutAsync:8f1dd84eead1f363aa2158e3": 1,
+        "call:SendAsync:da50051f364d81673860bc86": 4,
+        "new:Process:1aec02a084c4917c85fbe0ff": 1,
+        "new:ProcessStartInfo:6875f63548c75f2d8e582896": 1,
+        "new:ProcessStartInfo:a8abc686d4906a7eb8b33129": 2,
+        "new:ProcessStartInfo:b39a3eca5152fc8e0d893688": 1,
+        "static:Process.Start:3915dda288e3a36eee5d9956": 1,
+        "static:Process.Start:94e9a735f0b575204178362e": 2
+      },
+      "purpose": "既有工作流HTTP集成/视频下载及远程运行工具；LLM能力走网关，工厂出口阻止模型协议直连；保留既有 ffmpeg/ffprobe 媒体处理，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Services/CdsReportImportService.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:SendAsync:11b2d514619c251abd0151be": 1,
+        "call:SendAsync:d5fb003543027d8b39aedb4d": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ContentReprocessProcessor.cs": {
+      "calls": {
+        "call:CreateClient:51b9f7946caafcf76a42048c": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/DataSync/DataSyncRunWorker.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 2,
+        "call:GetAsync:83cf4a217e4d1efce59e07da": 1,
+        "call:SendAsync:b1e01451f6a1150fcbe007a2": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/DesktopUpdateAccelerator.cs": {
+      "calls": {
+        "call:CreateClient:77adf38926908006409526a5": 2,
+        "call:GetAsync:13b3cde5df4f406af6663496": 1,
+        "call:GetAsync:83cf4a217e4d1efce59e07da": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/DocumentStoreLiveTranscriptionRelay.cs": {
+      "calls": {
+        "call:SendAsync:39c9a364ff0837621ba3e313": 1,
+        "call:SendAsync:42ef26674319143356f31416": 1,
+        "call:SendAsync:d8c40b7501479a22c8aa3bcc": 1,
+        "new:ClientWebSocket:36bd3392c05703dedc118869": 1
+      },
+      "purpose": "实时转写 WebSocket：同一平台 authorizer 核验 HTTP 握手后仅携带可信许可头到服务网关"
+    },
+    "prd-api/src/PrdAgent.Api/Services/DocumentSyncWorker.cs": {
+      "calls": {
+        "call:CreateClient:d491fcc2b6b7ad6e03ff314a": 1,
+        "call:SendAsync:b1e01451f6a1150fcbe007a2": 1,
+        "call:SendAsync:f8b969af5ff4b43ac722da87": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/GitHubDirectorySyncService.cs": {
+      "calls": {
+        "call:GetStringAsync:4c17ac644ecada49871b84f1": 1,
+        "call:SendAsync:c3ab8828cd34112fd4c4a251": 5,
+        "target-new:HttpClient:322584c0561c7d77cace338a": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/HomepageAssetCopier.cs": {
+      "calls": {
+        "call:CreateClient:28975e7027e2c53611eb0259": 1,
+        "call:GetAsync:3a0088a3e8e889e9a5330f24": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ImageGenRunWorker.cs": {
+      "calls": {
+        "call:GetAsync:1986b11908619f8f8ac9a989": 1,
+        "new:HttpClient:0747f2e320376550ac7be4bb": 1
+      },
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ModelLeaderboard/ArenaLeaderboardFetcher.cs": {
+      "calls": {
+        "call:GetAsync:b6d42cb4f9fee6fb793eb2bb": 1,
+        "call:SendAsync:fb81492e0969d7d0e50988a6": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ModelLeaderboard/ModelLeaderboardSyncService.cs": {
+      "calls": {
+        "call:CreateClient:2fdfccefe2092ffbdfae312d": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/OpenDesignServiceArtifactExecutor.cs": {
+      "calls": {
+        "call:CreateClient:3052ddbc8eb0d0a47c730678": 1
+      },
+      "purpose": "既有受限sidecar或远程执行合同；不得用于新供应商绕过，运行许可由专用合同校验"
+    },
+    "prd-api/src/PrdAgent.Api/Services/PeerSync/PeerSyncTransferService.cs": {
+      "calls": {
+        "call:CreateClient:84815a312d0eaebc157871c8": 1,
+        "call:SendAsync:17cfc18951c937ec9ca6dd7c": 1,
+        "call:SendAsync:ec801ed3cff02ad94d47b32c": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ReportAgent/GitHubConnector.cs": {
+      "calls": {
+        "call:SendAsync:c3ab8828cd34112fd4c4a251": 2,
+        "target-new:HttpClient:322584c0561c7d77cace338a": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ReportAgent/PersonalSourceConnectors.cs": {
+      "calls": {
+        "call:SendAsync:c3ab8828cd34112fd4c4a251": 7,
+        "target-new:HttpClient:322584c0561c7d77cace338a": 2
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ReportAgent/ReportWebhookService.cs": {
+      "calls": {
+        "call:CreateClient:6bf501969deaa2c436d4debb": 2,
+        "call:PostAsync:bfb4fe525f8ab3c14815d899": 2
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ReportAgent/SvnConnector.cs": {
+      "calls": {
+        "new:ProcessStartInfo:2d208da8cebfb2be1fd81ded": 1,
+        "static:Process.Start:28798614b60ba466184a7833": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝；保留既有 SVN CLI 仓库读取，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Services/ReviewAgent/ReviewWebhookService.cs": {
+      "calls": {
+        "call:CreateClient:6bf501969deaa2c436d4debb": 3,
+        "call:PostAsync:bfb4fe525f8ab3c14815d899": 2
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/SubtitleGenerationProcessor.cs": {
+      "calls": {
+        "call:CreateClient:2f49a348ed136a0a861a7364": 1,
+        "call:CreateClient:50bab46787d9a24a149ed021": 1,
+        "call:CreateClient:9c9b9ea020e6a772c10d1f58": 1,
+        "call:GetByteArrayAsync:a816e12c869887e63d5424f1": 1,
+        "new:ProcessStartInfo:a8abc686d4906a7eb8b33129": 1,
+        "static:Process.Start:94e9a735f0b575204178362e": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝；保留既有 ffmpeg 音频规范化，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Services/TapdBugAgentService.cs": {
+      "calls": {
+        "call:CreateClient:c06280707dcbc5a5cbe7d15b": 1,
+        "call:SendAsync:e8bae929fe91578ccc8d31ea": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Api/Services/TranscriptRunWorker.cs": {
+      "calls": {
+        "call:GetByteArrayAsync:edb65691516ea17ea6540653": 1,
+        "new:HttpClient:99839896e3197278b819511e": 1,
+        "new:ProcessStartInfo:a8abc686d4906a7eb8b33129": 1,
+        "new:ProcessStartInfo:caafac2f44a1464e0592add3": 1,
+        "static:Process.Start:b44a7614327fe135f4ef7e66": 2
+      },
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求；保留既有 ffprobe 检查与 ffmpeg 音频规范化，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Services/VideoFastStartOptimizer.cs": {
+      "calls": {
+        "new:ProcessStartInfo:11f4fae89856137dfaeb5099": 1,
+        "static:Process.Start:910bc708027ce74b617027a5": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝；保留既有 ffmpeg 视频 faststart 处理，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs": {
+      "calls": {
+        "call:CreateClient:499f3ccee209ab00560cb1b2": 1,
+        "call:GetAsync:86376031f0bf4c159c203ba7": 1,
+        "new:HttpClient:9246b599c4afd0b454dbeea5": 1,
+        "new:HttpClientHandler:118800402633b3772fd33858": 1,
+        "new:ProcessStartInfo:11f4fae89856137dfaeb5099": 1,
+        "new:ProcessStartInfo:ebed41c4f4dc125ef9169622": 1,
+        "static:Process.Start:910bc708027ce74b617027a5": 2
+      },
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求；保留既有 ffmpeg/ffprobe 媒体处理，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Api/Services/VideoToDocRunWorker.cs": {
+      "calls": {
+        "call:GetAsync:3e8f343354eaa6b7203b2249": 1,
+        "new:HttpClient:702788ef6685537d0222f4cf": 1,
+        "new:ProcessStartInfo:159398b39bccf68b3ae66ebd": 1,
+        "new:ProcessStartInfo:6f65c9d1b9abd45c25d0c0dd": 1,
+        "static:Process.Start:28798614b60ba466184a7833": 2
+      },
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求；保留既有 ffmpeg/ffprobe 媒体处理，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/GitHub/GitHubOAuthService.cs": {
+      "calls": {
+        "call:CreateClient:93a4857c3cc9689991141dde": 4,
+        "call:SendAsync:11b2d514619c251abd0151be": 4
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/GitHub/GitHubPrClient.cs": {
+      "calls": {
+        "call:CreateClient:93a4857c3cc9689991141dde": 1,
+        "call:GetAsync:4281091194f75c1af71f9d9b": 1,
+        "call:GetAsync:bfe9b8712b32e6dcd3e5f57f": 8,
+        "call:GetAsync:fbd4754faf1b73eea7823a71": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/GitHub/GitHubUserConnectionService.cs": {
+      "calls": {
+        "call:CreateClient:93a4857c3cc9689991141dde": 1,
+        "call:GetAsync:033bc1099874b039d193dbe0": 1,
+        "call:GetAsync:5e1768809d86f761c98fadb2": 1,
+        "call:GetAsync:872dddf6b8143162e729b678": 1,
+        "call:GetAsync:9b1fb1ce4cd69429d6307cfb": 1,
+        "call:GetAsync:a414a9c98e81befcacdcfb8a": 1,
+        "call:GetAsync:bfe9b8712b32e6dcd3e5f57f": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LLM/ClaudeClient.cs": {
+      "calls": {
+        "call:SendAsync:951d0bf26a658823bb7aeac6": 1
+      },
+      "purpose": "网关serving复用的既有供应商发送源；MAP未注册底层客户端，工厂出口禁止直接付费模型协议"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LLM/HttpLoggingHandler.cs": {
+      "calls": {
+        "call:SendAsync:93159831ea63f242b2c5f74c": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIClient.cs": {
+      "calls": {
+        "call:SendAsync:951d0bf26a658823bb7aeac6": 1
+      },
+      "purpose": "网关serving复用的既有供应商发送源；MAP未注册底层客户端，工厂出口禁止直接付费模型协议"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs": {
+      "calls": {
+        "call:CreateClient:c13d6545a26a13bd9b9c99dc": 2,
+        "call:SendAsync:178184654e641e0343e96a01": 2
+      },
+      "purpose": "既有图片URL/附件下载；Generate入口只调用统一ILlmGateway"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LlmGateway/Asr/DoubaoStreamAsrService.cs": {
+      "calls": {
+        "call:ConnectAsync:8e60750c4511c6d2eb6e7a62": 2,
+        "call:ConnectAsync:9df1f41827e900f4c8dd18b2": 1,
+        "call:SendAsync:1067fb7b7ee4cb00860d2e9d": 1,
+        "call:SendAsync:1421228745a492c9eb431d35": 1,
+        "call:SendAsync:1454859d44303654c3075406": 1,
+        "call:SendAsync:1c80b438df4e261a373197f2": 1,
+        "call:SendAsync:2ba566fe790359ff4f72196b": 1,
+        "call:SendAsync:4b3bf183de1432f5c4b3551a": 1,
+        "call:SendAsync:71f4c1f0ff8542a4e8df6179": 1,
+        "call:SendAsync:c776c93e1aa98712a926e37b": 1,
+        "new:ClientWebSocket:36bd3392c05703dedc118869": 2,
+        "new:ClientWebSocket:dd7e2055959419ea01832018": 1,
+        "new:ProcessStartInfo:20f45ee679d31ef328f59831": 1,
+        "static:Process.Start:94e9a735f0b575204178362e": 1
+      },
+      "purpose": "网关serving复用的既有供应商发送源；MAP未注册底层客户端，工厂出口禁止直接付费模型协议；保留既有 ffmpeg 音频格式转换，新子进程用途须单独审计，进程网络仍需部署层隔离"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmClient.cs": {
+      "calls": {
+        "call:CreateClient:c938026b58555fe381e97e2d": 1,
+        "call:SendAsync:ec08a616080d79014df6f784": 1
+      },
+      "purpose": "阶段1统一许可运输与出口检查；新增调用仍按指纹逐项审计"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LlmGateway/HttpLlmGatewayClient.cs": {
+      "calls": {
+        "call:CreateClient:c938026b58555fe381e97e2d": 1,
+        "call:SendAsync:0acaa6f6bc66265d3a12b02d": 5,
+        "call:SendAsync:61bcb25a64091747dedd4fb9": 1,
+        "call:SendAsync:8aea20a08718131c60a92a55": 1,
+        "call:SendAsync:8b667a56508c2f3c23488ed4": 1,
+        "call:SendAsync:8bd167e89e1530d68e0fb552": 1
+      },
+      "purpose": "阶段1统一许可运输与出口检查；新增调用仍按指纹逐项审计"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 1,
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "new:DoubaoStreamAsrService:dab59fb88a9ab46474ead984": 1,
+        "new:GatewayLLMClient:80375ead04f1ba6a2bf35bcb": 1
+      },
+      "purpose": "网关 serving 复用的统一发送源及既有 GatewayLLMClient 构造；授权叶子拦截无许可执行，新增运输逐调用审计"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/ModelPool/HttpPoolDispatcher.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 2,
+        "call:SendAsync:00072abd2e95055dfb6b37a0": 1,
+        "call:SendAsync:3636994b832bfd8a95a4a444": 1
+      },
+      "purpose": "网关serving复用的既有供应商发送源；MAP未注册底层客户端，工厂出口禁止直接付费模型协议"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Security/MapModelEgressGuard.cs": {
+      "calls": {
+        "call:SendAsync:524228522121b05225e7ff6a": 1,
+        "call:SendAsync:777ee246723036b42848cc4b": 1
+      },
+      "purpose": "阶段1统一许可运输与出口检查；新增调用仍按指纹逐项审计"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/AgentWorkspace.cs": {
+      "calls": {
+        "new:Process:3db1df5ddbc650a5c96ea93e": 2,
+        "new:ProcessStartInfo:d5a14a022c92b6ff6e21b6f8": 1,
+        "new:ProcessStartInfo:f394883fc94b94f93163ca8f": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/Tools/CdsBridgeTools.cs": {
+      "calls": {
+        "call:SendAsync:fd7bc5ae7e17c656ba0dc20e": 1,
+        "target-new:HttpClient:322584c0561c7d77cace338a": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/AgentTools/Tools/RepoCreatePullRequestTool.cs": {
+      "calls": {
+        "call:SendAsync:0acaa6f6bc66265d3a12b02d": 1,
+        "new:HttpClient:99839896e3197278b819511e": 1,
+        "new:Process:8cd6e51783dead4a4361f8b6": 1,
+        "new:ProcessStartInfo:8c0c4bbdbd96e428add815e4": 1
+      },
+      "purpose": "既有GitHub pull request API与git执行；有限开发工具合同，不用于模型直连"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/AiNewsService.cs": {
+      "calls": {
+        "call:CreateClient:28f094a04891ea3c586edc83": 2,
+        "call:GetAsync:20f0a0bdda499a0d07ce6d21": 1,
+        "call:SendAsync:7c09f67a21ae9dc4ab6c5758": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/AppRegistryService.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 1,
+        "call:PostAsync:9a44fcf13daa7a249f418a62": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs": {
+      "calls": {
+        "call:GetAsync:c401ddc10b4cf1dfc37c7b8b": 1,
+        "call:GetAsync:c81d530430af854484631c95": 1,
+        "new:HttpClient:5f67dc24b6a1f7539b647025": 2
+      },
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/Authorization/TapdAuthHandler.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:SendAsync:11b2d514619c251abd0151be": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/Authorization/YuqueAuthHandler.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:SendAsync:11b2d514619c251abd0151be": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/Automation/WebhookActionExecutor.cs": {
+      "calls": {
+        "call:CreateClient:ee09099eaffa777720fcdce9": 1,
+        "call:SendAsync:5b2721df52c9c6b0ad1bbcaf": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/Changelog/ChangelogReader.cs": {
+      "calls": {
+        "call:CreateClient:93a4857c3cc9689991141dde": 1,
+        "call:SendAsync:9f591cb7d718979daa29a5b3": 6,
+        "new:Process:e04db0719f695c43d8943086": 2,
+        "new:ProcessStartInfo:bd87ba6424b40662710cc7b3": 1,
+        "new:ProcessStartInfo:f59d5eeee236981eea975c53": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarHealthChecker.cs": {
+      "calls": {
+        "call:CreateClient:b5ffca81efe3d70cb7edf8c4": 1,
+        "call:GetAsync:c81d530430af854484631c95": 1
+      },
+      "purpose": "既有受限sidecar或远程执行合同；不得用于新供应商绕过，运行许可由专用合同校验"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/ClaudeSidecarRouter.cs": {
+      "calls": {
+        "call:CreateClient:b8a90d00944332c9a1b450fd": 3,
+        "call:SendAsync:03da1cbe5c8a4bdbfbd9ea69": 1,
+        "call:SendAsync:1c5efcf4d6cf0e725ba99f49": 1,
+        "call:SendAsync:cbb02b7c202143719c9dc39c": 1
+      },
+      "purpose": "侧车运行唯一发送口必调任务短凭据 issuer；有限既有运行/取消/诊断合同，不下发供应商长期凭据"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/ClaudeSidecar/DynamicSidecarRegistry.cs": {
+      "calls": {
+        "call:CreateClient:b8a90d00944332c9a1b450fd": 2,
+        "call:GetAsync:c81d530430af854484631c95": 1
+      },
+      "purpose": "既有受限sidecar或远程执行合同；不得用于新供应商绕过，运行许可由专用合同校验"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/DefectWebhookService.cs": {
+      "calls": {
+        "call:CreateClient:6bf501969deaa2c436d4debb": 1,
+        "call:PostAsync:bfb4fe525f8ab3c14815d899": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/Email/ClassifyEmailHandler.cs": {
+      "calls": {
+        "call:CreateClient:cfb44f8de96f5c748ae803a0": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/Email/TodoEmailHandler.cs": {
+      "calls": {
+        "call:CreateClient:e92cb0318e8d700a44aeae4a": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs": {
+      "calls": {
+        "call:SendAsync:fb81492e0969d7d0e50988a6": 1
+      },
+      "purpose": "既有受限sidecar或远程执行合同；不得用于新供应商绕过，运行许可由专用合同校验"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/InfraConnections/InfraConnectionService.cs": {
+      "calls": {
+        "call:CreateClient:c09fae0660642c353df8e232": 4,
+        "call:PostAsJsonAsync:fe1c216345563fdbecfb8f9a": 2,
+        "call:SendAsync:11b2d514619c251abd0151be": 2
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/OpenRouterVideoClient.cs": {
+      "calls": {
+        "call:CreateClient:f449004b194e96f3b26300af": 1,
+        "call:SendAsync:5af454ba0879dfc265a3204d": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/ProjectRouteAgent/GitRepoCacheService.cs": {
+      "calls": {
+        "new:Process:3db1df5ddbc650a5c96ea93e": 1,
+        "new:ProcessStartInfo:118a7533d02d903e09a4bce1": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundHttpHandlerFactory.cs": {
+      "calls": {
+        "new:Socket:24335da45e7ef64864319a84": 1,
+        "new:SocketsHttpHandler:79647f7904af83a2f548cb40": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundWebSocketConnector.cs": {
+      "calls": {
+        "call:ConnectAsync:4646f14edb405479b65e9066": 1,
+        "call:ConnectAsync:bdd885682aa782c4b79945af": 1,
+        "new:HttpMessageInvoker:d1d185af380df5ba5c6c7ba4": 1,
+        "new:Socket:24335da45e7ef64864319a84": 1,
+        "new:SocketsHttpHandler:fdb2f565957e593a9baddb29": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/SiteContentSnapshotService.cs": {
+      "calls": {
+        "call:CreateClient:86be3be12ce50e82474c5315": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/WatermarkFontRegistry.cs": {
+      "calls": {
+        "call:GetByteArrayAsync:81020be4292589cb1aa15f4f": 1,
+        "new:HttpClient:95470b5907bd68c0a51e124b": 1
+      },
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/WatermarkRenderer.cs": {
+      "calls": {
+        "call:CreateClient:ca4959a4edf7d258c3ac29e8": 1,
+        "call:GetAsync:3967662df28a04540b273ad6": 1
+      },
+      "purpose": "既有附件/供应商已生成文件/字体下载或对象存储；不提交模型生成请求"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Services/WebhookNotificationService.cs": {
+      "calls": {
+        "call:CreateClient:ee09099eaffa777720fcdce9": 1,
+        "call:SendAsync:5b2721df52c9c6b0ad1bbcaf": 1
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    },
+    "prd-api/src/PrdAgent.Infrastructure/Sync/Resources/DocumentStoreSyncResource.cs": {
+      "calls": {
+        "call:CreateClient:84815a312d0eaebc157871c8": 2,
+        "call:GetAsync:766ac21c5f2969a173668008": 2
+      },
+      "purpose": "既有非模型出站集成/读取与网络工厂调用；新增或改变调用须重新审计，模型协议由统一出口拒绝"
+    }
+  },
+  "packages": {
+    "llmgw/serving/PrdAgent.LlmGateway.csproj": [
+      "Microsoft.Extensions.Caching.Memory",
+      "Microsoft.Extensions.Hosting.Abstractions",
+      "Microsoft.Extensions.Http",
+      "Microsoft.Extensions.Logging.Abstractions",
+      "MongoDB.Driver",
+      "Polly",
+      "Polly.Extensions.Http"
+    ],
+    "prd-api/src/PrdAgent.Api/PrdAgent.Api.csproj": [
+      "Jint",
+      "Microsoft.AspNetCore.Authentication.JwtBearer",
+      "Microsoft.AspNetCore.DataProtection.Extensions",
+      "Serilog.AspNetCore",
+      "Serilog.Sinks.Console",
+      "Serilog.Sinks.File",
+      "SixLabors.Fonts",
+      "SixLabors.ImageSharp",
+      "SixLabors.ImageSharp.Drawing",
+      "Swashbuckle.AspNetCore"
+    ],
+    "prd-api/src/PrdAgent.Core/PrdAgent.Core.csproj": [
+      "BCrypt.Net-Next",
+      "MongoDB.Bson",
+      "System.IdentityModel.Tokens.Jwt"
+    ],
+    "prd-api/src/PrdAgent.Infrastructure/PrdAgent.Infrastructure.csproj": [
+      "AWSSDK.S3",
+      "DocumentFormat.OpenXml",
+      "ExcelDataReader",
+      "MailKit",
+      "Markdig",
+      "Microsoft.Extensions.Caching.Memory",
+      "Microsoft.Extensions.Hosting.Abstractions",
+      "Microsoft.Extensions.Http",
+      "Microsoft.Extensions.Logging.Abstractions",
+      "MongoDB.Driver",
+      "PdfPig",
+      "Polly",
+      "Polly.Extensions.Http",
+      "SixLabors.Fonts",
+      "SixLabors.ImageSharp",
+      "SixLabors.ImageSharp.Drawing",
+      "StackExchange.Redis",
+      "Tencent.QCloud.Cos.Sdk"
+    ],
+    "prd-api/src/globtest/globtest.csproj": [
+      "Microsoft.Extensions.FileSystemGlobbing"
+    ]
+  }
+}

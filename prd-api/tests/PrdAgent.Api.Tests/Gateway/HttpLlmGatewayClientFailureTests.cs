@@ -29,19 +29,19 @@ public class HttpLlmGatewayClientFailureTests
     }
 
     [Fact]
-    public async Task AutomaticOrigin_OnlyFollowsGrantedExecutionFlow_AndUserCallRemainsUnmarked()
+    public async Task LegacyAutomaticScope_CannotOverrideVerifiedTaskIdentity()
     {
         var factory = new RecordingHttpClientFactory();
         var client = BuildClient(factory);
         using (PrdAgent.Infrastructure.Security.AutomaticTaskExecutionContext.Enter("authorized-deployment"))
         {
             await client.SendAsync(Request());
-            factory.ExecutionOrigin.ShouldBe("automatic");
-            factory.SourceDeployment.ShouldBe("authorized-deployment");
+            factory.ExecutionOrigin.ShouldBe("interactive");
+            factory.SourceDeployment.ShouldBe("transport-test-deployment");
         }
         await client.SendAsync(Request());
-        factory.ExecutionOrigin.ShouldBeNull();
-        factory.SourceDeployment.ShouldBeNull();
+        factory.ExecutionOrigin.ShouldBe("interactive");
+        factory.SourceDeployment.ShouldBe("transport-test-deployment");
     }
 
     [Fact]
@@ -234,7 +234,7 @@ public class HttpLlmGatewayClientFailureTests
             factory,
             config,
             NullLogger<HttpLlmGatewayClient>.Instance,
-            failoverNotifier: failoverNotifier);
+            failoverNotifier: failoverNotifier, taskAuthorizer: TransportTestTaskAuthorizer.Instance);
     }
 
     private static GatewayRequest Request() => new()

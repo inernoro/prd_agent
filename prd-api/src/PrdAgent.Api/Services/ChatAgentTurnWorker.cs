@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Collections.Concurrent;
 using PrdAgent.Core.Interfaces;
 
@@ -37,6 +38,8 @@ public sealed class ChatAgentTurnWorker : BackgroundService
             {
                 try
                 {
+                    using var taskExecutionScope = TaskExecutionContext.Enter(job.TaskPermitId == null
+                        ? null : new TaskExecutionIdentity(job.TaskPermitId, job.TurnId));
                     using var scope = _scopeFactory.CreateScope();
                     var chat = scope.ServiceProvider.GetRequiredService<IChatAgentService>();
                     await chat.RunTurnAsync(job.SessionId, job.TurnId, stoppingToken);

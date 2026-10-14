@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using MongoDB.Driver;
@@ -116,6 +117,8 @@ public class TranscriptRunWorker : BackgroundService
         var run = await db.TranscriptRuns.FindOneAndUpdateAsync(filter, update, options);
 
         if (run == null) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
 
         _currentRunId = run.Id;
         _logger.LogInformation("[transcript-agent] Processing run {RunId}, type={Type}", run.Id, run.Type);

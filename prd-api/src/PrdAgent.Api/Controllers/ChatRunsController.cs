@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
@@ -206,6 +207,7 @@ public class ChatRunsController : ControllerBase
         // run meta：Queued
         var meta = new RunMeta
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             RunId = runId,
             Kind = RunKinds.Chat,
             Status = RunStatuses.Queued,

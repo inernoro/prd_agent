@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -96,8 +97,13 @@ public sealed class WorkflowScheduleWorker : BackgroundService
             foreach (var kv in schedule.VariableOverrides) variables[kv.Key] = kv.Value;
         }
 
+        using var admissionScope = _scopeFactory.CreateScope();
+        using var admittedTask = PrdAgent.Core.Security.TaskExecutionContext.Enter(await admissionScope.ServiceProvider
+            .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+            .AdmitScheduledTaskAsync(nameof(WorkflowScheduleWorker), schedule.Id, schedule.CreatedBy, CancellationToken.None));
         var execution = new WorkflowExecution
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             WorkflowId = workflow.Id,
             WorkflowName = workflow.Name,
             TriggerType = schedule.Mode == "cron" ? WorkflowTriggerTypes.Cron : "scheduled-once",

@@ -116,6 +116,9 @@ public class ReportAutoGenerateWorker : BackgroundService
 
                     try
                     {
+                        using var admittedTask = PrdAgent.Core.Security.TaskExecutionContext.Enter(await scope.ServiceProvider
+                            .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                            .AdmitScheduledTaskAsync(nameof(ReportAutoGenerateWorker), $"{member.UserId}:{team.Id}:{weekYear}:{weekNumber}", member.UserId, CancellationToken.None));
                         await generationService.GenerateAsync(
                             member.UserId, team.Id, templateId,
                             weekYear, weekNumber, CancellationToken.None);

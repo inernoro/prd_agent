@@ -476,6 +476,11 @@ public class WebPageAskController : ControllerBase
             return;
         }
 
+        using var admittedShare = viewerUserId is null
+            ? PrdAgent.Core.Security.TaskExecutionContext.Enter(await HttpContext.RequestServices
+                .GetRequiredService<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>()
+                .AdmitVerifiedIntegrationAsync(HttpContext, site.OwnerUserId, $"site-share:{resolved.Share!.Id}", CancellationToken.None))
+            : null;
         await RunAskAsync(site, req, viewerUserId, shareToken: token);
     }
 

@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -152,6 +153,7 @@ public sealed class ChatAgentService : IChatAgentService
 
         var userMessage = new ChatAgentMessage
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             SessionId = sessionId,
             TurnId = turnId,
             Role = ChatAgentRoles.User,
@@ -163,6 +165,7 @@ public sealed class ChatAgentService : IChatAgentService
         };
         var assistantMessage = new ChatAgentMessage
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             SessionId = sessionId,
             TurnId = turnId,
             Role = ChatAgentRoles.Assistant,
@@ -202,7 +205,7 @@ public sealed class ChatAgentService : IChatAgentService
             cancellationToken: CancellationToken.None);
 
         // 入队后立刻返回：这一轮的生命周期与 HTTP 请求解绑，客户端断开不取消它。
-        await _queue.EnqueueAsync(new ChatAgentTurnJob(sessionId, turnId), CancellationToken.None);
+        await _queue.EnqueueAsync(new ChatAgentTurnJob(sessionId, turnId) { TaskPermitId = userMessage.TaskPermitId }, CancellationToken.None);
 
         return new ChatAgentTurnAccepted(turnId, userMessage.Id, assistantMessage.Id, seq);
     }
@@ -222,12 +225,18 @@ public sealed class ChatAgentService : IChatAgentService
             return;
         }
 
+        var turn = await _db.ChatAgentMessages.Find(message => message.SessionId == sessionId
+            && message.TurnId == turnId && message.Role == ChatAgentRoles.User).FirstOrDefaultAsync(ct);
+        using var taskExecutionScope = TaskExecutionContext.Enter(turn?.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(turn.TaskPermitId, turnId));
+
         var opts = _options.CurrentValue;
         var history = await BuildHistoryAsync(sessionId, turnId, opts.HistoryLimit, ct);
 
         var request = new SidecarRunRequest
         {
             RunId = turnId,
+            SubjectUserId = session.UserId,
             Model = string.IsNullOrWhiteSpace(session.Model) ? opts.Model : session.Model!,
             SystemPrompt = opts.SystemPrompt,
             Messages = history,
@@ -458,6 +467,9 @@ public sealed class ChatAgentService : IChatAgentService
 
         var opts = _options.CurrentValue;
         var runId = Guid.NewGuid().ToString("N");
+        var taskIdentity = TaskExecutionContext.Current;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskIdentity == null
+            ? null : new TaskExecutionIdentity(taskIdentity.PermitId, runId));
 
         var messages = new List<SidecarChatMessage>();
         foreach (var item in request.History ?? Array.Empty<ChatAgentOneOffMessage>())
@@ -481,6 +493,7 @@ public sealed class ChatAgentService : IChatAgentService
         var sidecarRequest = new SidecarRunRequest
         {
             RunId = runId,
+            SubjectUserId = request.UserId,
             Model = opts.Model,
             SystemPrompt = systemPrompt,
             Messages = messages,

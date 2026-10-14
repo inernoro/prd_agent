@@ -199,7 +199,7 @@ public sealed class DesignArtifactRuntimeServedModelTests
             new FixedResponseFactory(upstreamBody, upstreamMediaType),
             configuration,
             NullLogger<DesignArtifactRuntimeController>.Instance,
-            events.Object)
+            events.Object, taskAuthorizer: PrdAgent.Api.Tests.Gateway.TransportTestTaskAuthorizer.Instance)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
         };

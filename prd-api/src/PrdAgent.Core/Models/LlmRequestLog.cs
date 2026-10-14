@@ -89,6 +89,14 @@ public class LlmRequestLog
     public string? GroupId { get; set; }
     public string? SessionId { get; set; }
     public string? RunId { get; set; }
+    /// <summary>来自网关核验后的任务事实，不存储许可密钥或用户输入。</summary>
+    public string? TaskPermitId { get; set; }
+    public string? ExecutionOrigin { get; set; }
+    public string? TriggerCredentialId { get; set; }
+    public string? TriggerActorUserId { get; set; }
+    public string? SourceDeployment { get; set; }
+    public string? SourceTask { get; set; }
+
     /// <summary>一次用户动作或异步任务的稳定关联 ID；同一任务的 submit/status/download 共用。</summary>
     public string? LogicalRequestId { get; set; }
     /// <summary>供应商异步任务 ID；与每次 HTTP 往返的 ProviderRequestId 分开。</summary>

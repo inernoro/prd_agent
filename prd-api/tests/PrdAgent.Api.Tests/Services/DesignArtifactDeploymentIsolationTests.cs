@@ -1,3 +1,4 @@
+using PrdAgent.Infrastructure.Security;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -713,7 +714,26 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         }).Build();
         var environment = new Mock<IHostEnvironment>();
         environment.SetupGet(item => item.EnvironmentName).Returns("Production");
-        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object);
+        run.TaskPermitId = Guid.NewGuid().ToString("N");
+        var permit = new GatewayTaskPermitRecord
+        {
+            Id = run.TaskPermitId,
+            TenantId = GatewayTenantDefaults.InternalTenantId,
+            ActorUserId = run.UserId,
+            TriggerCredentialId = "synthetic-session",
+            Origin = TaskExecutionOrigins.Interactive,
+            SourceDeployment = TaskPermitDeployment.Resolve(configuration),
+            SourceTask = "design-grant-fixture",
+            AllowedAppCallerCodes = [AppCallerRegistry.Admin.WebHosting.GenerateHtml],
+            MaxCalls = 256,
+            MaxRuns = 1,
+            CreatedAt = Now.AddMinutes(-1),
+            ExpiresAt = Now.AddMinutes(15),
+        };
+        await _gateway.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+            .InsertOneAsync(permit);
+        var authorizer = new TaskExecutionAuthorizer(_gateway, configuration);
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object, authorizer);
 
         var issued = await service.IssueAsync(run, Now.AddMinutes(15), default);
         var stored = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
@@ -725,6 +745,12 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal("http://gateway/gw/v1", issued.BaseUrl);
         Assert.Equal("default-chat-curated", issued.Model);
         Assert.Equal("pool-chat-premium", stored.ModelPoolId);
+        Assert.Equal(run.TaskPermitId, stored.TaskPermitId);
+        Assert.Equal(256, stored.MaxCalls);
+        var admitted = await _gateway.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
+            .Find(item => item.Id == permit.Id).SingleAsync();
+        Assert.Equal([run.Id], admitted.BoundRunIds);
+        Assert.Equal(0, admitted.CallCount);
         Assert.Equal(AppCallerRegistry.Admin.WebHosting.GenerateHtml, issued.AppCallerCode);
         Assert.Equal(expectedHash, stored.KeyHash);
         Assert.Equal(expectedHash[..12], stored.KeyPrefix);
@@ -743,6 +769,10 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.True(authorization.Allowed);
         Assert.Equal(run.Id, authorization.RuntimeGrant?.RunId);
         Assert.Equal(run.UserId, authorization.RuntimeGrant?.UserId);
+
+        var reservation = await new GatewayRuntimeGrantCallCounter(_gateway)
+            .TryReserveAsync(authorization.RuntimeGrant!, default);
+        Assert.True(reservation.Allowed);
 
         var usage = await service.ObserveAsync(issued.Id, run, default);
         Assert.Equal(1, usage.CallCount);

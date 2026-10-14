@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text.Json;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
@@ -138,6 +139,9 @@ public class ToolboxRunWorker : BackgroundService
             _logger.LogWarning("Run 不存在: {RunId}", runId);
             return;
         }
+
+        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
+            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
 
         // 更新状态为运行中
         run.Status = ToolboxRunStatus.Running;

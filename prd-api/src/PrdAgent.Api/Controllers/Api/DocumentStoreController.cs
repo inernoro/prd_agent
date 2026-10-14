@@ -1867,6 +1867,7 @@ public class DocumentStoreController : ControllerBase
 
         var session = new DocumentRecordingUploadSession
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             StoreId = storeId,
             UserId = userId,
             OwnerInstanceId = InstanceIdentity.Get(_config),
@@ -2800,6 +2801,7 @@ public class DocumentStoreController : ControllerBase
                  && s.CompletionLeaseId == completionLeaseId,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                .Set(s => s.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                 .Set(s => s.EntryId, entry.Id)
                 .Set(
                     s => s.DeferredTranscriptionRunPending,
@@ -3240,6 +3242,7 @@ public class DocumentStoreController : ControllerBase
                  && s.CompletionLeaseId == completionLeaseId,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                .Set(s => s.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                 .Set(s => s.EntryId, entryId)
                 .Set(
                     s => s.DeferredTranscriptionRunPending,
@@ -5783,6 +5786,7 @@ public class DocumentStoreController : ControllerBase
             CancellationToken.None);
         var run = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Kind = DocumentStoreAgentRunKind.Transcribe,
             SourceEntryId = prior.SourceEntryId,
             StoreId = prior.StoreId,
@@ -5949,6 +5953,7 @@ public class DocumentStoreController : ControllerBase
         // 代码/已下线实例的 run（那正是定向消费要根治的「被别人消费」原 bug 的反向版本）。
         var run = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Kind = kind,
             SourceEntryId = entryId,
             StoreId = store.Id,
@@ -6108,6 +6113,7 @@ public class DocumentStoreController : ControllerBase
         {
             run = new DocumentStoreAgentRun
             {
+                TaskPermitId = TaskExecutionContext.Current?.PermitId,
                 Kind = DocumentStoreAgentRunKind.Reprocess,
                 SourceEntryId = entryId,
                 StoreId = store!.Id,
@@ -6153,6 +6159,7 @@ public class DocumentStoreController : ControllerBase
                     && r.Messages.Count == prevSeq,
                 Builders<DocumentStoreAgentRun>.Update
                     .Push(r => r.Messages, userMsg)
+                    .Set(r => r.TaskPermitId, TaskExecutionContext.Current == null ? null : TaskExecutionContext.Current.PermitId)
                     .Set(r => r.Status, DocumentStoreRunStatus.Queued)
                     // 重新排队时把归属改成当前实例：这条 Done 的 run 可能由 main 或别的分支创建，
                     // 共享 Mongo 下若不改主，本实例（定向消费）会因 owner 不匹配而忽略它，
@@ -6173,6 +6180,7 @@ public class DocumentStoreController : ControllerBase
             // 同步内存里的 run.Status，否则下面 return 时仍然返回旧的 "done"，
             // 客户端会误以为任务已经完成（Bugbot #1 三轮 Medium）
             run.Status = DocumentStoreRunStatus.Queued;
+            run.TaskPermitId = TaskExecutionContext.Current?.PermitId;
         }
 
         // 给 SSE 端推一条 userMessage 事件方便前端镜像（不影响处理流程）
@@ -6337,6 +6345,7 @@ public class DocumentStoreController : ControllerBase
         // 复用 ApplyService 内部逻辑：构造一个临时 Run+Message 喂给它，避免重复实现写盘细节
         var tmpRun = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Id = Guid.NewGuid().ToString("N"),
             Kind = DocumentStoreAgentRunKind.Reprocess,
             SourceEntryId = entryId,
@@ -6538,6 +6547,7 @@ public class DocumentStoreController : ControllerBase
         // (3) 新建归属本实例的 run
         var run = new DocumentStoreAgentRun
         {
+            TaskPermitId = TaskExecutionContext.Current?.PermitId,
             Kind = DocumentStoreAgentRunKind.AutoLink,
             SourceEntryId = string.Empty, // 库级任务
             StoreId = store!.Id,
