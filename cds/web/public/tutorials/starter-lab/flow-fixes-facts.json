@@ -1,0 +1,155 @@
+{
+  "checkedAt": "2026-10-13T07:34:05.598794+00:00",
+  "scope": "本案例四项体验修正，含重启后命名卷保留与跨项目入口修复",
+  "verdict": "pass",
+  "cdsProductCommit": "4d2689ef712c28fc729282126766133e5007b6e4",
+  "projectId": "8e3b69770497",
+  "branchId": "small-steps-closure-main",
+  "previewUrl": "https://main-small-steps-closure.miduo.org",
+  "previewSource": "cdscli preview-url / GET /api/branches",
+  "authorization": {
+    "projectId": "c6b1b78ef4d0",
+    "credentialMode": "0600",
+    "bootstrapCredentialAbsent": true,
+    "gitIgnored": true,
+    "credentialUnchanged": true,
+    "assertions": [
+      {
+        "assertion": "新进程静默复用",
+        "passed": true
+      },
+      {
+        "assertion": "新进程静默复用",
+        "passed": true
+      },
+      {
+        "assertion": "拒绝访问另一个演练项目",
+        "passed": true,
+        "httpStatus": 403
+      },
+      {
+        "assertion": "拒绝项目凭据再次创建项目",
+        "passed": true,
+        "httpStatus": 403
+      }
+    ],
+    "requestId": "0550ee0bebb7",
+    "actor": "用户确认具体申请后，Agent 代点批准一次建项目",
+    "receiptVisible": true,
+    "correctProjectLinkVerified": true,
+    "oldProjectDrawerCleared": true,
+    "timedOutRequestRejected": "f5db6726f044"
+  },
+  "failedCandidate": {
+    "id": "small-steps-closure-main",
+    "status": "running",
+    "runningCommitSha": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
+    "targetCommitSha": "3a686b841801b08fdf3a254a78c23958ea294a69",
+    "ciImageStatus": "failed",
+    "ciTargetSha": "3a686b841801b08fdf3a254a78c23958ea294a69",
+    "currentVersionId": "dv_13cb23f211634fa5e9610d86",
+    "lastDeploymentRunId": "dr_51a1e575aed2a69661e30352",
+    "previewUrl": "https://main-small-steps-closure.miduo.org",
+    "publicHealthy": true,
+    "taskCount": 2,
+    "actualImages": {
+      "web-small-steps-closure": "ghcr.io/inernoro/cds-small-steps-closure-lab:sha-83dfdf3a1d4c45353e29af204e300d9b773274ed"
+    },
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38356815757",
+    "imageJobSkipped": true,
+    "oldRunningImageUnchanged": true,
+    "deploymentVersionUnchanged": true,
+    "noNewDeploymentRun": true,
+    "provenance": "preview-live + integration-live"
+  },
+  "recoveredCandidate": {
+    "id": "small-steps-closure-main",
+    "status": "running",
+    "runningCommitSha": "5d00e9cb68cca68c7e110fd5a49f86376b4053b9",
+    "targetCommitSha": "5d00e9cb68cca68c7e110fd5a49f86376b4053b9",
+    "ciImageStatus": "ready",
+    "ciTargetSha": "5d00e9cb68cca68c7e110fd5a49f86376b4053b9",
+    "currentVersionId": "dv_0bdeb5fe794b09920edeaba7",
+    "lastDeploymentRunId": "dr_edd129dba766c5cb94f09987",
+    "previewUrl": "https://main-small-steps-closure.miduo.org",
+    "publicHealthy": true,
+    "taskCount": 1,
+    "actualImages": {
+      "web-small-steps-closure": "ghcr.io/inernoro/cds-small-steps-closure-lab:sha-5d00e9cb68cca68c7e110fd5a49f86376b4053b9"
+    }
+  },
+  "recoveryCi": {
+    "conclusion": "success",
+    "status": "completed",
+    "url": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38357137636"
+  },
+  "dataIncident": {
+    "firstDDeployDidNotShowOldTasks": true,
+    "cause": "旧版控制面重启把 Docker 命名卷误改为另一个缓存目录",
+    "originalVolumeFoundWithOldTasks": true,
+    "newTaskMergedById": true,
+    "recoveredTaskCount": 3,
+    "afterProcessRestartVolume": {
+      "kind": "volume",
+      "hostPath": "cds-small-steps-closure-data",
+      "containerPath": "/data"
+    },
+    "newProcessStartedAt": "2026-10-13T07:15:16.039Z",
+    "legacyIncorrectPathsAutoMigrated": false
+  },
+  "rollback": {
+    "id": "small-steps-closure-main",
+    "status": "running",
+    "runningCommitSha": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
+    "targetCommitSha": "5d00e9cb68cca68c7e110fd5a49f86376b4053b9",
+    "ciImageStatus": "ready",
+    "ciTargetSha": "5d00e9cb68cca68c7e110fd5a49f86376b4053b9",
+    "currentVersionId": "dv_13cb23f211634fa5e9610d86",
+    "lastDeploymentRunId": "dr_ba3d2519f2c1cb575088a103",
+    "previewUrl": "https://main-small-steps-closure.miduo.org",
+    "publicHealthy": true,
+    "taskCount": 3,
+    "actualImages": {
+      "web-small-steps-closure": "ghcr.io/inernoro/cds-small-steps-closure-lab:sha-83dfdf3a1d4c45353e29af204e300d9b773274ed"
+    },
+    "passed": true,
+    "allThreeTaskIdsAndCompletionStatesPreserved": true,
+    "runningAWhileTargetD": true,
+    "afterProcessRestart": true,
+    "provenance": "preview-live + integration-live"
+  },
+  "automaticRefresh": {
+    "drawerFactsVersionsAndHistory": true,
+    "manualDrawerRefreshClicked": false,
+    "disconnectedListFallbackVerified": true,
+    "fallbackIntervalSeconds": 15
+  },
+  "tests": {
+    "passed": 9022,
+    "skipped": 19,
+    "command": "pnpm --dir cds test --maxWorkers=1 --minWorkers=1 --retry=1",
+    "firstUnretriedRunsHadTransientLocalHttpErrors": true,
+    "isolatedRetestsPassed": true,
+    "backendTypecheck": true,
+    "webTypecheck": true,
+    "webBuild": true,
+    "lint": "已有占位脚本，不能算实际 ESLint 校验"
+  },
+  "video": {
+    "path": "media/flow-fixes-walkthrough.mp4",
+    "sha256": "0197f49a4792761526cb2d42cdf83ea4296534ec534be6d86a81cf2fc5276622",
+    "seconds": 135.72,
+    "segments": 24,
+    "frames": 4265,
+    "bytes": 1544881,
+    "kind": "真实浏览器帧按发生顺序剪去等待，无音轨"
+  },
+  "limits": [
+    "已有登录态，不覆盖账号开通及丢失凭据恢复",
+    "单服务单分支兼容数据格式；不覆盖破坏性数据库迁移",
+    "旧版错误绝对路径需逐项目核对恢复，没有全局自动迁移",
+    "共享公开练习区，无用户隔离",
+    "跨页面收起回执与 CLI 超时状态同步仍是后续体验建议"
+  ],
+  "reportUrl": "https://cds.miduo.org/reports?project=8e3b69770497&folder=00a096d2f0a44af1af109f2991dcd8fc&report=eb238b03eeb9446dbacde3f03019d234"
+}

@@ -938,9 +938,11 @@ export class ContainerService {
 
     if (profile.cacheMounts) {
       for (const cm of profile.cacheMounts) {
-        const mkdir = await this.shell.exec(`mkdir -p ${this.shellQuote(cm.hostPath)}`);
-        if (mkdir.exitCode !== 0) {
-          throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
+        if (cm.kind !== 'volume') {
+          const mkdir = await this.shell.exec(`mkdir -p ${this.shellQuote(cm.hostPath)}`);
+          if (mkdir.exitCode !== 0) {
+            throw new Error(`创建缓存目录失败: ${cm.hostPath}: ${combinedOutput(mkdir)}`);
+          }
         }
         volumeFlags.push(`-v ${this.shellQuote(cm.hostPath)}:${this.shellQuote(cm.containerPath)}`);
       }
