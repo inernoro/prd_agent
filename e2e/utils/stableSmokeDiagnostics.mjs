@@ -19,8 +19,12 @@ const sensitiveValueNames = [
   'privateKey',
   'signingPrivateKey',
   'aiAccessKey',
+  'apiKey',
+  'api_key',
+  'api-key',
   'ticket',
 ];
+const sensitivePropertyNames = new Set([...sensitiveHeaderNames, ...sensitiveValueNames].map((name) => name.toLowerCase()));
 const textArtifactExtensions = new Set(['.json', '.md', '.txt', '.log', '.xml', '.trx']);
 
 function escapeRegExp(value) {
@@ -53,7 +57,7 @@ export function redactStableSmokeDiagnosticText(value) {
   );
   const valuePattern = sensitiveValueNames.map(escapeRegExp).join('|');
   output = output.replace(
-    new RegExp(`(["'](?:${valuePattern})["']\\s*:\\s*)(["'])((?:\\\\.|(?!\\2)[^\\\\\\r\\n])*)\\2`, 'gi'),
+    new RegExp(`(["']?(?:${valuePattern})["']?\\s*[:=]\\s*)(["'])((?:\\\\.|(?!\\2)[^\\\\\\r\\n])*)\\2`, 'gi'),
     `$1$2${redacted}$2`,
   );
   output = output.replace(
@@ -74,16 +78,26 @@ export function redactStableSmokeDiagnosticText(value) {
 }
 
 function redactMutable(value, seen = new WeakSet()) {
-  if (!value || typeof value !== 'object' || seen.has(value)) return;
+  if (!value || typeof value !== 'object' || seen.has(value)) return false;
   seen.add(value);
+  let changed = false;
   for (const key of Object.keys(value)) {
     try {
-      if (typeof value[key] === 'string') value[key] = redactStableSmokeDiagnosticText(value[key]);
-      else redactMutable(value[key], seen);
+      if (typeof value[key] === 'string') {
+        const original = value[key];
+        const sanitized = sensitivePropertyNames.has(key.toLowerCase()) ? redacted : redactStableSmokeDiagnosticText(original);
+        if (original !== sanitized) {
+          value[key] = sanitized;
+          changed = true;
+        }
+      } else {
+        changed = redactMutable(value[key], seen) || changed;
+      }
     } catch {
       // Playwright 未来若把某个诊断字段改为只读，继续清理其余可写字段。
     }
   }
+  return changed;
 }
 
 export function sanitizeStableSmokeTestInfo(testInfo) {
@@ -153,7 +167,18 @@ export function sanitizeStableSmokeArtifactFile(path) {
     return { scanned: 0, changed: 0 };
   }
   const original = readFileSync(path, 'utf8');
-  const sanitized = redactStableSmokeDiagnosticText(original);
+  let sanitized = original;
+  if (extname(path).toLowerCase() === '.json') {
+    try {
+      // reporter 会再次转义 message 里的 JSON；先按实际结构脱敏，再处理文本。
+      // 没有变化时保留原格式，重复扫描不会制造无意义的产物改写。
+      const data = JSON.parse(original);
+      if (redactMutable(data)) sanitized = `${JSON.stringify(data, null, 2)}\n`;
+    } catch {
+      // 截断的诊断 JSON 仍走已有文本兜底，不因解析失败漏掉可识别凭据。
+    }
+  }
+  sanitized = redactStableSmokeDiagnosticText(sanitized);
   if (sanitized === original) return { scanned: 1, changed: 0 };
   writeFileSync(path, sanitized, 'utf8');
   return { scanned: 1, changed: 1 };
