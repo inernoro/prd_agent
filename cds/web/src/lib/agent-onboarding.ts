@@ -264,7 +264,7 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
   // 让它在两条命令之间等模型自己接力，就多了一次「少跑一步即不可逆」的机会。
   // --create-project 把「建项目 + 换成项目级钥匙 + 回读自证」压进同一个进程。
   const authorizationRequest = target.kind === 'new'
-    ? `仅在第二步未通过时运行 cli/cdscli.py connect --host ${cdsOrigin} --new-project --create-project <项目名称> --agent <当前 Agent 名称>。这一条命令会在批准后自动创建项目并把一次性授权换成项目级授权，不要拆成两步、也不要自己保存任何密钥。`
+    ? `仅在第二步未通过时运行 cli/cdscli.py connect --host ${cdsOrigin} --new-project --create-project <项目名称> --agent <当前 Agent 名称>。这一条命令会在批准后自动创建项目并把一次性授权换成项目级授权，Agent 自动带上当前 origin 仓库，审批绑定项目名称和该仓库。再次运行同一口令会复用或恢复原项目，不重复建项目；不要拆成两步、也不要自己保存任何密钥。`
     : connectArgs
     ? `仅在第二步未通过时运行 cli/cdscli.py connect --host ${cdsOrigin} ${connectArgs} --agent <当前 Agent 名称>。`
     : '当前没有真实项目身份，不运行 connect --project，也不生成占位项目命令。需要系统级写权限时，引导用户先在 CDS 页面完成管理员登录。';

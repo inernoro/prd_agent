@@ -24,6 +24,7 @@ import type { StateService } from '../services/state.js';
 import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { resolveUserCredential } from './identity.js';
+import { bootstrapTarget } from '../services/bootstrap-target.js';
 import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
 import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
 
@@ -66,6 +67,9 @@ function extractPollToken(req: import('express').Request): string {
 /** Strip the authorization-key plaintext + poll-token hash before returning to operator UI. */
 function publicView(r: AccessRequest): Omit<AccessRequest, 'issuedKeyPlaintext' | 'pollTokenHash'> {
   const { issuedKeyPlaintext: _k, pollTokenHash: _t, ...rest } = r;
+  if (r.kind === 'bootstrap' && r.status === 'pending' && bootstrapTarget(r.requestedProject)) {
+    return { ...rest, targetBound: true };
+  }
   return rest;
 }
 
@@ -80,25 +84,6 @@ function presentedKey(req: { headers: Record<string, unknown> }): string {
   const auth = req.headers['authorization'];
   if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7).trim();
   return '';
-}
-
-/** Only display a repository location: credentials, query tokens and fragments never enter the inbox. */
-function requestedProjectView(value: unknown): AccessRequest['requestedProject'] {
-  if (!value || typeof value !== 'object') return undefined;
-  const input = value as { name?: unknown; repository?: unknown };
-  if (typeof input.name !== 'string' || !input.name.trim()) return undefined;
-  let repository: string | undefined;
-  if (typeof input.repository === 'string') {
-    const raw = input.repository.trim();
-    try {
-      const url = new URL(raw);
-      if (['https:', 'http:', 'ssh:'].includes(url.protocol)) repository = `${url.host}${url.pathname}`.slice(0, 500);
-    } catch {
-      const scp = /^git@([a-zA-Z0-9.-]+):([a-zA-Z0-9_./-]+)$/.exec(raw);
-      if (scp) repository = `${scp[1]}/${scp[2]}`.slice(0, 500);
-    }
-  }
-  return { name: input.name.trim().slice(0, 100), ...(repository ? { repository } : {}) };
 }
 
 export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Router {
@@ -172,11 +157,17 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       ? body.agentName.trim().slice(0, 100) : 'AI Agent';
     const purpose = typeof body.purpose === 'string' && body.purpose.trim()
       ? body.purpose.trim().slice(0, 500) : '申请一次性创建新项目权限。';
+    const target = bootstrapTarget(body.requestedProject);
+    if (!target) {
+      res.status(400).json({ error: 'bootstrap_target_required', message: '请让 Agent 自动读取项目名称和 Git 仓库，再提交接入申请；不需要复制密钥。' });
+      return;
+    }
     const pollToken = randomBytes(24).toString('base64url');
     const item: AccessRequest = {
       id: newRequestId(),
       kind: 'bootstrap',
-      requestedProject: requestedProjectView(body.requestedProject),
+      requestedProject: target,
+      targetBound: true,
       projectId: BOOTSTRAP_PROJECT_ID,
       pollTokenHash: sha256(pollToken),
       agentName,
@@ -276,7 +267,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (!requireHumanOperator(req, res)) return;
     const decidedCount = stateService.listAccessRequests().filter((r) => r.status !== 'pending').length;
     if (decidedCount > 20) stateService.pruneAccessRequests(AUDIT_RETENTION_MS);
-    const list = stateService.listAccessRequests().map(publicView);
+    const list = stateService.listAccessRequests().map((item) => ({
+      ...publicView(item),
+      ...(item.kind !== 'bootstrap' ? { projectName: stateService.getProject(item.projectId)?.name } : {}),
+    }));
     res.json({ requests: list, pendingCount: list.filter((r) => r.status === 'pending').length });
   });
 
@@ -329,6 +323,11 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     // bootstrap 申请签发一次性 create-only cdsg_；项目申请签发全权项目 cdsp_。
     const now = new Date();
     if (item.kind === 'bootstrap') {
+      const target = bootstrapTarget(item.requestedProject);
+      if (!target) {
+        res.status(409).json({ error: 'bootstrap_target_required', message: '这条旧申请未绑定仓库，请让 Agent 更新接入技能并重新申请。' });
+        return;
+      }
       const plaintext = `cdsg_${randomBytes(32).toString('base64url')}`;
       const keyId = randomBytes(4).toString('hex');
       const decidedBy = decider(req);
@@ -339,6 +338,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         scope: 'rw',
         access: { canCreateProjects: true, projects: [] },
         oneTime: true,
+        creationTarget: target,
         createdAt: now.toISOString(),
         createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
       };
@@ -347,6 +347,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         stateService.updateAccessRequest(item.id, {
           status: 'approved',
           creationReceiptEnabled: true,
+          targetBound: true,
           decidedAt: now.toISOString(),
           decidedBy,
           issuedKeyId: keyId,

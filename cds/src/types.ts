@@ -4296,8 +4296,10 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
-  /** Agent 申报的建项目目标，仅供审批核对，不改变一次建项目的权限范围。 */
+  /** Agent 申报的建项目目标；新审批按规范化仓库和名称绑定一次建项目权限。 */
   requestedProject?: { name: string; repository?: string };
+  /** 服务端已验证并将审批限制到目标；旧记录缺省不作绑定声明。 */
+  targetBound?: boolean;
   /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
   createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
@@ -4478,6 +4480,8 @@ export interface GlobalAgentKey {
   access?: AgentKeyAccess;
   /** 一次性 bootstrap 授权：成功创建首个项目后自动吊销。 */
   oneTime?: boolean;
+  /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
+  creationTarget?: { name: string; repository: string };
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */
