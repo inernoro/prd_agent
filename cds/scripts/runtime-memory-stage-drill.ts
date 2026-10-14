@@ -31,7 +31,7 @@ const report: any = { owner, sourceHead: execFileSync('git', ['rev-parse', 'HEAD
 function docker(args: string[], timeout = 30000): string {
   return execFileSync('docker', args, { encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
-function inspect(id: string): any { return JSON.parse(docker(['inspect', id]))[0]; }
+function inspect(id: string): any { return JSON.parse(docker(['inspect', '--type', 'container', id]))[0]; }
 function owned(id: string): any {
   const view = inspect(id); assert.equal(view.Config.Labels['cds.acceptance.owner'], owner);
   assert.ok(names.includes(view.Name.slice(1))); assert.equal(view.HostConfig.Memory, 134217728);
