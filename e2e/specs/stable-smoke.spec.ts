@@ -4417,9 +4417,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIDEO-005] 活动视频任务取消后费用和产物停止增长并可回读', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[VIDEO-005] 活动视频取消后追踪上游终态与最终费用并可回读', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动取消计费视频任务');
-    test.setTimeout(180_000);
+    test.setTimeout(420_000);
     const token = await loginAndReadToken(page, request, '/video-agent');
     const models = await readEnvelope<Array<{
       id: string;
@@ -4460,6 +4460,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         directVideoJobId?: string;
         errorMessage?: string;
         directVideoCost?: number;
+        directVideoUpstreamStatus?: string;
+        directVideoReconciledAt?: string;
         videoAssetUrl?: string;
         scenes: Array<{ cost?: number; videoUrl?: string; versions?: Array<{ id: string }> }>;
       };
@@ -4490,19 +4492,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
         );
         return cancelled.status;
-      }, { message: '取消后任务必须进入可回读终态', timeout: 60_000, intervals: [1_000, 2_000] }).toBe('Cancelled');
+      }, { message: '必须等到供应商任务结束并完成费用回读，不能以本地冻结冒充取消', timeout: 300_000, intervals: [2_000, 5_000] }).toBe('Cancelled');
+      expect(cancelled.directVideoJobId).toBe(beforeCancel.directVideoJobId);
+      expect(cancelled.directVideoUpstreamStatus).toMatch(/^(completed|failed|cancelled|expired)$/);
+      expect(cancelled.directVideoReconciledAt, '取消终态必须带有上游终态回读时间').toBeTruthy();
       const cancelledArtifacts = cancelled.scenes.reduce((count, scene) => count + (scene.videoUrl ? 1 : 0) + (scene.versions?.length ?? 0), cancelled.videoAssetUrl ? 1 : 0);
-      const cancelledCost = (cancelled.directVideoCost ?? 0) + cancelled.scenes.reduce((sum, scene) => sum + (scene.cost ?? 0), 0);
+      const cancelledCost = cancelled.directVideoCost;
 
       await new Promise((resolveWait) => setTimeout(resolveWait, 10_000));
       const afterCancel = await readEnvelope<CancellableVideoRun>(
         await page.request.get(`/api/video-agent/runs/${encodeURIComponent(runId)}`, { headers: authHeaders(token) }),
       );
       const afterArtifacts = afterCancel.scenes.reduce((count, scene) => count + (scene.videoUrl ? 1 : 0) + (scene.versions?.length ?? 0), afterCancel.videoAssetUrl ? 1 : 0);
-      const afterCost = (afterCancel.directVideoCost ?? 0) + afterCancel.scenes.reduce((sum, scene) => sum + (scene.cost ?? 0), 0);
+      const afterCost = afterCancel.directVideoCost;
       expect(afterCancel.status).toBe('Cancelled');
+      expect(afterCancel.directVideoUpstreamStatus).toBe(cancelled.directVideoUpstreamStatus);
+      expect(afterCancel.directVideoReconciledAt).toBe(cancelled.directVideoReconciledAt);
       expect(afterArtifacts, '取消进入终态后不得新增视频产物或生成版本').toBe(cancelledArtifacts);
-      expect(afterCost, '取消进入终态后不得继续增加已记录费用').toBe(cancelledCost);
+      expect(afterCost, '已从上游回读的最终费用必须稳定；未知费用不能伪造为零').toBe(cancelledCost);
     } finally {
       if (runId) {
         const cleanup = await page.request.delete(`/api/video-agent/runs/${encodeURIComponent(runId)}?deleteEmptyProject=true`, { headers: authHeaders(token) });

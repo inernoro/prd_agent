@@ -98,6 +98,8 @@ const PHASE_LABELS: Record<string, string> = {
   'export-uploading': '正在上传成片',
   'export-failed': '导出失败，可修改后重试',
   completed: '成片已就绪',
+  'videogen-reconciling': '已停止后续生成，正在核对当前视频费用',
+  cancelled: '已取消',
 };
 
 export const getStoryboardExperienceState = (
