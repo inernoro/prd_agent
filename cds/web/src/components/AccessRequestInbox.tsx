@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { KeyRound, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -23,6 +23,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
+import { readDismissedReceipts, writeDismissedReceipt, receiptBelongsOnPage, receiptProjectId, RECEIPT_DISMISS_EVENT } from '@/lib/onboarding-receipts';
 
 interface AccessRequest {
   id: string;
@@ -63,11 +64,27 @@ export function AccessRequestInbox({
   placement?: 'inline' | 'floating';
 } = {}): JSX.Element | null {
   const events = useCdsEvents();
+  const location = useLocation();
   const [pending, setPending] = useState<AccessRequest[]>([]);
   const [receipts, setReceipts] = useState<AccessRequest[]>([]);
-  const [dismissed, setDismissed] = useState<string[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>(() => readDismissedReceipts());
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    const syncDismissal = (event: Event): void => {
+      const id = (event as CustomEvent<unknown>).detail;
+      if (typeof id === 'string') setDismissed((previous) => [...new Set([...previous, id])].slice(-50));
+    };
+    window.addEventListener(RECEIPT_DISMISS_EVENT, syncDismissal);
+    return () => window.removeEventListener(RECEIPT_DISMISS_EVENT, syncDismissal);
+  }, []);
+
+  const dismissReceipt = (id: string): void => {
+    writeDismissedReceipt(id);
+    setDismissed((previous) => [...new Set([...previous, id])].slice(-50));
+    window.dispatchEvent(new CustomEvent(RECEIPT_DISMISS_EVENT, { detail: id }));
+  };
 
   const refresh = useCallback(async () => {
     try {
@@ -121,7 +138,9 @@ export function AccessRequestInbox({
     onCountChange?.(count);
   }, [count, onCountChange]);
 
-  const receipt = receipts.find((item) => !dismissed.includes(item.id));
+  const pageProjectId = receiptProjectId(location);
+  const receipt = receipts.find((item) => !dismissed.includes(item.id)
+    && receiptBelongsOnPage(item, pageProjectId, placement));
   if (count === 0 && !receipt) return null;
   const primary = pending[0];
   const primaryBusy = primary && busy === primary.id;
@@ -133,6 +152,7 @@ export function AccessRequestInbox({
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold">{receipt.createdProject ? '项目已创建，授权已收敛' : receipt.deliveredAt ? 'Agent 已领取授权，等待创建结果' : '已批准，等待 Agent 领取授权'}</h2>
           <p className="mt-1 text-xs text-muted-foreground">{receipt.agentName}</p>
+          {receipt.createdProject ? <p className="mt-2 text-xs font-medium">回执所属项目：{receipt.createdProject.name}</p> : null}
           <RequestTarget request={receipt} />
           {receipt.createdProject ? (
             <>
@@ -142,7 +162,7 @@ export function AccessRequestInbox({
           ) : (
             <p className="mt-2 text-xs text-muted-foreground">创建成功后会在这里显示实际项目入口。若长时间未完成，请让 Agent 检查执行结果并继续，无需重复批准。</p>
           )}
-          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setDismissed((previous) => [...previous, receipt.id])}>收起回执</Button>
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => dismissReceipt(receipt.id)}>收起回执</Button>
         </div>
       </div>
     </section>

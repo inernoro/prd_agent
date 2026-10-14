@@ -1,3 +1,4 @@
+import { identityLabel, type AlarmIdentity } from './alarm-identity.js';
 import { renderAlarmMessage } from './alarm-route.js';
 /**
  * map-notifier — 把存活监控的状态翻转送进 MAP 站内通知。
@@ -39,12 +40,14 @@ export interface MapNotifierConfig {
 }
 
 export interface MapNotifierAlert {
+  identity?: AlarmIdentity;
   type: 'uptime.target.down' | 'uptime.target.recovered';
   targetId: string;
   targetName: string;
   projectId?: string;
   branchId?: string;
   probeUrl?: string;
+  boardUrl?: string;
   message: string;
   consecutiveFailures: number;
   detectedAt: string;
@@ -117,12 +120,12 @@ export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificati
 
   return {
     source: 'uptime-alert',
-    title: metricMessage?.title ?? title,
-    message: metricMessage?.body ?? lines.join('\n'),
+    title: metricMessage?.title ?? (alert.identity ? `[${identityLabel(alert.identity.subject)}] ${title}` : title),
+    message: metricMessage?.body ?? [alert.identity ? `检查方：${identityLabel(alert.identity.observer)}\n故障对象：${identityLabel(alert.identity.subject)}` : '', ...lines].filter(Boolean).join('\n'),
     level: down ? (metricMessage ? 'warning' : 'error') : 'info',
     section: 'admin',
-    dedupKey: `uptime:${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
-    ...(alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),
+    dedupKey: `uptime:${alert.identity ? `${alert.identity.observer.id}:${alert.identity.subject.id}:` : ''}${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
+    ...(alert.boardUrl ? { actionLabel: '查看问题与处理建议', actionUrl: alert.boardUrl } : alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),
   };
 }
 

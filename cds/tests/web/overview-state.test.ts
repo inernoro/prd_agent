@@ -233,8 +233,8 @@ describe('未知运行版本与已知差异的总览接线', () => {
   }));
   it('源码运行号未知时不谎报尚未发布，已知不同或检查等待仍展示待发布', () => {
     expect(render()).toContain('运行版本未确认');
-    expect(render()).not.toContain('新版本尚未发布');
-    expect(render('a'.repeat(40))).toContain('新版本尚未发布');
-    expect(render(undefined, 'waiting')).toContain('新版本尚未发布');
+    expect(render()).not.toContain('请核对目标的检查与部署记录');
+    expect(render('a'.repeat(40))).toContain('请核对目标的检查与部署记录');
+    expect(render(undefined, 'waiting')).toContain('请核对目标的检查与部署记录');
   });
 });
