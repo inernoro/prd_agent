@@ -22,6 +22,7 @@ assert.equal(os.platform(), 'linux');
 assert.match(process.env.GITHUB_RUN_ID || '', /^\d+$/);
 const owner = `cds-memory-${randomBytes(8).toString('hex')}`;
 const names: string[] = [], networks: string[] = [];
+const ownedIds = new Set<string>();
 const output = path.resolve('runtime-memory-output'); await fs.mkdir(output, { recursive: true });
 const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-memory-'));
 const report: any = { owner, sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -39,7 +40,7 @@ function owned(id: string): any {
 const shell = new ShellExecutor(); let transportFault = false;
 const checkedShell: IShellExecutor = { exec: async (command, options) => {
   // ContainerService commands may use names or CIDs. All references must be from this fixture set.
-  for (const token of command.match(/\b[a-f0-9]{64}\b/g) || []) owned(token);
+  for (const token of command.match(/\b[a-f0-9]{64}\b/g) || []) assert.ok(ownedIds.has(token));
   assert.ok(command.startsWith('docker '));
   return shell.exec(transportFault ? command.replace(/^docker /, `docker --host unix://${temp}/absent.sock `) : command, options);
 } };
@@ -67,7 +68,8 @@ async function launch(runtime: ServiceState, version: string, mode: 'ready' | 'e
     '--label', 'cds.profile.id=api', '--memory', '128m', '--cpus', '.25', '--pids-limit', '64',
     '-p', `127.0.0.1:${runtime.hostPort}:3000`, '-e', `FIXTURE_VERSION=${version}`, 'node:22-alpine', 'node', '-e', program]);
   runtime.creationIssued = true; runtime.sourceCommitSha = version;
-  owned(runtime.containerId); deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 512, { branchId: owner });
+  owned(runtime.containerId); ownedIds.add(runtime.containerId);
+  deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 512, { branchId: owner });
 }
 async function request(runtime: ServiceState, expected?: string): Promise<boolean> {
   try { const r = await fetch(`http://127.0.0.1:${runtime.hostPort}`, { signal: AbortSignal.timeout(1000) });
@@ -90,7 +92,7 @@ function candidate(): ServiceState {
 }
 async function publish(candidateService: ServiceState): Promise<void> {
   const old = entry.services.api.servingRuntime!;
-  Object.assign(entry.services.api, candidateService, { servingRuntime: old, pendingRuntime: runtimeRef(candidateService) });
+  Object.assign(entry.services.api, runtimeRef(candidateService), candidateService, { servingRuntime: old, pendingRuntime: runtimeRef(candidateService) });
   await commitServiceReplacements({ entry, profileIds: ['api'], state, container });
 }
 try {
@@ -100,6 +102,10 @@ try {
   await launch(old, 'old'); await ready(old, 'old'); const originalId = old.containerId!;
   old.servingRuntime = runtimeRef(old); entry.services.api = old;
   await served('old');
+  const staleIdentity = candidate();
+  Object.assign(staleIdentity, { containerId: originalId, creationIssued: true, status: 'error' });
+  await publish(staleIdentity); await served('old'); assert.equal(owned(originalId).State.Running, true);
+  report.checks.push({ case: 'stale-candidate-cid', confirmedServingCidProtected: true, actualOldHttpVersion: 'old' });
   const absent = candidate();
   assert.throws(() => docker(['create', '--pull=never', '--name', absent.containerName, `${owner}:missing`]), /Command failed/);
   absent.status = 'error'; absent.creationIssued = false; await publish(absent); await served('old');

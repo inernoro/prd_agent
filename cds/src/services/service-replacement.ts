@@ -107,9 +107,12 @@ export async function abortUnpublishedServiceReplacements(options: {
       && runtime.networkName === entry.replacementNetwork && (runtime.creationIssued || runtime.containerId));
     if (!candidates.length) continue;
     assertCurrent?.('before failed replacement old identity');
-    if (!await container.inspectOwnedRuntime(entry, id, active)) continue;
+    const confirmedActive = await container.inspectOwnedRuntime(entry, id, active);
+    if (!confirmedActive) continue;
     assertCurrent?.('after failed replacement old identity');
     for (const candidate of candidates) {
+      // 名称不同也可能仍携带旧CID；当前实际入口身份绝不能作为失败候选删除。
+      if (candidate.containerId && candidate.containerId === confirmedActive.containerId) continue;
       // 同网段已有发布角色可能仍消费它；没有发布任何角色时才整体撤销候选。
       if (Object.values(entry.services).some(peer => peer !== service
         && servingRuntime(peer)?.networkName === candidate.networkName)) continue;

@@ -132,4 +132,13 @@ describe('就绪切换与保旧回退', () => {
     expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
   });
 
+  it('候选名称不同但携带旧入口实际CID时绝不删除旧资源', async () => {
+    const f = fixture(); f.entry.replacementNetwork = 'new-network';
+    Object.assign(f.service, { status: 'error', creationIssued: true, containerId: f.service.servingRuntime!.containerId });
+    f.container.inspectOwnedRuntime = vi.fn().mockImplementation(async (_entry, _id, runtime) => runtime);
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+  });
+
 });
