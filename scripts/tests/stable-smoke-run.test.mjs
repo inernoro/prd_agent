@@ -441,6 +441,73 @@ test('CDS 权威分支状态在控制面瞬断后有限重试', async () => {
   assert.deepEqual(delays, [5]);
 });
 
+test('CDS 历史部署记录已回收时保留不可变版本证据并继续严格版本门禁', async () => {
+  const branch = await readCdsBranchStatusWithRetries((program, args) => {
+    assert.equal(program, 'python3');
+    if (args.includes('status')) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          data: {
+            id: 'prd-agent-main',
+            status: 'running',
+            commitSha: 'abc123',
+            ciTargetSha: 'abc123',
+            ciImageStatus: 'ready',
+            lastDeployDispatchCommitSha: 'abc123',
+            currentVersionId: 'dv-current',
+            lastDeploymentRunId: 'dr-expired',
+            deployRuntime: { drift: { hasDrift: false } },
+            services: {
+              api: { profileId: 'api', status: 'running', deployedImage: 'registry/api:sha-abc123' },
+            },
+          },
+        }),
+      };
+    }
+    if (args.includes('deployment-run')) {
+      return {
+        status: 2,
+        stdout: JSON.stringify({ ok: false, status: 404, error: '部署运行不存在' }),
+      };
+    }
+    throw new Error(`未预期命令: ${args.join(' ')}`);
+  }, { branchId: 'prd-agent-main', attempts: 1 });
+
+  assert.deepEqual(branch.deploymentRunEvidence, {
+    status: 'expired',
+    deploymentRunId: 'dr-expired',
+    versionId: 'dv-current',
+    reason: '历史部署运行记录已回收，改用分支不可变版本与当前服务镜像做严格一致性校验',
+  });
+  assert.equal(evaluateCdsReadiness(branch, 'abc123').ready, true);
+});
+
+test('CDS 部署记录异常但不是已回收时仍阻断', async () => {
+  await assert.rejects(() => readCdsBranchStatusWithRetries((program, args) => {
+    assert.equal(program, 'python3');
+    if (args.includes('status')) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          data: {
+            id: 'prd-agent-main',
+            currentVersionId: 'dv-current',
+            lastDeploymentRunId: 'dr-broken',
+          },
+        }),
+      };
+    }
+    if (args.includes('deployment-run')) {
+      return {
+        status: 2,
+        stdout: JSON.stringify({ ok: false, status: 503, error: '控制面不可用' }),
+      };
+    }
+    throw new Error(`未预期命令: ${args.join(' ')}`);
+  }, { branchId: 'prd-agent-main', attempts: 1 }), /部署运行状态读取失败/);
+});
+
 test('双环境执行范围按各自矩阵取交集且正式环境不能点名越权用例', () => {
   const plan = {
     requiredCaseIds: ['CORE-001', 'REC-006', 'VIDEO-004'],
