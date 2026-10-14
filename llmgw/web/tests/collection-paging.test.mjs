@@ -1,0 +1,86 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { collectionPage } from '../src/lib/collectionPaging.ts';
+import { groupModelProviders } from '../src/lib/modelProviderGroups.ts';
+
+const names = Array.from({ length: 10000 }, (_, i) => ({ id: `model-${i}`, name: i === 9999 ? '最后一项 SUNBURST' : `模型 ${i}` }));
+const text = (item) => `${item.id} ${item.name}`;
+test('万条模型中的末项能被跨页搜索，大小写与首尾空格不影响匹配', () => {
+  const result = collectionPage(names, ' sunburst ', text, 18, 10);
+  assert.equal(result.total, 1);
+  assert.equal(result.current, 1);
+  assert.equal(result.items[0].id, 'model-9999');
+});
+test('逐页遍历包含每一项，不能截断首十条后丢掉其余模型', () => {
+  const ids = new Set();
+  for (let page = 1; page <= 1000; page++) for (const item of collectionPage(names, '', text, page, 10).items) ids.add(item.id);
+  assert.equal(ids.size, names.length);
+  assert.ok(ids.has('model-9999'));
+});
+test('删除后夹住失效页码，空结果可正常返回而不出现负页码', () => {
+  assert.equal(collectionPage(names.slice(0, 15), '', text, 1000, 10).current, 2);
+  assert.deepEqual(collectionPage([], 'missing', text, 10, 10), { items: [], total: 0, pages: 1, current: 1, start: 0 });
+});
+test('AppCaller数量不决定当前页条数，分页能到达最后一条权限', () => {
+  const codes = Array.from({ length: 262 }, (_, i) => `app-${i}.feature::chat`);
+  assert.equal(collectionPage(codes, '', x => x, 1, 10).items.length, 10);
+  assert.deepEqual(collectionPage(codes, '', x => x, 27, 10).items, codes.slice(260));
+});
+const offering = (id, targetId, targetKind = 'model') => ({ id, targetId, targetKind, providerName: '同名上游', targetName: targetId });
+test('同名Provider以真实platformId分组，多条Offering完整保留', () => {
+  const routes = [offering('a', 'm1'), offering('b', 'm2'), offering('c', 'm3')];
+  const groups = groupModelProviders(routes, [{ id: 'm1', platformId: 'p1' }, { id: 'm2', platformId: 'p1' }, { id: 'm3', platformId: 'p2' }], [{ id: 'p1', name: '同名' }, { id: 'p2', name: '同名' }]);
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].offerings.length, 2);
+  assert.equal(groups[1].platformId, 'p2');
+  assert.deepEqual(groups.flatMap(x => x.offerings), routes);
+});
+test('未解析模型与Exchange不按名字合并，也不会被丢弃', () => {
+  const routes = [offering('a', 'missing1'), offering('b', 'missing2'), offering('c', 'missing1', 'exchange')];
+  const groups = groupModelProviders(routes, [], []);
+  assert.equal(groups.length, 3);
+  assert.deepEqual(groups.flatMap(x => x.offerings), routes);
+  assert.equal(groups[2].targetKind, 'exchange');
+});
+test('万条Offering聚合成两家供应方，但全部线路均可独立检索', () => {
+  const routes = Array.from({ length: 10000 }, (_, i) => offering(`o${i}`, i % 2 ? 'm1' : 'm2'));
+  const groups = groupModelProviders(routes, [{ id: 'm1', platformId: 'p1' }, { id: 'm2', platformId: 'p2' }], []);
+  assert.equal(groups.length, 2);
+  assert.equal(groups.reduce((n, x) => n + x.offerings.length, 0), routes.length);
+  assert.equal(collectionPage(routes, 'o9999', x => x.id, 1, 10).items[0].id, 'o9999');
+});
+
+import { providerForDetail, logicalForDetail, physicalForDetail, traceRouteStatus } from '../src/lib/modelDetailIdentity.ts';
+test('同名Provider详情以ID为准，不能混入另一家的元信息', () => {
+  const providers = [{ id: 'p1', name: '同名' }, { id: 'p2', name: '同名' }];
+  assert.equal(providerForDetail(providers, 'p2', '同名').id, 'p2');
+  assert.equal(providerForDetail(providers, 'missing', '同名'), null);
+});
+test('公开模型入口优先按公开标识定位，不被另一个模型的显示名遮住', () => {
+  const logicals = [{ id: 'a', publicId: 'other', name: 'default-chat' }, { id: 'b', publicId: 'default-chat', name: '对话默认池' }];
+  assert.equal(logicalForDetail(logicals, '', '', 'default-chat').id, 'b');
+  assert.equal(logicalForDetail(logicals, 'missing', '', 'default-chat'), null);
+});
+test('物理模型ID不被同名逻辑模型或另一家供应方覆盖', () => {
+  const models = [{ id: 'm1', modelName: 'same', platformId: 'p1' }, { id: 'm2', modelName: 'same', platformId: 'p2' }];
+  assert.equal(logicalForDetail([{ id: 'l1', publicId: 'same' }], '', 'm2', 'same'), null);
+  assert.deepEqual(physicalForDetail(models, 'm2', 'p2', 'same'), [models[1]]);
+  assert.deepEqual(physicalForDetail(models, '', 'p2', 'same'), [models[1]]);
+});
+test('调用全貌的健康与降级状态可用同一展示值进行检索', () => {
+  const routes = [{ id: 'a', healthStatus: 0 }, { id: 'b', healthStatus: 1, consecutiveFailures: 3 }, { id: 'c', skipReason: '上游已停用' }];
+  assert.equal(collectionPage(routes, '健康', traceRouteStatus, 1, 10).items[0].id, 'a');
+  assert.equal(collectionPage(routes, '降级', traceRouteStatus, 1, 10).items[0].id, 'b');
+  assert.equal(collectionPage(routes, '停用', traceRouteStatus, 1, 10).items[0].id, 'c');
+});
+
+const { offeringParticipationStatus } = await import('../src/lib/modelDetailIdentity.ts');
+test('线路开关启用但上游已停用时，状态必须警告不可参与，不能绿色报启用', () => {
+  const status = offeringParticipationStatus({ enabled: true, skipReason: '上游那个模型被停用了', healthStatus: 0 });
+  assert.equal(status.label, '不可参与');
+  assert.equal(status.tone, 'warning');
+  assert.equal(status.detail, '上游那个模型被停用了');
+  assert.equal(offeringParticipationStatus({ enabled: false, skipReason: null, healthStatus: 0 }).label, '线路停用');
+  assert.equal(offeringParticipationStatus({ enabled: true, skipReason: null, healthStatus: 1, consecutiveFailures: 3 }).label, '降级');
+  assert.equal(offeringParticipationStatus({ enabled: true, skipReason: null, healthStatus: 0 }).label, '线路启用');
+});
