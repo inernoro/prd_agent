@@ -15,6 +15,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
@@ -598,5 +599,8 @@ public class LiteraryMcpJourneyTests
 
         public Task<LiteraryMcpModelSelection> ValidateFixedModelAsync(string logicalModelPublicId, CancellationToken ct)
             => Task.FromResult(LiteraryMcpModelSelection.Selected(logicalModelPublicId));
+
+        public Task<ImageGenAdapterInfo?> GetImageCapabilitiesAsync(string appCallerCode, string logicalModelPublicId, CancellationToken ct)
+            => Task.FromResult(ImageGenModelAdapterRegistry.GetAdapterInfo(logicalModelPublicId));
     }
 }

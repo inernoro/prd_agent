@@ -16,7 +16,7 @@ CDS 中有三类容易混淆的信息：CDS 服务自身配置、业务应用运
 | --- | --- | --- | --- |
 | CDS 系统配置 | CDS 服务本身 | 管理员初始化和系统设置 | 否 |
 | 项目运行变量 | 某个项目的应用 | 项目设置 > 环境变量 | 是 |
-| Agent 项目凭据 | 当前项目中的 Codex、Cursor 或 Claude Code | CDS 页面批准 | 否 |
+| Agent 项目凭据 | 当前项目中的 Codex 或 Claude Code | CDS 页面批准 | 否 |
 
 新版 Agent 接入不依赖 Shell 环境变量。不要为了接入 Agent 修改 `.zshrc`、`.bashrc`、系统环境变量或全局 PATH。
 
@@ -115,7 +115,7 @@ Agent 项目凭据只用于让当前项目中的 Agent 操作 CDS，不属于业
 
 ### 项目技能文件与凭据不同
 
-Codex、Cursor 和 Claude Code 的项目级技能文件不包含凭据，用于告诉 Agent 如何调用 CDS。它们可能出现在 `git status`，是否提交由团队决定。
+Codex 和 Claude Code 的项目级技能文件不包含凭据，用于告诉 Agent 如何调用 CDS。它们可能出现在 `git status`，是否提交由团队决定。
 
 `.cds/credentials.json` 包含项目凭据，不能进入 `git status` 和 Git 提交。
 

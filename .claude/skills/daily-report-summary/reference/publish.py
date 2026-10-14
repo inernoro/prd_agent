@@ -939,7 +939,7 @@ def main():
         rollback_store_if_new()
         raise RuntimeError("正文写入未确认落库（库中内容与本次正文不一致），请稍后重跑")
     elif put_ok:
-        # state=None：验证接口不可达，但 PUT 已返回成功 → 接受，不删（Cursor High：勿误删已落库正文）
+        # state=None：验证接口不可达，但 PUT 已返回成功 → 接受，不删（高风险审查：勿误删已落库正文）
         print(f"  正文 PUT 成功，但验证接口暂不可达(state=None)——按已发布处理，不删条目")
     else:
         # 既没 PUT 成功又无法验证 → 保留条目（可能空壳，也可能已落库），交人工确认，不盲删不盲重跑

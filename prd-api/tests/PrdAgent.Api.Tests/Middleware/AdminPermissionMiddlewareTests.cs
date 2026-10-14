@@ -147,7 +147,8 @@ public class AdminPermissionMiddlewareTests
                     $"design-runtime-ticket-{Guid.NewGuid():N}"),
                 Mock.Of<IAssetStorage>(),
                 DataProtectionProvider.Create(new DirectoryInfo(keyRoot)),
-                new ConfigurationBuilder().Build());
+                new ConfigurationBuilder().Build(),
+                Mock.Of<IDesignArtifactGatewayGrantService>());
             var controller = new DesignArtifactRuntimeController(
                 broker,
                 Mock.Of<IHttpClientFactory>(),

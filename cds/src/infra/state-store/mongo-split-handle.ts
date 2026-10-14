@@ -144,6 +144,7 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     const client = new MongoClient(this.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
+      timeoutMS: 30_000,
     });
     try {
       await client.connect();

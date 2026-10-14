@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
-import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
+import { BugReportDialog, OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
@@ -112,7 +112,7 @@ export interface AppShellProps {
   wide?: boolean;
 }
 
-type ShellAuthStatus = {
+export type ShellAuthStatus = {
   enabled?: boolean;
   mode?: string;
   activeProvider?: string | null;
@@ -128,6 +128,52 @@ type ShellUser = {
   avatarUrl?: string | null;
   isSystemOwner?: boolean;
 };
+
+/** Unknown auth never exposes owner-only controls; disabled local mode stays compatible. */
+export function canManageSystemSettings(status: ShellAuthStatus | null): boolean {
+  return status !== null && (status.enabled === false || status.user?.isSystemOwner === true);
+}
+
+export const MEMBER_PREVIEW_MODE_NOTICE = '当前预览模式暂不支持普通账号，请联系系统所有者切换为多域名预览。';
+
+/** Simple/port previews require owner routing writes; members retain multi-domain previews. */
+export function canUseConsolePreview(mode: 'simple' | 'port' | 'multi' | undefined, canManageConsole: boolean): boolean {
+  return canManageConsole || mode === 'multi';
+}
+
+export const ConsoleAuthContext = createContext<{
+  status: ShellAuthStatus | null;
+  pending: boolean;
+  retry: () => void;
+}>({ status: null, pending: true, retry: () => {} });
+
+/** UI affordances use the same server-authenticated owner decision as route mounting. */
+export function useCanManageConsole(): boolean {
+  return canManageSystemSettings(useContext(ConsoleAuthContext).status);
+}
+
+/** Never mount owner pages (and their effects) for members or unresolved authentication. */
+export function OwnerConsoleRoute(): JSX.Element {
+  const { status, pending, retry } = useContext(ConsoleAuthContext);
+  if (canManageSystemSettings(status)) return <Outlet />;
+  if (pending) return <ConsoleRouteFallback />;
+  return (
+    <AppShell topbar={<TopBar left={<Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '访问范围' }]} />} />}>
+      <Workspace>
+        <section className="cds-surface-raised cds-hairline mt-6 space-y-4 rounded-lg p-6" role="alert">
+          <h1 className="text-lg font-semibold">{status ? '此页面仅系统所有者可用' : '登录状态暂时无法确认'}</h1>
+          <p className="text-sm text-muted-foreground">{status
+            ? '项目设置、服务拓扑和系统运维由系统所有者管理。你仍可在获授权项目中操作分支、查看预览和部署历史。'
+            : '未加载管理页面。请重新检查登录状态后再试。'}</p>
+          <div className="flex flex-wrap gap-4 text-sm">
+            <Link to="/project-list" className="text-primary underline">返回项目列表</Link>
+            {!status ? <button type="button" onClick={retry} className="text-primary underline">重新检查登录状态</button> : null}
+          </div>
+        </section>
+      </Workspace>
+    </AppShell>
+  );
+}
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
 const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPage'); };
@@ -245,6 +291,9 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
+  const [authPending, setAuthPending] = useState(true);
+  const [authAttempt, setAuthAttempt] = useState(0);
+  const canManageSettings = canManageSystemSettings(authStatus);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
   const routerLocation = useLocation();
   const agentContext = resolveAgentPageContext(
@@ -284,6 +333,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
     return () => { mo.disconnect(); window.clearTimeout(stop); };
   }, [previewInstance]);
   useEffect(() => {
+    if (!canManageSettings) return;
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
       if (isAccel && (event.key === 'k' || event.key === 'K')) {
@@ -298,23 +348,28 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('cds:open-palette' as keyof WindowEventMap, onCustom);
     };
-  }, []);
+  }, [canManageSettings]);
 
   useEffect(() => {
     const ctrl = new AbortController();
+    let cancelled = false;
+    const timer = window.setTimeout(() => ctrl.abort(), 15_000);
+    setAuthPending(true);
     fetch(apiUrl('/api/auth/status'), {
       credentials: 'include',
       headers: { Accept: 'application/json' },
       signal: ctrl.signal,
     })
       .then((res) => res.ok ? res.json() as Promise<ShellAuthStatus> : null)
-      .then((data) => setAuthStatus(data))
-      .catch((err: unknown) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
+      .then((data) => { if (!cancelled) { setAuthStatus(data); setAuthPending(false); } })
+      .catch(() => {
+        if (cancelled) return;
         setAuthStatus(null);
-      });
-    return () => ctrl.abort();
-  }, []);
+        setAuthPending(false);
+      })
+      .finally(() => window.clearTimeout(timer));
+    return () => { cancelled = true; window.clearTimeout(timer); ctrl.abort(); };
+  }, [authAttempt]);
 
   // 抽屉打开时锁住页面滚动,否则触屏下背景工作区仍能滚动,与模态行为冲突
   // (Bugbot #741 Medium「Drawer open background scrolls」)。关闭时还原原值。
@@ -344,6 +399,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   };
 
   return (
+    <ConsoleAuthContext.Provider value={{ status: authStatus, pending: authPending, retry: () => setAuthAttempt(value => value + 1) }}>
     <MobileNavContext.Provider value={{ openNav: () => setNavOpen(true) }}>
     <div
       className="cds-app-shell"
@@ -354,6 +410,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
         active={active}
+        canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
         user={authStatus?.user}
@@ -367,6 +424,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         open={navOpen}
         onClose={() => setNavOpen(false)}
         active={active}
+        canManageSettings={canManageSettings}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
         authMode={authStatus?.mode}
         user={authStatus?.user}
@@ -396,14 +454,16 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
           </div>
         </div>
       )}
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {canManageSettings ? <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} /> : null}
+      {canManageSettings ? <BugReportDialog /> : null}
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
-      <OperatorApprovalModal />
+      {canManageSettings ? <OperatorApprovalModal /> : null}
       {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
           当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
-      <SiteNoticeInbox />
+      {canManageSettings ? <SiteNoticeInbox /> : null}
     </div>
     </MobileNavContext.Provider>
+    </ConsoleAuthContext.Provider>
   );
 }
 
@@ -412,7 +472,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
  * keystroke chip and dispatches the open event when clicked. Pages should
  * render this as the leftmost item in their TopBar `right` slot.
  */
-export function PaletteHint(): JSX.Element {
+export function PaletteHint(): JSX.Element | null {
+  if (!useCanManageConsole()) return null;
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform);
   const open = () => window.dispatchEvent(new Event('cds:open-palette'));
   return (
@@ -434,6 +495,7 @@ export function PaletteHint(): JSX.Element {
 
 interface RailNavProps {
   active: AppNavKey;
+  canManageSettings: boolean;
   canLogout: boolean;
   authMode?: string;
   user?: ShellUser | null;
@@ -449,6 +511,7 @@ interface RailNavProps {
  */
 function RailNav({
   active,
+  canManageSettings,
   canLogout,
   authMode,
   user,
@@ -475,6 +538,7 @@ function RailNav({
           <span className="cds-rail-full">项目列表</span>
           <span className="cds-rail-short">项目</span>
         </Link>
+        {canManageSettings ? <>
         {/* 概览（plan.cds.service-relations 第四批）：全部项目的关系与体检，一眼看出配置错在哪、引用断在哪 */}
         <Link
           to="/overview"
@@ -548,6 +612,7 @@ function RailNav({
           <span className="cds-rail-full">监控中心</span>
           <span className="cds-rail-short">监控</span>
         </Link>
+        </> : null}
       </div>
       {/*
        * 2026-09-08 用户拍板（方案 S1）：工具组（Agent / 缺陷 / 设置）沉回栏底、紧贴账号。
@@ -556,6 +621,7 @@ function RailNav({
        */}
       <div className="flex-1" />
       <div className="cds-rail-tools">
+        {canManageSettings ? <>
         <button
           type="button"
           className="cds-rail-item cds-rail-action-entry cds-agent-access-entry"
@@ -600,10 +666,20 @@ function RailNav({
           <span className="cds-rail-full">系统设置</span>
           <span className="cds-rail-short">设置</span>
         </Link>
+        </> : (
+          <Link to="/cds-settings#activity" className="cds-rail-item"
+            data-active={active === 'cds-settings' ? 'true' : 'false'}
+            aria-label="个人操作痕迹" title="查看自己的操作记录" onClick={onNavigate}>
+            <Activity />
+            <span className="cds-rail-full">个人操作痕迹</span>
+            <span className="cds-rail-short">痕迹</span>
+          </Link>
+        )}
       </div>
       <div className="cds-rail-footer">
         <RailThemeToggle />
         <UserAccountMenu
+          canManageSettings={canManageSettings}
           authMode={authMode}
           canLogout={canLogout}
           logoutState={logoutState}
@@ -660,6 +736,7 @@ function userInitials(user?: ShellUser | null): string {
 
 function UserAccountMenu({
   authMode,
+  canManageSettings,
   canLogout,
   logoutState,
   onLogout,
@@ -733,7 +810,7 @@ function UserAccountMenu({
         </div>
       </div>
       <Link
-        to="/cds-settings#auth"
+        to={canManageSettings ? '/cds-settings#auth' : '/cds-settings#activity'}
         className="cds-account-menu-item"
         role="menuitem"
         onClick={() => {
@@ -742,7 +819,7 @@ function UserAccountMenu({
         }}
       >
         <Settings />
-        <span>用户与认证</span>
+        <span>{canManageSettings ? '用户与认证' : '个人操作痕迹'}</span>
       </Link>
       <div className="cds-account-theme" aria-label="主题">
         <div className="mb-2 text-xs font-medium text-muted-foreground">界面主题</div>
@@ -842,7 +919,7 @@ function UserAccountMenu({
   );
 }
 
-function AppRail(props: RailNavProps): JSX.Element {
+export function AppRail(props: RailNavProps): JSX.Element {
   return (
     <nav className="cds-rail" aria-label="主导航">
       {/* 品牌宝石 2026-07-05 起移入横贯全宽的 topbar 左端(用户反馈"logo 放在

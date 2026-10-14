@@ -11,7 +11,10 @@ const PUBLIC_ARTIFACT_MANIFEST_SCHEMA = 'map-design-artifact-public-manifest-v2'
 
 export const MAX_OUTPUT_FILE_COUNT = 100;
 
-export const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
+export const IGNORED_RUNTIME_OUTPUT_PATHS = [
+  'index.html.artifact.json',
+  'current/index.html.artifact.json',
+] as const;
 export const CDS_GENERATED_ARTIFACT_PATHS = [
   'assets/accessibility-static-report.json',
   'assets/design-tokens.json',

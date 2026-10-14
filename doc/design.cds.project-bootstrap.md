@@ -114,7 +114,7 @@ CDS  GET /api/bootstrap/{preset}          现场生成引导脚本（内嵌 CDS 
               └──回源──> MAP /api/official-skills/{key}/download（匿名，已有）
      │
      ▼
-项目级技能目录（.claude/skills、.agents/skills、.cursor/skills——存在几个装几个，非二选一）
+项目级技能目录（.claude/skills、.agents/skills——存在几个装几个，非二选一）
      │
      │  一句话：/sdd-init
      ▼
@@ -128,7 +128,7 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 执行顺序：
 
 1. **依赖自检**：`curl` / `unzip` / `tar`。缺失时给 Debian、RHEL、macOS 三种安装命令让用户复制，不是丢一句「请安装」。
-2. **探测宿主技能目录**：`.claude/` `.cursor/` `.agents/` 三个宿主**存在几个装几个**（不是取第一个命中的——早期首命中写法会让同时装了多个 Agent 的仓库出现「装完了但当前 Agent 看不见」），一个都没有时兜底建 `.agents/skills`。可用 `--skills-dir` 覆盖。**默认项目级**——装到用户级的话，人一走团队什么都没有。
+2. **探测宿主技能目录**：`.claude/` `.agents/` 两个宿主**存在几个装几个**（不是取第一个命中的——早期首命中写法会让同时装了多个 Agent 的仓库出现「装完了但当前 Agent 看不见」），一个都没有时兜底建 `.agents/skills`。可用 `--skills-dir` 覆盖。**默认项目级**——装到用户级的话，人一走团队什么都没有。
 3. **装 CDS 技能包**（5 个，走匿名的 `cds-pack` 端点——已有的 `export-skill` 需要登录，而客户此刻还没有凭据）
 4. **装方法论套装**（按预设）
 5. **写种子文件** `.cds/bootstrap.json`：预设、CDS 主机、技能目录、安装时间、装了哪些技能。`sdd-init` 读它来判断角色和上下文。
@@ -230,7 +230,7 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 
 1. 一台干净机器、一个空目录，两步之内拿到完整 harness，全程不需要 MAP 账号。
 2. 断开 MAP 之后重跑：命中缓存能装成功并提示用的是缓存版本；无缓存时明确报错说清原因。
-3. 三种宿主目录（`.claude` / `.agents` / `.cursor`）都能正确识别。
+3. 两种宿主目录（`.claude` / `.agents`）都能正确识别。
 4. 重复执行两次，用户已有的 AGENTS.md 和文档不被覆盖。
 5. 自托管 CDS（无本地 `.claude/skills`）走代理端点仍能装到方法论套装。
 6. 生成脚本内零密钥，执行后 shell profile 与用户主目录无改动。

@@ -15,7 +15,7 @@ public sealed class VisualModelPolicyController(IVisualModelPolicyService policy
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken ct)
-        => Ok(ApiResponse<VisualModelPolicy>.Ok(await policy.ReadAsync(ct)));
+        => Ok(ApiResponse<VisualModelPolicy>.Ok(await policy.ReadStoredAsync(ct)));
 
     [HttpGet("catalog")]
     public async Task<IActionResult> Catalog(CancellationToken ct)

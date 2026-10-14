@@ -17,6 +17,7 @@ public partial class LlmGateway
         GatewayRawRequest request,
         GatewayModelResolution resolution,
         Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null,
         CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var callerError))
@@ -57,7 +58,6 @@ public partial class LlmGateway
             else if (TryReadInt(body["max_output_tokens"]!, out var requested) && requested > resolution.MaxTokens.Value)
                 body["max_output_tokens"] = resolution.MaxTokens.Value;
         }
-
         var endpoint = BuildEndpointFromPath(resolution.ApiUrl!, "/v1/responses");
         using var message = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
@@ -87,6 +87,13 @@ public partial class LlmGateway
                 return outcome;
             }
             lease = admission.Lease;
+            // 运行时授权次数在全部本地校验和供应商并发/速率准入通过后才扣减，
+            // 但仍严格早于任何上游发送。瞬时 429 和所有本地拒绝都不消耗任务额度。
+            if (admit is not null && await admit(deadline.Token) is { } admissionError)
+            {
+                outcome = admissionError;
+                return outcome;
+            }
             using var client = CreateOutboundClient(request.Context?.TenantId);
             // 本次 deadline 管理完整请求；不使用 HttpClient 的默认 100 秒截断原生长流。
             client.Timeout = Timeout.InfiniteTimeSpan;

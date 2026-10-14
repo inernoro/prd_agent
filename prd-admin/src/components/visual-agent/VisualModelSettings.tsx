@@ -47,6 +47,10 @@ export function VisualModelSettings() {
     [models[index], models[index + offset]] = [models[index + offset], models[index]];
     setPolicy({ ...policy, models });
   };
+  const invalidDefaultId = policy?.defaultModelId
+    && !catalog.some(entry => entry.model.code === policy.defaultModelId)
+    ? policy.defaultModelId
+    : '';
   if (!canManage) return null;
   return <>
     <Button variant="secondary" size="sm" onClick={() => void load()}><Settings2 size={16} />模型设置</Button>
@@ -55,6 +59,9 @@ export function VisualModelSettings() {
       maxWidth={680} contentStyle={{ maxHeight: '85dvh' }} content={<div className="space-y-5" style={{ color: 'var(--text-primary)' }}>
         <p className="text-sm whitespace-normal break-words" style={{ color: 'var(--text-secondary)' }}>决定客户可选的模型和默认项。网关新增模型不会自动开放，调整顺序不会改变默认项。</p>
         {error && <div role="alert" className="rounded-lg p-3 text-sm" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>{error}</div>}
+        {invalidDefaultId && <div role="alert" className="rounded-lg p-3 text-sm" style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)' }}>
+          原默认模型 {invalidDefaultId} 已不在网关目录中，当前不会作为默认模型执行。请移除失效项并明确选择新的默认模型。
+        </div>}
         {loading ? <MapSectionLoader text="正在读取模型目录…" /> : policy ? <>
           <section className="space-y-2" aria-label="开放模型">
             <h3 className="text-sm font-semibold">开放模型</h3>
@@ -82,13 +89,17 @@ export function VisualModelSettings() {
           <section className="space-y-3" aria-label="默认模型与展示顺序">
             <h3 className="text-sm font-semibold">默认模型与展示顺序</h3>
             {policy.models.length === 0 && <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>先开放模型，再明确选择一个默认模型。</p>}
-            {policy.models.map((model, index) => <div key={model.modelId} className="rounded-lg p-3 space-y-2" style={{ background: 'var(--bg-secondary)' }}>
+            {policy.models.map((model, index) => {
+              const available = catalog.some(entry => entry.model.code === model.modelId);
+              return <div key={model.modelId} className="rounded-lg p-3 space-y-2" style={{ background: 'var(--bg-secondary)' }}>
               <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center">
                 <label className="flex min-w-0 flex-1 items-center gap-2 text-sm">
                   <input type="radio" name="visual-default-model" aria-label={`默认使用 ${model.displayName}`}
-                    checked={policy.defaultModelId === model.modelId} onChange={() => setPolicy({ ...policy, defaultModelId: model.modelId })} />
+                    disabled={!available}
+                    checked={available && policy.defaultModelId === model.modelId} onChange={() => setPolicy({ ...policy, defaultModelId: model.modelId })} />
                   <span className="truncate">{model.displayName}</span>
-                  {policy.defaultModelId === model.modelId && <span className="shrink-0 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>默认</span>}
+                  {available && policy.defaultModelId === model.modelId && <span className="shrink-0 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>默认</span>}
+                  {!available && policy.defaultModelId === model.modelId && <span className="shrink-0 whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>原默认已失效</span>}
                 </label>
                 <div className="flex shrink-0 justify-end gap-2">
                 <Button size="xs" variant="secondary" aria-label={`上移 ${model.displayName}`} disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp size={14} /></Button>
@@ -99,13 +110,13 @@ export function VisualModelSettings() {
               <input aria-label={`${model.displayName} 业务说明`} placeholder="业务说明（可选）" maxLength={500} value={model.description || ''}
                 className="w-full rounded-md px-3 py-2 text-sm" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
                 onChange={e => setPolicy({ ...policy, models: policy.models.map(x => x.modelId === model.modelId ? { ...x, description: e.target.value } : x) })} />
-              {!catalog.some(x => x.model.code === model.modelId) && <p className="text-xs">该模型当前不可用；保留原配置，不会自动换成其他型号。</p>}
-            </div>)}
+              {!available && <p className="text-xs">该模型当前不可用；保留原配置用于迁移，不会自动换成其他型号。</p>}
+            </div>})}
           </section>
         </> : null}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" disabled={loading || saving} onClick={() => void load()}>刷新目录</Button>
-          <Button disabled={loading || saving || !policy?.defaultModelId} onClick={() => void save()}>{saving && <MapSpinner size={16} />}{saving ? '正在保存…' : '保存模型配置'}</Button>
+          <Button disabled={loading || saving || !policy?.defaultModelId || Boolean(invalidDefaultId)} onClick={() => void save()}>{saving && <MapSpinner size={16} />}{saving ? '正在保存…' : '保存模型配置'}</Button>
         </div>
       </div>} />
   </>;

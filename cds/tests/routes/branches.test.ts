@@ -27,6 +27,8 @@ import type { ServerEventLogSink } from '../../src/services/server-event-log-sto
 import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
 import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
+import { computePreviewSlug } from '../../src/services/preview-slug.js';
+import { namedServiceLabel } from '../../src/services/preview-entrypoints.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string): CdsConfig {
@@ -670,6 +672,26 @@ describe('Branch Routes', () => {
         createdAt: now,
       });
     }
+
+    it.each(['alias-primary', 'alias-named', 'alias-legacy', 'alias-member', 'domain-primary', 'domain-named', 'domain-legacy', 'domain-member'])('项目改名后拒绝占走保留的旧入口：%s', async (kind) => {
+      seedProject('proj-a', 'local-a');
+      seedProject('proj-b', 'old-owner');
+      seedBranch('branch-a', 'proj-a', 'main');
+      seedBranch('branch-b', 'proj-b', 'feature/demo');
+      stateService.addBuildProfile({ id: 'gateway', projectId: 'proj-b', name: 'Gateway', dockerImage: 'nginx:alpine', workDir: '.', containerPort: 80, subdomain: 'llmgw' });
+      stateService.updateProject('proj-b', { slug: 'current-owner' });
+      stateService.getBranch('branch-b')!.replicaSets = { gateway: { profileId: 'gateway', enabled: true, primaryWeight: 100, members: [{ id: 'res-1', status: 'running', hostPort: 12001, weight: 100 }] } } as BranchEntry['replicaSets'];
+      const canonical = computePreviewSlug('feature/demo', 'old-owner');
+      const label = kind.endsWith('primary') ? canonical : kind.endsWith('member') ? `${canonical}-gateway-res-1` : namedServiceLabel(canonical, kind.endsWith('legacy') ? 'llmgw-web' : 'llmgw');
+      const alias = kind.startsWith('alias');
+      const endpoint = `/api/branches/branch-a/${alias ? 'subdomain-aliases' : 'custom-domains'}`;
+      const response = await request(server, 'PUT', endpoint, alias ? { aliases: [label] } : { domains: [`${label}.example.test`] }, { 'X-Test-Key': 'A' });
+      expect(response.status).toBe(409);
+      expect(stateService.getBranchSubdomainAliases('branch-a')).toEqual([]);
+      expect(stateService.getBranchCustomDomains('branch-a')).toEqual([]);
+      const allowed = await request(server, 'PUT', endpoint, alias ? { aliases: ['unoccupied'] } : { domains: ['unoccupied.example.test'] }, { 'X-Test-Key': 'A' });
+      expect(allowed.status).toBe(200);
+    });
 
     it('rejects project-scoped keys reading or writing another project custom domain config', async () => {
       seedProject('proj-a', 'a');

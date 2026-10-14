@@ -20,11 +20,13 @@ const bulkWriteMock = vi.fn(async () => undefined);
 const collectionMock = vi.fn(() => ({ name: 'stub-collection', findOne: findOneMock, bulkWrite: bulkWriteMock }));
 const dbMock = vi.fn(() => ({ collection: collectionMock }));
 const constructed: unknown[] = [];
+const clientOptions: Record<string, unknown>[] = [];
 
 vi.mock('mongodb', () => ({
   MongoClient: class {
-    constructor(uri: string) {
+    constructor(uri: string, options: Record<string, unknown>) {
       constructed.push(uri);
+      clientOptions.push(options);
     }
     connect = connectMock;
     close = closeMock;
@@ -42,6 +44,7 @@ beforeEach(() => {
   findOneMock.mockClear();
   bulkWriteMock.mockClear();
   constructed.length = 0;
+  clientOptions.length = 0;
 });
 
 describe('RealMongoSplitHandle.connect 失败复位', () => {
@@ -99,5 +102,15 @@ describe('RealMongoHandle.connect 失败复位', () => {
     await h.connect();
     expect(constructed).toHaveLength(2);
     expect(connectMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+it('两个状态库均限制在途操作等待，而不只限制建立连接', async () => {
+  connectMock.mockResolvedValue(undefined);
+  await new RealMongoHandle({ uri: 'mongodb://127.0.0.1:27018' }).connect();
+  await new RealMongoSplitHandle({ uri: 'mongodb://127.0.0.1:27018' }).connect();
+  expect(clientOptions).toHaveLength(2);
+  for (const options of clientOptions) expect(options).toMatchObject({
+    connectTimeoutMS: 5000, serverSelectionTimeoutMS: 5000, timeoutMS: 30_000,
   });
 });

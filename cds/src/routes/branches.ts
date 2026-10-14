@@ -3,6 +3,7 @@ import { prepareServiceReplacement, commitServiceReplacements, preserveReplaceme
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
 import { serveContainerLogStream } from '../services/container-log-stream-response.js';
+import { projectResourceNamespace } from '../services/preview-slug.js';
 import http from 'node:http';
 import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
@@ -29,6 +30,7 @@ import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployRe
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
+import { isCommitShaLike } from '../services/release-commit-clock.js';
 import {
   drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
   type DrainableRun, type DrainableReleaseRunSource,
@@ -54,6 +56,8 @@ import {
   namedServiceLabel,
   publishedServiceLabels,
   occupiedHostOwners,
+  projectBranchPreviewSlugs,
+  projectBranchPublishedServiceHosts,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
 import { handlesRootPath, mainDomainEntryPath, normalizeWebEntryPath, resolveWebEntry, selectPrimaryWebEntry } from '../services/web-entry.js';
@@ -83,7 +87,7 @@ import { recordMainThreadSection, timeMainThreadSection } from '../services/main
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
 import { isHumanSystemOwner } from '../services/human-auth.js';
 import { branchVersionFacts } from '../services/running-version.js';
-import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView } from '../services/human-project-access.js';
+import { canHumanAccessProject, isScopedHuman, profileForHumanView, branchForHumanView, resourceForHumanView, logPayloadForHumanView } from '../services/human-project-access.js';
 import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
@@ -3864,7 +3868,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       title: `派发到执行器 ${executor.id} (${executor.host}:${executor.port})`,
       timestamp: new Date().toISOString(),
     };
-    res.write(`event: step\ndata: ${JSON.stringify(preamble)}\n\n`);
+    sendSSE(res, 'step', preamble);
     appendDeploymentRunEvent(context.deploymentRunId, preamble);
 
     // 用户反馈 2026-05-06 (#3):远程执行器部署的 log 一直没回流到 master,
@@ -3951,7 +3955,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const errEvent = {
           message: `执行器拒绝部署请求 (HTTP ${upstream.status}): ${errText.slice(0, 200)}`,
         };
-        res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`);
+        sendSSE(res, 'error', errEvent);
         entry.status = 'error';
         entry.errorMessage = errEvent.message;
         proxyHasError = true;
@@ -3993,6 +3997,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
+        // Reuse complete frames already parsed for history; never forward raw
+        // executor network chunks to members, including split credentials.
+        if (res.locals.cdsScopedHuman) sendSSE(res, eventName, parsed);
         if (eventName === 'error') {
           proxyHasError = true;
           if (typeof parsed.message === 'string' && parsed.message.trim() !== '') proxyErrorMessage = parsed.message;
@@ -4123,7 +4130,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // client sees updates promptly rather than waiting for the full
         // upstream response to arrive.
         try {
-          res.write(chunk);
+          if (!res.locals.cdsScopedHuman) res.write(chunk);
         } catch {
           // Client disconnected mid-stream — stop piping; the remote will
           // continue its build independently of this pipe going away.
@@ -4138,7 +4145,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 残留时,res.write(finalChunk) 等于 res.write('') 没意义 — 拆成两个独立 guard。
       const finalChunk = decoder.decode();
       if (finalChunk) {
-        try { res.write(finalChunk); } catch { /* client gone */ }
+        try { if (!res.locals.cdsScopedHuman) res.write(finalChunk); } catch { /* client gone */ }
         buffer += finalChunk;
       }
       // 警告 Bugbot 2026-05-06 6927c312:之前直接 ingestFrame(buffer) 把"多个完整
@@ -4199,7 +4206,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } catch (err) {
       const msg = (err as Error).message;
       const errEvent = { message: `派发到执行器失败: ${msg}` };
-      try { res.write(`event: error\ndata: ${JSON.stringify(errEvent)}\n\n`); } catch { /* ignore */ }
+      sendSSE(res, 'error', errEvent);
       entry.status = 'error';
       entry.errorMessage = errEvent.message;
       proxyHasError = true;
@@ -4639,7 +4646,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   function sendSSE(res: import('express').Response, event: string, data: unknown) {
     try {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      const visible = res.locals.cdsScopedHuman
+        ? (event === 'log' || event === 'smoke-line'
+          // Raw chunks can split a credential across writes; keep progress but
+          // do not attempt per-chunk credential parsing for project members.
+          ? { profileId: data && typeof data === 'object' ? (data as { profileId?: string }).profileId : undefined,
+            chunk: '[原始输出仅系统所有者可查看]\n', text: '[原始输出仅系统所有者可查看]' }
+          : logPayloadForHumanView(res.locals.cdsHumanRequest, data))
+        : data;
+      res.write(`event: ${event}\ndata: ${JSON.stringify(visible)}\n\n`);
     } catch { /* client disconnected */ }
   }
 
@@ -4925,7 +4940,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           { cwd: repoRoot, timeout: 30_000, env: auth.env },
         );
         if (fetchResult.exitCode !== 0) {
-          const output = combinedOutput(fetchResult).slice(0, 500);
+          const output = logPayloadForHumanView(req, combinedOutput(fetchResult)).slice(0, 500);
           res.status(502).json({
             error: 'git_fetch_failed',
             message: output || 'git fetch origin --prune 失败',
@@ -4978,7 +4993,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         cachedAt: cacheValid ? lastFetchedAt : (fetched ? now : null),
       });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status(500).json(logPayloadForHumanView(req, { error: (err as Error).message }));
     }
   });
 
@@ -5022,7 +5037,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const dataObject = data && typeof data === 'object' && !Array.isArray(data)
         ? data as Record<string, unknown>
         : { value: data };
-      const payload = { ...dataObject, eventId: `${Date.now()}-${++streamEventSeq}` };
+      const payload = logPayloadForHumanView(req, { ...dataObject, eventId: `${Date.now()}-${++streamEventSeq}` });
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`); }
       catch { /* client gone */ }
     };
@@ -6250,7 +6265,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const slugified = StateService.slugify(branch);
       const id = targetProject.legacyFlag
         ? slugified
-        : `${targetProject.slug}-${slugified}`;
+        : `${projectResourceNamespace(targetProject)}-${slugified}`;
       // Collide on the computed id (same-project same-name in the current
       // formula) OR on the (projectId, branch) tuple — the latter catches
       // projects whose `legacyFlag` flipped after an existing branch was
@@ -6397,7 +6412,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         res.status(flushResult === 'timeout' ? 503 : 500).json({
           error: flushResult === 'timeout' ? 'state_flush_timeout' : 'state_flush_failed',
           message: branchStateFlushFailureMessage(flushResult, `分支 "${entry.id}" 已创建`),
-          branch: entry,
+          branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry,
         });
         return;
       }
@@ -6409,7 +6424,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         payload: { branch: entry, source: 'manual', ts: nowIso() },
       });
 
-      res.status(201).json({ branch: entry });
+      res.status(201).json({ branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry });
     } catch (err) {
       if (err instanceof WorktreeClaimHeldError) {
         res.status(409).json({ error: err.message, code: err.code });
@@ -6503,7 +6518,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       branchId: branch.id,
       branchName: branch.branch,
       projectId,
-      resources,
+      resources: resources.map(resource => resourceForHumanView(req, resource)),
     });
   });
 
@@ -9660,7 +9675,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const logs = stateService.getActivityLogs(projectId)
       .filter((entry) => entry.branchId === branch.id && entry.resourceId === resourceId)
       .slice(0, limit);
-    res.json({ branchId: branch.id, resourceId, logs, total: logs.length });
+    res.json(logPayloadForHumanView(req, { branchId: branch.id, resourceId, logs, total: logs.length }));
   });
 
   router.get('/branches/:id/resources/:resourceId/permissions', async (req, res) => {
@@ -9720,7 +9735,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const logs = await containerService.getLogs(ctx.containerName, tail);
       const mask = shouldMask(req);
       const maskedLogs = maskSecretsText(logs, { mask });
-      res.json({
+      res.json(logPayloadForHumanView(req, {
         branchId: ctx.branch.id,
         projectId: ctx.projectId,
         resourceId: ctx.resourceId,
@@ -9730,7 +9745,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         tail,
         masked: mask,
         logs: maskedLogs,
-      });
+      }));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -11993,7 +12008,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       branchId: branch.id,
       branchStatus: branch.status,
       diagnosisSource: branch.lastDeploymentRunId && deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
@@ -12003,7 +12018,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
         : undefined,
       failedServices,
-    });
+    }));
   });
 
   router.delete('/branches/:id', async (req, res) => {
@@ -15987,7 +16002,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const logs = matched.slice(0, limit);
     // total 必须是过滤后、截断前的命中总数，否则消费方无法判断"还有没有更多"
     // （截断后 total===logs.length 永远 ≤ limit，分页/加载更多失效）。Cursor Bugbot。
-    res.json({ branchId: id, logs, total: matched.length });
+    res.json(logPayloadForHumanView(req, { branchId: id, logs, total: matched.length }));
   });
 
   // ── Set default branch ──
@@ -16228,9 +16243,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 原始 env 会泄露分支本地密钥。与 extra-services / 分支序列化的 maskExtraProfilesEnv 口径一致，
     // 仅对额外服务脱敏（项目 profile 的既有行为不动）。
     const extraProfileIds = new Set((entry.extraProfiles || []).map((p) => p.id));
+    const visibleOverrides = branchForHumanView(req, entry).profileOverrides;
     const payload = profiles.map(profile => {
       const isExtra = extraProfileIds.has(profile.id) || isScopedHuman(req);
-      const override = entry.profileOverrides?.[profile.id];
+      const override = visibleOverrides?.[profile.id];
       const resolved = resolveEffectiveProfile(profile, entry);
       // CDS infra vars first, then profile.env so user-set values can still
       // shadow infra defaults (keeps current runtime semantics — see container.ts).
@@ -16618,19 +16634,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
     const project = stateService.getProject(entry.projectId);
-    const slug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    if (!slug) return [];
-    const hosts: string[] = [];
-    const seen = new Set<string>();
-    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
-      const sub = resolveEffectiveProfile(bp, entry).subdomain;
-      if (!sub || seen.has(sub)) continue;
-      seen.add(sub);
-      for (const label of publishedServiceLabels(slug, sub)) {
-        hosts.push(`${label}.${root}`.toLowerCase());
-      }
-    }
-    return hosts;
+    return projectBranchPublishedServiceHosts(entry, project, stateService.getEffectiveProfilesForBranch(entry), [root]);
   }
 
   const findPreviewHostCollisions = (
@@ -16646,12 +16650,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     for (const other of stateService.getAllBranches()) {
       const projectId = other.projectId || 'default';
       const project = stateService.getProject(projectId);
-      const previewSlug = buildPreviewUrlForProject('', other.branch, project, projectId).previewSlug;
+      const previewSlugs = projectBranchPreviewSlugs(other, project);
       for (const rawRoot of rootDomains) {
         const root = rawRoot.toLowerCase();
-        const previewHost = previewSlug ? `${previewSlug}.${root}` : '';
-        if (previewHost && candidates.has(previewHost)) {
-          conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
+        for (const previewSlug of previewSlugs) {
+          const previewHost = `${previewSlug}.${root}`;
+          if (candidates.has(previewHost)) conflicts.push({ domain: previewHost, conflictWith: other.id, reason: 'preview' });
         }
 
         for (const alias of stateService.getBranchSubdomainAliases(other.id)) {
@@ -17572,7 +17576,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }]
       : [];
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       logs: logs.length > 0 ? logs : fallbackLogs,
       logsAreSynthetic: (isErrorFallback || hasRecoveredRuntime) || undefined,
       branchStatus: branch?.status,
@@ -17589,7 +17593,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ],
         note: '在部署进行中时,本端点的 logs 数组可能仍为空。要看实时进度请订阅 liveStreamHint.url。',
       },
-    });
+    }));
   });
 
   router.post('/branches/:id/container-logs', async (req, res) => {
@@ -17703,7 +17707,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         details: { masked: mask, hostPort: svc.hostPort },
       });
       stateService.save();
-      res.json({ logs: masked });
+      res.json(logPayloadForHumanView(req, { logs: masked }));
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
@@ -18271,6 +18275,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    if (!isCommitShaLike(hash)) {
+      res.status(400).json({ error: '提交标识无效，请从提交历史选择要切换的提交。' });
+      return;
+    }
     if (entry.status === 'building' || entry.status === 'starting') {
       res.status(409).json({ error: '分支正在构建/启动中，无法切换提交' });
       return;
@@ -18279,7 +18287,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     try {
       // Validate the commit hash exists
       const verify = await shell.exec(
-        `git cat-file -t ${hash}`,
+        `git cat-file -t ${shellQuote(hash)}`,
         { cwd: entry.worktreePath, timeout: 5_000 },
       );
       if (verify.exitCode !== 0 || verify.stdout.trim() !== 'commit') {
@@ -18289,7 +18297,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Checkout the specific commit (detached HEAD)
       const result = await shell.exec(
-        `git checkout ${hash}`,
+        `git checkout --detach ${shellQuote(hash)}`,
         { cwd: entry.worktreePath, timeout: 10_000 },
       );
       if (result.exitCode !== 0) {
@@ -19207,7 +19215,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       warnings.push('OK 未检测到明显不一致。如仍看不到预期日志，排查：日志级别过滤、LogError 是否真走到那个代码路径、Infrastructure.dll 是不是被引用/注入。');
     }
 
-    res.json({
+    res.json(logPayloadForHumanView(req, {
       branch: branchSlug,
       profile: profileId,
       container: containerName,
@@ -19216,7 +19224,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       latestSource: topSrc,
       recentLogs: logs.split('\n').slice(-30).join('\n'),
       warnings,
-    });
+    }));
   });
 
   // ── Docker images (for dropdown selection) ──
@@ -19907,7 +19915,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // ── Config (read-only) ──
 
-  router.get('/config', async (_req, res) => {
+  router.get('/config', async (req, res) => {
+    if (isScopedHuman(req)) {
+      res.json({ workerPort: config.workerPort, mainDomain: config.mainDomain,
+        previewDomain: config.previewDomain || config.rootDomains?.[0] });
+      return;
+    }
     const customEnv = stateService.getCustomEnv();
     const prdAgentBaseUrl = stateService.getActiveCdsConnections()
       .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)
@@ -21048,7 +21061,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // slug head prefixed so two projects can each own `mongodb`.
       const containerName = targetProject.legacyFlag
         ? `cds-infra-${body.id}`
-        : `cds-infra-${targetProject.slug.slice(0, 12)}-${body.id}`;
+        : `cds-infra-${projectResourceNamespace(targetProject).slice(0, 12)}-${body.id}`;
 
       // Bug Q: when caller omits `volumes`, auto-fill recommended data
       // dirs for known stateful images. Empty array passed explicitly is
@@ -21841,7 +21854,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
 | Agent | 项目级目录 |
 |------|-----------|
 | Codex / 通用 Agent Skills | \`.agents/skills\` |
-| Cursor | \`.cursor/skills\` |
 | Claude Code | \`.claude/skills\` |
 
 不要写入用户主目录，不要修改 PATH、\`.bashrc\`、\`.zshrc\` 或系统环境变量。
@@ -22092,7 +22104,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // previously used the bare slugified branch as the entry id (and
       // looked up by it), which contradicts every other code path
       // (POST /api/branches, auto-build in index.ts, webhook dispatcher)
-      // that uses `${owner.slug}-${slugified}` for non-legacy projects.
+      // that keeps the original resource namespace for non-legacy projects.
       // After rename-default a re-run of init would miss the existing
       // `prd-agent-main` entry and try to create a duplicate `main`.
       //
@@ -22106,7 +22118,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         res.end();
         return;
       }
-      const mainBranchId = owner.legacyFlag ? mainSlug : `${owner.slug}-${mainSlug}`;
+      const mainBranchId = owner.legacyFlag ? mainSlug : `${projectResourceNamespace(owner)}-${mainSlug}`;
       let entry =
         stateService.getBranch(mainBranchId) ??
         stateService.findBranchByProjectAndName(owner.id, mainBranch);
@@ -22178,7 +22190,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               profileId: profile.id,
               // PR #498 round-3 review (Bugbot): container name must
               // track entry.id. After round-2 made mainBranchId
-              // `${owner.slug}-${mainSlug}` for non-legacy projects,
+              // `${projectResourceNamespace(owner)}-${mainSlug}` for non-legacy projects,
               // the hardcoded `cds-${mainSlug}-…` here became a
               // mismatch — same pattern index.ts:1105 already follows.
               containerName: `cds-${entry.id}-${profile.id}`,

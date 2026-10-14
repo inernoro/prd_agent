@@ -16,6 +16,7 @@ import { FlaskConical, Loader2, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
+import { useCanManageConsole } from '@/components/layout/AppShell';
 import { ExtraServiceFormDialog, type ExtraServiceProfile } from './ExtraServiceFormDialog';
 
 interface ExtraServicesPutResponse {
@@ -43,6 +44,7 @@ export function ExtraServicesPanel({
   onToast?: (message: string) => void;
   onChanged?: () => void;
 }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<PanelState>({ status: 'idle' });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<ExtraServiceProfile | null>(null);
@@ -154,7 +156,7 @@ export function ExtraServicesPanel({
           >
             <RefreshCw className={state.status === 'loading' ? 'animate-spin' : ''} />
           </Button>
-          <Button
+          {canManageConsole ? <Button
             size="sm"
             variant="outline"
             onClick={() => { setEditing(null); setDialogOpen(true); }}
@@ -162,7 +164,7 @@ export function ExtraServicesPanel({
           >
             <Plus />
             添加服务
-          </Button>
+          </Button> : null}
         </div>
       </div>
 
@@ -192,8 +194,7 @@ export function ExtraServicesPanel({
         <div className="rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-5 text-center text-sm text-muted-foreground">
           <div>本分支还没有临时服务。</div>
           <div className="mt-1 text-xs">
-            典型场景：这个分支要试 Nacos / Kafka / MinIO，但不想影响别的分支——点「添加服务」，
-            选个预设改两下就能起容器。
+            {canManageConsole ? '这个分支要试 Nacos / Kafka / MinIO 时，可以添加临时服务。' : '添加或修改临时服务请联系系统所有者。'}
           </div>
         </div>
       ) : null}
@@ -227,7 +228,7 @@ export function ExtraServicesPanel({
                   ) : null}
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-1">
+              {canManageConsole ? <div className="flex shrink-0 items-center gap-1">
                 <Button
                   size="sm"
                   variant="ghost"
@@ -248,20 +249,20 @@ export function ExtraServicesPanel({
                   pending={removingId === profile.id}
                   onConfirm={() => handleRemove(profile.id, true)}
                 />
-              </div>
+              </div> : <span className="text-xs text-muted-foreground">只读</span>}
             </div>
           ))}
         </div>
       ) : null}
 
-      <ExtraServiceFormDialog
+      {canManageConsole ? <ExtraServiceFormDialog
         open={dialogOpen}
         initial={editing}
         existingIds={state.status === 'ok' ? state.profiles.map((p) => p.id) : []}
         saving={saving}
         onClose={() => { if (!saving) { setDialogOpen(false); setEditing(null); } }}
         onSubmit={(draft, redeploy) => void handleSubmit(draft, redeploy)}
-      />
+      /> : null}
     </div>
   );
 }
