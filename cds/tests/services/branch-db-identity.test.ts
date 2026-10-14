@@ -292,13 +292,13 @@ describe('branches.ts 真的用上了这套身份与解释', () => {
       ['return branchDbAccountName(branch.id);', "return `cds_${StateService.slugify(branch.id).replace(/-/g, '_').slice(0, 24)}`.slice(0, 32);"],
     ],
     [
-      'MySQL 查询失败经过解释',
+      'SQL 查询失败经过共享解释',
       (source) => {
-        const at = source.indexOf('async function runMysqlDataQuery(');
-        expect(at, '找不到 runMysqlDataQuery').toBeGreaterThan(-1);
+        const at = source.indexOf('async function runSqlDataQuery(');
+        expect(at, '找不到 runSqlDataQuery').toBeGreaterThan(-1);
         expect(source.slice(at, at + 1600)).toContain('explainBranchDbAuthFailure({');
       },
-      ["        runtime: 'mysql',\n        branchId: branch.id,", "        // removed\n        branchId: branch.id,"],
+      ['const message = explainBranchDbAuthFailure({', 'const message = String({'],
     ],
   ];
 
@@ -312,10 +312,10 @@ describe('branches.ts 真的用上了这套身份与解释', () => {
     expectGuardRedOnMutation(guard, real, mutate(real, from, to));
   });
 
-  it('红用例：拆掉 MySQL 失败解释的调用，守卫必须变红', () => {
+  it('红用例：拆掉 SQL 失败解释的调用，守卫必须变红', () => {
     const real = readBranchesRoute();
     const guard = (source: string) => {
-      const at = source.indexOf('async function runMysqlDataQuery(');
+      const at = source.indexOf('async function runSqlDataQuery(');
       expect(at).toBeGreaterThan(-1);
       expect(source.slice(at, at + 1600)).toContain('explainBranchDbAuthFailure({');
     };
@@ -324,10 +324,8 @@ describe('branches.ts 真的用上了这套身份与解释', () => {
       real,
       mutate(
         real,
-        `      throw new SqlConsoleExecutionError(explainBranchDbAuthFailure({
-        runtime: 'mysql',`,
-        `      throw new SqlConsoleExecutionError(String({
-        runtime: 'mysql',`,
+        'const message = explainBranchDbAuthFailure({',
+        'const message = String({',
       ),
     );
   });

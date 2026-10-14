@@ -160,7 +160,7 @@ export function stripSqlComments(sql: string, options: SqlScanOptions = {}): str
 }
 
 /** 只读路径额外要拦的写关键字：CTE 后面可以跟 DELETE/UPDATE（PostgreSQL），头是 `with` 也不代表只读。 */
-const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
+const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock|into)\b/i;
 
 export type SqlStatementKind = 'read' | 'write' | 'unknown';
 
@@ -237,6 +237,8 @@ export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): s
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
+  assertNoHostEscape(body, dialect);
+  if (/\/\*!/.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');
   // 只读脚本逐条检查准入，执行仍由一个客户端连接完成。
   if (isSqlScript(body, dialect)) {
     if (/\/\*!/.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');

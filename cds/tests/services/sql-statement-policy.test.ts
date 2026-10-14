@@ -179,6 +179,24 @@ describe('工作台 SQL 准入：该放的都放行', () => {
 });
 
 describe('工作台 SQL 准入：该拦的仍拦', () => {
+  it('SELECT INTO 属于写：普通读取拒绝，审批写入入口接收', () => {
+    for (const sql of [
+      'SELECT id INTO qa_copy FROM qa_items',
+      'SELECT id INTO/**/TEMP TABLE qa_copy FROM qa_items',
+      'WITH x AS (SELECT 1) SELECT id INTO qa_copy FROM qa_items',
+      'SELECT 1; SELECT id INTO qa_copy FROM qa_items',
+    ]) {
+      expect(() => normalizeReadOnlyStatement(sql, 'postgres')).toThrow(/写 SQL/);
+      expect(() => normalizeConsoleWrite(sql, 'postgres')).not.toThrow();
+    }
+    for (const sql of ["SELECT 'into', 'update'", 'SELECT id AS "into" FROM qa_items', 'SELECT id /* INTO qa_copy */ FROM qa_items']) {
+      expect(() => normalizeReadOnlyStatement(sql, 'postgres')).not.toThrow();
+    }
+  });
+
+  it('单条可执行注释也不能藏入只读通道', () => {
+    expect(() => normalizeReadOnlyStatement('SELECT 1 /*! INTO @x */', 'mysql')).toThrow(/可执行注释/);
+  });
   it('披着读皮的写不许走读通道', () => {
     expect(() => normalizeReadOnlyStatement('WITH x AS (SELECT 1) DELETE FROM demo')).toThrow(/写入关键字|写 SQL/);
     expect(() => normalizeReadOnlyStatement('SELECT * FROM demo FOR UPDATE')).toThrow();

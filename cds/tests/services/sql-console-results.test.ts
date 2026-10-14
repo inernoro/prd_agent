@@ -1,38 +1,34 @@
 import { describe, expect, it } from 'vitest';
-import { parseSqlConsoleResults } from '../../src/services/sql-console-results.js';
+import { SqlResultCollector } from '../../src/services/sql-console-executor.js';
 
-describe('数据库客户端多结果展示', () => {
-  it('MySQL 独立查询、修改记录、空结果、NULL 和转义内容均保留', () => {
-    const result = parseSqlConsoleResults(`Query OK, 1 row affected
-<?xml version="1.0"?><resultset statement="SELECT 'a&amp;b'">
-<row><field name="text">a&amp;b&lt;c&gt;\n下一行</field><field name="missing" xsi:nil="true"/><field name="empty"></field></row>
-</resultset>
-Query OK, 2 rows affected
-<resultset statement="SELECT 2"><row><field name="n">2</field></row></resultset>
-<resultset statement="SELECT 3 WHERE false"></resultset>`, 'mysql');
-    expect(result.resultSets).toHaveLength(3);
-    expect(result.resultSets![0].rows).toEqual([['a&b<c>\n下一行', null, '']]);
-    expect(result.resultSets![0].statement).toBe("SELECT 'a&b'");
-    expect(result.resultSets![1].columns).toEqual(['n']);
-    expect(result.resultSets![2].rowCount).toBe(0);
-    expect(result.output).toContain('1 row affected');
-    expect(result.output).toContain('2 rows affected');
-    expect(result.output).not.toContain('<field');
-  });
-
-  it('PostgreSQL HTML 结果单独解析，命令结果连续保留', () => {
-    const result = parseSqlConsoleResults('UPDATE 1\n<table border="1"><tr><th>a</th></tr><tr><td>&lt;x&gt;<br />y</td></tr></table>\nUPDATE 2\n<table border="1"><tr><th>b</th></tr></table>', 'postgres');
+describe('数据库协议多结果展示', () => {
+  it('重复列名、NULL、空串、特殊字符、大数及空查询元数据均保留', () => {
+    const collector = new SqlResultCollector();
+    collector.record('UPDATE 1');
+    const first = collector.fields(['value', 'value', 'empty', 'text', 'big']);
+    collector.row(first, [null, 'NULL', '', '前\t后\n下一行\r\n<>&&nbsp;', '1000000000000000001']);
+    collector.fields(['empty_id', 'empty_qty']);
+    const result = collector.result();
     expect(result.resultSets).toHaveLength(2);
-    expect(result.resultSets![0].rows).toEqual([['<x>\ny']]);
-    expect(result.resultSets![1].columns).toEqual(['b']);
-    expect(result.output).toContain('UPDATE 1');
-    expect(result.output).toContain('UPDATE 2');
+    expect(result.rows).toEqual([[null, 'NULL', '', '前\t后\n下一行\r\n<>&&nbsp;', '1000000000000000001']]);
+    expect(result.columns).toEqual(['value', 'value', 'empty', 'text', 'big']);
+    expect(result.resultSets![1]).toEqual({ columns: ['empty_id', 'empty_qty'], rows: [], rowCount: 0 });
+    expect(result.output).toBe('UPDATE 1');
   });
 
-  it('大输出标记截断，保留完整的先前查询，不拼出伪结果', () => {
-    const result = parseSqlConsoleResults('<resultset statement="SELECT 1"><row><field name="a">1</field></row></resultset>' + 'x'.repeat(300_000), 'mysql');
-    expect(result.truncated).toBe(true);
-    expect(result.resultSets![0].rows).toEqual([['1']]);
-    expect(result.output!.length).toBeLessThanOrEqual(256 * 1024);
+  it('只有修改记录时结果不是伪查询，且多次修改记录连续保留', () => {
+    const collector = new SqlResultCollector();
+    collector.record('UPDATE 1'); collector.record('DELETE 2');
+    expect(collector.result()).toMatchObject({ columns: [], rows: [], resultSets: [], output: 'UPDATE 1\nDELETE 2' });
+  });
+
+  it('按 UTF-8 字节截断，不切破一个值；保留先前完整行及后续空查询列名', () => {
+    const collector = new SqlResultCollector(64);
+    const first = collector.fields(['text']);
+    collector.row(first, ['短内容']);
+    collector.row(first, ['汉'.repeat(30)]);
+    collector.fields(['empty']);
+    expect(collector.result()).toMatchObject({ truncated: true, rows: [['短内容']], rowCount: 2 });
+    expect(collector.result().resultSets![1].columns).toEqual(['empty']);
   });
 });

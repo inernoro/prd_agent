@@ -5720,7 +5720,7 @@ const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', '
  * 逐字一致**（守卫测试比对两边源码）：两边不一致就会出现「前端当读发过去、后端当写
  * 拒绝」或反过来的死语句。
  */
-const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
+const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock|into)\b/i;
 
 /**
  * 与后端 stripSqlComments(sql, { maskLiterals: true, dialect }) 同一套扫描：
@@ -5793,15 +5793,17 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
   const sqlReadOnly = sqlCommandIsReadOnly(sql, resource.runtime);
 
-  const loadTables = useCallback(async () => {
+  const loadTables = useCallback(async (autoSelect = true) => {
     if (!basePath) return;
     setTablesState((current) => ({ ...current, status: 'loading', message: undefined }));
     try {
       const res = await apiRequest<{ database?: string; tables: DbTableSummary[] }>(`${basePath}/tables`);
       const tables = res.tables || [];
       setTablesState({ status: 'ok', tables, database: res.database });
-      setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
-      setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      if (autoSelect) {
+        setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
+        setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      }
     } catch (err) {
       setTablesState({ status: 'error', tables: [], message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -5880,14 +5882,12 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       });
       setResultState({ status: 'ok', result });
       setResultMode(result.columns.length > 0 || result.resultSets?.length ? 'table' : 'output');
-      if (!readOnly && !result.output) {
-        void loadTables();
-        if (selectedTable) void loadTablePreview(selectedTable);
-      }
+      if (!readOnly) void loadTables(false);
     } catch (err) {
       const partialResult = err instanceof ApiError ? (err.body as { partialResult?: DbQueryResult })?.partialResult : undefined;
       setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err), result: partialResult });
       setResultMode('output');
+      if (!sqlReadOnly) void loadTables(false);
     }
   }
 

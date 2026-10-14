@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import express from 'express';
+import * as sqlConsole from '../../src/services/sql-console-executor.js';
 import { createServer } from '../../src/server.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
@@ -211,6 +212,8 @@ describe('human project grants through the production server', () => {
     expect(status.status).toBe(409);
     expect(status.body.update.reconciling).toBe(true);
     expect((await call('GET', '/api/projects', member)).status).toBe(409);
+    // Only the injected stalled write uses the short deadline; recovery uses the normal I/O budget.
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     finish();
     for (let attempt = 0; attempt < 20 && humanProjectGrantUpdateStatus(state, humanPrincipalId(memberId)); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 10));
@@ -235,6 +238,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => pending);
     try {
       expect((await grant(['project-b'])).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'interrupted-grant.json'));
       for (const failedStep of ['save', 'flush'] as const) {
@@ -315,6 +319,7 @@ describe('human project grants through the production server', () => {
     vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     try {
       expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
       await flushAllJsonStateStores();
       const restartPath = path.join(dir, `interrupted-${status}.json`);
       fs.copyFileSync(path.join(dir, 'state.json'), restartPath);
@@ -429,6 +434,7 @@ describe('human project grants through the production server', () => {
 
   it.each(['mysql', 'mongo'] as const)('allows only existing read-only %s commands in authorized resources', async runtime => {
     const mongo = runtime === 'mongo';
+    if (!mongo) vi.spyOn(sqlConsole, 'executeSqlConsole').mockResolvedValue({ columns: ['answer'], rows: [['1']], rowCount: 1, resultSets: [{ columns: ['answer'], rows: [['1']], rowCount: 1 }], output: 'SQL 执行完成。' });
     state.addInfraService({ id: runtime, projectId: 'project-a', name: runtime, dockerImage: mongo ? 'mongo:7' : 'mysql:8',
       containerPort: mongo ? 27017 : 3306, hostPort: mongo ? 27017 : 3306, containerName: `fixture-${runtime}`, status: 'running',
       dbName: 'app', env: mongo ? { MONGO_INITDB_ROOT_USERNAME: 'app', MONGO_INITDB_ROOT_PASSWORD: 'fake-db-password', MONGO_INITDB_DATABASE: 'app' }
@@ -1121,6 +1127,7 @@ describe('human project grants through the production server', () => {
     expect(humanProjectGrantUpdateStatus(state, principalId)?.reconciling).toBe(true);
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
     expect((await grant(['project-b'])).status).toBe(409);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     finish();
     for (let attempt = 0; attempt < 40 && humanProjectGrantUpdateStatus(state, principalId); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 10));
