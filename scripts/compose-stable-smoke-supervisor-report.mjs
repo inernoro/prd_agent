@@ -233,7 +233,8 @@ function businessFailureDetails(failure) {
     expected: `完成“${failure.acceptanceItem}”并得到可回读的业务结果`,
     reproduction: failure.reproduction || '按验收方法进入目标业务并重复操作',
   };
-  if (/CDS .*网关|清理旅程首轮失败/.test(reason)) {
+  if (/静态资源网关 502/.test(reason) && /控制面网关 504/.test(reason)
+      && /确定性重试通过/.test(reason)) {
     return {
       actual: '网页托管两条清理旅程首轮分别遭遇 CDS 静态资源网关 502 与控制面网关 504；确定性重试通过，但首次尝试的残留仍不能证明为零',
       expected: '同一固定提交下首轮完成网页托管旅程，全部测试资源清理回读为零，且不依赖重试',

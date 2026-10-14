@@ -110,7 +110,8 @@ export function updatePools(previous, { runId, profile = 'routine', commit = '',
       }
     }
   }
-  if (notification.status === 'delivery-failed' || notification.status === 'blocked') {
+  if ((notification.status === 'delivery-failed' || notification.status === 'blocked')
+      && !['failed', 'verification-failed'].includes(archive.status)) {
     const old = defects.get('DEF-STSMK-NOTIFY-001');
     defects.set('DEF-STSMK-NOTIFY-001', { ...old, defectId: 'DEF-STSMK-NOTIFY-001', environment: 'production', caseIds: ['REG-stsmk-notify-evidence-001'], firstRunId: old?.firstRunId || runId, latestRunId: runId, status: 'blocked', classification: 'configuration', rootCause: old?.rootCause || '未知：通知交付未完成，客户端失败不等于固定目标配置错误', reportUrl, nextAction: '按本轮交付诊断恢复链路，以相同 runId 与已验真报告补发并核对原固定目标 inernoro；不改投' });
     const key = `${runId}:production:notification:blocked`;

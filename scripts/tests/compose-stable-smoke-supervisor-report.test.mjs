@@ -103,6 +103,17 @@ test('老板首屏单列重试后通过并正确归因 CDS 清理波动', () => 
   assert.match(page, /CDS 与运行平台负责人/);
 });
 
+test('REG-stsmk-report-risk-001 清理欠证不得编造本轮没有的网关错误', () => {
+  const page = renderBusinessDecisionPage('', `
+## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|---|---|
+| CDS | 跨模块 | 清理门禁 | 冒烟 | 首页 → 文件上传 → 清理回读 | 不通过 | 清理旅程首轮失败；业务没有通过，独立回读缺证 | 巡检负责人 | [查看](#method-common-004) |
+`, '', {runId:'stsmk-no-fabrication',coverage:{total:1,passed:0,failed:1,notRun:0,flaky:0}}, 'fail');
+  assert.doesNotMatch(page, /静态资源网关 502|控制面网关 504|确定性重试通过/);
+});
+
 test('功能未执行与视觉缺口数量不同时不得声称数字相同', () => {
   const lead = '> 验收结论：有条件通过。共 1 项，1 项通过、0 项不通过、0 项未执行。';
   const visualGate = `## 处理流程

@@ -107,6 +107,17 @@ test('COMMON-004 接受真实 cleanup 标签并保留 CDS 首轮波动诊断', (
   assert.doesNotMatch(result.error, /没有执行/);
 });
 
+test('REG-stsmk-report-risk-001 两次业务失败不能写成重试通过或已确认污染', () => {
+  const rows = [
+    { caseId: 'FILE-003', environment: 'cds', status: 'fail', tags: ['@cleanup'], retryCount: 1, hadFailedAttempt: true },
+    ...['REG-stsmk-notify-evidence-001', 'REG-stsmk-report-view-001', 'REG-stsmk-report-risk-001'].map(caseId => ({caseId, environment:'cds', status:'pass'})),
+  ];
+  const result = buildCommonClosureEvidenceRow(rows);
+  assert.equal(result.status, 'fail');
+  assert.match(result.error, /独立清理回读/);
+  assert.doesNotMatch(result.error, /确定性重试通过|静态资源网关 502|控制面网关 504|已确认污染/);
+});
+
 function gatewayToken(securityVersion = '7') {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ user_security_version: securityVersion })}.signature`;
@@ -157,8 +168,8 @@ test('报告风险分类永久回归必须接线并传播失败', () => {
   try {
     for (const status of [0, 1]) {
       const result = runReportRiskRegression(directory, (name, args) => {
-        assert.equal(name, 'python3');
-        assert.ok(args.includes('ReportRiskDecisionTests'));
+        if (name === 'python3') assert.ok(args.includes('ReportRiskDecisionTests'));
+        else { assert.equal(name,'node'); assert.ok(args.includes('REG-stsmk-report-risk-001')); }
         return { status, stdout: '风险判据', stderr: '' };
       });
       assert.equal(result.rows[0].caseId, 'REG-stsmk-report-risk-001');

@@ -57,6 +57,13 @@ test('原通知缺陷沿用编号并记持续阻塞，不虚构多个产品事�
   const historical = updatePools({ defects: [{ defectId: 'DEF-STSMK-NOTIFY-001', environment: 'production', status: 'blocked', firstRunId: '历史源未提供，禁止用导入轮次替代' }] }, { ...input, notification: { status: 'blocked' } }, contract);
   assert.match(historical.defects.find(item => item.defectId === 'DEF-STSMK-NOTIFY-001').firstRunId, /历史源未提供/);
 });
+
+test('REG-stsmk-report-risk-001 报告归档拒收导致未投递，不能更新原通知配置缺陷', () => {
+  const previous = { defects:[{defectId:'DEF-STSMK-NOTIFY-001',status:'blocked',firstRunId:'stsmk-original',latestRunId:'stsmk-original',environment:'production',caseIds:['REG-stsmk-notify-evidence-001']}] };
+  const state = updatePools(previous,{...input,rows:[],archive:{status:'failed'},notification:{status:'delivery-failed'}} ,contract);
+  assert.equal(state.defects.find(x=>x.defectId==='DEF-STSMK-NOTIFY-001').latestRunId,'stsmk-original');
+  assert.equal(state.events.some(x=>x.caseId==='REG-stsmk-notify-evidence-001'),false);
+});
 test('重试仍失败不能伪装flaky；近期窗口按上海14个自然日', () => {
   const old = updatePools({}, { ...input, completedAt: '2026-09-29T16:00:00Z', rows: [{ environment: 'production', caseId: 'VIS-009', status: 'fail', retryCount: 1 }] }, contract);
   assert.equal(old.events[0].status, 'fail');

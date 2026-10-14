@@ -1008,9 +1008,13 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
     '.claude/skills/create-visual-test-to-kb/scripts/test_archive_report_verdict_contract.py',
     'ReportRiskDecisionTests',
   ]);
-  const passed = result.status === 0;
+  const facts = commandRunner('node', ['--test', '--test-name-pattern', 'REG-stsmk-report-risk-001',
+    'scripts/tests/stable-smoke-run.test.mjs',
+    'scripts/tests/compose-stable-smoke-supervisor-report.test.mjs',
+    'scripts/tests/stable-smoke-memory.test.mjs']);
+  const passed = result.status === 0 && facts.status === 0;
   const artifactPath = resolve(runDir, 'report-risk-regression.log');
-  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}`, 'utf8');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}\n${facts.stdout || ''}\n${facts.stderr || ''}`, 'utf8');
   return {
     execution: { environment: 'cds-report-risk-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
     rows: [{ caseId: 'REG-stsmk-report-risk-001', environment: 'cds', title: '报告首屏结论与风险分类不得误导', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '报告风险呈现回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['报告风险呈现回归失败'] }],
@@ -1029,8 +1033,9 @@ export function buildCommonClosureEvidenceRow(rows) {
     (row) => row.caseId === caseId && row.status === 'pass',
   ));
   const failedCleanup = cleanupRows.filter((row) => row.status !== 'pass' || row.hadFailedAttempt);
+  const retriedPass = failedCleanup.filter(row => row.status === 'pass' && row.hadFailedAttempt);
+  const unsuccessful = failedCleanup.filter(row => row.status !== 'pass');
   const passed = cleanupRows.length > 0 && failedCleanup.length === 0 && missingRegressions.length === 0;
-  const failedCleanupCaseIds = [...new Set(failedCleanup.map((row) => row.caseId))];
   const failedCleanupDiagnostics = [...new Set(failedCleanup.flatMap((row) => row.attemptDiagnostics || []))];
   const hasStaticAsset502 = failedCleanupDiagnostics.some((item) => /HTTP\s+502\b.*\/assets\//i.test(item));
   const hasControlPlane504 = failedCleanupDiagnostics.some((item) => /HTTP\s+504\b.*\/_cds\/api\//i.test(item));
@@ -1040,8 +1045,11 @@ export function buildCommonClosureEvidenceRow(rows) {
   ].filter(Boolean).join('、');
   const reasons = [
     cleanupRows.length === 0 ? '没有执行带清理回读的业务旅程' : '',
-    failedCleanup.length > 0
-      ? `${infrastructureCause ? `${infrastructureCause} 导致` : ''}清理旅程首轮失败、确定性重试通过：${failedCleanupCaseIds.join('、')}；首次尝试的清理副作用尚未证实为零`
+    retriedPass.length > 0
+      ? `${infrastructureCause ? `${infrastructureCause} 相关` : ''}清理旅程首轮失败、确定性重试通过：${retriedPass.map(row=>row.caseId).join('、')}；首次尝试的清理副作用尚未证实为零`
+      : '',
+    unsuccessful.length > 0
+      ? `清理相关旅程未通过：${unsuccessful.map(row=>row.caseId).join('、')}；业务失败不能证明已污染，必须补独立清理回读`
       : '',
     missingRegressions.length > 0 ? `报告或通知门禁缺失：${missingRegressions.join('、')}` : '',
   ].filter(Boolean);
