@@ -62,3 +62,5 @@
 | test | llmgw | 覆盖 Responses 用量公式、金额口径标签、Offering 删除保护和禁用创建兼容合同 |
 | fix | llmgw | Provider 删除同步退场明确关联的旧 MAP 来源，避免权威副本删除后旧配置重新出现 |
 | test | llmgw | 覆盖 Provider 双域删除、租户隔离、同 ID 歧义保护与历史请求日志保留 |
+| fix | design-runtime | 修改网页时将上一版本的浏览器质量证据保留为冻结输入，不再误当作可编辑资源拒绝工作区 |
+| test | design-runtime | 覆盖含双视口质量报告和截图的已生成站点可继续修改且派生证据不会混入新产物 |

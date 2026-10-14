@@ -61,6 +61,18 @@ describe('edit runs seeded from the current published site', () => {
     harness = await startHarness();
     const html = '<!doctype html><html><head><title>Library</title></head><body><main><h1>Original sentence.</h1><p>Library information.</p></main></body></html>';
     const metadataPaths = ['assets/accessibility-static-report.json', 'assets/design-tokens.json', 'assets/page-outline.json', 'assets/provenance.json'];
+    const browserEvidence = [
+      { path: 'assets/visual-quality-report.json', content: '{"schemaVersion":"map-browser-quality-v1","attempts":[]}', mediaType: 'application/json; charset=utf-8' },
+      { path: 'assets/quality/attempt-0-desktop.png', content: Buffer.from('previous desktop screenshot'), mediaType: 'image/png' },
+      { path: 'assets/quality/attempt-0-mobile.png', content: Buffer.from('previous mobile screenshot'), mediaType: 'image/png' },
+    ].map((file) => ({
+      path: file.path,
+      contentBase64: Buffer.from(file.content).toString('base64'),
+      sha256: digest(Buffer.from(file.content)),
+      size: Buffer.byteLength(file.content),
+      mediaType: file.mediaType,
+    }));
+    const browserEvidencePaths = browserEvidence.map((file) => file.path);
     const assets = [
       { path: 'assets/site.css', content: 'body { color: #123; }', mediaType: 'text/css' },
       { path: 'assets/app.js', content: 'document.documentElement.dataset.ready = "yes";', mediaType: 'application/javascript' },
@@ -69,11 +81,11 @@ describe('edit runs seeded from the current published site', () => {
     const oldPackage = buildGeneratedPublicArtifactPackage(hardenSelfContainedHtml(html), assets.map((file) => ({
       path: file.path, contentBase64: Buffer.from(file.content).toString('base64'), sha256: digest(Buffer.from(file.content)),
       size: Buffer.byteLength(file.content), mediaType: file.path.endsWith('.css') ? 'text/css; charset=utf-8' : file.path.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.mediaType,
-    })));
+    })), browserEvidence);
     const inputFiles = [
       { path: 'current/index.html', content: html, mediaType: 'text/html' },
       ...assets.map((file) => ({ ...file, path: `current/${file.path}` })),
-      ...oldPackage.filter((file) => metadataPaths.includes(file.path) || file.path === 'manifest.json').map((file) => ({
+      ...oldPackage.filter((file) => metadataPaths.includes(file.path) || browserEvidencePaths.includes(file.path) || file.path === 'manifest.json').map((file) => ({
         path: `current/${file.path}`, content: Buffer.from(file.contentBase64, 'base64'), mediaType: file.mediaType,
       })),
     ];
@@ -84,7 +96,10 @@ describe('edit runs seeded from the current published site', () => {
       if (index === 1) {
         expect(fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8')).toBe(html);
         for (const asset of assets) expect(fs.readFileSync(path.join(workspaceDir, asset.path))).toEqual(Buffer.from(asset.content));
-        for (const filePath of [...metadataPaths, 'manifest.json']) expect(fs.existsSync(path.join(workspaceDir, filePath))).toBe(false);
+        for (const filePath of [...metadataPaths, ...browserEvidencePaths, 'manifest.json']) {
+          expect(fs.existsSync(path.join(workspaceDir, filePath))).toBe(false);
+          expect(fs.existsSync(path.join(workspaceDir, 'current', filePath))).toBe(true);
+        }
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), html.replace('Original sentence.', 'Updated sentence.'));
         fs.writeFileSync(path.join(workspaceDir, 'current/index.html.artifact.json'), '{"runtime":"metadata"}');
         if (removeAsset) fs.unlinkSync(path.join(workspaceDir, 'assets/pixel.png'));

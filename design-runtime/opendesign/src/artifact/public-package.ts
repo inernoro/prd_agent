@@ -502,9 +502,11 @@ export function prepareCurrentArtifactSeeds(
     });
     const validated = validatePublicArtifactFiles(candidates);
     if (!validated.some((file) => file.path === 'index.html')) throw new Error('current entry is missing');
-    // Old derived reports describe the previous revision and must not masquerade
-    // as authored resources. Exact known paths only; case aliases remain invalid.
-    const seeds = validated.filter((file) => !CDS_GENERATED_ARTIFACT_PATHS.some((reportPath) => file.path === reportPath));
+    // Runtime-derived reports and browser evidence describe the previous revision
+    // and must stay frozen under current/ rather than becoming editable resources.
+    // The same predicate also covers case aliases, so a reserved path can never be
+    // reintroduced as an author-owned seed.
+    const seeds = validated.filter((file) => !isReservedGeneratedPath(file.path));
     validatePublicArtifactFiles(seeds, true);
     for (const seed of seeds) {
       if (!isAllowedOutput(seed.path, transfer.allowedOutputPaths)) throw new Error('current resource is outside the authorized output paths');
