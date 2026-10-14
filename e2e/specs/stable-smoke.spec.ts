@@ -8167,6 +8167,180 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[REG-visual-reference-clipboard-001] 图片引用复制粘贴保持卡片且上传提示可读', { tag: '@cleanup' }, async ({ browser, page, request }, testInfo) => {
+    test.setTimeout(300_000);
+    const harness = await import(webEvidenceHarnessUrl);
+    harness.attachAutoCapture(page);
+    const out = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), `reference-evidence-${testInfo.testId}-r${testInfo.retry}`);
+    const evidenceLabels: Record<string, string> = {
+      '01-desktop-entry': '01 通过：首页进入视觉创作',
+      '02-clipboard-card': '02 通过：复制保留图片卡片',
+      '03-invalid-preserved': '03 通过：失效输入未丢失',
+      '04-generated-restored': '04 通过：刷新后参考图正确',
+      '05-mobile-entry': '05 通过：上传入口可点',
+      '06-mobile-reference': '06 通过：图片和描述可读',
+    };
+    const capture = async (targetPage: Page, name: string, caption: string, target: Locator) => {
+      await target.scrollIntoViewIfNeeded();
+      await harness.box(targetPage, target, evidenceLabels[name]);
+      // 只调整取证标注；长图注留在报告中，避免标签换行遮挡被证明的正文。
+      await targetPage.locator('.__acc_box').last().evaluate((label) => {
+        Object.assign((label as HTMLElement).style, {
+          top: `${Math.max(0, parseFloat((label as HTMLElement).style.top) - 15)}px`,
+          left: `${Math.max(4, parseFloat((label as HTMLElement).style.left))}px`,
+          whiteSpace: 'nowrap',
+        });
+      });
+      try {
+        const evidence = await harness.shot(targetPage, out, name, caption, {
+          skipReady: true, module: 'visual-reference', testType: '回归', primaryState: name,
+          breadcrumb: '首页 → 视觉创作智能体 → 本轮项目 → 上传与图片引用',
+          environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), runId: requiredEnv('STABLE_SMOKE_RUN_ID'),
+          commit: requiredEnv('STABLE_SMOKE_COMMIT'), methodAnchor: 'method-visual-reference',
+        });
+        harness.writeManifest(out, { branch: 'codex/visual-reference-closure-20261013', commit: requiredEnv('STABLE_SMOKE_COMMIT') });
+        await testInfo.attach(name, { path: evidence.path, contentType: 'image/png' });
+        expect(evidence.automatedStatus, '截图异常不能被接口成功掩盖').toBe('通过');
+      } finally {
+        await harness.clearBoxes(targetPage);
+      }
+    };
+    const token = await loginAndReadToken(page, request, '/');
+    await page.getByRole('searchbox', { name: '搜索智能体、工具或平台能力' }).fill('视觉创作');
+    await page.getByText('视觉创作智能体', { exact: true }).first().click();
+    await expect(page).toHaveURL(/\/visual-agent(?:\?|$)/);
+    await capture(page, '01-desktop-entry', '桌面入口：从首页导航到达视觉创作项目列表', page.getByText('新建项目', { exact: true }));
+    const creation = page.waitForResponse((response) => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/visual-agent/image-master/workspaces');
+    await page.getByText('新建项目', { exact: true }).click();
+    await page.getByRole('dialog').getByRole('textbox').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-引用复制`);
+    await page.getByRole('dialog').getByRole('button', { name: '创建', exact: true }).click();
+    const created = await creation;
+    expect(created.ok()).toBe(true);
+    const workspace = (await created.json() as ApiEnvelope<{ workspace: { id: string } }>).data.workspace;
+    try {
+      await expect(page).toHaveURL(new RegExp(`/visual-agent/${workspace.id}`));
+      await dismissBlockingTutorial(page);
+      const picker = page.locator('input[type="file"][accept="image/*"]');
+      await expect(picker).toBeEnabled({ timeout: 30_000 });
+      await picker.setInputFiles({ name: '蓝色参考.png', mimeType: 'image/png',
+        buffer: Buffer.from(solidPngDataUrl(35, 90, 190, 32).split(',')[1]!, 'base64') });
+      await expect(page.getByTestId('canvas-image')).toHaveCount(1, { timeout: 30_000 });
+      const composer = page.locator('[contenteditable="true"]').last();
+      await composer.click();
+      await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+      await composer.press('ControlOrMeta+A');
+      await page.evaluate(() => navigator.clipboard.writeText('请把 @img1 改成水彩风格，保留原有构图。'));
+      await composer.press('ControlOrMeta+V');
+      await expect(composer.locator('.image-chip-node'), '历史引用文字粘贴后必须还原图片卡片').toHaveCount(1);
+      await expect(composer).not.toContainText('@img1');
+      let copied = '';
+      for (let round = 0; round < 3; round += 1) {
+        // 不插入延迟：覆盖全选后立即复制、selectionchange 尚未同步的真实快捷操作。
+        await composer.press('ControlOrMeta+A');
+        await composer.press('ControlOrMeta+C');
+        copied = await page.evaluate(() => navigator.clipboard.readText());
+        expect(copied).toContain('[@image:#1:');
+        expect(copied).toContain('保留原有构图');
+        await composer.press('Backspace');
+        await composer.press('ControlOrMeta+V');
+        await expect(composer.locator('.image-chip-node')).toHaveCount(1);
+        await expect(composer).not.toContainText('[@image:');
+      }
+      await expect(page.getByText(/已把 1 张图片加入画板/)).not.toContainText('@imgN');
+      await expect(page.getByText(/已把 1 张图片加入画板/)).toContainText('参考图');
+      await capture(page, '02-clipboard-card', '图片引用：旧文字与复制占位符粘贴后均恢复为可读图片卡片', composer);
+
+      // 失效引用只做前端前置拦截，不提交计费请求。
+      let invalidSubmissions = 0;
+      const observeSubmission = (incoming: import('@playwright/test').Request) => {
+        if (incoming.method() === 'POST' && incoming.url().includes('/image-gen/runs')) invalidSubmissions += 1;
+      };
+      page.on('request', observeSubmission);
+      await composer.press('ControlOrMeta+A');
+      await page.evaluate(() => navigator.clipboard.writeText('[@image:#99:removed:https://example.invalid/removed.png] 保留这段设计要求'));
+      await composer.press('ControlOrMeta+V');
+      await expect(composer).toContainText('参考图已移除');
+      await composer.press('Enter');
+      await expect(page.getByText('这次没有生成', { exact: true })).toBeVisible();
+      await expect(composer).toContainText('保留这段设计要求');
+      expect(invalidSubmissions).toBe(0);
+      page.off('request', observeSubmission);
+      await capture(page, '03-invalid-preserved', '失效引用：阻止生成并保留设计输入，提示重新选择图片', composer);
+
+      // 正常复制引用走真实生成，不替换业务响应。
+      await composer.press('ControlOrMeta+A');
+      await page.evaluate((text) => navigator.clipboard.writeText(text), copied);
+      await composer.press('ControlOrMeta+V');
+      const generation = page.waitForResponse((response) => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, { timeout: 60_000 });
+      await composer.press('Enter');
+      const generated = await generation;
+      expect(generated.ok()).toBe(true);
+      const payload = generated.request().postDataJSON() as { prompt: string; userMessageContent: string; imageRefs: unknown[] };
+      expect(payload.imageRefs).toHaveLength(1);
+      expect(payload.userMessageContent).toContain('[@image:');
+      expect(payload.prompt).not.toContain('[@image:');
+      const createdRun = await generated.json() as ApiEnvelope<{ runId: string }>;
+      expect(createdRun.success).toBe(true);
+      const completed = await waitForImageRun(page, token, createdRun.data.runId);
+      await assertImageArtifact(page, completed.detail);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      const userMessage = page.locator('[data-testid="visual-chat-message"][data-message-role="User"]').filter({ hasText: '保留原有构图' }).last();
+      await expect(userMessage).toBeVisible({ timeout: 30_000 });
+      await expect(userMessage.locator('img')).toHaveCount(1);
+      await expect(userMessage).not.toContainText('[@image:');
+      await expect(userMessage).not.toContainText('@img1');
+      await expect(userMessage.getByRole('button', { name: '展开', exact: true })).toHaveCount(0);
+      await expect(page.locator('[title*="@img"], [title*="[@image:"], img[alt*="@img"], img[alt*="[@image:"]'), '悬浮说明与辅助阅读也不得暴露内部引用格式').toHaveCount(0);
+      await userMessage.getByRole('button', { name: '复制', exact: true }).click();
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toContain('[@image:');
+      await capture(page, '04-generated-restored', '消息回读：真实生成后刷新仍显示正确参考图，再次复制保留图片身份', userMessage);
+
+      // 独立触控 context 从首页重新进入；移动端使用线性参考图上传，不假装支持桌面卡片编辑器。
+      const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+      let mobileWorkspaceId = '';
+      try {
+        const mobile = await mobileContext.newPage();
+        harness.attachAutoCapture(mobile);
+        await loginAndReadToken(mobile, request, '/');
+        await mobile.getByText('生图', { exact: true }).first().tap();
+        await expect(mobile).toHaveURL(/\/visual-agent(?:\?|$)/);
+        const mobileCreation = mobile.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === '/api/visual-agent/image-master/workspaces');
+        await mobile.getByText('新建项目', { exact: true }).tap();
+        await mobile.getByRole('dialog').getByRole('textbox').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-移动参考图`);
+        await mobile.getByRole('dialog').getByRole('button', { name: '创建', exact: true }).tap();
+        mobileWorkspaceId = (await (await mobileCreation).json() as ApiEnvelope<{ workspace: { id: string } }>).data.workspace.id;
+        await expect(mobile.getByRole('button', { name: '上传参考图', exact: true })).toBeEnabled({ timeout: 30_000 });
+        // 复用既有平台浮层隔离：只隐藏 CDS 调试小部件，不改产品布局或业务内容。
+        // 该小部件会自动替换紧凑态按钮，关闭按钮定位本身不属于图片验收。
+        await dismissCdsPreviewWidget(mobile);
+        await capture(mobile, '05-mobile-entry', '移动端入口：独立触控登录与导航后上传参考图操作可达', mobile.getByRole('button', { name: '上传参考图', exact: true }));
+        await mobile.locator('input[type="file"][accept="image/*"]').setInputFiles({ name: '移动蓝色参考.png', mimeType: 'image/png',
+          buffer: Buffer.from(solidPngDataUrl(35, 90, 190, 32).split(',')[1]!, 'base64') });
+        await expect(mobile.getByAltText('参考图', { exact: true })).toBeVisible({ timeout: 30_000 });
+        await mobile.getByPlaceholder('描述要怎么改这张图…').fill('保持蓝色，改成水彩风格');
+        expect(await mobile.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
+        await capture(mobile, '06-mobile-reference', '移动端参考图：真实上传图片与修改输入同屏可读，没有内部占位符', mobile.getByAltText('参考图', { exact: true }).locator('..'));
+      } finally {
+        if (mobileWorkspaceId) {
+          await expectDeleteSucceeded(await page.request.delete(`/api/visual-agent/image-master/workspaces/${mobileWorkspaceId}`, {
+            headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+          }), '清理移动端参考图验收项目失败');
+        }
+        await mobileContext.close();
+      }
+      harness.writeManifest(out, { verdict: 'pass', target: '图片引用复制、发送与回读闭环', branch: 'codex/visual-reference-closure-20261013', commit: requiredEnv('STABLE_SMOKE_COMMIT') });
+    } finally {
+      const removed = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+      });
+      await expectDeleteSucceeded(removed, '清理图片引用复制粘贴验收工作区失败');
+    }
+  });
+
   test('[MVIS-005][MVIS-006] 多图重复与超限输入给出明确行为', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行重复和超限图片输入');
     test.setTimeout(240_000);
@@ -8182,7 +8356,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       await picker.setInputFiles([file('dup1.png'), file('dup2.png')]);
       await expect(page.getByTestId('canvas-image')).toHaveCount(2, { timeout: 30_000 });
-      await expect(page.getByText('已把 2 张图片加入画板。你可以选中其中一张作为首帧，或用 @imgN 引用多张图。')).toBeVisible();
+      await expect(page.getByText('已把 2 张图片加入画板。点击图片可添加为参考图，再输入你想怎么修改。')).toBeVisible();
       await expect(page.locator('[data-testid="canvas-image"][alt="dup1.png"]')).toHaveCount(1);
       await expect(page.locator('[data-testid="canvas-image"][alt="dup2.png"]')).toHaveCount(1);
 
@@ -8201,11 +8375,23 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[MVIS-010] 多图引用失败只显示结果与恢复动作', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境只观察自然失败，不主动提交损坏引用');
     test.setTimeout(180_000);
-    const token = await loginAndReadToken(page, request, '/visual-agent');
-    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-readable-error');
+    const harness = await import(webEvidenceHarnessUrl);
+    harness.attachAutoCapture(page);
+    const token = await loginAndReadToken(page, request, '/');
+    await page.getByRole('searchbox', { name: '搜索智能体、工具或平台能力' }).fill('视觉创作');
+    await page.getByText('视觉创作智能体', { exact: true }).first().click();
+    const creation = page.waitForResponse(response => response.request().method() === 'POST'
+      && new URL(response.url()).pathname === '/api/visual-agent/image-master/workspaces');
+    await page.getByText('新建项目', { exact: true }).click();
+    await page.getByRole('dialog').getByRole('textbox').fill(`${requiredEnv('STABLE_SMOKE_RUN_ID')}-损坏引用`);
+    await page.getByRole('dialog').getByRole('button', { name: '创建', exact: true }).click();
+    const workspace = (await (await creation).json() as ApiEnvelope<{ workspace: { id: string } }>).data.workspace;
     let runId = '';
     try {
+      await expect(page).toHaveURL(new RegExp(`/visual-agent/${workspace.id}`));
+      await dismissBlockingTutorial(page);
       const valid = await readEnvelope<{ asset: { sha256: string; url: string } }>(
         await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
           headers: {
@@ -8256,17 +8442,38 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expectUserReadable(errorMessage);
       expect(errorMessage).not.toMatch(/HTTP|token|provider|offering|endpoint|protocol|stack|exception/i);
 
-      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
-      const visibleError = page.getByText(/参考图 @img2 无法使用/);
+      const visibleError = page.getByText(/参考图.*图2.*无法使用/);
       await expect(visibleError).toBeVisible({ timeout: 30_000 });
       await expect(visibleError).toContainText('其他输入已保留');
+      await expect(visibleError).not.toContainText('@img2');
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-13',
         target: visibleError,
-        caption: '损坏的 @img2 被精确指出，页面保留其他输入并给出可继续操作的恢复说明。',
+        caption: '损坏的第二张参考图被精确指出，页面保留其他输入并给出可继续操作的恢复说明。',
       });
-      await testInfo.attach('multi-image-readable-error', { body: await page.screenshot(), contentType: 'image/png' });
+      const out = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), `reference-error-evidence-${testInfo.testId}-r${testInfo.retry}`);
+      await visibleError.scrollIntoViewIfNeeded();
+      await harness.box(page, visibleError.locator('..'), '07 通过：失败引用可读');
+      await page.locator('.__acc_box').last().evaluate((label) => {
+        const style = (label as HTMLElement).style;
+        Object.assign(style, { top: `${Math.max(0, parseFloat(style.top) - 15)}px`, whiteSpace: 'nowrap' });
+      });
+      try {
+        const evidence = await harness.shot(page, out, '07-readable-reference-error',
+          '失败说明：实际损坏引用任务失败后显示可读图号和恢复动作，没有内部图片标记', {
+            skipReady: true, module: 'visual-reference', testType: '回归', primaryState: 'readable-reference-error',
+            breadcrumb: '首页 → 视觉创作智能体 → 本轮项目 → 引用失败说明',
+            environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), runId: requiredEnv('STABLE_SMOKE_RUN_ID'),
+            commit: requiredEnv('STABLE_SMOKE_COMMIT'), methodAnchor: 'method-visual-reference-error',
+          });
+        harness.writeManifest(out, { verdict: 'pass', target: '图片引用失败说明可读', commit: requiredEnv('STABLE_SMOKE_COMMIT') });
+        await testInfo.attach('multi-image-readable-error', { path: evidence.path, contentType: 'image/png' });
+        expect(evidence.automatedStatus).toBe('通过');
+      } finally {
+        await harness.clearBoxes(page);
+      }
     } finally {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: {
