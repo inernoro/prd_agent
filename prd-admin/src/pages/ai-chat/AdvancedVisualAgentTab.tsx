@@ -9248,6 +9248,15 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
             <div
               ref={inputPanelRef}
+              onKeyDownCapture={(event) => {
+                if (canEditCanvas() || event.key !== 'Enter' || event.shiftKey) return;
+                const native = event.nativeEvent;
+                if (composingRef.current || native.isComposing || native.keyCode === 229) return;
+                if (!(event.target as HTMLElement).closest('[contenteditable="true"]')) return;
+                // 必须先于 TwoPhase 的 confirmPending 和 Lexical 默认换行：拒绝发送不能改变草稿或引用状态。
+                event.preventDefault();
+                event.stopPropagation();
+              }}
               className={`surface-inset relative mt-2 shrink-0 rounded-[12px] p-2 ${directPrompt ? 'border-token-subtle' : ''}`}
               style={isMobile
                 ? {

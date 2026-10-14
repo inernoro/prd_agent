@@ -1,4 +1,7 @@
+// @vitest-environment jsdom
 import fs from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
@@ -7,9 +10,10 @@ import * as scheduling from '../../../lib/canvasSaveSchedule';
 
 // 执行 TSX 内真正的 boot、放置、提交和自动保存回调；只替换 React/DOM/API 边界。
 // 这不是复制一份简化业务实现，也不代替公网真实鼠标、保存和刷新验收。
-const path = new URL('../AdvancedVisualAgentTab.tsx', import.meta.url);
-const source = fs.readFileSync(path, 'utf8');
-const ast = ts.createSourceFile(path.pathname, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const testDirectory = dirname(fileURLToPath(import.meta.url));
+const sourcePath = resolve(testDirectory, '../AdvancedVisualAgentTab.tsx');
+const source = fs.readFileSync(sourcePath, 'utf8');
+const ast = ts.createSourceFile(sourcePath, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const declarations = new Map<string, ts.VariableDeclaration>();
 const effects: ts.Expression[] = [];
 const elements: ts.JsxElement[] = [];
@@ -201,9 +205,9 @@ describe('当前工作区快照成功应用之后才接受持久化编辑', () =
 });
 
 describe('草图控件与宿主 readiness 接线', () => {
-  const childPath = new URL('../../../components/visual-agent/DrawingBoardDialog.tsx', import.meta.url);
+  const childPath = resolve(testDirectory, '../../../components/visual-agent/DrawingBoardDialog.tsx');
   const childSource = fs.readFileSync(childPath, 'utf8');
-  const childAst = ts.createSourceFile(childPath.pathname, childSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const childAst = ts.createSourceFile(childPath, childSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   function find(node: ts.Node, predicate: (candidate: ts.Node) => boolean): ts.Node[] {
     const found: ts.Node[] = [];
     const walk = (candidate: ts.Node) => {
@@ -267,6 +271,69 @@ describe('草图控件与宿主 readiness 接线', () => {
       expect(h.context.onConfirm).not.toHaveBeenCalled();
     }
   });
+});
+
+describe('真实 Enter 捕获先于两阶段引用确认与 Lexical 提交', () => {
+  function parse(relative: string) {
+    const file = resolve(testDirectory, relative);
+    return ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  }
+  function find(root: ts.Node, predicate: (node: ts.Node) => boolean): ts.Node[] {
+    const nodes: ts.Node[] = [];
+    const walk = (node: ts.Node) => { if (predicate(node)) nodes.push(node); ts.forEachChild(node, walk); };
+    walk(root);
+    return nodes;
+  }
+  function attr(node: ts.JsxOpeningElement | ts.JsxSelfClosingElement, name: string) {
+    const found = node.attributes.properties.find(property => ts.isJsxAttribute(property) && property.name.getText() === name);
+    return found && ts.isJsxAttribute(found) && found.initializer && ts.isJsxExpression(found.initializer) ? found.initializer.expression : undefined;
+  }
+  const panel = find(ast, node => ts.isJsxOpeningElement(node) && attr(node, 'ref')?.getText() === 'inputPanelRef')[0] as ts.JsxOpeningElement;
+  const host = find(ast, node => ts.isJsxSelfClosingElement(node) && node.tagName.getText() === 'TwoPhaseRichComposer')[0] as ts.JsxSelfClosingElement;
+  const twoPhaseAst = parse('../../../components/RichComposer/TwoPhaseRichComposer.tsx');
+  const twoPhaseDeclaration = find(twoPhaseAst, node => ts.isVariableDeclaration(node) && node.name.getText() === 'handleSubmit')[0] as ts.VariableDeclaration;
+  const twoPhase = (twoPhaseDeclaration.initializer as ts.CallExpression).arguments[0];
+  const lexicalAst = parse('../../../components/RichComposer/index.tsx');
+  const register = find(lexicalAst, node => ts.isCallExpression(node) && node.expression.getText() === 'editor.registerCommand'
+    && node.arguments[0]?.getText() === 'KEY_ENTER_COMMAND')[0] as ts.CallExpression;
+  const lexical = register.arguments[1];
+  for (const [ready, shift] of [[false, false], [true, false], [false, true]]) {
+    it(`原生捕获/实际两阶段/实际 Lexical：ready=${ready}, Shift=${shift}`, () => {
+      const h = setup();
+      h.context.workspaceReadyRef.current = ready;
+      h.context.composingRef = { current: false };
+      h.context.onSendRich = vi.fn();
+      const confirmPending = vi.fn();
+      const twoContext = vm.createContext({ module: { exports: null }, confirmPending, onSubmit: () => run(attr(host, 'onSubmit')!, h.context) });
+      const lexicalContext = vm.createContext({ module: { exports: null }, onSubmit: () => run(twoPhase, twoContext) });
+      const parent = document.createElement('div');
+      parent.innerHTML = '<div contenteditable="true"><span>保留草稿</span></div>';
+      document.body.appendChild(parent);
+      const editor = parent.firstElementChild!;
+      const capture = attr(panel, 'onKeyDownCapture');
+      if (capture) parent.addEventListener('keydown', event => {
+        const keyboard = event as globalThis.KeyboardEvent;
+        run(capture, h.context, { key: keyboard.key, shiftKey: keyboard.shiftKey, nativeEvent: keyboard, target: keyboard.target,
+          preventDefault: () => keyboard.preventDefault(), stopPropagation: () => keyboard.stopPropagation() });
+      }, true);
+      editor.addEventListener('keydown', event => { run(lexical, lexicalContext, event); });
+      const enter = new KeyboardEvent('keydown', { key: 'Enter', shiftKey: shift, bubbles: true, cancelable: true });
+      editor.querySelector('span')!.dispatchEvent(enter);
+      if (!ready && !shift) {
+        expect(confirmPending).not.toHaveBeenCalled();
+        expect(enter.defaultPrevented).toBe(true);
+        expect(h.context.onSendRich).not.toHaveBeenCalled();
+      } else if (ready) {
+        expect(enter.defaultPrevented).toBe(true);
+        expect(confirmPending).toHaveBeenCalledOnce();
+        expect(h.context.onSendRich).toHaveBeenCalledOnce();
+      } else {
+        expect(enter.defaultPrevented).toBe(false);
+        expect(confirmPending).not.toHaveBeenCalled();
+      }
+      parent.remove();
+    });
+  }
 });
 
 describe('提交、草稿与既有上传保护', () => {
