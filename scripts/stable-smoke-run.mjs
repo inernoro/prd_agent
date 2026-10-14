@@ -1063,7 +1063,7 @@ export function runCdsVersionEvidence(runDir, commandRunner = command) {
   const readiness = readJson(resolve(runDir, 'cds-readiness.json'));
   const contract = commandRunner('node', [
     '--test', '--test-name-pattern',
-    'CDS 版本冻结门禁|纯验收工具变化可复用已部署业务版本|业务运行时代码变化不得借用旧镜像',
+    'CDS 版本冻结门禁|纯验收工具变化可复用已部署业务版本|业务运行时代码变化不得借用旧镜像|REG-stsmk-runtime-digest-001',
     'scripts/tests/stable-smoke-run.test.mjs',
   ]);
   const ready = readiness?.ready === true
@@ -1107,6 +1107,7 @@ export function runCdsVersionEvidence(runDir, commandRunner = command) {
       gateReasons: readiness?.reasons || [],
     },
     rows: [
+      row('REG-stsmk-runtime-digest-001', '提交标签与不可变摘要识别回归', ready && contractPassed, '当前 CDS 版本证据或摘要回归未通过'),
       row('COMMON-003', '[COMMON-003] 固定提交、不可变运行版本与恢复锚点', ready, 'CDS 固定版本或恢复锚点证据不完整'),
       row(
         'REG-stsmk-cds-runtime-equivalence-001',
@@ -2167,7 +2168,7 @@ async function main() {
       supplementalRows.push(...reportRiskRegression.rows);
     }
     if (selectedCdsCases.some((caseId) => (
-      caseId === 'COMMON-003' || caseId === 'REG-stsmk-cds-runtime-equivalence-001'
+      caseId === 'COMMON-003' || caseId === 'REG-stsmk-cds-runtime-equivalence-001' || caseId === 'REG-stsmk-runtime-digest-001'
     ))) {
       const versionEvidence = runCdsVersionEvidence(runDir);
       executions.push(versionEvidence.execution);

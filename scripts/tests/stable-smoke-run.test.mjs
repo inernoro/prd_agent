@@ -1134,6 +1134,7 @@ test('CDS 固定版本与运行时等价回归同时产出部署证据', () => {
     assert.deepEqual(
       result.rows.map((row) => [row.caseId, row.environment, row.status]),
       [
+        ['REG-stsmk-runtime-digest-001', 'cds', 'pass'],
         ['COMMON-003', 'cds', 'pass'],
         ['REG-stsmk-cds-runtime-equivalence-001', 'cds', 'pass'],
       ],
