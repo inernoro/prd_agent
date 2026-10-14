@@ -12,6 +12,8 @@
 
 同日追加例行范围判据：非核心失败不得代替五项核心结果；P0、污染、清理失败或清理欠证仍阻断，核心同编号混合红绿按红判定。缺失本轮结果不得解锁。DEF-STSMK-POLICY-001 绑定原 REG-stsmk-report-risk-001，旧红新绿接入实际例行执行，不靠解除本轮未通过的核心或视觉条件放行。
 
+同日老板复读捕获 DEF-STSMK-MATRIX-001：显式 not-run 占位曾在三池聚合为 pass，手机只读子项绿也会遮住同功能未执行。原 REG-stsmk-report-risk-001 新增两条旧红新绿，所有未执行、部分未执行均不得打勾；线上首屏、F编号评分表与原子账本必须一致。默认真人白桃证明缺口 ACCEPTANCE-stable-smoke-default-journey-001 仍未守，原 REG-visual-policy-001 保持 active，不以蓝杯API主例替代。
+
 ## 台账
 
 | caseId | 模块 | 首次发现 | 问题与根因 | 最小夹具 | CDS 环境证据 | 正式环境变体 | 必跑集合 | 重复逃逸 | 状态 |
