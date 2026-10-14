@@ -251,6 +251,7 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         Assert.Equal(TaskExecutionOrigins.Scheduled, permit.Origin);
         Assert.Equal("platform-scheduler:WorkflowScheduleWorker", permit.ActorUserId);
         Assert.Equal(["business-owner"], permit.SubjectUserIds);
+        Assert.False(permit.AllowDelegatedSubjects);
         Assert.Equal(8, permit.MaxCalls);
         Assert.Equal(1, permit.MaxRuns);
         using var scope = TaskExecutionContext.Enter(identity with { RunId = "job-run" });
@@ -261,6 +262,41 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         Assert.Equal(permit.ActorUserId, context.TriggerActorUserId);
         Assert.Equal(TaskExecutionOrigins.Scheduled, context.ExecutionOrigin);
         Assert.Equal(1, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+        var unchanged = await Permits.Find(item => item.Id == identity.PermitId).SingleAsync();
+        Assert.Equal(["business-owner"], unchanged.SubjectUserIds);
+        Assert.Equal(0, unchanged.CallCount);
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("scheduler-actor", false)]
+    [InlineData("unapproved-user", false)]
+    [InlineData("business-owner", true)]
+    [InlineData("unapproved-user", true)]
+    public async Task ScheduledJob_RejectsImplicitActorOrExpandedSubjects_AndAbnormalDelegationFlag(
+        string subject, bool delegated)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Deployment:Identity"] = "synthetic-branch",
+            ["Deployment:SharedScheduledWorkEnabled"] = "true",
+        }).Build();
+        using var deployment = AutomaticTaskExecutionContext.Enter("synthetic/WorkflowScheduleWorker/authority");
+        var identity = await new TaskAdmissionService(_data, config).AdmitScheduledTaskAsync(
+            "WorkflowScheduleWorker", "stored-job", "business-owner", default);
+        var permit = await Permits.Find(item => item.Id == identity.PermitId).SingleAsync();
+        permit.AllowDelegatedSubjects = delegated;
+        await Permits.ReplaceOneAsync(item => item.Id == permit.Id, permit);
+        using var scope = TaskExecutionContext.Enter(identity with { RunId = "job-run" });
+        using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
+        var context = new GatewayRequestContext { UserId = subject == "scheduler-actor" ? permit.ActorUserId : subject };
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => Authorize(message, context));
+        Assert.Equal(delegated ? "TASK_PERMIT_INVALID" : "TASK_PERMIT_SUBJECT_DENIED", error.Code);
+        Assert.False(message.Headers.Contains("X-Gateway-Task-Permit"));
+        Assert.Null(context.TaskPermitId);
+        var unchanged = await Permits.Find(item => item.Id == permit.Id).SingleAsync();
+        Assert.Equal(["business-owner"], unchanged.SubjectUserIds);
+        Assert.Empty(unchanged.BoundRunIds);
+        Assert.Equal(0, unchanged.CallCount);
     }
 
     public async Task DisposeAsync() => await _data.Database.Client.DropDatabaseAsync(_database);

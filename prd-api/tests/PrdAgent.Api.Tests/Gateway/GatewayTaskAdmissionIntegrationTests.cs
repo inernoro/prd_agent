@@ -153,6 +153,131 @@ public sealed class GatewayTaskAdmissionIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task ScheduledPermitPreservesServiceActorAndPreapprovedBusinessSubject()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.ScheduledPermitAsync();
+        await using var host = await Server(database);
+        var response = await Send(host.GetTestClient(), "POST", "/gw/v1/send", permit.Id,
+            context: new { UserId = "scheduled-owner", ExecutionOrigin = "interactive", TriggerActorUserId = "forged-actor" }, subject: "scheduled-owner");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var sent = database.Requests.Single().Context!;
+        sent.UserId.ShouldBe("scheduled-owner");
+        sent.TriggerActorUserId.ShouldBe("platform-scheduler:ReportAutoGenerateWorker");
+        sent.ExecutionOrigin.ShouldBe(TaskExecutionOrigins.Scheduled);
+        sent.TriggerCredentialId.ShouldBe("schedule:ReportAutoGenerateWorker:report-123");
+        sent.SourceTask.ShouldBe("ReportAutoGenerateWorker:report-123");
+        database.PaidCalls.ShouldBe(1);
+        var persisted = await database.Permits.Find(x => x.Id == permit.Id).SingleAsync();
+        persisted.CallCount.ShouldBe(1);
+        persisted.AllowDelegatedSubjects.ShouldBeFalse();
+        persisted.SubjectUserIds.ShouldBe(new[] { "scheduled-owner" });
+    }
+
+    [Theory]
+    [InlineData("unapproved-owner")]
+    [InlineData("platform-scheduler:ReportAutoGenerateWorker")]
+    public async Task ScheduledPermitCannotDynamicallyBorrowAnotherBillingSubject(string subject)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.ScheduledPermitAsync();
+        await using var host = await Server(database);
+        var response = await Send(host.GetTestClient(), "POST", "/gw/v1/send", permit.Id,
+            context: new { UserId = subject, ExecutionOrigin = "scheduled" }, subject: subject);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).ShouldContain("TASK_PERMIT_SUBJECT_DENIED");
+        database.PaidCalls.ShouldBe(0);
+        var persisted = await database.Permits.Find(x => x.Id == permit.Id).SingleAsync();
+        persisted.CallCount.ShouldBe(0);
+        persisted.SubjectUserIds.ShouldBe(new[] { "scheduled-owner" });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ScheduledSubjectDefaultsOnlyToAnUnambiguousPreapprovedBusinessUser(bool ambiguous)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.ScheduledPermitAsync();
+        if (ambiguous)
+        {
+            permit.SubjectUserIds.Add("another-preapproved-owner");
+            await database.Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
+        }
+        await using var host = await Server(database);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+        {
+            Content = JsonContent.Create(new { AppCallerCode = Caller, ModelType = "chat", Context = new { SourceSystem = "map" } }),
+        };
+        request.Headers.Add("X-Gateway-Key", TransportKey); request.Headers.Add("X-Gateway-Source", "map");
+        request.Headers.Add("X-Gateway-App-Caller", Caller); request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id);
+        var response = await host.GetTestClient().SendAsync(request);
+
+        response.StatusCode.ShouldBe(ambiguous ? HttpStatusCode.Forbidden : HttpStatusCode.OK);
+        database.PaidCalls.ShouldBe(ambiguous ? 0 : 1);
+        (await database.Permits.Find(x => x.Id == permit.Id).SingleAsync()).CallCount.ShouldBe(ambiguous ? 0 : 1);
+        if (!ambiguous)
+        {
+            database.Requests.Single().Context!.UserId.ShouldBe("scheduled-owner");
+            database.Requests.Single().Context!.TriggerActorUserId.ShouldBe("platform-scheduler:ReportAutoGenerateWorker");
+        }
+    }
+
+    [Theory]
+    [InlineData(TaskExecutionOrigins.Interactive)]
+    [InlineData(TaskExecutionOrigins.Agent)]
+    public async Task SelfReportedScheduledOriginCannotRelaxOtherOriginActorChecks(string origin)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.ScheduledPermitAsync(); permit.Origin = origin;
+        await database.Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
+        await using var host = await Server(database);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/send")
+        {
+            Content = JsonContent.Create(new { AppCallerCode = Caller, ModelType = "chat", Context = new { UserId = "scheduled-owner", ExecutionOrigin = "scheduled" } }),
+        };
+        request.Headers.Add("X-Gateway-Key", TransportKey); request.Headers.Add("X-Gateway-Source", "map");
+        request.Headers.Add("X-Gateway-App-Caller", Caller); request.Headers.Add("X-Gateway-Execution-Origin", "scheduled");
+        request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id);
+        var response = await host.GetTestClient().SendAsync(request);
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).ShouldContain("TASK_PERMIT_INVALID");
+        database.PaidCalls.ShouldBe(0);
+        (await database.Permits.Find(x => x.Id == permit.Id).SingleAsync()).CallCount.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("actor")]
+    [InlineData("credential")]
+    [InlineData("deployment")]
+    [InlineData("task")]
+    [InlineData("subjects")]
+    [InlineData("delegation")]
+    public async Task ScheduledPermitStillRequiresCompletePlatformFacts(string missing)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.ScheduledPermitAsync();
+        if (missing == "actor") permit.ActorUserId = "";
+        if (missing == "credential") permit.TriggerCredentialId = "";
+        if (missing == "deployment") permit.SourceDeployment = "";
+        if (missing == "task") permit.SourceTask = "";
+        if (missing == "subjects") permit.SubjectUserIds = [];
+        if (missing == "delegation") permit.AllowDelegatedSubjects = true;
+        await database.Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
+        await using var host = await Server(database);
+        var response = await Send(host.GetTestClient(), "POST", "/gw/v1/send", permit.Id,
+            context: new { UserId = "scheduled-owner" }, subject: "scheduled-owner");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await response.Content.ReadAsStringAsync()).ShouldContain("TASK_PERMIT_INVALID");
+        database.PaidCalls.ShouldBe(0);
+        (await database.Permits.Find(x => x.Id == permit.Id).SingleAsync()).CallCount.ShouldBe(0);
+    }
+
     [Theory]
     [InlineData("expired", "TASK_PERMIT_INVALID")]
     [InlineData("revoked", "TASK_PERMIT_INVALID")]
@@ -559,6 +684,18 @@ public sealed class GatewayTaskAdmissionIntegrationTests
                 MaxCalls = permit.MaxCalls, ExpiresAt = DateTime.UtcNow.AddMinutes(1),
             };
             await Grants.InsertOneAsync(grant); return (grant, key);
+        }
+
+        public async Task<GatewayTaskPermitRecord> ScheduledPermitAsync()
+        {
+            var permit = await PermitAsync(maxCalls: 8, origin: TaskExecutionOrigins.Scheduled);
+            permit.ActorUserId = "platform-scheduler:ReportAutoGenerateWorker";
+            permit.SubjectUserIds = ["scheduled-owner"];
+            permit.AllowDelegatedSubjects = false;
+            permit.TriggerCredentialId = "schedule:ReportAutoGenerateWorker:report-123";
+            permit.SourceTask = "ReportAutoGenerateWorker:report-123";
+            await Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
+            return permit;
         }
     }
 }

@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
+using PrdAgent.Api.Services.BackgroundTasks;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -115,6 +116,55 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         Assert.Equal("administrator", frozen.ActorUserId);
         Assert.Contains("owner", frozen.SubjectUserIds);
         Assert.Equal(0, frozen.CallCount);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task ScheduledTask_DefaultsToSoleApprovedBusinessSubject_AndIssuesShortGrant()
+    {
+        var configuration = ScheduledConfiguration();
+        var identity = await AdmitScheduledTaskAsync(configuration);
+        var permit = await Permits.Find(item => item.Id == identity.PermitId).SingleAsync();
+        Assert.Equal("platform-scheduler:WorkflowScheduleWorker", permit.ActorUserId);
+        Assert.Equal(["business-owner"], permit.SubjectUserIds);
+        Assert.False(permit.AllowDelegatedSubjects);
+        using var task = TaskExecutionContext.Enter(identity with { RunId = "scheduled-job-run" });
+        var prepared = await Issuer(configuration).PrepareAsync(Request(subject: null), default);
+        var grant = await Grants.Find(FilterDefinition<GatewayRuntimeGrantRecord>.Empty).SingleAsync();
+        Assert.StartsWith("gwrg_", prepared.ApiKey!);
+        Assert.Equal("business-owner", prepared.SubjectUserId);
+        Assert.Equal("business-owner", grant.UserId);
+        Assert.Equal(permit.Id, grant.TaskPermitId);
+        Assert.Equal("scheduled-job-run", grant.RunId);
+        Assert.True(grant.ExpiresAt <= permit.ExpiresAt);
+        var unchanged = await Permits.Find(item => item.Id == permit.Id).SingleAsync();
+        Assert.Equal(permit.ActorUserId, unchanged.ActorUserId);
+        Assert.Equal(["business-owner"], unchanged.SubjectUserIds);
+        Assert.Equal(["scheduled-job-run"], unchanged.BoundRunIds);
+        Assert.Equal(0, unchanged.CallCount);
+    }
+
+    [DesignScopeMongoTheory]
+    [InlineData("scheduler-actor", false)]
+    [InlineData("unapproved-user", false)]
+    [InlineData("business-owner", true)]
+    [InlineData("unapproved-user", true)]
+    public async Task ScheduledTask_RejectsImplicitActorAndUnapprovedSubjects_WithoutIssuingOrExpanding(
+        string subject, bool delegated)
+    {
+        var configuration = ScheduledConfiguration();
+        var identity = await AdmitScheduledTaskAsync(configuration);
+        var permit = await Permits.Find(item => item.Id == identity.PermitId).SingleAsync();
+        permit.AllowDelegatedSubjects = delegated;
+        await Permits.ReplaceOneAsync(item => item.Id == permit.Id, permit);
+        using var task = TaskExecutionContext.Enter(identity with { RunId = "scheduled-job-run" });
+        var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => Issuer(configuration).PrepareAsync(
+            Request(subject: subject == "scheduler-actor" ? permit.ActorUserId : subject), default));
+        Assert.Equal(delegated ? "TASK_PERMIT_INVALID" : "TASK_PERMIT_SUBJECT_DENIED", error.Code);
+        Assert.Equal(0, await Grants.CountDocumentsAsync(FilterDefinition<GatewayRuntimeGrantRecord>.Empty));
+        var unchanged = await Permits.Find(item => item.Id == permit.Id).SingleAsync();
+        Assert.Equal(["business-owner"], unchanged.SubjectUserIds);
+        Assert.Empty(unchanged.BoundRunIds);
+        Assert.Equal(0, unchanged.CallCount);
     }
 
     [DesignScopeMongoTheory]
@@ -290,6 +340,21 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         {
             ["LlmGateway:ServeBaseUrl"] = serving, ["LlmGateway:ExternalServingBaseUrl"] = external,
         }).Build();
+
+    private static IConfiguration ScheduledConfiguration() => new ConfigurationBuilder()
+        .AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://internal-gateway:8091",
+            ["Deployment:Identity"] = "synthetic-scheduler-deployment",
+            ["Deployment:SharedScheduledWorkEnabled"] = "true",
+        }).Build();
+
+    private async Task<TaskExecutionIdentity> AdmitScheduledTaskAsync(IConfiguration configuration)
+    {
+        using var deployment = AutomaticTaskExecutionContext.Enter("synthetic/WorkflowScheduleWorker/authority");
+        return await new TaskAdmissionService(_data, configuration).AdmitScheduledTaskAsync(
+            "WorkflowScheduleWorker", "stored-job", "business-owner", default);
+    }
 
     private static IConfiguration CdsConfiguration(string? console, string? serviceTable = null, string? external = null)
         => new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>

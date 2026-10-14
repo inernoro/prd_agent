@@ -70,6 +70,7 @@ public sealed class TaskScopedRuntimeGrantIssuer(
             || permit.MaxCalls is <= 0 or > GatewayTaskPermitRecord.MaximumCalls
             || permit.MaxRuns is <= 0 or > GatewayTaskPermitRecord.MaximumRuns || permit.CallCount < 0
             || !TaskExecutionOrigins.IsKnown(permit.Origin)
+            || permit.Origin == TaskExecutionOrigins.Scheduled && permit.AllowDelegatedSubjects
             || string.IsNullOrWhiteSpace(permit.TriggerCredentialId) || string.IsNullOrWhiteSpace(permit.SourceTask)
             || permit.CallCount >= permit.MaxCalls || permit.TenantId != tenant
             || permit.SourceDeployment != TaskPermitDeployment.Resolve(configuration)
@@ -77,7 +78,8 @@ public sealed class TaskScopedRuntimeGrantIssuer(
             || permit.AllowedAppCallerCodes?.Contains(request.AppCallerCode, StringComparer.Ordinal) != true
             || string.IsNullOrWhiteSpace(permit.ActorUserId) || context.TriggerActorUserId != permit.ActorUserId
             || string.IsNullOrWhiteSpace(context.UserId)
-            || context.UserId != permit.ActorUserId && permit.SubjectUserIds?.Contains(context.UserId, StringComparer.Ordinal) != true)
+            || (permit.Origin == TaskExecutionOrigins.Scheduled || context.UserId != permit.ActorUserId)
+                && permit.SubjectUserIds?.Contains(context.UserId, StringComparer.Ordinal) != true)
             throw Denied("TASK_PERMIT_INVALID",
                 "本次任务的执行许可已失效或超出范围，已停止启动；请核对任务状态后重新提交。");
 

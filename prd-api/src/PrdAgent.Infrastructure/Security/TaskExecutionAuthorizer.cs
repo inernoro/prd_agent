@@ -47,7 +47,8 @@ public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfigu
             || permit.MaxCalls is <= 0 or > GatewayTaskPermitRecord.MaximumCalls
             || permit.MaxRuns is <= 0 or > GatewayTaskPermitRecord.MaximumRuns
             || permit.CallCount < 0 || permit.CallCount >= permit.MaxCalls
-            || permit.BoundRunIds.Count > permit.MaxRuns || !TaskExecutionOrigins.IsKnown(permit.Origin))
+            || permit.BoundRunIds.Count > permit.MaxRuns || !TaskExecutionOrigins.IsKnown(permit.Origin)
+            || permit.Origin == TaskExecutionOrigins.Scheduled && permit.AllowDelegatedSubjects)
             throw Denied("TASK_PERMIT_INVALID", "本次任务的执行许可已失效或额度已用尽；请核对任务状态后重新提交。");
         if (permit.SourceDeployment != deployment || permit.TenantId != tenant
             || !permit.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.Ordinal)
@@ -60,7 +61,9 @@ public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfigu
         var runId = identity.RunId ?? context?.RunId;
         var subject = context?.UserId is { Length: > 0 } declaredSubject ? declaredSubject
             : permit.SubjectUserIds.Count == 1 ? permit.SubjectUserIds[0] : permit.ActorUserId;
-        if (subject != permit.ActorUserId && !permit.SubjectUserIds.Contains(subject, StringComparer.Ordinal))
+        // 调度器身份只表示执行来源，业务归属必须由调度准入预先批准。
+        if (!permit.SubjectUserIds.Contains(subject, StringComparer.Ordinal)
+            && (permit.Origin == TaskExecutionOrigins.Scheduled || subject != permit.ActorUserId))
         {
             if (!permit.AllowDelegatedSubjects || string.IsNullOrWhiteSpace(identity.RunId))
                 throw Denied("TASK_PERMIT_SUBJECT_DENIED", "本次调用的业务归属超出已批准范围，已停止；请核对任务归属。");

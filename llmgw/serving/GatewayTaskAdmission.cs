@@ -124,7 +124,10 @@ public sealed class GatewayTaskAdmission(
                 || string.IsNullOrWhiteSpace(permit.SourceTask) || string.IsNullOrWhiteSpace(permit.SourceDeployment)
                 || string.IsNullOrWhiteSpace(permit.ActorUserId)
                 || string.IsNullOrWhiteSpace(permit.TriggerCredentialId)
-                || !permit.SubjectUserIds.Contains(permit.ActorUserId, StringComparer.Ordinal)
+                // 调度服务是触发者，业务用户由签发端预批准；网关不能把二者混为一人或追加归属。
+                || permit.Origin == TaskExecutionOrigins.Scheduled
+                    && (permit.AllowDelegatedSubjects || permit.SubjectUserIds.Count == 0 || permit.SubjectUserIds.Any(string.IsNullOrWhiteSpace))
+                || permit.Origin != TaskExecutionOrigins.Scheduled && !permit.SubjectUserIds.Contains(permit.ActorUserId, StringComparer.Ordinal)
                 || permit.AllowedAppCallerCodes.Count == 0 || permit.AllowedAppCallerCodes.Any(x => x == "*"))
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_INVALID", "当前任务授权已失效，已停止本次调用；请重新发起任务。");
             if (permit.SourceDeployment != deployment)
@@ -155,10 +158,13 @@ public sealed class GatewayTaskAdmission(
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_RUN_DENIED", "当前任务授权与执行记录不匹配，已停止本次调用；请重新发起任务。");
 
             if (authorization.RuntimeGrant is { UserId.Length: > 0 } runtimeGrant) declared.SubjectUserIds.Add(runtimeGrant.UserId);
-            var subject = authorization.RuntimeGrant?.UserId ?? declared.SubjectUserId ?? permit.ActorUserId;
+            var defaultSubject = permit.Origin == TaskExecutionOrigins.Scheduled
+                ? permit.SubjectUserIds.Count == 1 ? permit.SubjectUserIds[0] : string.Empty
+                : permit.ActorUserId;
+            var subject = authorization.RuntimeGrant?.UserId ?? declared.SubjectUserId ?? defaultSubject;
             declared.SubjectUserIds.Add(subject);
             if (declared.SubjectUserIds.Count > 1 || declared.SubjectUserIds.Any(user => !permit.SubjectUserIds.Contains(user, StringComparer.Ordinal)
-                || !permit.AllowDelegatedSubjects && user != permit.ActorUserId))
+                || permit.Origin != TaskExecutionOrigins.Scheduled && !permit.AllowDelegatedSubjects && user != permit.ActorUserId))
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_SUBJECT_DENIED", "当前任务授权与操作归属不匹配，已停止本次调用；请重新进入正确任务。");
             if (expectedSubject is not null && expectedSubject != subject)
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_SUBJECT_DENIED", "当前任务操作归属已改变，已停止本次调用；请重新进入正确任务。");
