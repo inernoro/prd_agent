@@ -2078,26 +2078,32 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-003] 大文件上传期间持续显示文件名和百分比', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[FILE-003] 请求体传完后明确解析阶段并持续计时', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不注入响应延迟，慢路径仅在 CDS 验证');
     test.setTimeout(90_000);
-    const token = await loginAndReadToken(page, request, '/document-store');
+    const token = await loginAndReadToken(page, request, '/');
+    await page.getByRole('button', { name: '知识库', exact: true }).click();
+    await page.waitForURL((url) => url.pathname === '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
     let storeId = '';
+    const session = await page.context().newCDPSession(page);
+    let pausedRequestId = '';
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: { name: runKey, description: '上传进度稳定冒烟，执行后自动清理', isPublic: false },
       }));
       storeId = store.id;
-      await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissBlockingTutorial(page);
+      await page.getByText(runKey, { exact: true }).click();
       await expect(page.getByText(runKey, { exact: true })).toBeVisible({ timeout: 15_000 });
 
-      let releaseUpload!: () => void;
-      const release = new Promise<void>((resolveRelease) => { releaseUpload = resolveRelease; });
-      await page.route(`**/api/document-store/stores/${storeId}/upload`, async (route) => {
-        await release;
-        await route.continue();
+      // 仅延后真实响应交付，不替换回执、正文或页面状态。该证据证明 UI 慢路径，不证明解析性能。
+      const uploadPath = `/api/document-store/stores/${storeId}/upload`;
+      session.on('Fetch.requestPaused', (event) => { pausedRequestId = event.requestId; });
+      await session.send('Fetch.enable', {
+        patterns: [{ urlPattern: new URL(uploadPath, page.url()).href, requestStage: 'Response' }],
       });
       const name = `${runKey}.txt`;
       await page.locator('input[type="file"][accept*=".pdf"]').first().setInputFiles({
@@ -2105,14 +2111,31 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         mimeType: 'text/plain',
         buffer: Buffer.alloc(2 * 1024 * 1024, 65),
       });
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible({ timeout: 10_000 });
-      await expect(page.getByText(/^\d+%$/)).toBeVisible();
-      releaseUpload();
-      await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+      await expect.poll(() => pausedRequestId, { timeout: 20_000 }).not.toBe('');
+      await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeVisible();
+      const status = page.getByTestId('document-upload-status');
+      await expect(status).toContainText('解析中 · 已等待');
+      const firstStatus = await status.innerText();
+      await expect.poll(() => status.innerText(), { timeout: 3000 }).not.toBe(firstStatus);
+      const response = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath);
+      await session.send('Fetch.continueRequest', { requestId: pausedRequestId });
+      pausedRequestId = '';
+      const uploadResponse = await response;
+      expect(uploadResponse.ok()).toBe(true);
+      const uploadedBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
+      expect(uploadedBody.success).toBe(true);
+      await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
+      const content = await readEnvelope<{ content: string }>(await page.request.get(
+        `/api/document-store/entries/${uploadedBody.data.entry.id}/content`, { headers: authHeaders(token) },
+      ));
+      expect(content.content).toContain('AAAA');
     } finally {
+      if (pausedRequestId) await session.send('Fetch.continueRequest', { requestId: pausedRequestId }).catch(() => {});
+      await session.detach();
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
+        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
     }
   });
