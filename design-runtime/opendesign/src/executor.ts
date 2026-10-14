@@ -134,6 +134,18 @@ function buildExecutionBudget(startedAt: number, timeoutSeconds: number): Execut
   };
 }
 
+function allotBrowserRepairMs(
+  remainingMs: number,
+  minimumPassMs: number,
+  maximumPassMs: number,
+  remainingRepairSlots: number,
+): number {
+  if (remainingMs <= 0 || remainingRepairSlots <= 0) return 0;
+  const evenShare = Math.floor(remainingMs / remainingRepairSlots);
+  if (evenShare < minimumPassMs) return evenShare;
+  return Math.min(maximumPassMs, evenShare);
+}
+
 export interface ExecutorPaths {
   workspaceDir: string;
   dataDir: string;
@@ -797,7 +809,13 @@ export class DesignTaskExecutor {
           throw new AgentWorkspaceRuntimeError('design_output_missing', 'Trusted browser quality checkpoint has no index.html');
         }
         const remainingRepairMs = budget.finalizationDeadline - Date.now();
-        const allottedRepairMs = Math.min(budget.maximumQualityPassMs, remainingRepairMs);
+        const remainingRepairSlots = MAX_BROWSER_REPAIR_ATTEMPTS - browserRepairAttempt;
+        const allottedRepairMs = allotBrowserRepairMs(
+          remainingRepairMs,
+          budget.minimumQualityPassMs,
+          budget.maximumQualityPassMs,
+          remainingRepairSlots,
+        );
         if (allottedRepairMs < budget.minimumQualityPassMs) {
           onStage('open_design_quality_repair_budget_exhausted', {
             kind: 'browser-hard-gate',
@@ -812,7 +830,7 @@ export class DesignTaskExecutor {
         try {
           const repair = await client.odJson('/api/runs', {
             method: 'POST',
-            body: buildRunBody(browserRepairMessage(evidence)),
+            body: buildRunBody(browserRepairMessage(evidence, browserAttempts.at(-2))),
             signal: signalForDeadline(repairDeadline, signal),
             acceptedStatuses: [200, 202],
           });
@@ -854,14 +872,25 @@ export class DesignTaskExecutor {
             hardenedHtml,
             designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
           );
-          onStage('open_design_quality_repair_budget_exhausted', {
-            kind: 'browser-hard-gate',
-            attempt: browserRepairAttempt + 1,
-            allottedSeconds: Math.floor(allottedRepairMs / 1000),
-            issueCodes: evidence.issueCodes,
-            retainedRunId: stableRunId,
-          });
-          browserRepairBudgetExhausted = true;
+          const remainingAfterTimeoutMs = budget.finalizationDeadline - Date.now();
+          const remainingSlotsAfterTimeout = MAX_BROWSER_REPAIR_ATTEMPTS - browserRepairAttempt - 1;
+          const nextAllottedRepairMs = allotBrowserRepairMs(
+            remainingAfterTimeoutMs,
+            budget.minimumQualityPassMs,
+            budget.maximumQualityPassMs,
+            remainingSlotsAfterTimeout,
+          );
+          browserRepairBudgetExhausted = remainingSlotsAfterTimeout <= 0
+            || nextAllottedRepairMs < budget.minimumQualityPassMs;
+          if (browserRepairBudgetExhausted) {
+            onStage('open_design_quality_repair_budget_exhausted', {
+              kind: 'browser-hard-gate',
+              attempt: browserRepairAttempt + 1,
+              allottedSeconds: Math.floor(allottedRepairMs / 1000),
+              issueCodes: evidence.issueCodes,
+              retainedRunId: stableRunId,
+            });
+          }
           continue;
         }
         this.promoteDeliverableEntry(deliverableEntryFile, onStage);

@@ -580,6 +580,9 @@ describe('collecting the deliverable', () => {
     expect(seenEvidenceDirs.every((dir) => !dir.startsWith(harness!.config.odDataDir))).toBe(true);
     expect(harness.daemon.runBodies).toHaveLength(4);
     expect(harness.daemon.runBodies.slice(2).every((body) => String(body.message).includes('isolated browser quality gate'))).toBe(true);
+    expect(String(harness.daemon.runBodies[2].message)).not.toContain('previous targeted repair produced no measurable change');
+    expect(String(harness.daemon.runBodies[3].message)).toContain('previous targeted repair produced no measurable change');
+    expect(String(harness.daemon.runBodies[3].message)).toContain('Do not leave any second hidden nav or [role="navigation"]');
     expect(harness.daemon.runBodies[0].conversationId).toBe('od-conversation');
     expect(new Set(harness.daemon.runBodies.slice(1).map((body) => body.conversationId))).toEqual(
       new Set(['od-quality-conversation-1']),
@@ -660,12 +663,12 @@ describe('collecting the deliverable', () => {
     expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('trusted-candidate');
     expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
       'open_design_quality_repairing',
-      'open_design_quality_repair_budget_exhausted',
       'open_design_browser_quality_checked',
     ]));
+    expect(await statusReasons(pkg.runId)).not.toContain('open_design_quality_repair_budget_exhausted');
   }, 15_000);
 
-  it('ends as a traceable browser quality rejection when the restored snapshot still has hard issues', async () => {
+  it('uses the reserved second browser repair after the first times out and retains complete rejection evidence', async () => {
     const checkedHtml: string[] = [];
     harness = await startHarness({ overrides: {
       browserQualityRunner: {
@@ -710,6 +713,9 @@ describe('collecting the deliverable', () => {
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-browser-repair</main></body></html>');
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
       }
+      if (index === 4) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-with-hard-issue</h1></main></body></html>');
+      }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
 
@@ -718,17 +724,19 @@ describe('collecting the deliverable', () => {
     expect(view.state).toBe('failed');
     expect(view.error.code).toBe('design_browser_quality_rejected');
     expect(view.error.details).toMatchObject({
-      repairBudgetExhausted: true,
+      repairAttempts: 2,
+      repairBudgetExhausted: false,
       issueCodes: ['key_text_contrast_low'],
       bestRepairAttempt: 0,
       browserQualityEvidence: {
         schemaVersion: 'map-browser-quality-failure-evidence-v1',
-        repairBudgetExhausted: true,
+        repairAttempts: 2,
+        repairBudgetExhausted: false,
       },
     });
     const failureEvidence = view.error.details.browserQualityEvidence;
-    expect(failureEvidence.attempts).toHaveLength(2);
-    expect(failureEvidence.attempts.map((attempt: { repairAttempt: number }) => attempt.repairAttempt)).toEqual([0, 1]);
+    expect(failureEvidence.attempts).toHaveLength(3);
+    expect(failureEvidence.attempts.map((attempt: { repairAttempt: number }) => attempt.repairAttempt)).toEqual([0, 1, 2]);
     expect(failureEvidence.attempts[0].issues[0]).toEqual({
       issueCode: 'key_text_contrast_low',
       viewport: 'desktop',
@@ -739,9 +747,10 @@ describe('collecting the deliverable', () => {
     expect(JSON.stringify(view.error.details)).not.toContain('trusted-with-hard-issue');
     expect(JSON.stringify(view.error.details)).not.toContain('assets/quality/');
     expect(harness.daemon.cancels).toContain('od-run-3');
-    expect(checkedHtml).toHaveLength(2);
+    expect(checkedHtml).toHaveLength(3);
     expect(checkedHtml[1]).toContain('trusted-with-hard-issue');
     expect(checkedHtml[1]).not.toContain('partial-browser-repair');
+    expect(checkedHtml[2]).toContain('trusted-with-hard-issue');
     expect(map!.commits).toHaveLength(0);
   }, 15_000);
 
@@ -792,6 +801,18 @@ describe('collecting the deliverable', () => {
     expect(view.state).toBe('failed');
     expect(view.error.code).toBe('design_browser_quality_rejected');
     expect(view.error.details.bestRepairAttempt).toBe(0);
+    expect(view.error.details).toMatchObject({
+      repairAttempts: 2,
+      repairBudgetExhausted: false,
+      browserQualityEvidence: {
+        repairAttempts: 2,
+        repairBudgetExhausted: false,
+      },
+    });
+    expect(view.error.details.browserQualityEvidence.attempts).toHaveLength(3);
+    expect(view.error.details.browserQualityEvidence.attempts.map(
+      (attempt: { repairAttempt: number }) => attempt.repairAttempt,
+    )).toEqual([0, 1, 2]);
     expect(map!.commits).toHaveLength(0);
     expect(map!.previews.at(-1)?.html).toContain('best-initial');
   });

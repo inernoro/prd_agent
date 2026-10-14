@@ -88,6 +88,41 @@ describe('OpenDesign prompt quality contracts', () => {
     expect(repair).toContain('"label":"本季度重点工作"');
   });
 
+  it('escalates the second mobile navigation repair after no measurable improvement', () => {
+    const measurements = [{
+      viewport: 'mobile' as const,
+      width: 390,
+      height: 844,
+      documentWidth: 390,
+      h1Count: 1,
+      visibleHeadingCount: 1,
+      visibleCtaCount: 1,
+      visibleLandmarkCount: 1,
+      issues: [{
+        issueCode: 'mobile_navigation_unusable' as const,
+        severity: 'hard' as const,
+        ruleVersion: 'browser-hard-gate-v1' as const,
+        viewport: 'mobile' as const,
+        actual: { linkCount: 4, visibleLinkCount: 0, hasVisibleToggle: false },
+        target: 'visible links or an operable matching toggle',
+        element: { tag: 'nav', role: 'navigation', label: '页面章节导航' },
+      }],
+      screenshotPath: 'assets/quality/mobile.png',
+    }];
+    const initial = summarizeAttempt(0, 'test-chromium', measurements);
+    const unchanged = summarizeAttempt(1, 'test-chromium', measurements);
+
+    const firstRepair = browserRepairMessage(initial);
+    const escalatedRepair = browserRepairMessage(unchanged, initial);
+
+    expect(firstRepair).not.toContain('previous targeted repair produced no measurable change');
+    expect(escalatedRepair).toContain('previous targeted repair produced no measurable change');
+    expect(escalatedRepair).toContain('aria-controls exactly equals the controlled navigation id');
+    expect(escalatedRepair).toContain('Do not leave any second hidden nav or [role="navigation"]');
+    expect(escalatedRepair).toContain('decorative button');
+    expect(escalatedRepair).toContain('clicked open state');
+  });
+
   it('keeps the aesthetic pass from changing facts or requested behavior', () => {
     const aestheticReview = buildReviewMessage({ reviewPass: 1, editingExistingPage: false, reviewAddendum: '' });
 

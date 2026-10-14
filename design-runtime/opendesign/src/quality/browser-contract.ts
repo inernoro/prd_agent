@@ -214,7 +214,28 @@ export function buildBrowserQualityFailureEvidence(
   };
 }
 
-export function browserRepairMessage(attempt: BrowserQualityAttemptEvidence): string {
+function measuredIssueSignature(attempt: BrowserQualityAttemptEvidence): string[] {
+  return attempt.viewports.flatMap((measurement) => measurement.issues).map((issue) => JSON.stringify({
+    issueCode: issue.issueCode,
+    viewport: issue.viewport,
+    actual: Object.fromEntries(Object.entries(issue.actual).sort(([left], [right]) => left.localeCompare(right))),
+    target: issue.target,
+    element: issue.element,
+  })).sort();
+}
+
+function hasNoMeasuredImprovement(
+  attempt: BrowserQualityAttemptEvidence,
+  previousAttempt: BrowserQualityAttemptEvidence | undefined,
+): boolean {
+  if (!previousAttempt || attempt.score !== previousAttempt.score) return false;
+  return JSON.stringify(measuredIssueSignature(attempt)) === JSON.stringify(measuredIssueSignature(previousAttempt));
+}
+
+export function browserRepairMessage(
+  attempt: BrowserQualityAttemptEvidence,
+  previousAttempt?: BrowserQualityAttemptEvidence,
+): string {
   const issues = attempt.viewports.flatMap((measurement) => measurement.issues).map((issue) => ({
     issueCode: issue.issueCode,
     viewport: issue.viewport,
@@ -222,6 +243,14 @@ export function browserRepairMessage(attempt: BrowserQualityAttemptEvidence): st
     target: issue.target,
     element: issue.element,
   }));
+  const repeatedMobileNavigationFailure = hasNoMeasuredImprovement(attempt, previousAttempt)
+    && attempt.issueCodes.includes('mobile_navigation_unusable');
+  const escalation = repeatedMobileNavigationFailure ? [
+    'The previous targeted repair produced no measurable change to this mobile navigation issue or score. Do not repeat that patch.',
+    'At the 390px viewport, use one complete accessible strategy: either keep the failing navigation links directly visible, or provide one visible operable button whose aria-controls exactly equals the controlled navigation id and whose activation makes those links visible.',
+    'Do not leave any second hidden nav or [role="navigation"] containing links without its own matching visible control. A decorative button, a button targeting another nav, or a closed container whose links never become visible does not repair this issue.',
+    'Verify the computed mobile styles and the clicked open state before saving the complete page.',
+  ] : [];
   return [
     'The isolated browser quality gate rendered the current page at 1440px desktop and 390px mobile and rejected it.',
     'Repair only the measured hard issues below in the existing /workspace/index.html and its existing assets.',
@@ -229,6 +258,7 @@ export function browserRepairMessage(attempt: BrowserQualityAttemptEvidence): st
     'Keep all verified facts, brand tokens, sections, and working interactions. Do not replace the page with a simplified rewrite.',
     `Measured issues (rule ${BROWSER_QUALITY_RULE_VERSION}):`,
     JSON.stringify(issues),
+    ...escalation,
     'After fixing, save the complete page to /workspace/index.html. Do not describe the work in chat.',
   ].join('\n');
 }
