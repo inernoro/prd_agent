@@ -1,6 +1,6 @@
 import { devices, expect, test, type APIRequestContext, type APIResponse, type BrowserContext, type Locator, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -13,6 +13,7 @@ import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
   readStableSmokeInfrastructureCircuit,
+  sanitizeStableSmokeArtifactTree,
   sanitizeStableSmokeTestInfo,
   stableSmokeDiagnosticIndicatesInfrastructureTimeout,
   writeStableSmokeInfrastructureCircuit,
@@ -3431,6 +3432,70 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(missing.status()).toBe(404);
       }
     }
+  });
+
+  test('[REG-stsmk-diagnostic-api-key-001] 真实签发响应与保留诊断不泄漏 API 凭据', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(180_000); // 包含真实登录、签发和撤销回读，不放宽脱敏断言。
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境只读检查诊断产物，不主动签发测试凭据');
+    const token = await loginAndReadToken(page, request, '/');
+    let apiKeyId = '';
+    let liveKey = '';
+    const output = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), `diagnostic-api-key-${testInfo.testId}`);
+    try {
+      const issuedResponse = await page.request.post('/api/agent-api-keys', {
+        headers: authHeaders(token),
+        data: {
+          name: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-诊断脱敏`,
+          description: '诊断脱敏专项，无模型调用，结束立即撤销',
+          scopes: ['literary-agent:use'], scopeMode: 'manual', ttlDays: 1,
+        },
+        timeout: stableSmokeApiTimeoutMs,
+      });
+      expect(issuedResponse.ok(), '临时凭据签发必须实际成功').toBe(true);
+      const issued = await issuedResponse.json() as ApiEnvelope<{ item: { id: string }; apiKey: string }>;
+      apiKeyId = issued.data.item.id;
+      liveKey = issued.data.apiKey;
+      expect(typeof liveKey === 'string' && liveKey.length > 0, '签发响应必须包含实际凭据').toBe(true);
+      const actual = { success: issued.success, data: { item: { id: apiKeyId }, apiKey: liveKey }, status: issuedResponse.status() };
+      const diagnostic = { errors: [{ message: `POST /api/agent-api-keys 响应：${JSON.stringify(actual)}`, actual }] };
+      sanitizeStableSmokeTestInfo(diagnostic);
+      // 断言只输出布尔结果；即使脱敏回归也不把真实凭据作为断言值打印。
+      expect(JSON.stringify(diagnostic).includes(liveKey), '错误对象和 reporter 输入不得含原凭据').toBe(false);
+      expect(diagnostic.errors[0].actual.data.apiKey === '[REDACTED]', '结构化响应的凭据字段必须脱敏').toBe(true);
+      expect(diagnostic.errors[0].actual.data.item.id === apiKeyId, '公开 ID 必须保留用于排障').toBe(true);
+
+      mkdirSync(output, { recursive: true });
+      writeFileSync(resolve(output, 'actual-response-redacted.json'), JSON.stringify(diagnostic));
+      // 只给文件兜底路径写无权限的 canary；活跃凭据从不明文落盘。
+      const canary = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-non-credential-canary`;
+      const reporterInput = { errors: [{ message: JSON.stringify({ success: true, data: { item: { id: apiKeyId }, apiKey: canary } }) }] };
+      writeFileSync(resolve(output, 'reporter-canary.json'), JSON.stringify(reporterInput));
+      const sanitized = sanitizeStableSmokeArtifactTree(output);
+      expect(sanitized.changed, '转义 reporter JSON 的文件兜底必须实际改写').toBe(1);
+      const retained = readFileSync(resolve(output, 'actual-response-redacted.json'), 'utf8')
+        + readFileSync(resolve(output, 'reporter-canary.json'), 'utf8');
+      expect(retained.includes(liveKey), '真实保留文件不得含活跃凭据').toBe(false);
+      expect(retained.includes(canary), '转义保留文件不得含未脱敏 canary').toBe(false);
+      expect(retained.includes(apiKeyId), '排障 ID 不得丢失').toBe(true);
+      expect(sanitizeStableSmokeArtifactTree(output).changed, '再次扫描应幂等').toBe(0);
+    } finally {
+      if (apiKeyId) {
+        const deleted = await page.request.delete(`/api/agent-api-keys/${apiKeyId}`, {
+          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        });
+        expect(deleted.ok() || deleted.status() === 404, '本轮临时凭据必须撤销').toBe(true);
+        const keys = await readEnvelope<{ items: Array<{ id: string }> }>(await page.request.get('/api/agent-api-keys', {
+          headers: authHeaders(token), timeout: stableSmokeApiTimeoutMs,
+        }));
+        expect(keys.items.some((item) => item.id === apiKeyId), '撤销后列表不得保留本轮凭据').toBe(false);
+      }
+      liveKey = '';
+    }
+    await testInfo.attach('diagnostic-api-key-redaction', {
+      body: JSON.stringify({ runId: requiredEnv('STABLE_SMOKE_RUN_ID'), apiKeyId, responseRedacted: true,
+        escapedReporterRedacted: true, artifactReadback: true, idempotent: true, credentialRevoked: true }),
+      contentType: 'application/json',
+    });
   });
 
   test('[LIT-003][LIT-004] 文学续写停止后内容稳定且改写只替换选中段落', { tag: '@cleanup' }, async ({ page, request }) => {

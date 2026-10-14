@@ -1,6 +1,6 @@
 {
   "schemaVersion": "1.0",
-  "catalogVersion": "2026.09.22.1",
+  "catalogVersion": "2026.10.14.1",
   "name": "MAP 核心业务功能台账",
   "localRegressionCaseIds": ["REG-web-folder-canonical-001", "REG-web-folder-fence-001", "REG-web-folder-create-rename-001", "REG-stsmk-notify-evidence-001", "REG-stsmk-report-view-001", "REG-stsmk-report-risk-001", "REG-stsmk-runtime-digest-001"],
   "autoEnrollment": {
@@ -274,10 +274,10 @@
       "entrySmoke": false,
       "automationStatus": "contract",
       "requiredCaseIds": ["CORE-001", "CORE-005", "CORE-006", "COMMON-003", "COMMON-004"],
-      "regressionCaseIds": ["REG-stsmk-notify-evidence-001", "REG-stsmk-report-view-001", "REG-stsmk-report-risk-001", "REG-stsmk-cds-runtime-equivalence-001", "REG-stsmk-production-read-only-001", "REG-stsmk-runtime-digest-001"],
-      "cdsOnlyRegressionCaseIds": ["REG-stsmk-notify-evidence-001", "REG-stsmk-report-view-001", "REG-stsmk-report-risk-001", "REG-stsmk-cds-runtime-equivalence-001", "REG-stsmk-runtime-digest-001"],
+      "regressionCaseIds": ["REG-stsmk-notify-evidence-001", "REG-stsmk-report-view-001", "REG-stsmk-report-risk-001", "REG-stsmk-cds-runtime-equivalence-001", "REG-stsmk-production-read-only-001", "REG-stsmk-runtime-digest-001", "REG-stsmk-diagnostic-api-key-001"],
+      "cdsOnlyRegressionCaseIds": ["REG-stsmk-notify-evidence-001", "REG-stsmk-report-view-001", "REG-stsmk-report-risk-001", "REG-stsmk-cds-runtime-equivalence-001", "REG-stsmk-runtime-digest-001", "REG-stsmk-diagnostic-api-key-001"],
       "productionOnlyRegressionCaseIds": ["REG-stsmk-production-read-only-001"],
-      "sourcePrefixes": [".claude/skills/stable-smoke/", ".claude/skills/create-visual-test-to-kb/scripts/", "scripts/stable-smoke-", "scripts/render-stable-smoke-report.mjs", "e2e/specs/stable-smoke.spec.ts", "e2e/playwright.config.ts", "e2e/utils/stableSmokeSse", "e2e/utils/stableSmokeBrowser"],
+      "sourcePrefixes": [".claude/skills/stable-smoke/", ".claude/skills/create-visual-test-to-kb/scripts/", "scripts/stable-smoke-", "scripts/render-stable-smoke-report.mjs", "e2e/specs/stable-smoke.spec.ts", "e2e/playwright.config.ts", "e2e/utils/stableSmokeSse", "e2e/utils/stableSmokeBrowser", "e2e/utils/stableSmokeDiagnostics"],
       "cdsPolicy": "目录校验、变更映射、48 小时节拍、报告准入、失败通知和证据保留",
       "productionPolicy": "只执行安全矩阵；自身失败不得伪装为业务通过",
       "artifactAssertions": ["计划固定 catalogVersion 与 commit", "未映射变更可见", "条件通过或失败必通知", "报告真实展开完整版后核对完整正文", "异常与重叠运行无已验证报告时禁止通知"],
