@@ -1921,18 +1921,93 @@ public sealed class DesignArtifactLifecycleServiceTests
             },
             new DesignArtifactRun
             {
+                Id = "owner-quality-failed", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.ReviewingPage,
+                RuntimeFailure = new DesignArtifactRuntimeFailure
+                {
+                    Code = "design_browser_quality_rejected",
+                    IssueCodes = ["key_text_contrast_low"],
+                },
+                LatestPreviewHtml = "<!doctype html><main>最后预览</main>", LatestPreviewRevision = 4,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now, UpdatedAt = now,
+            },
+            new DesignArtifactRun
+            {
                 Id = "other-active", UserId = "other-user", Runtime = DesignArtifactRuntimes.OpenDesign,
                 Status = RunStatuses.Running, PhaseCode = DesignArtifactPhaseCodes.ComposingPage,
-                DeploymentSlug = DeploymentScope.Current, CreatedAt = now, UpdatedAt = now,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now.AddSeconds(1), UpdatedAt = now.AddSeconds(1),
             },
         ]);
 
         var ownerResult = Assert.IsType<OkObjectResult>(
             await Controller(fixture, new InMemoryRunEventStore(), "owner-user").GetActiveRun(DesignArtifactOperations.Generate));
         Assert.Equal(JsonValueKind.Null, Data(ownerResult).ValueKind);
+        var ownerFailedResult = Assert.IsType<OkObjectResult>(
+            await Controller(fixture, new InMemoryRunEventStore(), "owner-user")
+                .GetActiveRun(DesignArtifactOperations.Generate, includeLatestFailed: true));
+        Assert.Equal("owner-quality-failed", Data(ownerFailedResult).GetProperty("runId").GetString());
+        Assert.Equal("<!doctype html><main>最后预览</main>", Data(ownerFailedResult).GetProperty("previewHtml").GetString());
+        Assert.Equal(4, Data(ownerFailedResult).GetProperty("previewRevision").GetInt32());
         var otherResult = Assert.IsType<OkObjectResult>(
             await Controller(fixture, new InMemoryRunEventStore(), "other-user").GetActiveRun(DesignArtifactOperations.Generate));
         Assert.Equal("other-active", Data(otherResult).GetProperty("runId").GetString());
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RuntimePreview_ShouldPersistLatestBoundedPreviewOnItsRun()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var run = new DesignArtifactRun
+        {
+            Id = "run-preview-persisted",
+            UserId = "owner-user",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Status = RunStatuses.Running,
+            DeploymentSlug = DeploymentScope.Current,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(item => item.ValidatePreviewAsync(run.Id, "preview-ticket", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var controller = new DesignArtifactRuntimeController(
+            broker.Object,
+            new Mock<IHttpClientFactory>().Object,
+            new ConfigurationBuilder().Build(),
+            NullLogger<DesignArtifactRuntimeController>.Instance,
+            new InMemoryRunEventStore(),
+            fixture.Db)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        var body = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            html = "<!doctype html><main>持久预览</main>",
+            revision = 9,
+        });
+        controller.Request.Body = new MemoryStream(body);
+        controller.Request.ContentLength = body.Length;
+        controller.Request.Headers.Authorization = "Bearer preview-ticket";
+
+        var result = await controller.PushWorkspacePreview(run.Id, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        var staleBody = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            html = "<!doctype html><main>过期预览</main>",
+            revision = 8,
+        });
+        controller.Request.Body = new MemoryStream(staleBody);
+        controller.Request.ContentLength = staleBody.Length;
+        Assert.IsType<OkObjectResult>(await controller.PushWorkspacePreview(run.Id, CancellationToken.None));
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal("<!doctype html><main>持久预览</main>", persisted.LatestPreviewHtml);
+        Assert.Equal(9, persisted.LatestPreviewRevision);
+        Assert.NotNull(persisted.FirstPreviewAt);
+        broker.VerifyAll();
     }
 
     [Fact]

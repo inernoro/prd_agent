@@ -352,13 +352,15 @@ public sealed class DesignArtifactsController : ControllerBase
     }
 
     /// <summary>
-    /// 从服务端发现当前用户的活动或可重开任务。浏览器存储只作加速，
+    /// 从服务端发现当前用户的活动或可重开任务。客户端显式请求时，也可返回最近一条
+    /// 带最后预览的结构化失败 Run；它只可展示，不能伪装成可续跑任务。浏览器存储只作加速，
     /// 换标签页、设备或禁用 sessionStorage 也能找回同一条 Run。
     /// </summary>
     [HttpGet("runs/active")]
     public async Task<IActionResult> GetActiveRun(
         [FromQuery] string? operation = null,
-        [FromQuery] string? targetSiteId = null)
+        [FromQuery] string? targetSiteId = null,
+        [FromQuery] bool includeLatestFailed = false)
     {
         var userId = this.GetRequiredUserId();
         var normalizedOperation = operation?.Trim().ToLowerInvariant();
@@ -383,8 +385,21 @@ public sealed class DesignArtifactsController : ControllerBase
         var run = candidates.FirstOrDefault(item => item.Status is RunStatuses.Queued or RunStatuses.Running or RunStatuses.Committing);
         if (run == null && candidates.FirstOrDefault() is { } latest && IsRestartableInterrupted(latest))
             run = latest;
+        if (run == null && includeLatestFailed && candidates.FirstOrDefault() is { } latestFailed && IsViewableFailedRun(latestFailed))
+            run = latestFailed;
         return Ok(ApiResponse<object?>.Ok(run == null ? null : ToDto(run)));
     }
+
+    /// <summary>
+    /// 终态失败不能冒充活动任务；仅在客户端明确请求时，允许找回最近一条带真实预览和
+    /// 结构化失败事实的 Run，用于展示最后成果与诚实的恢复动作。
+    /// </summary>
+    internal static bool IsViewableFailedRun(DesignArtifactRun run) =>
+        run.Status == RunStatuses.Error
+        && run.RuntimeFailure != null
+        && !string.IsNullOrWhiteSpace(run.RuntimeFailure.Code)
+        && !string.IsNullOrWhiteSpace(run.LatestPreviewHtml)
+        && run.LatestPreviewRevision.HasValue;
 
     /// <summary>
     /// 服务重启中断后以原 Run 的冻结输入创建新 Run。幂等键决定新 runId，
@@ -1063,6 +1078,9 @@ public sealed class DesignArtifactsController : ControllerBase
         run.Phase,
         run.FirstVisibleFeedbackAt,
         run.FirstPreviewAt,
+        // 大页面不能跟着 1.5 秒一次的运行中轮询反复传输；只有终态失败恢复最后成果时才返回。
+        previewHtml = run.Status == RunStatuses.Error ? run.LatestPreviewHtml : null,
+        previewRevision = run.Status == RunStatuses.Error ? run.LatestPreviewRevision : null,
         run.LastProgressAt,
         run.MaxStaticGapSeconds,
         run.StreamReconnectCount,

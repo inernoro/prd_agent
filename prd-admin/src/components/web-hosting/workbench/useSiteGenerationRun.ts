@@ -24,6 +24,7 @@ import {
   closeGenerationStages,
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
+  resolvePersistedRunPreview,
   resolveRunModelBadge,
   runtimeFailureRecoveryMessage,
   type GenerationStage,
@@ -249,6 +250,14 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
         setRunInfo({ styleName: result.data.styleName, promptFingerprint: result.data.promptFingerprint });
         setRunStartedAtMs(Date.parse(result.data.createdAt));
         if (result.data.title) setRecoveredTitle((current) => current || result.data.title || '');
+        const persistedPreview = resolvePersistedRunPreview(result.data);
+        if (persistedPreview && isNewerPreviewRevision(persistedPreview.revision, previewRevisionRef.current)) {
+          previewRevisionRef.current = persistedPreview.revision;
+          applyPreviewHtml(
+            designPreviewEventDocument(persistedPreview.html),
+            DESIGN_PREVIEW_EVENT_SANDBOX,
+          );
+        }
         const status = result.data.status.toLowerCase();
         const siteId = resolveGeneratedSiteId(result.data);
         if (status === 'done' && siteId) {
@@ -270,7 +279,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 1500));
     }
-  }, [failGeneration, finishGeneration]);
+  }, [applyPreviewHtml, failGeneration, finishGeneration]);
 
   const resumeRun = useCallback((runId: string) => {
     abortRef.current?.abort();
@@ -320,7 +329,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
       resumeRun(runId);
       return;
     }
-    void getActiveDesignArtifactRun({ operation: 'generate' }).then((result) => {
+    void getActiveDesignArtifactRun({ operation: 'generate', includeLatestFailed: true }).then((result) => {
       if (discovery !== discoveryRef.current || busyRef.current || !result.success || !result.data) return;
       rememberActiveRun(result.data.runId);
       resumeRun(result.data.runId);

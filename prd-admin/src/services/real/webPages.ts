@@ -179,6 +179,9 @@ export interface DesignArtifactRunSummary {
   phaseCode?: string | null;
   firstVisibleFeedbackAt?: string | null;
   firstPreviewAt?: string | null;
+  /** Run 上持久化的最后一版受信预览；终态失败重开时只用于展示，不代表任务仍可续跑。 */
+  previewHtml?: string | null;
+  previewRevision?: number | null;
   lastProgressAt?: string | null;
   maxStaticGapSeconds?: number | null;
   streamReconnectCount?: number;
@@ -1742,9 +1745,11 @@ export async function getDesignArtifactRun(
 export async function getActiveDesignArtifactRun(input: {
   operation: 'generate' | 'edit';
   targetSiteId?: string;
+  includeLatestFailed?: boolean;
 }): Promise<ApiResponse<DesignArtifactRunSummary | null>> {
   const params = new URLSearchParams({ operation: input.operation });
   if (input.targetSiteId) params.set('targetSiteId', input.targetSiteId);
+  if (input.includeLatestFailed) params.set('includeLatestFailed', 'true');
   return apiRequest(`${api.designArtifacts.activeRun()}?${params.toString()}`);
 }
 

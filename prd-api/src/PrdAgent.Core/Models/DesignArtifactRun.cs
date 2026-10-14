@@ -195,6 +195,17 @@ public class DesignArtifactRun
     /// <summary>第一个经过工作区凭证校验的真实页面预览时间。</summary>
     public DateTime? FirstPreviewAt { get; set; }
 
+    /// <summary>
+    /// 最近一次经过工作区票据和 1 MiB 上限校验的真实页面预览。
+    /// 绑定在所属 Run 上，供终态失败后重新打开工作台恢复最后成果；不进入生命周期事件或错误详情。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? LatestPreviewHtml { get; set; }
+
+    /// <summary>LatestPreviewHtml 对应的执行器单调 revision；旧任务缺失时保持 null。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public int? LatestPreviewRevision { get; set; }
+
     /// <summary>最近一次有效阶段或预览更新时间，用于计算最大静止间隔。</summary>
     public DateTime? LastProgressAt { get; set; }
 

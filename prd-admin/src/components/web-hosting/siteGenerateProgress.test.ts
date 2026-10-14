@@ -6,6 +6,7 @@ import {
   GATEWAY_PLATFORM_FALLBACK,
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
+  resolvePersistedRunPreview,
   resolveRunModelBadge,
   runtimeFailureRecoveryMessage,
 } from './siteGenerateProgress';
@@ -86,10 +87,31 @@ describe('生成工作台的进度契约', () => {
       expect(source).toContain('getActiveDesignArtifactRun');
       expect(source).toContain('restartDesignArtifactRun');
     }
-    expect(generation).toContain("getActiveDesignArtifactRun({ operation: 'generate' })");
-    expect(edit).toContain("getActiveDesignArtifactRun({ operation: 'edit', targetSiteId: site.id })");
+    expect(generation).toContain("getActiveDesignArtifactRun({ operation: 'generate', includeLatestFailed: true })");
+    expect(edit).toContain('includeLatestFailed: true');
     expect(generation).not.toContain("item.kind === 'thinking'");
     expect(edit).not.toContain("event.event === 'thinking'");
+  });
+
+  it('restores the persisted final preview for a terminal failed run without marking it resumable', () => {
+    expect(resolvePersistedRunPreview(run({
+      status: 'Error',
+      previewHtml: '<!doctype html><main>最后预览</main>',
+      previewRevision: 7,
+    }))).toEqual({ html: '<!doctype html><main>最后预览</main>', revision: 7 });
+    expect(resolvePersistedRunPreview(run({ previewHtml: '  ', previewRevision: 8 }))).toBeNull();
+
+    const generation = generationRunSource();
+    const edit = readFileSync(path.resolve(__dirname, 'workbench/useSiteEditSession.ts'), 'utf8');
+    for (const source of [generation, edit]) {
+      expect(source).toContain('resolvePersistedRunPreview(result.data)');
+      expect(source).toContain('designPreviewEventDocument(persistedPreview.html)');
+    }
+    expect(generation).toContain("const interrupted = status === 'error' && result.data.phaseCode === 'interrupted'");
+    expect(generation).toContain("runtimeFailureRecoveryMessage(result.data, 'generate')");
+    expect(generation).not.toContain("setRestartableRunId(result.data.runId)");
+    expect(edit).toContain("runtimeFailureRecoveryMessage(result.data, 'edit')");
+    expect(edit).toContain("action: result.data.phaseCode === 'interrupted' ? 'restart' : 'generate'");
   });
 
   it('keeps recovery inside the workbench when the public stream ends or fails', () => {

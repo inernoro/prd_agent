@@ -16,7 +16,7 @@ export const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
 /** OpenDesign 0.21.1 sandbox-mode.ts 在数据目录下为会话隔离出的 CODEX_HOME（相对 OD_DATA_DIR）。 */
 export const OPEN_DESIGN_CODEX_HOME_RELATIVE = 'sandbox/agent-home/.codex';
 const CSS_GENERATED_TEXT_RULE = 'All readable text must be ordinary visible HTML text nodes. CSS content declarations and pseudo-elements may contain decorative symbols only; never put letters, digits, Chinese characters, or escaped forms of any of them in CSS content. Inspect every content declaration and move any readable text into visible HTML before stopping.';
-export const BROWSER_HARD_GATE_AUTHORING_RULE = 'At the 390px mobile viewport, navigation must expose visible links, or a visible actionable toggle whose aria-controls exactly references the navigation element. Key text contrast must be at least 4.5:1 for normal text and 3.0:1 for large text. Never use opacity, gradients, overlays, or generated backgrounds that make key text contrast unmeasurable or lower than those thresholds.';
+export const BROWSER_HARD_GATE_AUTHORING_RULE = 'At the 390px mobile viewport, navigation must expose visible links, or a visible actionable toggle whose aria-controls exactly references the navigation element. Author key text with a safety target of at least 5.0:1 for normal text and 3.3:1 for large text so the computed browser result remains above the 4.5:1 and 3.0:1 hard gate. The final computed colors after opacity, alpha blending, gradients, overlays, and generated backgrounds must still meet the safety target; never use effects that make contrast unmeasurable or marginal.';
 
 export function buildOpenDesignCodexConfig(baseUrl: string, model: string): string {
   return [

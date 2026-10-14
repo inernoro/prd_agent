@@ -993,6 +993,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.Phase,
         run.FirstVisibleFeedbackAt,
         run.FirstPreviewAt,
+        previewHtml = run.Status == RunStatuses.Error ? run.LatestPreviewHtml : null,
+        previewRevision = run.Status == RunStatuses.Error ? run.LatestPreviewRevision : null,
         run.LastProgressAt,
         run.MaxStaticGapSeconds,
         run.StreamReconnectCount,

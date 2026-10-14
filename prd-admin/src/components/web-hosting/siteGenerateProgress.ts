@@ -16,6 +16,19 @@ export function resolveGeneratedSiteId(run: DesignArtifactRunSummary): string | 
   return run.artifactSiteId || run.producedArtifactSiteId || null;
 }
 
+export function resolvePersistedRunPreview(
+  run: Pick<DesignArtifactRunSummary, 'previewHtml' | 'previewRevision'>,
+): { html: string; revision: number } | null {
+  const html = run.previewHtml?.trim();
+  if (!html) return null;
+  const revision = typeof run.previewRevision === 'number'
+    && Number.isSafeInteger(run.previewRevision)
+    && run.previewRevision >= 0
+    ? run.previewRevision
+    : 0;
+  return { html: run.previewHtml!, revision };
+}
+
 /**
  * 运行时技术测量只供管理员诊断。普通用户只看到稳定问题类别、线上安全结论和下一步，
  * 不显示 DOM 摘要、阈值、模型或供应商信息。

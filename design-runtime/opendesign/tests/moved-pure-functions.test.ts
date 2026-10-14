@@ -65,8 +65,10 @@ describe('OpenDesign prompt quality contracts', () => {
       viewport: 'mobile', width: 390, height: 844, documentWidth: 390,
       h1Count: 1, visibleHeadingCount: 1, visibleCtaCount: 1, visibleLandmarkCount: 1,
       issues: [{
-        issueCode: 'mobile_navigation_unusable', severity: 'hard', ruleVersion: 'browser-hard-gate-v1',
-        viewport: 'mobile', actual: { visibleLinkCount: 0 }, target: 'visible links or an aria-controls toggle',
+        issueCode: 'key_text_contrast_low', severity: 'hard', ruleVersion: 'browser-hard-gate-v1',
+        viewport: 'mobile', actual: { ratio: 4.43, minimum: 4.5, fontSize: 14, fontWeight: 400 },
+        target: 'contrast ratio >= 4.5',
+        element: { tag: 'p', id: 'summary', role: 'paragraph', label: '本季度重点工作' },
       }],
       screenshotPath: 'assets/quality/mobile.png',
     }]);
@@ -75,9 +77,15 @@ describe('OpenDesign prompt quality contracts', () => {
     for (const prompt of [generation, finalReview, repair]) {
       expect(prompt).toContain('390px mobile viewport');
       expect(prompt).toContain('aria-controls exactly references the navigation element');
-      expect(prompt).toContain('4.5:1 for normal text and 3.0:1 for large text');
-      expect(prompt).toContain('opacity, gradients, overlays, or generated backgrounds');
+      expect(prompt).toContain('5.0:1 for normal text and 3.3:1 for large text');
+      expect(prompt).toContain('4.5:1 and 3.0:1 hard gate');
+      expect(prompt).toContain('opacity, alpha blending, gradients, overlays, and generated backgrounds');
     }
+    expect(repair).toContain('"ratio":4.43');
+    expect(repair).toContain('"fontSize":14');
+    expect(repair).toContain('"fontWeight":400');
+    expect(repair).toContain('"id":"summary"');
+    expect(repair).toContain('"label":"本季度重点工作"');
   });
 
   it('keeps the aesthetic pass from changing facts or requested behavior', () => {

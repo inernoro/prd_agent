@@ -42,6 +42,7 @@ import {
 } from '../siteEditPreview';
 import {
   GATEWAY_PLATFORM_FALLBACK,
+  resolvePersistedRunPreview,
   resolveRunModelBadge,
   runtimeFailureRecoveryMessage,
   visibleDesignPhase,
@@ -439,7 +440,11 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       setActiveRunId(storedRunId);
     } catch { /* 浏览器存储不可用时继续向服务端发现 */ }
     if (!storedRunId) {
-      void getActiveDesignArtifactRun({ operation: 'edit', targetSiteId: site.id }).then((result) => {
+      void getActiveDesignArtifactRun({
+        operation: 'edit',
+        targetSiteId: site.id,
+        includeLatestFailed: true,
+      }).then((result) => {
         if (!active || busyRef.current || !result.success || !result.data) return;
         busyRef.current = true;
         setGenerating(true);
@@ -490,6 +495,13 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
       setResolvedModel(resolveRunModelBadge(result.data));
       setRunInfo({ styleName: result.data.styleName, promptFingerprint: result.data.promptFingerprint });
       setRunStartedAtMs(Date.parse(result.data.createdAt));
+      const persistedPreview = resolvePersistedRunPreview(result.data);
+      if (persistedPreview && isNewerPreviewRevision(persistedPreview.revision, previewRevisionRef.current)) {
+        previewRevisionRef.current = persistedPreview.revision;
+        setPreviewUrl(null);
+        setPreviewFromEvent(true);
+        setPreviewHtml(designPreviewEventDocument(persistedPreview.html));
+      }
       const status = result.data.status.toLowerCase();
       if (status === 'done' && result.data.artifactRevisionId) {
         clearRecovery();
