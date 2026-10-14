@@ -13,6 +13,11 @@ const referenceHead = 'a64d9b2494c8a0e140dd678c9c4bd9b90e1935c4';
 const inheritedCandidateHead = '2884f9a9cffdb6447658b25497beb4f3cacdc6c7';
 // 保留旧历史范围/编译黄金；本批新增按需能力准备及探针归属这一源，不能抵扣旧路径语义。
 const currentSourceChanges = ['src/executor/routes.ts', 'src/index.ts', 'src/middleware/github-auth.ts', 'src/routes/access-requests.ts', 'src/routes/branches.ts', 'src/routes/cache.ts', 'src/routes/projects.ts', 'src/routes/remote-hosts.ts', 'src/server.ts', 'src/services/agent-workspace-session-runtime.ts', 'src/services/artifact-admission.ts', 'src/services/branch-operation-coordinator.ts', 'src/services/cds-events-bus.ts', 'src/services/compose-parser.ts', 'src/services/container.ts', 'src/services/core-image-cache.ts', 'src/services/deployment-phase-budget.ts', 'src/services/forwarder-route-publisher.ts', 'src/services/github-webhook-dispatcher.ts', 'src/services/internal-pending-replay-auth.ts', 'src/services/isolated-shell-executor.ts', 'src/services/observation-stream-executor.ts', 'src/services/observation-supervisor-process.ts', 'src/services/proxy.ts', 'src/services/resource-usage-sampler.ts', 'src/services/running-version.ts', 'src/services/service-replacement.ts', 'src/services/service-runtime.ts', 'src/services/state.ts', 'src/services/uptime-history-write.ts', 'src/services/uptime-monitor.ts', 'src/types.ts', 'src/widget-script.ts'];
+// 旧已核验范围保留；把其他已上线版本与本阶段变化分别固定，新增文件不能混入旧黄金。
+const previousQualifiedHead = '7b964b87bf8e3c176ece89ccba2d3d160eb0b76b';
+const inheritedProductionHead = 'fe7e8b62d489d12cb866397c9584de1fd73b5a6f';
+const inheritedProductionSourceChanges = ["cds/src/config/known-env-keys.ts", "cds/src/index.ts", "cds/src/infra/state-store/mongo-handle.ts", "cds/src/infra/state-store/mongo-split-handle.ts", "cds/src/middleware/human-project-access.ts", "cds/src/routes/auth-local.ts", "cds/src/routes/bootstrap.ts", "cds/src/routes/branches.ts", "cds/src/routes/deployment-runs.ts", "cds/src/routes/github-webhook.ts", "cds/src/routes/identity.ts", "cds/src/routes/legacy-cleanup.ts", "cds/src/routes/pending-import.ts", "cds/src/routes/project-infra-resync.ts", "cds/src/routes/projects.ts", "cds/src/routes/releases.ts", "cds/src/routes/topology.ts", "cds/src/routes/user-project-access.ts", "cds/src/server.ts", "cds/src/services/agent-workspace-session-runtime.ts", "cds/src/services/artifact-admission.ts", "cds/src/services/credential-self-check.ts", "cds/src/services/cross-project-refs.ts", "cds/src/services/forwarder-route-publisher.ts", "cds/src/services/github-webhook-dispatcher.ts", "cds/src/services/human-project-access.ts", "cds/src/services/managed-project.ts", "cds/src/services/preview-entrypoints.ts", "cds/src/services/preview-instance-seed.ts", "cds/src/services/preview-mirror.ts", "cds/src/services/preview-slug.ts", "cds/src/services/project-identity-history.ts", "cds/src/services/proxy.ts", "cds/src/services/public-exposure-policy.ts", "cds/src/services/release-strategy.ts", "cds/src/services/state.ts", "cds/src/types.ts"];
+const memoryStageSourceChanges = ["cds/src/index.ts", "cds/src/infra/state-store/mongo-split-store.ts", "cds/src/services/container.ts", "cds/src/services/orphan-container-reaper.ts", "cds/src/services/resource-usage-sampler.ts", "cds/src/services/scheduler-service-stop.ts", "cds/src/services/scheduler.ts", "cds/src/services/service-replacement.ts", "cds/src/services/service-runtime.ts"];
 const ownershipReferenceHead = '766a259d8383da5e60e426819a97a110bfedf275';
 const sources = ['src/services/janitor.ts', 'src/services/state.ts', 'src/services/orphan-worktree.ts',
   'src/services/worktree.ts', 'src/infra/state-store/json-backing-store.ts', 'scripts/orphan-worktree-recheck-drill.ts',
@@ -34,7 +39,7 @@ async function main() {
     checks: [], isolatedFilesRemoved: false };
   try {
     report.stage = 'fixed-original-source-preparation';
-    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead], { stdio: 'pipe', timeout: 120000 });
+    execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', referenceHead, inheritedCandidateHead, previousQualifiedHead, inheritedProductionHead], { stdio: 'pipe', timeout: 120000 });
     const changed = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, inheritedCandidateHead, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
     report.inheritedCandidateHead = inheritedCandidateHead;
@@ -47,7 +52,15 @@ async function main() {
       'cds/src/services/worktree.ts', 'cds/src/types.ts']);
     report.changedProductionSources = execFileSync('/usr/bin/git', ['diff', '--name-only', inheritedCandidateHead, report.head, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
-    assert.deepEqual(report.changedProductionSources, currentSourceChanges.map(name => `cds/${name}`).sort());
+    const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
+      { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+    report.previousQualifiedHead = previousQualifiedHead;
+    report.inheritedProductionHead = inheritedProductionHead;
+    assert.deepEqual(changedSince(inheritedCandidateHead, previousQualifiedHead), currentSourceChanges.map(name => `cds/${name}`).sort());
+    report.inheritedCurrentProductionSources = changedSince(previousQualifiedHead, inheritedProductionHead);
+    assert.deepEqual(report.inheritedCurrentProductionSources, inheritedProductionSourceChanges.slice().sort());
+    report.memoryStageProductionSources = changedSince(inheritedProductionHead, report.head);
+    assert.deepEqual(report.memoryStageProductionSources, memoryStageSourceChanges.slice().sort());
     const manifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
       ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim();
     report.referenceDependencyManifestsChanged = manifestsChanged;
