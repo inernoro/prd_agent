@@ -533,6 +533,12 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         return $"{_prefix}/{rel}";
     }
 
+    public string BuildRecordingChunkKey(string sessionId, int index, string sha256)
+    {
+        var rel = RecordingChunkKey.RelativePath(sessionId, index, sha256);
+        return string.IsNullOrWhiteSpace(_prefix) ? rel : $"{_prefix}/{rel}";
+    }
+
     private static bool LooksLikeNotFound(CosServerException ex)
     {
         // SDK 版本差异较大：避免引用不确定的 statusCode 属性名，退化为字符串判断，确保可编译/可运行。
@@ -864,6 +870,12 @@ public sealed class TencentCosStorage : IAssetStorage, IDisposable
         if (AssetStorageDeletePolicy.IsHostedSiteFileKey(normalizedKey, _prefix))
         {
             reason = "owned_hosted_site_file";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsRecordingChunkKey(normalizedKey, _prefix))
+        {
+            reason = "owned_recording_chunk";
             return true;
         }
 

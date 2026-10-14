@@ -281,6 +281,12 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         return $"{_prefix}/{rel}";
     }
 
+    public string BuildRecordingChunkKey(string sessionId, int index, string sha256)
+    {
+        var rel = RecordingChunkKey.RelativePath(sessionId, index, sha256);
+        return string.IsNullOrWhiteSpace(_prefix) ? rel : $"{_prefix}/{rel}";
+    }
+
     // ========================== Private ==========================
 
     private async Task UploadBytesInternalAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
@@ -579,6 +585,12 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         if (AssetStorageDeletePolicy.IsHostedSiteFileKey(normalizedKey, _prefix))
         {
             reason = "owned_hosted_site_file";
+            return true;
+        }
+
+        if (AssetStorageDeletePolicy.IsRecordingChunkKey(normalizedKey, _prefix))
+        {
+            reason = "owned_recording_chunk";
             return true;
         }
 

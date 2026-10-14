@@ -267,6 +267,9 @@ public class LocalAssetStorage : IAssetStorage
         return $"web-hosting/sites/{siteId}/{filePath.TrimStart('/')}";
     }
 
+    public string BuildRecordingChunkKey(string sessionId, int index, string sha256)
+        => RecordingChunkKey.RelativePath(sessionId, index, sha256);
+
     private string ResolveKeyPath(string key)
     {
         var normalized = NormalizeKey(key);

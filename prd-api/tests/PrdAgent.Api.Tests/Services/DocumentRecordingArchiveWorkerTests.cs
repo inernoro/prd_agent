@@ -4,6 +4,8 @@ using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Moq;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
 using Xunit;
 
@@ -370,6 +372,326 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .ShouldBeFalse();
         DocumentStoreController.RecordingChunkRetryMatches([], requested)
             .ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("document-recordings/chunks/0123456789abcdef0123456789abcdef/000001-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin", true)]
+    [InlineData("prod/document-recordings/chunks/0123456789abcdef0123456789abcdef/000001-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin", true)]
+    [InlineData("document-recordings/chunks/0123456789abcdef0123456789abcdef/", false)]
+    [InlineData("document-recordings/chunks/../../other.bin", false)]
+    public void RecordingChunkDeletePolicy_ShouldAllowOnlyExactOwnedObject(string key, bool expected)
+    {
+        AssetStorageDeletePolicy.IsRecordingChunkKey(key, "prod").ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task ObjectChunkAssembly_ShouldRejectTamperedBytes()
+    {
+        var key = "recording-object";
+        var objects = new Dictionary<string, byte[]> { [key] = [9, 9] };
+        var storage = RecordingObjectStorage(objects);
+        var chunk = new DocumentRecordingUploadChunk
+        {
+            Index = 0,
+            SizeBytes = 2,
+            Sha256 = DocumentRecordingChunkStore.Sha256([1, 2]),
+            StorageKey = key,
+            ObjectStored = true,
+        };
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            DocumentRecordingChunkStore.AssembleAsync(
+                [chunk], 1, 2, storage.Object, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ObjectChunk_ShouldWriteIntentBeforeAcknowledgementAndNeverStoreBytesInMongo()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var objects = new Dictionary<string, byte[]>();
+        var storage = RecordingObjectStorage(objects);
+        var sessionId = Guid.NewGuid().ToString("N");
+        var bytes = new byte[] { 1, 2, 3 };
+
+        var first = await DocumentRecordingChunkStore.EnsureObjectChunkAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            "owner-1", sessionId, 0, bytes, CancellationToken.None);
+        var retry = await DocumentRecordingChunkStore.EnsureObjectChunkAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            "owner-1", sessionId, 0, bytes, CancellationToken.None);
+        var conflict = await DocumentRecordingChunkStore.EnsureObjectChunkAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            "owner-1", sessionId, 0, [1, 2, 4], CancellationToken.None);
+        var stored = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == sessionId).SingleAsync();
+
+        first.Inserted.ShouldBeTrue();
+        retry.Inserted.ShouldBeFalse();
+        conflict.PayloadMatches.ShouldBeFalse();
+        stored.Data.ShouldBeNull();
+        stored.ObjectStored.ShouldBeTrue();
+        stored.Sha256.ShouldBe(DocumentRecordingChunkStore.Sha256(bytes));
+        (await DocumentRecordingChunkStore.AssembleAsync(
+            [stored], 1, bytes.Length, storage.Object, CancellationToken.None)).ShouldBe(bytes);
+
+        objects.Clear();
+        (await DocumentRecordingChunkStore.ConfirmedRetryMatchesAsync(
+            [stored], bytes, storage.Object,
+            fixture.Db.DocumentRecordingUploadChunks, CancellationToken.None)).ShouldBeTrue();
+        objects.ShouldContainKey(stored.StorageKey!);
+
+        await DocumentRecordingChunkStore.DeleteChunksAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            [sessionId], CancellationToken.None);
+        objects.ShouldBeEmpty();
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(c => c.SessionId == sessionId))
+            .ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ObjectChunk_FailedUploadMustLeaveRetryableIntentNotConfirmedPayload()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        var storage = RecordingObjectStorage(new Dictionary<string, byte[]>());
+        storage.Setup(s => s.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ThrowsAsync(new TimeoutException("object storage unavailable"));
+
+        await Should.ThrowAsync<TimeoutException>(() =>
+            DocumentRecordingChunkStore.EnsureObjectChunkAsync(
+                fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+                "owner-1", sessionId, 0, [1, 2], CancellationToken.None));
+        var pending = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == sessionId).SingleAsync();
+        pending.Data.ShouldBeNull();
+        pending.ObjectStored.ShouldBeFalse();
+        DocumentRecordingChunkStore.RetryMatches([pending], [1, 2]).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task LegacyChunkMigration_ShouldKeepReadableBytesUntilObjectIsWritten()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        var legacy = Chunk(sessionId, 0, [5, 6, 7]);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertOneAsync(legacy);
+        var objects = new Dictionary<string, byte[]>();
+        var storage = RecordingObjectStorage(objects);
+
+        (await DocumentRecordingChunkStore.MigrateLegacyChunkAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            legacy, "owner-1", CancellationToken.None)).ShouldBeTrue();
+        var migrated = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.Id == legacy.Id).SingleAsync();
+        migrated.Data.ShouldBeNull();
+        migrated.ObjectStored.ShouldBeTrue();
+        (await DocumentRecordingChunkStore.AssembleAsync(
+            [migrated], 1, 3, storage.Object, CancellationToken.None))
+            .ShouldBe(new byte[] { 5, 6, 7 });
+    }
+
+    [Fact]
+    public async Task LegacyChunkMigration_FailedObjectWriteMustKeepMongoBytes()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var legacy = Chunk(Guid.NewGuid().ToString("N"), 0, [7, 8]);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertOneAsync(legacy);
+        var storage = RecordingObjectStorage(new Dictionary<string, byte[]>());
+        storage.Setup(s => s.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .ThrowsAsync(new TimeoutException("object storage unavailable"));
+
+        await Should.ThrowAsync<TimeoutException>(() =>
+            DocumentRecordingChunkStore.MigrateLegacyChunkAsync(
+                fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+                legacy, "owner-1", CancellationToken.None));
+        var unchanged = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.Id == legacy.Id).SingleAsync();
+        unchanged.Data.ShouldBe(new byte[] { 7, 8 });
+        unchanged.StorageKey.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task LegacyChunkMigration_FailedReadbackMustKeepMongoBytes()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var legacy = Chunk(Guid.NewGuid().ToString("N"), 0, [7, 8]);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertOneAsync(legacy);
+        var storage = RecordingObjectStorage(new Dictionary<string, byte[]>());
+        storage.Setup(s => s.TryDownloadBytesAsync(
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([9, 9]);
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            DocumentRecordingChunkStore.MigrateLegacyChunkAsync(
+                fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+                legacy, "owner-1", CancellationToken.None));
+        var unchanged = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.Id == legacy.Id).SingleAsync();
+        unchanged.Data.ShouldBe(new byte[] { 7, 8 });
+        unchanged.StorageKey.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task ChunkCleanup_WithStaleLegacySnapshot_ShouldDeleteMigratedObject()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var legacy = Chunk(Guid.NewGuid().ToString("N"), 0, [7, 8]);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertOneAsync(legacy);
+        var staleSnapshot = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.Id == legacy.Id).SingleAsync();
+        var objects = new Dictionary<string, byte[]>();
+        var storage = RecordingObjectStorage(objects);
+
+        (await DocumentRecordingChunkStore.MigrateLegacyChunkAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            legacy, "owner-1", CancellationToken.None)).ShouldBeTrue();
+        await DocumentRecordingChunkStore.DeleteChunkAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            staleSnapshot, CancellationToken.None);
+
+        objects.ShouldBeEmpty();
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(c => c.Id == legacy.Id))
+            .ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task DeletingChunk_ShouldRejectRepairAndLegacyMigration()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var legacy = Chunk(Guid.NewGuid().ToString("N"), 0, [7, 8]);
+        legacy.Deleting = true;
+        await fixture.Db.DocumentRecordingUploadChunks.InsertOneAsync(legacy);
+        var objects = new Dictionary<string, byte[]>();
+        var storage = RecordingObjectStorage(objects);
+
+        (await DocumentRecordingChunkStore.MigrateLegacyChunkAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            legacy, "owner-1", CancellationToken.None)).ShouldBeFalse();
+        objects.ShouldBeEmpty();
+        (await fixture.Db.DocumentRecordingUploadChunks.Find(c => c.Id == legacy.Id).SingleAsync())
+            .Data.ShouldBe(new byte[] { 7, 8 });
+        DocumentRecordingChunkStore.RetryMatches([legacy], [7, 8]).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task LegacyMigrationCursor_ShouldContinueSameSessionAfterFullBatch()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(
+            Session(sessionId, "owner-1", DocumentRecordingArchiveStatus.None));
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
+            Enumerable.Range(0, 21).Select(index =>
+                Chunk(sessionId, index, [(byte)index])));
+        var objects = new Dictionary<string, byte[]>();
+        var storage = RecordingObjectStorage(objects);
+        var worker = new DocumentRecordingArchiveWorker(
+            null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<DocumentRecordingArchiveWorker>.Instance);
+
+        (await worker.MigrateOwnedLegacyChunksAsync(
+            fixture.Db, storage.Object, "owner-1", CancellationToken.None)).ShouldBe(20);
+        (await worker.MigrateOwnedLegacyChunksAsync(
+            fixture.Db, storage.Object, "owner-1", CancellationToken.None)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(c => c.Data != null))
+            .ShouldBe(0);
+        objects.Count.ShouldBe(21);
+    }
+
+    [Fact]
+    public async Task ExpiredRecordingCleanup_ShouldNeverClaimAnotherDeploymentSession()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var own = Session("own-expired", "owner-1", DocumentRecordingArchiveStatus.None);
+        var foreign = Session("foreign-expired", "owner-2", DocumentRecordingArchiveStatus.None);
+        own.ExpiresAt = now.AddMinutes(-1);
+        foreign.ExpiresAt = now.AddMinutes(-1);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync([own, foreign]);
+
+        var claimed = await DocumentStoreController.ClaimExpiredRecordingUploadsAsync(
+            fixture.Db.DocumentRecordingUploadSessions, now, CancellationToken.None,
+            ownerInstanceId: "owner-1");
+        claimed.Sessions.Select(s => s.Id).ShouldBe([own.Id]);
+        (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == foreign.Id).SingleAsync())
+            .Status.ShouldBe(DocumentRecordingUploadStatus.Uploading);
+    }
+
+    [Fact]
+    public async Task ExpiredArchiveCleanup_ShouldNeverDeleteAnotherDeploymentObject()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var own = Session(Guid.NewGuid().ToString("N"), "owner-1", DocumentRecordingArchiveStatus.Completed);
+        var foreign = Session(Guid.NewGuid().ToString("N"), "owner-2", DocumentRecordingArchiveStatus.Completed);
+        own.ExpiresAt = now.AddMinutes(-1);
+        foreign.ExpiresAt = now.AddMinutes(-1);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync([own, foreign]);
+        var bytes = new byte[] { 1, 2 };
+        var objects = new Dictionary<string, byte[]>();
+        foreach (var session in new[] { own, foreign })
+        {
+            var key = RecordingChunkKey.RelativePath(
+                session.Id, 0, DocumentRecordingChunkStore.Sha256(bytes));
+            objects[key] = bytes;
+            await fixture.Db.DocumentRecordingUploadChunks.InsertOneAsync(new DocumentRecordingUploadChunk
+            {
+                SessionId = session.Id,
+                OwnerInstanceId = session.OwnerInstanceId,
+                Index = 0,
+                SizeBytes = bytes.Length,
+                Sha256 = DocumentRecordingChunkStore.Sha256(bytes),
+                StorageKey = key,
+                ObjectStored = true,
+            });
+        }
+        var storage = RecordingObjectStorage(objects);
+
+        (await DocumentRecordingArchiveWorker.CleanupExpiredArchivedSessionsAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            fixture.Db.DocumentRecordingUploadChunks,
+            now, CancellationToken.None,
+            storage: storage.Object,
+            ownerInstanceId: "owner-1")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(s => s.Id == foreign.Id))
+            .ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(c => c.SessionId == foreign.Id))
+            .ShouldBe(1);
+        objects.ShouldContainKey(RecordingChunkKey.RelativePath(
+            foreign.Id, 0, DocumentRecordingChunkStore.Sha256(bytes)));
+    }
+
+    [Fact]
+    public async Task OrphanCleanup_ShouldNotDeleteAnotherDeploymentObject()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var sessionId = Guid.NewGuid().ToString("N");
+        var bytes = new byte[] { 3, 4 };
+        var key = RecordingChunkKey.RelativePath(
+            sessionId, 0, DocumentRecordingChunkStore.Sha256(bytes));
+        var chunk = new DocumentRecordingUploadChunk
+        {
+            SessionId = sessionId,
+            OwnerInstanceId = "other-deployment",
+            Index = 0,
+            SizeBytes = bytes.Length,
+            Sha256 = DocumentRecordingChunkStore.Sha256(bytes),
+            StorageKey = key,
+            ObjectStored = true,
+        };
+        await fixture.Db.DocumentRecordingUploadChunks.InsertOneAsync(chunk);
+        var objects = new Dictionary<string, byte[]> { [key] = bytes };
+        var storage = RecordingObjectStorage(objects);
+
+        (await DocumentRecordingChunkStore.DeleteOwnedOrphansAsync(
+            fixture.Db.DocumentRecordingUploadChunks, storage.Object,
+            [sessionId], "this-deployment", CancellationToken.None)).ShouldBe(0);
+        objects.ShouldContainKey(key);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(c => c.Id == chunk.Id))
+            .ShouldBe(1);
     }
 
     [Fact]
@@ -2871,6 +3193,35 @@ public sealed class DocumentRecordingArchiveWorkerTests
             MimeType = "audio/webm",
             ArchiveStatus = archiveStatus,
         };
+
+    private static Mock<IAssetStorage> RecordingObjectStorage(Dictionary<string, byte[]> objects)
+    {
+        var storage = new Mock<IAssetStorage>();
+        storage.Setup(s => s.BuildRecordingChunkKey(
+                It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string>()))
+            .Returns((string sessionId, int index, string digest) =>
+                RecordingChunkKey.RelativePath(sessionId, index, digest));
+        storage.Setup(s => s.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns((string key, byte[] data, string? _, CancellationToken _, string? _) =>
+            {
+                objects[key] = data.ToArray();
+                return Task.CompletedTask;
+            });
+        storage.Setup(s => s.ExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string key, CancellationToken _) => Task.FromResult(objects.ContainsKey(key)));
+        storage.Setup(s => s.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string key, CancellationToken _) =>
+                Task.FromResult(objects.GetValueOrDefault(key)));
+        storage.Setup(s => s.DeleteByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string key, CancellationToken _) =>
+            {
+                objects.Remove(key);
+                return Task.CompletedTask;
+            });
+        return storage;
+    }
 
     private sealed class RecordingMongoFixture : IAsyncDisposable
     {
