@@ -267,6 +267,9 @@ public class PoolModelInfo
     /// </summary>
     public string HealthStatus { get; init; } = "Healthy";
 
+    /// <summary>只读恢复资格快照；实际请求仍须原子认领半开租约。</summary>
+    public bool IsRecoveryProbeAvailable { get; init; }
+
     /// <summary>
     /// 健康评分（0-100）
     /// </summary>

@@ -71,3 +71,21 @@ describe('buildLiteraryModelOptions', () => {
     expect(selectLiteraryModelOption(options, 'pool_sunburst')?.modelName).toBe('gpt-image-2.5-sunburst');
   });
 });
+
+describe('恢复试探目录契约', () => {
+  it.each([
+    { healthStatus: 'Healthy', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Degraded', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: false, enabled: false },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: true, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: undefined, enabled: false },
+  ])('健康为 $healthStatus、恢复资格为 $isRecoveryProbeAvailable 时按权威快照保留选项', ({ enabled, ...state }) => {
+    const entry = pool();
+    entry.models = entry.models.map((member) => ({ ...member, ...state }));
+
+    const options = buildLiteraryModelOptions([entry]);
+
+    expect(options).toHaveLength(enabled ? 1 : 0);
+    if (enabled) expect(options[0].modelName).toBe(entry.code);
+  });
+});
