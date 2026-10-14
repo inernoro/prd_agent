@@ -170,7 +170,7 @@ export function overviewCopy(f: OverviewFacts): OverviewCopy {
     case 'publish-blocked':
       return { state, verdict: '新版本被 CI 拦截，旧版本仍可用', tone: 'idle', entryLabel: ' · 当前运行版本可用', skeletonNote: pendingNote };
     case 'publish-pending':
-      return { state, verdict: '当前版本可用，新版本尚未发布', tone: 'idle', entryLabel: ' · 当前运行版本可用', skeletonNote: pendingNote };
+      return { state, verdict: '当前版本可用，请核对目标的检查与部署记录', tone: 'idle', entryLabel: ' · 当前运行版本可用', skeletonNote: pendingNote };
     case 'healthy':
       return {
         state,
