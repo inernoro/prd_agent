@@ -117,6 +117,9 @@ export class DeploymentVersionService {
         readinessProbe: snapshot.readinessProbe,
         startupSignal: snapshot.startupSignal,
         activeDeployMode: snapshot.deployedMode,
+        // 历史产物已物化，不能再让当前模式定义或热更新覆写镜像与启动命令。
+        deployModes: undefined,
+        hotReload: undefined,
         prebuiltImage: true,
         localArtifact: snapshot.artifactKind === 'managed-image',
         managedBuild: undefined,
