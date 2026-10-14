@@ -451,15 +451,15 @@ test('CDS 历史部署记录已回收时保留不可变版本证据并继续严�
           data: {
             id: 'prd-agent-main',
             status: 'running',
-            commitSha: 'abc123',
-            ciTargetSha: 'abc123',
+            commitSha: 'abc1234',
+            ciTargetSha: 'abc1234',
             ciImageStatus: 'ready',
-            lastDeployDispatchCommitSha: 'abc123',
+            lastDeployDispatchCommitSha: 'abc1234',
             currentVersionId: 'dv-current',
             lastDeploymentRunId: 'dr-expired',
             deployRuntime: { drift: { hasDrift: false } },
             services: {
-              api: { profileId: 'api', status: 'running', deployedImage: 'registry/api:sha-abc123' },
+              api: { profileId: 'api', status: 'running', deployedImage: 'registry/api:sha-abc1234' },
             },
           },
         }),
@@ -480,7 +480,7 @@ test('CDS 历史部署记录已回收时保留不可变版本证据并继续严�
     versionId: 'dv-current',
     reason: '历史部署运行记录已回收，改用分支不可变版本与当前服务镜像做严格一致性校验',
   });
-  assert.equal(evaluateCdsReadiness(branch, 'abc123').ready, true);
+  assert.equal(evaluateCdsReadiness(branch, 'abc1234').ready, true);
 });
 
 test('CDS 部署记录异常但不是已回收时仍阻断', async () => {
@@ -1683,7 +1683,7 @@ test('网关巡检用 MAP 签名换单次票据并完成短会话登录', async 
 });
 
 test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移', () => {
-  const commit = 'abc123';
+  const commit = 'abc1234';
   const branch = {
     status: 'running',
     commitSha: commit,
@@ -1716,7 +1716,7 @@ test('CDS 版本冻结门禁要求目标提交、全部服务健康且无漂移'
 });
 
 test('CDS 手动部署成功时不受陈旧 webhook 调度记录阻塞', () => {
-  const commit = 'abc123';
+  const commit = 'abc1234';
   const branch = {
     status: 'running',
     commitSha: commit,
@@ -1872,6 +1872,31 @@ test('组件级构建拒绝复用包含本组件代码差异的旧镜像', () =>
 
   assert.equal(readiness.ready, false);
   assert.ok(readiness.reasons.some((reason) => reason.includes('api-prd-agent 尚未切换')));
+});
+
+test('REG-stsmk-runtime-digest-001 提交标签加不可变摘要可读取但错误版本仍阻断', () => {
+  const commit = 'b'.repeat(40);
+  const digest = '7'.repeat(64);
+  const branch = {
+    status: 'running', commitSha: commit, ciTargetSha: commit,
+    ciImageStatus: 'ready', lastDeployDispatchCommitSha: commit,
+    currentVersionId: 'dv-digest', deployRuntime: { drift: { hasDrift: false } },
+    services: {
+      api: { profileId: 'api-prd-agent', status: 'running', deployedMode: 'express', deployedImage: `registry/api:sha-${commit}@sha256:${digest}` },
+    },
+  };
+  assert.equal(deployedRuntimeCommit(branch), commit);
+  assert.equal(evaluateCdsReadiness(branch, commit).ready, true);
+  for (const image of [
+    `registry/api:sha-${'a'.repeat(40)}@sha256:${digest}`,
+    `registry/api:sha-${commit}@sha256:malformed`,
+    `registry/api:sha-${commit}@sha256:${digest}extra`,
+    `registry/api:sha-${commit}-suffix`,
+    `registry/api@sha256:${digest}`,
+  ]) {
+    branch.services.api.deployedImage = image;
+    assert.equal(evaluateCdsReadiness(branch, commit).ready, false, image);
+  }
 });
 
 test('CDS 源码模式以分支提交和运行状态验收而不要求 SHA 镜像', () => {

@@ -82,6 +82,9 @@ export default defineConfig({
               args: [
                 '--use-fake-device-for-media-stream',
                 '--use-fake-ui-for-media-stream',
+                // 仅显式选择直连的巡检进程不用本机系统代理；不修改宿主设置。
+                ...(process.env.STABLE_SMOKE_BROWSER_TRANSPORT === 'direct'
+                  ? ['--no-proxy-server'] : []),
               ],
             }
           : undefined,

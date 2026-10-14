@@ -707,8 +707,8 @@ export function isValidationOnlyPath(path) {
 
 export function deployedRuntimeCommit(branch) {
   const commits = new Set(Object.values(branch?.services || {}).flatMap((service) => {
-    const match = String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i);
-    return match ? [match[1]] : [];
+    const commit = deployedImageCommit(service);
+    return commit ? [commit] : [];
   }));
   return commits.size === 1 ? [...commits][0] : '';
 }
@@ -722,7 +722,7 @@ const serviceBuildScopes = [
 ];
 
 function deployedImageCommit(service) {
-  return String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})$/i)?.[1] || '';
+  return String(service?.deployedImage || '').match(/:sha-([0-9a-f]{7,40})(?:@sha256:[0-9a-f]{64})?$/i)?.[1] || '';
 }
 
 function serviceNeedsCurrentCommit(serviceName, changedFiles) {
@@ -809,7 +809,9 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
     if (service.status !== 'running') reasons.push(`${serviceName} 未运行`);
     const expectedServiceCommit = serviceRuntimeCommits[serviceKey] || runtimeCommit;
     const sourceMode = service.deployedMode && service.deployedMode !== 'express';
-    if (!sourceMode && !String(service.deployedImage || '').endsWith(`:sha-${expectedServiceCommit}`)) {
+    // CDS 可返回 tag@digest；必须保留提交身份，摘要本身不能替代提交。
+    const imageCommit = deployedImageCommit(service);
+    if (!sourceMode && (!imageCommit || imageCommit !== expectedServiceCommit)) {
       reasons.push(`${serviceName} 尚未切换到运行时目标镜像`);
     }
   }
