@@ -18,6 +18,47 @@ namespace PrdAgent.Api.Tests.Services;
 public class VideoSceneConcurrencyTests
 {
     [Fact]
+    public async Task CancelEditingRun_ShouldImmediatelyReachTerminalState_ForOwnerOnly()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var project = await test.CreateService().CreateProjectAsync(
+            "video-agent",
+            test.OwnerId,
+            new CreateVideoProjectRequest { Title = "取消中的分镜", SourceMarkdown = "测试" });
+        var run = NewRun("cancel-editing", test.OwnerId, SceneItemStatus.Done, SceneItemStatus.Draft);
+        run.ProjectId = project.Id;
+        run.PhaseProgress = 100;
+        await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.UpdateOneAsync(
+            item => item.Id == project.Id,
+            Builders<VideoProject>.Update
+                .Set(item => item.LatestRunId, run.Id)
+                .Set(item => item.Status, VideoProjectStatus.Editing));
+        var service = test.CreateService();
+
+        (await service.CancelRunAsync(run.Id, "another-owner", run.AppKey)).ShouldBeFalse();
+        (await service.CancelRunAsync(run.Id, run.OwnerAdminId, "visual-agent")).ShouldBeFalse();
+        (await service.CancelRunAsync(run.Id, run.OwnerAdminId, run.AppKey)).ShouldBeTrue();
+
+        var persisted = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persisted.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        persisted.CurrentPhase.ShouldBe("cancelled");
+        persisted.PhaseProgress.ShouldBe(100);
+        persisted.CancelRequested.ShouldBeTrue();
+        persisted.EndedAt.ShouldNotBeNull();
+        persisted.Scenes[0].Status.ShouldBe(SceneItemStatus.Done);
+        persisted.Scenes[1].Status.ShouldBe(SceneItemStatus.Draft);
+        (await test.Context.VideoProjects.Find(item => item.Id == project.Id).SingleAsync()).Status
+            .ShouldBe(VideoProjectStatus.Draft);
+        test.RunStore.Verify(store => store.AppendEventAsync(
+            RunKinds.VideoGen, run.Id, "run.cancel.requested", It.IsAny<object>(),
+            It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
+        test.RunStore.Verify(store => store.AppendEventAsync(
+            RunKinds.VideoGen, run.Id, "run.cancelled", It.IsAny<object>(),
+            It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task DeleteCompletedRun_ShouldRemoveOwnedArtifactRunExportAndEmptyProject()
     {
         await using var test = await VideoSceneTestDatabase.CreateAsync();
@@ -369,6 +410,7 @@ public class VideoSceneConcurrencyTests
 
         public MongoDbContext Context { get; }
         public Mock<IOpenRouterVideoClient> VideoClient { get; }
+        public Mock<IRunEventStore> RunStore => _runStore;
         public Mock<IAssetStorage> AssetStorage => _assetStorage;
         public string OwnerId { get; }
 

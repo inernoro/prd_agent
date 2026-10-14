@@ -64,3 +64,7 @@
 | test | llmgw | 覆盖 Provider 双域删除、租户隔离、同 ID 歧义保护与历史请求日志保留 |
 | fix | design-runtime | 修改网页时将上一版本的浏览器质量证据保留为冻结输入，不再误当作可编辑资源拒绝工作区 |
 | test | design-runtime | 覆盖含双视口质量报告和截图的已生成站点可继续修改且派生证据不会混入新产物 |
+| fix | prd-api | 视频分镜任务在 Editing 状态由任务所有者取消时立即进入 Cancelled，避免空闲任务永久占用 Offering |
+| fix | prd-admin | 视频分镜编辑态补充停止任务入口，并在任务终态停止后台轮询 |
+| test | prd-api | 覆盖 Editing 取消终态、项目状态回落、跨用户与跨应用隔离 |
+| test | prd-admin | 覆盖 Editing 可停止和 Cancelled 即使残留活动镜头也不再轮询 |

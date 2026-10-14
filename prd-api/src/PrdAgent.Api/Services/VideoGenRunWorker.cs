@@ -511,6 +511,8 @@ public class VideoGenRunWorker : BackgroundService
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                .Set(x => x.CurrentPhase, "cancelled")
+                .Set(x => x.PhaseProgress, 100)
                 .Set(x => x.EndedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
 

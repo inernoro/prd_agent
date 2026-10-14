@@ -120,12 +120,17 @@ export const shouldKeepVideoRunPolling = (
   now: number,
   keepPollingUntil: number,
 ): boolean => {
+  if (['Completed', 'Failed', 'Cancelled'].includes(run.status)) return false;
   const hasTransientScene = run.scenes.some(
     (scene) => ['Generating', 'Submitting', 'SubmittingClaimed', 'Polling', 'PollingClaimed', 'Rendering'].includes(scene.status),
   );
   const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(run.status);
   return hasTransientScene || hasTransientRun || now < keepPollingUntil;
 };
+
+export const canCancelVideoRun = (status: string): boolean => (
+  ['Queued', 'Scripting', 'Editing', 'Rendering'].includes(status)
+);
 
 export const markVideoSceneSubmitting = (run: VideoGenRun, sceneIndex: number): VideoGenRun => ({
   ...run,
@@ -547,7 +552,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
         </div>
 
         <div className="video-workbench__actions">
-          {['Queued', 'Scripting', 'Rendering'].includes(run.status) && (
+          {canCancelVideoRun(run.status) && (
             <Button size="sm" variant="secondary" onClick={cancelRun} disabled={mutating === 'cancel-run'}>
               {mutating === 'cancel-run' ? <MapSpinner size={14} /> : <CircleStop size={14} />} 停止任务
             </Button>

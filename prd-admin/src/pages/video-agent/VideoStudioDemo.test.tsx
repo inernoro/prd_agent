@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRun } from '@/services/contracts/videoAgent';
 import {
+  canCancelVideoRun,
   calculateVideoRunSpentCost,
   formatVideoSceneError,
   getStoryboardExperienceState,
@@ -58,6 +59,13 @@ describe('VideoStudioDemo', () => {
     const staleRun = runWith('Editing', 'editing', [{ index: 0, status: 'Error' }] as VideoGenRun['scenes']);
     expect(shouldKeepVideoRunPolling(staleRun, 1_000, 46_000)).toBe(true);
     expect(shouldKeepVideoRunPolling(staleRun, 46_001, 46_000)).toBe(false);
+  });
+
+  it('lets the owner stop an Editing run and stops polling every terminal run', () => {
+    expect(canCancelVideoRun('Editing')).toBe(true);
+    expect(canCancelVideoRun('Cancelled')).toBe(false);
+    const cancelled = runWith('Cancelled', 'cancelled', [{ index: 0, status: 'Submitting' }] as VideoGenRun['scenes']);
+    expect(shouldKeepVideoRunPolling(cancelled, 1_000, 60_000)).toBe(false);
   });
 
   it.each(['SubmittingClaimed', 'Polling', 'PollingClaimed'] as const)(

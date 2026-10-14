@@ -572,16 +572,63 @@ public class VideoGenService : IVideoGenService
 
     public async Task<bool> CancelRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
     {
-        var run = await GetRunAsync(runId, ownerAdminId, appKey, ct);
-        if (run == null) return false;
+        var fb = Builders<VideoGenRun>.Filter;
+        var ownedFilter = fb.Eq(x => x.Id, runId)
+                          & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                          & fb.Eq(x => x.DeletionRequestedAt, null);
+        if (appKey != null) ownedFilter &= fb.Eq(x => x.AppKey, appKey);
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
+        // Editing is a user-held state rather than worker-owned work. An idle Editing run
+        // has no future claim that could observe CancelRequested, so finish it atomically
+        // here instead of leaving it permanently in flight.
+        var now = DateTime.UtcNow;
+        var cancelled = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            ownedFilter & fb.Eq(x => x.Status, VideoGenRunStatus.Editing),
+            Builders<VideoGenRun>.Update
+                .Set(x => x.CancelRequested, true)
+                .Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                .Set(x => x.CurrentPhase, "cancelled")
+                .Set(x => x.PhaseProgress, 100)
+                .Set(x => x.EndedAt, now),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (cancelled != null)
+        {
+            if (!string.IsNullOrWhiteSpace(cancelled.ProjectId))
+            {
+                await _db.VideoProjects.UpdateOneAsync(
+                    project => project.Id == cancelled.ProjectId
+                               && project.OwnerAdminId == ownerAdminId
+                               && project.AppKey == cancelled.AppKey
+                               && project.LatestRunId == cancelled.Id,
+                    Builders<VideoProject>.Update
+                        .Set(project => project.Status, VideoProjectStatus.Draft)
+                        .Set(project => project.UpdatedAt, now),
+                    cancellationToken: ct);
+            }
+            await PublishEventAsync(runId, "run.cancel.requested", new { });
+            await PublishEventAsync(runId, "run.cancelled", new { });
+            return true;
+        }
+
+        var terminalStatuses = new[]
+        {
+            VideoGenRunStatus.Completed,
+            VideoGenRunStatus.Failed,
+            VideoGenRunStatus.Cancelled,
+        };
+        var requested = await _db.VideoGenRuns.UpdateOneAsync(
+            ownedFilter & fb.Nin(x => x.Status, terminalStatuses),
             Builders<VideoGenRun>.Update.Set(x => x.CancelRequested, true),
             cancellationToken: ct);
+        if (requested.MatchedCount > 0)
+        {
+            await PublishEventAsync(runId, "run.cancel.requested", new { });
+            return true;
+        }
 
-        await PublishEventAsync(runId, "run.cancel.requested", new { });
-        return true;
+        // Terminal cancellation is idempotent, while a missing or foreign run stays hidden.
+        return await _db.VideoGenRuns.Find(ownedFilter).AnyAsync(ct);
     }
 
     public async Task<DeleteVideoGenRunResult?> DeleteRunAsync(
