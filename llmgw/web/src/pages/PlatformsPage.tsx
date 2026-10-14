@@ -30,7 +30,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
-  // 行内编辑：只在展开的那一行生效，避免整页进「编辑模式」
+  // 草稿绑定供应方详情，不依赖父列表当前的搜索、页码或窄屏可见性。
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<UpdatePlatformRequest>({});
   const [keyValue, setKeyValue] = useState('');
@@ -87,7 +87,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     const p = selectedProvider;
     return <CollectionDetailPane key={p.id} title={p.name} icon={<Server size={18}/>} identifier={summarizeProviderModels(ownedRows(p.id))} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>名下模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
       <div className={providerTab === 'models' ? 'lg-collection-provider-models' : 'lg-collection-hidden'}><ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} /></div>
-      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)},{label:'导入时间',value:p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? <Button size="sm" onClick={() => beginEdit(p)}>编辑连接</Button> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
+      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)},{label:'导入时间',value:p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? editId === p.id ? renderConnectionEditor(p) : <Button size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
       {providerTab === 'activity' ? <div className="lg-collection-key-facts"><h3>调用记录<HelpPopover label="调用记录">查看这条供应方的真实请求、响应状态与最近调用。</HelpPopover></h3><Link className="lg-text-link" to={`/logs?platformId=${encodeURIComponent(p.id)}`}>查看全部请求记录</Link></div> : null}
     </CollectionDetailPane>;
   }
@@ -276,7 +276,75 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     }
   }
 
+  function renderConnectionEditor(p: PlatformItem) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
+          <input
+            aria-label="平台名称"
+            value={editDraft.name ?? ''}
+            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
+            placeholder="名称"
+            style={{ ...inputStyle, width: 150 }}
+          />
+          <input
+            aria-label="备注"
+            value={editDraft.remark ?? ''}
+            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
+            placeholder="备注"
+            style={{ ...inputStyle, width: 160 }}
+          />
+          {/* 接口类型、API 地址、并发收进折叠区：接上游时是选平台带出来的，
+              改它们是例外不是常规。默认露在外面的话，每次只想改个备注
+              都要从一排输入框里认出哪个是备注（minimal-user-input）。 */}
+          <details style={{ width: '100%' }}>
+            <summary style={advancedSummaryStyle}>高级：接口类型、API 地址、并发（换了上游地址或要调并发时才动）</summary>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+              <select
+                aria-label="接口类型"
+                value={editDraft.platformType ?? ''}
+                onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
+                style={inputStyle}>
+                {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
+                    用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
+                {editDraft.platformType
+                  && !['openai', 'claude'].includes(editDraft.platformType) ? (
+                    <option value={editDraft.platformType}>
+                      {editDraft.platformType}（存量类型）
+                    </option>
+                  ) : null}
+                <option value="openai">openai</option>
+                <option value="claude">claude</option>
+              </select>
+              <input
+                aria-label="API 地址"
+                value={editDraft.apiUrl ?? ''}
+                onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
+                placeholder="https://…"
+                style={{ ...inputStyle, width: 240 }}
+              />
+              <input
+                aria-label="并发"
+                type="number"
+                value={editDraft.maxConcurrency ?? 0}
+                onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
+                style={{ ...inputStyle, width: 80 }}
+              />
+            </div>
+          </details>
+          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
+            保存
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
+            取消
+          </Button>
+      </div>
+    );
+  }
+
   function beginEdit(p: PlatformItem) {
+    setExpandedModelsFor(p.id);
+    setProviderTab('connection');
     setEditId(p.id);
     setKeyEditId(null);
     setEditDraft({
@@ -674,74 +742,6 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                           </Button>
                         </>
 </div></td></tr> : null}
-                {editId === p.id ? (
-                  <tr>
-                    {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={5}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
-                          <input
-                            aria-label="平台名称"
-                            value={editDraft.name ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
-                            placeholder="名称"
-                            style={{ ...inputStyle, width: 150 }}
-                          />
-                          <input
-                            aria-label="备注"
-                            value={editDraft.remark ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
-                            placeholder="备注"
-                            style={{ ...inputStyle, width: 160 }}
-                          />
-                          {/* 接口类型、API 地址、并发收进折叠区：接上游时是选平台带出来的，
-                              改它们是例外不是常规。默认露在外面的话，每次只想改个备注
-                              都要从一排输入框里认出哪个是备注（minimal-user-input）。 */}
-                          <details style={{ width: '100%' }}>
-                            <summary style={advancedSummaryStyle}>高级：接口类型、API 地址、并发（换了上游地址或要调并发时才动）</summary>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                              <select
-                                aria-label="接口类型"
-                                value={editDraft.platformType ?? ''}
-                                onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
-                                style={inputStyle}>
-                                {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
-                                    用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
-                                {editDraft.platformType
-                                  && !['openai', 'claude'].includes(editDraft.platformType) ? (
-                                    <option value={editDraft.platformType}>
-                                      {editDraft.platformType}（存量类型）
-                                    </option>
-                                  ) : null}
-                                <option value="openai">openai</option>
-                                <option value="claude">claude</option>
-                              </select>
-                              <input
-                                aria-label="API 地址"
-                                value={editDraft.apiUrl ?? ''}
-                                onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
-                                placeholder="https://…"
-                                style={{ ...inputStyle, width: 240 }}
-                              />
-                              <input
-                                aria-label="并发"
-                                type="number"
-                                value={editDraft.maxConcurrency ?? 0}
-                                onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
-                                style={{ ...inputStyle, width: 80 }}
-                              />
-                            </div>
-                          </details>
-                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
-                            保存
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
-                            取消
-                          </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
                 </Fragment>
               );
             })}
