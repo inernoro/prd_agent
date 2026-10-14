@@ -549,7 +549,9 @@ export interface BuildProfileOverride {
 
 /** A shared cache mount to avoid duplicating packages across branches */
 export interface CacheMount {
-  /** Host path (absolute) for the shared cache */
+  /** 未标记的存量条目沿用 bind 缓存迁移；volume 是 Docker 命名卷，不能改写为宿主机目录。 */
+  kind?: 'volume' | 'bind';
+  /** bind 的宿主机路径，或 volume 的 Docker 卷名。 */
   hostPath: string;
   /** Container path where it gets mounted */
   containerPath: string;
@@ -897,6 +899,8 @@ export interface PreviewMirrorTag {
   previewUrl?: string;
   previewUrls?: string[];
   subject?: string;
+  /** 只读镜像的路由投影，不携带父实例的设置审计记录。 */
+  routingIdentity?: { resourceNamespace: string; historicalSlugs: string[] };
 }
 
 export interface BranchEntry {
@@ -3666,7 +3670,32 @@ export interface ManagedProjectSpec {
   capabilities?: ManagedCapabilityBinding[];
 }
 
+export interface ProjectIdentitySnapshot {
+  name: string;
+  displayName: string;
+  slug: string;
+  /** 只读取上一版审计快照，不能作为项目配置写入。 */
+  previewIdentifier?: string;
+  originalIdentifier?: string;
+  repository: string;
+  /** 已绑定的 GitHub 仓库；与显式 Git 地址分别留痕，旧记录可能没有此字段。 */
+  githubRepository?: string;
+}
+
+export interface ProjectIdentityRecord {
+  id: string;
+  at: string;
+  kind: 'created' | 'baseline' | 'changed' | 'migrated';
+  actor: string;
+  requestId?: string;
+  slugSource?: 'explicit' | 'repository' | 'name';
+  before?: ProjectIdentitySnapshot;
+  after: ProjectIdentitySnapshot;
+}
+
 export interface Project {
+  /** 独立于活动日志保留的设置变更记录；baseline 只证明观察时的状态。 */
+  identityHistory?: ProjectIdentityRecord[];
   /** 父实例镜像来的只读项目（预览实例专用） */
   mirror?: PreviewMirrorTag;
   /**
@@ -3689,7 +3718,7 @@ export interface Project {
 
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
-  /** URL-friendly slug (may equal id, usually kebab-case). */
+  /** 唯一可编辑的项目 slug，用于预览地址；关联使用稳定的 id。 */
   slug: string;
   /** Human-friendly display name shown on the projects list card. */
   name: string;
@@ -3711,17 +3740,6 @@ export interface Project {
    * the legacy default project) is not the label the user wants to see.
    */
   aliasName?: string;
-  /**
-   * Optional alternative slug, reserved for a future "use alias in new
-   * branch ids" toggle. Stored here so the Settings UI can capture it
-   * alongside `aliasName`, but NOT consumed by branch-id derivation
-   * yet (see doc/plan.cds-github-integration-followups.md §1 — branch
-   * prefix change is scoped to a follow-up PR).
-   *
-   * Must pass the same SLUG_REGEX as `slug` and must not collide with
-   * any other project's `slug` or `aliasSlug`.
-   */
-  aliasSlug?: string;
   /** Optional one-line description shown under the name. */
   description?: string;
   /** 旧项目缺省为 compose，保持现有 BuildProfile/compose 行为。 */
@@ -4224,12 +4242,18 @@ export interface AccessRequest {
   agentName: string;
   /** 申请理由,用户审批时可见。 */
   purpose: string;
+  /** Agent 申报的建项目目标，仅供审批核对，不改变一次建项目的权限范围。 */
+  requestedProject?: { name: string; repository?: string };
+  /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
+  createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
   status: 'pending' | 'approved' | 'rejected';
   /** ISO submit time. */
   createdAt: string;
   /** Set when status flips away from 'pending'. */
   decidedAt?: string;
+  /** 此次批准已启用建项目回执；存量已批准记录不反推未采集过的进度。 */
+  creationReceiptEnabled?: boolean;
   /** GitHub login / 'cookie' / 'global-key' — who decided. */
   decidedBy?: string;
   /** 拒绝原因(status='rejected' 时可选)。 */

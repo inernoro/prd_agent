@@ -15,6 +15,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import { KeyRound, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
@@ -31,11 +32,27 @@ interface AccessRequest {
   purpose: string;
   status: 'pending' | 'approved' | 'rejected';
   createdAt: string;
+  decidedAt?: string;
+  creationReceiptEnabled?: boolean;
+  deliveredAt?: string;
+  requestedProject?: { name: string; repository?: string };
+  createdProject?: { id: string; name: string; createdAt: string };
 }
 
 interface AccessRequestsResponse {
   requests?: AccessRequest[];
   pendingCount?: number;
+}
+
+function RequestTarget({ request }: { request: AccessRequest }): JSX.Element | null {
+  if (request.kind !== 'bootstrap') return null;
+  return (
+    <div className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs leading-5 break-all">
+      <p>申请目标：{request.requestedProject?.name || '未提供项目名称'}</p>
+      <p>仓库：{request.requestedProject?.repository || '未提供仓库'}</p>
+      <p className="mt-1 text-muted-foreground">以上由 Agent 申报。权限仅限创建一个项目，建成后转为该项目权限。</p>
+    </div>
+  );
 }
 
 export function AccessRequestInbox({
@@ -47,13 +64,19 @@ export function AccessRequestInbox({
 } = {}): JSX.Element | null {
   const events = useCdsEvents();
   const [pending, setPending] = useState<AccessRequest[]>([]);
+  const [receipts, setReceipts] = useState<AccessRequest[]>([]);
+  const [dismissed, setDismissed] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const data = await apiRequest<AccessRequestsResponse>('/api/access-requests');
-      setPending((data.requests || []).filter((r) => r.status === 'pending'));
+      const requests = data.requests || [];
+      setPending(requests.filter((r) => r.status === 'pending'));
+      setReceipts(requests.filter((r) => r.kind === 'bootstrap' && r.status === 'approved' && r.creationReceiptEnabled
+        && Date.now() - Date.parse(r.decidedAt || r.createdAt) < 24 * 60 * 60 * 1000)
+        .sort((a, b) => (b.decidedAt || b.createdAt).localeCompare(a.decidedAt || a.createdAt)));
     } catch {
       // 静默 — degraded / 401 不该让这个组件爆错
     }
@@ -66,16 +89,21 @@ export function AccessRequestInbox({
     if (events.lastAccessRequestEvent) void refresh();
   }, [events.lastAccessRequestEvent, refresh]);
 
+  // SSE 重连补一次快照，避免离线期间已经创建成功却仍显示等待。
+  useEffect(() => {
+    if (events.connection === 'connected') void refresh();
+  }, [events.connection, refresh]);
+
   const approve = useCallback(async (reqId: string) => {
     if (busy) return;
     setBusy(reqId);
     try {
       await apiRequest(`/api/access-requests/${encodeURIComponent(reqId)}/approve`, { method: 'POST' });
-      setPending((prev) => prev.filter((r) => r.id !== reqId));
+      await refresh();
     } finally {
       setBusy(null);
     }
-  }, [busy]);
+  }, [busy, refresh]);
 
   const reject = useCallback(async (reqId: string) => {
     if (busy) return;
@@ -93,11 +121,34 @@ export function AccessRequestInbox({
     onCountChange?.(count);
   }, [count, onCountChange]);
 
-  if (count === 0) return null;
+  const receipt = receipts.find((item) => !dismissed.includes(item.id));
+  if (count === 0 && !receipt) return null;
   const primary = pending[0];
-  const primaryBusy = busy === primary.id;
+  const primaryBusy = primary && busy === primary.id;
 
-  const primaryCard = (
+  const receiptCard = receipt ? (
+    <section className="rounded-xl border bg-[hsl(var(--surface-raised))] p-4 shadow-2xl" aria-live="polite" aria-label="首次接入进度">
+      <div className="flex items-start gap-2">
+        {receipt.createdProject ? <ShieldCheck className="h-5 w-5 shrink-0 text-ok" /> : <Loader2 className="h-5 w-5 shrink-0 animate-spin text-muted-foreground" />}
+        <div className="min-w-0 flex-1">
+          <h2 className="text-sm font-semibold">{receipt.createdProject ? '项目已创建，授权已收敛' : receipt.deliveredAt ? 'Agent 已领取授权，等待创建结果' : '已批准，等待 Agent 领取授权'}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{receipt.agentName}</p>
+          <RequestTarget request={receipt} />
+          {receipt.createdProject ? (
+            <>
+              <p className="mt-2 text-xs">CDS 已确认创建“{receipt.createdProject.name}”，一次建项目权限已失效。</p>
+              <Link className="mt-3 inline-flex min-h-10 items-center text-sm font-medium text-primary underline" to={`/branches/${encodeURIComponent(receipt.createdProject.id)}`}>进入已创建的项目</Link>
+            </>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">创建成功后会在这里显示实际项目入口。若长时间未完成，请让 Agent 检查执行结果并继续，无需重复批准。</p>
+          )}
+          <Button variant="ghost" size="sm" className="mt-2" onClick={() => setDismissed((previous) => [...previous, receipt.id])}>收起回执</Button>
+        </div>
+      </div>
+    </section>
+  ) : null;
+
+  const primaryCard = primary ? (
     <section
       className="relative w-full overflow-hidden rounded-xl border border-warn/45
                  bg-[hsl(var(--surface-raised))] shadow-2xl"
@@ -127,6 +178,7 @@ export function AccessRequestInbox({
                 <>访问项目 <code className="font-mono text-foreground">{primary.projectId}</code></>
               )}
             </p>
+            <RequestTarget request={primary} />
             {primary.purpose ? (
               <p className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2
                             text-xs leading-5 text-foreground/85">
@@ -170,7 +222,7 @@ export function AccessRequestInbox({
         </button>
       </div>
     </section>
-  );
+  ) : receiptCard;
 
   const primarySurface = placement === 'floating' && typeof document !== 'undefined'
     ? createPortal((
@@ -223,6 +275,7 @@ export function AccessRequestInbox({
                         {' · '}
                         {new Date(item.createdAt).toLocaleString('zh-CN')}
                       </div>
+                      <RequestTarget request={item} />
                       {item.purpose ? (
                         <div className="mt-1 text-xs text-foreground/80">{item.purpose}</div>
                       ) : null}

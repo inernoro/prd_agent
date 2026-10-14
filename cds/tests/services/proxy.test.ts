@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
+import { computePreviewSlug } from '../../src/services/preview-slug.js';
 
 describe('ProxyService', () => {
   let stateFile: string;
@@ -775,6 +776,23 @@ describe('ProxyService', () => {
   });
 
   describe('preview subdomain — 三档解析（v3 优先 / v1 / v2 兼容）', () => {
+    it.each(['main', 'codex/combo-gift-admin', 'feature/orders/v2', 'release/2026.10'])(
+      '改项目 slug 后 master 对 %s 的新旧主入口和命名服务解析一致', (branch) => {
+        stateService.addProject({ id: 'p1', slug: 'old-project', name: '示例', kind: 'git', createdAt: new Date().toISOString() } as any);
+        stateService.addBranch({ id: 'persisted-branch-id', projectId: 'p1', branch, worktreePath: '/tmp/slug-compat',
+          services: { web: { profileId: 'web', containerName: 'existing-container', hostPort: 9100, status: 'running' } },
+          status: 'running', createdAt: new Date().toISOString() });
+        stateService.addBuildProfile({ id: 'web', projectId: 'p1', name: 'web', subdomain: 'app' } as any);
+        stateService.updateProject('p1', { slug: 'short-project' });
+        for (const slug of ['old-project', 'short-project']) {
+          const preview = computePreviewSlug(branch, slug);
+          expect((proxy as any).resolveBranchEntry(preview)?.id).toBe('persisted-branch-id');
+          expect((proxy as any).resolvePreviewServiceSubdomain(`${preview}-app`)).toMatchObject({
+            entry: { id: 'persisted-branch-id', projectId: 'p1' }, profileId: 'web', previewSlug: preview,
+          });
+        }
+      },
+    );
     // 子域名 `<slug>.<root>` 拿到裸 slug 后，proxy 按
     // ① v3 前向匹配 → ② v1 裸 slug 直查 → ③ v2 `${projectSlug}-${slug}` 拼接
     // 的顺序解析。任何一档命中就返回，三档都 miss 才走 auto-build。

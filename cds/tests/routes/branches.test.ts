@@ -20,6 +20,8 @@ import type { ServerEventLogSink } from '../../src/services/server-event-log-sto
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BranchEntry, CdsConfig } from '../../src/types.js';
+import { computePreviewSlug } from '../../src/services/preview-slug.js';
+import { namedServiceLabel } from '../../src/services/preview-entrypoints.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 function makeConfig(tmpDir: string): CdsConfig {
@@ -486,6 +488,26 @@ describe('Branch Routes', () => {
       });
     }
 
+    it.each(['alias-primary', 'alias-named', 'alias-legacy', 'alias-member', 'domain-primary', 'domain-named', 'domain-legacy', 'domain-member'])('项目改名后拒绝占走保留的旧入口：%s', async (kind) => {
+      seedProject('proj-a', 'local-a');
+      seedProject('proj-b', 'old-owner');
+      seedBranch('branch-a', 'proj-a', 'main');
+      seedBranch('branch-b', 'proj-b', 'feature/demo');
+      stateService.addBuildProfile({ id: 'gateway', projectId: 'proj-b', name: 'Gateway', dockerImage: 'nginx:alpine', workDir: '.', containerPort: 80, subdomain: 'llmgw' });
+      stateService.updateProject('proj-b', { slug: 'current-owner' });
+      stateService.getBranch('branch-b')!.replicaSets = { gateway: { profileId: 'gateway', enabled: true, primaryWeight: 100, members: [{ id: 'res-1', status: 'running', hostPort: 12001, weight: 100 }] } } as BranchEntry['replicaSets'];
+      const canonical = computePreviewSlug('feature/demo', 'old-owner');
+      const label = kind.endsWith('primary') ? canonical : kind.endsWith('member') ? `${canonical}-gateway-res-1` : namedServiceLabel(canonical, kind.endsWith('legacy') ? 'llmgw-web' : 'llmgw');
+      const alias = kind.startsWith('alias');
+      const endpoint = `/api/branches/branch-a/${alias ? 'subdomain-aliases' : 'custom-domains'}`;
+      const response = await request(server, 'PUT', endpoint, alias ? { aliases: [label] } : { domains: [`${label}.example.test`] }, { 'X-Test-Key': 'A' });
+      expect(response.status).toBe(409);
+      expect(stateService.getBranchSubdomainAliases('branch-a')).toEqual([]);
+      expect(stateService.getBranchCustomDomains('branch-a')).toEqual([]);
+      const allowed = await request(server, 'PUT', endpoint, alias ? { aliases: ['unoccupied'] } : { domains: ['unoccupied.example.test'] }, { 'X-Test-Key': 'A' });
+      expect(allowed.status).toBe(200);
+    });
+
     it('rejects project-scoped keys reading or writing another project custom domain config', async () => {
       seedProject('proj-a', 'a');
       seedProject('proj-b', 'b');
@@ -779,6 +801,25 @@ describe('Branch Routes', () => {
       stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
       const res = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
       expect(res.status).not.toBe(409);
+    });
+
+    it('切回源码模式清除旧 CI 目标，保留极速版时不清除', async () => {
+      seedGateProject(true);
+      const old = 'a'.repeat(40), next = 'b'.repeat(40);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.updateBranchGithubMeta('b1', { githubCommitSha: next, ciTargetSha: old, ciImageStatus: 'failed', ciImageError: 'old failure' });
+      await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'express' });
+      expect(stateService.getBranch('b1')?.ciTargetSha).toBe(old);
+      const source = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'dev' });
+      expect(source.status).toBe(200);
+      const detail = await request(server, 'GET', '/api/branches/b1');
+      expect(detail.body.branch.targetCommitSha).toBe(next);
+      expect(detail.body.branch.ciImageStatus).toBeUndefined();
+      expect(detail.body.branch.ciImageError).toBeUndefined();
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.updateBranchGithubMeta('b1', { ciTargetSha: old, ciImageStatus: 'failed' });
+      expect((await request(server, 'DELETE', '/api/branches/b1/profile-overrides/api')).status).toBe(200);
+      expect(stateService.getBranch('b1')?.ciTargetSha).toBeUndefined();
     });
 
     it('真人（无机器凭据）仍可把分支切成 dev，门禁只管 Agent', async () => {
@@ -5308,6 +5349,24 @@ describe('Branch Routes', () => {
   // static fallback, returning HTML — the React loader saw 200 OK and
   // rendered a blank panel. These tests lock in the JSON contract.
   describe('GET /api/branches/:id (F9)', () => {
+    it('运行 A 与被 CI 拦截的目标 B 在列表和详情保持分离', async () => {
+      await request(server, 'POST', '/api/branches', { branch: 'feature/x' });
+      const branch = stateService.getBranch('feature-x')!;
+      const A = 'a'.repeat(40), B = 'b'.repeat(40);
+      branch.githubCommitSha = B;
+      branch.ciTargetSha = B;
+      branch.ciImageStatus = 'failed';
+      branch.status = 'running';
+      branch.services = { web: { profileId: 'web', containerName: 'lab-web', hostPort: 18080, status: 'running', deployedImage: `ghcr.io/test/lab:sha-${A}` } };
+      const detail = await request(server, 'GET', '/api/branches/feature-x');
+      const list = await request(server, 'GET', '/api/branches?project=default&live=false');
+      for (const view of [(detail.body as any).branch, (list.body as any).branches.find((b: any) => b.id === branch.id)]) {
+        expect(view.runningCommitSha).toBe(A);
+        expect(view.targetCommitSha).toBe(B);
+        expect(view.ciImageStatus).toBe('failed');
+      }
+    });
+
     it('returns 200 + { branch } when the id exists', async () => {
       await request(server, 'POST', '/api/branches', { branch: 'feature/x' });
       const res = await request(server, 'GET', '/api/branches/feature-x');

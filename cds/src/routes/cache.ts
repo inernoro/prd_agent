@@ -90,6 +90,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
 
       for (const profile of profiles) {
         for (const mount of profile.cacheMounts || []) {
+          if (mount.kind === 'volume') continue;
           let entry = pathToInfo.get(mount.hostPath);
           if (!entry) {
             entry = {
@@ -127,6 +128,8 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
         const entries = fs.readdirSync(CACHE_BASE, { withFileTypes: true });
         for (const ent of entries) {
           if (!ent.isDirectory()) continue;
+          if (profiles.some((profile) => profile.cacheMounts?.some((mount) =>
+            mount.kind === 'volume' && mount.hostPath === ent.name))) continue;
           const full = path.join(CACHE_BASE, ent.name);
           if (pathToInfo.has(full)) continue;
           const stats = await dirStats(shell, full);
@@ -183,6 +186,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
 
         // 路径迁移（host slug 漂移 + pnpm 容器路径纠正）
         for (const cm of mounts) {
+          if (cm.kind === 'volume') continue;
           const updated = stateService.normalizeCacheHostPath(cm.hostPath);
           if (updated !== cm.hostPath) {
             actions.push({ profileId: profile.id, action: 'rewrite-host-path', fixed: `${cm.hostPath} → ${updated}` });
@@ -222,6 +226,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
       const allHostPaths = new Set<string>();
       for (const profile of stateService.getBuildProfiles()) {
         for (const cm of profile.cacheMounts || []) {
+          if (cm.kind === 'volume') continue;
           allHostPaths.add(cm.hostPath);
         }
       }
@@ -356,6 +361,11 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
     const name = String(req.query.name || '').trim();
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
+      return;
+    }
+    if (stateService.getBuildProfiles().some((profile) =>
+      profile.cacheMounts?.some((mount) => mount.kind === 'volume' && mount.hostPath === name))) {
+      res.status(409).json({ error: '这是应用的 Docker 命名卷，不属于可清理的构建缓存。' });
       return;
     }
     const CACHE_BASE = stateService.getCacheBase();
