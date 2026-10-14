@@ -155,7 +155,7 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
             ? '按权重分到各条线路。每次请求的落点由请求本身决定，所以这里只给比例，不指名道姓。'
             : '健康的排在降级的前面，然后按顺位。队首就是这次会落到的那一条。'}
         </p>
-        <CollectionView className="lg-collection-trace" items={[...data.routes].sort((a, b) => (a.queuePosition || 999) - (b.queuePosition || 999))} placeholder="搜索线路模型、供应方或状态" searchText={(route) => [route.providerName, route.upstreamModelId, route.targetName, route.skipReason, traceRouteStatus(route)].filter(Boolean).join(' ')}>
+        {data.routes.length === 0 ? <span role="alert" style={{ ...HINT_TEXT, color: 'var(--warn)' }}>一条线路都没有，现在调它一定失败。</span> : <CollectionView className="lg-collection-trace" items={[...data.routes].sort((a, b) => (a.queuePosition || 999) - (b.queuePosition || 999))} placeholder="搜索线路模型、供应方或状态" searchText={(route) => [route.providerName, route.upstreamModelId, route.targetName, route.skipReason, traceRouteStatus(route)].filter(Boolean).join(' ')}>
           {(routes) => <>
           {routes.map((route) => {
                 const extra = extraById.get(route.id);
@@ -199,7 +199,7 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
                 );
               })}
           </>}
-        </CollectionView>
+        </CollectionView>}
       </Step>
 
       <Step index={5} title="翻译成这家上游的方言">

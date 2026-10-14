@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 import React, { act } from 'react';
 
-test('供应方连接编辑不依赖父列表可见性，保留保存、取消与只读权限', async () => {
+test('供应方编辑保持可见及权限；调用全貌区分线路缺失与搜索空态', async () => {
   const rootDir = fileURLToPath(new URL('../', import.meta.url));
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost/platforms' });
   const names = ['window', 'document', 'HTMLElement', 'HTMLInputElement', 'Event', 'MouseEvent'];
@@ -38,6 +38,7 @@ test('供应方连接编辑不依赖父列表可见性，保留保存、取消�
         if (id === '\0provider-test-router') return Object.keys(globalThis.__providerRouterModule).filter(name => name !== 'default').map(name => `export const ${name}=globalThis.__providerRouterModule.${name};`).join('\n');
         if (id.endsWith('/src/lib/api.ts')) return apiNames.map(name => {
           if (name === 'getPlatforms') return 'export async function getPlatforms(){return {success:true,data:{items:globalThis.__providerEditFixture.providers}}}';
+          if (name === 'getCallTrace') return 'export async function getCallTrace(){return {success:true,data:globalThis.__providerEditFixture.traceData}}';
           if (name === 'updatePlatform') return 'export async function updatePlatform(id,draft){const f=globalThis.__providerEditFixture;f.calls.push({id,draft});f.providers=f.providers.map(p=>p.id===id?{...p,...draft,platformType:draft.platformType??p.platformType}:p);return {success:true,data:f.providers.find(p=>p.id===id)}}';
           return `export async function ${name}(){return {success:true,data:{items:[]}}}`;
         }).join('\n');
@@ -94,6 +95,31 @@ test('供应方连接编辑不依赖父列表可见性，保留保存、取消�
     assert.equal(button('编辑连接'), undefined);
     assert.equal(document.querySelector('[aria-label="平台名称"]'), null);
     assert.equal(fixture.calls.length, 1);
+    await act(async () => root.unmount());
+    root = null;
+    const { CallTracePanel } = await server.ssrLoadModule('/src/components/CallTracePanel.tsx');
+    fixture.traceData = {
+      publicId: 'missing-route', conclusion: '当前没有可用线路', routingStrategy: 'priority',
+      routes: [], routeExtras: [], flow: [],
+      gate: { enabled: true, allowedAppCallerCodes: [], summary: '已启用' },
+      unnamed: { reachingCallerCount: 0, callerCount: 0, callers: [], summary: '没有调用方' },
+      ledger: { windowDays: 7, calls: 0, costUsd: 0, unpricedCalls: 0 },
+    };
+    const mountTrace = async () => {
+      root = createRoot(document.getElementById('root'));
+      await act(async () => root.render(React.createElement(CallTracePanel, { logicalModelId: 'empty' })));
+    };
+    await mountTrace();
+    const routeSection = document.querySelector('[data-testid="call-trace-routes"]');
+    assert.equal(routeSection.querySelector('[role="alert"]').textContent, '一条线路都没有，现在调它一定失败。');
+    assert.equal(routeSection.textContent.includes('没有匹配结果'), false);
+    await act(async () => root.unmount());
+    root = null;
+    fixture.traceData.routes = [{ id: 'r1', providerName: '上游', upstreamModelId: 'chat', queuePosition: 1, priority: 0, enabled: true, healthStatus: 0 }];
+    await mountTrace();
+    await input(document.querySelector('input[aria-label="搜索线路模型、供应方或状态"]'), '不存在的线路');
+    assert.ok(document.querySelector('[data-testid="call-trace-routes"]').textContent.includes('没有匹配结果'));
+    assert.equal(document.querySelector('[data-testid="call-trace-routes"] [role="alert"]'), null);
   } finally {
     if (root) await act(async () => root.unmount());
     await server.close();
