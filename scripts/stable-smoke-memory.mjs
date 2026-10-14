@@ -96,7 +96,7 @@ export function updatePools(previous, { runId, profile = 'routine', commit = '',
       ? feature.caseIds.filter(caseId => requiredCaseIdsByEnvironment[environment].includes(caseId)) : feature.caseIds;
     const missing = expectedCases.filter(caseId => !selected.some(row => row.caseId === caseId));
     const status = statuses.includes('fail') ? 'fail' : statuses.includes('flaky') ? 'flaky'
-      : statuses.includes('blocked') ? 'blocked' : missing.length || !selected.length ? 'not-run' : 'pass';
+      : statuses.includes('blocked') ? 'blocked' : statuses.includes('not-run') || missing.length || !selected.length ? 'not-run' : 'pass';
     run.results.push({ featureId: feature.id, environment, status, missing, cases: selected.map(row => ({ caseId: row.caseId, status: caseStatus(row) })) });
     for (const row of selected) {
       const rowStatus = caseStatus(row);

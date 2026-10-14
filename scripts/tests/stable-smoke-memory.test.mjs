@@ -49,6 +49,17 @@ test('没有verify-open的链接不进入三池，CDS通过不填正式通过', 
   assert.equal(state.runs[0].evidenceVerified, false);
   assert.equal(state.runs[0].results.find(r => r.featureId === 'F17' && r.environment === 'production').status, 'not-run');
 });
+test('REG-stsmk-report-risk-001 正式全部显式未执行占位不能聚合通过', () => {
+  const ids=[...new Set(contract.features.flatMap(f=>f.caseIds))];
+  const state=updatePools({}, {...input, rows:ids.map(caseId=>({environment:'production',caseId,status:'not-run'})),requiredCaseIdsByEnvironment:{production:ids,cds:[]}},contract);
+  assert.ok(state.runs[0].results.filter(r=>r.environment==='production').every(r=>r.status==='not-run'));
+  assert.ok(state.hotspots.every(h=>h.latest.find(r=>r.environment==='production').status==='not-run'));
+});
+test('REG-stsmk-report-risk-001 手机子项通过不遮住正式同功能未执行', () => {
+  const feature=contract.features.find(f=>f.id==='F17');
+  const state=updatePools({}, {...input,rows:feature.caseIds.map(caseId=>({environment:'production',caseId,status:caseId==='CORE-010'?'pass':'not-run'})),requiredCaseIdsByEnvironment:{production:feature.caseIds,cds:[]}},contract);
+  assert.equal(state.runs[0].results.find(r=>r.featureId==='F17'&&r.environment==='production').status,'not-run');
+});
 test('原通知缺陷沿用编号并记持续阻塞，不虚构多个产品事故', () => {
   const state = updatePools({}, { ...input, rows: [], notification: { status: 'blocked' } }, contract);
   assert.equal(state.defects[0].defectId, 'DEF-STSMK-NOTIFY-001');
