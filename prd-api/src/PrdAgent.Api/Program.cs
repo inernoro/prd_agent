@@ -571,6 +571,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgen
 builder.Services.AddHttpClient("SafeOutbound")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddScoped<IMiduoPlanetSsoAuditWriter, MiduoPlanetSsoAuditWriter>();
 
 // Report Agent Phase 2: 自动采集服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();

@@ -68,6 +68,8 @@ public class RequestResponseLoggingMiddleware
     private static readonly string[] CredentialBearingPathPrefixes =
     {
         "/api/llm-gateway/sso/ticket",
+        // SSO 入站 body 是交换令牌 / 登录后签发的凭据；只由专用出站审计保存脱敏证据。
+        "/api/v1/auth/miduo-planet",
         "/api/instance-sync/",
         // 智能体开放层与 MCP 网关：请求体里是用户的**私人内容本身** ——
         // 文学正文、知识库文档、要托管的整页 HTML。它们和凭据一样不该进这张

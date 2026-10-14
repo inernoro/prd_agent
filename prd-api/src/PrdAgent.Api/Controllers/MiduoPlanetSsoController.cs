@@ -2,11 +2,15 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
+using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Diagnostics;
+using PrdAgent.Core.Attributes;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -24,6 +28,7 @@ public class MiduoPlanetSsoController : ControllerBase
     private readonly IConfiguration _cfg;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<MiduoPlanetSsoController> _logger;
+    private readonly IMiduoPlanetSsoAuditWriter _auditWriter;
 
     public MiduoPlanetSsoController(
         IUserService userService,
@@ -33,7 +38,8 @@ public class MiduoPlanetSsoController : ControllerBase
         MongoDbContext db,
         IConfiguration cfg,
         IHttpClientFactory httpClientFactory,
-        ILogger<MiduoPlanetSsoController> logger)
+        ILogger<MiduoPlanetSsoController> logger,
+        IMiduoPlanetSsoAuditWriter auditWriter)
     {
         _userService = userService;
         _jwtService = jwtService;
@@ -43,6 +49,7 @@ public class MiduoPlanetSsoController : ControllerBase
         _cfg = cfg;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _auditWriter = auditWriter;
     }
 
     [HttpGet("options")]
@@ -75,6 +82,8 @@ public class MiduoPlanetSsoController : ControllerBase
     [ProducesResponseType(typeof(ApiResponse<LoginResponse>), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status502BadGateway)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status503ServiceUnavailable)]
     public async Task<IActionResult> Login([FromBody] MiduoPlanetSsoLoginRequest request, CancellationToken ct)
     {
         var options = await ReadOptionsAsync(ct);
@@ -95,17 +104,18 @@ public class MiduoPlanetSsoController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "clientType 必须是 admin 或 desktop"));
         }
 
-        var validation = await ValidateLoginTokenAsync(options, token, ct);
+        var validation = await ValidateLoginTokenAsync(options, token, clientType, ct);
         if (validation.ErrorCode != null)
         {
             var message = validation.ErrorCode switch
             {
+                "SSO_AUDIT_UNAVAILABLE" => "登录诊断记录暂时不可用，请稍后重试；若持续失败，请联系管理员检查日志服务。",
                 "SSO_PROVIDER_UNAVAILABLE" => "米多星球登录校验暂时不可用，请稍后重试；若持续失败，请联系管理员检查登录服务。",
                 "SSO_USER_UNAVAILABLE" => "米多星球无法提供当前账号的身份信息，请联系米多星球管理员检查账号。",
                 "SSO_PROFILE_INCOMPLETE" => "米多星球未提供有效的账号绑定信息，请联系米多星球管理员检查账号资料和授权字段。",
                 _ => "米多星球登录凭证校验未通过，请点击米多星球重新发起登录；若持续失败，请联系米多星球管理员。"
             };
-            return StatusCode(validation.ErrorCode == "SSO_PROVIDER_UNAVAILABLE" ? 502 : 401,
+            return StatusCode(validation.ErrorCode == "SSO_AUDIT_UNAVAILABLE" ? 503 : validation.ErrorCode == "SSO_PROVIDER_UNAVAILABLE" ? 502 : 401,
                 ApiResponse<object>.Fail(validation.ErrorCode, message));
         }
         var profile = validation.Profile!;
@@ -257,7 +267,8 @@ public class MiduoPlanetSsoController : ControllerBase
             AppSecret = appSecret ?? string.Empty,
             RedirectUri = redirectUri ?? string.Empty,
             SubjectType = NormalizeSubjectType(FirstNonEmpty(settings?.MiduoSsoSubjectType, FirstConfig("MiduoSso:SubjectType", "MIDUO_SSO_SUBJECT_TYPE", "MiduoPlanetSso:SubjectType", "MIDUO_PLANET_SSO_SUBJECT_TYPE"))),
-            PasswordLoginDisabled = passwordLoginDisabled
+            PasswordLoginDisabled = passwordLoginDisabled,
+            SettingsUpdatedAt = settings?.UpdatedAt
         };
     }
 
@@ -288,7 +299,7 @@ public class MiduoPlanetSsoController : ControllerBase
             || string.Equals(value, "on", StringComparison.OrdinalIgnoreCase);
     }
 
-    private async Task<(MiduoPlanetProfile? Profile, string? ErrorCode)> ValidateLoginTokenAsync(MiduoPlanetSsoOptions options, string token, CancellationToken ct)
+    private async Task<(MiduoPlanetProfile? Profile, string? ErrorCode)> ValidateLoginTokenAsync(MiduoPlanetSsoOptions options, string token, string clientType, CancellationToken ct)
     {
         var client = _httpClientFactory.CreateClient("SafeOutbound");
         var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString();
@@ -302,33 +313,126 @@ public class MiduoPlanetSsoController : ControllerBase
         req.Headers.TryAddWithoutValidation("X-App-Signature", signature);
         req.Content = JsonContent.Create(new { token });
 
-        using var resp = await client.SendAsync(req, ct);
-        if (!resp.IsSuccessStatusCode)
+        var context = ControllerContext.HttpContext;
+        var requestId = context?.Items["RequestId"]?.ToString() ?? context?.TraceIdentifier ?? Guid.NewGuid().ToString("N");
+        var actualCommit = BuildIdentity.ParseBakedCommit(typeof(MiduoPlanetSsoController).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion);
+        var expectedCommit = FirstNonEmpty(_cfg?["GIT_COMMIT"], _cfg?["COMMIT_SHA"], _cfg?["GITHUB_SHA"],
+            _cfg?["SOURCE_VERSION"], _cfg?["CDS_COMMIT_SHA"]);
+        var audit = new ApiRequestLog
         {
-            _logger.LogWarning("Miduo Planet SSO validate-login-token failed with status {StatusCode}", (int)resp.StatusCode);
-            return (null, "SSO_PROVIDER_UNAVAILABLE");
-        }
-
-        await using var stream = await resp.Content.ReadAsStreamAsync(ct);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
-        var errorCode = GetValidationError(doc.RootElement, options.SubjectType);
-        if (errorCode != null)
-        {
-            // 不记录令牌、签名、手机号或上游原文；只记录固定分类与所需字段。
-            long? upstreamCode = long.TryParse(ReadJsonPath(doc.RootElement, "return_code"), out var code) ? code : null;
-            _logger.LogWarning("Miduo Planet SSO validation failed. errorCode={ErrorCode}, subjectType={SubjectType}, upstreamCode={UpstreamCode}",
-                errorCode, options.SubjectType, upstreamCode);
-            return (null, errorCode);
-        }
-
-        var subject = ReadJsonPath(doc.RootElement, $"return_data.{options.SubjectType}");
-        var displayName = ReadJsonPath(doc.RootElement, "return_data.userName");
-
-        return (new MiduoPlanetProfile
+            Id = Guid.NewGuid().ToString("N"), RequestId = requestId, StartedAt = DateTime.UtcNow,
+            Method = "POST", Path = req.RequestUri!.AbsolutePath, AbsoluteUrl = MiduoPlanetSsoAudit.SafeUrl(req.RequestUri.ToString()),
+            Protocol = req.RequestUri.Scheme, TargetHost = req.RequestUri.Host, RequestContentType = "application/json",
+            AppName = AppNames.System, AppId = options.AppCode, UserId = "anonymous", ClientType = "server",
+            Direction = "outbound", Status = "running",
+            RequestBody = JsonSerializer.Serialize(new
             {
-                SubjectValue = NormalizeSubjectValue(options.SubjectType, subject!),
-                DisplayName = displayName?.Trim()
-            }, null);
+                auditVersion = 1, operation = "miduo-planet.validate-login-token", parentRequestId = requestId, attempt = 1,
+                config = new { appCode = options.AppCode, subjectType = options.SubjectType, label = options.Label,
+                    baseUrl = MiduoPlanetSsoAudit.SafeUrl(options.BaseUrl), redirectUri = MiduoPlanetSsoAudit.SafeUrl(options.RedirectUri),
+                    enabled = options.Enabled, passwordLoginDisabled = options.PasswordLoginDisabled,
+                    settingsUpdatedAt = options.SettingsUpdatedAt, keyFingerprint = MiduoPlanetSsoAudit.Fingerprint("config-key:v1", options.AppSecret) },
+                runtime = new { actualCommit, expectedCommit, commitMatch = BuildIdentity.ToWireValue(BuildIdentity.Compare(actualCommit, expectedCommit)),
+                    environment = _cfg?["ASPNETCORE_ENVIRONMENT"], deployment = _cfg?["CDS_BRANCH_ID"], project = _cfg?["CDS_PROJECT_ID"],
+                    database = _db?.Database.DatabaseNamespace.DatabaseName, instance = Environment.MachineName, processId = Environment.ProcessId },
+                request = new { timestamp, nonce, clientType, signingAlgorithm = "HMAC-SHA256", tokenLength = token.Length,
+                    tokenKind = token.StartsWith("exch_", StringComparison.Ordinal) ? "exchange" : "other",
+                    tokenFingerprint = MiduoPlanetSsoAudit.Fingerprint("request-token:" + token, options.AppSecret),
+                    timeoutMs = client.Timeout == Timeout.InfiniteTimeSpan ? (double?)null : client.Timeout.TotalMilliseconds,
+                    maxCaptureBytes = MiduoPlanetSsoAudit.MaxCaptureBytes,
+                    clientOrigin = context == null ? null : MiduoPlanetSsoAudit.SafeUrl($"{context.Request.Scheme}://{context.Request.Host}{context.Request.Path}"),
+                    userAgent = MiduoPlanetSsoAudit.SafeText(context?.Request.Headers.UserAgent.ToString() ?? "", [token, options.AppSecret]) }
+            }),
+            ResponseBody = MiduoPlanetSsoAudit.BuildResponse(null, "prepared", null, options.SubjectType, options.AppSecret, token, false, 0, null, null)
+        };
+        if (context != null) context.Response.Headers["X-SSO-Audit-Id"] = audit.Id;
+        // 日志存储不可用时先拒绝调用，避免消费一次性凭证后完全没有证据。
+        if (!await _auditWriter.BeginAsync(audit))
+        {
+            if (context != null) context.Response.Headers["X-SSO-Audit-Status"] = "unavailable";
+            return (null, "SSO_AUDIT_UNAVAILABLE");
+        }
+
+        HttpResponseMessage? resp = null;
+        string? raw = null;
+        string? errorCode = null;
+        MiduoPlanetProfile? profile = null;
+        var stage = "sending";
+        var capturedBytes = 0;
+        var truncated = false;
+        var bodyReadComplete = false;
+        var auditCompleted = false;
+        var stopwatch = Stopwatch.StartNew();
+        using var captured = new MemoryStream();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (client.Timeout != Timeout.InfiniteTimeSpan) deadline.CancelAfter(client.Timeout);
+        try
+        {
+            resp = await client.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            stage = "reading_response";
+            await using var stream = await resp.Content.ReadAsStreamAsync(deadline.Token);
+            var buffer = new byte[8192];
+            while (captured.Length <= MiduoPlanetSsoAudit.MaxCaptureBytes)
+            {
+                var count = await stream.ReadAsync(buffer.AsMemory(0, Math.Min(buffer.Length,
+                    MiduoPlanetSsoAudit.MaxCaptureBytes + 1 - (int)captured.Length)), deadline.Token);
+                if (count == 0) { bodyReadComplete = true; break; }
+                captured.Write(buffer, 0, count);
+                capturedBytes = (int)Math.Min(captured.Length, MiduoPlanetSsoAudit.MaxCaptureBytes);
+            }
+            raw = Encoding.UTF8.GetString(captured.GetBuffer(), 0, capturedBytes);
+            truncated = captured.Length > MiduoPlanetSsoAudit.MaxCaptureBytes;
+            if (!resp.IsSuccessStatusCode || truncated)
+            {
+                stage = truncated ? "response_too_large" : "http_error";
+                errorCode = "SSO_PROVIDER_UNAVAILABLE";
+            }
+            else
+            {
+                stage = "parsing_response";
+                using var doc = JsonDocument.Parse(raw);
+                errorCode = GetValidationError(doc.RootElement, options.SubjectType);
+                stage = errorCode == null ? "identity_validated" : "validation_rejected";
+                if (errorCode == null)
+                    profile = new MiduoPlanetProfile
+                    {
+                        SubjectValue = NormalizeSubjectValue(options.SubjectType, ReadJsonPath(doc.RootElement, $"return_data.{options.SubjectType}")!),
+                        DisplayName = ReadJsonPath(doc.RootElement, "return_data.userName")?.Trim()
+                    };
+            }
+        }
+        catch (Exception ex)
+        {
+            stage = ex is OperationCanceledException ? ct.IsCancellationRequested ? "caller_cancelled" : "timeout"
+                : ex is JsonException ? "parse_error" : stage == "reading_response" ? "response_read_error" : "transport_error";
+            errorCode = "SSO_PROVIDER_UNAVAILABLE";
+            // 原始异常可能包含地址或凭据，只记录类型；返回正文由专用审计脱敏。
+            audit.ApiSummary = JsonSerializer.Serialize(new { errorType = ex.GetType().Name });
+        }
+        finally
+        {
+            // 读流失败或超时也属于不完整响应，不能把已捕获的前缀伪装成完整正文。
+            truncated = truncated || (resp != null && !bodyReadComplete);
+            if (raw == null && capturedBytes > 0) raw = Encoding.UTF8.GetString(captured.GetBuffer(), 0, capturedBytes);
+            stopwatch.Stop();
+            audit.EndedAt = DateTime.UtcNow;
+            audit.DurationMs = stopwatch.ElapsedMilliseconds;
+            audit.StatusCode = resp == null ? 0 : (int)resp.StatusCode;
+            audit.ResponseContentType = resp?.Content.Headers.ContentType?.MediaType;
+            audit.ResponseBodyBytes = capturedBytes;
+            audit.ErrorCode = errorCode;
+            audit.Status = errorCode == null ? "completed" : stage == "timeout" ? "timeout" : "failed";
+            audit.ResponseBodyTruncated = truncated;
+            audit.ResponseBody = MiduoPlanetSsoAudit.BuildResponse(raw, stage, errorCode, options.SubjectType, options.AppSecret,
+                token, truncated, capturedBytes, resp?.Content.Headers.ContentLength, resp);
+            auditCompleted = await _auditWriter.CompleteAsync(audit);
+            if (context != null) context.Response.Headers["X-SSO-Audit-Status"] = auditCompleted ? "complete" : "unavailable";
+            _logger.LogInformation("Miduo Planet SSO audit completed. auditId={AuditId}, requestId={RequestId}, stage={Stage}, errorCode={ErrorCode}, persisted={Persisted}",
+                audit.Id, audit.RequestId, stage, errorCode, auditCompleted);
+            resp?.Dispose();
+        }
+        return auditCompleted ? (profile, errorCode) : (null, "SSO_AUDIT_UNAVAILABLE");
     }
 
     internal static string? GetValidationError(JsonElement root, string subjectType)
@@ -482,6 +586,7 @@ public class MiduoPlanetSsoController : ControllerBase
         public string RedirectUri { get; set; } = string.Empty;
         public string SubjectType { get; set; } = "mobile";
         public bool PasswordLoginDisabled { get; set; }
+        public DateTime? SettingsUpdatedAt { get; set; }
     }
 
     private sealed class MiduoPlanetProfile
