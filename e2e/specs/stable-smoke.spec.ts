@@ -2091,6 +2091,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let pausedRequestId = '';
     let progressObserver: import('@playwright/test').JSHandle<{ seen: { value: boolean }; stop: () => void }> | null = null;
     let pendingUpload: Promise<import('@playwright/test').Response> | null = null;
+    let uploadStarted = false;
+    const observeUpload = (item: import('@playwright/test').Request) => {
+      if (storeId && new URL(item.url()).pathname === `/api/document-store/stores/${storeId}/upload`) uploadStarted = true;
+    };
+    page.on('request', observeUpload);
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -2191,7 +2196,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [] });
         await session.detach();
       }
-      if (pendingUpload) {
+      page.off('request', observeUpload);
+      if (pendingUpload && uploadStarted) {
         // 请求已放行也可能仍在写正文；必须等真实响应完整收敛后再级联删除。
         try {
           const response = await pendingUpload;
