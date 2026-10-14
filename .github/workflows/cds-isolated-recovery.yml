@@ -21,6 +21,7 @@ on:
       - cds/scripts/application-bootstrap-drill.ts
       - cds/scripts/application-docker-host-drill.ts
       - cds/scripts/application-docker-inner-drill.ts
+      - cds/scripts/runtime-memory-stage-drill.ts
       - cds/tests/services/internal-pending-replay-auth.test.ts
       - cds/tests/routes/pending-replay-server-auth.test.ts
       - cds/tests/services/branch-operation-replay.test.ts
@@ -42,6 +43,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  runtime-memory-stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and compile the actual CDS source
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real owned replacement, cooling and reservation recovery
+        run: pnpm -C cds exec tsx scripts/runtime-memory-stage-drill.ts
+      - name: Preserve exact runtime memory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-runtime-memory-stage-${{ github.sha }}
+          path: cds/runtime-memory-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
   application-docker:
     runs-on: ubuntu-latest
     timeout-minutes: 20

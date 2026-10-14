@@ -21,7 +21,7 @@ export function runtimeRef(service: ServiceRuntimeRef): ServiceRuntimeRef {
 
 export function servingRuntime(service: ServiceState | undefined): ServiceRuntimeRef | null {
   if (!service) return null;
-  if (['idle', 'stopped', 'stopping'].includes(service.status)) return null;
+  if (['stopped', 'stopping'].includes(service.status)) return null;
   const runtime = pendingPublication.get(service)?.runtime || service.servingRuntime || (service.status === 'running' ? service : null);
   return runtime && runtime.hostPort > 0 ? runtime : null;
 }

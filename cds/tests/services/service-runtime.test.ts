@@ -24,4 +24,12 @@ describe('部署入口运行身份', () => {
       retainedRuntimes: [{ containerName: 'old', hostPort: 10002 }] };
     expect(serviceRuntimeRefs(service).map(runtime => runtime.hostPort).sort()).toEqual([10001, 10002, 10003]);
   });
+  it('新一轮预留把候选置idle时，已确认旧入口仍可服务；显式停止仍禁用', () => {
+    const svc: ServiceState = { profileId: 'api', containerName: 'candidate', hostPort: 10002, status: 'idle',
+      servingRuntime: { containerName: 'old', hostPort: 10001, containerId: 'a'.repeat(64) } };
+    expect(servingRuntime(svc)?.containerName).toBe('old');
+    svc.status = 'stopping'; expect(servingRuntime(svc)).toBeNull();
+    svc.status = 'stopped'; expect(servingRuntime(svc)).toBeNull();
+  });
+
 });

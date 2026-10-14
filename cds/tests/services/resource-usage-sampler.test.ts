@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { computeResourceSnapshot, ResourceUsageSampler, countReservedContainers, __setLatestResourceUsageForTests } from '../../src/services/resource-usage-sampler.js';
+import { computeResourceSnapshot, ResourceUsageSampler, countReservedContainers, forgetConfirmedStoppedContainers, __setLatestResourceUsageForTests } from '../../src/services/resource-usage-sampler.js';
 import type { StateService } from '../../src/services/state.js';
 import type { BranchEntry } from '../../src/types.js';
 import type { BuildActivitySummary } from '../../src/services/build-activity-tracker.js';
@@ -22,6 +22,13 @@ const MB = 1024 * 1024;
 afterEach(() => __setLatestResourceUsageForTests(null));
 
 describe('computeResourceSnapshot', () => {
+  it('真实驻留但未被状态引用的容器仍占预算，只有确认停止才可释放', async () => {
+    const provider = { getRunningContainerNames: async () => new Set(['unclaimed-live']), getServiceStats: async () => new Map() };
+    const sampler = new ResourceUsageSampler({ getAllBranches: () => [] } as unknown as StateService, provider);
+    await sampler.sampleOnce(); expect(countReservedContainers([])).toBe(1);
+    forgetConfirmedStoppedContainers(['other']); expect(countReservedContainers([])).toBe(1);
+    forgetConfirmedStoppedContainers(['unclaimed-live']); expect(countReservedContainers([])).toBe(0);
+  });
   it('sampler queries the actual running inventory for error services, and a failed read retains their reservation', async () => {
     const branches = [branch('p1', [{ status: 'error', containerName: 'alive-error' }, { status: 'stopped', containerName: 'stopped' }])];
     const provider = { getRunningContainerNames: vi.fn().mockResolvedValue(new Set(['alive-error'])),
