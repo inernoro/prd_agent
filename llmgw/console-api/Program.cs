@@ -3387,6 +3387,7 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
         {
             detail.ProviderReportedCost = reportedCost.Amount;
             detail.ProviderCostCurrency = reportedCost.Currency;
+            detail.CostKind = GatewayCostKindNames.ProviderActual;
         }
     }
     return Json(ApiEnvelope<LlmLogDetail>.Ok(detail), jsonOptions);
@@ -7115,7 +7116,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         { "Protocol", string.IsNullOrWhiteSpace(body?.Protocol) ? BsonNull.Value : body.Protocol.Trim().ToLowerInvariant() },
         { "EndpointPath", string.IsNullOrWhiteSpace(body?.EndpointPath) ? BsonNull.Value : body.EndpointPath.Trim() },
         { "Priority", Math.Clamp(body?.Priority ?? 100, 0, 10000) }, { "Weight", Math.Clamp(body?.Weight ?? 100, 1, 10000) },
-        { "Enabled", true }, { "HealthStatus", 0 }, { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
+        { "Enabled", body?.Enabled ?? true }, { "HealthStatus", 0 }, { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
         { "MaxConcurrency", body?.MaxConcurrency is > 0 ? body.MaxConcurrency.Value : BsonNull.Value },
         { "RateLimitPerMinute", body?.RateLimitPerMinute is > 0 ? body.RateLimitPerMinute.Value : BsonNull.Value },
         { "Notes", string.IsNullOrWhiteSpace(body?.Notes) ? BsonNull.Value : body.Notes.Trim() },
@@ -7149,7 +7150,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
             jsonOptions, 409);
     }
     await WriteOperationAuditAsync(operationAudits, http, "model-offering.create", "llmgw_model_offering", offeringId, targetId, true, null,
-        new BsonDocument { { "logicalModelId", id }, { "targetKind", targetKind }, { "targetId", targetId } });
+        new BsonDocument { { "logicalModelId", id }, { "targetKind", targetKind }, { "targetId", targetId }, { "enabled", body?.Enabled ?? true } });
     var platformsForMap = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
     var item = MapLogicalModel(
         logical,
@@ -7199,6 +7200,82 @@ app.MapPost("/gw/logical-models/{logicalId}/offerings/{offeringId}/recover", asy
         });
 
     return Json(ApiEnvelope<object>.Ok(new { offeringId, halfOpenPending = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapDelete("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var filter = TenantAccess.Filter(http, fb.And(
+        fb.Eq("_id", offeringId),
+        fb.Eq("LogicalModelId", logicalId)));
+    var existing = await gwModelOfferings.Find(filter).FirstOrDefaultAsync();
+    if (existing is null)
+    {
+        return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+    }
+
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.Eq("_id", logicalId))).FirstOrDefaultAsync();
+    if (logical is null)
+    {
+        return Json(ApiEnvelope<object>.Fail("LOGICAL_MODEL_NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    }
+
+    // 历史请求日志只负责追溯，不阻塞配置清理；真正会继续拿 OfferingId 回上游的在途任务必须拦住。
+    var inFlightFilter = OfferingReferencePolicy.BuildInFlightVideoRunFilter([offeringId]);
+    var inFlightCount = inFlightFilter is null ? 0 : await videoGenRuns.CountDocumentsAsync(inFlightFilter);
+    var directJobFilter = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter([offeringId], DateTime.UtcNow);
+    var directJobCount = directJobFilter is null ? 0 : await directVideoJobOwnerships.CountDocumentsAsync(directJobFilter);
+    if (inFlightCount > 0 || directJobCount > 0)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "OFFERING_HAS_INFLIGHT_JOBS",
+            $"这条线路仍被 {inFlightCount} 个未结束视频任务和 {directJobCount} 个保留期内直连任务引用。"
+            + "请等待任务结束或保留期到期后再删除；历史请求记录不会阻塞删除"), jsonOptions, 409);
+    }
+
+    // 删除后逻辑模型仍须至少有一条可承接新请求的线路。停用、已被替代或目标已失效的线路不算。
+    var remaining = await gwModelOfferings.Find(TenantAccess.Filter(http, fb.And(
+        fb.Eq("LogicalModelId", logicalId),
+        fb.Ne("_id", offeringId)))).ToListAsync();
+    var modelTargets = (await gwModels.Find(TenantAccess.Filter(http)).ToListAsync())
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var exchangeTargets = (await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync())
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var platformTargets = (await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync())
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var hasUsableRemaining = OfferingDeletionPolicy.HasUsableRemaining(
+        remaining, modelTargets, exchangeTargets, platformTargets);
+    if (!hasUsableRemaining)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "LAST_USABLE_OFFERING",
+            "删除后这个逻辑模型将没有可用上游。请先新增并启用一条可用 Offering，再回来删除旧线路"), jsonOptions, 409);
+    }
+
+    var deleted = await gwModelOfferings.DeleteOneAsync(filter);
+    if (deleted.DeletedCount == 0)
+    {
+        return Json(ApiEnvelope<object>.Fail(
+            "OFFERING_CHANGED",
+            "这条 Offering 刚刚已被其他管理员修改或删除，请刷新后重试"), jsonOptions, 409);
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "model-offering.delete",
+        targetType: "llmgw_model_offering",
+        targetId: offeringId,
+        targetName: existing.AsNullableString("UpstreamModelId") ?? existing.AsNullableString("TargetId"),
+        success: true,
+        reason: null,
+        changes: new BsonDocument
+        {
+            { "logicalModelId", logicalId },
+            { "targetKind", ToBsonAuditValue(existing.AsNullableString("TargetKind")) },
+            { "targetId", ToBsonAuditValue(existing.AsNullableString("TargetId")) },
+        });
+
+    return Json(ApiEnvelope<object>.Ok(new { offeringId, deleted = true }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId, [FromBody] UpdateModelOfferingRequest? body) =>
@@ -12344,6 +12421,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
             {
                 { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
                 { "ProviderCostCurrency", actualCurrency },
+                { "CostKind", GatewayCostKindNames.ProviderActual },
                 { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
                 { "ReconciliationStatus", reconciliationStatus },
                 { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
@@ -16780,11 +16858,13 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     StatusCode = d.AsNullableInt("StatusCode"),
     InputTokens = d.AsNullableInt("InputTokens"),
     OutputTokens = d.AsNullableInt("OutputTokens"),
+    ReasoningTokens = d.AsNullableInt("ReasoningTokens"),
     TokenUsageSource = d.AsNullableString("TokenUsageSource"),
     ImageSuccessCount = d.AsNullableInt("ImageSuccessCount"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
     EstimatedCostUsd = d.AsNullableDecimal("EstimatedCostUsd"),
+    CostKind = ResolveLogCostKind(d),
     PriceSnapshotHash = d.AsNullableString("PriceSnapshotHash"),
     ProviderRequestId = d.AsNullableString("ProviderRequestId"),
     ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
@@ -16846,6 +16926,10 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ToolCallCount = d.AsNullableInt("ToolCallCount"),
     InputTokens = d.AsNullableInt("InputTokens"),
     OutputTokens = d.AsNullableInt("OutputTokens"),
+    ReasoningTokens = d.AsNullableInt("ReasoningTokens"),
+    CacheCreationInputTokens = d.AsNullableInt("CacheCreationInputTokens"),
+    CacheReadInputTokens = d.AsNullableInt("CacheReadInputTokens"),
+    CacheCreationCountedInsideInput = d.AsNullableBool("CacheCreationCountedInsideInput"),
     ImageSuccessCount = d.AsNullableInt("ImageSuccessCount"),
     OutputImages = MapLogImages(d, "OutputImages"),
     OutputImageCaptureStatus = d.AsNullableString("OutputImageCaptureStatus"),
@@ -16867,6 +16951,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     // 是这次没花钱、还是这条模型压根没配价——后者才是他要去处理的事。
     CostStatus = ResolveLogCostStatus(d),
     CostUnpricedReason = d.AsNullableString("CostUnpricedReason"),
+    CostKind = ResolveLogCostKind(d),
     EstimatedCallCost = d.AsNullableDecimal("EstimatedCallCost"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
@@ -19945,6 +20030,44 @@ static string ResolveLogCostStatus(BsonDocument d)
 }
 
 /// <summary>
+/// 金额证据性质。供应商实际账单永远优先于请求完成时的估算快照；存量日志没有 CostKind 时
+/// 按已有事实回退，绝不把 APIYI 的人工价格表伪装成供应商实际结算。
+/// </summary>
+static string ResolveLogCostKind(BsonDocument d)
+{
+    if (d.AsNullableDecimal("ProviderReportedCost") is not null)
+    {
+        return GatewayCostKindNames.ProviderActual;
+    }
+
+    var stored = d.AsNullableString("CostKind")?.Trim().ToLowerInvariant();
+    if (GatewayCostKindNames.All.Contains(stored, StringComparer.Ordinal))
+    {
+        return stored!;
+    }
+
+    var status = ResolveLogCostStatus(d);
+    if (status == GatewayCostStatusNames.NoUsage) return GatewayCostKindNames.NoUsage;
+    if (status != GatewayCostStatusNames.Priced) return GatewayCostKindNames.Unpriced;
+
+    var provider = string.Join(' ', new[]
+    {
+        d.AsNullableString("Provider"),
+        d.AsNullableString("PlatformId"),
+        d.AsNullableString("PlatformName"),
+    }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    if (provider.Contains("apiyi", StringComparison.OrdinalIgnoreCase)
+        || provider.Equals("openai", StringComparison.OrdinalIgnoreCase))
+    {
+        return GatewayCostKindNames.OfficialBaselineEstimate;
+    }
+
+    return string.Equals(d.AsNullableString("PriceSource")?.Trim(), "upstream", StringComparison.OrdinalIgnoreCase)
+        ? GatewayCostKindNames.ProviderPolicyEstimate
+        : GatewayCostKindNames.OfficialBaselineEstimate;
+}
+
+/// <summary>
 /// 网关写进日志的成本状态取值。console-api 是独立工程、引用不到网关那份常量，
 /// 只能在这里复述一份；两边漂移会让统计口径和写入口径对不上，所以由
 /// <c>GatewayCostStatusMirrorGuardTests</c> 从源码上钉住。
@@ -19958,6 +20081,24 @@ static class GatewayCostStatusNames
     public const string Unpriced = "unpriced";
     public const string StaleCurrency = "stale_currency";
     public const string NoUsage = "no_usage";
+}
+
+static class GatewayCostKindNames
+{
+    public const string ProviderActual = "provider_actual";
+    public const string OfficialBaselineEstimate = "official_baseline_estimate";
+    public const string ProviderPolicyEstimate = "provider_policy_estimate";
+    public const string Unpriced = "unpriced";
+    public const string NoUsage = "no_usage";
+
+    public static readonly string[] All =
+    [
+        ProviderActual,
+        OfficialBaselineEstimate,
+        ProviderPolicyEstimate,
+        Unpriced,
+        NoUsage,
+    ];
 }
 
 /// <summary>

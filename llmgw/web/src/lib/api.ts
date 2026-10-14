@@ -649,6 +649,12 @@ export function updateModelOffering(logicalModelId: string, offeringId: string, 
     { method: 'PUT', body: req },
   );
 }
+export function deleteModelOffering(logicalModelId: string, offeringId: string): Promise<ApiResponse<{ offeringId: string; deleted: boolean }>> {
+  return apiRequest<{ offeringId: string; deleted: boolean }>(
+    `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}`,
+    { method: 'DELETE' },
+  );
+}
 export function setLogicalModelEnabled(id: string, enabled: boolean): Promise<ApiResponse<LogicalModelItem>> {
   return apiRequest<LogicalModelItem>(`/logical-models/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: { enabled } });
 }

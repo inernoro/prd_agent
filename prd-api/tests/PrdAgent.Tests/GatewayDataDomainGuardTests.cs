@@ -1449,7 +1449,7 @@ public class GatewayDataDomainGuardTests
     {
         var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
 
-        foreach (var label in new[] { "费用四状态", "可估算", "供应商实际", "估算未知", "已对账" })
+        foreach (var label in new[] { "金额证据四状态", "可估算", "供应商实际", "估算未知", "已对账" })
         {
             Assert.Contains(label, usagePage);
         }
@@ -1464,6 +1464,77 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("前端不猜测汇率", usagePage);
         Assert.DoesNotContain("providerToEstimatedFxRate *", usagePage);
         Assert.DoesNotContain("* item.providerToEstimatedFxRate", usagePage);
+    }
+
+    [Fact]
+    public void Offering删除受鉴权_可用线路_在途引用和审计共同保护()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var endpoint = EndpointBody(console, "app.MapDelete(\"/gw/logical-models/{logicalId}/offerings/{offeringId}\"");
+
+        Assert.Contains("OfferingReferencePolicy.BuildInFlightVideoRunFilter", endpoint);
+        Assert.Contains("OfferingReferencePolicy.BuildLiveDirectVideoJobFilter", endpoint);
+        Assert.Contains("OfferingDeletionPolicy.HasUsableRemaining", endpoint);
+        Assert.Contains("LAST_USABLE_OFFERING", endpoint);
+        Assert.Contains("model-offering.delete", endpoint);
+        Assert.Contains("gwModelOfferings.DeleteOneAsync", endpoint);
+        Assert.DoesNotContain("llm_request_logs", endpoint, StringComparison.OrdinalIgnoreCase);
+
+        var start = console.IndexOf("app.MapDelete(\"/gw/logical-models/{logicalId}/offerings/{offeringId}\"", StringComparison.Ordinal);
+        var auth = console.IndexOf("RequireAuthorization(\"ConfigWrite\")", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && auth > start, "Offering 删除端点必须受 ConfigWrite 鉴权");
+
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        Assert.Contains("export function deleteModelOffering", api);
+        Assert.Contains("await deleteModelOffering(logical.id, offering.id)", page);
+        Assert.Contains("历史请求记录会保留", page);
+    }
+
+    [Fact]
+    public void Offering创建可原子落成禁用_未传时仍默认启用()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var create = EndpointBody(console, "app.MapPost(\"/gw/logical-models/{id}/offerings\"");
+        var dto = ReadRepoFile("llmgw/console-api/Models/Dtos.cs");
+        var types = ReadRepoFile("llmgw/web/src/lib/types.ts");
+
+        Assert.Contains("public bool? Enabled", dto);
+        Assert.Contains("{ \"Enabled\", body?.Enabled ?? true }", create);
+        Assert.Contains("{ \"enabled\", body?.Enabled ?? true }", create);
+        Assert.Contains("enabled?: boolean", types);
+        Assert.Contains("'targetKind' | 'targetId' | 'enabled'", types);
+        Assert.DoesNotContain("apiyi", create, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void 计费展示明确金额性质_未知不伪装为零()
+    {
+        var core = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostKind.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var helpers = ReadRepoFile("llmgw/web/src/lib/logsHelpers.ts");
+        var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var usage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
+        var logicalModels = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        foreach (var value in new[]
+        {
+            "provider_actual",
+            "official_baseline_estimate",
+            "provider_policy_estimate",
+            "unpriced",
+            "no_usage",
+        })
+        {
+            Assert.Contains($"\"{value}\"", core);
+            Assert.Contains($"\"{value}\"", console);
+        }
+
+        Assert.Contains("OpenAI 官方基准价估算，经 APIYI 调用", helpers);
+        Assert.Contains("Gateway 估算", logs);
+        Assert.Contains("本月预算占用", usage);
+        Assert.DoesNotContain("本月已结算", usage);
+        Assert.Contains("近 30 天 Gateway 估算", logicalModels);
     }
 
     [Fact]
@@ -3201,8 +3272,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("unknownCostRequests: number", consoleTypes);
         Assert.Contains("priceCoveragePercent: number", consoleTypes);
         Assert.Contains("fmtCost(it.estimatedCost, it.estimatedCostCurrency)", logsView);
-        Assert.Contains("缺价格保持未知，不显示为 0", logsView);
-        Assert.Contains("有完整价格快照时显示估算；缺价格保持未知，不显示为 0。", logsView);
+        Assert.Contains("明确区分实际、估算、未计价和无用量，未知不显示为 0", logsView);
+        Assert.Contains("costKindLabel(it.costKind", logsView);
         Assert.Contains("未知：缺 token 或价格快照", ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx"));
     }
 

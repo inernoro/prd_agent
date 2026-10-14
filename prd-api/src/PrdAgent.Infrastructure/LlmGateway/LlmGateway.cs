@@ -4547,7 +4547,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ResolutionReason: resolution.ResolutionReason,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
-                    ModelGroupName: resolution.ModelGroupName));
+                    ModelGroupName: resolution.ModelGroupName,
+                    ReasoningTokens: tokenUsage?.ReasoningTokens,
+                    CacheCreationCountedInsideInput: tokenUsage?.CacheCreationCountedInsideInput,
+                    CostKind: GatewayCostKind.Resolve(
+                        cost.Status,
+                        providerReportedCost: null,
+                        resolution.PriceSource,
+                        resolution.ActualPlatformName ?? resolution.ActualPlatformId)));
         }
         catch (Exception ex)
         {
@@ -4664,7 +4671,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ResolutionReason: resolution?.ResolutionReason,
                     ModelResolutionType: resolution is null ? null : ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution?.ModelGroupId,
-                    ModelGroupName: resolution?.ModelGroupName));
+                    ModelGroupName: resolution?.ModelGroupName,
+                    ReasoningTokens: tokenUsage?.ReasoningTokens,
+                    CacheCreationCountedInsideInput: tokenUsage?.CacheCreationCountedInsideInput,
+                    CostKind: GatewayCostKind.Resolve(
+                        cost.Status,
+                        providerReportedCost: null,
+                        resolution?.PriceSource,
+                        resolution?.ActualPlatformName ?? resolution?.ActualPlatformId)));
         }
         catch (Exception ex)
         {
@@ -4910,14 +4924,17 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // Anthropic 那边分开报、那两截直接不进账。两种都让 EstimatedCostUsd 失真。
             var tokenUsage = rawUsage.InputTokens is not null
                 || rawUsage.OutputTokens is not null
+                || rawUsage.ReasoningTokens is not null
                 || rawUsage.CacheReadInputTokens is not null
                 || rawUsage.CacheCreationInputTokens is not null
                 ? new GatewayTokenUsage
                 {
                     InputTokens = rawUsage.InputTokens,
                     OutputTokens = rawUsage.OutputTokens,
+                    ReasoningTokens = rawUsage.ReasoningTokens,
                     CacheReadInputTokens = rawUsage.CacheReadInputTokens,
                     CacheCreationInputTokens = rawUsage.CacheCreationInputTokens,
+                    CacheCreationCountedInsideInput = rawUsage.CacheCreationCountedInsideInput,
                     Source = "response_body"
                 }
                 : null;
@@ -4981,7 +4998,14 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ProviderCostCurrency: rawUsage.ProviderCostCurrency,
                     OutputImagePayloads: rawUsage.OutputImages
                         .Select(image => new LlmLogImagePayload(image.Base64Data, image.SourceUrl, image.MimeType))
-                        .ToList()));
+                        .ToList(),
+                    ReasoningTokens: rawUsage.ReasoningTokens,
+                    CacheCreationCountedInsideInput: rawUsage.CacheCreationCountedInsideInput,
+                    CostKind: GatewayCostKind.Resolve(
+                        cost.Status,
+                        rawUsage.ProviderReportedCost,
+                        resolution.PriceSource,
+                        resolution.ActualPlatformName ?? resolution.ActualPlatformId)));
         }
         catch (Exception ex)
         {
