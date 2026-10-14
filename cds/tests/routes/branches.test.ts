@@ -341,7 +341,7 @@ describe('Branch Routes', () => {
     mock.addResponsePatternFirst(/docker image inspect (.+)/, match => {
       const reference = match[1].replace(/'/g, ''); const sha = /:sha-([a-f0-9]{40})/.exec(reference)?.[1];
       if (!images.has(reference) && sha) {
-        const content = `sha256:${sha + sha.slice(0, 24)}`, digest = reference.replace(/:sha-[a-f0-9]{40}$/, '') + '@' + content;
+        const content = `sha256:${sha + sha.slice(0, 24)}`, digest = reference.split('@')[0].replace(/:sha-[a-f0-9]{40}$/, '') + '@' + content;
         const metadata = { Id: content, RepoDigests: [digest], Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': sha } } };
         for (const name of [reference, content, digest]) images.set(name, metadata);
       }
@@ -1177,7 +1177,7 @@ describe('Branch Routes', () => {
         const human = await request(server, 'POST', '/api/branches/b1/deploy', {});
         expect(human.status).toBe(200); await waitForAcceptedRun(human);
         const humanDeploy = fetchCalls.find((c) => c.url.includes('/exec/deploy'));
-        expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.dockerImage).toBe(`ghcr.io/x/api@sha256:${'c'.repeat(64)}`);
+        expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.dockerImage).toBe(`ghcr.io/x/api:sha-${'a'.repeat(40)}@sha256:${'c'.repeat(64)}`);
         expect(humanDeploy?.body?.profiles?.find((p: any) => p.id === 'api')?.sourceFallbackProfile).toBeUndefined();
 
         fetchCalls.length = 0;
@@ -3501,7 +3501,7 @@ describe('Branch Routes', () => {
       expect(versionId).toMatch(/^dv_/);
       expect(deploymentVersionService.get(versionId!)).toMatchObject({
         commitSha,
-        profiles: [expect.objectContaining({ artifactImage: image.replace(/:sha-[a-f0-9]{40}$/, '') + `@sha256:${commitSha + commitSha.slice(0, 24)}`, reusable: true })],
+        profiles: [expect.objectContaining({ artifactImage: image + `@sha256:${commitSha + commitSha.slice(0, 24)}`, reusable: true })],
       });
       const sourcePullCount = mock.commands.filter((command) => command.includes('git fetch')).length;
 
@@ -4390,7 +4390,7 @@ describe('Branch Routes', () => {
       expect(response.status).toBe(200);
       const run = await waitForAcceptedRun(response);
       expect(run.status).toBe('running');
-      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api@sha256:${requested + requested.slice(0, 24)}`);
+      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api:sha-${requested}@sha256:${requested + requested.slice(0, 24)}`);
       expect(run.commitSha).toBe(requested);
       expect(deploymentVersionService.get(run.versionId!)?.commitSha).toBe(requested);
     });
@@ -4436,7 +4436,7 @@ describe('Branch Routes', () => {
       try {
         expect((await request(server, 'POST', `/api/branches/${id}/deploy`, { ...(explicit ? { commitSha: requested } : {}), targetExecutorId: 'exec-artifact' })).status).toBe(200);
         expect(preflight.profiles[0].dockerImage).toBe(`ghcr.io/owned/api:sha-${requested}`);
-        expect(dispatched.profiles[0].dockerImage).toBe(digest);
+        expect(dispatched.profiles[0].dockerImage).toBe(digest.replace('@', `:sha-${requested}@`));
         expect(dispatched.commitSha).toBe(requested); expect(dispatched.artifactCommitSha).toBe(requested);
         expect(mock.commands.some(c => isAppLaunchCommand(c))).toBe(false);
       } finally { vi.unstubAllGlobals(); }
@@ -4454,7 +4454,7 @@ describe('Branch Routes', () => {
         stderr: match[1].includes(previous) ? '' : 'manifest unknown', exitCode: match[1].includes(previous) ? 0 : 1 }));
       const response = await request(server, 'POST', `/api/branches/${id}/deploy`);
       expect(response.status).toBe(200); await waitForAcceptedRun(response);
-      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api@sha256:${previous + previous.slice(0, 24)}`);
+      expect(stateService.getBranch(id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api:sha-${previous}@sha256:${previous + previous.slice(0, 24)}`);
       expect(deploymentRunService.list({ branchId: id })[0].status).toBe('running');
     });
 

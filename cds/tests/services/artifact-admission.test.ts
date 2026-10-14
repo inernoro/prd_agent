@@ -1,3 +1,4 @@
+import { branchVersionFacts } from '../../src/services/running-version.js';
 import { describe, expect, it } from 'vitest';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { admittedArtifactProfile, inspectDeploymentArtifacts } from '../../src/services/artifact-admission.js';
@@ -26,10 +27,29 @@ describe('完整预构建产物准入', () => {
     expect(shell.commands.filter(command => command.startsWith('docker pull'))).toHaveLength(1);
     expect(shell.commands.filter(command => command.startsWith('docker image inspect'))).toHaveLength(1);
     const original = { ...profile('common'), fallbackImage: 'old:tag', sourceFallbackProfile: { ...profile('source'), command: 'build', prebuiltImage: false } };
-    expect(admittedArtifactProfile(original, result)).toMatchObject({ dockerImage: digest, localArtifact: true, fallbackImage: undefined, sourceFallbackProfile: undefined });
+    expect(admittedArtifactProfile(original, result)).toMatchObject({ dockerImage: digest.replace('@', `:sha-${target}@`), localArtifact: true, fallbackImage: undefined, sourceFallbackProfile: undefined });
     expect(original.dockerImage).toBe(image); expect(original.fallbackImage).toBe('old:tag');
   });
 
+
+  it('固定摘要运行保留已核验提交，目标推进仍只展示当前产物身份', async () => {
+    const admission = await inspectDeploymentArtifacts(fixture(), [profile('api')], target);
+    const runtime = admittedArtifactProfile(profile('api'), admission);
+    const branch = { services: { api: { profileId: 'api', status: 'running', deployedImage: runtime.dockerImage } },
+      githubCommitSha: 'a'.repeat(40), ciTargetSha: 'a'.repeat(40) } as any;
+    expect(runtime.dockerImage?.split('@')[1]).toBe(digest.split('@')[1]);
+    expect(branchVersionFacts(branch)).toEqual({ runningCommitSha: target, targetCommitSha: 'a'.repeat(40) });
+    const version = { ...profile('api'), dockerImage: runtime.dockerImage };
+    const repeated = await inspectDeploymentArtifacts(fixture(), [version], target);
+    expect(admittedArtifactProfile(version, repeated).dockerImage).toBe(runtime.dockerImage);
+  });
+
+  it('带 registry 端口的固定摘要也保留原仓库与核验身份', async () => {
+    const admission = await inspectDeploymentArtifacts(fixture(), [profile('api')], target);
+    admission.artifacts[0].image = `127.0.0.1:5000/owned/api@sha256:${'d'.repeat(64)}`;
+    expect(admittedArtifactProfile(profile('api'), admission).dockerImage)
+      .toBe(`127.0.0.1:5000/owned/api:sha-${target}@sha256:${'d'.repeat(64)}`);
+  });
   it('最后一个必需镜像不存在时，整轮保持等待而不发布部分准入', async () => {
     const shell = fixture();
     shell.addResponsePatternFirst(/docker pull .*web/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));

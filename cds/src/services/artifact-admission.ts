@@ -107,12 +107,21 @@ export async function inspectDeploymentArtifacts(
   return { state: 'ready', targetCommitSha: target, checkedAt, artifacts };
 }
 
+function verifiedRuntimeImage(artifact: VerifiedDeploymentArtifact): string {
+  // Docker 按 @digest 运行固定内容；提交标签只携带此前 OCI revision 已核验的身份。
+  // 不从待发布目标或部署版本猜运行号，纯本机配置 ID 仍保持未知。
+  const [repository, digest] = artifact.image.split('@');
+  return digest && /^[0-9a-f]{40}$/.test(artifact.revision)
+    ? `${repository.replace(/:[^/:]+$/, '')}:sha-${artifact.revision}@${digest}` : artifact.image;
+}
+
 /** 只在完整准入后物化本次已确认内容，原配置快照不被覆写。 */
 export function admittedArtifactProfile(profile: BuildProfile, admission?: ArtifactAdmission): BuildProfile {
   if (!profile.prebuiltImage || profile.managedBuild || profile.localArtifact || !admission) return profile;
   if (admission.state !== 'ready') throw new Error('部署产物尚未完成核验');
-  const artifact = admission.artifacts.find(item => item.profileIds.includes(profile.id) && (item.requestedImage === profile.dockerImage || item.image === profile.dockerImage));
+  const artifact = admission.artifacts.find(item => item.profileIds.includes(profile.id)
+    && [item.requestedImage, item.image, verifiedRuntimeImage(item)].includes(profile.dockerImage));
   if (!artifact) throw new Error('当前服务不在本次产物准入清单中');
-  return { ...profile, dockerImage: artifact.image, localArtifact: true, fallbackImage: undefined,
+  return { ...profile, dockerImage: verifiedRuntimeImage(artifact), localArtifact: true, fallbackImage: undefined,
     sourceFallbackProfile: undefined };
 }
