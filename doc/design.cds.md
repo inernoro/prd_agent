@@ -70,7 +70,7 @@ Dashboard、CLI、GitHub Check 和诊断能力读取同一事实，不再各自�
 
 ### 页面批准替代长期 Key 复制
 
-Codex、Cursor 和 Claude Code 使用同一申请协议。用户在 CDS 页面批准项目访问，凭据只保存到当前项目。
+Codex 和 Claude Code 使用同一申请协议。用户在 CDS 页面批准项目访问，凭据只保存到当前项目。
 
 首次创建项目使用一次性授权，项目创建完成后自动失效并切换到项目专属权限。
 

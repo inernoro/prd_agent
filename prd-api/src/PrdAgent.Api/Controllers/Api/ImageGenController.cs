@@ -1968,6 +1968,7 @@ public class ImageGenController : ControllerBase
                 run.ModelGroupName,
                 run.Size,
                 run.ResponseFormat,
+                run.ExpectedImageRefCount,
                 imageRefs = run.ImageRefs?.Select(imageRef => new
                 {
                     imageRef.RefId,

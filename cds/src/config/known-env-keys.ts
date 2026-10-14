@@ -98,6 +98,8 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_DIRECT_PROXY_IMMUTABLE_PATHS', description: '直连生产静态不可变资源路径（逗号分隔，如 /_next/static/；未配置则不额外改缓存）', isSecret: false, group: 'domain' },
   { key: 'CDS_SWITCH_DOMAIN', legacyAliases: ['SWITCH_DOMAIN'], description: '流量切换域名', isSecret: false, group: 'domain' },
   { key: 'CDS_PUBLIC_BASE_URL', description: '公网访问基础 URL（GitHub check-run details_url 用）', isSecret: false, group: 'domain' },
+  { key: 'CDS_PUBLIC_PREVIEW_DISCOVERY', description: '未知预览域名页面是否展示运行中的分支与预览地址（公网实例建议关闭）', isSecret: false, group: 'domain' },
+  { key: 'CDS_PUBLIC_HEALTH_DETAILS', description: '公网 /healthz 是否返回完整宿主与控制面诊断（公网实例建议关闭）', isSecret: false, group: 'domain' },
 
   // ── github ──
   { key: 'CDS_GITHUB_CLIENT_ID', description: 'CDS Dashboard 登录用 GitHub OAuth App ID', isSecret: false, group: 'github' },

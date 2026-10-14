@@ -13,7 +13,7 @@ description: 调 cdscli 读取当前分支在 CDS 实际发布的预览验收地
 python3 <当前项目技能根>/cds/cli/cdscli.py --human preview-url
 ```
 
-默认零参数。可选 `--changed-since <ref>`：按「相对该 ref 的改动」把结果收窄到真正被波及的项目；不给就列出全部可见项目的入口。技能根必须按当前宿主的实际项目级安装位置解析：Codex / 通用 Agent Skills 通常是 `.agents/skills`，Cursor 是 `.cursor/skills`，Claude Code 是 `.claude/skills`。禁止在不知道宿主时硬编码某一个目录。
+默认零参数。可选 `--changed-since <ref>`：按「相对该 ref 的改动」把结果收窄到真正被波及的项目；不给就列出全部可见项目的入口。技能根必须按当前宿主的实际项目级安装位置解析：Codex / 通用 Agent Skills 通常是 `.agents/skills`，Claude Code 是 `.claude/skills`。禁止在不知道宿主时硬编码某一个目录。
 
 `cdscli` 会读取当前项目 `.cds/credentials.json` 中的项目级连接，把仓库、分支（以及可选的改动清单）交给 CDS，由**服务端**判定项目归属与作用域。只有一个入口时输出一行；多个入口逐行输出。
 

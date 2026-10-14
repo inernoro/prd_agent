@@ -1106,6 +1106,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
+    'GET /projects/:id/identity-history': '查看设置记录',
     'GET /projects/:id/recent-auto-deploys': '查看自动部署历史',
     'GET /projects/:id/preview-mode': '获取项目预览模式',
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
@@ -1395,6 +1396,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back\/preview$/, '预览回写'],
     [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back$/, '回写派生库'],
     [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-backs\/[^/]+\/rollback$/, '回退回写'],
+    [/^GET \/projects\/[^/]+\/identity-history$/, '查看设置记录'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -1818,6 +1820,7 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  app.disable('x-powered-by');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
     new ProjectSharedCredentialRotationBackend(
@@ -2188,6 +2191,14 @@ export function createServer(deps: ServerDeps): express.Express {
       checks.controlPlane = { ok: true, detail: `压力快照失败: ${(err as Error).message}` };
     }
 
+    // 仅无代理转发标识的真实 loopback 启动深探保留故障诊断，公网不能用转发头冒充。
+    const localStartupProbe = req.query.probe === 'routes'
+      && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')
+      && !req.headers['x-forwarded-for'] && !req.headers.forwarded;
+    if (process.env.CDS_PUBLIC_HEALTH_DETAILS !== '1' && !localStartupProbe) {
+      res.status(overallOk ? 200 : 503).json({ ok: overallOk, port: deps.config.masterPort });
+      return;
+    }
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
       degraded: pressure?.degraded ?? false,
@@ -2736,7 +2747,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // bootstrap 会在每次重启后重新开放，github 模式下首个访客即可自封 system owner
     // （PR #865 Codex P1）。
     const bootstrapAllowed = !(authStore instanceof MemoryAuthStore);
-    app.use('/api', createAuthLocalRouter({ authService, cookieSecure, bootstrapAllowed }));
+    app.use('/api', createAuthLocalRouter({ authService, stateService: deps.stateService, cookieSecure, bootstrapAllowed }));
 
     console.log(
       `  Auth: github mode (allowedOrgs: ${allowedOrgs.join(',') || '(any GitHub login allowed)'})`,
@@ -3381,6 +3392,7 @@ export function createServer(deps: ServerDeps): express.Express {
   if (authMode === 'basic' && authService) {
     app.use('/api', createAuthLocalRouter({
       authService,
+      stateService: deps.stateService,
       cookieSecure,
       bootstrapAllowed: false,
       reservedUsernames: cdsUser ? [cdsUser] : [],
@@ -4543,7 +4555,7 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createCredentialSelfCheckRouter({ stateService: deps.stateService }));
 
   // 身份层：主体 / 用户级凭证 / 项目授权 / 权限总览。
-  app.use('/api', createIdentityRouter({ stateService: deps.stateService }));
+  app.use('/api', createIdentityRouter({ stateService: deps.stateService, authService: authService ?? undefined }));
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({

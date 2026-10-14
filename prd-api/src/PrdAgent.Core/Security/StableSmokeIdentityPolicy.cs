@@ -30,6 +30,8 @@ public static class StableSmokeIdentityPolicy
         AdminPermissionCatalog.UsersRead,
         AdminPermissionCatalog.UsersWrite,
         AdminPermissionCatalog.AuthzManage,
+        // 发布前只读审计：确认 MAP 近期调用没有绕过 LLM Gateway 直连上游
+        AdminPermissionCatalog.LogsRead,
         // 01 录音 / 02 文件解析 / 03 短视频：文档空间、录音分片、短视频素材都挂在 document-store 权限上
         AdminPermissionCatalog.DocumentStoreRead,
         AdminPermissionCatalog.DocumentStoreWrite,

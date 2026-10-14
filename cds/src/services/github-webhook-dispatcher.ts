@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from './preview-slug.js';
 /**
  * GitHubWebhookDispatcher — processes an already-verified GitHub webhook
  * and translates it into CDS state changes.
@@ -904,7 +905,7 @@ export class GitHubWebhookDispatcher {
     project: Project,
   ): Promise<WebhookDispatchResult> {
     const slugified = StateServiceClass.slugify(event.ref);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Prefer the canonical id, but fall back to a (projectId, branch)
     // lookup so a branch created under the previous legacyFlag formula
     // is still found after the flag was flipped.
@@ -1008,7 +1009,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
       const names = projects.map((p) => `'${p.name}'`).join('、');
@@ -1260,7 +1261,7 @@ export class GitHubWebhookDispatcher {
       };
     }
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Fall back to a (projectId, branch) lookup so a legacyFlag flip
     // doesn't hide an existing entry stored under the old id.
     const entry =
@@ -1341,7 +1342,7 @@ export class GitHubWebhookDispatcher {
         const baseRef = pr.base?.ref;
         if (baseRef && baseRef !== branchName) {
           const baseSlug = StateServiceClass.slugify(baseRef);
-          const baseCanonicalId = project.legacyFlag ? baseSlug : `${project.slug}-${baseSlug}`;
+          const baseCanonicalId = project.legacyFlag ? baseSlug : `${projectResourceNamespace(project)}-${baseSlug}`;
           const baseEntry =
             this.deps.stateService.getBranch(baseCanonicalId) ??
             this.deps.stateService.findBranchByProjectAndName(project.id, baseRef);
@@ -1571,7 +1572,7 @@ export class GitHubWebhookDispatcher {
     // otherwise a single push would spawn a phantom duplicate (bug: same
     // repo's `main` appearing as both `main` and `<slug>-main`).
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     let entry =
       this.deps.stateService.getBranch(canonicalId) ??
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
@@ -1931,7 +1932,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
     }

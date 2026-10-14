@@ -303,7 +303,7 @@ while [ $# -gt 0 ]; do
     --skills-dir=*) SKILLS_DIRS="\${1#*=}"; shift ;;
     -h|--help)
       echo "用法: sh bootstrap.sh [--skills-dir \"<目录> [目录...]\"]"
-      echo "不指定时装到当前项目所有存在的 Agent 技能目录（.claude / .cursor / .agents）。"
+      echo "不指定时装到当前项目所有存在的 Agent 技能目录（.claude / .agents）。"
       exit 0 ;;
     *) echo "未知参数: $1"; exit 2 ;;
   esac
@@ -337,7 +337,7 @@ fi
 # 技能都看不见。多装一份的代价是几百 KB 重复文件，比装了看不见小得多。
 # 想只装一个目录用 --skills-dir 显式指定。
 if [ -z "$SKILLS_DIRS" ]; then
-  for h in .claude .cursor .agents; do
+  for h in .claude .agents; do
     [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
   done
   [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"

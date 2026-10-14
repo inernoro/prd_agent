@@ -59,7 +59,12 @@ function normalizeEnvelope(value: unknown, taskId: string): string {
   return serialized;
 }
 
-function normalizeModel(value: unknown): OpenDesignModelAuthority {
+function normalizeModel(
+  value: unknown,
+  taskId: string,
+  trustedLlmGwBaseUrl: string,
+  inputPackageUrl: string,
+): OpenDesignModelAuthority {
   const model = record(value, 'model');
   if (typeof model.baseUrl !== 'string' || typeof model.apiKey !== 'string' || typeof model.model !== 'string') {
     invalid('model.baseUrl, model.apiKey, and model.model must be strings');
@@ -67,10 +72,29 @@ function normalizeModel(value: unknown): OpenDesignModelAuthority {
   if (model.protocol !== 'openai') invalid('model.protocol must be openai');
   if (model.apiKey.length > 8_192 || /[\0\r\n]/.test(model.apiKey)) invalid('model.apiKey is malformed');
   if (model.model.length > 200) invalid('model.model is too long');
-  return { baseUrl: model.baseUrl, protocol: 'openai', apiKey: model.apiKey, model: model.model };
+  const directLlmGw = model.baseUrl.replace(/\/$/, '') === trustedLlmGwBaseUrl.replace(/\/$/, '');
+  if (directLlmGw && model.sourceSystem !== 'map') invalid('model.sourceSystem must be map');
+  const appCallerCode = typeof model.appCallerCode === 'string' ? model.appCallerCode.trim() : '';
+  const userId = typeof model.userId === 'string' ? model.userId.trim() : '';
+  const runId = typeof model.runId === 'string' ? model.runId.trim() : '';
+  if (directLlmGw && (!appCallerCode || appCallerCode.length > 200 || /[\0\r\n]/.test(appCallerCode))) invalid('model.appCallerCode is malformed');
+  if (directLlmGw && (!userId || userId.length > 200 || /[\0\r\n]/.test(userId))) invalid('model.userId is malformed');
+  if (directLlmGw && runId !== taskId) invalid('model.runId must equal taskId');
+  const normalized: OpenDesignModelAuthority = {
+    baseUrl: model.baseUrl,
+    protocol: 'openai',
+    apiKey: model.apiKey,
+    model: model.model,
+    sourceSystem: 'map',
+    appCallerCode,
+    userId,
+    runId: runId || taskId,
+  };
+  validateModelAuthority(normalized, inputPackageUrl, trustedLlmGwBaseUrl);
+  return normalized;
 }
 
-export function normalizeTaskRequest(body: unknown): NormalizedTaskRequest {
+export function normalizeTaskRequest(body: unknown, trustedLlmGwBaseUrl = 'http://gateway/gw/v1'): NormalizedTaskRequest {
   const request = record(body, 'request body');
   const taskId = typeof request.taskId === 'string' ? request.taskId.trim() : '';
   if (!SESSION_ID_RE.test(taskId)) invalid('taskId must match ^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$');
@@ -92,8 +116,7 @@ export function normalizeTaskRequest(body: unknown): NormalizedTaskRequest {
   } else {
     previewUrl = derivePreviewUrl(transfer.resultCommitUrl);
   }
-  const model = normalizeModel(request.model);
-  validateModelAuthority(model, transfer.inputPackageUrl);
+  const model = normalizeModel(request.model, taskId, trustedLlmGwBaseUrl, transfer.inputPackageUrl);
   const timeoutSeconds = request.timeoutSeconds === undefined ? DEFAULT_TASK_TIMEOUT_SECONDS : request.timeoutSeconds;
   if (
     !Number.isSafeInteger(timeoutSeconds)
@@ -108,7 +131,15 @@ export function normalizeTaskRequest(body: unknown): NormalizedTaskRequest {
     attempt,
     transfer: publicTransfer(transfer),
     previewUrl: previewUrl ?? null,
-    model: { baseUrl: model.baseUrl, protocol: model.protocol, model: model.model },
+    model: {
+      baseUrl: model.baseUrl,
+      protocol: model.protocol,
+      model: model.model,
+      sourceSystem: model.sourceSystem,
+      appCallerCode: model.appCallerCode,
+      userId: model.userId,
+      runId: model.runId,
+    },
     timeoutSeconds,
     instruction,
   }));

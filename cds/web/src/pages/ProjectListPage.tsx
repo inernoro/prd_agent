@@ -508,13 +508,13 @@ export function ProjectListPage(): JSX.Element {
   const refresh = useCallback(async (showLoading = false) => {
     if (showLoading) setState({ status: 'loading' });
     try {
-      const [projectsRes, legacyRes] = await Promise.all([
-        apiRequest<ProjectsResponse>('/api/projects'),
-        apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null),
-      ]);
+      const projectsRes = await apiRequest<ProjectsResponse>('/api/projects');
       const nextProjects = projectsRes.projects || [];
       const lastKnownGood = lastKnownGoodProjectsRef.current;
       const canManageProjects = projectsRes.canManageProjects !== false;
+      const legacyRes = canManageProjects
+        ? await apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null)
+        : null;
       if (nextProjects.length > 0 || !canManageProjects) {
         lastKnownGoodProjectsRef.current = nextProjects;
       }
@@ -530,7 +530,7 @@ export function ProjectListPage(): JSX.Element {
       if (suspiciousEmpty) {
         setToast('项目列表返回可疑空结果，已保留上一次有效列表');
       }
-      void loadPendingImports();
+      if (canManageProjects) void loadPendingImports();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
@@ -861,7 +861,7 @@ export function ProjectListPage(): JSX.Element {
           ) : null}
         </section>
 
-        <CreateProjectDialog
+        {canManageProjects ? <CreateProjectDialog
           open={createOpen}
           onOpenChange={(next) => {
             setCreateOpen(next);
@@ -881,7 +881,7 @@ export function ProjectListPage(): JSX.Element {
             info,
             pendingClone: project.cloneStatus === 'pending' ? project : null,
           })}
-        />
+        /> : null}
 
         {/*
          * 建项目时填了一个已被绑走的仓库：项目建好了、仓库没绑上。默认不绑是对的
@@ -1001,7 +1001,7 @@ export function ProjectListPage(): JSX.Element {
           onOpenChange={setMonitoringOpen}
         />
         <PendingImportDialog
-          open={pendingImportOpen}
+          open={canManageProjects && pendingImportOpen}
           onOpenChange={(open) => {
             setPendingImportOpen(open);
             if (!open) setPendingImportFocusId(null);

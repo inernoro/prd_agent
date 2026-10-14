@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
+import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -61,24 +62,31 @@ async function request(
   const addr = server.address();
   if (!addr || typeof addr === 'string') throw new Error('no server address');
   try {
-    // 每次请求独立服务器及连接，不经过跨夹具共用的 fetch 连接池。
     return await new Promise((resolve, reject) => {
       const payload = body === undefined ? undefined : JSON.stringify(body);
-      const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: url, method, agent: false,
-        headers: { ...(payload === undefined ? {} : { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }), ...headers } }, (res) => {
+      const req = http.request({
+        hostname: '127.0.0.1', port: addr.port, path: url, method,
+        // 每次请求都新建临时服务器，不能复用上一次服务的连接池。
+        agent: false,
+        headers: { ...(payload === undefined ? {} : {
+          'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload),
+        }), ...headers },
+      }, (res) => {
         let text = '';
-        res.setEncoding('utf8'); res.on('data', (chunk: string) => { text += chunk; });
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => { text += chunk; });
         res.on('error', reject);
         res.on('end', () => {
           let parsed: any = null;
-          try { parsed = text ? JSON.parse(text) : null; } catch { /* 保留原始错误响应供断言 */ }
+          try { parsed = text ? JSON.parse(text) : null; } catch { /* 保留非 JSON 原文供断言 */ }
           resolve({ status: res.statusCode!, body: parsed, text, contentType: String(res.headers['content-type'] || '') });
         });
       });
-      req.on('error', reject); req.end(payload);
+      req.on('error', reject);
+      req.end(payload);
     });
   } finally {
-    await new Promise<void>(resolve => server.close(() => resolve()));
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
   }
 }
 
