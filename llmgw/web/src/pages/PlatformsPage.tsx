@@ -1,6 +1,9 @@
 // Provider（模型供应方）：先完成单个 Provider 的可理解自助配置，再把批量维护收进高级区。
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
+import { CollectionView, CollectionDetailPane, CollectionPaneTab, CollectionFacts } from '@/components/CollectionView';
+import { Link } from 'react-router-dom';
+import { Server } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
@@ -10,9 +13,8 @@ import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarn
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
 import { ModelCatalogSection } from '@/components/ModelCatalogSection';
-import { PageBody, PageShell } from '@/components/PageShell';
+import { HelpPopover, PageBody, PageShell } from '@/components/PageShell';
 import { RowActions } from '@/components/RowActions';
-import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
@@ -28,7 +30,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
-  // 行内编辑：只在展开的那一行生效，避免整页进「编辑模式」
+  // 草稿绑定供应方详情，不依赖父列表当前的搜索、页码或窄屏可见性。
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<UpdatePlatformRequest>({});
   const [keyValue, setKeyValue] = useState('');
@@ -56,6 +58,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   const [ownedModels, setOwnedModels] = useState<ModelItem[]>([]);
   const [logicalModels, setLogicalModels] = useState<LogicalModelItem[]>([]);
   const [expandedModelsFor, setExpandedModelsFor] = useState<string | null>(null);
+  const [providerTab, setProviderTab] = useState("models");
 
   useEffect(() => {
     let alive = true;
@@ -77,6 +80,17 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       alive = false;
     };
   }, []);
+
+  const selectedProvider = items?.find((p) => expandedModelsFor === p.id);
+  function renderOwnedModels() {
+    if (!selectedProvider) return null;
+    const p = selectedProvider;
+    return <CollectionDetailPane key={p.id} title={p.name} icon={<Server size={18}/>} identifier={summarizeProviderModels(ownedRows(p.id))} onClose={() => setExpandedModelsFor(null)} tabs={<><CollectionPaneTab active={providerTab === 'models'} onClick={() => setProviderTab('models')}>名下模型</CollectionPaneTab><CollectionPaneTab active={providerTab === 'connection'} onClick={() => setProviderTab('connection')}>连接配置</CollectionPaneTab><CollectionPaneTab active={providerTab === 'activity'} onClick={() => setProviderTab('activity')}>调用记录</CollectionPaneTab></>}>
+      <div className={providerTab === 'models' ? 'lg-collection-provider-models' : 'lg-collection-hidden'}><ProviderModelsPanel rows={ownedRows(p.id)} onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude' ? () => void openDiscovery(p) : undefined} /></div>
+      {providerTab === 'connection' ? <div className="lg-collection-key-facts"><h3>连接配置</h3><CollectionFacts items={[{label:'接口类型',value:platformTypeLabel(p.platformType)},{label:'API 地址',value:<code>{p.apiUrl || '未配置'}</code>},{label:'供应方标识',value:p.providerId || '未单独设置'},{label:'最大并发',value:p.maxConcurrency ?? '未配置'},{label:'配置来源',value:p.authority === 'llm_gateway' ? 'Gateway 权威配置' : '旧 MAP 配置，需先导入'},{label:'密钥状态',value:<>{p.keyStatus === 'unreadable' ? '解不开' : p.hasKey ? '已配置' : '未配置'}{p.keyFingerprint ? <code>{p.keyFingerprint}</code> : null}</>},{label:'备注',value:p.remark || '无备注'},{label:'最近更新',value:formatPlatformTime(p.updatedAt)},{label:'导入时间',value:p.claimedAt || '未导入'}]}/>{canWrite && p.authority === 'llm_gateway' ? editId === p.id ? renderConnectionEditor(p) : <Button size="sm" disabled={busyId === p.id} onClick={() => beginEdit(p)}>编辑连接</Button> : null}<Link className="lg-text-link" to={`/platforms/view?id=${encodeURIComponent(p.id)}&name=${encodeURIComponent(p.name)}`}>供应方详情</Link></div> : null}
+      {providerTab === 'activity' ? <div className="lg-collection-key-facts"><h3>调用记录<HelpPopover label="调用记录">查看这条供应方的真实请求、响应状态与最近调用。</HelpPopover></h3><Link className="lg-text-link" to={`/logs?platformId=${encodeURIComponent(p.id)}`}>查看全部请求记录</Link></div> : null}
+    </CollectionDetailPane>;
+  }
 
   /** 某个上游名下的模型 + 登记状态。判据是「有没有线路指向它」，不是名字像不像。 */
   const ownedRows = (platformId: string) => collectProviderModels(platformId, ownedModels, logicalModels);
@@ -262,7 +276,75 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
     }
   }
 
+  function renderConnectionEditor(p: PlatformItem) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
+          <input
+            aria-label="平台名称"
+            value={editDraft.name ?? ''}
+            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
+            placeholder="名称"
+            style={{ ...inputStyle, width: 150 }}
+          />
+          <input
+            aria-label="备注"
+            value={editDraft.remark ?? ''}
+            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
+            placeholder="备注"
+            style={{ ...inputStyle, width: 160 }}
+          />
+          {/* 接口类型、API 地址、并发收进折叠区：接上游时是选平台带出来的，
+              改它们是例外不是常规。默认露在外面的话，每次只想改个备注
+              都要从一排输入框里认出哪个是备注（minimal-user-input）。 */}
+          <details style={{ width: '100%' }}>
+            <summary style={advancedSummaryStyle}>高级：接口类型、API 地址、并发（换了上游地址或要调并发时才动）</summary>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+              <select
+                aria-label="接口类型"
+                value={editDraft.platformType ?? ''}
+                onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
+                style={inputStyle}>
+                {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
+                    用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
+                {editDraft.platformType
+                  && !['openai', 'claude'].includes(editDraft.platformType) ? (
+                    <option value={editDraft.platformType}>
+                      {editDraft.platformType}（存量类型）
+                    </option>
+                  ) : null}
+                <option value="openai">openai</option>
+                <option value="claude">claude</option>
+              </select>
+              <input
+                aria-label="API 地址"
+                value={editDraft.apiUrl ?? ''}
+                onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
+                placeholder="https://…"
+                style={{ ...inputStyle, width: 240 }}
+              />
+              <input
+                aria-label="并发"
+                type="number"
+                value={editDraft.maxConcurrency ?? 0}
+                onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
+                style={{ ...inputStyle, width: 80 }}
+              />
+            </div>
+          </details>
+          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
+            保存
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
+            取消
+          </Button>
+      </div>
+    );
+  }
+
   function beginEdit(p: PlatformItem) {
+    setExpandedModelsFor(p.id);
+    setProviderTab('connection');
     setEditId(p.id);
     setKeyEditId(null);
     setEditDraft({
@@ -379,7 +461,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
   return (
     <PageShell>
       {section === 'provider' ? (
-      <PageBody>
+      <PageBody className="lg-collection-page">
       <header className="lg-page-heading">
         <div style={{ maxWidth: 720 }}>
           <h1>Provider（模型供应方）</h1>
@@ -521,8 +603,11 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
       {providerItems.length === 0 ? (
         <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
       ) : (
-      <div className="lg-config-table-shell" style={{ flexShrink: 0, minHeight: 160, overflowX: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-        <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <div className="lg-collection-workspace">
+      <div className="lg-config-table-shell lg-collection-list" style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
+        <CollectionView items={providerItems} placeholder="搜索供应方名称或接口" searchText={(item) => `${item.name} ${item.apiUrl || ''}`} filters={[{ value: 'enabled', label: '已启用', matches: (item) => item.enabled }, { value: 'disabled', label: '已停用', matches: (item) => !item.enabled }]}>
+        {(pageProviders) => <table className="lg-data-table lg-collection-provider-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <colgroup><col style={{ width: '24%' }}/><col style={{ width: '29%' }}/><col style={{ width: '18%' }}/><col style={{ width: '14%' }}/><col style={{ width: '15%' }}/></colgroup>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
               {/* 主表只摆要拿来做决定的东西。接口类型、API 地址、并发都是选完平台就定下来的
@@ -530,24 +615,23 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                   预览里一个不少（minimal-user-input：有正确默认值的字段不摆在主路径上）。 */}
               <th style={th}>平台</th>
               <th style={th}>名下模型</th>
-              <th style={th}>配置来源</th>
+              <th style={th}>密钥 / 来源</th>
               <th style={th}>状态</th>
-              <th style={th}>密钥</th>
               <th style={th}>操作</th>
             </tr>
           </thead>
           <tbody>
-            {providerItems.map((p) => {
-              const en = boolChip(p.enabled, '启用', '停用');
+            {pageProviders.map((p) => {
+              const en = { label: p.enabled ? '启用' : '停用', color: p.enabled ? 'var(--ok)' : 'var(--text-muted)', bg: p.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)' };
               // 密文在库但解不开（多半轮换过 ApiKeyCrypto:Secret）不能显示成「已配置」——
               // 那会让人以为这条上游能用，实际每次调用都会失败
               const key = p.keyStatus === 'unreadable'
                 ? { label: '解不开', color: 'var(--semantic-warning-text, #b45309)', bg: 'rgba(180,83,9,0.14)' }
-                : boolChip(p.hasKey, '已配置', '未配置');
+                : { label: p.hasKey ? '已配置' : '未配置', color: p.hasKey ? 'var(--ok)' : 'var(--text-muted)', bg: p.hasKey ? 'var(--ok-bg)' : 'var(--bg-elevated)' };
               return (
                 // 一行可能渲染两个兄弟节点（数据行 + 展开的编辑行），列表里的 Fragment 必须带 key
                 <Fragment key={p.id}>
-                <tr>
+                <tr className={`lg-collection-provider-row${expandedModelsFor === p.id ? ' lg-collection-selected-row' : ''}`}>
                   <td style={td}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
                       <span style={{ fontWeight: 600 }}>{p.name}</span>
@@ -588,7 +672,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                         「2 个没登记」读得出——没登记的模型调用方按名字请求找不到它。 */}
                     <button
                       type="button"
-                      onClick={() => setExpandedModelsFor((x) => (x === p.id ? null : p.id))}
+                      onClick={() => {setProviderTab('models');setExpandedModelsFor((x) => (x === p.id ? null : p.id));}}
                       style={{
                         background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
                         fontSize: 'var(--fs-secondary)',
@@ -599,61 +683,15 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                       {summarizeProviderModels(ownedRows(p.id))}
                     </button>
                   </td>
-                  <td style={td}>
-                    {p.authority === 'llm_gateway' ? (
-                      <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
-                    ) : (
-                      <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
-                    )}
-                  </td>
-                  <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
-                  <td style={td}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
-                      <Chip label={key.label} color={key.color} bg={key.bg} />
-                      {/* 指纹：同名同 URL 的两条上游只有密钥不同时，这是唯一能分清谁是谁的线索 */}
-                      {p.keyFingerprint ? (
-                        <code
-                          style={{ fontSize: 'var(--fs-tertiary)', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}
-                          title="密钥指纹（头尾各留几位，中间打码），用于分辨是哪一把，不是完整密钥">
-                          {p.keyFingerprint}
-                        </code>
-                      ) : null}
-                    </div>
-                  </td>
+                  <td style={td}><div className="lg-collection-provider-key" title={p.keyFingerprint ? `密钥指纹 ${p.keyFingerprint}` : undefined}><Chip label={key.label} color={key.color} bg={key.bg}/><span style={HINT_TEXT} title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined}>{p.authority === 'llm_gateway' ? '平台配置' : '待导入'}</span></div></td>
+                  <td style={td}><Chip label={en.label} color={en.color} bg={en.bg}/></td>
                   <td style={{ ...td, whiteSpace: 'nowrap' }}>
                     {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      {keyEditId === p.id ? (
-                        <>
-                          <input
-                            type="password"
-                            autoComplete="new-password"
-                            value={keyValue}
-                            onChange={(e) => setKeyValue(e.target.value)}
-                            placeholder="apiKey"
-                            style={inputStyle}
-                          />
-                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveApiKey(p)}>
-                            保存
-                          </Button>
-                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => { setKeyEditId(null); setKeyValue(''); }}>
-                            取消
-                          </Button>
-                        </>
-                      ) : (
-                        /*
-                         * 主操作留在行内，其余收进「更多」。原来八个操作平铺一行，
-                         * 横向排成一堵墙、主次不分，删除这种不可逆动作还和日常操作等权并排。
-                         * 留在外面的判据：这条上游刚配好密钥时，用户下一步会点的是什么。
-                         *   - GW 自有：测试连接（当场验证）→ 查看模型（拉清单导入），正是控制台
-                         *     自己在测试结果里写的「下一步」；
-                         *   - MAP 来源：只有「导入到平台」一个动作，本来就该是主操作。
-                         */
+
+
                         <RowActions
                           primary={p.authority === 'llm_gateway' ? (
                             <>
-                              <Button size="sm" variant="ghost" disabled={busyId === p.id || !p.hasKey} onClick={() => void runTest(p)} title={p.hasKey ? '用已保存的密钥打一次上游' : '先配置密钥'}>
-                                测试连接
-                              </Button>
                               <Button size="sm" variant="ghost" disabled={busyId === p.id || !p.hasKey || p.platformType === 'claude'} onClick={() => void openDiscovery(p)} title={p.platformType === 'claude' ? 'Claude 原生协议没有模型列表接口' : '从上游拉取模型清单并勾选导入'}>
                                 查看模型
                               </Button>
@@ -665,6 +703,7 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                           )}
                           actions={[
                             ...(p.authority === 'llm_gateway' ? [
+                              { key: 'test', label: '测试连接', disabled: busyId === p.id || !p.hasKey, onSelect: () => void runTest(p) },
                               { key: 'rotate', label: '更新密钥', disabled: busyId === p.id, onSelect: () => { setKeyEditId(p.id); setKeyValue(''); } },
                               ...(p.hasKey ? [{ key: 'clear', label: '清除密钥', disabled: busyId === p.id, onSelect: () => void clearApiKey(p) }] : []),
                               { key: 'edit', label: '编辑', disabled: busyId === p.id, onSelect: () => beginEdit(p) },
@@ -682,97 +721,35 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
                             ] : []),
                           ]}
                         />
-                      )}
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
-                {expandedModelsFor === p.id ? (
-                  <tr>
-                    {/* 名下模型占满整行：这是「模型属于上游」这件事的落地位置，
-                        窄列里塞不下「登记为哪几个公开名」这句结论 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={6}>
-                      <ProviderModelsPanel
-                        rows={ownedRows(p.id)}
-                        onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude'
-                          ? () => void openDiscovery(p)
-                          : undefined}
-                      />
-                    </td>
-                  </tr>
-                ) : null}
-                {editId === p.id ? (
-                  <tr>
-                    {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={6}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
+                {keyEditId === p.id && canWrite ? <tr><td colSpan={5} style={td}><div className="lg-collection-provider-edit">
+                        <>
                           <input
-                            aria-label="平台名称"
-                            value={editDraft.name ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, name: e.target.value }))}
-                            placeholder="名称"
-                            style={{ ...inputStyle, width: 150 }}
+                            type="password"
+                            autoComplete="new-password"
+                            value={keyValue}
+                            onChange={(e) => setKeyValue(e.target.value)}
+                            placeholder="apiKey"
+                            style={inputStyle}
                           />
-                          <input
-                            aria-label="备注"
-                            value={editDraft.remark ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, remark: e.target.value }))}
-                            placeholder="备注"
-                            style={{ ...inputStyle, width: 160 }}
-                          />
-                          {/* 接口类型、API 地址、并发收进折叠区：接上游时是选平台带出来的，
-                              改它们是例外不是常规。默认露在外面的话，每次只想改个备注
-                              都要从一排输入框里认出哪个是备注（minimal-user-input）。 */}
-                          <details style={{ width: '100%' }}>
-                            <summary style={advancedSummaryStyle}>高级：接口类型、API 地址、并发（换了上游地址或要调并发时才动）</summary>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                              <select
-                                aria-label="接口类型"
-                                value={editDraft.platformType ?? ''}
-                                onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
-                                style={inputStyle}>
-                                {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
-                                    用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
-                                {editDraft.platformType
-                                  && !['openai', 'claude'].includes(editDraft.platformType) ? (
-                                    <option value={editDraft.platformType}>
-                                      {editDraft.platformType}（存量类型）
-                                    </option>
-                                  ) : null}
-                                <option value="openai">openai</option>
-                                <option value="claude">claude</option>
-                              </select>
-                              <input
-                                aria-label="API 地址"
-                                value={editDraft.apiUrl ?? ''}
-                                onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
-                                placeholder="https://…"
-                                style={{ ...inputStyle, width: 240 }}
-                              />
-                              <input
-                                aria-label="并发"
-                                type="number"
-                                value={editDraft.maxConcurrency ?? 0}
-                                onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
-                                style={{ ...inputStyle, width: 80 }}
-                              />
-                            </div>
-                          </details>
-                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
+                          <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveApiKey(p)}>
                             保存
                           </Button>
-                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => setEditId(null)}>
+                          <Button size="sm" variant="ghost" disabled={busyId === p.id} onClick={() => { setKeyEditId(null); setKeyValue(''); }}>
                             取消
                           </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ) : null}
+                        </>
+</div></td></tr> : null}
                 </Fragment>
               );
             })}
           </tbody>
-        </table>
+        </table>}
+        </CollectionView>
+      </div>
+      {renderOwnedModels()}
       </div>
       )}
 
