@@ -2,6 +2,7 @@ import mysql, { type FieldPacket, type ResultSetHeader } from 'mysql2';
 import pg, { type QueryResult, type FieldDef, type QueryArrayConfig } from 'pg';
 import { isUtf8 } from 'node:buffer';
 import { SqlConsoleExecutionError, type SqlConsoleResult, type SqlConsoleResultSet } from './sql-console-results.js';
+import { isPreviewInstance } from './preview-instance.js';
 
 export interface SqlConsoleOptions {
   runtime: 'mysql' | 'postgres';
@@ -158,6 +159,7 @@ async function executePostgres(options: SqlConsoleOptions, collector: SqlResultC
 }
 
 export async function executeSqlConsole(options: SqlConsoleOptions): Promise<SqlConsoleResult> {
+  if (isPreviewInstance()) throw new Error('CDS 预览实例不连接真实数据库。请返回正式 CDS 控制面执行数据库操作。');
   if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {
     throw new Error('数据库缺少内部连接端口，未执行 SQL。');
   }

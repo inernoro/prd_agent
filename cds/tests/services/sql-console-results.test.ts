@@ -1,7 +1,16 @@
-import { describe, expect, it } from 'vitest';
-import { SqlResultCollector } from '../../src/services/sql-console-executor.js';
+import { describe, expect, it, vi } from 'vitest';
+import { executeSqlConsole, SqlResultCollector } from '../../src/services/sql-console-executor.js';
 
 describe('数据库协议多结果展示', () => {
+  it('隔离预览实例不能通过原生驱动越过原有宿主访问边界', async () => {
+    vi.stubEnv('CDS_PREVIEW_INSTANCE', '1');
+    try {
+      for (const readOnly of [true, false]) {
+        await expect(executeSqlConsole({ runtime: 'postgres', port: 44001, database: 'preview_fixture', user: 'fake_user', password: 'fake_password', sql: 'SELECT 1', readOnly, timeoutMs: 50 })).rejects.toThrow(/预览实例不连接真实数据库/);
+      }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('重复列名、NULL、空串、特殊字符、大数及空查询元数据均保留', () => {
     const collector = new SqlResultCollector();
     collector.record('UPDATE 1');
