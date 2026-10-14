@@ -3261,7 +3261,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
           : decision.reason || '同分支已有写操作正在运行',
     };
-    if (input.sse) {
+    if (input.versionId && !accepted) {
+      // 版本分发器以 HTTP 回执判定受理；200 的 error 流会把产物拒绝误报为成功。
+      res.status(409).json({ ...payload, ok: false, error: payload.message });
+    } else if (input.sse) {
       initSSE(res);
       sendSSE(res, accepted ? 'complete' : 'error', payload);
       res.end();

@@ -4378,6 +4378,30 @@ describe('Branch Routes', () => {
       expect(mock.commands.filter(command => isAppLaunchCommand(command))).toHaveLength(executions);
     });
 
+    it('指定历史版本产物缺少OCI身份时HTTP拒绝，外层分发不误报受理且旧服务不变', async () => {
+      const target = 'a'.repeat(40);
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: `ghcr.io/owned/api:sha-${target}`,
+        workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      readyArtifactFixture();
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: `sha256:${'c'.repeat(64)}`,
+        RepoDigests: [`ghcr.io/owned/api@sha256:${'c'.repeat(64)}`], Os: 'linux', Architecture: 'amd64', Config: { Labels: {} } }]), stderr: '', exitCode: 0 }));
+      const id = 'legacy-version-rejection';
+      const branch = { id, projectId: 'default', branch: 'feature/legacy-version-rejection', worktreePath: path.join(tmpDir, id),
+        status: 'running', createdAt: new Date().toISOString(), services: { api: { profileId: 'api', containerName: 'kept-old',
+          hostPort: 10011, status: 'running', deployedImage: `ghcr.io/owned/api:sha-${target}`, deployedMode: 'express' } } } as BranchEntry;
+      stateService.addBranch(branch);
+      const version = deploymentVersionService.create({ projectId: 'default', branchId: id, commitSha: target,
+        configHash: 'c'.repeat(64), profiles: [stateService.getBuildProfile('api')!], branch, createdByRunId: 'old-import' });
+      const before = structuredClone(branch);
+      const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { versionId: version.id });
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ ok: false, operationStatus: 'rejected', error: expect.stringContaining('产物') });
+      expect(response.headers['x-cds-deployment-run-id']).toBeUndefined();
+      expect(stateService.getBranch(id)).toEqual(before);
+      expect(deploymentRunService.list({ branchId: id })).toEqual([]);
+      expect(mock.commands.some(command => isAppLaunchCommand(command) || /^docker (stop|rm) /.test(command))).toBe(false);
+    });
+
     it('单服务预构建原记录和版本必须记录本次目标而非分支旧缓存', async () => {
       const previous = 'a'.repeat(40), requested = 'b'.repeat(40);
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}',
