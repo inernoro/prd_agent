@@ -223,3 +223,14 @@ Healthy → Degraded 排。补的时候两条一起做。
 - 共享的模型清单与尺寸联动：`prd-admin/src/lib/visualModelSizes.ts`、`prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts`
 - 编辑器里那份未切走的等价实现：`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx`
 - 背景生成的 run 轮询与挑池：`prd-admin/src/lib/backdropStudio.ts`
+
+## 2026-10-14：画布快捷键的交付与验收边界
+
+工具菜单原本向用户展示 H 手形与 V 选择，但画布的键盘监听器没有响应这两个键。
+本轮只接回这两项已经承诺的工具切换；输入控件、页面其它区域以及复制粘贴等组合键
+保留原有行为，不改图片引用、生成任务、文件上传或模型配置。
+
+回归测试执行实际监听器，覆盖画布焦点与悬停、输入框保护、组合键保护和卸载清理。
+这些断言只证明监听器行为，不能替代固定版本的公网页面验收：须从正常导航进入画布，
+验证 H 后鼠标拖动实际平移、V 后回到选择工具，以及提示词输入 h/v 时工具不被切换。
+手机布局、图片生成和完整 48 小时复测属于独立工作包，不由本次快捷键修复宣布通过。
