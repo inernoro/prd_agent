@@ -873,11 +873,22 @@ function readCdsBranchStatusOnce(commandFn = command, providedBranchId = '') {
       '.claude/skills/cds/cli/cdscli.py',
       'deployment-run', 'show', branch.lastDeploymentRunId,
     ]);
-    const runPayload = runResult.status === 0 ? readJsonFromText(runResult.stdout) : null;
+    const runPayload = readJsonFromText(runResult.stdout);
     if (!runPayload?.data?.run) {
-      throw new Error('CDS 部署运行状态读取失败，拒绝在未知部署版本上开测');
+      if (Number(runPayload?.status) === 404 && branch.currentVersionId) {
+        branch.latestDeploymentRun = null;
+        branch.deploymentRunEvidence = {
+          status: 'expired',
+          deploymentRunId: branch.lastDeploymentRunId,
+          versionId: branch.currentVersionId,
+          reason: '历史部署运行记录已回收，改用分支不可变版本与当前服务镜像做严格一致性校验',
+        };
+      } else {
+        throw new Error('CDS 部署运行状态读取失败，拒绝在未知部署版本上开测');
+      }
+    } else {
+      branch.latestDeploymentRun = runPayload.data.run;
     }
-    branch.latestDeploymentRun = runPayload?.data?.run || null;
   }
   return branch;
 }
