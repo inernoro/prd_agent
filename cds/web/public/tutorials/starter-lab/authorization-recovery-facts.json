@@ -39,10 +39,10 @@
   "passed": true,
   "chapter": "第三章 · 仓库绑定与凭据恢复",
   "video": {
-    "seconds": 41.52,
-    "frames": 36,
-    "segments": 12,
-    "sha256": "f7348b1db6ed94bb4020779cec9fe36a2625b7d49e785ab7b5930a57779ce08d",
+    "seconds": 51.9,
+    "frames": 45,
+    "segments": 15,
+    "sha256": "7f8f46f00a90d55df71c67fb319d2d95f63c5926266db6b6e9570ef9b2797821",
     "kind": "真实浏览器采样帧，按实操顺序压缩等待，无音轨、无界面重绘；字幕用于说明步骤",
     "recordingCommits": [
       "ccc5dcae5bd1ceda070024d734de8615787efb3e",
@@ -60,6 +60,13 @@
   "tests": {
     "remoteCdsPassed": 9830,
     "remoteCdsSkipped": 9,
-    "localCliPassed": 227
+    "localCliPassed": 232
+  },
+  "finalClientVersion": "0.16.11",
+  "compatibilityRetest": {
+    "lossRequest": "06ed790621c8",
+    "revocationRequest": "92965128fefe",
+    "sameProjectId": "8dbfa9eb0ea6",
+    "newIntentAndDisplayRenameRegressionPassed": true
   }
 }

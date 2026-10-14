@@ -8,12 +8,14 @@ describe('建项目仓库身份绑定', () => {
       expect(bootstrapRepository(value)).toBe('github.com/acme/demo');
     }
   });
-  it('主机不能丢掉，异常仓库和非默认端口不接受', () => {
+  it('主机和自定义端口不能丢掉，非法仓库不接受', () => {
     expect(bootstrapRepository('https://gitlab.com/acme/demo')).not.toBe(bootstrapRepository('https://github.com/acme/demo'));
     for (const value of ['', 'file:///tmp/demo', 'https://github.com/acme',
-      'https://github.com:2222/acme/demo', 'http://github.com:22/acme/demo', 'https://github.com/acme/%2Fdemo']) {
+      'https://github.com/acme/%2Fdemo']) {
       expect(bootstrapRepository(value)).toBeNull();
     }
+    expect(bootstrapRepository('ssh://git@gitbox:2222/acme/demo')).toBe('gitbox:2222/acme/demo');
+    expect(bootstrapRepository('http://github.com:22/acme/demo')).not.toBe('github.com/acme/demo');
     expect(bootstrapTarget({ name: '   ', repository: 'https://github.com/acme/demo' })).toBeNull();
   });
 });

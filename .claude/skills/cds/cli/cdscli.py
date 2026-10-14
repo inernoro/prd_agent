@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.16.10"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.11"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -174,7 +174,8 @@ def _save_local_credentials(*, host: str, project_id: str | None = None,
                             project_key: str | None = None,
                             bootstrap_key: str | None = None,
                             bootstrap_source: str | None = None,
-                            repository: str | None = None) -> str:
+                            repository: str | None = None,
+                            project_name: str | None = None, project_slug: str | None = None) -> str:
     """原子写入当前项目凭据；不打印密钥，不修改 shell profile。
 
     `bootstrap_source` 记这把 bootstrapKey 的来源。`init --yes` 也会把一把静态或
@@ -206,8 +207,15 @@ def _save_local_credentials(*, host: str, project_id: str | None = None,
     _exclude_local_credentials(root)
     if project_id:
         # 无密钥的定位信息独立保存；丢失密钥时仍回到原项目，不再创建副本。
+        previous_context = _connection_context()
+        if previous_context.get("projectId") != project_id:
+            previous_context = {}
         context = {"version": 1, "host": host.rstrip("/"), "projectId": project_id,
-                   "repository": _repository_identity(repository or _origin_repository())}
+                   "repository": _repository_identity(repository or _origin_repository()),
+                   "projectName": project_name or previous_context.get("projectName"),
+                   "projectSlug": project_slug or previous_context.get("projectSlug"),
+                   "creationName": previous_context.get("creationName") or previous_context.get("projectName") or project_name,
+                   "creationSlug": previous_context.get("creationSlug") or previous_context.get("projectSlug") or project_slug}
         context_path = os.path.join(root, ".cds", "connection.json")
         with open(context_path + ".tmp", "w", encoding="utf-8") as f:
             json.dump(context, f, ensure_ascii=False, indent=2)
@@ -822,7 +830,8 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
         # 项目就作废了，此时必须明说，不能让调用方继续往下跑一串 401。
         if had_bootstrap_identity:
             _save_local_credentials(host=_cds_base(), project_id=pid,
-                                    repository=str(proj.get("gitRepoUrl") or ""))
+                                    repository=str(proj.get("gitRepoUrl") or ""),
+                                    project_name=proj.get("name"), project_slug=proj.get("slug"))
             die(
                 f"项目已创建（id={pid}），但项目凭据未交付。已保留原项目定位信息。"
                 "请重新运行同一接入口令，在页面批准恢复访问；无需复制密钥，不会再建项目。",
@@ -841,6 +850,7 @@ def _create_project_and_adopt_key(payload: dict[str, Any], *, timeout: int = 30)
     credentials_path = _save_local_credentials(
         host=_cds_base(), project_id=pid, project_key=plaintext,
         repository=str(proj.get("gitRepoUrl") or ""),
+        project_name=proj.get("name"), project_slug=proj.get("slug"),
     )
     os.environ["CDS_PROJECT_ID"] = pid
     os.environ["CDS_PROJECT_KEY"] = plaintext
@@ -3838,12 +3848,34 @@ def cmd_connect(args: argparse.Namespace) -> None:
     local = _read_local_credentials_file()
     known = context if context else local
     if new_project and known.get("projectId") and str(known.get("host") or "").rstrip("/") == host:
-        if context.get("repository") and context["repository"] != _repository_identity(git_url):
-            die("当前目录已连接其他仓库的项目，请让 Agent 核对项目身份；未发起建项目申请。", code=1)
-        # 同一条新项目口令重跑 = 恢复原项目，不再申请新建权限。
-        project_id = str(known["projectId"])
-        new_project = False
-        create_name = ""
+        same_repository = not context.get("repository") or context["repository"] == _repository_identity(git_url)
+        # 旧连接没有名称时先自动补定位信息；明确换名/换slug的任务仍走新建审批。
+        if same_repository and not known.get("projectName") and local.get("projectKey"):
+            previous_host = os.environ.get("CDS_HOST")
+            os.environ["CDS_HOST"] = host
+            try:
+                meta_status, meta_body, _ = _request(
+                    "GET", f"/api/projects/{urllib.parse.quote(str(known['projectId']))}", timeout=10,
+                    extra_headers={"X-AI-Access-Key": str(local['projectKey'])}, fatal_network_errors=False,
+                )
+            finally:
+                if previous_host is None: os.environ.pop("CDS_HOST", None)
+                else: os.environ["CDS_HOST"] = previous_host
+            if meta_status == 200 and isinstance(meta_body, dict):
+                actual = meta_body.get("project", meta_body)
+                if isinstance(actual, dict) and actual.get("id") == known["projectId"]:
+                    known = {**known, "projectName": actual.get("name"), "projectSlug": actual.get("slug")}
+            elif meta_status not in (401, 403):
+                die(f"原项目暂时无法核对（HTTP {meta_status}），未新建或覆盖凭据，请稍后重试。", code=2)
+        requested_slug = str(getattr(args, "slug", "") or "").strip()
+        creation_name = known.get("creationName") or known.get("projectName")
+        creation_slug = known.get("creationSlug") or known.get("projectSlug")
+        same_name = not create_name or not creation_name or creation_name == create_name
+        same_slug = not requested_slug or not creation_slug or creation_slug == requested_slug
+        if same_repository and same_name and same_slug:
+            project_id = str(known["projectId"])
+            new_project = False
+            create_name = ""
     agent_name = str(getattr(args, "agent", "") or "Agent").strip()[:100] or "Agent"
     timeout_seconds = max(10, int(getattr(args, "timeout", 300) or 300))
     interval_seconds = max(1, int(getattr(args, "interval", 2) or 2))
@@ -3871,7 +3903,8 @@ def cmd_connect(args: argparse.Namespace) -> None:
                 if not isinstance(actual, dict) or actual.get("id") != project_id:
                     _restore_auth_env(previous)
                     die("CDS 返回的项目身份与本地连接不一致，未继续操作。", code=2)
-                _save_local_credentials(host=host, project_id=project_id, project_key=local_key)
+                _save_local_credentials(host=host, project_id=project_id, project_key=local_key,
+                                        project_name=actual.get("name"), project_slug=actual.get("slug"))
                 _restore_auth_env(previous)
                 ok({"projectId": project_id, "reused": True}, note="已复用原项目授权，无需再次批准。")
                 return
@@ -4008,6 +4041,12 @@ def cmd_connect(args: argparse.Namespace) -> None:
     verify_status, _verify_body, _ = _request("GET", verification_path, timeout=10)
     if not 200 <= verify_status < 300:
         die(f"授权已保存，但验证失败: HTTP {verify_status}", code=2)
+
+    if not new_project and isinstance(_verify_body, dict):
+        actual = _verify_body.get("project", _verify_body)
+        if isinstance(actual, dict) and actual.get("id") == resolved_project_id:
+            _save_local_credentials(host=host, project_id=resolved_project_id, project_key=authorization_key,
+                                    project_name=actual.get("name"), project_slug=actual.get("slug"))
 
     # --create-project：把「批准 → 一次性钥匙 → 建项目 → 换成项目级钥匙」压成
     # 同一条命令、同一个进程。分成两步时，那把一次性钥匙要在上层（往往是大模型）

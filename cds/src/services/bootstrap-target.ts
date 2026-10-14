@@ -12,13 +12,14 @@ export function bootstrapRepository(value: unknown): string | null {
     try {
       const url = new URL(raw.includes('://') ? raw : `https://${raw}`);
       if (!['https:', 'http:', 'ssh:'].includes(url.protocol)) return null;
-      if (url.port && !(url.protocol === 'ssh:' && url.port === '22')) return null;
       host = url.hostname.toLowerCase();
+      // 自建 Git 服务可使用内网主机和非默认端口；不同端口不能共用授权。
+      if (url.port && !(url.protocol === 'ssh:' && url.port === '22')) host += `:${url.port}`;
       pathname = url.pathname;
     } catch { return null; }
   }
   pathname = pathname.replace(/^\/+|\/+$/g, '').replace(/\.git$/i, '');
-  if (!host.includes('.') || !pathname || /[%\\\s]/.test(pathname)
+  if (!host || !pathname || /[%\\\s]/.test(pathname)
     || pathname.split('/').some((segment) => !segment || segment === '.' || segment === '..')) return null;
   if (host === 'github.com') {
     if (!/^[\w.-]+\/[\w.-]+$/.test(pathname)) return null;
