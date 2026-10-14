@@ -2090,6 +2090,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let requestPausedId = '';
     let pausedRequestId = '';
     let progressObserver: import('@playwright/test').JSHandle<{ seen: { value: boolean }; stop: () => void }> | null = null;
+    let pendingUpload: Promise<import('@playwright/test').Response> | null = null;
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -2138,7 +2139,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           return { seen, stop: () => observer.disconnect() };
         });
       }
-      const response = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath);
+      pendingUpload = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath, { timeout: 60_000 });
+      void pendingUpload.catch(() => {});
       await input.setInputFiles({
         name,
         mimeType: 'text/plain',
@@ -2165,7 +2167,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await expect.poll(() => status.innerText(), { timeout: 3000 }).not.toBe(firstStatus);
         await session.send('Fetch.continueRequest', { requestId: pausedRequestId }); pausedRequestId = '';
       }
-      const uploadResponse = await response;
+      const uploadResponse = await pendingUpload;
       expect(uploadResponse.ok()).toBe(true);
       const uploadedBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
       expect(uploadedBody.success).toBe(true);
@@ -2188,6 +2190,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
         await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [] });
         await session.detach();
+      }
+      if (pendingUpload) {
+        // 请求已放行也可能仍在写正文；必须等真实响应完整收敛后再级联删除。
+        try {
+          const response = await pendingUpload;
+          if (await response.finished()) throw new Error('上传响应未完整结束');
+        } catch {
+          throw new Error(`上传未收敛，保留本轮知识库 ${storeId} 供恢复清理，禁止并发级联删除`);
+        }
       }
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
