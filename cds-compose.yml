@@ -74,6 +74,9 @@ x-cds-env-meta:
   STABLE_SMOKE_PUBLIC_KEY:
     kind: required
     hint: "稳定冒烟 RSA 公钥正文，由 CDS 项目 env scope 托管；私钥禁止进入部署环境"
+  STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME:
+    kind: required
+    hint: "稳定冒烟失败或条件通过通知的固定 MAP 接收用户名，由 CDS 项目 env scope 托管"
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）
@@ -336,6 +339,7 @@ services:
       Deployment__LegacyOwnerCreatedBeforeUtc: ""
       # CDS 自动验收永久入口：仍需通过仓库登记的 RSA 公钥签名，显式开关可独立熔断。
       SYNTHETIC_LOGIN_ENABLED: "true"
+      StableSmokeAuthentication__NotificationTargetUsername: "${STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME}"
       StableSmokeAuthentication__Keys__0__KeyId: "${STABLE_SMOKE_KEY_ID}"
       StableSmokeAuthentication__Keys__0__Username: "${STABLE_SMOKE_USERNAME}"
       StableSmokeAuthentication__Keys__0__DisplayName: "CDS 稳定冒烟"

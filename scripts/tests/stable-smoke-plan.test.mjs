@@ -34,9 +34,11 @@ test('48 小时调度属于本地自动化而非 GitHub Actions', () => {
   const promptPath = resolve(repoRoot, '.claude/skills/stable-smoke/reference/local-automation-prompt.md');
   const workflowPath = resolve(repoRoot, '.github/workflows/stable-smoke-48h.yml');
   const prompt = readFileSync(promptPath, 'utf8');
-  assert.match(prompt, /execution_environment.*local|执行环境：`local`/);
-  assert.match(prompt, /RRULE:FREQ=DAILY;INTERVAL=2;BYHOUR=2;BYMINUTE=17/);
-  assert.match(prompt, /正式环境固定为 `https:\/\/map\.ebcone\.net`/);
+  assert.match(prompt, /本地执行环境/);
+  assert.match(prompt, /保留既有.*48 小时周期/);
+  assert.match(prompt, /正式固定 https:\/\/map\.ebcone\.net/);
+  assert.match(prompt, /automation_update/);
+  assert.match(prompt, /--profile routine --capture-visual/);
   assert.equal(existsSync(workflowPath), false);
 });
 
@@ -126,7 +128,11 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
     ...catalog.featureLines.flatMap((feature) => feature.regressionCaseIds),
   ])].filter((caseId) => !visualRegressionCaseIds.includes(caseId));
   const cdsOnlyRegressions = new Set(catalog.featureLines.flatMap((feature) => feature.cdsOnlyRegressionCaseIds || []));
-  assert.deepEqual(new Set(plan.requiredCaseIdsByEnvironment.cds), new Set([...selected.cds, ...functionalRegressions]));
+  const productionOnlyRegressions = new Set(catalog.featureLines.flatMap((feature) => feature.productionOnlyRegressionCaseIds || []));
+  assert.deepEqual(
+    new Set(plan.requiredCaseIdsByEnvironment.cds),
+    new Set([...selected.cds, ...functionalRegressions.filter((caseId) => !productionOnlyRegressions.has(caseId))]),
+  );
   assert.deepEqual(
     new Set(plan.requiredCaseIdsByEnvironment.production),
     new Set([...selected.production, ...functionalRegressions.filter((caseId) => !cdsOnlyRegressions.has(caseId))]),
@@ -140,6 +146,10 @@ test('定时计划按环境策略纳入矩阵与永久回归', () => {
   assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('VIS-004'));
   assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-visual-policy-001'));
   assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-visual-policy-001'));
+  assert.ok(!plan.requiredCaseIdsByEnvironment.cds.includes('REG-stsmk-production-read-only-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.production.includes('REG-stsmk-production-read-only-001'));
+  assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes('REG-stsmk-cds-runtime-equivalence-001'));
+  assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes('REG-stsmk-cds-runtime-equivalence-001'));
   assert.deepEqual(
     new Set(plan.requiredCaseIds),
     new Set([...plan.requiredCaseIdsByEnvironment.cds, ...plan.requiredCaseIdsByEnvironment.production]),
@@ -197,6 +207,9 @@ test('网页托管变更进入功能台账并绑定七个操作锚点', () => {
     'REG-web-folder-canonical-001',
     'REG-web-folder-fence-001',
     'REG-web-folder-create-rename-001',
+    'REG-web-ask-stream-001',
+    'REG-web-sandbox-001',
+    'REG-web-cleanup-timeout-001',
   ]);
   const plan = buildPlan({
     catalog,
@@ -218,17 +231,19 @@ test('网页托管问答先走匿名主存储，旧存储夹具只在 CDS 环境
   const testStart = source.indexOf("test('[WEB-004][WEB-005][WEB-006]");
   const testEnd = source.indexOf("\n  test(", testStart + 1);
   const block = source.slice(testStart, testEnd);
-  const currentAsk = block.indexOf("expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'current')");
+  const currentAsk = block.indexOf("expectAnonymousShareAnswer(guest, share.token, siteId, uploaded.marker, 'current', testInfo)");
   const fixtureGuard = block.indexOf("if (environment === 'cds')");
-  const legacyAsk = block.indexOf("expectAnonymousShareAnswer(request, share.token, siteId, uploaded.marker, 'legacy')");
+  const legacyAsk = block.indexOf("expectAnonymousShareAnswer(guest, share.token, siteId, uploaded.marker, 'legacy', testInfo)");
 
   assert.ok(testStart >= 0, '缺少 WEB-005 稳定冒烟用例');
   assert.ok(currentAsk >= 0 && fixtureGuard > currentAsk && legacyAsk > fixtureGuard,
     '必须先验证当前存储，再只在 CDS 环境切换旧存储夹具');
   assert.match(block, /if \(siteId && legacyFixturePrepared\)/,
     '未准备旧存储夹具时不得调用恢复端点');
-  assert.match(source, /async function expectAnonymousShareAnswer[\s\S]*?headers: \{ Accept: 'text\/event-stream' \}/,
-    '分享问答必须使用不带 Authorization 的独立 request 上下文');
+  assert.match(block, /guestContext = await page\.context\(\)\.browser\(\)!\.newContext\(\)/,
+    '分享问答必须使用不借用所有者身份的独立访客浏览器');
+  assert.match(source, /ask\.request\(\)\.headers\(\)\.authorization[\s\S]*?toBeUndefined\(\)/,
+    '必须回读实际页面请求，确认匿名提问不带 Authorization');
 });
 
 test('正式环境禁止项不得混入可被正式环境选中的组合用例', () => {
@@ -246,6 +261,42 @@ test('正式环境禁止项不得混入可被正式环境选中的组合用例',
       );
     }
   }
+});
+
+test('VIDEO-009 刷新恢复必须创建并回读真实后端任务', () => {
+  const source = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const testStart = source.indexOf("test('[VIDEO-002][VIDEO-009]");
+  const testEnd = source.indexOf('\n  test(', testStart + 1);
+  const block = source.slice(testStart, testEnd);
+
+  assert.ok(testStart >= 0, '缺少 VIDEO-009 稳定冒烟用例');
+  assert.doesNotMatch(block, /installControlledVideoRun|page\.route\(/,
+    '刷新恢复不得用浏览器拦截伪造任务、项目或固定进度');
+  assert.match(block, /POST'[\s\S]*?\/api\/video-agent\/runs/,
+    '刷新恢复必须从真实创建接口取得 runId');
+  assert.match(block, /page\.reload\([\s\S]*?\/api\/video-agent\/runs\/\$\{encodeURIComponent\(runId\)\}/,
+    '刷新后必须从未修改的真实接口回读同一 runId');
+  assert.match(block, /beforeReload\.status[\s\S]*?toMatch\(\/Queued\|Scripting\/i\)/,
+    '刷新开始前必须证明真实任务仍在执行，禁止用已完成任务冒充恢复');
+  assert.match(block, /afterReload\.phaseProgress[\s\S]*?toBeGreaterThanOrEqual\(beforeReload\.phaseProgress\)/,
+    '刷新后必须比较真实持久化进度，禁止只读取不断言');
+  assert.match(block, /restoredView[\s\S]*?toHaveAttribute\('data-progress', String\(afterReload\.phaseProgress\)\)/,
+    '刷新后页面必须展示与服务端回读一致的真实进度');
+});
+
+test('VIDEO-005 取消验收必须等待上游作业真实提交', () => {
+  const source = readFileSync(resolve(repoRoot, 'e2e/specs/stable-smoke.spec.ts'), 'utf8');
+  const testStart = source.indexOf("test('[VIDEO-005]");
+  const testEnd = source.indexOf('\n  test(', testStart + 1);
+  const block = source.slice(testStart, testEnd);
+
+  assert.ok(testStart >= 0, '缺少 VIDEO-005 稳定冒烟用例');
+  assert.match(block, /beforeCancel\.directVideoJobId/,
+    '取消前必须回读已持久化的上游作业 ID');
+  assert.match(block, /beforeCancel\.currentPhase === 'videogen-polling'/,
+    '取消前必须证明真实任务已进入上游轮询阶段');
+  assert.doesNotMatch(block, /toMatch\(\/Queued\|Scripting\|Rendering\/i\)/,
+    '不得将未提交上游作业的 Queued 或 Scripting 状态当作取消验收前置');
 });
 
 test('PR 变更模式同样遵守双环境矩阵策略', () => {

@@ -487,6 +487,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const { isMobile } = useBreakpoint();
   const [mobileTab, setMobileTab] = useState<'article' | 'markers'>('article');
   const [articleContent, setArticleContent] = useState('');
+  // 工作区详情与用户上传并行时，晚返回的旧详情不能把刚读入的文章清空。
+  // 版本只记录本页的文章输入变更；主动恢复历史时重新调用 loadWorkspace，仍会正常采用服务端状态。
+  const articleMutationVersionRef = useRef(0);
   const [articleWithMarkers, setArticleWithMarkers] = useState('');
   const [articleWithImages, setArticleWithImages] = useState('');
   const [phase, setPhase] = useState<WorkflowPhase>(0); // 0=upload
@@ -1249,6 +1252,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [promptPreviewOpen, configViewMode, loadMarketplaceData]);
 
   async function loadWorkspace() {
+    const articleVersionAtStart = articleMutationVersionRef.current;
     try {
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
@@ -1258,6 +1262,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         autoSubmitSuppressedRef.current = suppressAutoSubmit;
         setAutoSubmitSuppressed(suppressAutoSubmit);
         setAutoSubmitEnabled(!suppressAutoSubmit);
+        // 用户已经在本次读取期间上传了文章时，只跳过这份旧响应里的文章工作流字段。
+        // 其他设置仍可恢复，避免为了防覆盖而丢掉模型或提示词配置。
+        if (articleMutationVersionRef.current !== articleVersionAtStart) {
+          pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
+          await loadLiteraryPrompts();
+          return;
+        }
         const content = ws.articleContent || '';
         setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
@@ -1461,6 +1472,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(fileName);
 
@@ -1518,6 +1530,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
     try {
       const text = await file.text();
+      articleMutationVersionRef.current += 1;
       setArticleContent(text);
       setUploadedFileName(file.name);
 

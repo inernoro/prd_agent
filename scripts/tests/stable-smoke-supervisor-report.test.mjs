@@ -64,7 +64,7 @@ test('主管报告把异常提前并保留全量逐项账本', () => {
   assert.match(report, /正式环境 \| 全部计划模块 \| 2 项/);
   assert.equal((report.match(/正式合成身份未就绪/g) || []).length, 1);
   assert.match(report, /## 执行覆盖账本/);
-  assert.match(report, /正式环境 \| 2 \| 0 \| 0 \| 0 \| 2 \|/);
+  assert.match(report, /正式环境 \| 2 \| 0 \| 0 \| 0 \| 0 \| 2 \|/);
   assert.match(report, /CORE-001 \| 正式环境 \| identity-missing \| 正式身份未就绪/);
   assert.match(report, /代码或页面入口 \| 补跑命令 \| 关闭条件/);
   assert.match(report, /## 逐项验收账本/);

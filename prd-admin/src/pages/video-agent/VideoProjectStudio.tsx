@@ -121,6 +121,38 @@ export const resolveVideoAudioSetting = (
   selectedModel?: Pick<VideoModelOption, 'supportsAudio'>,
 ) => requested && selectedModel?.supportsAudio === true;
 
+export const resolveAvailableVideoModel = (
+  currentModel: string,
+  models: VideoModelOption[],
+) => currentModel && models.some((item) => item.id === currentModel)
+  ? currentModel
+  : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
+
+export const resolveVideoProjectSettings = (
+  project: VideoProject | null,
+  models: VideoModelOption[],
+) => {
+  const model = resolveAvailableVideoModel(project?.defaultVideoModel ?? '', models);
+  const option = models.find((item) => item.id === model);
+  const requestedAspectRatio = project?.defaultAspectRatio ?? '16:9';
+  const requestedResolution = project?.defaultResolution ?? '1080p';
+  const requestedDuration = project?.defaultDuration ?? 5;
+  const requestedAudio = project?.generateAudio ?? true;
+  return {
+    model,
+    aspectRatio: option?.aspectRatios.includes(requestedAspectRatio)
+      ? requestedAspectRatio
+      : option?.aspectRatios[0] ?? requestedAspectRatio,
+    resolution: option?.resolutions.includes(requestedResolution)
+      ? requestedResolution
+      : option?.resolutions[0] ?? requestedResolution,
+    duration: option?.durations.includes(requestedDuration)
+      ? requestedDuration
+      : option?.durations[0] ?? requestedDuration,
+    generateAudio: option ? resolveVideoAudioSetting(requestedAudio, option) : requestedAudio,
+  };
+};
+
 export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   projects,
   project,
@@ -160,21 +192,15 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   const effectiveGenerateAudio = resolveVideoAudioSetting(generateAudio, selectedModel);
 
   useEffect(() => {
+    const settings = resolveVideoProjectSettings(project, models);
     setTitle(project?.title === '未命名视频' ? '' : project?.title ?? '');
     setSourceMarkdown(project?.sourceMarkdown ?? '');
     setStyleDescription(project?.styleDescription ?? '智能匹配');
-    const savedModel = project?.defaultVideoModel;
-    const nextModel = savedModel && models.some((item) => item.id === savedModel)
-      ? savedModel
-      : models.find((item) => item.healthStatus !== 'Unavailable')?.id ?? '';
-    setModel(nextModel);
-    setAspectRatio(project?.defaultAspectRatio ?? '16:9');
-    setResolution(project?.defaultResolution ?? '1080p');
-    setDuration(project?.defaultDuration ?? 5);
-    setGenerateAudio(resolveVideoAudioSetting(
-      project?.generateAudio ?? true,
-      models.find((item) => item.id === nextModel),
-    ));
+    setModel(settings.model);
+    setAspectRatio(settings.aspectRatio);
+    setResolution(settings.resolution);
+    setDuration(settings.duration);
+    setGenerateAudio(settings.generateAudio);
     setAssets(project?.assets ?? []);
     setTimelineTracks(project?.timelineTracks?.length ? project.timelineTracks : createTimelineTracks());
   }, [project, models]);
@@ -236,7 +262,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
     setAssetDescription('');
   };
 
-  const coverForProject = (item: VideoProject) => item.assets.find((asset) => asset.type !== 'audio' && asset.url)?.url;
+  const coverForProject = (item: VideoProject) => item.assets?.find((asset) => asset.type !== 'audio' && asset.url)?.url;
   const submitCreation = () => creationMode === 'storyboard' ? onAnalyze(input) : onCreateDirect(input);
   const actionLabel = creationMode === 'storyboard' ? '生成故事分镜' : '生成这段视频';
 

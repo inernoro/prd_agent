@@ -7,6 +7,8 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
+using PrdAgent.Infrastructure.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
@@ -16,9 +18,12 @@ namespace PrdAgent.Api.Services;
 public sealed class ShortVideoMaterialWorker : BackgroundService
 {
     private static readonly TimeSpan ScanInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan ProcessingLeaseHeartbeatInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan ProcessingLeaseTimeout = TimeSpan.FromMinutes(15);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<ShortVideoMaterialWorker> _logger;
     private string? _currentRunId;
+    private string? _currentProcessingToken;
 
     public ShortVideoMaterialWorker(IServiceScopeFactory scopeFactory, ILogger<ShortVideoMaterialWorker> logger)
     {
@@ -64,28 +69,28 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-            // 回收范围 = 本实例 running + 历史无主 running（OwnerInstanceId 空）。
-            // 无主 running 只可能由「定向消费上线前的旧代码」产生：旧代码不打 owner，
-            // 容器退出后永远没人回收、永卡 running。一并回收是一次性过渡兜底（上线后新 run
-            // 认领即打主，不再产生无主 running）。代价：若另一实例此刻在跑某个无主 running 会被
-            // 误判失败——但无主 = 旧代码遗留，归属本不可分辨，过渡期代价可接受（Bugbot Medium）。
+            // 启动回收只覆盖显式获权的历史无主/退役 owner。当前稳定 owner 可能仍由滚动发布
+            // 中的旧进程处理，不能仅凭新进程启动就宣告失活。
             var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
             var instanceId = InstanceIdentity.Get(configuration);
-            var compatibleOwnerIds = InstanceIdentity.GetCompatibleOwnerIds(configuration);
+            // 同一稳定 owner 可能在滚动发布窗口内同时有新旧两个进程。启动时不能把
+            // compatible owner 的 running 直接判死；这里只接管经截止时间授权的历史
+            // 无主/退役 owner。当前 owner 的真正卡死任务由带 token fencing 的周期回收处理。
             var ownerScope = LegacyOwnerScope.Build<ShortVideoMaterialRun>(
                 nameof(ShortVideoMaterialRun.OwnerInstanceId),
-                compatibleOwnerIds,
+                Array.Empty<string>(),
                 includeUnowned: true,
                 retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
                 legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
             var recoverFilter = Builders<ShortVideoMaterialRun>.Filter.And(
-                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, ShortVideoMaterialRunStatus.Running),
                 ownerScope);
             var recovered = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 recoverFilter,
                 Builders<ShortVideoMaterialRun>.Update
-                    .Set(r => r.Status, "failed")
+                    .Set(r => r.Status, ShortVideoMaterialRunStatus.Failed)
                     .Set(r => r.OwnerInstanceId, instanceId)
+                    .Set(r => r.ProcessingToken, (string?)null)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, "服务重启，短视频解析任务被中断")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
@@ -120,18 +125,22 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
                 includeUnowned: true,
                 retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
                 legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
-            var cutoff = DateTime.UtcNow - TimeSpan.FromMinutes(15);
+            var cutoff = DateTime.UtcNow - ProcessingLeaseTimeout;
             var current = _currentRunId ?? "";
             var filter = Builders<ShortVideoMaterialRun>.Filter.And(
-                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "running"),
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, ShortVideoMaterialRunStatus.Running),
                 Builders<ShortVideoMaterialRun>.Filter.Lt(r => r.UpdatedAt, cutoff),
+                // 只回收一个已经超时的显式租约。无 token 的历史脏数据由有权限的启动迁移处理，
+                // 不能在多副本运行时用宽泛条件把新认领任务一起判死。
+                Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.ProcessingToken, (string?)null),
                 Builders<ShortVideoMaterialRun>.Filter.Ne(r => r.Id, current),
                 ownerScope);
             var res = await db.ShortVideoMaterialRuns.UpdateManyAsync(
                 filter,
                 Builders<ShortVideoMaterialRun>.Update
-                    .Set(r => r.Status, "failed")
+                    .Set(r => r.Status, ShortVideoMaterialRunStatus.Failed)
                     .Set(r => r.OwnerInstanceId, instanceId)
+                    .Set(r => r.ProcessingToken, (string?)null)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_TIMEOUT)
                     .Set(r => r.ErrorMessage, "处理超时或中断，请重试")
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
@@ -145,17 +154,67 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         }
     }
 
+    private async Task RenewProcessingLeaseAsync(
+        string runId,
+        string ownerInstanceId,
+        string processingToken,
+        CancellationToken stopToken,
+        CancellationTokenSource authorityStop)
+    {
+        using var timer = new PeriodicTimer(ProcessingLeaseHeartbeatInterval);
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stopToken))
+            {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+                    var renewed = await db.ShortVideoMaterialRuns.UpdateOneAsync(
+                        current => current.Id == runId
+                                   && current.Status == ShortVideoMaterialRunStatus.Running
+                                   && !current.CancelRequested
+                                   && current.OwnerInstanceId == ownerInstanceId
+                                   && current.ProcessingToken == processingToken,
+                        Builders<ShortVideoMaterialRun>.Update.Set(current => current.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                    if (renewed.MatchedCount != 1)
+                    {
+                        _logger.LogWarning(
+                            "[short-video-material] 处理租约已失效，停止续租 run={RunId}",
+                            runId);
+                        authorityStop.Cancel();
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 瞬时数据库故障不应立刻终止业务调用；下一拍继续续租。若持续超过租约期限，
+                    // 周期回收才会按 token + UpdatedAt 的原子条件接管。
+                    _logger.LogError(ex, "[short-video-material] 处理租约续租失败 run={RunId}", runId);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (stopToken.IsCancellationRequested)
+        {
+            // 正常收尾。
+        }
+    }
+
     private async Task MarkCurrentRunFailedAsync(string message)
     {
-        if (string.IsNullOrWhiteSpace(_currentRunId)) return;
+        if (string.IsNullOrWhiteSpace(_currentRunId) || string.IsNullOrWhiteSpace(_currentProcessingToken)) return;
         try
         {
             using var scope = _scopeFactory.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
             await db.ShortVideoMaterialRuns.UpdateOneAsync(
-                r => r.Id == _currentRunId && r.Status == "running",
+                r => r.Id == _currentRunId
+                     && r.Status == ShortVideoMaterialRunStatus.Running
+                     && r.ProcessingToken == _currentProcessingToken,
                 Builders<ShortVideoMaterialRun>.Update
-                    .Set(r => r.Status, "failed")
+                    .Set(r => r.Status, ShortVideoMaterialRunStatus.Failed)
+                    .Set(r => r.ProcessingToken, (string?)null)
                     .Set(r => r.ErrorCode, ErrorCodes.SHORT_VIDEO_INTERRUPTED)
                     .Set(r => r.ErrorMessage, message)
                     .Set(r => r.UpdatedAt, DateTime.UtcNow),
@@ -180,16 +239,18 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
             includeUnowned: true,
             retiredLegacyOwnerIds: DeploymentAuthority.GetRetiredLegacyBranchOwnerIds(configuration),
             legacyOwnerCreatedBeforeUtc: DeploymentAuthority.GetRetiredLegacyBranchOwnerCreatedBeforeUtc(configuration));
+        var processingToken = Guid.NewGuid().ToString("N");
         var run = await db.ShortVideoMaterialRuns.FindOneAndUpdateAsync(
             Builders<ShortVideoMaterialRun>.Filter.And(
-                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, "queued"),
+                Builders<ShortVideoMaterialRun>.Filter.Eq(r => r.Status, ShortVideoMaterialRunStatus.Queued),
                 ownerScope),
             Builders<ShortVideoMaterialRun>.Update
-                .Set(r => r.Status, "running")
+                .Set(r => r.Status, ShortVideoMaterialRunStatus.Running)
                 .Set(r => r.ErrorCode, (string?)null)
                 .Set(r => r.ErrorMessage, (string?)null)
                 // 认领时盖上本实例归属（领取历史无主任务后必须打主，否则崩溃重启兜底匹配不到、永卡 running，Bugbot Medium）
                 .Set(r => r.OwnerInstanceId, instanceId)
+                .Set(r => r.ProcessingToken, processingToken)
                 .Set(r => r.UpdatedAt, DateTime.UtcNow),
             new FindOneAndUpdateOptions<ShortVideoMaterialRun>
             {
@@ -200,31 +261,99 @@ public sealed class ShortVideoMaterialWorker : BackgroundService
         if (run == null) return;
 
         _currentRunId = run.Id;
+        _currentProcessingToken = run.ProcessingToken;
+        if (string.IsNullOrWhiteSpace(run.OwnerInstanceId) || string.IsNullOrWhiteSpace(run.ProcessingToken))
+            throw new InvalidOperationException("短视频任务认领后缺少处理租约");
+        using var leaseHeartbeatStop = new CancellationTokenSource();
+        using var leaseAuthorityStop = new CancellationTokenSource();
+        var leaseHeartbeatTask = RenewProcessingLeaseAsync(
+            run.Id,
+            run.OwnerInstanceId,
+            run.ProcessingToken,
+            leaseHeartbeatStop.Token,
+            leaseAuthorityStop);
         try
         {
             // 不用 WaitAsync 套超时:那只会让 await 提前返回、原 ProcessAsync 仍在后台跑(无 ct
             // 不可取消),可能稍后又把 run 写成 done 与"超时失败"冲突(Bugbot High),也违反
             // server-authority"不中途取消服务端任务"。改为依赖各外部调用自身超时(resolve 30s/
             // 下载 180s/ASR 600s 已有界)+ 周期兜底(RecoverStaleRunningRunsAsync 15min)托底。
-            await processor.ProcessAsync(run.Id);
+            await processor.ProcessAsync(run.Id, leaseAuthorityStop.Token);
+        }
+        catch (OperationCanceledException) when (leaseAuthorityStop.IsCancellationRequested)
+        {
+            _logger.LogWarning("[short-video-material] 处理权失效，已停止后续写入 run={RunId}", run.Id);
+            var cancelled = await db.ShortVideoMaterialRuns.Find(
+                r => r.Id == run.Id
+                     && r.Status == ShortVideoMaterialRunStatus.Running
+                     && r.CancelRequested
+                     && r.ProcessingToken == run.ProcessingToken).FirstOrDefaultAsync(CancellationToken.None);
+            if (cancelled != null)
+            {
+                cancelled.Status = ShortVideoMaterialRunStatus.Cancelled;
+                cancelled.ProcessingToken = null;
+                cancelled.ErrorCode = null;
+                cancelled.ErrorMessage = null;
+                cancelled.UpdatedAt = DateTime.UtcNow;
+                await db.ShortVideoMaterialRuns.ReplaceOneAsync(
+                    r => r.Id == cancelled.Id
+                         && r.Status == ShortVideoMaterialRunStatus.Running
+                         && r.CancelRequested
+                         && r.ProcessingToken == run.ProcessingToken,
+                    cancelled,
+                    new ReplaceOptions { IsUpsert = false },
+                    CancellationToken.None);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[short-video-material] Process failed run={RunId}", run.Id);
-            var latest = await db.ShortVideoMaterialRuns.Find(r => r.Id == run.Id).FirstOrDefaultAsync(CancellationToken.None);
-            if (latest != null)
+            var latest = await db.ShortVideoMaterialRuns.Find(
+                r => r.Id == run.Id
+                     && r.Status == ShortVideoMaterialRunStatus.Running
+                     && r.ProcessingToken == run.ProcessingToken).FirstOrDefaultAsync(CancellationToken.None);
+            if (latest != null && !string.IsNullOrWhiteSpace(run.ProcessingToken))
             {
-                latest.Status = "failed";
-                latest.ErrorCode = ErrorCodes.INTERNAL_ERROR;
-                latest.ErrorMessage = ex.Message;
-                ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
+                latest.ProcessingToken = null;
+                if (latest.CancelRequested)
+                {
+                    latest.Status = ShortVideoMaterialRunStatus.Cancelled;
+                    latest.ErrorCode = null;
+                    latest.ErrorMessage = null;
+                    _logger.LogInformation(
+                        "[short-video-material] 已按取消请求停止处理 run={RunId}",
+                        run.Id);
+                }
+                else
+                {
+                    latest.Status = ShortVideoMaterialRunStatus.Failed;
+                    latest.ErrorCode = ErrorCodes.INTERNAL_ERROR;
+                    latest.ErrorMessage = ex.Message;
+                    ShortVideoMaterialProcessor.MarkFirstRunningStageFailed(latest, ex.Message);
+                    _logger.LogError(ex, "[short-video-material] Process failed run={RunId}", run.Id);
+                }
                 latest.UpdatedAt = DateTime.UtcNow;
-                await db.ShortVideoMaterialRuns.ReplaceOneAsync(r => r.Id == latest.Id, latest, cancellationToken: CancellationToken.None);
+                await db.ShortVideoMaterialRuns.ReplaceOneAsync(
+                    r => r.Id == latest.Id
+                         && r.Status == ShortVideoMaterialRunStatus.Running
+                         && r.ProcessingToken == run.ProcessingToken,
+                    latest,
+                    new ReplaceOptions { IsUpsert = false },
+                    CancellationToken.None);
+            }
+            else
+            {
+                _logger.LogWarning(
+                    ex,
+                    "[short-video-material] 处理异常发生时租约已失效，未覆盖新持有者状态 run={RunId}",
+                    run.Id);
             }
         }
         finally
         {
+            leaseHeartbeatStop.Cancel();
+            await leaseHeartbeatTask;
             _currentRunId = null;
+            _currentProcessingToken = null;
         }
     }
 }
@@ -251,20 +380,72 @@ public sealed class ShortVideoMaterialProcessor
         _logger = logger;
     }
 
-    public async Task ProcessAsync(string runId)
+    public async Task ProcessAsync(string runId, CancellationToken authorityToken = default)
     {
-        var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(CancellationToken.None)
+        var claimedRun = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId)
+            .FirstOrDefaultAsync(authorityToken);
+        var expectedProcessingToken = claimedRun?.ProcessingToken;
+        try
+        {
+            await ProcessCoreAsync(runId, authorityToken);
+        }
+        catch
+        {
+            try
+            {
+                var authoritativeRun = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (CanCleanupArtifactsAfterFailure(authoritativeRun, expectedProcessingToken))
+                    await CleanupRunArtifactsAsync(runId);
+                else
+                    _logger.LogInformation(
+                        "短视频处理异常后的权威状态不允许清理产物 run={RunId}, status={Status}",
+                        runId,
+                        authoritativeRun?.Status ?? "missing");
+            }
+            catch (Exception cleanupError)
+            {
+                // 终态提交结果不确定时宁可保留可回收产物，也不能误删已完成任务的引用。
+                _logger.LogError(cleanupError, "短视频处理失败后的权威核对或产物清理失败 run={RunId}", runId);
+            }
+            throw;
+        }
+    }
+
+    internal static bool CanCleanupArtifactsAfterFailure(
+        ShortVideoMaterialRun? authoritativeRun,
+        string? expectedProcessingToken)
+    {
+        if (authoritativeRun == null || string.IsNullOrWhiteSpace(expectedProcessingToken)) return false;
+        if (authoritativeRun.Status == ShortVideoMaterialRunStatus.Done) return false;
+        if (authoritativeRun.Status == ShortVideoMaterialRunStatus.Running)
+            return string.Equals(
+                authoritativeRun.ProcessingToken,
+                expectedProcessingToken,
+                StringComparison.Ordinal);
+        return authoritativeRun.Status is ShortVideoMaterialRunStatus.Failed
+            or ShortVideoMaterialRunStatus.Cancelled;
+    }
+
+    private async Task ProcessCoreAsync(string runId, CancellationToken authorityToken)
+    {
+        var run = await _db.ShortVideoMaterialRuns.Find(r => r.Id == runId).FirstOrDefaultAsync(authorityToken)
                   ?? throw new InvalidOperationException("短视频解析运行记录不存在");
-        var user = await _db.Users.Find(u => u.UserId == run.UserId).FirstOrDefaultAsync(CancellationToken.None);
+        var user = await _db.Users.Find(u => u.UserId == run.UserId).FirstOrDefaultAsync(authorityToken);
         var userName = string.IsNullOrWhiteSpace(user?.DisplayName) ? user?.Username ?? run.UserId : user.DisplayName!;
         var now = DateTime.UtcNow;
 
         // 进入解析就把 parse 标成 running 并落库：一是让前端立刻看到"正在解析"而不是僵在 pending
         // （否则用户感觉"一点反应都没有"），二是刷新 updatedAt 作为心跳，配合周期兜底判活。
         MarkStage(run, "parse", "running", "正在解析短视频链接…");
-        await SaveRunAsync(run);
+        await SaveRunAsync(run, authorityToken);
 
-        var parsed = await ResolveParsedSourceAsync(run.VideoUrl, run.Platform, run.InputSourceText, run.RequestedTitle);
+        var parsed = await ResolveParsedSourceAsync(
+            run.VideoUrl,
+            run.Platform,
+            run.InputSourceText,
+            run.RequestedTitle,
+            authorityToken);
         var title = CleanTitle(run.RequestedTitle) ?? CleanTitle(parsed.Title) ?? run.Title;
         run.Title = title;
         run.SourceMode = parsed.SourceMode;
@@ -272,38 +453,67 @@ public sealed class ShortVideoMaterialProcessor
         run.ParserMessage = parsed.Message;
         run.Card = BuildShortVideoCard(parsed.MetadataJson, title, run.Platform, parsed.CoverUrl);
         MarkStage(run, "parse", "done", parsed.Message);
-        await SaveRunAsync(run);
+        await SaveRunAsync(run, authorityToken);
 
-        var store = await ResolveStoreAsync(run.StoreId, run.UserId);
+        var store = await ResolveStoreAsync(run.StoreId, run.UserId, authorityToken);
         run.StoreId = store.Id;
         MarkStage(run, "source", "running", $"正在把视频文件保存到知识库「{store.Name}」");
-        await SaveRunAsync(run);
+        await SaveRunAsync(run, authorityToken);
 
-        var videoMaterial = await DownloadVideoMaterialAsync(parsed);
-        var sourceEntry = await CreateVideoEntryAsync(
-            store,
-            run.UserId,
-            userName,
-            title,
-            videoMaterial,
-            parsed,
-            run.VideoUrl,
-            run.Platform,
-            run.Id,
-            now);
+        DownloadedVideoMaterial? videoMaterial = null;
+        DocumentEntry? sourceEntry = null;
+        try
+        {
+            videoMaterial = await DownloadVideoMaterialAsync(
+                parsed,
+                authorityToken,
+                async storedVideo =>
+                {
+                    videoMaterial = storedVideo;
+                    await EnsureRunActiveAsync(run, authorityToken);
+                    sourceEntry = await CreateVideoEntryAsync(
+                        store,
+                        run.UserId,
+                        userName,
+                        title,
+                        storedVideo,
+                        parsed,
+                        run.VideoUrl,
+                        run.Platform,
+                        run,
+                        now,
+                        authorityToken);
+                });
+        }
+        catch
+        {
+            try
+            {
+                if (videoMaterial != null)
+                    await DeleteDownloadedVideoIfUnreferencedAsync(videoMaterial);
+            }
+            catch (Exception cleanupError)
+            {
+                _logger.LogError(cleanupError, "短视频处理权失效后的下载产物清理失败 run={RunId}", run.Id);
+            }
+            throw;
+        }
+        if (videoMaterial == null || sourceEntry == null)
+            throw new InvalidOperationException("短视频下载产物未完成引用登记");
         run.SourceEntryId = sourceEntry.Id;
         run.SourceVideoUrl = videoMaterial.Url;
         if (run.Card != null)
             run.Card.VideoUrl = videoMaterial.Url; // 入库后改用 COS 永久地址播放
         MarkStage(run, "source", "done", "原始视频已作为知识库文件入库");
-        await SaveRunAsync(run);
+        await SaveRunAsync(run, authorityToken);
 
         MarkStage(run, "transcript", "running", "正在从已入库视频执行 ASR 转写");
-        await SaveRunAsync(run);
+        await SaveRunAsync(run, authorityToken);
 
         var transcriptAttempt = parsed.SourceMode == "manual"
             ? new VideoTranscriptionAttempt(parsed.SourceText, null)
-            : await TryTranscribeVideoAsync(videoMaterial.Url, title);
+            : await TryTranscribeVideoAsync(videoMaterial.Url, title, authorityToken);
+        await EnsureRunActiveAsync(run, authorityToken);
         if (!string.IsNullOrWhiteSpace(transcriptAttempt.Text))
         {
             var transcriptEntry = await CreateMarkdownEntryAsync(
@@ -322,9 +532,10 @@ public sealed class ShortVideoMaterialProcessor
                     ["videoUrl"] = run.VideoUrl,
                     ["assetUrl"] = videoMaterial.Url,
                     ["platform"] = run.Platform,
-                    ["sourceMode"] = "asr",
+                    ["sourceMode"] = parsed.SourceMode == "manual" ? "manual" : "asr",
                 },
-                now);
+                now,
+                authorityToken);
             run.TranscriptEntryId = transcriptEntry.Id;
             run.EntryId = transcriptEntry.Id;
             MarkStage(run, "transcript", "done", "已从视频转写出原始文字并保存到知识库");
@@ -340,9 +551,9 @@ public sealed class ShortVideoMaterialProcessor
             MarkStage(run, "ready", "done", "视频已入库；文字、文案和时间线需要后续通过转写或人工补充继续加工");
         }
 
-        run.Status = "done";
+        run.Status = ShortVideoMaterialRunStatus.Done;
         run.UpdatedAt = DateTime.UtcNow;
-        await SaveRunAsync(run);
+        await SaveRunAsync(run, authorityToken, terminal: true);
     }
 
     private async Task<DocumentEntry> CreateVideoEntryAsync(
@@ -354,10 +565,11 @@ public sealed class ShortVideoMaterialProcessor
         ParsedShortVideoSource parsed,
         string originalUrl,
         string platform,
-        string runId,
-        DateTime now)
+        ShortVideoMaterialRun run,
+        DateTime now,
+        CancellationToken authorityToken)
     {
-        var fileName = BuildVideoFileName(title);
+        var fileName = BuildVideoFileName(title, video.MimeType);
         var attachment = new Attachment
         {
             UploaderId = userId,
@@ -368,8 +580,6 @@ public sealed class ShortVideoMaterialProcessor
             Type = AttachmentType.Document,
             UploadedAt = now,
         };
-        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: CancellationToken.None);
-
         var entry = new DocumentEntry
         {
             StoreId = store.Id,
@@ -383,7 +593,7 @@ public sealed class ShortVideoMaterialProcessor
             Metadata = new Dictionary<string, string>
             {
                 ["kind"] = "short-video-video",
-                ["runId"] = runId,
+                ["runId"] = run.Id,
                 ["originalShareUrl"] = originalUrl,
                 ["assetUrl"] = video.Url,
                 ["platform"] = platform,
@@ -400,13 +610,30 @@ public sealed class ShortVideoMaterialProcessor
         };
         if (!string.IsNullOrWhiteSpace(parsed.CoverUrl))
             entry.Metadata["coverUrl"] = parsed.CoverUrl!;
+        if (!string.IsNullOrWhiteSpace(video.Sha256))
+            entry.Metadata["sha256"] = video.Sha256!;
 
-        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
-        await IncrementStoreDocumentCountAsync(store, entry.Id);
-        return entry;
+        try
+        {
+            await _db.Attachments.InsertOneAsync(attachment, cancellationToken: authorityToken);
+            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: authorityToken);
+            await IncrementStoreDocumentCountAsync(store, entry.Id, authorityToken);
+            await EnsureRunActiveAsync(run, authorityToken);
+            return entry;
+        }
+        catch
+        {
+            await _db.Attachments.DeleteOneAsync(
+                item => item.AttachmentId == attachment.AttachmentId,
+                CancellationToken.None);
+            throw;
+        }
     }
 
-    private async Task IncrementStoreDocumentCountAsync(DocumentStore store, string entryId)
+    private async Task IncrementStoreDocumentCountAsync(
+        DocumentStore store,
+        string entryId,
+        CancellationToken authorityToken)
     {
         await _db.DocumentStores.UpdateOneAsync(
             s => s.Id == store.Id,
@@ -414,12 +641,15 @@ public sealed class ShortVideoMaterialProcessor
                 .Inc(s => s.DocumentCount, 1)
                 .Set(s => s.PrimaryEntryId, string.IsNullOrEmpty(store.PrimaryEntryId) ? entryId : store.PrimaryEntryId)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: authorityToken);
         if (string.IsNullOrEmpty(store.PrimaryEntryId))
             store.PrimaryEntryId = entryId;
     }
 
-    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(ParsedShortVideoSource parsed)
+    private async Task<DownloadedVideoMaterial> DownloadVideoMaterialAsync(
+        ParsedShortVideoSource parsed,
+        CancellationToken authorityToken,
+        Func<DownloadedVideoMaterial, Task>? registerStoredAssetAsync = null)
     {
         var videoUrl = RequireResolvedVideoUrl(parsed.VideoUrl);
 
@@ -432,17 +662,29 @@ public sealed class ShortVideoMaterialProcessor
             {
                 ["videoUrl"] = videoUrl,
                 ["timeoutSeconds"] = 180,
+                ["maxFileSizeBytes"] = CapsuleExecutor.DefaultMaxVideoDownloadBytes,
             },
         };
         var result = await CapsuleExecutor.ExecuteVideoDownloaderAsync(
             _serviceProvider,
             node,
             new Dictionary<string, string>(),
-            new List<ExecutionArtifact>());
+            new List<ExecutionArtifact>(),
+            authorityToken,
+            registerStoredAssetAsync == null
+                ? null
+                : stored => registerStoredAssetAsync(new DownloadedVideoMaterial(
+                    stored.Url,
+                    stored.Mime,
+                    stored.SizeBytes,
+                    stored.Sha256)));
         return ExtractDownloadedVideo(result.Artifacts.FirstOrDefault()?.InlineContent);
     }
 
-    private async Task<VideoTranscriptionAttempt> TryTranscribeVideoAsync(string videoUrl, string title)
+    private async Task<VideoTranscriptionAttempt> TryTranscribeVideoAsync(
+        string videoUrl,
+        string title,
+        CancellationToken authorityToken)
     {
         try
         {
@@ -474,11 +716,16 @@ public sealed class ShortVideoMaterialProcessor
                         InlineContent = input,
                     },
                 },
-                null);
+                null,
+                authorityToken);
             var text = ExtractTranscript(result.Artifacts.FirstOrDefault()?.InlineContent);
             return string.IsNullOrWhiteSpace(text)
                 ? new VideoTranscriptionAttempt(null, "ASR 模型未返回可用文字")
                 : new VideoTranscriptionAttempt(text, null);
+        }
+        catch (OperationCanceledException) when (authorityToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -524,13 +771,24 @@ public sealed class ShortVideoMaterialProcessor
         }
     }
 
-    private static string BuildVideoFileName(string title)
+    internal static string BuildVideoFileName(string title, string? mimeType)
     {
         var safe = Regex.Replace(title.Trim(), @"[\\/:*?""<>|\r\n]+", " ");
         safe = Regex.Replace(safe, @"\s+", " ").Trim();
         if (string.IsNullOrWhiteSpace(safe)) safe = "短视频素材";
         if (safe.Length > 60) safe = safe[..60].Trim();
-        return $"{safe}.mp4";
+        var extension = (mimeType ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "video/mp4" => "mp4",
+            "video/x-m4v" => "m4v",
+            "video/quicktime" => "mov",
+            "video/webm" => "webm",
+            "video/x-matroska" => "mkv",
+            "video/x-msvideo" => "avi",
+            _ => throw new InvalidOperationException(
+                $"下载的视频格式不受支持（{mimeType ?? "未知"}），请改用 MP4、MOV、WebM、MKV 或 AVI 文件"),
+        };
+        return $"{safe}.{extension}";
     }
 
     private static string BuildVideoIndex(string title, string originalUrl, string platform, ParsedShortVideoSource parsed)
@@ -545,13 +803,16 @@ public sealed class ShortVideoMaterialProcessor
         return sb.ToString();
     }
 
-    private async Task<DocumentStore> ResolveStoreAsync(string? storeId, string userId)
+    private async Task<DocumentStore> ResolveStoreAsync(
+        string? storeId,
+        string userId,
+        CancellationToken authorityToken)
     {
         if (!string.IsNullOrWhiteSpace(storeId))
         {
             var existing = await _db.DocumentStores
                 .Find(s => s.Id == storeId && s.OwnerId == userId)
-                .FirstOrDefaultAsync(CancellationToken.None);
+                .FirstOrDefaultAsync(authorityToken);
             if (existing == null)
                 throw new InvalidOperationException("目标知识库不存在或不可写");
             return existing;
@@ -560,7 +821,7 @@ public sealed class ShortVideoMaterialProcessor
         const string storeName = "短视频素材库";
         var store = await _db.DocumentStores
             .Find(s => s.OwnerId == userId && s.Name == storeName)
-            .FirstOrDefaultAsync(CancellationToken.None);
+            .FirstOrDefaultAsync(authorityToken);
         if (store != null) return store;
 
         var now = DateTime.UtcNow;
@@ -574,7 +835,7 @@ public sealed class ShortVideoMaterialProcessor
             CreatedAt = now,
             UpdatedAt = now,
         };
-        await _db.DocumentStores.InsertOneAsync(store, cancellationToken: CancellationToken.None);
+        await _db.DocumentStores.InsertOneAsync(store, cancellationToken: authorityToken);
         return store;
     }
 
@@ -587,45 +848,218 @@ public sealed class ShortVideoMaterialProcessor
         string summary,
         List<string> tags,
         Dictionary<string, string> metadata,
-        DateTime now)
+        DateTime now,
+        CancellationToken authorityToken)
     {
-        var parsed = await _documentService.ParseAsync(markdown);
+        var parsed = await _documentService.ParseAsync(markdown).WaitAsync(authorityToken);
         parsed.Title = title;
-        await _documentService.SaveAsync(parsed);
-
-        var entry = new DocumentEntry
+        try
         {
-            StoreId = store.Id,
-            DocumentId = parsed.Id,
-            Title = title,
-            Summary = summary,
-            SourceType = DocumentSourceType.Import,
-            ContentType = "text/markdown",
-            FileSize = Encoding.UTF8.GetByteCount(markdown),
-            Tags = tags,
-            Metadata = metadata,
-            CreatedBy = userId,
-            CreatedByName = userName,
-            UpdatedBy = userId,
-            UpdatedByName = userName,
-            ContentIndex = markdown.Length > 2000 ? markdown[..2000] : markdown,
-            LastChangedAt = now,
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
-        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
-        await IncrementStoreDocumentCountAsync(store, entry.Id);
-        return entry;
+            // IDocumentService 目前没有 CancellationToken。必须等待保存真正结束后再检查租约，
+            // 这样取消时才能确定性删除刚写入的文档，而不是让后台 SaveAsync 脱管后留下孤儿。
+            await _documentService.SaveAsync(parsed);
+            authorityToken.ThrowIfCancellationRequested();
+            var entry = new DocumentEntry
+            {
+                StoreId = store.Id,
+                DocumentId = parsed.Id,
+                Title = title,
+                Summary = summary,
+                SourceType = DocumentSourceType.Import,
+                ContentType = "text/markdown",
+                FileSize = Encoding.UTF8.GetByteCount(markdown),
+                Tags = tags,
+                Metadata = metadata,
+                CreatedBy = userId,
+                CreatedByName = userName,
+                UpdatedBy = userId,
+                UpdatedByName = userName,
+                ContentIndex = markdown.Length > 2000 ? markdown[..2000] : markdown,
+                LastChangedAt = now,
+                CreatedAt = now,
+                UpdatedAt = now,
+            };
+            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: authorityToken);
+            await IncrementStoreDocumentCountAsync(store, entry.Id, authorityToken);
+            return entry;
+        }
+        catch
+        {
+            await _db.Documents.DeleteOneAsync(
+                document => document.Id == parsed.Id,
+                CancellationToken.None);
+            throw;
+        }
     }
 
-    private async Task SaveRunAsync(ShortVideoMaterialRun run)
+    private async Task EnsureRunActiveAsync(
+        ShortVideoMaterialRun run,
+        CancellationToken authorityToken)
     {
+        authorityToken.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(run.ProcessingToken))
+            throw new InvalidOperationException("短视频任务缺少处理租约，已停止继续写入");
+        var active = await _db.ShortVideoMaterialRuns.Find(
+            current => current.Id == run.Id
+                       && current.Status == ShortVideoMaterialRunStatus.Running
+                       && !current.CancelRequested
+                       && current.OwnerInstanceId == run.OwnerInstanceId
+                       && current.ProcessingToken == run.ProcessingToken)
+            .AnyAsync(authorityToken);
+        if (!active)
+            throw new InvalidOperationException("短视频任务处理权已失效，已停止继续写入");
+    }
+
+    private async Task SaveRunAsync(
+        ShortVideoMaterialRun run,
+        CancellationToken authorityToken,
+        bool terminal = false)
+    {
+        authorityToken.ThrowIfCancellationRequested();
+        var processingToken = run.ProcessingToken;
+        if (string.IsNullOrWhiteSpace(processingToken))
+            throw new InvalidOperationException("短视频任务缺少处理租约，已停止继续写入");
         run.UpdatedAt = DateTime.UtcNow;
-        await _db.ShortVideoMaterialRuns.ReplaceOneAsync(
-            r => r.Id == run.Id,
+        if (terminal) run.ProcessingToken = null;
+        var saved = await _db.ShortVideoMaterialRuns.ReplaceOneAsync(
+            r => r.Id == run.Id
+                 && r.Status == ShortVideoMaterialRunStatus.Running
+                 && !r.CancelRequested
+                 && r.OwnerInstanceId == run.OwnerInstanceId
+                 && r.ProcessingToken == processingToken,
             run,
-            new ReplaceOptions { IsUpsert = true },
+            new ReplaceOptions { IsUpsert = false },
+            authorityToken);
+        if (saved.MatchedCount != 1)
+            throw new InvalidOperationException("短视频任务处理权已失效，已停止继续写入");
+    }
+
+    private async Task CleanupRunArtifactsAsync(string runId)
+    {
+        var runEntries = await _db.DocumentEntries
+            .Find(Builders<DocumentEntry>.Filter.Eq("Metadata.runId", runId))
+            .ToListAsync(CancellationToken.None);
+        if (runEntries.Count == 0) return;
+
+        var entryIds = runEntries.Select(entry => entry.Id).ToArray();
+        var storeIds = runEntries.Select(entry => entry.StoreId).Distinct(StringComparer.Ordinal).ToArray();
+        var attachmentIds = runEntries
+            .Select(entry => entry.AttachmentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var documentIds = runEntries
+            .Select(entry => entry.DocumentId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var assets = runEntries
+            .Select(entry => new
+            {
+                Url = entry.Metadata.GetValueOrDefault("assetUrl"),
+                Sha256 = entry.Metadata.GetValueOrDefault("sha256"),
+            })
+            .Where(asset => !string.IsNullOrWhiteSpace(asset.Url)
+                            && !string.IsNullOrWhiteSpace(asset.Sha256))
+            .DistinctBy(asset => asset.Sha256, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        await _db.DocumentEntries.DeleteManyAsync(
+            entry => entryIds.Contains(entry.Id),
             CancellationToken.None);
+
+        foreach (var storeId in storeIds)
+        {
+            var store = await _db.DocumentStores.Find(store => store.Id == storeId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (store == null) continue;
+            var remainingCount = await _db.DocumentEntries.CountDocumentsAsync(
+                entry => entry.StoreId == storeId,
+                cancellationToken: CancellationToken.None);
+            var primaryEntryId = store.PrimaryEntryId;
+            if (!string.IsNullOrWhiteSpace(primaryEntryId) && entryIds.Contains(primaryEntryId))
+            {
+                primaryEntryId = await _db.DocumentEntries.Find(entry => entry.StoreId == storeId)
+                    .SortBy(entry => entry.CreatedAt)
+                    .Project(entry => entry.Id)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            }
+            await _db.DocumentStores.UpdateOneAsync(
+                current => current.Id == storeId,
+                Builders<DocumentStore>.Update
+                    .Set(current => current.DocumentCount, checked((int)remainingCount))
+                    .Set(current => current.PrimaryEntryId, primaryEntryId)
+                    .Set(current => current.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
+
+        foreach (var attachmentId in attachmentIds)
+        {
+            if (await _db.DocumentEntries.CountDocumentsAsync(
+                    entry => entry.AttachmentId == attachmentId,
+                    cancellationToken: CancellationToken.None) == 0)
+            {
+                await _db.Attachments.DeleteOneAsync(
+                    attachment => attachment.AttachmentId == attachmentId,
+                    CancellationToken.None);
+            }
+        }
+
+        foreach (var documentId in documentIds)
+        {
+            if (await _db.DocumentEntries.CountDocumentsAsync(
+                    entry => entry.DocumentId == documentId,
+                    cancellationToken: CancellationToken.None) == 0)
+            {
+                await _db.Documents.DeleteOneAsync(
+                    document => document.Id == documentId,
+                    CancellationToken.None);
+            }
+        }
+
+        var assetStorage = _serviceProvider.GetService<IAssetStorage>();
+        if (assetStorage == null) return;
+        foreach (var asset in assets)
+        {
+            await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                _db,
+                VideoAssetMutationLease.ContentKey("workflow-agent", "doc", asset.Sha256!),
+                CancellationToken.None);
+            var stillReferenced = await _db.DocumentEntries.CountDocumentsAsync(
+                Builders<DocumentEntry>.Filter.Eq("Metadata.assetUrl", asset.Url),
+                cancellationToken: CancellationToken.None);
+            if (stillReferenced == 0)
+            {
+                await assetStorage.DeleteByShaAsync(
+                    asset.Sha256!,
+                    CancellationToken.None,
+                    domain: "workflow-agent",
+                    type: "doc");
+            }
+        }
+    }
+
+    private async Task DeleteDownloadedVideoIfUnreferencedAsync(DownloadedVideoMaterial video)
+    {
+        if (string.IsNullOrWhiteSpace(video.Sha256)) return;
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            VideoAssetMutationLease.ContentKey("workflow-agent", "doc", video.Sha256),
+            CancellationToken.None);
+        var stillReferenced = await _db.DocumentEntries.CountDocumentsAsync(
+            Builders<DocumentEntry>.Filter.Eq("Metadata.assetUrl", video.Url),
+            cancellationToken: CancellationToken.None);
+        if (stillReferenced != 0) return;
+
+        var assetStorage = _serviceProvider.GetService<IAssetStorage>();
+        if (assetStorage == null) return;
+        await assetStorage.DeleteByShaAsync(
+            video.Sha256,
+            CancellationToken.None,
+            domain: "workflow-agent",
+            type: "doc");
     }
 
     public static List<ShortVideoMaterialStage> BuildInitialStages()
@@ -675,6 +1109,17 @@ public sealed class ShortVideoMaterialProcessor
            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
            && !string.IsNullOrWhiteSpace(uri.Host);
 
+    public static bool IsDirectVideoUrl(string? value)
+    {
+        if (!Uri.TryCreate(value?.Trim(), UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            || string.IsNullOrWhiteSpace(uri.Host))
+            return false;
+
+        return Path.GetExtension(uri.AbsolutePath).ToLowerInvariant() is
+            ".mp4" or ".m4v" or ".mov" or ".webm" or ".mkv" or ".avi";
+    }
+
     public static string DetectPlatform(string url)
     {
         var lower = url.ToLowerInvariant();
@@ -687,10 +1132,32 @@ public sealed class ShortVideoMaterialProcessor
         return "unknown";
     }
 
-    private async Task<ParsedShortVideoSource> ResolveParsedSourceAsync(string videoUrl, string platform, string? manualText, string? requestedTitle)
+    private async Task<ParsedShortVideoSource> ResolveParsedSourceAsync(
+        string videoUrl,
+        string platform,
+        string? manualText,
+        string? requestedTitle,
+        CancellationToken authorityToken)
     {
+        authorityToken.ThrowIfCancellationRequested();
         var trimmedManual = manualText?.Trim();
         var hasManualText = !string.IsNullOrWhiteSpace(trimmedManual);
+        if (Uri.TryCreate(videoUrl.Trim(), UriKind.Absolute, out var directUri)
+            && string.Equals(Path.GetExtension(directUri.AbsolutePath), ".ogv", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("当前下载与转写流水线不支持 OGV 直链，请先转换为 MP4、MOV、WebM、MKV 或 AVI");
+        if (IsDirectVideoUrl(videoUrl))
+        {
+            return new ParsedShortVideoSource(
+                CleanTitle(requestedTitle),
+                trimmedManual,
+                hasManualText ? "manual" : "direct-video",
+                hasManualText
+                    ? "已识别到直接视频文件，并使用用户提供的文字作为后续加工来源"
+                    : "已识别到直接视频文件；默认先保存原始视频，再从视频执行真实转写",
+                null,
+                videoUrl,
+                null);
+        }
         var apiKey = ResolveTikHubApiKey();
         if (string.IsNullOrWhiteSpace(apiKey))
         {
@@ -722,7 +1189,8 @@ public sealed class ShortVideoMaterialProcessor
                 _serviceProvider,
                 parserNode,
                 new Dictionary<string, string>(),
-                new List<ExecutionArtifact>());
+                new List<ExecutionArtifact>(),
+                authorityToken);
             var metadataJson = parserResult.Artifacts.FirstOrDefault()?.InlineContent;
             var metadata = ExtractParsedMetadata(metadataJson);
 
@@ -734,6 +1202,10 @@ public sealed class ShortVideoMaterialProcessor
                 _ => "已解析到视频文件地址；默认先保存原始视频，再从视频执行真实转写",
             };
             return new ParsedShortVideoSource(metadata.Title, source, mode, message, metadataJson, metadata.VideoUrl, metadata.CoverUrl);
+        }
+        catch (OperationCanceledException) when (authorityToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

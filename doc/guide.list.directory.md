@@ -30,6 +30,7 @@
 - [MAP 知识库传输协议（MAP-KBTP v1） · 规格](./spec.knowledge-base.transfer-protocol.md) `spec.knowledge-base.transfer-protocol`
 - [海鲜市场产品规格 · 规格](./spec.marketplace.md) `spec.marketplace`
 - [应用注册中心协议 · 规格](./spec.platform.app-registry.md) `spec.platform.app-registry`
+- [MAP 核心功能验收清单 · 规格](./spec.platform.core-business-checklist.md) `spec.platform.core-business-checklist`
 - [网页生成设置与风格预设 · 规格](./spec.platform.design-generation.settings.md) `spec.platform.design-generation.settings`
 - [设计执行协议 map-design-executor-v1 · 规格](./spec.platform.design-runtime.protocol.md) `spec.platform.design-runtime.protocol`
 - [LLM 网关测试矩阵 · 规格](./spec.platform.llm-gateway.test-matrix.md) `spec.platform.llm-gateway.test-matrix`
@@ -218,6 +219,8 @@
 - [开放平台 Open API · 指南](./guide.open-platform.open-api.md) `guide.open-platform.open-api`
 - [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
+- [MAP 核心功能验收方法 · 指南](./guide.platform.core-business-acceptance.md) `guide.platform.core-business-acceptance`
+- [MAP 核心功能历史问题与经验 · 指南](./guide.platform.core-business-history.md) `guide.platform.core-business-history`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
 - [LLM 网关验收面包屑清单 · 指南](./guide.platform.llm-gateway.acceptance-breadcrumbs.md) `guide.platform.llm-gateway.acceptance-breadcrumbs`
@@ -261,6 +264,7 @@
 - [移动端视觉检查矩阵 · 规则](./rule.frontend.mobile-visual-check-matrix.md) `rule.frontend.mobile-visual-check-matrix`
 - [流式文本动效 · 规则](./rule.frontend.streaming-text.md) `rule.frontend.streaming-text`
 - [录音链路：换一条录音要放掉什么 · 规则](./rule.prd-admin.recording-entry-scope.md) `rule.prd-admin.recording-entry-scope`
+- [MAP 验收三池经验规范 · 规则](./rule.platform.acceptance-memory.md) `rule.platform.acceptance-memory`
 - [Agent 开发交付流程 · 规则](./rule.platform.agent-development.md) `rule.platform.agent-development`
 - [Agent 权限分类 · 规则](./rule.platform.agent-permissions.md) `rule.platform.agent-permissions`
 - [AI 模型可见性原则 · 规则](./rule.platform.ai-model-visibility.md) `rule.platform.ai-model-visibility`
@@ -356,6 +360,8 @@
 - [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
 - [prd-agent 平台杂项 · 债务台账](./debt.prd-agent.md) `debt.prd-agent`
+- [prd-agent 头像闭环 · 验收债务台账](./debt.prd-agent.avatar-acceptance.md) `debt.prd-agent.avatar-acceptance`
+- [prd-agent 稳定冒烟视觉覆盖 · 验收债务台账](./debt.prd-agent.stable-smoke-visual.md) `debt.prd-agent.stable-smoke-visual`
 - [产品与项目管理智能体 · 债务台账](./debt.product-agent.md) `debt.product-agent`
 - [周报与日报 · 债务台账](./debt.report-agent.md) `debt.report-agent`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
@@ -420,3 +426,13 @@
 - [网关测试矩阵全量报告（grandfather 保留） · 报告](./report.gw-test-matrix.md) `report.gw-test-matrix`
 - [LLM Gateway 故障隔离与恢复 · 测试环境验收报告](./report.platform.llm-gateway.resilience-acceptance.md) `report.platform.llm-gateway.resilience-acceptance`
 - [「向我提问」形变坞 · 交接清单](./report.web-hosting.ask-dock-handoff.md) `report.web-hosting.ask-dock-handoff`
+
+## 变更历史
+
+| 日期 | 操作 | 文档 | 中文标题 |
+|---|---|---|---|
+| 2026-10-10 | 新增 | spec.platform.core-business-checklist | MAP 核心功能验收清单 · 规格 |
+| 2026-10-10 | 新增 | guide.platform.core-business-acceptance | MAP 核心功能验收方法 · 指南 |
+| 2026-10-12 | 新增 | guide.platform.core-business-history | MAP 核心功能历史问题与经验 · 指南 |
+| 2026-10-12 | 新增 | rule.platform.acceptance-memory | MAP 验收三池经验规范 · 规则 |
+| 2026-10-12 | 更新 | spec.platform.core-business-checklist、guide.platform.core-business-acceptance | 加入近期热点、历史跳转及常见/候选方法分层 |

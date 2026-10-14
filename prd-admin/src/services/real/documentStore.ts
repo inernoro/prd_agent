@@ -244,12 +244,12 @@ export async function uploadDocumentFile(storeId: string, file: File): Promise<i
 
 /**
  * 带进度回调的上传（XHR：fetch 拿不到 upload progress 事件）。
- * onProgress 收 0-100 整数百分比；大文件上传不再"卡住没反馈"（2026-07-13 用户反馈）。
+ * phase 只由 xhr.upload.onload 切到 parsing，不能从四舍五入后的百分比推断。
  */
 export async function uploadDocumentFileWithProgress(
   storeId: string,
   file: File,
-  onProgress: (percent: number) => void,
+  onProgress: (percent: number, phase: 'uploading' | 'parsing') => void,
 ): Promise<import('@/types/api').ApiResponse<{
   entry: import('@/services/contracts/documentStore').DocumentEntry;
   attachmentId: string;
@@ -266,10 +266,13 @@ export async function uploadDocumentFileWithProgress(
     xhr.open('POST', api.documentStore.entries.upload(storeId));
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+      if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)), 'uploading');
     };
+    // 某些浏览器/代理不会补发 loaded === total 的最后一帧 progress，但 upload load
+    // 仍会可靠触发。99 表示请求体已发送、正在等待服务端解析；100 只在完整响应回来后报告。
+    xhr.upload.onload = () => onProgress(99, 'parsing');
     xhr.onload = () => {
-      onProgress(100);
+      onProgress(100, 'parsing');
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
           resolve(JSON.parse(xhr.responseText));

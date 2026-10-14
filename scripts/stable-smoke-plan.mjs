@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadBusinessContract, readPools, pendingRetests } from './stable-smoke-memory.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..');
@@ -113,6 +114,9 @@ export function validateCatalog(catalog) {
     if ((feature.cdsOnlyRegressionCaseIds || []).some((caseId) => !(feature.regressionCaseIds || []).includes(caseId))) {
       errors.push(`${feature.id} 的 cdsOnlyRegressionCaseIds 必须属于 regressionCaseIds`);
     }
+    if ((feature.productionOnlyRegressionCaseIds || []).some((caseId) => !(feature.regressionCaseIds || []).includes(caseId))) {
+      errors.push(`${feature.id} 的 productionOnlyRegressionCaseIds 必须属于 regressionCaseIds`);
+    }
     if (!Array.isArray(feature.sourcePrefixes) || feature.sourcePrefixes.length === 0) errors.push(`${feature.id} 缺少 sourcePrefixes`);
     if (!['planned', 'entry', 'contract', 'contract-and-entry', 'journey'].includes(feature.automationStatus)) errors.push(`${feature.id} 的 automationStatus 不合法`);
     if (!feature.cdsPolicy || !feature.productionPolicy) errors.push(`${feature.id} 缺少双环境策略`);
@@ -159,7 +163,11 @@ export function buildPlan({
   matrixCaseIds = [],
   mode,
   commit,
+  profile = 'full',
+  businessContract,
+  pools,
 }) {
+  if (!['routine', 'full'].includes(profile)) throw new Error('巡检范围必须为 routine 或 full');
   const catalogErrors = validateCatalog(catalog);
   const { selected, unmappedFiles } = selectFeatureLines(catalog, changedFiles, activeRegressions, mode);
   const incomplete = selected.filter((feature) => feature.automationStatus === 'planned');
@@ -175,11 +183,13 @@ export function buildPlan({
   const matrixById = new Map(normalizedMatrixCases.map((item) => [item.caseId, item]));
   const visualRegressionSet = new Set(visualRegressionCaseIds);
   const cdsOnlyRegressionSet = new Set(selected.flatMap((feature) => feature.cdsOnlyRegressionCaseIds || []));
+  const productionOnlyRegressionSet = new Set(selected.flatMap((feature) => feature.productionOnlyRegressionCaseIds || []));
   const functionalRegressions = activeRegressions.filter((caseId) => !visualRegressionSet.has(caseId));
   const visualRegressions = activeRegressions.filter((caseId) => visualRegressionSet.has(caseId));
   const selectedCaseIds = selected.flatMap((feature) => [...feature.requiredCaseIds, ...(feature.regressionCaseIds || [])]);
   const selectedForEnvironment = (environment) => selectedCaseIds.filter((caseId) => {
     if (environment === 'production' && cdsOnlyRegressionSet.has(caseId)) return false;
+    if (environment === 'cds' && productionOnlyRegressionSet.has(caseId)) return false;
     const matrixCase = matrixById.get(caseId);
     if (!matrixCase) return true;
     return matrixSelection[environment].includes(caseId);
@@ -188,7 +198,7 @@ export function buildPlan({
     cds: [...new Set([
       ...(mode === 'scheduled' ? matrixSelection.cds : []),
       ...selectedForEnvironment('cds'),
-      ...functionalRegressions,
+      ...functionalRegressions.filter((caseId) => !productionOnlyRegressionSet.has(caseId)),
     ])].sort(),
     production: [...new Set([
       ...(mode === 'scheduled' ? matrixSelection.production : []),
@@ -196,6 +206,21 @@ export function buildPlan({
       ...functionalRegressions.filter((caseId) => !cdsOnlyRegressionSet.has(caseId)),
     ])].sort(),
   };
+  let cdsCoreCaseIds = [];
+  if (profile === 'routine') {
+    const contract = businessContract || loadBusinessContract();
+    const state = pools || readPools();
+    const core = new Set(contract.features.filter(feature => feature.cdsCore).flatMap(feature => feature.caseIds));
+    cdsCoreCaseIds = requiredCaseIdsByEnvironment.cds.filter(caseId => core.has(caseId));
+    const followups = new Set(pendingRetests(state, 'cds'));
+    const localRegressions = new Set(catalog.localRegressionCaseIds || []);
+    requiredCaseIdsByEnvironment.cds = requiredCaseIdsByEnvironment.cds.filter(caseId => core.has(caseId) || followups.has(caseId) || localRegressions.has(caseId));
+    // 正式矩阵不缩减。近期重点只调整执行优先级，不增加正式禁止操作。
+    for (const environment of ['cds', 'production']) {
+      const priority = new Set(pendingRetests(state, environment));
+      requiredCaseIdsByEnvironment[environment].sort((a, b) => Number(priority.has(b)) - Number(priority.has(a)) || a.localeCompare(b));
+    }
+  }
   const requiredCaseIds = [...new Set([
     ...requiredCaseIdsByEnvironment.cds,
     ...requiredCaseIdsByEnvironment.production,
@@ -204,6 +229,8 @@ export function buildPlan({
     schemaVersion: '1.1',
     generatedAt: new Date().toISOString(),
     mode,
+    profile,
+    cdsCoreCaseIds,
     commit,
     catalogVersion: catalog.catalogVersion,
     verdict,
@@ -285,6 +312,7 @@ async function main() {
     matrixCases,
     mode,
     commit: gitCommit(),
+    profile: readArg(argv, '--profile', mode === 'scheduled' ? 'routine' : 'full'),
   });
   const outputJson = readArg(argv, '--output-json');
   const outputMd = readArg(argv, '--output-md');

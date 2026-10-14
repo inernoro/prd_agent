@@ -20,4 +20,20 @@ describe('classifyDocumentUploadFailure', () => {
       message: '文件上传未完成，请检查文件是否完整后重新上传。',
     });
   });
+
+  it('保留后端明确给出的损坏文件结果与恢复动作', () => {
+    const error = classifyDocumentUploadFailure(400, JSON.stringify({
+      success: false,
+      data: null,
+      error: {
+        code: 'INVALID_FORMAT',
+        message: '文件无法解析，请确认文件未损坏并重新选择',
+      },
+    }));
+
+    expect(error).toEqual({
+      code: 'UPLOAD_FAILED',
+      message: '文件无法解析，请确认文件未损坏并重新选择',
+    });
+  });
 });

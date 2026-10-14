@@ -9,7 +9,6 @@ import {
   GitBranch, GitCommitHorizontal, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { marked } from 'marked';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -55,6 +54,7 @@ import {
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { useTheme } from '@/lib/theme';
 import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
+import { buildMarkdownReportDocument } from '@/lib/report-document';
 import { ReportsOverviewPanel } from '@/pages/reports/ReportsOverview';
 import { PipelinePanel } from '@/pages/reports/PipelinePanel';
 
@@ -2300,19 +2300,7 @@ function ReportViewer({
     fetchReportRaw(report.id)
       .then((raw) => {
         if (reqRef.current !== token) return;
-        const parsed = marked.parse(raw, { async: false }) as string;
-        const linkColor = theme === 'dark' ? '#60a5fa' : '#2563eb';
-        const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-          :root { color-scheme: ${theme}; }
-          body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 1.75rem clamp(1.75rem, 6vw, 6rem); max-width: 68.75rem; margin: 0 auto; }
-          pre { background: rgba(127,127,127,0.12); padding: 0.75rem; border-radius: 0.5rem; overflow: auto; }
-          code { background: rgba(127,127,127,0.12); padding: 1px 0.25rem; border-radius: 0.25rem; }
-          pre code { background: transparent; padding: 0; }
-          table { border-collapse: collapse; } th, td { border: 1px solid rgba(127,127,127,0.3); padding: 0.375rem 0.625rem; }
-          img { max-width: 100%; height: auto; }
-          a { color: ${linkColor}; }
-        </style></head><body>${parsed}</body></html>`;
-        setMdHtml(doc);
+        setMdHtml(buildMarkdownReportDocument(raw, theme));
       })
       .catch((err) => {
         if (reqRef.current !== token) return;

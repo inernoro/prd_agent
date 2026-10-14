@@ -15,6 +15,9 @@ public static class VideoAssetMutationLease
     private static readonly TimeSpan AcquireTimeout = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMilliseconds(100);
 
+    public static string ContentKey(string domain, string type, string sha256)
+        => $"{domain.Trim().ToLowerInvariant()}:{type.Trim().ToLowerInvariant()}:{sha256.Trim().ToLowerInvariant()}";
+
     public static async Task<IAsyncDisposable> AcquireAsync(
         MongoDbContext db,
         string resourceKey,

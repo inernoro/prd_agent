@@ -438,11 +438,13 @@ describe('wiring guards', () => {
       templatesDir: '/app/design-templates',
       webPrototypeSourceDir: '/app/plugins/_official/examples/web-prototype',
       odPort: 7456,
+      odStartTimeoutSeconds: 180,
       egressPort: 8787,
       engineUid: 1001,
       engineGid: 1001,
     });
     expect(config.odCommand.slice(1)).toEqual(['apps/daemon/dist/cli.js', '--no-open']);
+    expect(loadConfig({ DESIGN_RUNTIME_OD_START_TIMEOUT_SECONDS: '90' }).odStartTimeoutSeconds).toBe(90);
   });
 });
 
