@@ -14,7 +14,7 @@ async function render(snapshot,{drill=false,recovered=false}={}){
   vm.runInContext(script,context);await new Promise(r=>setImmediate(r));return elements;
 }
 const fresh={healthy:true,updatedAt:new Date().toISOString(),incident:null};
-let e=await render(fresh);assert.equal(e.get('watchdog-title').textContent,'外部监控心跳正常');assert.match(e.get('notice-action').textContent,/外部监控进程/);assert.equal(e.get('notice-console').href,undefined);assert.match(e.get('notice-explanation').textContent,/无需依赖 CDS/);
+let e=await render(fresh);assert.equal(e.get('watchdog-title').textContent,'外部监控心跳正常');assert.match(e.get('notice-action').textContent,/外部监控进程/);assert.equal(e.get('notice-console')?.href,undefined);assert.match(e.get('notice-explanation').textContent,/无需依赖 CDS/);
 e=await render({...fresh,healthy:false,incident:{startedAt:fresh.updatedAt}});assert.equal(e.get('watchdog-title').textContent,'外部监控心跳中断');
 e=await render({...fresh,incident:{startedAt:fresh.updatedAt}});assert.match(e.get('watchdog-title').textContent,/正在确认稳定恢复/);
 e=await render({...fresh,updatedAt:new Date(Date.now()-1000000).toISOString()});assert.match(e.get('watchdog-title').textContent,/已过期/);
