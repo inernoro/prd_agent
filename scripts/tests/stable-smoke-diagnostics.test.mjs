@@ -42,9 +42,12 @@ test('[REG-stsmk-diagnostic-api-key-001] 诊断源码改动必须进入巡检且
   assert.deepEqual(selection.unmappedFiles, []);
   assert.ok(selection.selected.some((feature) => feature.id === 'stability-foundation'));
   const caseId = 'REG-stsmk-diagnostic-api-key-001';
-  const plan = buildPlan({ catalog, changedFiles, activeRegressions: [caseId], mode: 'changed', commit: 'diagnostic-consumer-guard' });
-  assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId));
-  assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes(caseId));
+  for (const scope of [{ mode: 'changed', profile: 'full' }, { mode: 'scheduled', profile: 'routine' }]) {
+    const plan = buildPlan({ catalog, changedFiles, activeRegressions: [caseId], ...scope,
+      pools: { defects: [] }, commit: 'diagnostic-consumer-guard' });
+    assert.ok(plan.requiredCaseIdsByEnvironment.cds.includes(caseId), `${scope.mode}/${scope.profile} 不得漏掉诊断安全回归`);
+    assert.ok(!plan.requiredCaseIdsByEnvironment.production.includes(caseId), '不得在正式主动签发凭据');
+  }
 });
 
 test('稳定冒烟诊断脱敏保留端点与状态并移除全部凭据形态', () => {
