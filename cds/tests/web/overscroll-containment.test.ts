@@ -37,6 +37,8 @@ const OVERLAY_ALLOWLIST = [
 
 /** 已经清理干净的页内面板：不许把 contain 加回来。 */
 const MUST_STAY_CLEAN = [
+  'pages/status/TargetDetail.tsx',
+  'pages/status/IncidentTimeline.tsx',
   'pages/ReleaseCenterPage.tsx',
   'pages/ReleaseConsolePage.tsx',
   'pages/release-center/EnvironmentSidebar.tsx',
@@ -51,8 +53,15 @@ describe('滚动链不许被页内面板切断', () => {
     for (const rel of MUST_STAY_CLEAN) {
       const src = fs.readFileSync(path.join(WEB, rel), 'utf8');
       expect(src, `${rel} 不该再出现 overscrollBehavior: contain（页内面板会把页面焊死）`)
-        .not.toContain("overscrollBehavior: 'contain'");
+        .not.toMatch(/overscrollBehavior:\s*['"]contain['"]|overscroll-contain/);
     }
+  });
+
+  it('业务详情与处理记录把滚动交给页面，切换目标时回到顶部', () => {
+    const src = fs.readFileSync(path.join(WEB, 'pages/StatusPage.tsx'), 'utf8');
+    expect(src).toContain('<TargetDetail scrollMode="page"');
+    expect(src).toContain('<IncidentTimeline scrollMode="page"');
+    expect(src).toContain("key={`${boardView}:${location.targetId ?? ''}`}");
   });
 
   it('浮层仍然保留 containment —— 那是它该有的', () => {

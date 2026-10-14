@@ -19,6 +19,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -56,7 +57,7 @@ async function request(
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<{ status: number; body: any; text: string; contentType: string }> {
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const addr = server.address();
   if (!addr || typeof addr === 'string') throw new Error('no server address');

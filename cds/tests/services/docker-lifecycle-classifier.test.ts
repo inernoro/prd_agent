@@ -228,7 +228,7 @@ describe('状态优先，关键字只兜存量', () => {
     // 逐个调用切片，而不是拿一条正则去套多行写法——守卫自己漏抓，就成了新的漏网源。
     // 只认容器停止那一类调用（containerService.stop / container.stop），
     // 别把 scheduler.stop()、monitor.stop() 这些同名方法卷进来。
-    const calls = [...sources.matchAll(/\b(?:containerService|container)\.stop\(/g)]
+    const calls = [...sources.matchAll(/\b(?:containerService|container)\.stop(?:RuntimeGroup)?\(/g)]
       .map((match) => {
         const at = match.index ?? 0;
         const end = sources.indexOf('});', at);

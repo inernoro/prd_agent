@@ -1,6 +1,7 @@
 // ── Cloud Development Suite (CDS) — Core Types ──
 
 import type { SealedSecret } from './infra/secret-seal.js';
+import type { BranchOperationRequest } from './services/branch-operation-coordinator.js';
 
 /** A routing rule that maps incoming requests to a branch */
 export interface RoutingRule {
@@ -926,6 +927,10 @@ export interface BranchEntry {
   worktreePath: string;
   /** Per-profile container state */
   services: Record<string, ServiceState>;
+  /** 当前部署候选的独立网络，不改变既有服务网络。 */
+  replacementNetwork?: string;
+  replacementOperationId?: string;
+  replacementNetworks?: string[];
   /**
    * Overall branch status.
    * `restarting` is a transient state entered when a container is being
@@ -1267,11 +1272,28 @@ export interface BranchEntry {
 }
 
 /** State of a single service (one build profile instance) within a branch */
+/** 可切换入口的实际运行身份；不保存环境变量或构建日志。 */
+export interface ServiceRuntimeRef {
+  containerName: string;
+  hostPort: number;
+  containerId?: string;
+  creationIssued?: boolean;
+  networkName?: string;
+  connectedNetworks?: string[];
+  aliasNetworks?: string[];
+  deployedMode?: string;
+  deployedImage?: string;
+  sourceCheckoutPath?: string;
+  sourceCommitSha?: string;
+}
+
 export interface ServiceState {
   profileId: string;
   containerName: string;
   /** Host port allocated for this service */
   hostPort: number;
+  containerId?: string;
+  creationIssued?: boolean;
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'stopped' | 'error';
   buildLog?: string;
   errorMessage?: string;
@@ -1285,6 +1307,19 @@ export interface ServiceState {
   deployedMode?: string;
   /** 当前容器实际使用的镜像引用；用于生成不可变 DeploymentVersion。 */
   deployedImage?: string;
+  /** 当前源码容器实际挂载的部署专用目录；重启时继续使用同一份源码。 */
+  sourceCheckoutPath?: string;
+  /** 部署专用目录的实际完整 Git 提交。 */
+  sourceCommitSha?: string;
+  networkName?: string;
+  connectedNetworks?: string[];
+  aliasNetworks?: string[];
+  /** 实际继续服务的已确认版本；切换后保存新版本身份，主动停止时清除。 */
+  servingRuntime?: ServiceRuntimeRef;
+  /** 已保留端口和身份的新容器；不会成为公网入口。 */
+  pendingRuntime?: ServiceRuntimeRef;
+  /** 仍被同网的旧服务使用的版本；实际占用继续纳入容量。 */
+  retainedRuntimes?: ServiceRuntimeRef[];
 }
 
 /** 分支部署的触发来源。 */
@@ -1332,6 +1367,18 @@ export interface DeploymentRunEvent {
  * 记录必须在 pull / build / docker 等副作用之前创建。events 是有界窗口，
  * seq 终身递增；firstEventSeq 告诉续传客户端窗口是否已经截断。
  */
+export interface PersistedDeploymentIntent {
+  /** 配对记录损坏时拒绝重放，覆盖请求身份及全部私有执行输入。 */
+  inputDigest: string;
+  schema: 1;
+  runId: string;
+  operationId: string;
+  generation: number;
+  admissionGeneration: number;
+  request: BranchOperationRequest;
+  inputPayload: string | SealedSecret;
+}
+
 export interface DeploymentRun {
   id: string;
   projectId: string;
@@ -1344,6 +1391,10 @@ export interface DeploymentRun {
   commitSha?: string;
   versionId?: string;
   operationId?: string;
+  operationGeneration?: number;
+  /** 原请求的受理顺序；强制重建续接不因执行代次递增而成为更晚意图。 */
+  operationAdmissionGeneration?: number;
+  profileId?: string;
   executorId?: string;
   configHash?: string;
   startedAt: string;
@@ -2127,6 +2178,8 @@ export interface CdsState {
   logs: Record<string, OperationLog[]>;
   /** 分支部署唯一事实记录，key 为 DeploymentRun.id。旧状态可缺省。 */
   deploymentRuns?: Record<string, DeploymentRun>;
+  /** 私有执行输入，Mongo 与对应 run 同文档落盘，不进入 run API 或 SSE。 */
+  deploymentIntents?: Record<string, PersistedDeploymentIntent>;
   /** 不可变部署版本，key 为 DeploymentVersion.id。旧状态可缺省。 */
   deploymentVersions?: Record<string, DeploymentVersion>;
   /** Release targets keyed by id. */
@@ -2502,6 +2555,7 @@ export interface CdsState {
    * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
    * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
    */
+  alarmIdentity?: import('./services/alarm-identity.js').AlarmIdentitySettings;
   alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
   /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
@@ -4906,6 +4960,7 @@ export interface CdsConfig {
    * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
    * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
    */
+  alarmIdentity?: import('./services/alarm-identity.js').AlarmIdentitySettings;
   alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
   /**
    * Public base URL of this CDS install (e.g. "https://cds.example.com").
@@ -4964,10 +5019,31 @@ export function combinedOutput(result: { stdout: string; stderr: string }): stri
   return [result.stdout, result.stderr].filter(Boolean).join('\n');
 }
 
+export interface ExecAssignment {
+  jobId: number;
+  factoryGeneration: number | null;
+  factoryPid: number | null;
+  actorPid: number | null;
+  lane: 'observation' | 'operation';
+}
+
 export interface ExecOptions {
+  /** 明确标记只读观测；生产主装配将普通操作与观测分配到独立进程池。 */
+  executionLane?: 'observation' | 'operation';
+  /** 排队取消不会启动进程；执行中的取消等待所属进程组收尾。 */
+  signal?: AbortSignal;
+  /** 独立执行槽就绪后在控制面重新检查资格；抛错保留原异常且不启动命令，不经IPC传输此函数。 */
+  beforeStart?: () => void;
+  /** Qualified private executor assignment; callback remains in the control process. Unknown identities stay null. */
+  onAssigned?: (assignment: ExecAssignment) => void;
+  /** 仅用于已确认创建且按本次调用独立命名的临时容器回收，占用保留清理槽。 */
+  executionPurpose?: 'temporary-cleanup';
   cwd?: string;
+  /** timeout=0仅用于关闭全文捕获且提供AbortSignal和消费回调的持续流；其他调用使用有限预算。 */
   timeout?: number;
-  onData?: (chunk: string) => void;
+  /** 独立执行可关闭完整输出捕获；回调消费确认后才继续发送，默认仍保留有限全文捕获。 */
+  captureOutput?: boolean;
+  onData?: (chunk: string, channel?: 'stdout' | 'stderr') => void;
   /** 环境变量覆盖。提供时与 process.env 合并(本字段后写覆盖)。
    *  2026-05-06 起 self-update / web build 不再下发 NODE_OPTIONS 上限,V8 自适应主机 RAM。 */
   env?: Record<string, string>;
@@ -4985,5 +5061,9 @@ export interface ExecOptions {
 }
 
 export interface IShellExecutor {
+  /** 保证在归属操作进程实际派发前复核，且等待所属进程清理；普通shell不能冒充。 */
+  execOwnedOperation?(command: string, options: ExecOptions & { beforeStart: () => void }): Promise<ExecResult>;
   exec(command: string, options?: ExecOptions): Promise<ExecResult>;
+  /** 非紧急纯读取：已有隔离操作池承接，不占健康池或保留清理槽；缺能力时调用方保持未知。 */
+  execBackgroundObservation?(command: string, options?: ExecOptions): Promise<ExecResult>;
 }

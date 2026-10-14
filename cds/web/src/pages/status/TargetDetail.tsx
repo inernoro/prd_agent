@@ -45,9 +45,11 @@ import {
   type UptimeTargetSummary,
   MONITOR_ORIGIN_LABEL,
 } from '@/lib/monitorCenter';
+import { explainTarget, homeState } from '@/lib/statusHome';
+import { HomeStateBadge } from './BusinessHome';
 import { LatencyChart } from './LatencyChart';
 import { FunctionalEvidence } from './FunctionalEvidence';
-import { AvailabilityBar, SegmentedControl, SourceBadge, Stat, StatusPill } from './primitives';
+import { AvailabilityBar, SegmentedControl, SourceBadge, Stat } from './primitives';
 
 type HistoryState =
   | { status: 'idle' }
@@ -96,6 +98,7 @@ export function TargetDetail({
   actions,
   busy,
   onBack,
+  scrollMode = 'panel',
 }: {
   target: UptimeTargetSummary;
   incidents: ReadonlyArray<UptimeIncidentView>;
@@ -106,13 +109,15 @@ export function TargetDetail({
   busy: 'probe' | 'toggle' | 'remove' | null;
   /** 窄屏：返回列表 */
   onBack?: () => void;
+  /** 页面嵌入时由外层统一滚动；分栏模式才独立滚动。 */
+  scrollMode?: 'page' | 'panel';
 }): JSX.Element {
   const [range, setRange] = useState<HistoryRange>('24h');
   const [reloadToken, setReloadToken] = useState(0);
   const history = useHistory(target.id, range, generatedAt, reloadToken);
   const own = useMemo(() => incidents.filter((i) => i.targetId === target.id).slice(0, 20), [incidents, target.id]);
   const link = sourceLink(target);
-  const isCustom = target.source === 'custom';
+  const isCustom = target.source === 'custom' && !target.id.startsWith('monitor@self-collection-');
   const rangeBuckets = history.status === 'ok' ? history.history.points : null;
   const rangeAvailability = rangeBuckets ? availabilityOfBuckets(rangeBuckets) : null;
   const statusTone = target.status === 'down' ? 'danger' : target.status === 'up' ? 'ok' : target.status === 'unknown' ? 'warn' : 'default';
@@ -120,22 +125,26 @@ export function TargetDetail({
   const unmeasured = target.measured === false;
   const viewpoint = target.source === 'branch'
     ? (target.userView ? 'CDS 主机 → 容器端口（进程视角） + 预览域名整条链路（用户视角）' : 'CDS 主机 → 容器端口（进程视角，单点）')
-    : 'CDS 主机出网 → 目标地址，单点；与用户视角一致但不等价（内网 DNS / 出网策略可能不同）';
+    : 'CDS 检查器 → 配置的目标地址；检查位置与用户设备不同，结果不能代表所有用户的访问情况';
+  const explanation = explainTarget(target);
+  const isMetric = Boolean(target.healthCheck);
+  const rateLabel = isMetric ? '检查通过率' : '可用率';
   const recentSamples = history.status === 'ok' ? (history.history.recentSamples || []) : [];
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]">
+    <div className={cn("flex min-h-0 flex-col rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]", scrollMode === 'panel' && 'h-full')}>
       <header className="flex shrink-0 flex-col gap-3 border-b border-[hsl(var(--hairline))] p-4">
         <div className="flex flex-wrap items-start gap-3">
           {onBack ? (
-            <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2 lg:hidden">
+            <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
               <ChevronLeft />
-              列表
+              返回列表
             </Button>
           ) : null}
           <div className="min-w-0 flex-1">
+            <p className="mb-2 text-muted-foreground">{target.projectName || target.projectId || '未归属项目'} · {target.environmentLabel}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <StatusPill status={target.status} excluded={target.excluded} measured={target.measured} size="lg" />
+              <HomeStateBadge state={homeState(target, now)} />
               <h2 className="min-w-0 truncate text-lg font-semibold leading-tight">{target.name}</h2>
               <SourceBadge source={target.source} full />
               {target.degraded ? (
@@ -156,7 +165,7 @@ export function TargetDetail({
                   <span className="inline-flex items-center gap-1">用户视角 <span className={cn('inline-block h-2 w-2 rounded-full', target.userView.status === 'up' ? 'bg-ok' : target.userView.status === 'down' ? 'bg-destructive' : 'bg-[hsl(var(--hairline-strong))]')} /></span>
                 </span>
               ) : (
-                <span className="rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[0.6875rem]">视角：{target.source === 'branch' ? 'CDS 主机 → 容器端口' : 'CDS 主机 → 公网地址'}</span>
+                <span className="rounded border border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[0.6875rem]">视角：{target.source === 'branch' ? 'CDS 主机 → 容器端口' : 'CDS 检查器 → 目标地址'}</span>
               )}
             </div>
             {(target.tags || []).length > 0 ? (
@@ -170,10 +179,10 @@ export function TargetDetail({
           <div className="flex flex-wrap items-center gap-1.5">
             <Button variant="outline" size="sm" onClick={() => void actions.probeNow(target)} disabled={!canProbe || busy !== null} title={canProbe ? '立刻探测一次并记入台账' : '暂停或未纳入监控的目标不能探测'}>
               <Zap className={busy === 'probe' ? 'animate-pulse' : undefined} />
-              {busy === 'probe' ? '探测中' : '立即探测'}
+              {busy === 'probe' ? '检查中' : '立即检查'}
             </Button>
             {isCustom ? (
-              <>
+              <details className="relative"><summary className="cursor-pointer rounded-md border px-3 py-3">监控设置</summary><div className="mt-2 flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" onClick={() => void actions.toggleEnabled(target)} disabled={busy !== null}>
                   {target.enabled === false ? <Play /> : <Pause />}
                   {busy === 'toggle' ? '处理中' : target.enabled === false ? '恢复探测' : '暂停'}
@@ -195,7 +204,7 @@ export function TargetDetail({
                   pending={busy === 'remove'}
                   onConfirm={() => actions.remove(target)}
                 />
-              </>
+              </div></details>
             ) : link ? (
               <Button variant="outline" size="sm" asChild>
                 <Link to={link.to}>
@@ -207,8 +216,22 @@ export function TargetDetail({
           </div>
         </div>
 
+        <section className="status-home-guidance" aria-label="指标说明与处理建议">
+          <p><strong>这项检查是什么：</strong>{explanation.meaning}</p>
+          <p><strong>可能影响：</strong>{explanation.impact}</p>
+          <p><strong>下一步：</strong>{explanation.action}</p>
+          <p className="text-muted-foreground">立即检查只重新读取状态，不会重试部署或清除故障记录。</p>
+          {target.healthCheck?.componentId === 'webhook.dispatch-unresolved' ? <Button variant="outline" asChild><Link to="/project-list">查看项目与部署记录</Link></Button> : null}
+        </section>
+        {target.alarmIdentity ? <section className="rounded-lg border p-4 text-base leading-relaxed" aria-label="监控身份">
+          <p>检查方：{[target.alarmIdentity.observer.name, target.alarmIdentity.observer.environment, target.alarmIdentity.observer.location].filter(Boolean).join(' · ')}</p>
+          <p>故障对象：{[target.alarmIdentity.subject.name, target.alarmIdentity.subject.environment, target.alarmIdentity.subject.location].filter(Boolean).join(' · ')}</p>
+        </section> : null}
+        {target.lastSample?.noData ? <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-base leading-relaxed text-warn">
+          本轮没有有效读数。当前状态待确认，历史故障与最后有效检查结果仍保留。
+        </div> : null}
         {target.status === 'down' && target.lastSample?.err ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-base leading-relaxed text-destructive">
             <span className="font-medium">最近失败原因：</span>{target.lastSample.err}
             {target.openIncidentSince ? <span className="opacity-80">（故障始于 {formatClock(target.openIncidentSince)}）</span> : null}
           </div>
@@ -239,12 +262,13 @@ export function TargetDetail({
         ) : null}
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
+      <div className={cn('p-4', scrollMode === 'panel' && 'min-h-0 flex-1 overflow-y-auto')}>
         <div className="flex flex-col gap-5">
+          {isMetric ? <p className="rounded-md bg-muted p-3">以下百分比表示检查通过的次数占比。重复检查可能读到同一项未解决任务；采样次数不等于新故障数量，也不代表网站可用率。</p> : null}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            <Stat label="近 24h 可用率" value={formatPercent(target.availability24h)} tone={target.availability24h !== null && target.availability24h < 0.99 ? 'warn' : 'default'} hint={target.sampleCount24h > 0 ? `采样 ${target.sampleCount24h} 次` : '尚无采样'} />
-            <Stat label="近 7 日可用率" value={formatPercent(target.availability7d)} hint="自然日（UTC，含今天）" />
-            <Stat label="平均响应" value={formatLatency(target.avgLatencyMs24h)} hint="近 24h" />
+            <Stat label={isMetric ? '近 24h 检查通过率' : '近 24h 可用率'} value={formatPercent(target.availability24h)} tone={target.availability24h !== null && target.availability24h < 0.99 ? 'warn' : 'default'} hint={target.sampleCount24h > 0 ? `采样 ${target.sampleCount24h} 次` : '尚无采样'} />
+            <Stat label={isMetric ? '近 7 日检查通过率' : '近 7 日可用率'} value={formatPercent(target.availability7d)} hint="自然日（UTC，含今天）" />
+            <Stat label={isMetric ? '读取检查耗时' : '平均响应'} value={formatLatency(target.avgLatencyMs24h)} hint="近 24h" />
             <Stat
               label="最近一次探测"
               value={target.lastSample ? formatLatency(target.lastSample.ms) : '—'}
@@ -267,10 +291,10 @@ export function TargetDetail({
           <section className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-baseline gap-2">
-                <h3 className="text-sm font-semibold">可用率与响应时间</h3>
+                <h3 className="text-sm font-semibold">{isMetric ? '检查结果与读取耗时' : '可用率与响应时间'}</h3>
                 {history.status === 'ok' && range !== '24h' ? (
                   <span className="text-xs text-muted-foreground">
-                    {HISTORY_RANGES.find((r) => r.value === range)?.label}可用率 {formatPercent(rangeAvailability)}
+                    {HISTORY_RANGES.find((r) => r.value === range)?.label}{rateLabel} {formatPercent(rangeAvailability)}
                   </span>
                 ) : null}
               </div>
@@ -278,11 +302,11 @@ export function TargetDetail({
             </div>
             {range === '24h' ? (
               <div className="overflow-x-auto" style={{ overscrollBehaviorX: 'contain' }}>
-                <AvailabilityBar buckets={target.buckets} segments={90} className="min-w-[20rem]" label={`${target.name} 最近 24 小时可用率分布`} />
+                <AvailabilityBar buckets={target.buckets} segments={90} className="min-w-[20rem]" label={`${target.name} 最近 24 小时${rateLabel}分布`} />
               </div>
             ) : rangeBuckets ? (
               <div className="overflow-x-auto" style={{ overscrollBehaviorX: 'contain' }}>
-                <AvailabilityBar buckets={rangeBuckets} segments={rangeBuckets.length} className="min-w-[20rem]" label={`${target.name} 最近 ${range} 可用率分布`} />
+                <AvailabilityBar buckets={rangeBuckets} segments={rangeBuckets.length} className="min-w-[20rem]" label={`${target.name} 最近 ${range} ${rateLabel}分布`} />
               </div>
             ) : null}
             {history.status === 'loading' || history.status === 'idle' ? (
@@ -304,7 +328,7 @@ export function TargetDetail({
             )}
             <div className="text-[0.6875rem] text-muted-foreground">
               {range === '24h'
-                ? `90 段 · 覆盖最近 24 小时，原始采样按 ${target.intervalSeconds} 秒一次 · 灰段 = 无采样（不计入可用率分母）`
+                ? `90 段 · 覆盖最近 24 小时，原始采样按 ${target.intervalSeconds} 秒一次 · 灰段 = 无采样（不计入${rateLabel}分母）`
                 : '按自然日聚合（UTC）：每一段是一天，曲线是当天平均响应'}
             </div>
           </section>
@@ -312,7 +336,7 @@ export function TargetDetail({
           <section className="flex flex-col gap-2">
             <div className="flex flex-wrap items-baseline gap-2">
               <h3 className="text-sm font-semibold">原始采样（最近 {recentSamples.length} 次）</h3>
-              <span className="text-[0.6875rem] text-muted-foreground">判定就是从这些数据来的，可自行核对；每 {target.intervalSeconds} 秒一次，连续失败达阈值判故障，一次成功即恢复</span>
+              <span className="text-[0.6875rem] text-muted-foreground">判定就是从这些数据来的，可自行核对；每 {target.intervalSeconds} 秒一次，状态按配置的检查结果判定，通知另按稳定恢复策略发送</span>
             </div>
             {/* 只拦 x 轴。overflow-x:auto 会把 y 轴也变成滚动容器，两轴一起 contain 就把纵向滚轮
                 吃在这张表里、不再往上冒——鼠标停在采样表上整个详情页就滚不动（2026-09-15 用户截图）。 */}

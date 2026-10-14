@@ -11,8 +11,8 @@
  * 部署审计挂在一份**从未被部署过**的代码上；更糟的是 `findReusable` 也按这个 sha
  * 查，可能把 A 的构建产物复用给 B。
  *
- * 这条链路在 route handler 深处、依赖 worktree/docker/多服务编排，单测无法真实驱动，
- * 因此这里退而做**结构契约守卫**：凡是在 pull 之后写 run / version 的地方，一律不得
+ * branches.test.ts 已通过真实HTTP验证单服务固定目标，原生队列演练核对实际Git/Docker/HTTP。
+ * 本文件仍做结构契约守卫：凡是在 pull 之后写 run / version 的地方，一律不得
  * 再引用 `entry.githubCommitSha`。回归时若有人把它改回去，这条测试会红。
  */
 import { describe, it, expect } from 'vitest';
@@ -32,8 +32,8 @@ describe('部署 run / version 记录实际落地的 SHA', () => {
     // 必须是 let：极速版拉不到镜像时 runService 会自动回退源码编译，那一刻落地的
     // commit 从「镜像锁定的 sha」变成 pull 到的 HEAD，只能事后由回调修正（六轮 P2）。
     expect(src).toContain('let deployedCommitSha = selectedDeploymentVersion?.commitSha');
-    expect(src).toContain('deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;');
-    expect(src).toContain('let deployedCommitSha: string | undefined = entry.githubCommitSha;');
+    expect(src).toContain('deployedCommitSha = isSourcePull ? pulledSha : inputBranch().githubCommitSha;');
+    expect(src).toContain('let deployedCommitSha: string | undefined = inputBranch().githubCommitSha;');
   });
 
   it('自动回退源码编译时，两条路径都会把 deployedCommitSha 改口径（六轮 P2）', () => {
@@ -47,6 +47,28 @@ describe('部署 run / version 记录实际落地的 SHA', () => {
       expect(block).toContain('deployedCommitSha =');
       expect(block).toContain('deriveCommitMeta(entry,');
     }
+  });
+
+  /*
+   * 方案甲（2026-10-08 mdimp）：两条部署路径都要把刚 pull 到的提交传给 runService，
+   * 让极速版先试它的 CI 镜像；用上了就把记录改成那个提交。删掉任一处接线，容器层的
+   * 单测照样全绿，只是线上又回到「按旧提交找镜像 → 回退宿主编译」——所以在这里钉住。
+   */
+  it('两条部署路径都把 pull 到的提交传给极速版，用上了就改记录（方案甲）', () => {
+    const passes = src.split('latestCommitSha: ').slice(1).filter((body) => !body.startsWith('options.'));
+    expect(passes.length, '整分支部署与单服务部署各传一次').toBe(2);
+    // 显式点名提交时不改目标：整分支看 requestCommitSha，单服务看 profileRequestCommitSha
+    expect(passes[0].slice(0, 200)).toContain('!requestCommitSha');
+    expect(passes[1].slice(0, 200)).toContain('profileRequestCommitSha ? undefined');
+    const hooks = src.split('onLatestCommitImage: (sha) => {').slice(1);
+    expect(hooks.length).toBe(2);
+    for (const body of hooks) {
+      const block = body.slice(0, 300);
+      expect(block).toContain('deployedCommitSha = sha;');
+      expect(block).toContain('deriveCommitMeta(entry, sha)');
+    }
+    expect(src).toContain('latestCommitSha: options.latestCommitSha,');
+    expect(src).toContain('onLatestCommitImage: options.onLatestCommitImage,');
   });
 
   const runAnchors = [

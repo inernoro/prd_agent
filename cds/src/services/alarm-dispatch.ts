@@ -66,7 +66,7 @@ export function buildBarkUrl(channel: AlarmChannelConfig, message: AlarmMessage)
     `${base}/${encodeURIComponent(bark.key.trim())}`
     + `/${encodeURIComponent(message.title)}/${encodeURIComponent(message.body)}`,
   );
-  url.searchParams.set('group', bark.group?.trim() || 'CDS 监控');
+  url.searchParams.set('group', message.group || bark.group?.trim() || 'CDS 监控');
   if (bark.sound?.trim()) url.searchParams.set('sound', bark.sound.trim());
   // 通道没钉死级别时用消息自己的级别：业务挂了该是 critical，恢复该是 passive。
   const level = bark.level?.trim() || message.level;
@@ -102,13 +102,26 @@ async function httpSend(
  *
  * 返回值永远是结果，不抛——调用方是探测循环，它不该因为一次通知失败而断掉。
  */
+export function independentIncidentUrl(channel: AlarmChannelConfig, event: AlarmEvent): string | undefined {
+  if (event.projectId !== 'cds-self-monitor' || !channel.incidentPageUrl) return undefined;
+  try {
+    const url = new URL(channel.incidentPageUrl);
+    if (url.protocol !== 'https:' || url.username || url.password) return undefined;
+    if (event.targetId) url.searchParams.set('target', event.targetId);
+    url.searchParams.set('detectedAt', event.detectedAt);
+    return url.toString();
+  } catch { return undefined; }
+}
+
 export async function sendAlarm(
   channel: AlarmChannelConfig,
   event: AlarmEvent,
   opts: { boardUrl?: string; timeoutMs?: number; history?: ServerEventLogSink | null; deliveryKind?: 'alert' | 'drill' } = {},
 ): Promise<AlarmDeliveryResult> {
-  const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
+  const boardUrl = independentIncidentUrl(channel, event) || opts.boardUrl;
+  const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
+    identity: event.identity,
     type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
     targetId: event.targetName, targetName: event.targetName, projectId: event.projectId,
     message: event.message, consecutiveFailures: event.consecutiveFailures, detectedAt: event.detectedAt,
@@ -124,7 +137,8 @@ export async function sendAlarm(
 async function sendAlarmTransport(
   channel: AlarmChannelConfig, event: AlarmEvent, opts: { boardUrl?: string; timeoutMs?: number },
 ): Promise<AlarmDeliveryResult> {
-  const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
+  const boardUrl = independentIncidentUrl(channel, event) || opts.boardUrl;
+  const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
     if (channel.kind === 'bark') {
@@ -167,12 +181,14 @@ async function sendAlarmTransport(
       timeoutMs,
     });
     return await notifier.send({
-      type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
+      identity: event.identity,
+    type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
       targetId: event.targetName,
       targetName: event.targetName,
       projectId: event.projectId,
       ...(event.probeUrl ? { probeUrl: event.probeUrl } : {}),
       message: event.message,
+      boardUrl,
       consecutiveFailures: event.consecutiveFailures,
       detectedAt: event.detectedAt,
     });

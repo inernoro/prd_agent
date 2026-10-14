@@ -103,6 +103,26 @@ function addMultiProfileBranch(opts: {
 }
 
 describe('ForwarderRoutePublisher', () => {
+  it('合并后新旧项目入口在替换构建期间继续指向已确认的运行容器', () => {
+    ensureProject('p1', 'old-project');
+    addRunningBranch({ projectId: 'p1', branch: 'main', hostPort: 41200 });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'p1', pathPrefixes: ['/'] } as Parameters<typeof state.addBuildProfile>[0]);
+    state.updateProject('p1', { slug: 'short-project' });
+    const branch = state.getBranch('p1-main')!;
+    branch.status = 'building';
+    branch.services.web.status = 'building';
+    branch.services.web.servingRuntime = { containerName: 'confirmed-web', hostPort: 41200 };
+    branch.services.web.hostPort = 41300;
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const routes: RouteRecord[] = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+    for (const slug of ['old-project', 'short-project']) {
+      const route = resolveRoute(routes, `${computePreviewSlug('main', slug)}.miduo.org`, '/');
+      expect(route?.upstreamPort).toBe(41200);
+      expect(route?.healthState).toBe('running');
+    }
+  });
+
   it('共享入口枚举覆盖实际新旧复制集成员路由，沿用DNS编码与可路由成员判据', () => {
     ensureProject('p1', 'old-project');
     state.addBuildProfile({ id: 'api_v2', projectId: 'p1', name: 'API', dockerImage: 'nginx:alpine', workDir: '.', containerPort: 80 });

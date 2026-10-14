@@ -66,7 +66,7 @@ export const PROBER_STALLED_SECONDS = 9_999;
 /**
  * 进程刚起来的宽限期：自身状态缓存还没算完之前，不把「还不知道」当成「前端产物落后」。
  * 没有这个宽限，每次自更新重启都会先响一次铃再自己恢复——铃响多了就没人听了。
- * 过了宽限还不知道，那就是真的拿不到，照实 fail。
+ * 过了宽限还不知道，仍保留未知，由统一采集通道报告读数缺失。
  */
 export const SELF_STATUS_GRACE_MS = 5 * 60 * 1000;
 
@@ -196,10 +196,22 @@ export function assembleDoc(checks: SelfCheckItem[], releaseId?: string): SelfCh
   };
 }
 
+/** 慢依赖不能拖垮整份自检；无法读取的统计使用 null，不能冒充零或通过。 */
+async function boundedSelfRead<T>(read: () => T | Promise<T>, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([Promise.resolve().then(read).catch(() => fallback),
+      new Promise<T>(resolve => { timer = setTimeout(() => resolve(fallback), 3000); })]);
+  } finally { if (timer) clearTimeout(timer); }
+}
+
 export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc> {
   const now = deps.now();
   const time = new Date(now).toISOString();
   const checks: SelfCheckItem[] = [];
+  const httpRead = boundedSelfRead(() => deps.httpStats(now - HALF_HOUR_MS), null);
+  const dockerRead = boundedSelfRead(() => deps.dockerPing(), { ok: false, ms: 3000, detail: 'Docker 检查超时或读取失败' });
+  const selfRead = boundedSelfRead(() => deps.selfStatus(), null);
 
   // ── 部署 ───────────────────────────────────────────────────────────
   const runs = deps.deploymentRuns();
@@ -271,7 +283,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   ));
 
   // ── 页面（首屏）─────────────────────────────────────────────────────
-  const http = await deps.httpStats(now - HALF_HOUR_MS);
+  const http = await httpRead;
   const requests = http?.requests ?? 0;
   checks.push({
     componentId: 'api.requests-30m', componentType: 'http',
@@ -380,7 +392,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
     { name: 'CDS · 磁盘占用', op: 'lt', value: DISK_USED_MAX_PERCENT, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
-  const docker = await deps.dockerPing();
+  const docker = await dockerRead;
   checks.push(monitored(
     {
       componentId: 'host.docker-ping-ms', componentType: 'host',
@@ -408,8 +420,8 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   ));
 
   // ── 自身 ───────────────────────────────────────────────────────────
-  const self = await deps.selfStatus();
-  // 缓存还没算过一次 + 进程还在宽限期内 → 「还不知道」，不响铃；过了宽限还不知道才算真拿不到。
+  const self = await selfRead;
+  // 缓存还没算过一次时保留未知；启动宽限仅影响解释文案，不能把未知伪造成版本落后。
   const selfWarming = Boolean(self && !self.ready && processAgeSec !== null && processAgeSec * 1000 < SELF_STATUS_GRACE_MS);
   const selfKnown = Boolean(self && self.ready);
   const updateAge = now - Date.parse(self?.updateStartedAt ?? '');
@@ -423,8 +435,8 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
     {
       componentId: 'self.bundle-stale', componentType: 'self',
       // 布尔写成 0/1：协议里期望值是字符串比较，数字最不容易被两边解读成不同的东西。
-      observedValue: !bundleObservable ? null : selfKnown ? (self!.bundleStale ? 1 : 0) : 1, observedUnit: 'flag',
-      status: !bundleObservable ? 'warn' : selfKnown ? (self!.bundleStale ? 'fail' : 'pass') : 'fail',
+      observedValue: !bundleObservable || !selfKnown ? null : (self!.bundleStale ? 1 : 0), observedUnit: 'flag',
+      status: !bundleObservable || !selfKnown ? 'warn' : (self!.bundleStale ? 'fail' : 'pass'),
       output: selfUpdating ? '自更新中，最多等待 10 分钟再检查前端产物' : selfKnown
         ? (self!.bundleStale ? `前端产物落后于代码 ${self!.headSha}（${self!.currentBranch}）—— 页面跑的是旧版` : `前端产物与 ${self!.headSha} 一致`)
         : selfWarming ? `进程刚起 ${processAgeSec} 秒，自身状态还没算完` : '拿不到自身状态',

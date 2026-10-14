@@ -1,3 +1,4 @@
+import { parseAlarmIdentity, identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-identity.js';
 /*
  * 通知通道的读写接口（CDS 系统设置 → 接入 → 通知）。
  *
@@ -38,6 +39,8 @@ import {
 } from '../services/alarm-route.js';
 
 export interface AlarmChannelRoutesDeps {
+  getIdentity?: () => AlarmIdentitySettings | undefined;
+  setIdentity?: (identity: AlarmIdentitySettings) => void;
   list: () => AlarmChannelConfig[];
   upsert: (channel: AlarmChannelConfig) => void;
   remove: (id: string) => boolean;
@@ -59,7 +62,7 @@ function fingerprint(pem: string): string {
 /** 脱敏视图。这是唯一允许出网的形状——任何新增字段都要先问「它是不是秘密」。 */
 export function publicChannel(c: AlarmChannelConfig): Record<string, unknown> {
   const base = {
-    id: c.id, name: c.name, kind: c.kind, enabled: c.enabled,
+    id: c.id, name: c.name, kind: c.kind, enabled: c.enabled, incidentPageUrl: c.incidentPageUrl,
     projects: c.projects, events: c.events,
     createdAt: c.createdAt, updatedAt: c.updatedAt,
   };
@@ -165,9 +168,16 @@ function parseChannelConfig(
     ? body.projects.map((p) => str(p, 128)).filter(Boolean)
     : [];
 
+  const incidentPageUrl = body.incidentPageUrl === undefined ? previous?.incidentPageUrl : str(body.incidentPageUrl, 2048);
+  if (incidentPageUrl) {
+    let parsed: URL;
+    try { parsed = new URL(incidentPageUrl); } catch { return fail('独立事件入口必须是完整 HTTPS 地址'); }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) fail('独立事件入口必须使用 HTTPS 且不能包含凭据');
+  }
   const shell: AlarmChannelConfig = {
     id: previous?.id ?? crypto.randomUUID(),
     name, kind, projects, events,
+    ...(incidentPageUrl ? { incidentPageUrl } : {}),
     enabled: body.enabled === undefined ? (previous?.enabled ?? true) : Boolean(body.enabled),
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
@@ -252,6 +262,20 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
   const views = (): AlarmChannelStatusView[] =>
     deps.list().map((c) => deps.ledger.view(c, channelConfigured(c)));
 
+  router.get('/cds-system/alarm-identity', (req, res) => {
+    if (denySystemAccess(req, res)) return;
+    res.json({ identity: deps.getIdentity?.() ?? null });
+  });
+  router.put('/cds-system/alarm-identity', (req, res) => {
+    if (denySystemAccess(req, res)) return;
+    if (!deps.setIdentity) { res.status(503).json({ message: '实例身份存储尚未接通' }); return; }
+    try {
+      const identity = parseAlarmIdentity(req.body, deps.getIdentity?.());
+      deps.setIdentity(identity);
+      res.json({ identity });
+    } catch (error) { res.status(400).json({ message: (error as Error).message }); }
+  });
+
   router.get('/cds-system/alarm-channels', (req, res) => {
     if (denySystemAccess(req, res)) return;
     res.json({
@@ -325,7 +349,7 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     if (!channel) { res.status(404).json({ error: '通道不存在' }); return; }
     const now = Date.now();
     const boardUrl = deps.boardUrl?.();
-    const result = await sendAlarm(channel, drillEvent(now), { boardUrl, history: deps.history, deliveryKind: 'drill' });
+    const result = await sendAlarm(channel, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, { boardUrl, history: deps.history, deliveryKind: 'drill' });
     deps.ledger.record(channel.id, result, 'drill', now);
     res.json({ ...result, status: deps.ledger.view(channel, channelConfigured(channel)) });
   });

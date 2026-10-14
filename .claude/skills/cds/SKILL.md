@@ -147,6 +147,10 @@ python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
 不会被截断（`16:9` 是完整的）。刻意不做表达式——自由文本判据一开口，下一轮就会被
 要求加同义词和嵌套。
 
+配置通知身份：`cdscli monitor identity` 查看，`cdscli monitor identity --file <私有JSON文件>` 更新（管理员）。身份配置只存运行状态，真实名称、地址与凭据不得提交仓库。
+
+更新现有通知的独立故障入口：`cdscli monitor incident-page --file <私有JSON文件>`。文件包含 channelId 与 incidentPageUrl，保留原接收者和事件订阅；实际地址不写入命令行或仓库。
+
 查通知发送记录：`cdscli monitor notifications --hours 24`（也支持 1 / 168 小时，仅管理员）。按目标、通道、事件类型、小时统计，演练单列；`truncated=true` 时是部分统计。成功表示推送服务已接受，不能当作手机已展示；旧版未留记录的历史不可回填。
 
 看历史证据：`cdscli monitor observations <id>`；只看功能监控：`monitor list --functional-only`。
