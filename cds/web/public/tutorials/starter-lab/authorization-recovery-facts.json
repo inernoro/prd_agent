@@ -46,12 +46,12 @@
     "kind": "真实浏览器采样帧，按实操顺序压缩等待，无音轨、无界面重绘；字幕用于说明步骤",
     "recordingCommits": [
       "ccc5dcae5bd1ceda070024d734de8615787efb3e",
-      "f26939fb4ecb9fa5286e2284f1bf2a75087e8d32"
+      "f26939fb4ecb9fa5286e2284f1bf2a75087e8d32",
+      "18b49cfc20b18e4d92b4a163575d94e4461dd8c7"
     ]
   },
   "functionalCommit": "ccc5dcae5bd1ceda070024d734de8615787efb3e",
   "preservedOnlineCommit": "cff921218470514dbabe5a991e9a433fa76b3cd4",
-  "functionalSourceUnchangedAcrossRecording": true,
   "scope": "项目凭据文件丢失、项目凭据撤销后的同项目批准恢复；不包括身份账户及项目Grant撤销",
   "github": "https://github.com/inernoro/cds-onboarding-receipt-lab",
   "cds": "https://cds.miduo.org/branches/8dbfa9eb0ea6",
@@ -68,5 +68,11 @@
     "revocationRequest": "92965128fefe",
     "sameProjectId": "8dbfa9eb0ea6",
     "newIntentAndDisplayRenameRegressionPassed": true
-  }
+  },
+  "sameGitHubPermissionBoundaryAcrossRecording": true,
+  "recordingClientVersions": [
+    "0.16.10",
+    "0.16.11"
+  ],
+  "recordingNote": "初始服务端修复及后续客户端兼容复验，画面均来自同一授权专项项目；新增目标与显示改名兼容修订不改变该项目的批准与恢复步骤。"
 }
