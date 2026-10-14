@@ -1193,6 +1193,26 @@ test('隔离 worktree 缺少前端依赖时先按锁文件恢复再执行回归'
   assert.deepEqual(calls[1][1].slice(0, 6), [
     '--dir', 'prd-admin', 'exec', 'vitest', 'run', 'src/components/web-hosting/folderDrop.test.ts',
   ]);
+  assert.deepEqual(calls[2], ['dotnet', [
+    'restore', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
+  ]]);
+  assert.deepEqual(calls[3][1].slice(0, 3), [
+    'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj', '--no-restore',
+  ]);
+  assert.equal(result.execution.status, 'passed');
+});
+
+test('隔离 worktree 已有前端依赖但缺少 NuGet 资产时只恢复服务端依赖', () => {
+  const calls = [];
+  const result = runFolderRegressionTests('/tmp/stable-smoke-folder-regression-server-bootstrap-test', (name, args) => {
+    calls.push([name, args]);
+    return { status: 0 };
+  }, (path) => !path.endsWith('project.assets.json'));
+  assert.equal(calls[0][0], 'pnpm');
+  assert.deepEqual(calls[1], ['dotnet', [
+    'restore', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
+  ]]);
+  assert.equal(calls[2][0], 'dotnet');
   assert.equal(result.execution.status, 'passed');
 });
 

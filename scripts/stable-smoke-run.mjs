@@ -1141,7 +1141,15 @@ export function runFolderRegressionTests(runDir, commandRunner = command, depend
     encoding: undefined,
   }) : installResult;
   const serverArtifactPath = resolve(runDir, 'web-folder-regressions.trx');
-  const serverResult = commandRunner('dotnet', [
+  const assetsPath = resolve(repoRoot, 'prd-api/tests/PrdAgent.Api.Tests/obj/project.assets.json');
+  const restoreResult = dependencyExists(assetsPath) ? { status: 0 } : commandRunner('dotnet', [
+    'restore', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
+  ], {
+    env: { ...process.env, DOTNET_ROLL_FORWARD: 'Major' },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  const serverResult = restoreResult.status === 0 ? commandRunner('dotnet', [
     'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
     '--no-restore', '-m:1',
     '--filter', 'FullyQualifiedName~WebFolderRenameFenceTests',
@@ -1151,7 +1159,7 @@ export function runFolderRegressionTests(runDir, commandRunner = command, depend
     env: { ...process.env, DOTNET_ROLL_FORWARD: 'Major' },
     stdio: 'inherit',
     encoding: undefined,
-  });
+  }) : restoreResult;
   const clientPassed = clientResult.status === 0;
   const serverPassed = serverResult.status === 0;
   const resultsByCaseId = new Map([
