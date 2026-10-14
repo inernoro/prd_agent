@@ -23,6 +23,17 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
     private const int MaxAdapterEvents = 1000;
     private const long MaxManifestFileBytes = 100L * 1024 * 1024;
     private const long MaxManifestTotalBytes = 100L * 1024 * 1024;
+    private static readonly HashSet<string> BrowserQualityIssueCodes = new(StringComparer.Ordinal)
+    {
+        "horizontal_overflow", "main_content_clipped", "primary_cta_clipped", "empty_link",
+        "broken_fragment_target", "mobile_navigation_unusable", "table_unreadable", "key_text_contrast_low",
+    };
+    private static readonly HashSet<string> BrowserQualityMeasurementKeys = new(StringComparer.Ordinal)
+    {
+        "documentWidth", "viewportWidth", "present", "visible", "left", "right", "href",
+        "linkCount", "visibleLinkCount", "hasVisibleToggle", "tableWidth", "scrollable",
+        "minCellWidth", "ratio", "minimum", "fontSize", "fontWeight",
+    };
 
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _events;
@@ -1086,7 +1097,95 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             IssueCodes = issueCodes,
             RepairAttempts = repairAttempts,
             RepairBudgetExhausted = value.RepairBudgetExhausted,
+            BrowserQualityEvidence = NormalizeBrowserQualityFailureEvidence(value.BrowserQualityEvidence),
         };
+    }
+
+    private static DesignArtifactBrowserQualityFailureEvidence? NormalizeBrowserQualityFailureEvidence(
+        DesignArtifactBrowserQualityFailureEvidence? value)
+    {
+        if (value == null) return null;
+        if (value.SchemaVersion != "map-browser-quality-failure-evidence-v1"
+            || value.RepairAttempts is < 0 or > 1_000
+            || value.Attempts.Count is < 1 or > 3)
+            throw Invalid("runtimeFailure.browserQualityEvidence 无效");
+        return new DesignArtifactBrowserQualityFailureEvidence
+        {
+            SchemaVersion = value.SchemaVersion,
+            RuleVersion = SafeToken(value.RuleVersion, "runtimeFailure.browserQualityEvidence.ruleVersion", 64),
+            HeuristicVersion = SafeToken(value.HeuristicVersion, "runtimeFailure.browserQualityEvidence.heuristicVersion", 64),
+            RepairAttempts = value.RepairAttempts,
+            RepairBudgetExhausted = value.RepairBudgetExhausted,
+            Attempts = value.Attempts.Select(NormalizeBrowserQualityFailureAttempt).ToList(),
+        };
+    }
+
+    private static DesignArtifactBrowserQualityFailureAttempt NormalizeBrowserQualityFailureAttempt(
+        DesignArtifactBrowserQualityFailureAttempt value)
+    {
+        if (value.RepairAttempt is < 0 or > 1_000
+            || !double.IsFinite(value.Score)
+            || value.Score is < 0 or > 100
+            || value.Issues.Count > 16)
+            throw Invalid("runtimeFailure.browserQualityEvidence.attempt 无效");
+        return new DesignArtifactBrowserQualityFailureAttempt
+        {
+            RepairAttempt = value.RepairAttempt,
+            HardPassed = value.HardPassed,
+            Score = value.Score,
+            Issues = value.Issues.Select(NormalizeBrowserQualityFailureIssue).ToList(),
+        };
+    }
+
+    private static DesignArtifactBrowserQualityFailureIssue NormalizeBrowserQualityFailureIssue(
+        DesignArtifactBrowserQualityFailureIssue value)
+    {
+        var issueCode = SafeToken(value.IssueCode, "runtimeFailure.browserQualityEvidence.issueCode", 64);
+        if (!BrowserQualityIssueCodes.Contains(issueCode) || value.Viewport is not ("desktop" or "mobile")
+            || value.Actual.Count > 8)
+            throw Invalid("runtimeFailure.browserQualityEvidence.issue 无效");
+        var actual = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (key, raw) in value.Actual)
+        {
+            if (!BrowserQualityMeasurementKeys.Contains(key))
+                throw Invalid("runtimeFailure.browserQualityEvidence.actual 无效");
+            actual[key] = raw switch
+            {
+                null => null,
+                bool boolean => boolean,
+                string text when text.Length <= 120 && !text.Any(char.IsControl) => text,
+                double number when double.IsFinite(number) => number,
+                float number when float.IsFinite(number) => number,
+                int number => number,
+                long number => number,
+                _ => throw Invalid("runtimeFailure.browserQualityEvidence.actual 无效"),
+            };
+        }
+        return new DesignArtifactBrowserQualityFailureIssue
+        {
+            IssueCode = issueCode,
+            Viewport = value.Viewport,
+            Actual = actual,
+            Target = SafeDiagnosticText(value.Target, 160),
+            ElementSummary = value.ElementSummary == null ? null : new DesignArtifactBrowserElementSummary
+            {
+                Tag = SafeDiagnosticText(value.ElementSummary.Tag, 40),
+                Id = OptionalDiagnosticText(value.ElementSummary.Id, 80),
+                Role = OptionalDiagnosticText(value.ElementSummary.Role, 80),
+                Label = OptionalDiagnosticText(value.ElementSummary.Label, 160),
+            },
+        };
+    }
+
+    private static string SafeDiagnosticText(string? value, int maxLength)
+        => OptionalDiagnosticText(value, maxLength) ?? throw Invalid("runtimeFailure.browserQualityEvidence 文本无效");
+
+    private static string? OptionalDiagnosticText(string? value, int maxLength)
+    {
+        var normalized = Optional(value, maxLength);
+        return normalized != null && !normalized.Any(char.IsControl)
+            ? normalized
+            : normalized == null ? null : throw Invalid("runtimeFailure.browserQualityEvidence 文本无效");
     }
 
     private static void ValidateCapability(

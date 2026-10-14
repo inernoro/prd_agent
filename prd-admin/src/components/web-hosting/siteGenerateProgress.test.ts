@@ -7,6 +7,7 @@ import {
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
   resolveRunModelBadge,
+  runtimeFailureRecoveryMessage,
 } from './siteGenerateProgress';
 
 const run = (overrides: Partial<DesignArtifactRunSummary>): DesignArtifactRunSummary => ({
@@ -112,6 +113,51 @@ describe('生成工作台的进度契约', () => {
     // 停止是进度卡上的显式按钮，交给钩子里真正打服务端的 stop。
     const stage = readFileSync(path.resolve(__dirname, 'workbench/NewSiteStage.tsx'), 'utf8');
     expect(stage).toContain('onStop={() => void run.stop()}');
+  });
+});
+
+describe('浏览器质量失败的用户恢复文案', () => {
+  const runtimeFailure = {
+    code: 'design_browser_quality_rejected',
+    issueCodes: ['mobile_navigation_unusable', 'key_text_contrast_low'],
+    repairAttempts: 1,
+    repairBudgetExhausted: true,
+    browserQualityEvidence: {
+      schemaVersion: 'map-browser-quality-failure-evidence-v1',
+      ruleVersion: 'browser-hard-gate-v1',
+      heuristicVersion: 'browser-aesthetic-heuristic-v1',
+      repairAttempts: 1,
+      repairBudgetExhausted: true,
+      attempts: [{
+        repairAttempt: 1,
+        hardPassed: false,
+        score: 6,
+        issues: [{
+          issueCode: 'key_text_contrast_low',
+          viewport: 'mobile',
+          actual: { ratio: 2.1, provider: 'must-not-render' },
+          target: 'at least 4.5',
+          elementSummary: { tag: 'h1', label: 'internal DOM label' },
+        }],
+      }],
+    },
+  };
+
+  it('shows stable recovery categories without leaking raw diagnostics', () => {
+    const message = runtimeFailureRecoveryMessage(run({
+      status: 'Error',
+      error: 'raw runtime error with model and provider',
+      runtimeFailure,
+    }), 'generate');
+
+    expect(message).toContain('移动端导航还不能可靠操作');
+    expect(message).toContain('关键文字对比度仍不足');
+    expect(message).toContain('已保留最后一版预览');
+    expect(message).toContain('请按原资料和要求重新生成');
+    expect(message).not.toContain('ratio');
+    expect(message).not.toContain('provider');
+    expect(message).not.toContain('model');
+    expect(message).not.toContain('internal DOM label');
   });
 });
 

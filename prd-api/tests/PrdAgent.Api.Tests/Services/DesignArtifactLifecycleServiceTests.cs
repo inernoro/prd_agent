@@ -1312,6 +1312,34 @@ public sealed class DesignArtifactLifecycleServiceTests
                 IssueCodes = ["css_generated_text"],
                 RepairAttempts = 1,
                 RepairBudgetExhausted = true,
+                BrowserQualityEvidence = new DesignArtifactBrowserQualityFailureEvidence
+                {
+                    SchemaVersion = "map-browser-quality-failure-evidence-v1",
+                    RuleVersion = "browser-hard-gate-v1",
+                    HeuristicVersion = "browser-aesthetic-heuristic-v1",
+                    RepairAttempts = 1,
+                    RepairBudgetExhausted = true,
+                    Attempts =
+                    [
+                        new DesignArtifactBrowserQualityFailureAttempt
+                        {
+                            RepairAttempt = 1,
+                            HardPassed = false,
+                            Score = 6,
+                            Issues =
+                            [
+                                new DesignArtifactBrowserQualityFailureIssue
+                                {
+                                    IssueCode = "key_text_contrast_low",
+                                    Viewport = "mobile",
+                                    Actual = new Dictionary<string, object?> { ["ratio"] = 2.1d, ["minimum"] = 4.5d },
+                                    Target = "at least 4.5",
+                                    ElementSummary = new DesignArtifactBrowserElementSummary { Tag = "h1" },
+                                },
+                            ],
+                        },
+                    ],
+                },
             }));
         Assert.Equal(RunStatuses.Error, failed.Status);
         Assert.Equal("design_output_quality_rejected", failed.LifecycleFailureCode);
@@ -1319,8 +1347,12 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(["css_generated_text"], failed.RuntimeFailure?.IssueCodes);
         Assert.Equal(1, failed.RuntimeFailure?.RepairAttempts);
         Assert.True(failed.RuntimeFailure?.RepairBudgetExhausted);
+        Assert.Equal("key_text_contrast_low",
+            failed.RuntimeFailure?.BrowserQualityEvidence?.Attempts[0].Issues[0].IssueCode);
         Assert.Equal(failed.RuntimeFailure?.Code, failed.LifecycleEvents[^1].RuntimeFailure?.Code);
         Assert.Equal(["css_generated_text"], failed.LifecycleEvents[^1].RuntimeFailure?.IssueCodes);
+        Assert.Equal("mobile",
+            failed.LifecycleEvents[^1].RuntimeFailure?.BrowserQualityEvidence?.Attempts[0].Issues[0].Viewport);
         Assert.DoesNotContain("provider", failed.ToJson(), StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1459,6 +1491,34 @@ public sealed class DesignArtifactLifecycleServiceTests
                 IssueCodes = ["css_generated_text"],
                 RepairAttempts = 1,
                 RepairBudgetExhausted = true,
+                BrowserQualityEvidence = new DesignArtifactBrowserQualityFailureEvidence
+                {
+                    SchemaVersion = "map-browser-quality-failure-evidence-v1",
+                    RuleVersion = "browser-hard-gate-v1",
+                    HeuristicVersion = "browser-aesthetic-heuristic-v1",
+                    RepairAttempts = 1,
+                    RepairBudgetExhausted = true,
+                    Attempts =
+                    [
+                        new DesignArtifactBrowserQualityFailureAttempt
+                        {
+                            RepairAttempt = 1,
+                            HardPassed = false,
+                            Score = 6,
+                            Issues =
+                            [
+                                new DesignArtifactBrowserQualityFailureIssue
+                                {
+                                    IssueCode = "key_text_contrast_low",
+                                    Viewport = "mobile",
+                                    Actual = new Dictionary<string, object?> { ["ratio"] = 2.1d, ["minimum"] = 4.5d },
+                                    Target = "at least 4.5",
+                                    ElementSummary = new DesignArtifactBrowserElementSummary { Tag = "h1" },
+                                },
+                            ],
+                        },
+                    ],
+                },
             }));
 
         var controller = Controller(fixture, events, current.UserId);
@@ -1490,6 +1550,13 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal("css_generated_text", runtimeFailure.GetProperty("issueCodes")[0].GetString());
         Assert.Equal(1, runtimeFailure.GetProperty("repairAttempts").GetInt32());
         Assert.True(runtimeFailure.GetProperty("repairBudgetExhausted").GetBoolean());
+        var browserFailure = runtimeFailure.GetProperty("browserQualityEvidence");
+        Assert.Equal("map-browser-quality-failure-evidence-v1", browserFailure.GetProperty("schemaVersion").GetString());
+        var browserIssue = browserFailure.GetProperty("attempts")[0].GetProperty("issues")[0];
+        Assert.Equal("key_text_contrast_low", browserIssue.GetProperty("issueCode").GetString());
+        Assert.Equal("mobile", browserIssue.GetProperty("viewport").GetString());
+        Assert.Equal(2.1d, browserIssue.GetProperty("actual").GetProperty("ratio").GetDouble());
+        Assert.Equal("h1", browserIssue.GetProperty("elementSummary").GetProperty("tag").GetString());
         var failedEvents = Data(Assert.IsType<OkObjectResult>(await controller.GetContractEvents(failedPublic.Id)));
         var failureEvent = failedEvents.GetProperty("items").EnumerateArray().Last();
         Assert.Equal("css_generated_text",

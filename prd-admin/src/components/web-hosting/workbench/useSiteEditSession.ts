@@ -43,6 +43,7 @@ import {
 import {
   GATEWAY_PLATFORM_FALLBACK,
   resolveRunModelBadge,
+  runtimeFailureRecoveryMessage,
   visibleDesignPhase,
 } from '../siteGenerateProgress';
 import {
@@ -511,7 +512,7 @@ export function useSiteEditSession(site: HostedSite, { onPublished, prefillInstr
         clearRecovery();
         setGenerating(false);
         beginRuntimeRecovery(result.data.runtime);
-        const detail = result.data.error || result.data.phase || '页面修改失败';
+        const detail = runtimeFailureRecoveryMessage(result.data, 'edit');
         setProgress((current) => siteEditDisplayProgress('incomplete', current));
         setPhase(detail);
         setRecoveryNotice({

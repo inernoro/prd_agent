@@ -139,6 +139,33 @@ export interface ResolvedDesignKnowledgeReference extends DesignKnowledgeReferen
   title: string;
 }
 
+export interface DesignArtifactRuntimeFailure {
+  code: string;
+  issueCodes: string[];
+  repairAttempts?: number | null;
+  repairBudgetExhausted?: boolean | null;
+  /** 管理员诊断用的有界浏览器测量；普通用户界面不得直接渲染其中技术值。 */
+  browserQualityEvidence?: {
+    schemaVersion: string;
+    ruleVersion: string;
+    heuristicVersion: string;
+    repairAttempts: number;
+    repairBudgetExhausted: boolean;
+    attempts: Array<{
+      repairAttempt: number;
+      hardPassed: boolean;
+      score: number;
+      issues: Array<{
+        issueCode: string;
+        viewport: 'desktop' | 'mobile' | string;
+        actual: Record<string, string | number | boolean | null>;
+        target: string;
+        elementSummary?: { tag: string; id?: string | null; role?: string | null; label?: string | null } | null;
+      }>;
+    }>;
+  } | null;
+}
+
 export interface DesignArtifactRunSummary {
   runId: string;
   status: string;
@@ -192,6 +219,7 @@ export interface DesignArtifactRunSummary {
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
   error?: string | null;
+  runtimeFailure?: DesignArtifactRuntimeFailure | null;
   cancelRequested?: boolean;
   cancelRequestedAt?: string | null;
   cancelledAt?: string | null;

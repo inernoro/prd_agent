@@ -104,6 +104,7 @@ internal sealed class OpenDesignRemoteDiagnosticException : Exception
             IssueCodes = Details?.IssueCodes.ToList() ?? [],
             RepairAttempts = Details?.RepairAttempts,
             RepairBudgetExhausted = Details?.RepairBudgetExhausted,
+            BrowserQualityEvidence = Details?.BrowserQualityEvidence,
         };
     }
 }
@@ -111,7 +112,8 @@ internal sealed class OpenDesignRemoteDiagnosticException : Exception
 internal sealed record OpenDesignRemoteFailureDetails(
     IReadOnlyList<string> IssueCodes,
     int? RepairAttempts,
-    bool? RepairBudgetExhausted);
+    bool? RepairBudgetExhausted,
+    DesignArtifactBrowserQualityFailureEvidence? BrowserQualityEvidence = null);
 
 internal static class OpenDesignFailureMessage
 {

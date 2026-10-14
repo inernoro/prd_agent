@@ -23,6 +23,7 @@ import {
   parseDesignBrief,
   parseDesignDirection,
 } from '../src/prompts.js';
+import { browserRepairMessage, summarizeAttempt } from '../src/quality/browser-contract.js';
 import {
   assertRequiredFactualCoverage,
   canAcceptUntrackedWorkspaceEdit,
@@ -55,6 +56,28 @@ describe('OpenDesign prompt quality contracts', () => {
 
     assertNoGeneratedReadableText(generation);
     assertNoGeneratedReadableText(finalReview);
+  });
+
+  it('prevents unusable mobile navigation and low-contrast key text in generation, final review and browser repair', () => {
+    const generation = buildPlatformRules({ knowledgeFiles: [], editingExistingPage: false }).join(' ');
+    const finalReview = buildReviewMessage({ reviewPass: 0, editingExistingPage: false, reviewAddendum: '' });
+    const attempt = summarizeAttempt(0, 'test-chromium', [{
+      viewport: 'mobile', width: 390, height: 844, documentWidth: 390,
+      h1Count: 1, visibleHeadingCount: 1, visibleCtaCount: 1, visibleLandmarkCount: 1,
+      issues: [{
+        issueCode: 'mobile_navigation_unusable', severity: 'hard', ruleVersion: 'browser-hard-gate-v1',
+        viewport: 'mobile', actual: { visibleLinkCount: 0 }, target: 'visible links or an aria-controls toggle',
+      }],
+      screenshotPath: 'assets/quality/mobile.png',
+    }]);
+    const repair = browserRepairMessage(attempt);
+
+    for (const prompt of [generation, finalReview, repair]) {
+      expect(prompt).toContain('390px mobile viewport');
+      expect(prompt).toContain('aria-controls exactly references the navigation element');
+      expect(prompt).toContain('4.5:1 for normal text and 3.0:1 for large text');
+      expect(prompt).toContain('opacity, gradients, overlays, or generated backgrounds');
+    }
   });
 
   it('keeps the aesthetic pass from changing facts or requested behavior', () => {

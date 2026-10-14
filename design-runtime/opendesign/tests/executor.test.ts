@@ -690,8 +690,9 @@ describe('collecting the deliverable', () => {
                 severity: 'hard' as const,
                 ruleVersion: 'browser-hard-gate-v1' as const,
                 viewport: viewport.viewport,
-                actual: { contrastRatio: 2.5 },
+                actual: { ratio: 2.5, minimum: 4.5 },
                 target: 'at least 4.5',
+                element: { tag: 'h1', id: 'hero-title', role: 'heading', label: 'Launch heading' },
               }],
               screenshotPath,
             };
@@ -720,7 +721,23 @@ describe('collecting the deliverable', () => {
       repairBudgetExhausted: true,
       issueCodes: ['key_text_contrast_low'],
       bestRepairAttempt: 0,
+      browserQualityEvidence: {
+        schemaVersion: 'map-browser-quality-failure-evidence-v1',
+        repairBudgetExhausted: true,
+      },
     });
+    const failureEvidence = view.error.details.browserQualityEvidence;
+    expect(failureEvidence.attempts).toHaveLength(2);
+    expect(failureEvidence.attempts.map((attempt: { repairAttempt: number }) => attempt.repairAttempt)).toEqual([0, 1]);
+    expect(failureEvidence.attempts[0].issues[0]).toEqual({
+      issueCode: 'key_text_contrast_low',
+      viewport: 'desktop',
+      actual: { ratio: 2.5, minimum: 4.5 },
+      target: 'at least 4.5',
+      elementSummary: { tag: 'h1', id: 'hero-title', role: 'heading', label: 'Launch heading' },
+    });
+    expect(JSON.stringify(view.error.details)).not.toContain('trusted-with-hard-issue');
+    expect(JSON.stringify(view.error.details)).not.toContain('assets/quality/');
     expect(harness.daemon.cancels).toContain('od-run-3');
     expect(checkedHtml).toHaveLength(2);
     expect(checkedHtml[1]).toContain('trusted-with-hard-issue');

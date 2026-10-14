@@ -86,9 +86,10 @@ public sealed class OpenDesignServiceArtifactExecutorTests
                 ["retryable"] = false,
                 ["details"] = new JsonObject
                 {
-                    ["issueCodes"] = new JsonArray("css_generated_text"),
+                    ["issueCodes"] = new JsonArray("mobile_navigation_unusable", "key_text_contrast_low"),
                     ["repairAttempts"] = 1,
                     ["repairBudgetExhausted"] = true,
+                    ["browserQualityEvidence"] = BrowserQualityEvidence(),
                 },
             })));
         var executor = BuildExecutor(service, BuildBroker().Object);
@@ -101,9 +102,17 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         var diagnostic = error.InnerException.ShouldBeOfType<OpenDesignRemoteDiagnosticException>();
         diagnostic.RemoteCode.ShouldBe("design_output_quality_rejected");
         diagnostic.Details.ShouldNotBeNull();
-        diagnostic.Details!.IssueCodes.ShouldBe(["css_generated_text"]);
+        diagnostic.Details!.IssueCodes.ShouldBe(["mobile_navigation_unusable", "key_text_contrast_low"]);
         diagnostic.Details.RepairAttempts.ShouldBe(1);
         diagnostic.Details.RepairBudgetExhausted.ShouldBe(true);
+        var browserEvidence = diagnostic.Details.BrowserQualityEvidence.ShouldNotBeNull();
+        browserEvidence.SchemaVersion.ShouldBe("map-browser-quality-failure-evidence-v1");
+        var issue = browserEvidence.Attempts.ShouldHaveSingleItem().Issues.ShouldHaveSingleItem();
+        issue.Viewport.ShouldBe("mobile");
+        issue.Actual["visibleLinkCount"].ShouldBe(0d);
+        issue.Target.ShouldBe("visible links or a matching aria-controls toggle");
+        issue.ElementSummary!.Tag.ShouldBe("nav");
+        diagnostic.ToRuntimeFailure()!.BrowserQualityEvidence.ShouldNotBeNull();
         service.CancelCalls.ShouldBe(0);
     }
 
@@ -146,6 +155,55 @@ public sealed class OpenDesignServiceArtifactExecutorTests
         diagnostic.RemoteCode.ShouldBe("design_output_quality_rejected");
         diagnostic.Details!.IssueCodes.ShouldBe(["css_generated_text"]);
     }
+
+    [Fact]
+    public void BrowserQualityDetails_RejectUnboundedOrUntrustedMeasurements()
+    {
+        var evidence = BrowserQualityEvidence();
+        evidence["rawHtml"] = "<main>must not cross boundary</main>";
+        var issue = evidence["attempts"]!.AsArray()[0]!["issues"]!.AsArray()[0]!.AsObject();
+        issue["actual"]!["nested"] = new JsonObject { ["secret"] = "not primitive" };
+        var payload = new JsonObject { ["details"] = new JsonObject { ["browserQualityEvidence"] = evidence } };
+
+        var details = OpenDesignEventTranslator.ReadFailureDetails(payload.ToJsonString());
+
+        details.ShouldBeNull();
+    }
+
+    private static JsonObject BrowserQualityEvidence() => new()
+    {
+        ["schemaVersion"] = "map-browser-quality-failure-evidence-v1",
+        ["ruleVersion"] = "browser-hard-gate-v1",
+        ["heuristicVersion"] = "browser-aesthetic-heuristic-v1",
+        ["repairAttempts"] = 1,
+        ["repairBudgetExhausted"] = true,
+        ["attempts"] = new JsonArray
+        {
+            new JsonObject
+            {
+                ["repairAttempt"] = 1,
+                ["hardPassed"] = false,
+                ["score"] = 6,
+                ["issues"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["issueCode"] = "mobile_navigation_unusable",
+                        ["viewport"] = "mobile",
+                        ["actual"] = new JsonObject { ["visibleLinkCount"] = 0, ["hasVisibleToggle"] = false },
+                        ["target"] = "visible links or a matching aria-controls toggle",
+                        ["elementSummary"] = new JsonObject
+                        {
+                            ["tag"] = "nav",
+                            ["id"] = "mobile-nav",
+                            ["role"] = "navigation",
+                            ["label"] = "Main navigation",
+                        },
+                    },
+                },
+            },
+        },
+    };
 
     [Fact]
     public async Task UsageObservationFailure_StillRevokesTheRunScopedGrant()

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
 
@@ -15,6 +16,29 @@ internal sealed class OpenDesignEventTranslator
     private const int MaxIssueCodes = 16;
     private const int MaxIssueCodeLength = 64;
     private const int MaxRepairAttempts = 1_000;
+    private const int MaxBrowserQualityAttempts = 3;
+    private const int MaxBrowserQualityIssuesPerAttempt = 16;
+    private const int MaxMeasurementValues = 8;
+    private const int MaxMeasurementValueLength = 120;
+    private const int MaxTargetLength = 160;
+    private const string BrowserQualityFailureSchema = "map-browser-quality-failure-evidence-v1";
+    private static readonly HashSet<string> BrowserIssueCodes = new(StringComparer.Ordinal)
+    {
+        "horizontal_overflow",
+        "main_content_clipped",
+        "primary_cta_clipped",
+        "empty_link",
+        "broken_fragment_target",
+        "mobile_navigation_unusable",
+        "table_unreadable",
+        "key_text_contrast_low",
+    };
+    private static readonly HashSet<string> BrowserMeasurementKeys = new(StringComparer.Ordinal)
+    {
+        "documentWidth", "viewportWidth", "present", "visible", "left", "right", "href",
+        "linkCount", "visibleLinkCount", "hasVisibleToggle", "tableWidth", "scrollable",
+        "minCellWidth", "ratio", "minimum", "fontSize", "fontWeight",
+    };
     internal const string Status = "status";
     internal const string TextDelta = "text_delta";
     internal const string Thinking = "thinking";
@@ -105,8 +129,12 @@ internal sealed class OpenDesignEventTranslator
                 && budgetValue.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 repairBudgetExhausted = budgetValue.GetBoolean();
 
-            return issueCodes.Count > 0 || repairAttempts.HasValue || repairBudgetExhausted.HasValue
-                ? new OpenDesignRemoteFailureDetails(issueCodes, repairAttempts, repairBudgetExhausted)
+            var browserQualityEvidence = details.TryGetProperty("browserQualityEvidence", out var evidenceValue)
+                ? ReadBrowserQualityEvidence(evidenceValue)
+                : null;
+
+            return issueCodes.Count > 0 || repairAttempts.HasValue || repairBudgetExhausted.HasValue || browserQualityEvidence != null
+                ? new OpenDesignRemoteFailureDetails(issueCodes, repairAttempts, repairBudgetExhausted, browserQualityEvidence)
                 : null;
         }
         catch (JsonException)
@@ -114,6 +142,170 @@ internal sealed class OpenDesignEventTranslator
             return null;
         }
     }
+
+    private static DesignArtifactBrowserQualityFailureEvidence? ReadBrowserQualityEvidence(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object
+            || ReadBoundedText(value, "schemaVersion", 80) != BrowserQualityFailureSchema
+            || ReadVersionField(value, "ruleVersion") is not { } ruleVersion
+            || ReadVersionField(value, "heuristicVersion") is not { } heuristicVersion
+            || !TryReadSafeInt(value, "repairAttempts", MaxRepairAttempts, out var repairAttempts)
+            || !value.TryGetProperty("repairBudgetExhausted", out var exhaustedValue)
+            || exhaustedValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+            || !value.TryGetProperty("attempts", out var attemptsValue)
+            || attemptsValue.ValueKind != JsonValueKind.Array
+            || attemptsValue.GetArrayLength() is < 1 or > MaxBrowserQualityAttempts)
+            return null;
+
+        var attempts = new List<DesignArtifactBrowserQualityFailureAttempt>();
+        foreach (var attemptValue in attemptsValue.EnumerateArray())
+        {
+            var attempt = ReadBrowserQualityAttempt(attemptValue);
+            if (attempt == null) return null;
+            attempts.Add(attempt);
+        }
+        return new DesignArtifactBrowserQualityFailureEvidence
+        {
+            SchemaVersion = BrowserQualityFailureSchema,
+            RuleVersion = ruleVersion,
+            HeuristicVersion = heuristicVersion,
+            RepairAttempts = repairAttempts,
+            RepairBudgetExhausted = exhaustedValue.GetBoolean(),
+            Attempts = attempts,
+        };
+    }
+
+    private static DesignArtifactBrowserQualityFailureAttempt? ReadBrowserQualityAttempt(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object
+            || !TryReadSafeInt(value, "repairAttempt", MaxRepairAttempts, out var repairAttempt)
+            || !value.TryGetProperty("hardPassed", out var hardPassedValue)
+            || hardPassedValue.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+            || !value.TryGetProperty("score", out var scoreValue)
+            || scoreValue.ValueKind != JsonValueKind.Number
+            || !scoreValue.TryGetDouble(out var score)
+            || !double.IsFinite(score)
+            || score is < 0 or > 100
+            || !value.TryGetProperty("issues", out var issuesValue)
+            || issuesValue.ValueKind != JsonValueKind.Array
+            || issuesValue.GetArrayLength() > MaxBrowserQualityIssuesPerAttempt)
+            return null;
+
+        var issues = new List<DesignArtifactBrowserQualityFailureIssue>();
+        foreach (var issueValue in issuesValue.EnumerateArray())
+        {
+            var issue = ReadBrowserQualityIssue(issueValue);
+            if (issue == null) return null;
+            issues.Add(issue);
+        }
+        return new DesignArtifactBrowserQualityFailureAttempt
+        {
+            RepairAttempt = repairAttempt,
+            HardPassed = hardPassedValue.GetBoolean(),
+            Score = score,
+            Issues = issues,
+        };
+    }
+
+    private static DesignArtifactBrowserQualityFailureIssue? ReadBrowserQualityIssue(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return null;
+        var viewport = ReadBoundedText(value, "viewport", 16);
+        if (ReadStableField(value, "issueCode") is not { } issueCode
+            || !BrowserIssueCodes.Contains(issueCode)
+            || viewport is not ("desktop" or "mobile")
+            || ReadBoundedText(value, "target", MaxTargetLength) is not { } target
+            || !value.TryGetProperty("actual", out var actualValue)
+            || actualValue.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var actual = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var property in actualValue.EnumerateObject())
+        {
+            if (actual.Count >= MaxMeasurementValues
+                || !BrowserMeasurementKeys.Contains(property.Name)
+                || !TryReadMeasurementValue(property.Value, out var measurement))
+                return null;
+            actual[property.Name] = measurement;
+        }
+        var element = value.TryGetProperty("elementSummary", out var elementValue)
+            ? ReadElementSummary(elementValue)
+            : null;
+        if (value.TryGetProperty("elementSummary", out _) && element == null) return null;
+        return new DesignArtifactBrowserQualityFailureIssue
+        {
+            IssueCode = issueCode,
+            Viewport = viewport,
+            Actual = actual,
+            Target = target,
+            ElementSummary = element,
+        };
+    }
+
+    private static DesignArtifactBrowserElementSummary? ReadElementSummary(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object || ReadBoundedText(value, "tag", 40) is not { } tag) return null;
+        return new DesignArtifactBrowserElementSummary
+        {
+            Tag = tag,
+            Id = ReadOptionalBoundedText(value, "id", 80),
+            Role = ReadOptionalBoundedText(value, "role", 80),
+            Label = ReadOptionalBoundedText(value, "label", 160),
+        };
+    }
+
+    private static bool TryReadMeasurementValue(JsonElement value, out object? result)
+    {
+        result = value.ValueKind switch
+        {
+            JsonValueKind.String when value.GetString() is { Length: <= MaxMeasurementValueLength } text
+                                      && !text.Any(char.IsControl) => text,
+            JsonValueKind.Number when value.TryGetDouble(out var number) && double.IsFinite(number) => number,
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Null => null,
+            _ => null,
+        };
+        return value.ValueKind == JsonValueKind.Null || result != null;
+    }
+
+    private static bool TryReadSafeInt(JsonElement value, string field, int max, out int result)
+    {
+        result = 0;
+        return value.TryGetProperty(field, out var property)
+               && property.ValueKind == JsonValueKind.Number
+               && property.TryGetInt32(out result)
+               && result is >= 0
+               && result <= max;
+    }
+
+    private static string? ReadStableField(JsonElement value, string field)
+    {
+        var text = ReadBoundedText(value, field, MaxIssueCodeLength);
+        return IsStableToken(text) ? text : null;
+    }
+
+    private static string? ReadVersionField(JsonElement value, string field)
+    {
+        var text = ReadBoundedText(value, field, MaxIssueCodeLength);
+        return !string.IsNullOrEmpty(text)
+               && text[0] is >= 'a' and <= 'z'
+               && text.All(character => character is >= 'a' and <= 'z'
+                                        || character is >= '0' and <= '9'
+                                        || character is '-' or '_')
+            ? text
+            : null;
+    }
+
+    private static string? ReadBoundedText(JsonElement value, string field, int maxLength)
+    {
+        if (!value.TryGetProperty(field, out var property) || property.ValueKind != JsonValueKind.String) return null;
+        var text = property.GetString();
+        return !string.IsNullOrWhiteSpace(text) && text.Length <= maxLength && !text.Any(char.IsControl) ? text : null;
+    }
+
+    private static string? ReadOptionalBoundedText(JsonElement value, string field, int maxLength) =>
+        value.TryGetProperty(field, out _) ? ReadBoundedText(value, field, maxLength) : null;
 
     internal static string? ReadPayloadStableToken(string payloadJson, string field)
     {

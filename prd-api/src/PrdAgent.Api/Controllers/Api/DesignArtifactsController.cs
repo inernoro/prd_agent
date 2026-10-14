@@ -27,6 +27,7 @@ public sealed class DesignArtifactsController : ControllerBase
         "design_output_invalid",
         "design_output_missing",
         "design_output_quality_rejected",
+        "design_browser_quality_rejected",
         "design_output_too_large",
         "open_design_contract_mismatch",
         "open_design_execution_failed",
@@ -1203,6 +1204,7 @@ public sealed class DesignArtifactsController : ControllerBase
             failure.IssueCodes,
             failure.RepairAttempts,
             failure.RepairBudgetExhausted,
+            failure.BrowserQualityEvidence,
         };
 
     private static object BuildRunFailurePayload(DesignArtifactRun run, string fallbackMessage) => new
@@ -1216,6 +1218,7 @@ public sealed class DesignArtifactsController : ControllerBase
             issueCodes = run.RuntimeFailure.IssueCodes,
             run.RuntimeFailure.RepairAttempts,
             run.RuntimeFailure.RepairBudgetExhausted,
+            browserQualityEvidence = run.RuntimeFailure.BrowserQualityEvidence,
         },
     };
 

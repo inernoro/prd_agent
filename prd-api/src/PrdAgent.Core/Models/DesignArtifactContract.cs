@@ -134,6 +134,61 @@ public sealed class DesignArtifactRuntimeFailure
     public int? RepairAttempts { get; set; }
 
     public bool? RepairBudgetExhausted { get; set; }
+
+    /// <summary>浏览器硬门禁失败的有界测量证据；不含 HTML、截图路径、模型输出或供应商诊断。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignArtifactBrowserQualityFailureEvidence? BrowserQualityEvidence { get; set; }
+}
+
+public sealed class DesignArtifactBrowserQualityFailureEvidence
+{
+    public string SchemaVersion { get; set; } = string.Empty;
+
+    public string RuleVersion { get; set; } = string.Empty;
+
+    public string HeuristicVersion { get; set; } = string.Empty;
+
+    public int RepairAttempts { get; set; }
+
+    public bool RepairBudgetExhausted { get; set; }
+
+    public List<DesignArtifactBrowserQualityFailureAttempt> Attempts { get; set; } = new();
+}
+
+public sealed class DesignArtifactBrowserQualityFailureAttempt
+{
+    public int RepairAttempt { get; set; }
+
+    public bool HardPassed { get; set; }
+
+    public double Score { get; set; }
+
+    public List<DesignArtifactBrowserQualityFailureIssue> Issues { get; set; } = new();
+}
+
+public sealed class DesignArtifactBrowserQualityFailureIssue
+{
+    public string IssueCode { get; set; } = string.Empty;
+
+    public string Viewport { get; set; } = string.Empty;
+
+    public Dictionary<string, object?> Actual { get; set; } = new(StringComparer.Ordinal);
+
+    public string Target { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignArtifactBrowserElementSummary? ElementSummary { get; set; }
+}
+
+public sealed class DesignArtifactBrowserElementSummary
+{
+    public string Tag { get; set; } = string.Empty;
+
+    public string? Id { get; set; }
+
+    public string? Role { get; set; }
+
+    public string? Label { get; set; }
 }
 
 /// <summary>

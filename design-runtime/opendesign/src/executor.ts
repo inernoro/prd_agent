@@ -58,6 +58,7 @@ import {
   MAX_BROWSER_REPAIR_ATTEMPTS,
   browserRepairMessage,
   buildBrowserQualityEvidence,
+  buildBrowserQualityFailureEvidence,
   summarizeAttempt,
   type BrowserQualityAttemptEvidence,
 } from './quality/browser-contract.js';
@@ -753,6 +754,7 @@ export class DesignTaskExecutor {
             bestScore: Math.max(...browserAttempts.map((attempt) => attempt.score)),
             bestRepairAttempt: bestBrowserCandidate.repairAttempt,
             repairBudgetExhausted,
+            browserQualityEvidence: buildBrowserQualityFailureEvidence(browserAttempts, repairBudgetExhausted),
           },
         );
       };

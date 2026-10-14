@@ -300,6 +300,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 IssueCodes = runtimeFailure.IssueCodes.ToList(),
                 RepairAttempts = runtimeFailure.RepairAttempts,
                 RepairBudgetExhausted = runtimeFailure.RepairBudgetExhausted,
+                BrowserQualityEvidence = runtimeFailure.BrowserQualityEvidence,
             };
         }
         for (var attempt = 0; attempt < 3; attempt++)

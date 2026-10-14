@@ -25,6 +25,7 @@ import {
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
   resolveRunModelBadge,
+  runtimeFailureRecoveryMessage,
   type GenerationStage,
 } from '../siteGenerateProgress';
 
@@ -262,7 +263,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
           const interrupted = status === 'error' && result.data.phaseCode === 'interrupted';
           failGeneration(status === 'cancelled'
             ? '网页生成已取消，未保存或发布新页面'
-            : result.data.error || '网页生成未完成，请重新发起', interrupted ? runId : undefined);
+            : runtimeFailureRecoveryMessage(result.data, 'generate'), interrupted ? runId : undefined);
           return;
         }
         setGenerating(true);

@@ -1012,6 +1012,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             run.RuntimeFailure.IssueCodes,
             run.RuntimeFailure.RepairAttempts,
             run.RuntimeFailure.RepairBudgetExhausted,
+            run.RuntimeFailure.BrowserQualityEvidence,
         },
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,
@@ -1071,6 +1072,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             issueCodes = run.RuntimeFailure.IssueCodes,
             run.RuntimeFailure.RepairAttempts,
             run.RuntimeFailure.RepairBudgetExhausted,
+            browserQualityEvidence = run.RuntimeFailure.BrowserQualityEvidence,
         },
     };
 

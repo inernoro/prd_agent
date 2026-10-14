@@ -16,6 +16,34 @@ export function resolveGeneratedSiteId(run: DesignArtifactRunSummary): string | 
   return run.artifactSiteId || run.producedArtifactSiteId || null;
 }
 
+/**
+ * 运行时技术测量只供管理员诊断。普通用户只看到稳定问题类别、线上安全结论和下一步，
+ * 不显示 DOM 摘要、阈值、模型或供应商信息。
+ */
+export function runtimeFailureRecoveryMessage(
+  run: Pick<DesignArtifactRunSummary, 'runtimeFailure' | 'error'>,
+  operation: 'generate' | 'edit',
+): string {
+  const failure = run.runtimeFailure;
+  if (failure?.code === 'design_browser_quality_rejected') {
+    const problems: string[] = [];
+    if (failure.issueCodes.includes('mobile_navigation_unusable')) problems.push('移动端导航还不能可靠操作');
+    if (failure.issueCodes.includes('key_text_contrast_low')) problems.push('关键文字对比度仍不足');
+    const reason = problems.length > 0 ? problems.join('，') : '桌面或移动端仍有可用性问题';
+    const action = operation === 'edit' ? '请保留当前要求并重新发起修改' : '请按原资料和要求重新生成';
+    return `页面没有通过最终浏览器检查：${reason}。已保留最后一版预览，线上页面没有变化；${action}。`;
+  }
+  if (failure?.code === 'design_output_quality_rejected') {
+    const action = operation === 'edit' ? '请缩小修改范围后重新发起' : '请缩小设计要求或减少引用资料后重新生成';
+    return `页面没有通过发布前的内容校验。已保留最后一版预览，线上页面没有变化；${action}。`;
+  }
+  if (failure) {
+    const action = operation === 'edit' ? '请稍后按原要求重新发起修改' : '请稍后按原资料和要求重新生成';
+    return `页面处理没有完成。已保留可用的最后一版预览，线上页面没有变化；${action}。管理员可以在诊断记录中查看技术原因。`;
+  }
+  return run.error?.trim() || (operation === 'edit' ? '页面修改未完成，请重新发起' : '网页生成未完成，请重新发起');
+}
+
 /** 后端只给了模型名、没给平台名时的兜底称谓。三个消费点共用这一份，别各写各的。 */
 export const GATEWAY_PLATFORM_FALLBACK = 'LLM Gateway';
 

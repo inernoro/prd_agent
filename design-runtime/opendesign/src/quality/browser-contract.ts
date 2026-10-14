@@ -1,4 +1,7 @@
+import { BROWSER_HARD_GATE_AUTHORING_RULE } from '../prompts.js';
+
 export const BROWSER_QUALITY_SCHEMA = 'map-browser-quality-evidence-v1';
+export const BROWSER_QUALITY_FAILURE_SCHEMA = 'map-browser-quality-failure-evidence-v1';
 export const BROWSER_QUALITY_RULE_VERSION = 'browser-hard-gate-v1';
 export const BROWSER_QUALITY_HEURISTIC_VERSION = 'browser-aesthetic-heuristic-v1';
 export const MAX_BROWSER_REPAIR_ATTEMPTS = 2;
@@ -73,6 +76,34 @@ export interface BrowserQualityEvidence {
   attempts: BrowserQualityAttemptEvidence[];
 }
 
+export interface BrowserQualityFailureIssue {
+  issueCode: BrowserQualityIssueCode;
+  viewport: BrowserQualityViewportName;
+  actual: Record<string, string | number | boolean | null>;
+  target: string;
+  elementSummary?: BrowserElementSummary;
+}
+
+export interface BrowserQualityFailureAttempt {
+  repairAttempt: number;
+  hardPassed: boolean;
+  score: number;
+  issues: BrowserQualityFailureIssue[];
+}
+
+/**
+ * 失败任务也必须留下可追溯的浏览器事实，但不能把 HTML、截图物理路径或无界 DOM 文本塞进事件。
+ * 最多保留三次检查、每次十六个问题；这覆盖首检与两轮有限修复。
+ */
+export interface BrowserQualityFailureEvidence {
+  schemaVersion: typeof BROWSER_QUALITY_FAILURE_SCHEMA;
+  ruleVersion: typeof BROWSER_QUALITY_RULE_VERSION;
+  heuristicVersion: typeof BROWSER_QUALITY_HEURISTIC_VERSION;
+  repairAttempts: number;
+  repairBudgetExhausted: boolean;
+  attempts: BrowserQualityFailureAttempt[];
+}
+
 export interface BrowserQualityWorkerJob {
   workspaceDir: string;
   evidenceDir: string;
@@ -131,6 +162,58 @@ export function buildBrowserQualityEvidence(
   };
 }
 
+const boundedText = (value: string | undefined, max: number): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, max) : undefined;
+};
+
+const BROWSER_MEASUREMENT_KEYS = new Set([
+  'documentWidth', 'viewportWidth', 'present', 'visible', 'left', 'right', 'href',
+  'linkCount', 'visibleLinkCount', 'hasVisibleToggle', 'tableWidth', 'scrollable',
+  'minCellWidth', 'ratio', 'minimum', 'fontSize', 'fontWeight',
+]);
+
+function boundedActual(actual: BrowserQualityIssue['actual']): BrowserQualityFailureIssue['actual'] {
+  const safe: BrowserQualityFailureIssue['actual'] = {};
+  for (const [key, value] of Object.entries(actual).slice(0, 8)) {
+    if (!BROWSER_MEASUREMENT_KEYS.has(key)) continue;
+    safe[key] = typeof value === 'string' ? value.slice(0, 120) : value;
+  }
+  return safe;
+}
+
+export function buildBrowserQualityFailureEvidence(
+  attempts: BrowserQualityAttemptEvidence[],
+  repairBudgetExhausted: boolean,
+): BrowserQualityFailureEvidence {
+  return {
+    schemaVersion: BROWSER_QUALITY_FAILURE_SCHEMA,
+    ruleVersion: BROWSER_QUALITY_RULE_VERSION,
+    heuristicVersion: BROWSER_QUALITY_HEURISTIC_VERSION,
+    repairAttempts: Math.max(0, attempts.length - 1),
+    repairBudgetExhausted,
+    attempts: attempts.slice(-3).map((attempt) => ({
+      repairAttempt: attempt.repairAttempt,
+      hardPassed: attempt.hardPassed,
+      score: attempt.score,
+      issues: attempt.viewports.flatMap((measurement) => measurement.issues).slice(0, 16).map((issue) => ({
+        issueCode: issue.issueCode,
+        viewport: issue.viewport,
+        actual: boundedActual(issue.actual),
+        target: boundedText(issue.target, 160) ?? 'browser hard-gate target',
+        ...(issue.element ? {
+          elementSummary: {
+            tag: boundedText(issue.element.tag, 40) ?? 'element',
+            ...(boundedText(issue.element.id, 80) ? { id: boundedText(issue.element.id, 80) } : {}),
+            ...(boundedText(issue.element.role, 80) ? { role: boundedText(issue.element.role, 80) } : {}),
+            ...(boundedText(issue.element.label, 160) ? { label: boundedText(issue.element.label, 160) } : {}),
+          },
+        } : {}),
+      })),
+    })),
+  };
+}
+
 export function browserRepairMessage(attempt: BrowserQualityAttemptEvidence): string {
   const issues = attempt.viewports.flatMap((measurement) => measurement.issues).map((issue) => ({
     issueCode: issue.issueCode,
@@ -142,6 +225,7 @@ export function browserRepairMessage(attempt: BrowserQualityAttemptEvidence): st
   return [
     'The isolated browser quality gate rendered the current page at 1440px desktop and 390px mobile and rejected it.',
     'Repair only the measured hard issues below in the existing /workspace/index.html and its existing assets.',
+    BROWSER_HARD_GATE_AUTHORING_RULE,
     'Keep all verified facts, brand tokens, sections, and working interactions. Do not replace the page with a simplified rewrite.',
     `Measured issues (rule ${BROWSER_QUALITY_RULE_VERSION}):`,
     JSON.stringify(issues),
