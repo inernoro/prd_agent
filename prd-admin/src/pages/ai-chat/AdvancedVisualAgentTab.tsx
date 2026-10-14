@@ -932,6 +932,20 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // workspaceId：视觉创作 Agent 的稳定主键（用于替代易漂移的 sessionId）
   const workspaceId = String(props.workspaceId ?? '').trim();
   const initialPromptFromProps = String(props.initialPrompt ?? '').trim();
+  const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
+  const [booting, setBooting] = useState(true);
+  // 应用资格属于当前工作区，不是「曾经恢复过一次」。失败与切换均不能借用旧资格。
+  const canvasBootedRef = useRef<string | null>(null);
+  const workspaceIdRef = useRef(workspaceId);
+  workspaceIdRef.current = workspaceId;
+  const workspaceReady = !booting && workspace?.id === workspaceId && canvasBootedRef.current === workspaceId;
+  const workspaceReadyRef = useRef(workspaceReady);
+  workspaceReadyRef.current = workspaceReady;
+  // 回调可能跨越弹窗等待或保留旧闭包；提交时同时核对最新 readiness 和归属。
+  const canEditCanvas = useCallback(
+    () => workspaceReadyRef.current && workspaceIdRef.current === workspaceId,
+    [workspaceId],
+  );
   const { isMobile } = useBreakpoint();
   const [mobileShowChat, setMobileShowChat] = useState(false);
   // 移动端默认使用 hand 工具，以便直接拖拽画布
@@ -1426,6 +1440,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 使用 ref 追踪上一次的 composerSize，避免在 canvas 变化时重复触发
   const prevComposerSizeRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!canEditCanvas()) return;
     if (!composerSize) return;
     // 仅在用户手动选择尺寸时（非自动模式）才联动
     if (composerSizeAutoRef.current) return;
@@ -1454,7 +1469,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setCanvas((prev) =>
       prev.map((x) => (x.key === k ? { ...x, x: newX, y: newY, w: newW, h: newH } : x))
     );
-  }, [composerSize, selectedKeys, canvas]);
+  }, [composerSize, selectedKeys, canvas, canEditCanvas, workspaceReady]);
 
   // 注：已删除老代码的 selectedImagesForComposer 显示区域
   // TwoPhaseRichComposer 内部自己管理 chip 显示，不需要外部 padding
@@ -1669,6 +1684,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   });
 
   const applyResizeFromClient = useCallback((clientX: number, clientY: number) => {
+    if (!canEditCanvas()) return;
     const rz = resizeRef.current;
     if (!rz.active) return;
     const dx = (clientX - rz.startClientX) / zoomRef.current;
@@ -1790,7 +1806,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           : it
       )
     );
-  }, []);
+  }, [canEditCanvas]);
 
   useEffect(() => {
     if (!resizing) return;
@@ -1845,6 +1861,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const ensureRefIdForKey = useCallback(
     (key: string) => {
+      if (!canEditCanvas()) return null;
       const it = canvas.find((x) => x.key === key) ?? null;
       if (!it) return null;
       if (typeof it.refId === 'number' && Number.isFinite(it.refId) && it.refId > 0) return it.refId;
@@ -1855,7 +1872,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setCanvas((prev) => prev.map((x) => (x.key === key ? { ...x, refId: id } : x)));
       return id;
     },
-    [canvas, nextRefId]
+    [canvas, nextRefId, canEditCanvas]
   );
 
   /**
@@ -1975,6 +1992,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const startResize = useCallback(
     (e: ReactPointerEvent, it: CanvasImageItem, corner: ResizeCorner) => {
+      if (!canEditCanvas()) return;
       // 捏合进行中不启动 resize（第二根手指可能正好落在控制点上）
       if (e.pointerType === 'touch' && pinchActiveRef.current) return;
       if (effectiveTool === 'hand' && !isMobile) return;
@@ -2020,7 +2038,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       e.stopPropagation();
       e.preventDefault();
     },
-    [effectiveTool, isMobile]
+    [effectiveTool, isMobile, canEditCanvas]
   );
 
 
@@ -2039,6 +2057,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   // 手动投稿：将当前画布上所有已生成的图片一次性投稿到作品广场
   const handleManualSubmit = useCallback(async () => {
+    if (!canEditCanvas()) return;
     const assetIds = canvasRef.current
       .filter((it) => (it.kind ?? 'image') === 'image' && it.status === 'done' && it.assetId)
       .map((it) => it.assetId!);
@@ -2062,11 +2081,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     } finally {
       setManualSubmitting(false);
     }
-  }, []);
-
-  const [workspace, setWorkspace] = useState<VisualAgentWorkspace | null>(null);
-  const [booting, setBooting] = useState(true);
-  const workspaceReady = !booting && workspace?.id === workspaceId;
+  }, [canEditCanvas]);
   const initWorkspaceRef = useRef<{ workspaceId: string; started: boolean }>({ workspaceId: '', started: false });
 
   // 触发缺陷提交按钮闪烁（生图失败时调用，持续闪烁直到用户点击）
@@ -2135,6 +2150,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const openImageFilePicker = useCallback(() => {
+    if (!canEditCanvas()) return;
     const input = fileRef.current;
     if (!input) return;
 
@@ -2172,7 +2188,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     window.addEventListener('focus', onWindowFocus, true);
     input.addEventListener('change', onInputChange);
     input.click();
-  }, []);
+  }, [canEditCanvas]);
 
   const [preview, setPreview] = useState<{ open: boolean; src: string; prompt: string; runId?: string }>({ open: false, src: '', prompt: '' });
 
@@ -2219,6 +2235,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     /** 用自己的话说的拆法；不传就用面板里当前那句。 */
     intent?: string;
   }): Promise<Array<{ name: string; source: string }> | null> => {
+    if (!canEditCanvas()) return null;
     if (layeringRunningRef.current) {
       toast.info('分层进行中', '已经有一张图片在拆分图层，等它完成再试。');
       return null;
@@ -2598,7 +2615,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }
     // layerIntentPref 必须进依赖：函数体内用它兜底（input.intent ?? layerIntentPref），
     // 漏掉就会把上一次的拆法带进这次调用。调用方另有显式传参，这里是第二道保险。
-  }, [layerCountPref, layerIntentPref, layerLayoutMode, setSelectionWithoutChip, workspaceId]);
+  }, [layerCountPref, layerIntentPref, layerLayoutMode, setSelectionWithoutChip, workspaceId, canEditCanvas]);
 
   const exportAiLayeredPsd = useCallback(async (input: {
     key: string;
@@ -2830,6 +2847,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 所以解完组再重新编组，它还认得出自己是同一次分层的产物。
    */
   const groupSelection = useCallback(() => {
+    if (!canEditCanvas()) return;
     const keys = selectedKeysRef.current ?? [];
     if (keys.length < 2) {
       toast.info('选中至少两个元素再编组', '选中多个元素后按 Cmd/Ctrl+G 把它们框成一个 Frame。');
@@ -2839,9 +2857,10 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const inGroup = new Set(keys);
     setCanvas((previous) => previous.map((item) => inGroup.has(item.key) ? { ...item, frameId } : item));
     toast.success('已编组', `${keys.length} 个元素已框成一个 Frame，Cmd/Ctrl+Shift+G 可解组。`, 4000);
-  }, []);
+  }, [canEditCanvas]);
 
   const ungroupSelection = useCallback(() => {
+    if (!canEditCanvas()) return;
     const keys = new Set(selectedKeysRef.current ?? []);
     if (keys.size === 0) return;
     const items = canvasRef.current ?? [];
@@ -2859,10 +2878,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       : item));
     setLayerPanelGroupId((current) => (current && frameIds.has(current) ? null : current));
     toast.success('已解组', `${frameIds.size} 个 Frame 已拆开，元素本身没有任何变化。`, 4000);
-  }, []);
+  }, [canEditCanvas]);
 
   /** 切换摆放方式：就地把这一组图层重新摆一遍，不重新生成。 */
   const applyLayerLayout = useCallback((groupId: string, mode: 'stacked' | 'spread') => {
+    if (!canEditCanvas()) return;
     setLayerLayoutMode(mode);
     try { localStorage.setItem('prdAdmin.visualAgent.layerLayout', mode); } catch { /* 偏好写不进去不影响功能 */ }
     const items = canvasRef.current;
@@ -2908,7 +2928,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const placement = placementByKey.get(candidate.key);
       return placement ? { ...candidate, ...placement, layerLayout: 'spread' as const, userResized: true } : candidate;
     }));
-  }, []);
+  }, [canEditCanvas]);
 
   /**
    * 画布绘制顺序。
@@ -2980,10 +3000,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [canvas]);
 
   const patchLayer = useCallback((key: string, patch: Partial<CanvasImageItem>) => {
+    if (!canEditCanvas()) return;
     setCanvas((previous) => previous.map((candidate) => candidate.key === key ? { ...candidate, ...patch } : candidate));
-  }, []);
+  }, [canEditCanvas]);
 
   const moveLayerInStack = useCallback((key: string, direction: 'up' | 'down') => {
+    if (!canEditCanvas()) return;
     const ordered = layerPanelLayers.map((layer) => layer.key);
     const index = ordered.indexOf(key);
     if (index < 0) return;
@@ -2998,7 +3020,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     setCanvas((previous) => previous.map((candidate) => zByKey.has(candidate.key)
       ? { ...candidate, layerZ: zByKey.get(candidate.key) }
       : candidate));
-  }, [layerPanelLayers]);
+  }, [layerPanelLayers, canEditCanvas]);
 
   /** 面板底部三个下载出口共用：拿到原图 + 当前这份图层视图，拿不齐就明确报错。 */
   const readLayerExportInput = useCallback(() => {
@@ -3103,7 +3125,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const msgContentRef = useRef<HTMLDivElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  const canvasBootedRef = useRef(false);
   const canvasSaveTimerRef = useRef<number | null>(null);
   const lastSavedJsonRef = useRef<string>('');
   const lastSaveAtRef = useRef<number>(0);
@@ -3168,6 +3189,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const confirmAndDeleteSelectedKeys = useCallback(
     async (keysArg?: string[]) => {
+      if (!canEditCanvas()) return;
       const keys = Array.from(new Set((keysArg ?? selectedKeysRef.current ?? []).filter(Boolean)));
       if (keys.length === 0) return;
 
@@ -3178,7 +3200,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         confirmText: '删除',
         cancelText: '取消',
       });
-      if (!ok) return;
+      if (!ok || !canEditCanvas()) return;
 
       const set = new Set(keys);
       const snapshot = (canvasRef.current ?? []).filter((it) => set.has(it.key));
@@ -3231,7 +3253,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       lastSavedJsonRef.current = json;
       lastSaveAtRef.current = Date.now();
     },
-    [reloadWorkspace, workspaceId, clearSelectionWithChips]
+    [reloadWorkspace, workspaceId, clearSelectionWithChips, canEditCanvas]
   );
 
   // 只刷新模型目录，不触发上游探活或生成请求。失败时保留旧目录，避免一次网关抖动把当前页面锁死。
@@ -3354,6 +3376,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (!workspaceId) return;
     if (initWorkspaceRef.current.workspaceId === workspaceId && initWorkspaceRef.current.started) return;
     initWorkspaceRef.current = { workspaceId, started: true };
+    canvasBootedRef.current = null;
+    workspaceReadyRef.current = false;
 
     // 重置视口 hydration：避免进入页面时用默认值覆写服务器保存的 viewport
     viewportHydratedRef.current = false;
@@ -3367,7 +3391,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         if (!cancelled) setError(detail.error?.message || '加载 Workspace 失败');
         return;
       }
-      if (cancelled) return;
+      if (cancelled || workspaceIdRef.current !== workspaceId) return;
       setWorkspace(detail.data.workspace);
       setHasMoreMessages(!!detail.data.hasMoreMessages);
       // 从 workspace 恢复风格统一提示词
@@ -3406,7 +3430,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         if (maxRef > 0) {
           setNextRefId(maxRef + 1);
         }
-        canvasBootedRef.current = true;
+        canvasBootedRef.current = workspaceId;
         // 修复：初始化时不自动选中第一张图片，而是清空选中
         clearSelectionWithChips();
 
@@ -3515,15 +3539,17 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       void saveVisualAgentWorkspaceCanvas({ id: workspaceId, schemaVersion: PERSIST_SCHEMA_VERSION, payloadJson: json, idempotencyKey: `boot_${Date.now()}` });
     })()
       .catch((e) => {
-        if (cancelled) return;
+        if (cancelled || workspaceIdRef.current !== workspaceId) return;
+        canvasBootedRef.current = null;
         setError(e instanceof Error ? e.message : '加载 Workspace 失败');
       })
       .finally(() => {
-        if (!cancelled) setBooting(false);
+        if (!cancelled && workspaceIdRef.current === workspaceId) setBooting(false);
       });
 
     return () => {
       cancelled = true;
+      workspaceReadyRef.current = false;
       // React 18 StrictMode(dev) 会在 mount 后立刻执行一次 cleanup 再执行 effect 第二次。
       // 这里如果不重置 started，第二次 effect 会被守卫跳过，导致 workspace 永远不落地（表现为空白页）。
       if (initWorkspaceRef.current.workspaceId === workspaceId) {
@@ -3531,10 +3557,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
     };
   }, [focusStage, focusComposer, pushMsg, setViewport, workspaceId]);
-
-  // 当前 workspaceId 的最新值引用：供异步回调判断是否已切换 workspace（防串台）
-  const workspaceIdRef = useRef(workspaceId);
-  workspaceIdRef.current = workspaceId;
 
   // 拿到 runId 后立即把含 runId 的画布落盘（不等 debounce）：避免用户在 debounce 刷盘前关页/切走，
   // 导致占位落库缺 runId。三条生图路径（主生成 / 快捷操作 / 草图）统一复用，避免只在主路径补 runId。
@@ -3669,7 +3691,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 自动保存画布（debounce）
   useEffect(() => {
     if (!workspaceId) return;
-    if (!canvasBootedRef.current) return;
+    if (!canEditCanvas()) return;
 
     if (canvasSaveTimerRef.current != null) {
       window.clearTimeout(canvasSaveTimerRef.current);
@@ -3678,6 +3700,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
     const runSave = () => {
       canvasSaveTimerRef.current = null;
+      if (!canEditCanvas()) return;
       const built = canvasToPersistedV1(canvasRef.current ?? []);
       const json = JSON.stringify(built.state);
       if (json === lastSavedJsonRef.current) return;
@@ -3723,7 +3746,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         canvasSaveTimerRef.current = null;
       }
     };
-  }, [canvas, pushMsg, workspaceId]);
+  }, [canvas, pushMsg, workspaceId, workspaceReady, canEditCanvas]);
 
   // 初始化右侧宽度：sessionStorage 优先，否则默认 20%
   useEffect(() => {
@@ -4038,6 +4061,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
       // 方向键：微调（Figma-ish）
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        if (!canEditCanvas()) return;
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
@@ -4050,7 +4074,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     const opts = { capture: true } as const;
     window.addEventListener('keydown', onDown, opts);
     return () => window.removeEventListener('keydown', onDown, opts);
-  }, [confirmAndDeleteSelectedKeys, focusStage, clearSelectionWithChips]);
+  }, [confirmAndDeleteSelectedKeys, focusStage, clearSelectionWithChips, canEditCanvas]);
 
   const zoomAt = useCallback((clientX: number, clientY: number, nextZoom: number) => {
     cancelViewportAnimation(cameraAnimRef);
@@ -4166,6 +4190,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const placeAtPointer = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (!placing) return false;
+      if (!canEditCanvas()) return false;
       stageRef.current?.focus();
       const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
       const sx = e.clientX - rect.left;
@@ -4224,7 +4249,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setTextEdit({ open: true, key, value: next.text || 'Text' });
       return true;
     },
-    [placing]
+    [placing, canEditCanvas]
   );
 
   const animateCameraToWorldCenter = useCallback(
@@ -4552,6 +4577,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     seedSelectedKey?: string,
     sizeOverride?: string | null
   ) => {
+    if (!canEditCanvas()) return;
     const display = String(displayText ?? '').trim();
     // 直连模式：解析 @model(...) 只用于"强制选模型"，不应当把标记本身发给生图 prompt
     const stripModelMention = (s: string) => String(s ?? '').replace(/@model\([^)]*\)/gi, '').replace(/\s{2,}/g, ' ').trim();
@@ -4590,6 +4616,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
       // 'keep' → 保留原选择继续
     }
+    if (!canEditCanvas()) return;
 
     setError('');
     const seedKey = String(seedSelectedKey ?? '').trim();
@@ -4694,6 +4721,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 用户要求移除右侧“本次使用模型/直连模式/参考图...”类提示，不再 push 该类 Assistant 消息
 
     // 画板占位
+    if (!canEditCanvas()) return;
     const near = stageCenterWorld();
     const selectedFirstKey = seedKey;
     const selectedIsGenerator = selectedFirstKey
@@ -5175,6 +5203,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // ── 快捷操作执行（写入消息列表以便追溯） ──
   const executeQuickAction = useCallback(
     async (prompt: string, sourceItem: CanvasImageItem, sizeOverride?: string, maskBase64?: string, actionLabel?: string) => {
+      if (!canEditCanvas()) return;
       if (!prompt.trim()) return;
       const pickedModel = effectiveModel;
       if (!pickedModel) {
@@ -5450,7 +5479,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         pushMsg('Assistant', buildGenErrorContent({ msg, refSrc: refSrc || undefined, prompt }));
       }
     },
-    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg, persistRunIdImmediately],
+    [effectiveModel, imageGenSize, workspaceId, setSelectionWithoutChip, pushMsg, persistRunIdImmediately, canEditCanvas],
   );
 
   /** 快捷操作栏：点击内置/DIY 操作 */
@@ -5563,13 +5592,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     if (initialPromptHandledRef.current) return;
     if (!workspace) return;
     if (modelsLoading) return;
-    if (!canvasBootedRef.current) return;
+    if (!canEditCanvas()) return;
 
     // 标记已处理，避免重复执行
     initialPromptHandledRef.current = true;
 
     // 延迟执行，确保 UI 已渲染完成
     const timer = window.setTimeout(() => {
+      if (!canEditCanvas()) return;
       const inline = initialPrompt.inlineImage;
       // 这一拍刚加进画布 / 刚选中的东西。setCanvas 与 setSelectedKeys 都要到下一次渲染
       // 才生效，所以必须原样递给 sendText，否则解析器在旧画布里找不到它。
@@ -5683,7 +5713,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     }, 500);
 
     return () => window.clearTimeout(timer);
-  }, [initialPrompt, workspace, modelsLoading]);
+  }, [initialPrompt, workspace, modelsLoading, workspaceReady, canEditCanvas]);
 
   const insertAtCursor = (text: string) => {
     const ta = inputRef.current;
@@ -5746,6 +5776,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     /** 同上：刚设置、还没刷出来的选中键。 */
     selectedKeysOverride?: string[];
   }) => {
+    if (!canEditCanvas()) return;
     const raw = String(rawText ?? '').trim();
     if (!raw) return;
     const now = Date.now();
@@ -5867,6 +5898,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   // 富文本编辑器发送（入口1）
   // 注意：TwoPhaseRichComposer 的 onSubmit 回调会自动确认 pending chips
   const onSendRich = async () => {
+    if (!canEditCanvas()) return;
     const composer = richComposerRef.current;
     if (!composer) return;
 
@@ -5889,6 +5921,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   };
 
   const onSendQuick = async () => {
+    if (!canEditCanvas()) return;
     const raw = quickInput.trim();
     if (!raw) return;
     const clean = String(extractSizeToken(raw).cleanText ?? '').trim();
@@ -5902,7 +5935,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const onUploadImages = async (files: File[]) => {
     // 工作区初始画布仍在回放时接收上传，会被稍后返回的服务器快照覆盖：界面提示
     // “已加入”但图片随即消失。入口和处理函数双重门禁，覆盖文件选择、拖放与粘贴路径。
-    if (!workspaceReady) {
+    if (!canEditCanvas()) {
       showUploadToast('画板正在恢复，请稍后再上传图片');
       return;
     }
@@ -5919,6 +5952,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     // 压缩（解码 + canvas 重编码）也必须放在锁内：否则并发上传会同时解码多张大图，
     // 重新引发 20 张封顶本想避免的内存峰值 / 标签页冻结。
     const run = async () => {
+    if (!canEditCanvas()) return;
     // 上传前压缩：超大图（最长边 > 2560px 或 体积 > 8MB）会把画布拖卡，先在源头缩到阈值内。
     // 已达标的图原样放行（幂等，不重复劣化）；解码失败放行原图由后端兜底。详见 lib/imageCompress.ts。
     // 串行（非 Promise.all）逐张压缩：并发解码 + canvas 重编码多达 20 张大图会瞬时爆内存，
@@ -5935,6 +5969,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       }
     }
     if (anyCompressed) showUploadToast('已自动压缩大图以提升画布流畅度');
+    if (!canEditCanvas()) return;
     const added: CanvasImageItem[] = [];
     const now = Date.now();
 
@@ -5970,7 +6005,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       )
     );
 
-    if (added.length === 0) return;
+    if (added.length === 0 || !canEditCanvas()) return;
     // 保持顺序：用户选中的文件顺序
     added.sort((a, b) => a.createdAt - b.createdAt);
     // 首张是否真的贴着选中图落位（不是「有没有选中」——四个方向被占满时会退回最近空位，
@@ -6237,6 +6272,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   /** 自动排列：紧凑网格布局（最大化利用空间） */
   const arrangeGrid = useCallback(() => {
+    if (!canEditCanvas()) return;
     const items = canvasRef.current.filter(
       (it) =>
         (it.kind ?? 'image') === 'image' ||
@@ -6341,44 +6377,48 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
     requestAnimationFrame(() => {
       fitItemsToViewport(updatedItems);
     });
-  }, [fitItemsToViewport, stageSize.w, stageSize.h]);
+  }, [fitItemsToViewport, stageSize.w, stageSize.h, canEditCanvas]);
 
   // 图层操作回调
   const layerMoveUp = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = moveUp(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   const layerMoveDown = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = moveDown(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   const layerBringToFront = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = bringToFront(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   const layerSendToBack = useCallback(() => {
+    if (!canEditCanvas()) return;
     if (selectedKeys.length === 0) return;
     setCanvas((prev) => {
       const next = sendToBack(prev, selectedKeys);
       canvasRef.current = next;
       return next;
     });
-  }, [selectedKeys]);
+  }, [selectedKeys, canEditCanvas]);
 
   // Figma 风格快捷键（仅在画布区域操作时生效）
   // - Shift+1: 适配全部内容 (Zoom to Fit)
@@ -6544,6 +6584,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           <div
             ref={stageRef}
             data-tour-id="visual-editor-canvas"
+            aria-busy={booting}
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
               backgroundColor: '#1e1e1e',
@@ -6671,6 +6712,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               // dragging selected items
               const drag = dragItemsRef.current;
               if (drag.active && drag.pointerId === e.pointerId) {
+                if (!canEditCanvas()) return;
                 const rawDx = e.clientX - drag.startClientX;
                 const rawDy = e.clientY - drag.startClientY;
                 // 移动端拖拽死区：触摸需超过 10px 屏幕像素才开始拖拽，防止点选时误触
@@ -6837,6 +6879,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               // 方向键微调（Figma-ish）
               if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                if (!canEditCanvas()) return;
                 if (selectedKeys.length === 0) return;
                 e.preventDefault();
                 const step = e.shiftKey ? 10 : 1;
@@ -6984,6 +7027,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       if (effectiveTool !== 'hand' || isMobile) e.stopPropagation();
                     }}
                     onPointerDown={(e) => {
+                      if (!canEditCanvas()) return;
                       // 捏合进行中：不启动元素选择/拖拽（第二根手指落在图片上时让位给捏合）
                       if (e.pointerType === 'touch' && pinchActiveRef.current) {
                         e.stopPropagation();
@@ -7636,6 +7680,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       title="拖这里可以整组移动"
                       onPointerDown={(event) => {
                         event.stopPropagation();
+                        if (!canEditCanvas()) return;
                         const keys = frame.layerKeys;
                         if (keys.length === 0) return;
                         setSelectionWithoutChip(keys);
@@ -8006,7 +8051,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </div>
 
             {/* 图层面板（组装台）：画布 Frame 管单层编辑，这里管叠放、显隐与导出 */}
-            {layerPanelGroupId && layerPanelModel.length > 0 ? (
+            {workspaceReady && layerPanelGroupId && layerPanelModel.length > 0 ? (
               <SemanticLayerPanel
                 // 方案 B：从画布右缘推出，让开右侧的对话浮层——两个浮层不再抢同一片区域。
                 // 手机端对话是覆盖全屏、可开关的（mobileShowChat），没有「常驻占位」可让，
@@ -8612,7 +8657,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     type="button"
                     className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover-bg-soft shrink-0"
                     onClick={arrangeGrid}
-                    disabled={canvas.length === 0}
+                    disabled={!workspaceReady || canvas.length === 0}
                     title="自动排列（网格布局）"
                     aria-label="自动排列"
                   >
@@ -8747,7 +8792,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               <button
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft disabled:cursor-wait disabled:opacity-50"
-                title={workspaceReady ? '上传图片' : '画板正在恢复'}
+                title={workspaceReady ? '上传图片' : booting ? '画板正在恢复' : '恢复失败，请重新打开画板'}
                 aria-label="上传图片"
                 disabled={!workspaceReady}
                 onClick={() => openImageFilePicker()}
@@ -8762,7 +8807,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     window.clearTimeout(shapeMenuCloseTimerRef.current);
                     shapeMenuCloseTimerRef.current = null;
                   }
-                  setShapeMenuOpen(true);
+                  if (canEditCanvas()) setShapeMenuOpen(true);
                 }}
                 onPointerLeave={() => {
                   if (shapeMenuCloseTimerRef.current != null) window.clearTimeout(shapeMenuCloseTimerRef.current);
@@ -8785,6 +8830,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                       title="形状"
                       aria-label="形状"
+                      disabled={!workspaceReady}
                     >
                       <Square size={18} />
                     </button>
@@ -8883,7 +8929,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="文字（T）"
                 aria-label="文字"
+                disabled={!workspaceReady}
                 onClick={() => {
+                  if (!canEditCanvas()) return;
                   setActiveTool('select');
                   setPlacing({ kind: 'text' });
                   stageRef.current?.focus();
@@ -8901,7 +8949,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="图像生成器（A）"
                 aria-label="图像生成器"
+                disabled={!workspaceReady}
                 onClick={() => {
+                  if (!canEditCanvas()) return;
                   // 允许创建多个"生成器区域"：每次点击都新建一个（不覆盖旧的）
                   const w = 1024;
                   const h = 1024;
@@ -8958,7 +9008,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 type="button"
                 className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => void confirmAndDeleteSelectedKeys([...selectedKeys])}
-                disabled={selectedKeys.length === 0}
+                disabled={!workspaceReady || selectedKeys.length === 0}
                 title="删除选中"
                 aria-label="删除选中"
               >
@@ -9013,6 +9063,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 onClick={() => openImageFilePicker()}
                 className="h-10 w-10 shrink-0 inline-flex items-center justify-center rounded-full text-token-muted"
                 aria-label="上传图片"
+                disabled={!workspaceReady}
               >
                 <ImagePlus size={18} />
               </button>
@@ -9109,7 +9160,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <button
                   type="button"
                   onClick={handleManualSubmit}
-                  disabled={manualSubmitting}
+                  disabled={!workspaceReady || manualSubmitting}
                   className="surface-action-accent h-6 shrink-0 inline-flex items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors duration-200 hover:opacity-90 disabled:opacity-50"
                   title="将当前画布上所有已生成的图片投稿到作品广场"
                 >
@@ -9186,6 +9237,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             {error ? (
               <div className="mt-2 text-[10px] text-token-error">
                 {error}
+              </div>
+            ) : null}
+
+            {!workspaceReady ? (
+              <div role="status" className={`mt-2 text-[10px] text-token-muted ${booting ? 'animate-pulse' : ''}`}>
+                {booting ? '画板正在恢复，完成后可编辑与提交；可先准备描述。' : '画板恢复未完成，请重新打开后再编辑；描述草稿仍可继续准备。'}
               </div>
             ) : null}
 
@@ -9270,7 +9327,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 }}
                 onSubmit={() => {
                   // IME 合成输入时不触发发送
-                  if (composingRef.current) return false;
+                  if (composingRef.current || !canEditCanvas()) return false;
                   void onSendRich();
                   return true;
                 }}
@@ -9770,6 +9827,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   color: 'var(--accent-fg-danger)',
                                 }}
                                 onClick={() => {
+                                  if (!canEditCanvas()) return;
                                   setStylePrompt('');
                                   setStylePromptDraft('');
                                   setStylePopoverOpen(false);
@@ -9777,6 +9835,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     void updateVisualAgentWorkspace({ id: workspaceId, stylePrompt: '' });
                                   }
                                 }}
+                                disabled={!workspaceReady}
                               >
                                 清除
                               </button>
@@ -9789,8 +9848,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 border: stylePromptDraft.trim() ? '1px solid rgba(168, 85, 247, 0.65)' : '1px solid rgba(255,255,255,0.12)',
                                 color: stylePromptDraft.trim() ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255,255,255,0.35)',
                               }}
-                              disabled={!stylePromptDraft.trim()}
+                              disabled={!workspaceReady || !stylePromptDraft.trim()}
                               onClick={() => {
+                                if (!canEditCanvas()) return;
                                 const val = stylePromptDraft.trim();
                                 setStylePrompt(val);
                                 setStylePopoverOpen(false);
@@ -9838,6 +9898,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     type="button"
                     className="surface-action-accent inline-flex h-7 w-7 items-center justify-center rounded-full transition-all hover:brightness-110"
                     aria-label="发送"
+                    disabled={!workspaceReady}
                     title="发送（Enter）"
                     onClick={() => void onSendRich()}
                   >
@@ -10049,6 +10110,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerBringToFront();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10062,6 +10124,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerMoveUp();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10075,6 +10138,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerMoveDown();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10088,6 +10152,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               type="button"
               className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
+              disabled={!workspaceReady}
               onClick={() => {
                 layerSendToBack();
                 setImgContextMenu((p) => ({ ...p, open: false }));
@@ -10292,7 +10357,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </Button>
               <Button
                 variant="primary"
+                disabled={!workspaceReady}
                 onClick={() => {
+                  if (!canEditCanvas()) return;
                   const key = textEdit.key;
                   if (!key) {
                     setTextEdit({ open: false, key: '', value: '' });
@@ -10398,6 +10465,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           imageHeight={inpaintTarget.naturalH || inpaintTarget.h || 1024}
           onCancel={() => setInpaintTarget(null)}
           onConfirm={async (maskDataUri) => {
+            if (!canEditCanvas()) return;
             const target = inpaintTarget;
             setInpaintTarget(null);
             // 弹出提示词输入
@@ -10406,6 +10474,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               message: '请输入重绘区域的描述',
               placeholder: '如：将这里替换为蓝色的天空',
             });
+            if (!canEditCanvas()) return;
             if (!desc?.trim()) {
               toast.error('请输入重绘描述');
               return;
@@ -10419,13 +10488,11 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       <DrawingBoardDialog
         open={drawingBoardOpen}
         onOpenChange={setDrawingBoardOpen}
+        canSubmit={workspaceReady}
         onConfirm={async (dataUri, chatHistory, sizeHint) => {
-          setDrawingBoardOpen(false);
-
-          // 同步手绘板 AI 对话记录到消息面板（可追溯）
-          if (chatHistory.length > 0) {
-            const chatSummary = chatHistory.map(m => `${m.role === 'user' ? '我' : 'AI'}: ${m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content}`).join('\n');
-            pushMsg('User', `[手绘板对话]\n${chatSummary}`);
+          if (!canEditCanvas()) {
+            toast.info('画板尚未恢复，草图已保留', '恢复完成后再提交；恢复失败时请重新打开画板。');
+            return;
           }
 
           // 弹出提示词输入
@@ -10434,6 +10501,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             message: '请描述你想基于这张草图生成的图片',
             placeholder: '如：一只猫坐在窗台上，水彩风格',
           });
+          if (!canEditCanvas()) return;
           if (!desc?.trim()) {
             toast.error('请输入生成描述');
             return;
@@ -10443,6 +10511,12 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           if (!pickedModel) {
             toast.error('暂无可用生图模型');
             return;
+          }
+          setDrawingBoardOpen(false);
+          // 提交被接受后才关闭草图并同步对话；拒绝提交不能清空用户准备的内容。
+          if (chatHistory.length > 0) {
+            const chatSummary = chatHistory.map(m => `${m.role === 'user' ? '我' : 'AI'}: ${m.content.length > 200 ? m.content.slice(0, 200) + '…' : m.content}`).join('\n');
+            pushMsg('User', `[手绘板对话]\n${chatSummary}`);
           }
           const modelPoolName = pickedModel?.name || pickedModel?.modelName || '';
           const sketchUserMsg = `[手绘板生图] ${desc.trim()}`;
