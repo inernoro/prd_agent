@@ -278,7 +278,7 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
             {drill?.id === c.id ? (
               <div className={cn('flex items-center gap-1.5 text-[0.6875rem]', drill.queued ? 'text-muted-foreground' : drill.ok ? 'text-ok' : 'text-destructive')}>
                 {drill.queued ? <Clock className="h-3 w-3" /> : drill.ok ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                {drill.queued ? '演练已交给独立监控，投递结果请查看处理记录。' : drill.ok ? '演练已送达 —— 这条链现在是通的，去手机上确认收到了' : `演练失败：${drill.reason ?? '原因不明'}`}
+                {drill.queued ? '演练已交给独立监控。稍后刷新本页，可在此通道查看投递结果。' : drill.ok ? '演练已送达 —— 这条链现在是通的，去手机上确认收到了' : `演练失败：${drill.reason ?? '原因不明'}`}
               </div>
             ) : null}
           </div>
