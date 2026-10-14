@@ -101,7 +101,7 @@ function redactMutable(value, seen = new WeakSet()) {
 }
 
 function redactInterruptedReporterText(value) {
-  const names = sensitiveValueNames.map(escapeRegExp).join('|');
+  const names = [...sensitivePropertyNames].map(escapeRegExp).join('|');
   // JSON reporter 的 message 只有这一层已证实的 JSON 转义。
   // 闭引号或文件末尾均收敛，进程中断在敏感值内部也不能留下明文。
   const quote = '(?<!\\\\)\\\\"';

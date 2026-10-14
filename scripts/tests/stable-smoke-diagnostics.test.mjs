@@ -125,7 +125,8 @@ test('REG-stsmk-diagnostic-api-key-001：保留产物覆盖原始响应和 repor
 test('REG-stsmk-diagnostic-api-key-001：中断截断的真实 reporter 转义层仍脱敏', () => {
   const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-api-key-truncated-'));
   try {
-    const issued = { item: { id: 'test-key-id' }, apiKey: 'issued-api-key-marker' };
+    const issued = { headers: { authorization: 'Bearer truncated-header-marker', 'x-ai-access-key': 'truncated-access-marker' },
+      item: { id: 'test-key-id' }, apiKey: 'issued-api-key-marker' };
     const reporter = JSON.stringify({ errors: [{ message: 'HTTP 503 /api/agent-api-keys 响应：' + JSON.stringify(issued) }] });
     const samples = [
       reporter.slice(0, -2),
@@ -136,6 +137,7 @@ test('REG-stsmk-diagnostic-api-key-001：中断截断的真实 reporter 转义�
     for (const index of [0, 1]) {
       const retained = readFileSync(resolve(directory, index + '.json'), 'utf8');
       assert.doesNotMatch(retained, /issued-api-key-marker/);
+      assert.doesNotMatch(retained, /truncated-header-marker|truncated-access-marker/);
       assert.match(retained, /\[REDACTED\]/);
       assert.match(retained, /test-key-id/);
       assert.match(retained, /HTTP 503 \/api\/agent-api-keys/);
