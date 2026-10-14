@@ -129,9 +129,11 @@ def notify(config, state, transition, now):
     event = state.get('incident') or state.get('history', [{}])[0]
     if transition == 'recovered' and not any(d.get('accepted') and d.get('incidentId') == event.get('id') and d.get('transition') != 'recovered' for d in state.get('deliveries', [])):
         return True
-    title = '监控平台：已恢复' if transition == 'recovered' else '监控平台：访问无响应' if event.get('reason') == 'unreachable' else '监控平台：状态暂时无法确认'
     identity = config.get('identity', {})
     subject = config.get('displayName', '监控平台')
+    environment = identity.get('subject', {}).get('environment', '生产')
+    result = '已恢复' if transition == 'recovered' else '访问无响应' if event.get('reason') == 'unreachable' else '状态暂时无法确认'
+    title = subject + ' · ' + environment + '：' + result
     payload = {'device_key': bark['key'], 'title': title,
                'body': '外部检查持续失败，相关检查已合并。点击查看影响与处理建议。' if transition != 'recovered' else '外部访问已持续恢复。点击查看处理记录。',
                'url': incident_url(config, event.get('id', '')),
