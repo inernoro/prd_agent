@@ -2089,6 +2089,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const session = production ? null : await page.context().newCDPSession(page);
     let requestPausedId = '';
     let pausedRequestId = '';
+    let progressObserver: import('@playwright/test').JSHandle<{ seen: { value: boolean }; stop: () => void }> | null = null;
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -2127,6 +2128,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         ] });
       }
       const name = `${runKey}.txt`;
+      if (production) {
+        progressObserver = await page.evaluateHandle(() => {
+          const seen = { value: false };
+          const observer = new MutationObserver(() => {
+            if (document.querySelector('[data-testid="document-upload-progress"]')) seen.value = true;
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+          return { seen, stop: () => observer.disconnect() };
+        });
+      }
       const response = page.waitForResponse((item) => new URL(item.url()).pathname === uploadPath);
       await input.setInputFiles({
         name,
@@ -2158,12 +2169,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(uploadResponse.ok()).toBe(true);
       const uploadedBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
       expect(uploadedBody.success).toBe(true);
+      if (progressObserver) {
+        expect(await progressObserver.evaluate((observation) => observation.seen.value), '安全小文件上传必须实际渲染进度卡，不能仅靠终态隐藏').toBe(true);
+      }
       await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeHidden({ timeout: 30_000 });
       const content = await readEnvelope<{ content: string }>(await page.request.get(
         `/api/document-store/entries/${uploadedBody.data.entry.id}/content`, { headers: authHeaders(token) },
       ));
       expect(content.content).toContain('AAAA');
     } finally {
+      if (progressObserver) {
+        await progressObserver.evaluate((observation) => observation.stop());
+        await progressObserver.dispose();
+      }
       if (session) {
         for (const requestId of [requestPausedId, pausedRequestId].filter(Boolean)) {
           await session.send('Fetch.continueRequest', { requestId }).catch(() => {});
