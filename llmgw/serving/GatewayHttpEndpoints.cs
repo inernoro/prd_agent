@@ -3026,7 +3026,10 @@ public static class GatewayHttpEndpoints
             ApplyGovernanceRateLimitHeaders(http, denied);
             return denied;
         }
-        var decision = await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct);
+        var inputs = http.Items["llmgw.key.authorization.inputs"] as GatewayAuthorizationInputs;
+        var identity = GatewayMinimumRequestIdentity.Resolve(http, authorization,
+            inputs?.SourceSystem ?? string.Empty, inputs?.IngressProtocol ?? string.Empty);
+        var decision = await CheckAppCallerGovernanceAsync(services, authorization.TenantId, ingress.AppCallerCode, ingress.RequestType, ingress.RequestId, ct, identity);
         ApplyGovernanceRateLimitHeaders(http, decision);
         return decision;
     }
@@ -3037,7 +3040,8 @@ public static class GatewayHttpEndpoints
         string appCallerCode,
         string requestType,
         string requestId,
-        CancellationToken ct)
+        CancellationToken ct,
+        GatewayMinimumRequestIdentity? identity = null)
     {
         if (string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(requestType))
             return AppCallerGovernanceDecision.Allow(appCallerCode, requestType);
@@ -3045,6 +3049,12 @@ public static class GatewayHttpEndpoints
         var gatewayData = services.GetService<LlmGatewayDataContext>();
         if (gatewayData == null)
             return AppCallerGovernanceDecision.Allow(appCallerCode, requestType);
+
+        identity ??= GatewayMinimumRequestIdentity.General;
+        var safety = services.GetService<GatewayMinimumProtectionCoordinator>()
+                     ?? new GatewayMinimumProtectionCoordinator(gatewayData,
+                         services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(),
+                         Microsoft.Extensions.Logging.Abstractions.NullLogger<GatewayMinimumProtectionCoordinator>.Instance);
 
         GatewayAppCallerRecord? caller = null;
         GatewayTenantGovernanceRecord? tenantGovernance = null;
@@ -3087,6 +3097,13 @@ public static class GatewayHttpEndpoints
                     AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
                     AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false));
 
+            var minimum = await safety.CheckAsync(tenantId, appCallerCode, requestType, caller?.TeamId,
+                requestId, identity, tenantGovernance?.RateLimitPerMinute, caller?.RateLimitPerMinute, ct);
+            if (minimum.Rejected)
+                return new AppCallerGovernanceDecision(status, TenantRateLimitDecision.Allow(tenantId),
+                    AppCallerRateLimitDecision.Allow(appCallerCode, requestType),
+                    AppCallerBudgetDecision.Allow(appCallerCode, requestType, 0, 0, hasCostEvidence: false), minimum);
+
             var budget = await ReserveMonthlyBudgetsAsync(services, tenantId, caller, appCallerCode, requestType, requestId, ct);
             if (budget.Rejected)
                 return new AppCallerGovernanceDecision(
@@ -3096,6 +3113,8 @@ public static class GatewayHttpEndpoints
                     budget);
 
             var tenantRateLimit = await CheckTenantRateLimitAsync(gatewayData, tenantId, tenantGovernance?.RateLimitPerMinute ?? 0);
+            await safety.ObserveAsync(tenantId, "$tenant", "$aggregate", null, requestId, identity.SourceDeployment,
+                "tenant", "general", 60, tenantRateLimit.WindowStart, tenantRateLimit.Count, tenantRateLimit.LimitPerMinute, ct);
             if (tenantRateLimit.Rejected)
                 return new AppCallerGovernanceDecision(
                     status,
@@ -3161,6 +3180,8 @@ public static class GatewayHttpEndpoints
             var rateLimit = count > limit
                 ? AppCallerRateLimitDecision.Reject(appCallerCode, requestType, limit, count, windowStart)
                 : AppCallerRateLimitDecision.Allow(appCallerCode, requestType, limit, count, windowStart);
+            await safety.ObserveAsync(tenantId, normalizedAppCallerCode, normalizedRequestType, caller?.TeamId,
+                requestId, identity.SourceDeployment, "app-caller", "general", 60, windowStart, count, limit, ct);
             return new AppCallerGovernanceDecision(status, tenantRateLimit, rateLimit, budget);
         }
         catch
@@ -3307,6 +3328,12 @@ public static class GatewayHttpEndpoints
             await WriteStatusErrorAsync(http, decision.Status);
             return true;
         }
+        if (decision.MinimumProtection is { Rejected: true } minimum)
+        {
+            GatewayMinimumProtectionCoordinator.ApplyHeaders(http, minimum);
+            await WriteCompatErrorAsync(http, minimum.Message, "rate_limit_error", minimum.ErrorCode, StatusCodes.Status429TooManyRequests);
+            return true;
+        }
         if (decision.Budget.Rejected)
         {
             await WriteBudgetErrorAsync(http, decision.Budget);
@@ -3331,6 +3358,15 @@ public static class GatewayHttpEndpoints
         JsonSerializerOptions jsonOpts)
     {
         if (decision.Status.Rejected) return StatusResult(decision.Status, jsonOpts);
+        if (decision.MinimumProtection is { Rejected: true } minimum)
+        {
+            GatewayMinimumProtectionCoordinator.ApplyHeaders(http, minimum);
+            return Results.Json(new
+            {
+                error = new { code = minimum.ErrorCode, message = minimum.Message, minimum.Scope, minimum.Origin,
+                    minimum.WindowSeconds, minimum.WindowStart, minimum.Count, minimum.Limit },
+            }, jsonOpts, statusCode: StatusCodes.Status429TooManyRequests);
+        }
         if (decision.Budget.Rejected) return BudgetResult(decision.Budget, jsonOpts);
         if (decision.TenantRateLimit.Rejected) return TenantRateLimitResult(http, decision.TenantRateLimit, jsonOpts);
         if (decision.RateLimit.Rejected) return RateLimitResult(http, decision.RateLimit, jsonOpts);
@@ -3340,6 +3376,7 @@ public static class GatewayHttpEndpoints
     private static string GovernanceErrorCode(AppCallerGovernanceDecision decision)
     {
         if (decision.Status.Rejected) return "APP_CALLER_DISABLED";
+        if (decision.MinimumProtection is { Rejected: true } minimum) return minimum.ErrorCode;
         if (decision.Budget.Rejected) return decision.Budget.ErrorCode;
         if (decision.TenantRateLimit.Rejected) return "TENANT_RATE_LIMITED";
         if (decision.RateLimit.Rejected) return "APP_CALLER_RATE_LIMITED";
@@ -3455,6 +3492,8 @@ public static class GatewayHttpEndpoints
 
     private static void ApplyGovernanceRateLimitHeaders(HttpContext http, AppCallerGovernanceDecision decision)
     {
+        if (decision.MinimumProtection is { Rejected: true } minimum)
+            GatewayMinimumProtectionCoordinator.ApplyHeaders(http, minimum);
         ApplyScopedRateLimitHeaders(
             http,
             "Tenant",
@@ -6157,7 +6196,8 @@ public static class GatewayHttpEndpoints
         AppCallerStatusDecision Status,
         TenantRateLimitDecision TenantRateLimit,
         AppCallerRateLimitDecision RateLimit,
-        AppCallerBudgetDecision Budget)
+        AppCallerBudgetDecision Budget,
+        GatewayMinimumProtectionDecision? MinimumProtection = null)
     {
         public static AppCallerGovernanceDecision Allow(string appCallerCode, string requestType)
             => new(
