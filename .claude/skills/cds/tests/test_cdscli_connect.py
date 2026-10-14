@@ -351,7 +351,7 @@ def test_display_rename_keeps_original_creation_command_reusable(workspace, monk
         assert method == "GET" and path == "/api/projects/p"
         return 200, {"id": "p", "name": "Renamed", "slug": "renamed"}, {}
     monkeypatch.setattr(cdscli, "_request", request)
-    args = ["connect", "--host", "cds.example", "--new-project", "--create-project", "Demo", "--slug", "demo"]
+    args = ["connect", "--host", "cds.example", "--new-project", "--create-project", "Demo", "--slug", "Demo"]
     for _ in range(2):
         code, output = run_command(args)
         assert code == 0, output

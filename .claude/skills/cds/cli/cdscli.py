@@ -3867,7 +3867,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
                     known = {**known, "projectName": actual.get("name"), "projectSlug": actual.get("slug")}
             elif meta_status not in (401, 403):
                 die(f"原项目暂时无法核对（HTTP {meta_status}），未新建或覆盖凭据，请稍后重试。", code=2)
-        requested_slug = str(getattr(args, "slug", "") or "").strip()
+        requested_slug = str(getattr(args, "slug", "") or "").strip().lower()
         creation_name = known.get("creationName") or known.get("projectName")
         creation_slug = known.get("creationSlug") or known.get("projectSlug")
         same_name = not create_name or not creation_name or creation_name == create_name
