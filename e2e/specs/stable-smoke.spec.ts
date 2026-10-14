@@ -2119,6 +2119,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           else requestPausedId = event.requestId;
         });
         const urlPattern = new URL(uploadPath, page.url()).href;
+        await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [
+          { urlPattern, latency: 0, downloadThroughput: -1, uploadThroughput: 128 * 1024 },
+        ] });
         await session.send('Fetch.enable', { patterns: [
           { urlPattern, requestStage: 'Request' }, { urlPattern, requestStage: 'Response' },
         ] });
@@ -2134,7 +2137,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await expect.poll(() => requestPausedId, { timeout: 10_000 }).not.toBe('');
         await expect(page.getByText(`正在上传 ${name}`, { exact: true })).toBeVisible();
         await expect(page.getByText(/^\d+%$/)).toBeVisible();
+        const transferStatus = page.getByTestId('document-upload-status');
+        const initialPercent = await transferStatus.innerText();
         await session.send('Fetch.continueRequest', { requestId: requestPausedId }); requestPausedId = '';
+        await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(initialPercent);
+        await expect(transferStatus).toHaveText(/^\d+%$/);
+        const nextPercent = await transferStatus.innerText();
+        await expect.poll(() => transferStatus.innerText(), { timeout: 10_000 }).not.toBe(nextPercent);
+        await expect(transferStatus).toHaveText(/^\d+%$/);
         await expect.poll(() => pausedRequestId, { timeout: 20_000 }).not.toBe('');
         await expect(page.getByText(`正在解析 ${name}`, { exact: true })).toBeVisible();
         const status = page.getByTestId('document-upload-status');
@@ -2158,6 +2168,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         for (const requestId of [requestPausedId, pausedRequestId].filter(Boolean)) {
           await session.send('Fetch.continueRequest', { requestId }).catch(() => {});
         }
+        await session.send('Network.emulateNetworkConditionsByRule', { offline: false, matchedNetworkConditions: [] });
         await session.detach();
       }
       if (storeId) {
