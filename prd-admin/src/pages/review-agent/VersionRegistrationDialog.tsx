@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArrowLeft, ArrowRight, BookOpenCheck, CheckCircle2, FileSpreadsheet, FileUp, History, ListFilter, Plus, Search, Settings2, X } from 'lucide-react';
+import { Archive, ArrowLeft, ArrowRight, BookOpenCheck, CheckCircle2, Copy, FileSpreadsheet, FileUp, History, ListFilter, Plus, Search, Settings2, X } from 'lucide-react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
+import { copyToClipboard, copyWithFeedback } from '@/lib/clipboard';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
   createVersionRegistryApplication,
@@ -38,6 +39,12 @@ interface Props {
 type ApplyKind = 'internal' | 'formal';
 type FormalSourceMode = 'internal_registration' | 'manual_t';
 type View = 'apply' | 'records' | 'registry' | 'application-records' | 'archive';
+
+type IssuedResult = {
+  code: string;
+  copyTemplate: string;
+  autoCopied: boolean;
+};
 
 type FormState = {
   projectType: '' | 'standard' | 'custom';
@@ -467,7 +474,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
-  const [issuedCode, setIssuedCode] = useState('');
+  const [issuedResult, setIssuedResult] = useState<IssuedResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const messageParseRequestRef = useRef(0);
 
@@ -498,6 +505,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return;
+    setIssuedResult(null);
     void reload();
   }, [open, reload]);
 
@@ -548,7 +556,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const chooseKind = (nextKind: ApplyKind) => {
     setKind(nextKind);
     setMessage('');
-    setIssuedCode('');
+    setIssuedResult(null);
     setForm(emptyForm());
     setWecomMessage('');
     setMessageParseHint('');
@@ -675,7 +683,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const submitApplication = async () => {
     if (!kind) return;
     setMessage('');
-    setIssuedCode('');
+    setIssuedResult(null);
     if (!form.projectType || !form.versionType) {
       setMessage('请先选择项目类别和版本类别，或粘贴企微登记内容后自动回填');
       return;
@@ -702,8 +710,12 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
       setMessage(result.error.message || '申领未完成，请检查填写内容');
       return;
     }
-    setIssuedCode(result.data.record.code);
-    setMessage(`${result.data.record.code} 已完成登记。编号一经生成不会回收。`);
+    const autoCopied = await copyToClipboard(result.data.record.code);
+    setIssuedResult({
+      code: result.data.record.code,
+      copyTemplate: result.data.copyTemplate,
+      autoCopied,
+    });
     await reload();
   };
 
@@ -887,9 +899,41 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
 
         <main className="flex-1 px-5 py-5 sm:px-6" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {message ? (
-            <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${issuedCode ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-[color:var(--accent-fg-amber)]'}`}>
+            <div className="mb-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-[color:var(--accent-fg-amber)]">
               {message}
             </div>
+          ) : null}
+
+          {view === 'apply' && issuedResult ? (
+            <section aria-live="polite" className="mb-5 rounded-xl border border-emerald-500/35 bg-emerald-500/[0.08] p-4 sm:p-5">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-token-primary">版本号申领完成</p>
+                    <p className="mt-1 font-mono text-2xl font-semibold tracking-tight text-emerald-300">{issuedResult.code}</p>
+                    <p className="mt-1 text-xs leading-5 text-token-secondary">
+                      {issuedResult.autoCopied ? '版本号已自动复制，可直接粘贴使用。' : '当前浏览器未允许自动复制，请点击“复制版本号”。'}
+                    </p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => void copyWithFeedback(issuedResult.code, { successMessage: '版本号已复制', label: '版本号' })} className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-500/35 px-3 py-2 text-sm font-medium text-emerald-300 transition-colors hover:bg-emerald-500/10">
+                  <Copy className="h-4 w-4" />复制版本号
+                </button>
+              </div>
+              <div className="mt-4 border-t border-emerald-500/20 pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-token-primary">完整企微模板</p>
+                    <p className="mt-1 text-xs text-token-muted">已按原来的版本立项或版本上线格式生成。</p>
+                  </div>
+                  <button type="button" onClick={() => void copyWithFeedback(issuedResult.copyTemplate, { successMessage: '完整模板已复制', label: '完整模板' })} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500">
+                    <Copy className="h-4 w-4" />复制完整模板
+                  </button>
+                </div>
+                <pre className="mt-3 whitespace-pre-wrap break-words rounded-lg border border-token-subtle bg-token-nested p-3 text-sm leading-6 text-token-secondary">{issuedResult.copyTemplate}</pre>
+              </div>
+            </section>
           ) : null}
 
           {loading ? <MapSectionLoader text="正在读取可申领资料..." /> : null}
@@ -917,7 +961,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                       <p className="text-sm font-medium text-token-primary">{kind === 'internal' ? '申领内部版本号 T' : '申领正式版本号 V'}</p>
                       <p className="mt-1 text-xs text-token-muted">{kind === 'internal' ? '评审完成后可直接登记，系统会按 T 序列发号。' : '系统会按独立 V 序列发号，不会把 T 前缀直接替换为 V。'}</p>
                     </div>
-                    <button type="button" className="text-xs text-[color:var(--accent-fg-blue)] hover:underline" onClick={() => { messageParseRequestRef.current += 1; setKind(null); setIssuedCode(''); setMessage(''); setWecomMessage(''); setMessageParseHint(''); }}>重新选择</button>
+                    <button type="button" className="text-xs text-[color:var(--accent-fg-blue)] hover:underline" onClick={() => { messageParseRequestRef.current += 1; setKind(null); setIssuedResult(null); setMessage(''); setWecomMessage(''); setMessageParseHint(''); }}>重新选择</button>
                   </div>
 
                   <div className="rounded-xl border border-dashed border-indigo-500/40 bg-indigo-500/[0.04] p-4">
@@ -986,7 +1030,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                   <InputFields form={form} setForm={patchForm} mode={kind} strictFormal={kind === 'formal' && formalSourceMode === 'internal_registration'} />
 
                   <div className="flex justify-end gap-2 border-t border-token-subtle pt-4">
-                    <button type="button" onClick={() => { setKind(null); setMessage(''); setIssuedCode(''); }} className="rounded-lg border border-token-subtle px-4 py-2 text-sm text-token-secondary hover-bg-soft">取消</button>
+                    <button type="button" onClick={() => { setKind(null); setMessage(''); setIssuedResult(null); }} className="rounded-lg border border-token-subtle px-4 py-2 text-sm text-token-secondary hover-bg-soft">取消</button>
                     <button type="button" disabled={submitting} onClick={() => void submitApplication()} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60">
                       {submitting ? <MapSpinner size={15} /> : <Plus className="h-4 w-4" />}
                       完成申领并生成 {kind === 'internal' ? 'T' : 'V'} 号

@@ -184,7 +184,7 @@ export function parseVersionRegistrationMessage(input: {
 
 export function createInternalVersionRegistration(
   input: VersionRegistrationFields & { reviewSubmissionId: string },
-): Promise<ApiResponse<{ record: VersionRegistration }>> {
+): Promise<ApiResponse<{ record: VersionRegistration; copyTemplate: string }>> {
   return apiRequest('/api/review-agent/version-registrations/internal', { method: 'POST', body: input });
 }
 
@@ -197,7 +197,7 @@ export function createFormalVersionRegistration(
     plannedReleaseAt?: string;
     contractParty?: string;
   },
-): Promise<ApiResponse<{ record: VersionRegistration }>> {
+): Promise<ApiResponse<{ record: VersionRegistration; copyTemplate: string }>> {
   return apiRequest('/api/review-agent/version-registrations/formal', { method: 'POST', body: input });
 }
 

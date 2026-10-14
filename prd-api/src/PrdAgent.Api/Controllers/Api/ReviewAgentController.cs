@@ -2465,7 +2465,7 @@ public class ReviewAgentController : ControllerBase
             CreatedByName = GetDisplayName(),
         };
         await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
-        return Ok(ApiResponse<object>.Ok(new { record }));
+        return Ok(ApiResponse<object>.Ok(new { record, copyTemplate = VersionRegistrationCopyTemplate.Build(record) }));
     }
 
     /// <summary>从已登记 T 号或手工填写的 T 号申领正式版本号 V。</summary>
@@ -2553,7 +2553,7 @@ public class ReviewAgentController : ControllerBase
             CreatedByName = GetDisplayName(),
         };
         await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
-        return Ok(ApiResponse<object>.Ok(new { record }));
+        return Ok(ApiResponse<object>.Ok(new { record, copyTemplate = VersionRegistrationCopyTemplate.Build(record) }));
     }
 
     /// <summary>导入历史 T/V 登记，并把上传文件和导入结果保存成不可变档案快照。</summary>
