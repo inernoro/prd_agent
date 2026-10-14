@@ -129,3 +129,9 @@
 ### 2026-10-15 00:38 认证头与首次清理恢复
 
 固定工具 2ee736e578030ca5907666b3917653ce4eb6ab0e 的真实融合用例首轮 1/1、零重试通过；完整与截断文件回读、四张诊断输出显形和[该版本在线报告](https://miduo.org/reports?project=prd-agent&folder=34dcfc4e1c964da4bdf59675484e6401&report=17cdfa7b53cb4e29a128e810160cea38) 验真成功，但不挪为后续版本证据。追加两条 A 直接评论：截断样本认证头先红，随后复用现有同一有限敏感字段清单；首次尝试清理失败可能留下旧凭据，重试必须在新签发前核销本轮精确尝试名称。GET 与 DELETE 的用户所属契约已核对，公开 ID 在删除前保存，其他运行资源不删除。真实融合用例加入一份本轮自有旧凭据夹具，必须先撤销再签发，最终回读本轮零残留；当前 Node 316/316、E2E 类型检查通过，独立复核无新增直接缺陷，最终固定 head 的真实预回收待执行。
+
+### 2026-10-15 01:00 安全固定版本验真与实际采用
+
+最终工具9fa490f213889c4a1b6dc5e8aad9e0dea9bd34b1，runId stsmk-20261015-security-consumer-final-01于00:43:25开始，首轮1/1、零重试、12.2秒、无模型调用。真实旧夹具先签发并回收，GET不存在后新签发，最终精确名称零残留；两次CREATE、两次DELETE，不计为多个独立case。完整与截断文件改写2、再次0，外层8文本改写0，四图全部回读。[最终在线报告](https://miduo.org/reports?project=prd-agent&folder=34dcfc4e1c964da4bdf59675484e6401&report=cb402762a6554a68806101c4dfdccfe5) 首次归档/verify-open成功，13图片节点、68内链、6真实跳转、零断链或失败，诊断输出不冒充产品界面。
+
+当前head的CI38600502458、BranchImage38600502002成功，自动审查完成且无新增主要问题，紧邻合并重新回读未解决线程0。[PR #1690](https://github.com/inernoro/prd_agent/pull/1690) 于00:53:29合入实际工具分支，merge53faab9a62f3b7372d0e1ae07fb6fa40d9058543与实测head的tree均5266497a9394b41932d217c8b609faa1be2dbcfe。现有任务仍读同一origin/codex/stable-smoke-three-pools-20261013，远端已包含本修复；周期与权限不变。计划安全REG为CDS=true、正式=false，next完整周期尚未执行，REG保持active；不因此关闭历史安全扫描或其它正式业务。
