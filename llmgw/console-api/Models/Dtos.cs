@@ -1002,6 +1002,8 @@ public sealed class PlatformDeleteBlockers
 {
     public List<string> Models { get; set; } = new();
     public List<string> Pools { get; set; } = new();
+    public bool GatewayDeleted { get; set; }
+    public bool MapSourceDeleted { get; set; }
     public int TotalCount => Models.Count + Pools.Count;
 }
 

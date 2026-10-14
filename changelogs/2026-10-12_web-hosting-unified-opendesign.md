@@ -60,3 +60,5 @@
 | feat | llmgw | 请求记录、预算与模型统计明确区分供应商实际、Gateway 估算、未计价和无用量 |
 | feat | llmgw | 增加受鉴权的 Offering 安全删除与禁用创建能力，保留历史日志并阻止破坏最后可用线路或在途任务 |
 | test | llmgw | 覆盖 Responses 用量公式、金额口径标签、Offering 删除保护和禁用创建兼容合同 |
+| fix | llmgw | Provider 删除同步退场明确关联的旧 MAP 来源，避免权威副本删除后旧配置重新出现 |
+| test | llmgw | 覆盖 Provider 双域删除、租户隔离、同 ID 歧义保护与历史请求日志保留 |

@@ -700,7 +700,13 @@ export type PlatformItem = {
   createdAt?: string | null; updatedAt?: string | null;
 };
 /** 删除上游被挡下时回来的占用清单：先摘掉这些才能删。 */
-export type PlatformDeleteBlockers = { models: string[]; pools: string[]; totalCount: number };
+export type PlatformDeleteBlockers = {
+  models: string[];
+  pools: string[];
+  totalCount: number;
+  gatewayDeleted: boolean;
+  mapSourceDeleted: boolean;
+};
 /** 删除模型被挡下时回来的占用清单。 */
 export type ModelDeleteBlockers = { pools: string[]; totalCount: number };
 /** 删除模型池被挡下时回来的占用清单；isCurrentDefault 是「删了那个类型没默认可用」这类阻挡。 */

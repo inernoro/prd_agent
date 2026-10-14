@@ -330,7 +330,9 @@ export function PlatformsPage({ section = 'provider' }: { section?: PlatformSect
         delete next[p.id];
         return next;
       });
-      setToast(`已删除上游「${p.name}」`);
+      setToast(res.data.mapSourceDeleted
+        ? `已删除上游「${p.name}」，旧 MAP 来源也已同步清理`
+        : `已删除上游「${p.name}」`);
       return;
     }
     setToast(res.error?.message || '删除失败');

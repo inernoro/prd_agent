@@ -4480,6 +4480,33 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("export function deleteModel(", api);
     }
 
+    [Fact]
+    public void PlatformDelete_RetiresExplicitMapSourceWithoutDroppingSafetyGuardsOrHistory()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/platforms/{id}\"");
+        var coordinator = ReadRepoFile("llmgw/console-api/Governance/PlatformDeletionCoordinator.cs");
+
+        Assert.Contains("PlatformDeletionCoordinator.ResolveAsync", delete);
+        Assert.Contains("PlatformDeletionScope.Ambiguous", delete);
+        Assert.Contains("CollectPlatformDeleteBlockersAsync", delete);
+        Assert.Contains("blockers.TotalCount > 0", delete);
+        Assert.Contains("PlatformDeletionCoordinator.DeleteAsync", delete);
+        Assert.Contains("CancellationToken.None", delete);
+        Assert.Contains("platform.delete", delete);
+        Assert.Contains("mapSourceDeleted", delete);
+        Assert.DoesNotContain("llmrequestlogs", delete, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Contains("fb.Eq(\"TenantId\", tenantId)", coordinator);
+        Assert.Contains("string.Equals(tenantId, internalTenantId", coordinator);
+        Assert.Contains("SourceCollection", coordinator);
+        Assert.Contains("MapSourceCollection", coordinator);
+        Assert.True(
+            coordinator.IndexOf("mapPlatforms.DeleteOneAsync", StringComparison.Ordinal)
+            < coordinator.IndexOf("gatewayPlatforms.DeleteOneAsync", StringComparison.Ordinal),
+            "双域删除必须先退场 MAP 来源，再删 GW 副本，避免中途失败后旧来源重新出现");
+    }
+
     /// <summary>
     /// 「建得出、删不掉」是垃圾堆积的系统性成因。
     ///

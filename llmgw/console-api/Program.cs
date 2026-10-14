@@ -14535,17 +14535,33 @@ app.MapPut("/gw/platforms/{id}", async (HttpContext http, string id, [FromBody] 
     return Json(ApiEnvelope<PlatformItem>.Ok(MapPlatform(updated, config, revealFingerprint: true)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
-// 删除上游平台：只删 GW 权威的，且必须先确认没人引用。
+// 删除上游平台：必须先确认没人引用。内部租户若删除的是从 MAP 认领来的 Provider，
+// 同一操作会先删除明确关联的 MAP 来源，再删除 GW 权威副本，避免旧来源重新回灌。
 //
 // 为什么一定要挡引用：池成员是按 (modelId, platformId) 定位的，平台删了成员还在，
 // 池子看起来正常、实际解析不到上游——这类静默损坏最难查（本仓库刚为同类问题排查过一整轮）。
 // 所以宁可拒绝并列清单，让运维先把引用摘干净，也不做级联删除。
 app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
 {
-    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-    var doc = await gwPlatforms.Find(filter).FirstOrDefaultAsync();
-    if (doc is null)
-        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的平台；MAP 来源平台请先认领"), jsonOptions, 409);
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var target = await PlatformDeletionCoordinator.ResolveAsync(
+        gwPlatforms,
+        platforms,
+        tenantId,
+        internalTenantId,
+        id,
+        http.RequestAborted);
+    if (target is null)
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail("NOT_FOUND", $"Provider 不存在：{id}"), jsonOptions, 404);
+    if (target.Scope == PlatformDeletionScope.Ambiguous)
+    {
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail(
+            "PLATFORM_SOURCE_AMBIGUOUS",
+            "Gateway 与旧 MAP 中存在同 ID Provider，但没有明确的认领来源关系。为避免跨域误删，本次未删除；请先核对配置权威来源"),
+            jsonOptions,
+            409);
+    }
+    var doc = target.EffectiveDocument;
 
     var blockers = await CollectPlatformDeleteBlockersAsync(http, id, gwModels, models, gwModelPools, modelGroups, internalTenantId);
     if (blockers.TotalCount > 0)
@@ -14562,12 +14578,49 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
             409);
     }
 
-    await gwPlatforms.DeleteOneAsync(filter);
+    PlatformDeletionResult deleted;
+    try
+    {
+        // 先删旧 MAP 来源，再删 GW 权威副本。第二步失败时 GW 仍能继续服务且可重试，
+        // 不会回到「GW 已删、MAP 来源重新出现」的假删除状态。
+        deleted = await PlatformDeletionCoordinator.DeleteAsync(
+            gwPlatforms,
+            platforms,
+            tenantId,
+            target,
+            // 双域退场一旦开始就不能被浏览器断连截断，否则可能只删 MAP 来源、
+            // 尚未删除 GW 副本也来不及写审计。读取与 blocker 检查仍使用请求取消令牌。
+            CancellationToken.None);
+    }
+    catch (PlatformDeletionException ex)
+    {
+        await WriteOperationAuditAsync(
+            operationAudits,
+            http,
+            action: "platform.delete",
+            targetType: target.GatewayDocument is null ? "map_llm_platform" : "llmgw_platform",
+            targetId: id,
+            targetName: doc.AsNullableString("Name"),
+            success: false,
+            reason: ex.Message,
+            changes: new BsonDocument
+            {
+                { "sourceCollection", ToBsonAuditValue(doc.AsNullableString("SourceCollection")) },
+                { "scope", target.Scope.ToString() },
+                { "failureStage", ex.FailureStage },
+                { "gatewayDeletedConfirmed", ex.GatewayDeleted },
+                { "mapSourceDeletedConfirmed", ex.MapSourceDeleted },
+            });
+        return Json(ApiEnvelope<PlatformDeleteBlockers>.Fail(
+            "PLATFORM_DELETE_INCOMPLETE",
+            "Provider 删除结果未能完整确认。刷新列表核对后重试，若仍失败请查看操作审计",
+            new PlatformDeleteBlockers()), jsonOptions, 503);
+    }
     await WriteOperationAuditAsync(
         operationAudits,
         http,
         action: "platform.delete",
-        targetType: "llmgw_platform",
+        targetType: target.GatewayDocument is null ? "map_llm_platform" : "llmgw_platform",
         targetId: id,
         targetName: doc.AsNullableString("Name"),
         success: true,
@@ -14579,9 +14632,16 @@ app.MapDelete("/gw/platforms/{id}", async (HttpContext http, string id) =>
             { "apiUrl", ToBsonAuditValue(doc.AsNullableString("ApiUrl")) },
             { "platformType", ToBsonAuditValue(doc.AsNullableString("PlatformType")) },
             { "hadKey", !string.IsNullOrEmpty(doc.AsNullableString("ApiKeyEncrypted")) },
-            { "authority", "llm_gateway" },
+            { "authority", target.GatewayDocument is null ? "map" : "llm_gateway" },
+            { "scope", target.Scope.ToString() },
+            { "gatewayDeleted", deleted.GatewayDeleted },
+            { "mapSourceDeleted", deleted.MapSourceDeleted },
         });
-    return Json(ApiEnvelope<PlatformDeleteBlockers>.Ok(new PlatformDeleteBlockers()), jsonOptions);
+    return Json(ApiEnvelope<PlatformDeleteBlockers>.Ok(new PlatformDeleteBlockers
+    {
+        GatewayDeleted = deleted.GatewayDeleted,
+        MapSourceDeleted = deleted.MapSourceDeleted,
+    }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // 删除模型：同样先查引用。模型能建不能删，是「垃圾越攒越多」在平台下一层的同一个洞——
