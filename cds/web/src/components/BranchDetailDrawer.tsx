@@ -4426,8 +4426,8 @@ function ResourceConnection({
         </div>
       ) : null}
       <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
-        <div className="flex items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
             <div className="font-semibold">临时 TCP 直连</div>
             <div className="mt-1">填写白名单 IP 和有效期后，本地数据库工具可直接连接。到期会断开已有连接并关闭入口，数据库账号密码沿用当前配置。</div>
             {infraLocalOnly ? <div className="mt-1">{tcpCapability?.enabled ? `直连主机：${tcpCapability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。` : tcpCapability?.reason || '正在读取实例直连配置…'}</div> : null}
@@ -4467,25 +4467,26 @@ function ResourceConnection({
             {externalEnabled ? '关闭直连' : '临时开启'}
           </Button>
         </div>
-        <div className="grid gap-2 md:grid-cols-[8.75rem_minmax(0,1fr)]">
-          <label className="grid gap-1">
+        <div className="grid items-start gap-3 md:grid-cols-2">
+          <label className="flex min-w-0 flex-col gap-1">
             <span className="text-[0.6875rem] text-warn/80">有效期（分钟，开启时生效）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
-              className="h-8 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
+              className="h-10 w-full min-w-0 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
               inputMode="numeric"
               placeholder="120"
               type="number" min={1} max={1440} step={1}
             />
           </label>
-          <label className="grid gap-1">
+          <label className="flex min-w-0 flex-col gap-1">
             <span className="text-[0.6875rem] text-warn/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}
-              className="min-h-[4rem] resize-y rounded-md border border-warn/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-warn"
+              className="h-10 min-h-10 w-full min-w-0 resize-y rounded-md border border-warn/30 bg-background px-2 py-2.5 font-mono text-xs outline-none focus:border-warn"
               placeholder="203.0.113.10/32"
+              rows={1}
               spellCheck={false}
             />
           </label>
