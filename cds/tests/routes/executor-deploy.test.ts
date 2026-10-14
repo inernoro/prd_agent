@@ -1,3 +1,4 @@
+import { runningCommitSha } from '../../src/services/running-version.js';
 /**
  * Executor route regression tests.
  *
@@ -295,7 +296,7 @@ describe('Executor /exec/deploy', () => {
     const firstMutation = mock.commands.findIndex(cmd => /^docker (stop|rm)|^git /.test(cmd));
     expect(pullIndices).toHaveLength(2); expect(Math.max(...pullIndices)).toBeLessThan(firstMutation);
     const runs = mock.commands.filter(cmd => /^docker (run|create) /.test(cmd));
-    expect(runs).toHaveLength(2); expect(runs.every(cmd => cmd.includes(`ghcr.io/owned/shared@${f.imageId}`))).toBe(true);
+    expect(runs).toHaveLength(2); expect(runs.every(cmd => cmd.includes(`ghcr.io/owned/shared:sha-${f.target}@${f.imageId}`))).toBe(true);
     expect(result.events.find(e => e.data?.step === 'artifact-target')?.data.artifactCommitSha).toBe(f.target);
     expect(mock.commands.some(cmd => /^git |^mkdir /.test(cmd))).toBe(false);
     expect(mock.commands.some(cmd => cmd.includes('compile-unexpected') || cmd.includes('old:tag'))).toBe(false);
@@ -309,13 +310,15 @@ describe('Executor /exec/deploy', () => {
     const result = await postSse(server, '/exec/deploy', { ...f.payload, profiles: [profile], artifactCommitSha: f.target });
     expect(result.events.filter(e => e.event === 'error' || e.data?.status === 'error')).toEqual([]);
     expect(mock.commands.filter(cmd => cmd.startsWith('docker pull '))).toEqual([]);
-    expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))[0]).toContain(repositoryDigest);
-    expect(stateService.getBranch(f.entry.id)?.services.api.deployedImage).toBe(repositoryDigest);
+    const runtimeImage = repositoryDigest.replace('@', `:sha-${f.target}@`);
+    expect(mock.commands.filter(cmd => /^docker (run|create) /.test(cmd))[0]).toContain(runtimeImage);
+    expect(stateService.getBranch(f.entry.id)?.services.api.deployedImage).toBe(runtimeImage);
     const versions = new DeploymentVersionService(stateService);
     const version = versions.create({ projectId: 'default', branchId: f.entry.id, commitSha: f.target, configHash: 'c'.repeat(64),
       profiles: [profile], branch: stateService.getBranch(f.entry.id)!, createdByRunId: 'owned-portable-reference' });
-    expect(version.profiles[0]).toMatchObject({ artifactKind: 'prebuilt-image', artifactImage: repositoryDigest, reusable: true });
-    expect(versions.materializeProfiles(version, [profile])[0].dockerImage).toBe(repositoryDigest);
+    expect(version.profiles[0]).toMatchObject({ artifactKind: 'prebuilt-image', artifactImage: runtimeImage, reusable: true });
+    expect(versions.materializeProfiles(version, [profile])[0].dockerImage).toBe(runtimeImage);
+    expect(runningCommitSha(stateService.getBranch(f.entry.id)!)).toBe(f.target);
   });
 
   it.each(['stop', 'delete', 'new-target', 'owner'])('执行器预检等待中%s后，旧请求不得迟到拆服务或写旧状态', async (change) => {
