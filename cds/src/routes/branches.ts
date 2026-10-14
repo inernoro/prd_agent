@@ -12841,6 +12841,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
+    if (selectedDeploymentVersion) {
+      // 准入和执行必须核验同一份历史产物；当前分支模式不得替换版本的固定镜像。
+      deploymentInput.profiles = profiles;
+      deploymentInput.profileOverrides = undefined;
+      deploymentInput.targetCommitSha = /^[0-9a-f]{40}$/i.test(selectedDeploymentVersion.commitSha)
+        ? selectedDeploymentVersion.commitSha.toLowerCase() : undefined;
+    }
     const effectiveProfilesForHash = currentProfiles.map((profile) => { const effective = resolveEffectiveProfile(profile, inputBranch()); return effective.prebuiltImage ? withoutSourceFallback(effective) : effective; });
     let deploymentConfigHash = deploymentInput.configHash || selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(

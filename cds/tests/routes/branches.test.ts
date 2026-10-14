@@ -14,7 +14,7 @@ import {
 } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
-import { ContainerService } from '../../src/services/container.js';
+import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
@@ -863,12 +863,15 @@ describe('Branch Routes', () => {
       const branch = stateService.getBranch('b1')!;
       const profile = stateService.getBuildProfile('api')!;
       // 历史版本是当年极速版跑出来的不可变镜像；此刻分支基线仍是 static（源码模式）。
+      readyArtifactFixture();
+      branch.services.api = { profileId: 'api', containerName: 'old-version-api', hostPort: 10011, status: 'running',
+        deployedImage: 'ghcr.io/x/api:sha-abcdef1234567890abcdef1234567890abcdef12', deployedMode: 'express' };
       const version = deploymentVersionService.create({
         projectId: 'proj-a',
         branchId: 'b1',
         commitSha: 'abcdef1234567890abcdef1234567890abcdef12',
         configHash: 'cfg',
-        profiles: [{ ...profile, prebuiltImage: true, dockerImage: 'ghcr.io/x/api:sha-abcdef1234567890abcdef1234567890abcdef12' }],
+        profiles: [{ ...profile, command: '', prebuiltImage: true, dockerImage: 'ghcr.io/x/api:sha-abcdef1234567890abcdef1234567890abcdef12' }],
         branch,
         createdByRunId: 'run-0',
       });
@@ -876,7 +879,8 @@ describe('Branch Routes', () => {
       const plain = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
       expect(plain.status).toBe(409);
       const replay = await request(server, 'POST', '/api/branches/b1/deploy', { versionId: version.id }, { 'X-Test-Key': 'A' });
-      expect(replay.status).not.toBe(409);
+      expect(replay.status).toBe(200);
+      await waitForAcceptedRun(replay);
       expect((replay.body as any)?.error).not.toBe('agent_prebuilt_only');
       // 分支此刻选了显式 prebuilt: false 的模式：版本重放执行时不套分支覆盖，判定也不能套（Codex 第八轮 P2）
       profile.deployModes!.legacy = { label: '源码', prebuilt: false, command: 'pnpm dev' };
@@ -4376,6 +4380,35 @@ describe('Branch Routes', () => {
       expect(executions).toBe(2);
       expect(await refreshArtifactWaiters({ coordinator: branchOperationCoordinator, containerService, getBranch: id => stateService.getBranch(id), recheckMs: 0 })).toEqual([]);
       expect(mock.commands.filter(command => isAppLaunchCommand(command))).toHaveLength(executions);
+    });
+
+    it('历史A固定产物准入不被当前B部署模式覆盖，按A版本运行并保留B待发布目标', async () => {
+      const A = 'a'.repeat(40), B = 'b'.repeat(40), digest = 'd'.repeat(64);
+      const artifact = `ghcr.io/owned/api:sha-${A}@sha256:${digest}`;
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node:22',
+        workDir: '.', command: 'source-build', containerPort: 3000,
+        deployModes: { express: { label: 'CI', dockerImage: 'ghcr.io/owned/api:sha-${CDS_COMMIT_SHA}', command: '', prebuilt: true } } });
+      const branch = { id: 'fixed-version-input', projectId: 'default', branch: 'feature/fixed-version-input', worktreePath: path.join(tmpDir, 'fixed-version-input'),
+        status: 'running', createdAt: new Date().toISOString(), ciTargetSha: B, githubCommitSha: B,
+        profileOverrides: { api: { activeDeployMode: 'express' } }, services: { api: { profileId: 'api', containerName: 'old-api',
+          hostPort: 10011, status: 'running', deployedImage: artifact, deployedMode: 'express' } } } as BranchEntry;
+      stateService.addBranch(branch);
+      const version = deploymentVersionService.create({ projectId: 'default', branchId: branch.id, commitSha: A,
+        configHash: 'c'.repeat(64), profiles: [resolveEffectiveProfile(stateService.getBuildProfile('api')!, branch)], branch, createdByRunId: 'verified-old' });
+      branch.services.api.deployedImage = `ghcr.io/owned/api:sha-${B}`;
+      mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/docker pull (.+)/, match => ({ stdout: match[1].includes(`@sha256:${digest}`) ? 'fixed artifact available' : '',
+        stderr: match[1].includes(`@sha256:${digest}`) ? '' : 'manifest unknown', exitCode: match[1].includes(`@sha256:${digest}`) ? 0 : 1 }));
+      mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: `sha256:${'e'.repeat(64)}`,
+        RepoDigests: [`ghcr.io/owned/api@sha256:${digest}`], Os: 'linux', Architecture: 'amd64',
+        Config: { Labels: { 'org.opencontainers.image.revision': A } } }]), stderr: '', exitCode: 0 }));
+      const response = await request(server, 'POST', `/api/branches/${branch.id}/deploy`, { versionId: version.id });
+      expect(response.status).toBe(200);
+      const run = await waitForAcceptedRun(response);
+      expect(run.status).toBe('running'); expect(run.versionId).toBe(version.id);
+      expect(stateService.getBranch(branch.id)?.services.api.deployedImage).toBe(artifact);
+      expect(stateService.getBranch(branch.id)?.ciTargetSha).toBe(B);
+      expect(mock.commands.some(command => command.startsWith('git fetch') || command.includes('source-build'))).toBe(false);
     });
 
     it('指定历史版本产物缺少OCI身份时HTTP拒绝，外层分发不误报受理且旧服务不变', async () => {
