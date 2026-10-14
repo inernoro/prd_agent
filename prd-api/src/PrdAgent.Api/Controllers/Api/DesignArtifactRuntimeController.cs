@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
+using MongoDB.Bson;
+using MongoDB.Driver;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -34,19 +37,22 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<DesignArtifactRuntimeController> _logger;
+    private readonly MongoDbContext? _db;
 
     public DesignArtifactRuntimeController(
         IDesignArtifactWorkspaceBroker broker,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
         ILogger<DesignArtifactRuntimeController> logger,
-        PrdAgent.Core.Interfaces.IRunEventStore? events = null)
+        PrdAgent.Core.Interfaces.IRunEventStore? events = null,
+        MongoDbContext? db = null)
     {
         _events = events;
         _broker = broker;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
+        _db = db;
     }
 
     [HttpGet("workspace/input")]
@@ -92,8 +98,8 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
 
     /// <summary>
     /// OpenDesign 运行期间的实时预览：CDS 发现 /workspace/index.html 变了就把整页推来，
-    /// 这里只写进 Redis 事件流（生成流与修改流都会转给前端），不进 Mongo，也不当产物——
-    /// 最终产物仍然只认 workspace/result 那一次整包提交与两道校验。
+    /// 事件写进 Redis 流供生成流与修改流实时展示，同时把最新受信版本有界持久化到所属 Run，
+    /// 供终态失败后恢复最后预览；它仍不当产物，最终产物只认 workspace/result 的整包提交与两道校验。
     /// </summary>
     [HttpPost("workspace/preview")]
     [RequestSizeLimit(MaxPreviewRequestBytes)]
@@ -111,10 +117,41 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                            && revisionElement.TryGetInt32(out var parsedRevision)
                 ? parsedRevision
                 : 0;
-            if (html.Length == 0 || Encoding.UTF8.GetByteCount(html) > MaxPreviewHtmlBytes)
-                return BadRequest(new { error = "preview_invalid", message = "预览内容为空或超过 1 MB" });
+            if (html.Length == 0 || revision < 0 || Encoding.UTF8.GetByteCount(html) > MaxPreviewHtmlBytes)
+                return BadRequest(new { error = "preview_invalid", message = "预览内容为空、revision 无效或超过 1 MB" });
             if (_events == null)
                 return StatusCode(503, new { error = "preview_unavailable", message = "事件流未配置" });
+            if (_db != null)
+            {
+                var now = DateTime.UtcNow;
+                var previewFilter = Builders<DesignArtifactRun>.Filter.Where(item => item.Id == runId
+                        && item.Status != RunStatuses.Done
+                        && item.Status != RunStatuses.Error
+                        && item.Status != RunStatuses.Cancelled)
+                    & (Builders<DesignArtifactRun>.Filter.Eq(item => item.LatestPreviewRevision, null)
+                       | Builders<DesignArtifactRun>.Filter.Lt(item => item.LatestPreviewRevision, revision));
+                await _db.DesignArtifactRuns.UpdateOneAsync(
+                    previewFilter,
+                    Builders<DesignArtifactRun>.Update.Pipeline(new BsonDocument[]
+                    {
+                        new("$set", new BsonDocument
+                        {
+                            {
+                                nameof(DesignArtifactRun.FirstPreviewAt),
+                                new BsonDocument("$ifNull", new BsonArray
+                                {
+                                    $"${nameof(DesignArtifactRun.FirstPreviewAt)}",
+                                    now,
+                                })
+                            },
+                            { nameof(DesignArtifactRun.LatestPreviewHtml), html },
+                            { nameof(DesignArtifactRun.LatestPreviewRevision), revision },
+                            { nameof(DesignArtifactRun.LastProgressAt), now },
+                            { nameof(DesignArtifactRun.UpdatedAt), now },
+                        }),
+                    }),
+                    cancellationToken: CancellationToken.None);
+            }
             await _events.AppendEventAsync(
                 PrdAgent.Core.Models.RunKinds.DesignArtifact,
                 runId,

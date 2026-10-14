@@ -532,6 +532,37 @@ public sealed class DesignArtifactLifecycleServiceTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task AppendEvent_PersistsLargestStaticProgressGapWithoutRewritingHistory()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var service = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        var run = await service.CreateSessionAsync(Session(
+            "static-gap",
+            DesignArtifactTypes.WebPage,
+            DesignArtifactWorkspaceKinds.RemotePackage,
+            "open-design"));
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == run.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.LastProgressAt, DateTime.UtcNow.AddSeconds(-42))
+                .Set(item => item.MaxStaticGapSeconds, 10));
+        var seeded = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+
+        await service.AppendEventAsync(new AppendDesignArtifactEventRequest(
+            seeded.Id,
+            seeded.UserId,
+            DesignArtifactLifecycleEventTypes.Phase,
+            "浏览器质量检查",
+            81));
+
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.InRange(persisted.MaxStaticGapSeconds!.Value, 40, 50);
+        Assert.Equal(2, persisted.LifecycleEventSequence);
+        Assert.Equal(2, persisted.LifecycleEvents.Count);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task ActiveLeaseCannotBeBypassedByOmittingLeaseOwner()
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
@@ -1274,9 +1305,54 @@ public sealed class DesignArtifactLifecycleServiceTests
             failureRun.Id,
             failureRun.UserId,
             Expected(failureRun),
-            "adapter_failed"));
+            "design_output_quality_rejected",
+            new DesignArtifactRuntimeFailure
+            {
+                Code = "untrusted_remote_code_is_replaced",
+                IssueCodes = ["css_generated_text"],
+                RepairAttempts = 1,
+                RepairBudgetExhausted = true,
+                BrowserQualityEvidence = new DesignArtifactBrowserQualityFailureEvidence
+                {
+                    SchemaVersion = "map-browser-quality-failure-evidence-v1",
+                    RuleVersion = "browser-hard-gate-v1",
+                    HeuristicVersion = "browser-aesthetic-heuristic-v1",
+                    RepairAttempts = 1,
+                    RepairBudgetExhausted = true,
+                    Attempts =
+                    [
+                        new DesignArtifactBrowserQualityFailureAttempt
+                        {
+                            RepairAttempt = 1,
+                            HardPassed = false,
+                            Score = 6,
+                            Issues =
+                            [
+                                new DesignArtifactBrowserQualityFailureIssue
+                                {
+                                    IssueCode = "key_text_contrast_low",
+                                    Viewport = "mobile",
+                                    Actual = new Dictionary<string, object?> { ["ratio"] = 2.1d, ["minimum"] = 4.5d },
+                                    Target = "at least 4.5",
+                                    ElementSummary = new DesignArtifactBrowserElementSummary { Tag = "h1" },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            }));
         Assert.Equal(RunStatuses.Error, failed.Status);
-        Assert.Equal("adapter_failed", failed.LifecycleFailureCode);
+        Assert.Equal("design_output_quality_rejected", failed.LifecycleFailureCode);
+        Assert.Equal("design_output_quality_rejected", failed.RuntimeFailure?.Code);
+        Assert.Equal(["css_generated_text"], failed.RuntimeFailure?.IssueCodes);
+        Assert.Equal(1, failed.RuntimeFailure?.RepairAttempts);
+        Assert.True(failed.RuntimeFailure?.RepairBudgetExhausted);
+        Assert.Equal("key_text_contrast_low",
+            failed.RuntimeFailure?.BrowserQualityEvidence?.Attempts[0].Issues[0].IssueCode);
+        Assert.Equal(failed.RuntimeFailure?.Code, failed.LifecycleEvents[^1].RuntimeFailure?.Code);
+        Assert.Equal(["css_generated_text"], failed.LifecycleEvents[^1].RuntimeFailure?.IssueCodes);
+        Assert.Equal("mobile",
+            failed.LifecycleEvents[^1].RuntimeFailure?.BrowserQualityEvidence?.Attempts[0].Issues[0].Viewport);
         Assert.DoesNotContain("provider", failed.ToJson(), StringComparison.OrdinalIgnoreCase);
     }
 
@@ -1399,6 +1475,51 @@ public sealed class DesignArtifactLifecycleServiceTests
             UserId = current.UserId,
             ContractVersion = 3,
         });
+        var failedPublic = await service.CreateSessionAsync(Session(
+            "public-failed-run",
+            DesignArtifactTypes.WebPage,
+            DesignArtifactWorkspaceKinds.RemotePackage,
+            "open-design"));
+        failedPublic = await service.FailAsync(new FailDesignArtifactSessionRequest(
+            failedPublic.Id,
+            failedPublic.UserId,
+            Expected(failedPublic),
+            "design_output_quality_rejected",
+            new DesignArtifactRuntimeFailure
+            {
+                Code = "design_output_quality_rejected",
+                IssueCodes = ["css_generated_text"],
+                RepairAttempts = 1,
+                RepairBudgetExhausted = true,
+                BrowserQualityEvidence = new DesignArtifactBrowserQualityFailureEvidence
+                {
+                    SchemaVersion = "map-browser-quality-failure-evidence-v1",
+                    RuleVersion = "browser-hard-gate-v1",
+                    HeuristicVersion = "browser-aesthetic-heuristic-v1",
+                    RepairAttempts = 1,
+                    RepairBudgetExhausted = true,
+                    Attempts =
+                    [
+                        new DesignArtifactBrowserQualityFailureAttempt
+                        {
+                            RepairAttempt = 1,
+                            HardPassed = false,
+                            Score = 6,
+                            Issues =
+                            [
+                                new DesignArtifactBrowserQualityFailureIssue
+                                {
+                                    IssueCode = "key_text_contrast_low",
+                                    Viewport = "mobile",
+                                    Actual = new Dictionary<string, object?> { ["ratio"] = 2.1d, ["minimum"] = 4.5d },
+                                    Target = "at least 4.5",
+                                    ElementSummary = new DesignArtifactBrowserElementSummary { Tag = "h1" },
+                                },
+                            ],
+                        },
+                    ],
+                },
+            }));
 
         var controller = Controller(fixture, events, current.UserId);
         var contract = Data(Assert.IsType<OkObjectResult>(await controller.GetContract(current.Id)));
@@ -1422,6 +1543,29 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.DoesNotContain("payload", serialized, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("baseUrl", serialized, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("apiKey", serialized, StringComparison.OrdinalIgnoreCase);
+
+        var failedContract = Data(Assert.IsType<OkObjectResult>(await controller.GetContract(failedPublic.Id)));
+        var runtimeFailure = failedContract.GetProperty("runtimeFailure");
+        Assert.Equal("design_output_quality_rejected", runtimeFailure.GetProperty("code").GetString());
+        Assert.Equal("css_generated_text", runtimeFailure.GetProperty("issueCodes")[0].GetString());
+        Assert.Equal(1, runtimeFailure.GetProperty("repairAttempts").GetInt32());
+        Assert.True(runtimeFailure.GetProperty("repairBudgetExhausted").GetBoolean());
+        var browserFailure = runtimeFailure.GetProperty("browserQualityEvidence");
+        Assert.Equal("map-browser-quality-failure-evidence-v1", browserFailure.GetProperty("schemaVersion").GetString());
+        var browserIssue = browserFailure.GetProperty("attempts")[0].GetProperty("issues")[0];
+        Assert.Equal("key_text_contrast_low", browserIssue.GetProperty("issueCode").GetString());
+        Assert.Equal("mobile", browserIssue.GetProperty("viewport").GetString());
+        Assert.Equal(2.1d, browserIssue.GetProperty("actual").GetProperty("ratio").GetDouble());
+        Assert.Equal("h1", browserIssue.GetProperty("elementSummary").GetProperty("tag").GetString());
+        var failedEvents = Data(Assert.IsType<OkObjectResult>(await controller.GetContractEvents(failedPublic.Id)));
+        var failureEvent = failedEvents.GetProperty("items").EnumerateArray().Last();
+        Assert.Equal("css_generated_text",
+            failureEvent.GetProperty("runtimeFailure").GetProperty("issueCodes")[0].GetString());
+        var failureSerialized = JsonSerializer.Serialize(
+            new { failedContract, failedEvents },
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.DoesNotContain("quality gate rejected", failureSerialized, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<style", failureSerialized, StringComparison.OrdinalIgnoreCase);
 
         var legacy = Data(Assert.IsType<OkObjectResult>(await controller.GetContract("legacy-run")));
         Assert.Equal(DesignArtifactContractVersions.Legacy, legacy.GetProperty("contractVersion").GetInt32());
@@ -1756,6 +1900,201 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(DesignArtifactLifecycleErrorCodes.Conflict, error.Code);
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ActiveRun_ShouldStayUserScoped_AndIgnoreOlderInterruptedRun()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        await fixture.Db.DesignArtifactRuns.InsertManyAsync([
+            new DesignArtifactRun
+            {
+                Id = "owner-interrupted", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.Interrupted,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now.AddMinutes(-2), UpdatedAt = now.AddMinutes(-2),
+            },
+            new DesignArtifactRun
+            {
+                Id = "owner-done", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Done, PhaseCode = DesignArtifactPhaseCodes.Completed,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now.AddMinutes(-1), UpdatedAt = now.AddMinutes(-1),
+            },
+            new DesignArtifactRun
+            {
+                Id = "owner-quality-failed", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.ReviewingPage,
+                RuntimeFailure = new DesignArtifactRuntimeFailure
+                {
+                    Code = "design_browser_quality_rejected",
+                    IssueCodes = ["key_text_contrast_low"],
+                },
+                LatestPreviewHtml = "<!doctype html><main>最后预览</main>", LatestPreviewRevision = 4,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now, UpdatedAt = now,
+            },
+            new DesignArtifactRun
+            {
+                Id = "other-active", UserId = "other-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+                Status = RunStatuses.Running, PhaseCode = DesignArtifactPhaseCodes.ComposingPage,
+                DeploymentSlug = DeploymentScope.Current, CreatedAt = now.AddSeconds(1), UpdatedAt = now.AddSeconds(1),
+            },
+        ]);
+
+        var ownerResult = Assert.IsType<OkObjectResult>(
+            await Controller(fixture, new InMemoryRunEventStore(), "owner-user").GetActiveRun(DesignArtifactOperations.Generate));
+        Assert.Equal(JsonValueKind.Null, Data(ownerResult).ValueKind);
+        var ownerFailedResult = Assert.IsType<OkObjectResult>(
+            await Controller(fixture, new InMemoryRunEventStore(), "owner-user")
+                .GetActiveRun(DesignArtifactOperations.Generate, includeLatestFailed: true));
+        Assert.Equal("owner-quality-failed", Data(ownerFailedResult).GetProperty("runId").GetString());
+        Assert.Equal("<!doctype html><main>最后预览</main>", Data(ownerFailedResult).GetProperty("previewHtml").GetString());
+        Assert.Equal(4, Data(ownerFailedResult).GetProperty("previewRevision").GetInt32());
+        var otherResult = Assert.IsType<OkObjectResult>(
+            await Controller(fixture, new InMemoryRunEventStore(), "other-user").GetActiveRun(DesignArtifactOperations.Generate));
+        Assert.Equal("other-active", Data(otherResult).GetProperty("runId").GetString());
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RuntimePreview_ShouldPersistLatestBoundedPreviewOnItsRun()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var run = new DesignArtifactRun
+        {
+            Id = "run-preview-persisted",
+            UserId = "owner-user",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Status = RunStatuses.Running,
+            DeploymentSlug = DeploymentScope.Current,
+            CreatedAt = DateTime.UtcNow,
+            UpdatedAt = DateTime.UtcNow,
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(item => item.ValidatePreviewAsync(run.Id, "preview-ticket", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var controller = new DesignArtifactRuntimeController(
+            broker.Object,
+            new Mock<IHttpClientFactory>().Object,
+            new ConfigurationBuilder().Build(),
+            NullLogger<DesignArtifactRuntimeController>.Instance,
+            new InMemoryRunEventStore(),
+            fixture.Db)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        var body = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            html = "<!doctype html><main>持久预览</main>",
+            revision = 9,
+        });
+        controller.Request.Body = new MemoryStream(body);
+        controller.Request.ContentLength = body.Length;
+        controller.Request.Headers.Authorization = "Bearer preview-ticket";
+
+        var result = await controller.PushWorkspacePreview(run.Id, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        var staleBody = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            html = "<!doctype html><main>过期预览</main>",
+            revision = 8,
+        });
+        controller.Request.Body = new MemoryStream(staleBody);
+        controller.Request.ContentLength = staleBody.Length;
+        Assert.IsType<OkObjectResult>(await controller.PushWorkspacePreview(run.Id, CancellationToken.None));
+        var persisted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == run.Id).SingleAsync();
+        Assert.Equal("<!doctype html><main>持久预览</main>", persisted.LatestPreviewHtml);
+        Assert.Equal(9, persisted.LatestPreviewRevision);
+        Assert.NotNull(persisted.FirstPreviewAt);
+        broker.VerifyAll();
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RestartRun_ShouldBeIdempotent_AndKeepInterruptedSourceUnchanged()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var source = new DesignArtifactRun
+        {
+            Id = "interrupted-source", UserId = "owner-user", Runtime = DesignArtifactRuntimes.OpenDesign,
+            Status = RunStatuses.Error, PhaseCode = DesignArtifactPhaseCodes.Interrupted,
+            Phase = HostedSiteEditRunWorker.RestartInterruptedMessage,
+            Error = HostedSiteEditRunWorker.RestartInterruptedMessage,
+            Instruction = "生成产品发布页", Title = "产品发布页",
+            DeploymentSlug = DeploymentScope.Current,
+            DesignBrief = new DesignArtifactDesignBrief
+            {
+                Goal = "生成产品发布页",
+                Audience = "产品用户",
+                PrimaryMessage = "产品发布页",
+                PrimaryAction = "了解产品",
+                BrandKitRef = "minimal",
+                Fingerprint = "brief1234567",
+            },
+            BrandPackage = new DesignArtifactBrandPackage
+            {
+                Ref = "minimal",
+                Source = "design-style-preset",
+                DesignSystemId = "minimal",
+                Fingerprint = "brand1234567",
+            },
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
+        var capability = new DesignArtifactProviderCapability(
+            DesignArtifactRuntimes.OpenDesign,
+            "OpenDesign",
+            DesignArtifactAdapterKinds.RemoteAgent,
+            DesignArtifactExecutionOwners.CdsRemoteAgent,
+            DesignArtifactIsolationModes.SessionContainer,
+            [DesignArtifactTypes.WebPage],
+            [DesignArtifactOperations.Generate, DesignArtifactOperations.Edit],
+            [DesignArtifactSourceSurfaces.WebHosting],
+            Configured: true,
+            Healthy: true,
+            Enabled: true,
+            Reason: null,
+            ConnectionId: "design-runtime");
+        var providers = new Mock<IDesignArtifactProviderCatalog>();
+        providers.Setup(item => item.FindAsync(source.UserId, DesignArtifactRuntimes.OpenDesign, CancellationToken.None))
+            .ReturnsAsync(capability);
+        var queue = new Mock<IRunQueue>();
+        var events = new InMemoryRunEventStore();
+        var controller = new DesignArtifactsController(
+            fixture.Db,
+            events,
+            queue.Object,
+            providers.Object,
+            Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(),
+            new ConfigurationBuilder().Build(),
+            Mock.Of<IHostedSiteService>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", source.UserId)], "test")),
+            },
+        };
+
+        var request = new RestartDesignArtifactRunRequest { IdempotencyKey = "same-restart-key" };
+        var first = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
+        var second = Assert.IsType<AcceptedResult>(await controller.RestartRun(source.Id, request));
+        var firstId = Data(first).GetProperty("runId").GetString();
+        Assert.Equal(firstId, Data(second).GetProperty("runId").GetString());
+        Assert.Equal(2, await fixture.Db.DesignArtifactRuns.CountDocumentsAsync(_ => true));
+        var persistedSource = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == source.Id).SingleAsync();
+        Assert.Equal(RunStatuses.Error, persistedSource.Status);
+        Assert.Equal(DesignArtifactPhaseCodes.Interrupted, persistedSource.PhaseCode);
+        var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == firstId).SingleAsync();
+        Assert.Equal(source.Id, restarted.RestartedFromRunId);
+        Assert.Equal(source.Instruction, restarted.Instruction);
+        Assert.Equal(source.DesignBrief.Fingerprint, restarted.DesignBrief?.Fingerprint);
+        Assert.Equal(source.BrandPackage.Fingerprint, restarted.BrandPackage?.Fingerprint);
+        queue.Verify(item => item.EnqueueAsync(RunKinds.DesignArtifact, firstId!, CancellationToken.None), Times.Once);
+    }
+
     private static DesignArtifactsController Controller(
         LifecycleMongoFixture fixture,
         IRunEventStore events,
@@ -1781,6 +2120,10 @@ public sealed class DesignArtifactLifecycleServiceTests
     }
 
     private static JsonElement Data(OkObjectResult result)
+        => JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            .GetProperty("data");
+
+    private static JsonElement Data(AcceptedResult result)
         => JsonSerializer.SerializeToElement(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web))
             .GetProperty("data");
 

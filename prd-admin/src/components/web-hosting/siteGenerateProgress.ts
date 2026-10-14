@@ -2,23 +2,101 @@ import type { SseEvent } from '@/lib/sse';
 import type { DesignArtifactRunSummary, DesignTimingStats } from '@/services/real/webPages';
 
 export type SiteGenerationProgressEvent =
-  | { kind: 'phase'; message?: string; progress?: number }
+  | { kind: 'phase'; phaseCode?: string; message?: string; progress?: number }
   | { kind: 'model'; model: string; platform: string }
-  | { kind: 'thinking'; text: string }
   | { kind: 'delta'; text: string }
   /** OpenDesign 写出或更新页面文件时推一次整页正文；revision 单调递增，旧的丢弃。 */
   | { kind: 'preview'; html: string; revision: number }
   | { kind: 'done'; siteId: string; siteUrl?: string; destinationApplyError?: string }
   | { kind: 'cancelled'; message: string }
-  | { kind: 'error'; message: string }
+  | { kind: 'error'; message: string; code?: string }
   | { kind: 'unknown' };
 
 export function resolveGeneratedSiteId(run: DesignArtifactRunSummary): string | null {
   return run.artifactSiteId || run.producedArtifactSiteId || null;
 }
 
+export function resolvePersistedRunPreview(
+  run: Pick<DesignArtifactRunSummary, 'previewHtml' | 'previewRevision'>,
+): { html: string; revision: number } | null {
+  const html = run.previewHtml?.trim();
+  if (!html) return null;
+  const revision = typeof run.previewRevision === 'number'
+    && Number.isSafeInteger(run.previewRevision)
+    && run.previewRevision >= 0
+    ? run.previewRevision
+    : 0;
+  return { html: run.previewHtml!, revision };
+}
+
+/**
+ * 运行时技术测量只供管理员诊断。普通用户只看到稳定问题类别、线上安全结论和下一步，
+ * 不显示 DOM 摘要、阈值、模型或供应商信息。
+ */
+export function runtimeFailureRecoveryMessage(
+  run: Pick<DesignArtifactRunSummary, 'runtimeFailure' | 'error'>,
+  operation: 'generate' | 'edit',
+): string {
+  const failure = run.runtimeFailure;
+  if (failure?.code === 'design_browser_quality_rejected') {
+    const problems: string[] = [];
+    if (failure.issueCodes.includes('mobile_navigation_unusable')) problems.push('移动端导航还不能可靠操作');
+    if (failure.issueCodes.includes('key_text_contrast_low')) problems.push('关键文字对比度仍不足');
+    const reason = problems.length > 0 ? problems.join('，') : '桌面或移动端仍有可用性问题';
+    const action = operation === 'edit' ? '请保留当前要求并重新发起修改' : '请按原资料和要求重新生成';
+    return `页面没有通过最终浏览器检查：${reason}。已保留最后一版预览，线上页面没有变化；${action}。`;
+  }
+  if (failure?.code === 'design_output_quality_rejected') {
+    const action = operation === 'edit' ? '请缩小修改范围后重新发起' : '请缩小设计要求或减少引用资料后重新生成';
+    return `页面没有通过发布前的内容校验。已保留最后一版预览，线上页面没有变化；${action}。`;
+  }
+  if (failure) {
+    const action = operation === 'edit' ? '请稍后按原要求重新发起修改' : '请稍后按原资料和要求重新生成';
+    return `页面处理没有完成。已保留可用的最后一版预览，线上页面没有变化；${action}。管理员可以在诊断记录中查看技术原因。`;
+  }
+  return run.error?.trim() || (operation === 'edit' ? '页面修改未完成，请重新发起' : '网页生成未完成，请重新发起');
+}
+
 /** 后端只给了模型名、没给平台名时的兜底称谓。三个消费点共用这一份，别各写各的。 */
 export const GATEWAY_PLATFORM_FALLBACK = 'LLM Gateway';
+
+/**
+ * OpenDesign 只把有限阶段码交给普通用户。后端原始命令、路径、工具参数和推理文本
+ * 即使误入事件载荷，也不能绕过这份注册表显示出来。
+ */
+export const DESIGN_PHASE_LABELS: Readonly<Record<string, string>> = {
+  queued: '任务已进入队列',
+  'waiting-capacity': '设计服务繁忙，正在等待空闲位置',
+  'service-recovering': '设计服务正在恢复，任务会自动继续',
+  'preparing-workspace': '正在准备设计工作区',
+  'reading-sources': '正在整理资料与要求',
+  'starting-design': '正在启动页面设计',
+  'composing-page': '正在搭建页面',
+  'reviewing-page': '正在检查页面质量',
+  'repairing-quality': '正在修正页面细节',
+  'collecting-artifact': '正在整理页面产物',
+  'committing-artifact': '正在保存页面版本',
+  'saving-result': '正在保存生成结果',
+  completed: '页面已经生成完成',
+  interrupted: '服务重启中断了任务，可以按原资料重开',
+  failed: '页面生成未完成',
+  cancelled: '页面生成已停止',
+};
+
+export function visibleDesignPhase(
+  phaseCode: unknown,
+  legacyMessage?: unknown,
+): { phaseCode?: string; message?: string } | null {
+  if (typeof phaseCode === 'string' && phaseCode.trim()) {
+    const normalized = phaseCode.trim();
+    const message = DESIGN_PHASE_LABELS[normalized];
+    return message ? { phaseCode: normalized, message } : null;
+  }
+  // 历史 map-gateway Run 没有 phaseCode；保留它们的只读恢复能力。
+  return typeof legacyMessage === 'string' && legacyMessage.trim()
+    ? { message: legacyMessage.trim() }
+    : {};
+}
 
 /**
  * 刷新后从 run 读回徽章。流事件只在开头出现一次，错过就只能靠这条恢复，
@@ -42,9 +120,11 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
   }
 
   if (event.event === 'phase') {
+    const visible = visibleDesignPhase(data.phaseCode, data.message);
+    if (!visible) return { kind: 'unknown' };
     return {
       kind: 'phase',
-      message: typeof data.message === 'string' ? data.message : undefined,
+      ...visible,
       progress: typeof data.progress === 'number' ? data.progress : undefined,
     };
   }
@@ -57,8 +137,6 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
       platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : GATEWAY_PLATFORM_FALLBACK,
     };
   }
-  if (event.event === 'thinking' && typeof data.text === 'string')
-    return { kind: 'thinking', text: data.text };
   if (event.event === 'delta' && typeof data.text === 'string')
     return { kind: 'delta', text: data.text };
   if (event.event === 'preview' && typeof data.html === 'string' && data.html.trim()) {
@@ -90,6 +168,7 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
     return {
       kind: 'error',
       message: typeof data.message === 'string' ? data.message : '网页生成失败',
+      code: typeof data.code === 'string' ? data.code : undefined,
     };
   }
   return { kind: 'unknown' };

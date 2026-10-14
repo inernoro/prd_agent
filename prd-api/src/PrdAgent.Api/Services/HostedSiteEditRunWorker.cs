@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Runtime.CompilerServices;
 using MongoDB.Driver;
 using PrdAgent.Api.Filters;
@@ -121,7 +122,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         meta.StartedAt ??= DateTime.UtcNow;
         await projection.WriteAsync(() => _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None));
         await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 8,
-            run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标");
+            run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标",
+            DesignArtifactPhaseCodes.ReadingSources);
 
         var sites = scope.ServiceProvider.GetRequiredService<IHostedSiteService>();
         var revisions = scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>();
@@ -170,7 +172,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 throw new InvalidOperationException("页面与知识正文过长，首版最多支持约 24 万字符，请减少引用或精简内容");
 
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 18,
-                run.Operation == DesignArtifactOperations.Edit ? "正在理解页面结构与修改要求" : "正在规划页面结构与视觉层级");
+                run.Operation == DesignArtifactOperations.Edit ? "正在理解页面结构与修改要求" : "正在规划页面结构与视觉层级",
+                DesignArtifactPhaseCodes.ReadingSources);
             executionCts.Token.ThrowIfCancellationRequested();
 
             var output = new StringBuilder();
@@ -232,9 +235,18 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     var calls = await ReadRuntimeModelCallCountAsync(db, runId, CancellationToken.None);
                     var phaseText = calls > 0 ? $"{chunk.Content} · 已调用模型 {calls} 次" : chunk.Content;
                     await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
-                        Math.Max(run.Progress, chunk.Progress.Value), phaseText);
+                        Math.Max(run.Progress, chunk.Progress.Value), phaseText,
+                        chunk.PhaseCode ?? DesignArtifactPhaseCodes.ComposingPage);
                     continue;
                 }
+
+                // OpenDesign 只允许有限阶段码和整页 preview 进入用户流；模型原文与隐式推理
+                // 即使未来执行器误产出，也只能留在运行时内部，不能由 MAP 二次透传。
+                // Done 分片也沿用 delta 类型，但它同时带着已经过工作区合同校验的完整文件包：
+                // 这份入口 HTML 必须留在服务端供 HardenExecutorOutput 校验和持久化，仍然不得作为
+                // 用户可见 delta 发到 SSE。不能只按 Type 丢弃，否则会留下文件包却把入口正文清空。
+                if (ConsumePrivateOpenDesignChunk(run, chunk, output))
+                    continue;
 
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
@@ -243,7 +255,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     {
                         sawFirstText = true;
                         await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
-                            Math.Max(run.Progress, 36), "页面已经开始生成");
+                            Math.Max(run.Progress, 36), "页面已经开始生成",
+                            DesignArtifactPhaseCodes.ComposingPage);
                     }
                     await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
@@ -275,8 +288,26 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 html,
                 qualityEvidence,
                 allowScriptedControls: verifiedFiles != null);
+            var browserQuality = ParseBrowserQualitySummary(verifiedFiles);
+            if (run.Runtime == DesignArtifactRuntimes.OpenDesign
+                && run.ContractVersion == DesignArtifactContractVersions.Current
+                && browserQuality == null)
+                throw new InvalidOperationException("OpenDesign 没有提交浏览器质量证据，请重新生成");
+            if (browserQuality != null)
+            {
+                run.BrowserQuality = browserQuality;
+                if (!await PersistBrowserQualityAsync(
+                        db,
+                        run.Id,
+                        leaseOwner,
+                        browserQuality,
+                        DateTime.UtcNow,
+                        CancellationToken.None))
+                    throw new DesignArtifactRunLeaseLostException(run.Id);
+            }
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 88,
-                run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页");
+                run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页",
+                DesignArtifactPhaseCodes.SavingResult);
             executionCts.Token.ThrowIfCancellationRequested();
 
             if (run.ContractVersion == DesignArtifactContractVersions.Current)
@@ -333,6 +364,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             run.Status = RunStatuses.Done;
             run.Progress = 100;
+            run.PhaseCode = DesignArtifactPhaseCodes.Completed;
             run.Phase = run.Operation == DesignArtifactOperations.Edit ? "草稿已生成" : "网页已生成并保存";
             run.CompletedAt = DateTime.UtcNow;
             run.UpdatedAt = DateTime.UtcNow;
@@ -439,7 +471,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 run.Runtime,
                 runId,
                 ex.Message);
-            await MarkErrorAsync(runId, ex.Message, leaseOwner);
+            await MarkErrorAsync(
+                runId,
+                ex.Message,
+                leaseOwner,
+                ex.InnerException as OpenDesignRemoteDiagnosticException);
         }
         catch (OperationCanceledException) when (executionCts.IsCancellationRequested)
         {
@@ -547,12 +583,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
         RunProjection projection,
         int progress,
-        string message)
+        string message,
+        string phaseCode)
     {
+        var now = DateTime.UtcNow;
         run.Progress = progress;
+        run.PhaseCode = phaseCode;
         run.Phase = message;
         run.Status = RunStatuses.Running;
-        run.UpdatedAt = DateTime.UtcNow;
+        run.FirstVisibleFeedbackAt ??= now;
+        run.LastProgressAt = now;
+        run.UpdatedAt = now;
         if (run.ContractVersion == DesignArtifactContractVersions.Current)
         {
             await publicLifecycle.AppendPhaseAsync(
@@ -560,7 +601,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
                 progress,
                 message,
-                CancellationToken.None);
+                CancellationToken.None,
+                phaseCode);
         }
         else if (!await PersistPhaseAsync(
                      db,
@@ -569,7 +611,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                      progress,
                      message,
                      run.UpdatedAt,
-                     CancellationToken.None))
+                     CancellationToken.None,
+                     phaseCode))
         {
             throw new DesignArtifactRunLeaseLostException(run.Id);
         }
@@ -577,19 +620,24 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             RunKinds.DesignArtifact,
             run.Id,
             "phase",
-            new { progress, message },
+            new { phaseCode, progress, message },
             RunTtl,
             CancellationToken.None));
     }
 
-    private Task MarkErrorAsync(string runId, string message, string leaseOwner)
+    private Task MarkErrorAsync(
+        string runId,
+        string message,
+        string leaseOwner,
+        OpenDesignRemoteDiagnosticException? remoteDiagnostic = null)
         => MarkTerminalAsync(
             runId,
             message,
             leaseOwner,
             RunStatuses.Error,
             "error",
-            "DESIGN_ARTIFACT_FAILED");
+            "DESIGN_ARTIFACT_FAILED",
+            remoteDiagnostic);
 
     private async Task MarkCancelledAsync(string runId, string message, string leaseOwner)
     {
@@ -677,7 +725,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string leaseOwner,
         string status,
         string eventName,
-        string? errorCode)
+        string? errorCode,
+        OpenDesignRemoteDiagnosticException? remoteDiagnostic = null)
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
@@ -688,14 +737,27 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         if (usesPublicLifecycle)
         {
             var publicLifecycle = scope.ServiceProvider.GetRequiredService<IWebPageDesignArtifactLifecycleAdapter>();
+            var runtimeFailure = remoteDiagnostic?.ToRuntimeFailure();
             var stableCode = errorCode == null
                 ? "open_design_run_cancelled"
-                : WebPageDesignArtifactLifecycleAdapter.ExecutionFailureCode;
-            await publicLifecycle.FailAsync(
-                runId,
-                stableCode,
-                new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
-                CancellationToken.None);
+                : WebPageDesignArtifactLifecycleAdapter.NormalizeFailureCode(runtimeFailure?.Code);
+            if (runtimeFailure == null)
+            {
+                await publicLifecycle.FailAsync(
+                    runId,
+                    stableCode,
+                    new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                    CancellationToken.None);
+            }
+            else
+            {
+                await publicLifecycle.FailWithDetailsAsync(
+                    runId,
+                    stableCode,
+                    runtimeFailure,
+                    new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                    CancellationToken.None);
+            }
             status = RunStatuses.Error;
             eventName = "error";
             errorCode = stableCode;
@@ -729,9 +791,29 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             RunKinds.DesignArtifact,
             runId,
             eventName,
-            new { code = errorCode, message },
+            BuildTerminalProjection(errorCode, message, remoteDiagnostic?.ToRuntimeFailure()),
             RunTtl,
             CancellationToken.None));
+    }
+
+    private static object BuildTerminalProjection(
+        string? errorCode,
+        string message,
+        DesignArtifactRuntimeFailure? runtimeFailure)
+    {
+        if (runtimeFailure == null)
+            return new { code = errorCode, message };
+        return new
+        {
+            code = errorCode,
+            message,
+            details = new
+            {
+                issueCodes = runtimeFailure.IssueCodes,
+                runtimeFailure.RepairAttempts,
+                runtimeFailure.RepairBudgetExhausted,
+            },
+        };
     }
 
     // Redis 只投影当前执行的界面事件。一次失败后停止本次执行的投影，
@@ -1179,6 +1261,132 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         return hardened;
     }
 
+    internal static DesignArtifactBrowserQualitySummary? ParseBrowserQualitySummary(
+        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles)
+    {
+        const string evidencePath = "assets/visual-quality-report.json";
+        var file = verifiedFiles?.SingleOrDefault(item => item.Path == evidencePath);
+        if (file == null) return null;
+        if (file.Size <= 0 || file.Size > 256 * 1024)
+            throw new InvalidOperationException("浏览器质量证据大小不合法，请重新生成");
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(file.ContentBase64); }
+        catch (FormatException) { throw new InvalidOperationException("浏览器质量证据损坏，请重新生成"); }
+        try
+        {
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
+            var root = document.RootElement;
+            var ruleVersion = root.GetProperty("ruleVersion").GetString();
+            var heuristicVersion = root.GetProperty("heuristicVersion").GetString();
+            if (root.ValueKind != JsonValueKind.Object
+                || root.GetProperty("schemaVersion").GetString() != "map-browser-quality-evidence-v1"
+                || ruleVersion != "browser-hard-gate-v1"
+                || heuristicVersion != "browser-aesthetic-heuristic-v1"
+                || !root.GetProperty("finalHardPassed").GetBoolean())
+                throw new InvalidOperationException("浏览器质量证据合同不一致，请重新生成");
+            if (ContainsForbiddenBrowserEvidence(root))
+                throw new InvalidOperationException("浏览器质量证据包含不应持久化的模型或页面正文，请重新生成");
+            var attempts = root.GetProperty("attempts");
+            if (attempts.ValueKind != JsonValueKind.Array || attempts.GetArrayLength() is < 1 or > 3)
+                throw new InvalidOperationException("浏览器质量证据轮次不合法，请重新生成");
+            var repairAttempts = root.GetProperty("repairAttempts").GetInt32();
+            var finalScore = root.GetProperty("finalScore").GetDouble();
+            var firstPassPassed = root.GetProperty("firstPassPassed").GetBoolean();
+            var repairSucceeded = root.GetProperty("repairSucceeded").GetBoolean();
+            if (repairAttempts is < 0 or > 2
+                || repairAttempts != attempts.GetArrayLength() - 1
+                || firstPassPassed != (repairAttempts == 0)
+                || repairSucceeded != (repairAttempts > 0)
+                || !double.IsFinite(finalScore)
+                || finalScore is < 0 or > 100)
+                throw new InvalidOperationException("浏览器质量证据指标不合法，请重新生成");
+            var filesByPath = verifiedFiles!.ToDictionary(item => item.Path, StringComparer.Ordinal);
+            var expectedViewports = new[] { "desktop", "mobile" };
+            foreach (var attempt in attempts.EnumerateArray())
+            {
+                var attemptViewports = attempt.GetProperty("viewports").EnumerateArray()
+                    .Select(viewport => viewport.GetProperty("viewport").GetString())
+                    .OrderBy(viewport => viewport, StringComparer.Ordinal)
+                    .ToArray();
+                if (!attemptViewports.SequenceEqual(expectedViewports, StringComparer.Ordinal))
+                    throw new InvalidOperationException("浏览器质量证据缺少桌面或移动视口，请重新生成");
+                var refs = attempt.GetProperty("evidenceRefs").EnumerateArray()
+                    .Select(item => item.GetString())
+                    .ToArray();
+                if (refs.Length != 2 || refs.Any(reference => reference is null))
+                    throw new InvalidOperationException("浏览器质量证据截图引用不完整，请重新生成");
+                foreach (var reference in refs.Select(reference => reference!))
+                {
+                    if (!reference.StartsWith("assets/quality/", StringComparison.Ordinal)
+                        || !filesByPath.TryGetValue(reference, out var screenshot)
+                        || screenshot.Size <= 0
+                        || !string.Equals(screenshot.MediaType, "image/png", StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("浏览器质量证据截图引用无效，请重新生成");
+                }
+            }
+            return new DesignArtifactBrowserQualitySummary
+            {
+                SchemaVersion = "map-browser-quality-evidence-v1",
+                RuleVersion = ruleVersion,
+                HeuristicVersion = heuristicVersion,
+                FirstPassPassed = firstPassPassed,
+                RepairAttempts = repairAttempts,
+                RepairSucceeded = repairSucceeded,
+                FinalHardPassed = true,
+                FinalScore = finalScore,
+                Viewports = expectedViewports.ToList(),
+                EvidenceRef = evidencePath,
+            };
+        }
+        catch (KeyNotFoundException) { throw new InvalidOperationException("浏览器质量证据缺少必填字段，请重新生成"); }
+        catch (JsonException) { throw new InvalidOperationException("浏览器质量证据不是有效 JSON，请重新生成"); }
+        catch (InvalidOperationException error) when (!error.Message.StartsWith("浏览器质量证据", StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException("浏览器质量证据字段类型不合法，请重新生成");
+        }
+    }
+
+    private static bool ContainsForbiddenBrowserEvidence(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name.Equals("html", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("rawHtml", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("raw_html", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("thinking", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("reasoning", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("chainOfThought", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("text_delta", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("textDelta", StringComparison.OrdinalIgnoreCase)
+                    || property.Name.Equals("prompt", StringComparison.OrdinalIgnoreCase)) return true;
+                if (ContainsForbiddenBrowserEvidence(property.Value)) return true;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                if (ContainsForbiddenBrowserEvidence(item)) return true;
+        }
+        return false;
+    }
+
+    internal static bool ConsumePrivateOpenDesignChunk(
+        DesignArtifactRun run,
+        DesignArtifactExecutorChunk chunk,
+        StringBuilder output)
+    {
+        if (run.Runtime != DesignArtifactRuntimes.OpenDesign
+            || chunk.Type is not ("delta" or "thinking"))
+            return false;
+
+        if (chunk.Type == "delta" && chunk.VerifiedFiles is { Count: > 0 })
+            output.Append(chunk.Content);
+
+        return true;
+    }
+
     internal static string? NormalizeExecutorInput(DesignArtifactRun run, string? currentHtml)
     {
         if (string.IsNullOrEmpty(currentHtml)
@@ -1452,17 +1660,42 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         int progress,
         string phase,
         DateTime updatedAt,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? phaseCode = null)
     {
+        var update = Builders<DesignArtifactRun>.Update
+            .Set(x => x.Progress, progress)
+            .Set(x => x.Phase, phase)
+            .Set(x => x.LastProgressAt, updatedAt)
+            .Max(x => x.UpdatedAt, updatedAt);
+        if (!string.IsNullOrWhiteSpace(phaseCode))
+            update = update.Set(x => x.PhaseCode, phaseCode);
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && x.Status == RunStatuses.Running
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > updatedAt),
+            update,
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
+    }
+
+    internal static async Task<bool> PersistBrowserQualityAsync(
+        MongoDbContext db,
+        string runId,
+        string leaseOwner,
+        DesignArtifactBrowserQualitySummary summary,
+        DateTime updatedAt,
+        CancellationToken ct)
+    {
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
+                   && run.Status == RunStatuses.Running
+                   && run.LeaseOwnerId == leaseOwner
+                   && run.LeaseExpiresAt > updatedAt),
             Builders<DesignArtifactRun>.Update
-                .Set(x => x.Progress, progress)
-                .Set(x => x.Phase, phase)
-                .Max(x => x.UpdatedAt, updatedAt),
+                .Set(run => run.BrowserQuality, summary)
+                .Max(run => run.UpdatedAt, updatedAt),
             cancellationToken: ct);
         return write.ModifiedCount == 1;
     }
@@ -1694,7 +1927,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 Builders<DesignArtifactRun>.Update
                     .Set(x => x.Status, RunStatuses.Error)
                     .Set(x => x.Error, interruptedMessage)
+                    .Set(x => x.PhaseCode, DesignArtifactPhaseCodes.Interrupted)
                     .Set(x => x.Phase, interruptedMessage)
+                    .Set(x => x.LastProgressAt, now)
                     .Set(x => x.UpdatedAt, now)
                     .Set(x => x.CompletedAt, now)
                     .Set(x => x.LeaseExpiresAt, null)
@@ -1940,6 +2175,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         && item.ProducedArtifactRevisionId == null),
                 Builders<DesignArtifactRun>.Update
                     .Set(item => item.Status, RunStatuses.Cancelled)
+                    .Set(item => item.PhaseCode, DesignArtifactPhaseCodes.Cancelled)
                     .Set(item => item.Phase, "设计任务已取消")
                     .Set(item => item.Error, null)
                     .Set(item => item.CancelledAt, cancelledAt)

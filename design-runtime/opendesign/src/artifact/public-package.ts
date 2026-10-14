@@ -21,6 +21,13 @@ export const CDS_GENERATED_ARTIFACT_PATHS = [
   'assets/page-outline.json',
   'assets/provenance.json',
 ] as const;
+export const BROWSER_QUALITY_REPORT_PATH = 'assets/visual-quality-report.json';
+
+function isReservedGeneratedPath(filePath: string): boolean {
+  return CDS_GENERATED_ARTIFACT_PATHS.some((reserved) => reserved.toUpperCase() === filePath.toUpperCase())
+    || filePath.toUpperCase() === BROWSER_QUALITY_REPORT_PATH.toUpperCase()
+    || filePath.toUpperCase().startsWith('ASSETS/QUALITY/');
+}
 
 function jsonArtifactFile(path: string, value: unknown): WorkspacePackageFile {
   const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
@@ -95,6 +102,7 @@ function normalizeDerivedText(value: string, maxLength: number): string {
 export function buildGeneratedArtifactFiles(
   hardenedHtml: string,
   authorAssetPaths: readonly string[] = [],
+  runtimeEvidencePaths: readonly string[] = [],
 ): WorkspacePackageFile[] {
   const headings: DerivedHeading[] = [];
   const customProperties = new Map<string, string>();
@@ -284,7 +292,7 @@ export function buildGeneratedArtifactFiles(
       producer: 'cds-open-design-runtime',
       derivationStage: 'post-security-hardening',
       publicInput: authorAssetPaths.length ? 'hardened-index-html-and-author-assets' : 'hardened-index-html',
-      publishedFiles: ['index.html', ...authorAssetPaths, ...CDS_GENERATED_ARTIFACT_PATHS, 'manifest.json'].sort(compareOrdinal),
+      publishedFiles: ['index.html', ...authorAssetPaths, ...CDS_GENERATED_ARTIFACT_PATHS, ...runtimeEvidencePaths, 'manifest.json'].sort(compareOrdinal),
       privacy: authorAssetPaths.length
         ? 'author-assets-preserved-publication-review-required'
         : 'public-html-only-no-private-source-metadata',
@@ -295,6 +303,7 @@ export function buildGeneratedArtifactFiles(
 export function buildGeneratedPublicArtifactPackage(
   hardenedHtml: string,
   collectedFiles: readonly WorkspacePackageFile[],
+  runtimeEvidenceFiles: readonly WorkspacePackageFile[] = [],
 ): WorkspacePackageFile[] {
   const authorAssets = validatePublicArtifactFiles(collectedFiles, true)
     .filter((file) => file.path !== 'index.html');
@@ -306,7 +315,12 @@ export function buildGeneratedPublicArtifactPackage(
     size: indexBytes.byteLength,
     mediaType: 'text/html; charset=utf-8',
   };
-  const publicFiles = [indexFile, ...authorAssets, ...buildGeneratedArtifactFiles(hardenedHtml, authorAssets.map((file) => file.path))]
+  const evidence = validatePublicArtifactFiles(runtimeEvidenceFiles);
+  const publicFiles = [indexFile, ...authorAssets, ...buildGeneratedArtifactFiles(
+    hardenedHtml,
+    authorAssets.map((file) => file.path),
+    evidence.map((file) => file.path),
+  ), ...evidence]
     .sort((left, right) => compareOrdinal(left.path, right.path));
   assertPublicArtifactFileCount(publicFiles.length + 1);
   return [...publicFiles, buildPublicArtifactManifest(publicFiles)]
@@ -386,11 +400,11 @@ export function validatePublicArtifactFiles(
   files: readonly WorkspacePackageFile[],
   rejectGeneratedPaths = false,
 ): WorkspacePackageFile[] {
-  const seen = new Set<string>(rejectGeneratedPaths ? CDS_GENERATED_ARTIFACT_PATHS.map((filePath) => filePath.toUpperCase()) : []);
+  const seen = new Set<string>();
   const validated = files.filter((file) => file.path !== 'manifest.json').map((file) => {
     assertPublicArtifactPath(file.path);
     const identity = file.path.toUpperCase();
-    if (rejectGeneratedPaths && CDS_GENERATED_ARTIFACT_PATHS.some((reserved) => reserved.toUpperCase() === identity)) {
+    if (rejectGeneratedPaths && isReservedGeneratedPath(file.path)) {
       throw new AgentWorkspaceRuntimeError('design_output_invalid', `public output path is reserved for CDS metadata: ${file.path}`);
     }
     if (seen.has(identity)) throw new AgentWorkspaceRuntimeError('design_output_invalid', `duplicate public output: ${file.path}`);

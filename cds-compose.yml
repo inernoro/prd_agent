@@ -29,6 +29,9 @@ x-cds-env:
   ASSETS_EXPECTED_PROVIDER: cloudflareR2
   # 对象存储路径前缀——结构约定，非密钥
   R2_PREFIX: data
+  # API 与 design-opendesign 必须从同一份非密钥基址派生模型出口；项目 env 可覆盖，
+  # 但不能再让两端各自硬编码一份后漂移。
+  LLMGW_SERVE_BASE_URL: "http://llmgw-serve:8091"
 
 # 只声明“需要哪些密钥”，不保存密钥值。实际值继续由 CDS 项目 env scope
 # 托管；Agent 修改 compose 时可在同一文件看懂配置合同，无需去隐藏位置猜。
@@ -363,7 +366,7 @@ services:
       # 和 serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
       # 服务间地址使用 CDS 实际注入的 Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
-      LlmGateway__ServeBaseUrl: "http://llmgw-serve:8091"
+      LlmGateway__ServeBaseUrl: "${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}"
       # 设计执行服务（design-opendesign，map-design-executor-v1）。两项都在时 api 的 OpenDesign 默认直连它；
       # 缺任一项照旧走 CDS 会话。要退回旧路径就加 DesignRuntime__OpenDesign__Transport: "cds-session"。
       # 判定只有一处：prd-api OpenDesignTransportResolver。
@@ -547,7 +550,7 @@ services:
       # 任务接口的 Bearer 密钥。未注入时服务照常起来，但拒绝一切任务接口并在 /v1/capabilities 说明原因。
       DESIGN_RUNTIME_API_KEY: "${DESIGN_RUNTIME_API_KEY}"
       # CDS 的 serving 服务别名与正式 Compose 不同；模型数据面仍由任务级短期授权直达 LLMGW。
-      DESIGN_RUNTIME_LLMGW_BASE_URL: "http://llmgw-serve:8091/gw/v1"
+      DESIGN_RUNTIME_LLMGW_BASE_URL: "${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}/gw/v1"
     labels:
       cds.prebuilt-image: "true"
       # CI 构建该镜像的输入范围，与 x-cds-deploy-modes.design-opendesign.express.buildScope 同一份、

@@ -14,7 +14,8 @@ public interface IWebPageDesignArtifactLifecycleAdapter
         DesignArtifactLifecycleLeaseAuthority lease,
         int progress,
         string phase,
-        CancellationToken ct = default);
+        CancellationToken ct = default,
+        string? phaseCode = null);
 
     Task CommitManifestAsync(
         string runId,
@@ -30,6 +31,13 @@ public interface IWebPageDesignArtifactLifecycleAdapter
     Task FailAsync(
         string runId,
         string failureCode,
+        DesignArtifactLifecycleLeaseAuthority lease,
+        CancellationToken ct = default);
+
+    Task FailWithDetailsAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure runtimeFailure,
         DesignArtifactLifecycleLeaseAuthority lease,
         CancellationToken ct = default);
 
@@ -65,7 +73,9 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         "design_output_invalid",
         "design_output_missing",
         "design_output_quality_rejected",
+        "design_browser_quality_rejected",
         "design_output_too_large",
+        "browser_quality_unavailable",
         "open_design_contract_mismatch",
         "open_design_not_ready",
         "open_design_run_cancelled",
@@ -76,6 +86,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         "workspace_egress_unavailable",
         "workspace_package_hash_mismatch",
         "workspace_package_invalid",
+        "workspace_quality_evidence_unsupported",
         "workspace_runtime_unavailable",
         "workspace_session_not_found",
         "workspace_transfer_invalid",
@@ -154,6 +165,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 Sequence = 1,
                 Type = DesignArtifactLifecycleEventTypes.Run,
                 Phase = run.Phase,
+                PhaseCode = run.PhaseCode,
                 Progress = run.Progress,
                 OccurredAt = now,
                 Authoritative = true,
@@ -161,6 +173,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         ];
         run.CreatedAt = now;
         run.UpdatedAt = now;
+        run.FirstVisibleFeedbackAt ??= now;
+        run.LastProgressAt ??= now;
     }
 
     public async Task AppendPhaseAsync(
@@ -168,7 +182,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         DesignArtifactLifecycleLeaseAuthority lease,
         int progress,
         string phase,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? phaseCode = null)
     {
         var current = await RequireCurrentAsync(runId);
         if (!IsManaged(current)) return;
@@ -179,7 +194,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 DesignArtifactLifecycleEventTypes.Phase,
                 phase,
                 progress,
-                Expected(current, lease)),
+                Expected(current, lease),
+                phaseCode),
             CancellationToken.None);
     }
 
@@ -257,10 +273,36 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         string failureCode,
         DesignArtifactLifecycleLeaseAuthority lease,
         CancellationToken ct = default)
+        => await FailCoreAsync(runId, failureCode, null, lease);
+
+    public async Task FailWithDetailsAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure runtimeFailure,
+        DesignArtifactLifecycleLeaseAuthority lease,
+        CancellationToken ct = default)
+        => await FailCoreAsync(runId, failureCode, runtimeFailure, lease);
+
+    private async Task FailCoreAsync(
+        string runId,
+        string failureCode,
+        DesignArtifactRuntimeFailure? runtimeFailure,
+        DesignArtifactLifecycleLeaseAuthority lease)
     {
         var current = await RequireCurrentAsync(runId);
         if (!IsManaged(current)) return;
-        if (!AllowedFailureCodes.Contains(failureCode)) failureCode = ExecutionFailureCode;
+        failureCode = NormalizeFailureCode(failureCode);
+        if (runtimeFailure != null)
+        {
+            runtimeFailure = new DesignArtifactRuntimeFailure
+            {
+                Code = failureCode,
+                IssueCodes = runtimeFailure.IssueCodes.ToList(),
+                RepairAttempts = runtimeFailure.RepairAttempts,
+                RepairBudgetExhausted = runtimeFailure.RepairBudgetExhausted,
+                BrowserQualityEvidence = runtimeFailure.BrowserQualityEvidence,
+            };
+        }
         for (var attempt = 0; attempt < 3; attempt++)
         {
             if (current.Status == RunStatuses.Error) return;
@@ -273,7 +315,8 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                         current.Id,
                         current.UserId,
                         Expected(current, lease),
-                        failureCode),
+                        failureCode,
+                        runtimeFailure),
                     CancellationToken.None);
                 return;
             }
@@ -285,6 +328,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
         }
         throw Conflict();
     }
+
+    internal static string NormalizeFailureCode(string? failureCode) =>
+        !string.IsNullOrWhiteSpace(failureCode) && AllowedFailureCodes.Contains(failureCode)
+            ? failureCode
+            : ExecutionFailureCode;
 
     public async Task BindPublishedAsync(
         string runId,

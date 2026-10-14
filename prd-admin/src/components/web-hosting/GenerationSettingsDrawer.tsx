@@ -6,14 +6,12 @@ import { toast } from '@/lib/toast';
 import {
   getDesignGenerationSettings,
   updateDesignGenerationSettings,
-  type DesignGenerationRuntime,
   type DesignGenerationSettings,
   type DesignGenerationSettingsUpdate,
   type DesignGenerationStyle,
   type DesignPromptKind,
   type DesignReviewMode,
 } from '@/services/real/webPages';
-import { RUNTIME_CARD_REGISTRY } from './siteGenerateOptions';
 import {
   PROMPT_SECTION_REGISTRY,
   REVIEW_MODE_REGISTRY,
@@ -27,11 +25,8 @@ interface Props {
   onClose: () => void;
 }
 
-const RUNTIME_OPTIONS: DesignGenerationRuntime[] = ['open-design', 'map-gateway'];
-
 function toDraft(settings: DesignGenerationSettings): GenerationSettingsDraft {
   return {
-    defaultRuntime: settings.defaultRuntime,
     reviewMode: settings.reviewMode,
     styles: settings.styles.map((style) => ({ ...style, swatches: [...style.swatches] })),
     prompts: {
@@ -101,7 +96,7 @@ const fieldStyle = { background: 'var(--bg-input)', border: '1px solid var(--bor
 /**
  * 网页生成设置（从网页托管顶部「生成网页」旁的齿轮进入）。
  *
- * 管理员在这里改默认执行器、自查强度、风格预设与三段提示词；改完下一次运行生效，
+ * 管理员在这里改自查强度、风格预设与三段提示词；改完下一次运行生效，
  * 已经在跑的任务不受影响（运行时冻结进任务书）。canEdit=false 时整页只读，但复制照样可用——
  * 提示词区的一个重要用途就是整段复制拿去搭自己的智能体。
  */
@@ -218,35 +213,6 @@ export default function GenerationSettingsDrawer({ open, onClose }: Props) {
     }
     return (
       <div className="flex flex-col gap-4">
-        <Section title="默认执行器" hint="新开生成弹窗和「帮我修改」时默认选中哪一种；它不可用时界面会自动改用另一种并写明原因。">
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2" role="radiogroup" aria-label="默认执行器">
-            {RUNTIME_OPTIONS.map((runtime) => {
-              const copy = RUNTIME_CARD_REGISTRY[runtime];
-              const active = draft.defaultRuntime === runtime;
-              return (
-                <button
-                  key={runtime}
-                  type="button"
-                  role="radio"
-                  aria-checked={active}
-                  disabled={readOnly}
-                  onClick={() => updateDraft((current) => ({ ...current, defaultRuntime: runtime }))}
-                  className="flex flex-col gap-1 rounded-xl px-3.5 py-3 text-left transition-colors disabled:cursor-not-allowed"
-                  style={active
-                    ? { border: '1.5px solid var(--accent-primary)', background: 'var(--selection-bg)' }
-                    : { border: '1px solid var(--border-default)' }}
-                >
-                  <span className="flex items-center gap-2 text-[14px] font-bold text-token-primary">
-                    {copy?.title ?? runtime}
-                    <span className="text-[11px] font-normal text-token-muted">{copy?.badge}</span>
-                  </span>
-                  <span className="text-[12px] leading-relaxed text-token-muted">{copy?.description}</span>
-                </button>
-              );
-            })}
-          </div>
-        </Section>
-
         <Section title="自查强度" hint="只对精细设计（OpenDesign）生效：写完页面后要自查几轮。">
           <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3" role="radiogroup" aria-label="自查强度">
             {(Object.keys(REVIEW_MODE_REGISTRY) as DesignReviewMode[]).map((mode) => {
@@ -359,7 +325,7 @@ export default function GenerationSettingsDrawer({ open, onClose }: Props) {
 
         <Section
           title="提示词"
-          hint="这三段只用于精细设计；快速生成只采用风格名称与说明。它们接在平台契约之后，只影响「怎么设计」，不影响「能不能发布」，可以整段复制拿去搭自己的智能体。"
+          hint="这三段接在平台契约之后，只影响「怎么设计」，不影响「能不能发布」，可以整段复制拿去搭自己的智能体。"
           action={(
             <SmallButton onClick={() => void copyText(composePromptBundle(settings.platformContract, draft.prompts), '平台契约与三段提示词')}>
               <Copy size={13} />复制全部

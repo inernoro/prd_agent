@@ -1004,6 +1004,8 @@ public static class DesignArtifactWorkspaceContract
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public const string DesignDirectionSchemaVersion = "map-design-direction-v1";
+    public const string DesignBriefSchemaVersion = "map-design-brief-v1";
+    public const string BrandPackageSchemaVersion = "map-brand-package-v1";
 
     /// <summary>上传文档在工作区里的位置；与知识库条目同在 knowledge/，前缀 upload- 区分来源。</summary>
     internal static string UploadedSourcePath(int index, DesignUploadedSource item)
@@ -1041,13 +1043,31 @@ public static class DesignArtifactWorkspaceContract
             currentHtmlHash = string.IsNullOrEmpty(currentHtml) ? null : HashText(currentHtml),
         }, JsonOptions);
         // 新增输入只在出现时参与版本指纹：没有它们的旧运行，指纹与改动前逐字节一致。
-        if (uploadedSources.Count > 0 || referenceFiles is { Count: > 0 } || run.DesignDirection != null)
+        if (uploadedSources.Count > 0 || referenceFiles is { Count: > 0 } || run.DesignDirection != null
+            || run.DesignBrief != null || run.BrandPackage != null || run.DesignContextProvenance != null)
             semantic = JsonSerializer.SerializeToUtf8Bytes(new
             {
                 inputRevision = HashBytes(semantic),
                 uploaded = uploadedSources.Select(item => new { item.AttachmentId, item.ContentHash }),
                 references = referenceFiles?.Select(file => new { file.Path, file.Sha256 }),
                 designDirection = run.DesignDirection?.PromptFingerprint,
+                designBrief = run.DesignBrief?.Fingerprint,
+                brandPackage = run.BrandPackage?.Fingerprint,
+            }, JsonOptions);
+        if (run.DesignContextProvenance != null)
+            semantic = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                inputRevision = HashBytes(semantic),
+                designContext = new
+                {
+                    run.DesignContextProvenance.SchemaVersion,
+                    run.DesignContextProvenance.Version,
+                    run.DesignContextProvenance.Source,
+                    run.DesignContextProvenance.SourceRunId,
+                    run.DesignContextProvenance.SourceRevisionId,
+                    run.DesignContextProvenance.ParentDesignBriefFingerprint,
+                    run.DesignContextProvenance.ParentBrandPackageFingerprint,
+                },
             }, JsonOptions);
         // Keep the existing HTML-only revision algorithm for callers without a
         // server file snapshot; complete edits additionally bind every file digest.
@@ -1177,6 +1197,19 @@ public static class DesignArtifactWorkspaceContract
                 },
                 run.DesignDirection.PromptFingerprint,
             }, JsonOptions);
+            task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
+        }
+        if (run.DesignBrief != null || run.BrandPackage != null || run.DesignContextProvenance != null)
+        {
+            var completeTask = System.Text.Json.Nodes.JsonNode.Parse(task)!;
+            if (run.DesignBrief != null)
+                completeTask["designBrief"] = JsonSerializer.SerializeToNode(run.DesignBrief, JsonOptions);
+            if (run.BrandPackage != null)
+                completeTask["brandPackage"] = JsonSerializer.SerializeToNode(run.BrandPackage, JsonOptions);
+            if (run.DesignContextProvenance != null)
+                completeTask["designContextProvenance"] = JsonSerializer.SerializeToNode(
+                    run.DesignContextProvenance,
+                    JsonOptions);
             task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
         }
         files.Add(ToFile("brief/task.json", "application/json", task));

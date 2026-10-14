@@ -1550,7 +1550,9 @@ public class GatewayDataDomainGuardTests
         }
         // 三处 MAP 都只走网关，所以都必须拿到网关地址与服务 key。
         Assert.Contains("LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:?", dockerCompose);
-        Assert.Contains("LlmGateway__ServeBaseUrl: \"http://llmgw-serve:8091\"", cdsCompose);
+        Assert.Contains("LLMGW_SERVE_BASE_URL: \"http://llmgw-serve:8091\"", cdsCompose);
+        Assert.Contains("LlmGateway__ServeBaseUrl: \"${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}\"", cdsCompose);
+        Assert.Contains("DESIGN_RUNTIME_LLMGW_BASE_URL: \"${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}/gw/v1\"", cdsCompose);
         Assert.Contains("LlmGateway__ServeBaseUrl=http://llmgw-serve:8091", devCompose);
         Assert.True(
             devCompose.Split("LlmGwServe__ApiKey=${LLMGW_SERVE_KEY:-dev-llmgw-serve-key}", StringSplitOptions.None).Length - 1 >= 2,

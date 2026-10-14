@@ -73,5 +73,14 @@ describe('日期证据：完整日期支撑它的年月，中文写法也算', (
       // 只有年月的来源撑不起具体某一天。
       expect(() => gateOf('计划在 2026-09 完成')(page('2026-09-30 完成'))).toThrow(/unsupported date, contact, or URL/);
     });
+    it(`${name}：中文月日支撑点号月日，旁边的行内中文名词不冒充量词`, () => {
+      const evidence = '唯一主按钮写“查看 12 月 16 日评审安排”，项目代号为 NOVA-04。';
+      const output = '<!doctype html><html><body><span>评审日期</span><strong>12.16</strong><span>项目代号</span></body></html>';
+      expect(() => gateOf(evidence)(output)).not.toThrow();
+      expect(() => gateOf(evidence)(page('评审日期 12.17 项目代号 NOVA-04'))).toThrow(/unsupported date, contact, or URL/);
+      expect(() => gateOf(evidence)(page('本轮新增 12.16项待办'))).toThrow(/unsupported measured claim/);
+      expect(() => gateOf('没有数量承诺')(page('本轮新增 3 项计划'))).toThrow(/unsupported measured claim/);
+      expect(() => gateOf('没有数量承诺')(page('本轮新增 3 个项目'))).toThrow(/unsupported measured claim/);
+    });
   }
 });

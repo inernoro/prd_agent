@@ -11,9 +11,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 
+import { resolveEnvTemplates } from '../../src/services/compose-parser.js';
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const source = fs.readFileSync(path.join(repoRoot, 'cds-compose.yml'), 'utf8');
 const compose = yaml.load(source) as {
+  'x-cds-env': Record<string, string>;
   services: Record<string, { environment?: Record<string, string> }>;
   'x-cds-deploy-modes': Record<string, Record<string, { env?: Record<string, string> }>>;
 };
@@ -29,7 +32,15 @@ describe('prd-agent CDS 内部服务 DNS', () => {
     expect(modes['llmgw-web'].dev.env?.LLMGW_PROXY_TARGET).toBe('http://llmgw:8090');
     expect(modes['llmgw-web'].dev.env?.LLMGW_SERVING_PROXY_TARGET).toBe('http://llmgw-serve:8091');
 
-    expect(compose.services.api.environment?.LlmGateway__ServeBaseUrl).toBe('http://llmgw-serve:8091');
+    expect(compose['x-cds-env'].LLMGW_SERVE_BASE_URL).toBe('http://llmgw-serve:8091');
+    expect(compose.services.api.environment?.LlmGateway__ServeBaseUrl)
+      .toBe('${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}');
+    expect(compose.services['design-opendesign'].environment?.DESIGN_RUNTIME_LLMGW_BASE_URL)
+      .toBe('${LLMGW_SERVE_BASE_URL:-http://llmgw-serve:8091}/gw/v1');
+    expect(resolveEnvTemplates(compose.services.api.environment ?? {}, compose['x-cds-env']).LlmGateway__ServeBaseUrl)
+      .toBe('http://llmgw-serve:8091');
+    expect(resolveEnvTemplates(compose.services['design-opendesign'].environment ?? {}, compose['x-cds-env']).DESIGN_RUNTIME_LLMGW_BASE_URL)
+      .toBe('http://llmgw-serve:8091/gw/v1');
     expect(compose.services.api.environment?.ClaudeSdkExecutor__CallbackBaseUrl).toBe('http://api:5000');
     expect(compose.services['llmgw-web'].environment?.LLMGW_PROXY_TARGET).toBe('http://llmgw:8090');
     expect(compose.services['llmgw-web'].environment?.LLMGW_SERVING_PROXY_TARGET).toBe('http://llmgw-serve:8091');

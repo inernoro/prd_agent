@@ -1311,14 +1311,16 @@ export const api = {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
     // 最近 30 天真实耗时 P50/P95（按执行器 × 产物类型），给「预计还要多久」用
     timingStats: () => '/api/design-artifacts/timing-stats',
-    // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
+    // 网页生成设置：自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
     generationSettings: () => '/api/design-artifacts/generation-settings',
     // 「我的风格」：每人自己的风格（列表 / 新建 / 改 / 删 / 从自己的网页提取草稿）
     personalStyles: () => '/api/design-artifacts/personal-styles',
     personalStyle: (id: string) => `/api/design-artifacts/personal-styles/${encodeURIComponent(id)}`,
     personalStyleDerive: () => '/api/design-artifacts/personal-styles/derive',
     runs: () => '/api/design-artifacts/runs',
+    activeRun: () => '/api/design-artifacts/runs/active',
     byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
+    restart: (runId: string) => `/api/design-artifacts/runs/${runId}/restart`,
     cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,
     stream: (runId: string) => `/api/design-artifacts/runs/${runId}/stream`,
   },

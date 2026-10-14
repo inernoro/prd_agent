@@ -122,6 +122,76 @@ public sealed class DesignArtifactPlanReceipt
 }
 
 /// <summary>
+/// 远端设计执行器允许穿过 MAP 边界的稳定失败事实。
+/// 这里只接受有限问题码与计数，不保存远端原文、HTML、CSS、路径、模型输出或供应商诊断。
+/// </summary>
+public sealed class DesignArtifactRuntimeFailure
+{
+    public string Code { get; set; } = string.Empty;
+
+    public List<string> IssueCodes { get; set; } = new();
+
+    public int? RepairAttempts { get; set; }
+
+    public bool? RepairBudgetExhausted { get; set; }
+
+    /// <summary>浏览器硬门禁失败的有界测量证据；不含 HTML、截图路径、模型输出或供应商诊断。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignArtifactBrowserQualityFailureEvidence? BrowserQualityEvidence { get; set; }
+}
+
+public sealed class DesignArtifactBrowserQualityFailureEvidence
+{
+    public string SchemaVersion { get; set; } = string.Empty;
+
+    public string RuleVersion { get; set; } = string.Empty;
+
+    public string HeuristicVersion { get; set; } = string.Empty;
+
+    public int RepairAttempts { get; set; }
+
+    public bool RepairBudgetExhausted { get; set; }
+
+    public List<DesignArtifactBrowserQualityFailureAttempt> Attempts { get; set; } = new();
+}
+
+public sealed class DesignArtifactBrowserQualityFailureAttempt
+{
+    public int RepairAttempt { get; set; }
+
+    public bool HardPassed { get; set; }
+
+    public double Score { get; set; }
+
+    public List<DesignArtifactBrowserQualityFailureIssue> Issues { get; set; } = new();
+}
+
+public sealed class DesignArtifactBrowserQualityFailureIssue
+{
+    public string IssueCode { get; set; } = string.Empty;
+
+    public string Viewport { get; set; } = string.Empty;
+
+    public Dictionary<string, object?> Actual { get; set; } = new(StringComparer.Ordinal);
+
+    public string Target { get; set; } = string.Empty;
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignArtifactBrowserElementSummary? ElementSummary { get; set; }
+}
+
+public sealed class DesignArtifactBrowserElementSummary
+{
+    public string Tag { get; set; } = string.Empty;
+
+    public string? Id { get; set; }
+
+    public string? Role { get; set; }
+
+    public string? Label { get; set; }
+}
+
+/// <summary>
 /// 跨 adapter 的公共事件信封。正文、凭证和任意 payload 不属于此合同。
 /// </summary>
 public sealed class DesignArtifactEventEnvelope
@@ -136,11 +206,17 @@ public sealed class DesignArtifactEventEnvelope
 
     public string? Phase { get; set; }
 
+    public string? PhaseCode { get; set; }
+
     public int? Progress { get; set; }
 
     public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
 
     public bool Authoritative { get; set; }
+
+    /// <summary>仅 error 终态携带；旧事件缺失时保持 null。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DesignArtifactRuntimeFailure? RuntimeFailure { get; set; }
 }
 
 public static class DesignArtifactContractVersions

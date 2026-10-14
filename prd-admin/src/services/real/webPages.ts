@@ -139,6 +139,33 @@ export interface ResolvedDesignKnowledgeReference extends DesignKnowledgeReferen
   title: string;
 }
 
+export interface DesignArtifactRuntimeFailure {
+  code: string;
+  issueCodes: string[];
+  repairAttempts?: number | null;
+  repairBudgetExhausted?: boolean | null;
+  /** 管理员诊断用的有界浏览器测量；普通用户界面不得直接渲染其中技术值。 */
+  browserQualityEvidence?: {
+    schemaVersion: string;
+    ruleVersion: string;
+    heuristicVersion: string;
+    repairAttempts: number;
+    repairBudgetExhausted: boolean;
+    attempts: Array<{
+      repairAttempt: number;
+      hardPassed: boolean;
+      score: number;
+      issues: Array<{
+        issueCode: string;
+        viewport: 'desktop' | 'mobile' | string;
+        actual: Record<string, string | number | boolean | null>;
+        target: string;
+        elementSummary?: { tag: string; id?: string | null; role?: string | null; label?: string | null } | null;
+      }>;
+    }>;
+  } | null;
+}
+
 export interface DesignArtifactRunSummary {
   runId: string;
   status: string;
@@ -149,6 +176,30 @@ export interface DesignArtifactRunSummary {
   title?: string | null;
   progress: number;
   phase: string;
+  phaseCode?: string | null;
+  firstVisibleFeedbackAt?: string | null;
+  firstPreviewAt?: string | null;
+  /** Run 上持久化的最后一版受信预览；终态失败重开时只用于展示，不代表任务仍可续跑。 */
+  previewHtml?: string | null;
+  previewRevision?: number | null;
+  lastProgressAt?: string | null;
+  maxStaticGapSeconds?: number | null;
+  streamReconnectCount?: number;
+  lastStreamReconnectAt?: string | null;
+  /** 最终产物的隔离浏览器质量摘要；逐视口证据保存在产物包，不进入普通运行流。 */
+  browserQuality?: {
+    schemaVersion: string;
+    ruleVersion: string;
+    heuristicVersion: string;
+    firstPassPassed: boolean;
+    repairAttempts: number;
+    repairSucceeded: boolean;
+    finalHardPassed: boolean;
+    finalScore: number;
+    viewports: string[];
+    evidenceRef: string;
+  } | null;
+  restartedFromRunId?: string | null;
   artifactSiteId?: string | null;
   artifactRevisionId?: string | null;
   producedArtifactSiteId?: string | null;
@@ -171,6 +222,7 @@ export interface DesignArtifactRunSummary {
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
   error?: string | null;
+  runtimeFailure?: DesignArtifactRuntimeFailure | null;
   cancelRequested?: boolean;
   cancelRequestedAt?: string | null;
   cancelledAt?: string | null;
@@ -1577,6 +1629,23 @@ export interface DesignTimingGroup {
   /** 资料到可分享链接：创建时刻 → 生成者为产出站点建的第一条分享/访问链接。 */
   materialToShareLink: DesignTimingMetric;
   materialToShareLinkEligibleRuns: number;
+  firstPreview?: DesignTimingMetric;
+  maxStaticGap?: DesignTimingMetric;
+  restartedCount?: number;
+  recoveredCount?: number;
+  streamReconnectCount?: number;
+  publishedWithin24HoursCount?: number;
+  browserQuality?: {
+    sampleCount: number;
+    firstPassPassedCount: number;
+    firstPassRate: number | null;
+    repairedRunCount: number;
+    repairSucceededCount: number;
+    repairSuccessRate: number | null;
+    averageRepairAttempts: number | null;
+    finalScore: DesignTimingMetric;
+    ruleVersions: string[];
+  };
 }
 
 export interface DesignTimingStats {
@@ -1630,7 +1699,6 @@ export async function resolveDesignKnowledgeReferences(
 export async function createDesignArtifactRun(input: {
   instruction: string;
   title?: string;
-  runtime?: string;
   sourceSurface: 'web-hosting' | 'knowledge-base';
   /**
    * 目标团队空间，在发起这一刻冻结、由服务端建站时应用。
@@ -1650,7 +1718,7 @@ export async function createDesignArtifactRun(input: {
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
-  const { styleId, designSystemId, attachmentIds, runtime, ...rest } = input;
+  const { styleId, designSystemId, attachmentIds, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
@@ -1662,8 +1730,6 @@ export async function createDesignArtifactRun(input: {
         storeId,
         contentHash,
       })),
-      // 不传执行器时交给服务端按「网页生成设置」的默认值决定，前端不再写死一个默认。
-      ...(runtime ? { runtime } : {}),
       ...(designSystemId ? { designSystemId } : styleId ? { styleId } : {}),
       ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
@@ -1674,6 +1740,27 @@ export async function getDesignArtifactRun(
   runId: string,
 ): Promise<ApiResponse<DesignArtifactRunSummary>> {
   return apiRequest(api.designArtifacts.byId(runId));
+}
+
+export async function getActiveDesignArtifactRun(input: {
+  operation: 'generate' | 'edit';
+  targetSiteId?: string;
+  includeLatestFailed?: boolean;
+}): Promise<ApiResponse<DesignArtifactRunSummary | null>> {
+  const params = new URLSearchParams({ operation: input.operation });
+  if (input.targetSiteId) params.set('targetSiteId', input.targetSiteId);
+  if (input.includeLatestFailed) params.set('includeLatestFailed', 'true');
+  return apiRequest(`${api.designArtifacts.activeRun()}?${params.toString()}`);
+}
+
+export async function restartDesignArtifactRun(
+  runId: string,
+  idempotencyKey: string,
+): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.designArtifacts.restart(runId), {
+    method: 'POST',
+    body: { idempotencyKey },
+  });
 }
 
 export async function cancelDesignArtifactRun(
@@ -1713,7 +1800,6 @@ export async function createHostedSiteEditRun(
   siteId: string,
   instruction: string,
   knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
-  runtime = 'map-gateway',
   extras: HostedSiteEditRunExtras = {},
 ): Promise<ApiResponse<Pick<DesignArtifactRunSummary, 'runId' | 'status' | 'runtime'>
   & Partial<Pick<DesignArtifactRunSummary, 'styleName' | 'promptFingerprint' | 'reviewMode'>>>> {
@@ -1725,7 +1811,6 @@ export async function createHostedSiteEditRun(
     method: 'POST',
     body: {
       instruction,
-      runtime,
       knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
         entryId,
         storeId,

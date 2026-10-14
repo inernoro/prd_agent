@@ -14,7 +14,8 @@ public sealed record DesignArtifactExecutorChunk(
     string Content,
     IReadOnlyList<DesignWorkspaceFile>? VerifiedFiles = null,
     DesignArtifactResolvedModel? ResolvedModel = null,
-    int? Progress = null);
+    int? Progress = null,
+    string? PhaseCode = null);
 
 /// <summary>
 /// 本次生成实际用到的模型与平台（Codex P1，2026-09-15）。用户会因为「换了个模型」直接感到

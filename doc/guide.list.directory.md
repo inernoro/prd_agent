@@ -166,6 +166,7 @@
 - [多图视觉生成 · 设计](./design.visual-agent.multi-image-vision-api.md) `design.visual-agent.multi-image-vision-api`
 - [Visual Agent (视觉创作) · 设计](./design.visual-agent.md) `design.visual-agent`
 - [网页托管与分享 · 设计](./design.web-hosting.md) `design.web-hosting`
+- [网页生成统一走 OpenDesign · 设计](./design.web-hosting.open-design-unified-generation.md) `design.web-hosting.open-design-unified-generation`
 - [设计执行服务独立部署 · 设计](./design.platform.design-runtime.md) `design.platform.design-runtime`
 - [知识驱动设计生成体系 · 设计](./design.platform.design-generation.md) `design.platform.design-generation`
 - [工作流自动配置 (Workflow Auto-Config) · 设计](./design.workflow-agent.auto-config.md) `design.workflow-agent.auto-config`
@@ -293,6 +294,7 @@
 - [CDS 当前工作看板 · 计划](./plan.cds.status.md) `plan.cds.status`
 - [CDS Legacy 前端退场 · 计划](./plan.cds.web-migration.md) `plan.cds.web-migration`
 - [网页托管 · 预览修复与向我提问 · 三 PR 拆分看板](./plan.web-hosting.preview-and-ask.md) `plan.web-hosting.preview-and-ask`
+- [网页生成统一走 OpenDesign · 实施与验收看板](./plan.web-hosting.open-design-unified-generation.md) `plan.web-hosting.open-design-unified-generation`
 - [每日小贴士场景统一与过时检测 · 计划](./plan.daily-tips.scenarios-and-staleness.md) `plan.daily-tips.scenarios-and-staleness`
 - [Desktop 资产中心 · 计划](./plan.desktop.asset-features.md) `plan.desktop.asset-features`
 - [抖音与 TikTok 真订阅闭环 · 计划](./plan.emergence.tiktok-douyin-poster.md) `plan.emergence.tiktok-douyin-poster`

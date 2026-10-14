@@ -57,7 +57,7 @@ async function statusReasons(taskId: string): Promise<string[]> {
 }
 
 describe('edit runs seeded from the current published site', () => {
-  it.each([[false, true], [true, true], [false, false]])('seeds complete edit resources and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
+  it.each([[false, true], [true, true]])('seeds complete edit resources and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
     harness = await startHarness();
     const html = '<!doctype html><html><head><title>Library</title></head><body><main><h1>Original sentence.</h1><p>Library information.</p></main></body></html>';
     const metadataPaths = ['assets/accessibility-static-report.json', 'assets/design-tokens.json', 'assets/page-outline.json', 'assets/provenance.json'];
@@ -107,8 +107,11 @@ describe('edit runs seeded from the current published site', () => {
     for (const filePath of metadataPaths) {
       const file = committed.files.find((item: { path: string }) => item.path === filePath);
       if (includeReports) {
-        const expected = buildGeneratedArtifactFiles(hardenSelfContainedHtml(html.replace('Original sentence.', 'Updated sentence.')),
-          assets.filter((asset) => !removeAsset || asset.path !== 'assets/pixel.png').map((asset) => asset.path)).find((item) => item.path === filePath);
+        const expected = buildGeneratedArtifactFiles(
+          hardenSelfContainedHtml(html.replace('Original sentence.', 'Updated sentence.')),
+          assets.filter((asset) => !removeAsset || asset.path !== 'assets/pixel.png').map((asset) => asset.path),
+          ['assets/quality/attempt-0-desktop.png', 'assets/quality/attempt-0-mobile.png', 'assets/visual-quality-report.json'],
+        ).find((item) => item.path === filePath);
         expect(file).toEqual(expected);
       } else expect(file).toBeUndefined();
     }
@@ -116,6 +119,21 @@ describe('edit runs seeded from the current published site', () => {
     expect(manifest.artifactRevision).toBe(computePublicArtifactRevision(committed.files.filter((item: { path: string }) => item.path !== 'manifest.json')));
     expect(Buffer.from(committed.files.find((item: { path: string }) => item.path === 'index.html').contentBase64, 'base64').toString('utf8')).toContain('Updated sentence.');
     expect(committed.files.some((item: { path: string }) => item.path === 'current/index.html.artifact.json')).toBe(false);
+  });
+
+  it('rejects a legacy output allowlist that cannot retain browser quality evidence', async () => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Launch page</main></body></html>');
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg, (request) => ({
+      ...request,
+      transfer: { ...request.transfer, allowedOutputPaths: ['index.html', 'manifest.json'] },
+    }));
+    expect(view.error.code).toBe('workspace_quality_evidence_unsupported');
+    expect(map!.commits).toHaveLength(0);
   });
 
   it.each([
@@ -253,6 +271,12 @@ describe('design direction, review passes and live preview', () => {
     expect(systemPrompt).toContain('/workspace/reference/');
     expect(String(runBodies[1].message)).toContain('EDITABLE-REVIEW-MARKER');
     expect(String(runBodies[2].message)).toContain('visual quality pass');
+    expect(harness.daemon.conversations).toEqual([{
+      title: 'MAP quality review map-run-1',
+      sessionMode: 'design',
+    }]);
+    expect(runBodies[0].conversationId).toBe('od-conversation');
+    expect(runBodies.slice(1).every((body) => body.conversationId === 'od-quality-conversation-1')).toBe(true);
     expect(map!.previews.length).toBeGreaterThanOrEqual(1);
     expect(map!.previews[0].html).toContain('Product facts');
     expect(map!.previews.map((item) => item.revision)).toEqual(map!.previews.map((_, index) => index + 1));
@@ -271,8 +295,73 @@ describe('design direction, review passes and live preview', () => {
     const view = await runToEnd(pkg);
     expect(view.state).toBe('succeeded');
     expect(harness.daemon.runBodies).toHaveLength(1);
+    expect(harness.daemon.conversations).toHaveLength(0);
     expect(view.result.openDesignRunId).toBe('od-run-1');
   });
+
+  it('bounds a slow review, restores the last verified output, and still runs the browser hard gate', async () => {
+    const browserInputs: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          browserInputs.push(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8'));
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          return {
+            browserVersion: 'test-chromium',
+            measurements: [
+              { viewport: 'desktop' as const, width: 1440, height: 900 },
+              { viewport: 'mobile' as const, width: 390, height: 844 },
+            ].map((viewport) => {
+              const screenshotPath = `assets/quality/${viewport.viewport}.png`;
+              fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+              return {
+                ...viewport,
+                documentWidth: viewport.width,
+                h1Count: 1,
+                visibleHeadingCount: 1,
+                visibleCtaCount: 1,
+                visibleLandmarkCount: 1,
+                issues: [],
+                screenshotPath,
+              };
+            }),
+          };
+        },
+      },
+    } });
+    const pkg = buildPackage([], { taskExtras: { designDirection: direction } });
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      fs.mkdirSync(path.join(workspaceDir, 'assets'), { recursive: true });
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>verified-main</h1></main></body></html>');
+        fs.writeFileSync(path.join(workspaceDir, 'assets/site.css'), 'main { display: block; }');
+        return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+      }
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-review</main></body></html>');
+      fs.writeFileSync(path.join(workspaceDir, 'assets/site.css'), 'partial-review');
+      await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      return { status: 'succeeded' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    expect(harness.daemon.cancels).toContain('od-run-2');
+    expect(view.result.openDesignRunId).toBe('od-run-1');
+    expect(browserInputs).toHaveLength(1);
+    expect(browserInputs[0]).toContain('verified-main');
+    expect(browserInputs[0]).not.toContain('partial-review');
+    const committedIndex = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    const committedCss = map!.commits[0].files.find((file: { path: string }) => file.path === 'assets/site.css');
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('verified-main');
+    expect(Buffer.from(committedCss.contentBase64, 'base64').toString('utf8')).toBe('main { display: block; }');
+    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
+      'open_design_reviewing',
+      'open_design_review_budget_exhausted',
+      'open_design_browser_quality_checking',
+    ]));
+  }, 15_000);
 
   it('writes the session Codex configuration into the engine data directory, pointing only at the local relay', async () => {
     harness = await startHarness();
@@ -326,7 +415,7 @@ describe('collecting the deliverable', () => {
     // 会被产物预检按白名单拒收——这与 CDS 现行实现一致，是否属实要在真实引擎上确认，
     // 记在 doc/debt.platform.open-design.md，这里不把它锁成期望。
     const events = (await harness.request('GET', `/v1/tasks/${pkg.runId}/events`, undefined, auth)).body.events;
-    const resolved = events.find((event: { payload: { reason?: string; promoted?: boolean } }) => event.payload.reason === 'deliverable_entry_resolved' && event.payload.promoted);
+    const resolved = events.find((event: { payload: { reason?: string; promoted?: boolean } }) => event.payload.reason === 'deliverable_entry_checkpointed' && event.payload.promoted);
     expect(resolved.payload).toMatchObject({ entryFile: 'launch-page.html', promoted: true, bytes: 74 });
   });
 
@@ -401,6 +490,347 @@ describe('collecting the deliverable', () => {
     expect(String(harness.daemon.runBodies[2].message)).toContain('document-order position(s) 1');
     expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
   });
+
+  it('bounds deterministic repair before the finalization reserve and keeps the rejected trusted snapshot', async () => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><a href="#missing">trusted-invalid</a></main></body></html>');
+      }
+      if (index === 3) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-repair</main></body></html>');
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state).toBe('failed');
+    expect(view.error.code).toBe('design_output_quality_rejected');
+    expect(view.error.details).toMatchObject({
+      issueCodes: ['missing_fragment_target'],
+      repairAttempts: 1,
+      repairBudgetExhausted: true,
+    });
+    expect(harness.daemon.cancels).toContain('od-run-3');
+    expect(harness.daemon.freezes).toBe(harness.daemon.thaws);
+    expect(map!.commits).toHaveLength(0);
+    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
+      'open_design_quality_repairing',
+      'open_design_quality_repair_budget_exhausted',
+    ]));
+    const events = (await harness.request('GET', `/v1/tasks/${pkg.runId}/events`, undefined, auth)).body.events;
+    const terminal = events.find((event: { type: string }) => event.type === 'error');
+    expect(terminal.payload.details).toMatchObject({
+      issueCodes: ['missing_fragment_target'],
+      repairAttempts: 1,
+      repairBudgetExhausted: true,
+    });
+  });
+
+  it('isolates quality work from generation history and keeps browser repairs in the quality conversation', async () => {
+    const seenAttempts: number[] = [];
+    const seenEvidenceDirs: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          seenAttempts.push(job.repairAttempt);
+          seenEvidenceDirs.push(job.evidenceDir);
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 2,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 2,
+              issues: job.repairAttempt < 2 ? [{
+                issueCode: viewport.viewport === 'mobile' ? 'mobile_navigation_unusable' as const : 'horizontal_overflow' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { measured: 12 },
+                target: 'measured hard target',
+                element: { tag: 'main', id: 'content' },
+              }] : [],
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main id="content"><h1>Launch page</h1></main></body></html>');
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(seenAttempts).toEqual([0, 1, 2]);
+    expect(seenEvidenceDirs.every((dir) => dir.startsWith(path.dirname(harness!.config.outputDir)))).toBe(true);
+    expect(seenEvidenceDirs.every((dir) => !dir.startsWith(harness!.config.odDataDir))).toBe(true);
+    expect(harness.daemon.runBodies).toHaveLength(4);
+    expect(harness.daemon.runBodies.slice(2).every((body) => String(body.message).includes('isolated browser quality gate'))).toBe(true);
+    expect(String(harness.daemon.runBodies[2].message)).not.toContain('previous targeted repair produced no measurable change');
+    expect(String(harness.daemon.runBodies[3].message)).toContain('previous targeted repair produced no measurable change');
+    expect(String(harness.daemon.runBodies[3].message)).toContain('Do not leave any second hidden nav or [role="navigation"]');
+    expect(harness.daemon.runBodies[0].conversationId).toBe('od-conversation');
+    expect(new Set(harness.daemon.runBodies.slice(1).map((body) => body.conversationId))).toEqual(
+      new Set(['od-quality-conversation-1']),
+    );
+    const reportFile = map!.commits[0].files.find((file: { path: string }) => file.path === 'assets/visual-quality-report.json');
+    const reportText = Buffer.from(reportFile.contentBase64, 'base64').toString('utf8');
+    const report = JSON.parse(reportText);
+    expect(report).toMatchObject({
+      schemaVersion: 'map-browser-quality-evidence-v1',
+      ruleVersion: 'browser-hard-gate-v1',
+      firstPassPassed: false,
+      repairAttempts: 2,
+      repairSucceeded: true,
+      finalHardPassed: true,
+    });
+    expect(report.attempts).toHaveLength(3);
+    expect(reportText).not.toContain('<!doctype html>');
+    expect(reportText).not.toContain('thinking');
+  });
+
+  it('cancels a browser repair at its absolute deadline, restores the trusted snapshot, and reruns both viewports', async () => {
+    const checkedHtml: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          const html = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
+          checkedHtml.push(html);
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/deadline-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 1,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 1,
+              issues: job.repairAttempt === 0 ? [{
+                issueCode: 'mobile_navigation_unusable' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { measured: false },
+                target: 'usable navigation',
+              }] : [],
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-candidate</h1></main></body></html>');
+      }
+      if (index === 3) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-browser-repair</main></body></html>');
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.cancels).toContain('od-run-3');
+    expect(checkedHtml).toHaveLength(2);
+    expect(checkedHtml[0]).toContain('trusted-candidate');
+    expect(checkedHtml[1]).toContain('trusted-candidate');
+    expect(checkedHtml[1]).not.toContain('partial-browser-repair');
+    const committedIndex = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    expect(Buffer.from(committedIndex.contentBase64, 'base64').toString('utf8')).toContain('trusted-candidate');
+    expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
+      'open_design_quality_repairing',
+      'open_design_browser_quality_checked',
+    ]));
+    expect(await statusReasons(pkg.runId)).not.toContain('open_design_quality_repair_budget_exhausted');
+  }, 15_000);
+
+  it('uses the reserved second browser repair after the first times out and retains complete rejection evidence', async () => {
+    const checkedHtml: string[] = [];
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          checkedHtml.push(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8'));
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/rejected-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 1,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 1,
+              issues: [{
+                issueCode: 'key_text_contrast_low' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { ratio: 2.5, minimum: 4.5 },
+                target: 'at least 4.5',
+                element: { tag: 'h1', id: 'hero-title', role: 'heading', label: 'Launch heading' },
+              }],
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-with-hard-issue</h1></main></body></html>');
+      }
+      if (index === 3) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>partial-browser-repair</main></body></html>');
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+      }
+      if (index === 4) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>trusted-with-hard-issue</h1></main></body></html>');
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({ ...request, timeoutSeconds: 30 }));
+
+    expect(view.state).toBe('failed');
+    expect(view.error.code).toBe('design_browser_quality_rejected');
+    expect(view.error.details).toMatchObject({
+      repairAttempts: 2,
+      repairBudgetExhausted: false,
+      issueCodes: ['key_text_contrast_low'],
+      bestRepairAttempt: 0,
+      browserQualityEvidence: {
+        schemaVersion: 'map-browser-quality-failure-evidence-v1',
+        repairAttempts: 2,
+        repairBudgetExhausted: false,
+      },
+    });
+    const failureEvidence = view.error.details.browserQualityEvidence;
+    expect(failureEvidence.attempts).toHaveLength(3);
+    expect(failureEvidence.attempts.map((attempt: { repairAttempt: number }) => attempt.repairAttempt)).toEqual([0, 1, 2]);
+    expect(failureEvidence.attempts[0].issues[0]).toEqual({
+      issueCode: 'key_text_contrast_low',
+      viewport: 'desktop',
+      actual: { ratio: 2.5, minimum: 4.5 },
+      target: 'at least 4.5',
+      elementSummary: { tag: 'h1', id: 'hero-title', role: 'heading', label: 'Launch heading' },
+    });
+    expect(JSON.stringify(view.error.details)).not.toContain('trusted-with-hard-issue');
+    expect(JSON.stringify(view.error.details)).not.toContain('assets/quality/');
+    expect(harness.daemon.cancels).toContain('od-run-3');
+    expect(checkedHtml).toHaveLength(3);
+    expect(checkedHtml[1]).toContain('trusted-with-hard-issue');
+    expect(checkedHtml[1]).not.toContain('partial-browser-repair');
+    expect(checkedHtml[2]).toContain('trusted-with-hard-issue');
+    expect(map!.commits).toHaveLength(0);
+  }, 15_000);
+
+  it('restores and flushes the best measured preview when two browser repairs still fail', async () => {
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: {
+        run: async (job) => {
+          fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const html = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
+          const issueCount = html.includes('best-initial') ? 1 : html.includes('repair-one') ? 4 : 3;
+          const measurements = [
+            { viewport: 'desktop' as const, width: 1440, height: 900 },
+            { viewport: 'mobile' as const, width: 390, height: 844 },
+          ].map((viewport) => {
+            const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
+            fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            return {
+              ...viewport,
+              documentWidth: viewport.width,
+              h1Count: 1,
+              visibleHeadingCount: 2,
+              visibleCtaCount: 1,
+              visibleLandmarkCount: 2,
+              issues: Array.from({ length: issueCount }, () => ({
+                issueCode: 'horizontal_overflow' as const,
+                severity: 'hard' as const,
+                ruleVersion: 'browser-hard-gate-v1' as const,
+                viewport: viewport.viewport,
+                actual: { measured: issueCount },
+                target: 'measured hard target',
+              })),
+              screenshotPath,
+            };
+          });
+          return { browserVersion: 'test-chromium', measurements };
+        },
+      },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir, index }) => {
+      const marker = index === 1 ? 'best-initial' : index === 3 ? 'repair-one' : index === 4 ? 'repair-two' : '';
+      if (marker) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><h1>${marker}</h1></main></body></html>`);
+      }
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state).toBe('failed');
+    expect(view.error.code).toBe('design_browser_quality_rejected');
+    expect(view.error.details.bestRepairAttempt).toBe(0);
+    expect(view.error.details).toMatchObject({
+      repairAttempts: 2,
+      repairBudgetExhausted: false,
+      browserQualityEvidence: {
+        repairAttempts: 2,
+        repairBudgetExhausted: false,
+      },
+    });
+    expect(view.error.details.browserQualityEvidence.attempts).toHaveLength(3);
+    expect(view.error.details.browserQualityEvidence.attempts.map(
+      (attempt: { repairAttempt: number }) => attempt.repairAttempt,
+    )).toEqual([0, 1, 2]);
+    expect(map!.commits).toHaveLength(0);
+    expect(map!.previews.at(-1)?.html).toContain('best-initial');
+  });
+
+  it('fails honestly when the isolated browser worker is unavailable and does not commit an unchecked artifact', async () => {
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async () => { throw new Error('browser process missing'); } },
+    } });
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Launch page</main></body></html>');
+      return { status: 'succeeded' };
+    };
+    const view = await runToEnd(pkg);
+    expect(view.state).toBe('failed');
+    expect(view.error.message).toContain('browser process missing');
+    expect(map!.commits).toHaveLength(0);
+  });
 });
 
 describe('live preview delivery', () => {
@@ -424,22 +854,51 @@ describe('live preview delivery', () => {
     let now = 1_000_000;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     try {
-      const push = (executor as any).createPreviewPusher(
+      const preview = (executor as any).createPreviewPusher(
         { previewUrl: 'https://map.example.test/api/design-artifacts/runtime/r1/workspace/preview', transfer: { transferToken: 't' } },
         now + 600_000,
         (stage: string) => stages.push(stage),
-      ) as () => Promise<void>;
-      await push();
+      ) as { poll: () => Promise<void>; close: () => void };
+      await preview.poll();
       now += 9_000;
       // 页面没有再变：修复前指纹在推送前就记下，这一轮会直接跳过，预览永远停在失败那一刻。
-      await push();
+      await preview.poll();
       now += 9_000;
-      await push();
+      await preview.poll();
+      preview.close();
     } finally {
       clock.mockRestore();
     }
     expect(posted.map((item) => item.revision)).toEqual([1, 2]);
     expect(posted.every((item) => item.html.includes('Stable page'))).toBe(true);
     expect(stages).toEqual(['open_design_preview_failed', 'open_design_preview_pushed']);
+  });
+
+  it('pushes file changes from fs.watch before polling and cleans the watcher on close', async () => {
+    const workspaceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-preview-watch-'));
+    const posted: Array<{ revision: number; html: string }> = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      posted.push(JSON.parse(String(init.body)));
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch;
+    const executor = new DesignTaskExecutor({
+      paths: { workspaceDir, dataDir: workspaceDir, templatesDir: workspaceDir, outputDir: workspaceDir, webPrototypeSourceDir: workspaceDir },
+      daemon: { current: () => undefined } as any,
+      fetchImpl,
+      relayPort: 0,
+      llmgwBaseUrl: 'http://gateway/gw/v1',
+    });
+    const preview = (executor as any).createPreviewPusher(
+      { previewUrl: 'https://map.example.test/api/design-artifacts/runtime/r1/workspace/preview', transfer: { transferToken: 't' } },
+      Date.now() + 600_000,
+      () => undefined,
+    ) as { poll: () => Promise<void>; close: () => void };
+    fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><main>First page</main>');
+    await waitFor(() => posted.length === 1, 'watch preview push');
+    expect(posted[0].html).toContain('First page');
+    preview.close();
+    fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><main>Second page</main>');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(posted).toHaveLength(1);
   });
 });

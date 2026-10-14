@@ -18,6 +18,24 @@ public sealed class DesignArtifactLlmRequestPolicy
 }
 
 /// <summary>
+/// 隔离浏览器质量证据的有界摘要。逐视口测量与截图保存在受信产物包，Run 只保存可聚合指标和引用，
+/// 不复制 HTML、模型正文或隐式推理。
+/// </summary>
+public sealed class DesignArtifactBrowserQualitySummary
+{
+    public string SchemaVersion { get; set; } = string.Empty;
+    public string RuleVersion { get; set; } = string.Empty;
+    public string HeuristicVersion { get; set; } = string.Empty;
+    public bool FirstPassPassed { get; set; }
+    public int RepairAttempts { get; set; }
+    public bool RepairSucceeded { get; set; }
+    public bool FinalHardPassed { get; set; }
+    public double FinalScore { get; set; }
+    public List<string> Viewports { get; set; } = new();
+    public string EvidenceRef { get; set; } = string.Empty;
+}
+
+/// <summary>
 /// 跨网页托管、知识库与 HTML PPT 的统一设计任务。
 /// v2 权威生命周期事件与状态保存在同一 Mongo 文档；Redis 仅服务历史流程和兼容投影。
 /// </summary>
@@ -118,6 +136,12 @@ public class DesignArtifactRun
     public string? LifecycleFailureCode { get; set; }
 
     /// <summary>
+    /// 远端执行器经过白名单收敛的失败事实。旧任务缺失时保持 null；不得放入原始诊断或页面正文。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactRuntimeFailure? RuntimeFailure { get; set; }
+
+    /// <summary>
     /// 远程执行器在能力探针通过时冻结的 CDS 连接。Worker 只能使用该连接，
     /// 禁止按更新时间重新选择另一个基础设施目标。
     /// </summary>
@@ -150,9 +174,54 @@ public class DesignArtifactRun
 
     public string? LinkedRunId { get; set; }
 
+    /// <summary>服务重启后从哪条历史 Run 的冻结输入重开；历史 Run 本身不改写。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? RestartedFromRunId { get; set; }
+
+    /// <summary>重开幂等键的 SHA-256，不保存客户端原值。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? RestartIdempotencyKeyHash { get; set; }
+
     public int Progress { get; set; }
 
+    /// <summary>有限、稳定的用户可见阶段码；不保存执行器命令、路径或工具参数。</summary>
+    public string PhaseCode { get; set; } = DesignArtifactPhaseCodes.Queued;
+
     public string Phase { get; set; } = "任务已进入队列";
+
+    /// <summary>任务创建后第一次向用户提供可见状态的时间。</summary>
+    public DateTime? FirstVisibleFeedbackAt { get; set; }
+
+    /// <summary>第一个经过工作区凭证校验的真实页面预览时间。</summary>
+    public DateTime? FirstPreviewAt { get; set; }
+
+    /// <summary>
+    /// 最近一次经过工作区票据和 1 MiB 上限校验的真实页面预览。
+    /// 绑定在所属 Run 上，供终态失败后重新打开工作台恢复最后成果；不进入生命周期事件或错误详情。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? LatestPreviewHtml { get; set; }
+
+    /// <summary>LatestPreviewHtml 对应的执行器单调 revision；旧任务缺失时保持 null。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public int? LatestPreviewRevision { get; set; }
+
+    /// <summary>最近一次有效阶段或预览更新时间，用于计算最大静止间隔。</summary>
+    public DateTime? LastProgressAt { get; set; }
+
+    /// <summary>相邻服务端权威进度时间点之间的最大秒数；旧任务缺失时不回填、不冒充零等待。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public double? MaxStaticGapSeconds { get; set; }
+
+    /// <summary>带游标重新建立任务事件流的次数；首连 afterSeq=0 不计入。</summary>
+    public int StreamReconnectCount { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DateTime? LastStreamReconnectAt { get; set; }
+
+    /// <summary>最终产物的浏览器质量摘要；旧任务缺失时只读兼容，不回填。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactBrowserQualitySummary? BrowserQuality { get; set; }
 
     public string? Error { get; set; }
 
@@ -231,6 +300,18 @@ public class DesignArtifactRun
     /// <summary>创建时冻结的风格与提示词。缺失 = 改动前的旧运行，执行器按内置默认处理。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactDesignDirection? DesignDirection { get; set; }
+
+    /// <summary>任务开始时确定性形成并冻结的设计简报。旧运行缺失时只读兼容，不补写。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactDesignBrief? DesignBrief { get; set; }
+
+    /// <summary>由既有设计方向、个人风格、资料与附件映射出的品牌包；不复制 OpenDesign 设计系统。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactBrandPackage? BrandPackage { get; set; }
+
+    /// <summary>冻结设计上下文的可追溯来源；旧运行缺失时只读兼容，不回填。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactContextProvenance? DesignContextProvenance { get; set; }
 
     /// <summary>直接上传的文档（事实来源，与知识库引用并列；不写进站点的知识来源记录）。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
@@ -388,6 +469,30 @@ public static class DesignArtifactRuntimes
     public const string Codex = "codex";
     public const string Claude = "claude";
     public const string HtmlPptPipeline = "html-ppt-pipeline";
+}
+
+/// <summary>
+/// 普通用户可见的有限阶段集合。执行器原始事件必须先收敛到这些值，
+/// 禁止把命令、路径、工具参数或隐式推理当作阶段。
+/// </summary>
+public static class DesignArtifactPhaseCodes
+{
+    public const string Queued = "queued";
+    public const string WaitingCapacity = "waiting-capacity";
+    public const string ServiceRecovering = "service-recovering";
+    public const string PreparingWorkspace = "preparing-workspace";
+    public const string ReadingSources = "reading-sources";
+    public const string StartingDesign = "starting-design";
+    public const string ComposingPage = "composing-page";
+    public const string ReviewingPage = "reviewing-page";
+    public const string RepairingQuality = "repairing-quality";
+    public const string CollectingArtifact = "collecting-artifact";
+    public const string CommittingArtifact = "committing-artifact";
+    public const string SavingResult = "saving-result";
+    public const string Completed = "completed";
+    public const string Interrupted = "interrupted";
+    public const string Failed = "failed";
+    public const string Cancelled = "cancelled";
 }
 
 public static class DesignWorkspaceResultWriteStates
