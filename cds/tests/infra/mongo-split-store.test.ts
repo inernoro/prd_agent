@@ -224,12 +224,12 @@ describe('MongoSplitStateBackingStore', () => {
     const read = vi.spyOn(handle.deploymentRuns, 'findOne');
     if (matches) {
       const run = await begin(); expect(handle.deploymentRuns.docs.get(run.id)?.doc.status).toBe('queued');
-      expect(write.mock.calls[0][2]).toEqual({ upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, ignoreUndefined: true });
+      expect(write.mock.calls[0][2]).toEqual({ upsert: true, writeConcern: { w: 'majority', j: true, wtimeoutMS: 5000 }, maxTimeMS: 5000, timeoutMS: 5000, ignoreUndefined: true });
     } else {
       await expect(begin()).rejects.toThrow('write acknowledgement lost');
       const run = state.getDeploymentRuns()[0]; new DeploymentRunService(state).cancel(run.id, '受理失败');
     }
-    expect(read.mock.calls[0][1]).toEqual({ readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000 });
+    expect(read.mock.calls[0][1]).toEqual({ readConcern: { level: 'majority' }, readPreference: 'primary', maxTimeMS: 5000, timeoutMS: 5000 });
     await state.flush();
   });
 

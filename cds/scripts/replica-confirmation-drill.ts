@@ -124,7 +124,7 @@ export async function main(): Promise<void> {
     // 明确使用较弱的普通确认；服务器默认强度不能被当成关键协议的保证。
     collection.bulkWrite = async (operations, options) => rawRuns.bulkWrite(operations as any[], { ...options, writeConcern: { w: 1 } });
     const original = collection.replaceOne.bind(collection); let criticalWrites = 0;
-    collection.replaceOne = async (...args) => { assert.deepEqual(args[2]?.writeConcern, { w: 'majority', j: true, wtimeoutMS: 5000 }); criticalWrites++; return original(...args); };
+    collection.replaceOne = async (...args) => { assert.deepEqual(args[2]?.writeConcern, { w: 'majority', j: true, wtimeoutMS: 5000 }); assert.equal(args[2]?.timeoutMS, 5000); criticalWrites++; return original(...args); };
     for (const member of members.slice(1)) { assert.equal(inspect(member).State.Running, true); docker(['pause', member.id]); assert.equal(inspect(member).State.Paused, true); }
     runs.cancel(run.id, 'isolated stop'); await state.flush();
     assert.equal((await rawRuns.findOne({ _id: run.id }, { readConcern: { level: 'local' } }))?.doc.status, 'cancelled');

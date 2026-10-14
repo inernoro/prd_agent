@@ -92,6 +92,43 @@ export function preserveReplacementNames(entry: BranchEntry, candidate: ServiceS
     .filter(runtime => runtime.containerName !== candidate.containerName).map(runtime => runtime.containerName);
 }
 
+/** 本轮整体失败后收回未发布候选；已确认旧入口、其他轮次及已发布依赖保持。 */
+export async function abortUnpublishedServiceReplacements(options: {
+  entry: BranchEntry; profileIds: readonly string[]; state: StateService;
+  container: Pick<ContainerService, 'inspectOwnedRuntime' | 'removeOwnedRuntime'>;
+  assertCurrent?: (step: string) => void;
+}): Promise<void> {
+  const { entry, profileIds, state, container, assertCurrent } = options;
+  if (!entry.replacementNetwork) return;
+  for (const id of profileIds) {
+    const service = entry.services[id], active = service?.servingRuntime;
+    if (!service || !active) continue;
+    const candidates = serviceRuntimeRefs(service).filter(runtime => runtime.containerName !== active.containerName
+      && runtime.networkName === entry.replacementNetwork && (runtime.creationIssued || runtime.containerId));
+    if (!candidates.length) continue;
+    assertCurrent?.('before failed replacement old identity');
+    const confirmedActive = await container.inspectOwnedRuntime(entry, id, active);
+    if (!confirmedActive) continue;
+    assertCurrent?.('after failed replacement old identity');
+    for (const candidate of candidates) {
+      // 名称不同也可能仍携带旧CID；当前实际入口身份绝不能作为失败候选删除。
+      if (candidate.containerId && candidate.containerId === confirmedActive.containerId) continue;
+      // 同网段已有发布角色可能仍消费它；没有发布任何角色时才整体撤销候选。
+      if (Object.values(entry.services).some(peer => peer !== service
+        && servingRuntime(peer)?.networkName === candidate.networkName)) continue;
+      await container.removeOwnedRuntime(entry, id, runtimeRef(candidate), { branchId: entry.id, projectId: entry.projectId,
+        profileId: id, operation: 'failed-unpublished-runtime', source: 'service-replacement',
+        assertCurrent: () => assertCurrent?.('failed replacement cleanup command') });
+      assertCurrent?.('after failed replacement cleanup');
+      if (service.containerName === candidate.containerName) Object.assign(service, runtimeRef(active));
+      if (service.pendingRuntime?.containerName === candidate.containerName) service.pendingRuntime = undefined;
+      service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== candidate.containerName);
+      state.save([{ kind: 'branches', id: entry.id }]); await state.flush();
+      assertCurrent?.('after failed replacement cleanup persistence');
+    }
+  }
+}
+
 /** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
 export async function commitServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
@@ -99,7 +136,10 @@ export async function commitServiceReplacements(options: {
 }): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
   const selected = profileIds.map(id => entry.services[id]).filter((service): service is ServiceState => Boolean(service));
-  if (selected.some(service => service.status !== 'running')) return;
+  if (selected.some(service => service.status !== 'running')) {
+    if (selected.some(service => service.status === 'error')) await abortUnpublishedServiceReplacements(options);
+    return;
+  }
   const changed = selected.filter(service => service.servingRuntime && service.servingRuntime.containerName !== service.containerName);
   if (!changed.length && !selected.some(service => service.retainedRuntimes?.length)) return;
   assertCurrent?.('before runtime cutover persistence');

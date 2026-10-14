@@ -19,6 +19,7 @@
     "branch-claim-entry-drill.ts",
     "application-bootstrap-drill.ts",
     "application-docker-host-drill.ts",
-    "application-docker-inner-drill.ts"
+    "application-docker-inner-drill.ts",
+    "runtime-memory-stage-drill.ts"
   ]
 }

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { assertCurrentSourceQualification } from './current-source-qualification.js';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -47,7 +48,7 @@ async function main() {
       'cds/src/services/worktree.ts', 'cds/src/types.ts']);
     report.changedProductionSources = execFileSync('/usr/bin/git', ['diff', '--name-only', inheritedCandidateHead, report.head, '--', ':(top)cds/src'],
       { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
-    assert.deepEqual(report.changedProductionSources, currentSourceChanges.map(name => `cds/${name}`).sort());
+    assertCurrentSourceQualification(currentSourceChanges, report);
     const manifestsChanged = execFileSync('/usr/bin/git', ['diff', '--name-only', referenceHead, report.head, '--',
       ':(top)cds/package.json', ':(top)cds/pnpm-lock.yaml'], { encoding: 'utf8' }).trim();
     report.referenceDependencyManifestsChanged = manifestsChanged;

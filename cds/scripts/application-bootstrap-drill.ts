@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { waitForBootstrapExit } from './bootstrap-exit-wait.js';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import os from 'node:os';
@@ -74,11 +75,12 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
   const webHashes = await fileHashes(path.resolve('web/dist'), '', /./); assert.ok(webHashes['index.html']);
   const sourceHashes = await fileHashes(path.resolve('src'), '', /\.(?:ts|json)$/);
   const scriptHash = createHash('sha256').update(await fs.readFile('scripts/application-bootstrap-drill.ts')).digest('hex'); assert.ok(Object.keys(compiledHashes).length > 200);
+  const driverHelperHashes = { 'scripts/bootstrap-exit-wait.ts': createHash('sha256').update(await fs.readFile('scripts/bootstrap-exit-wait.ts')).digest('hex') };
   const report: any = { schema: 1, head, platform: os.platform(), native, startedAt: new Date().toISOString(), verdict: 'failed', checks: [],
     scope: options.dockerHost
       ? 'original compiled index startup with all default pools, private mongo-split/auth and owned Docker; application exercise pending; no whole first-stage/public/browser/performance acceptance'
       : 'original compiled index startup with all default execution pools, real private mongo-split and durable local-user bootstrap/login/restart; Docker endpoint deliberately unavailable; no whole first-stage deployment or public/browser/performance acceptance',
-    sourceHashes, scriptHash, webHashes, sourceHeadOrigin: options.sourceHead ? 'outer-owner-verified-source-snapshot' : 'checkout-git', dockerAvailableFixture: Boolean(options.dockerHost),
+    sourceHashes, scriptHash, driverHelperHashes, webHashes, sourceHeadOrigin: options.sourceHead ? 'outer-owner-verified-source-snapshot' : 'checkout-git', dockerAvailableFixture: Boolean(options.dockerHost),
     compiledHashes, actualFullIndexBootstrapVerified: false, actualAuthRestartVerified: false,
     actualWholeFirstStageVerified: false, browserVerified: false, publicPerformanceVerified: false, formalAcceptancePassed: false,
     ownedProcessesRemoved: false, ownedDatabaseRemoved: false, isolatedFilesRemoved: false };
@@ -179,7 +181,8 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
     const stop = async () => {
       assert.ok(application?.pid); for (const row of descendants(application.pid)) knownPids.add(row.pid);
       const began = performance.now(); const requestedAt = new Date().toISOString();
-      application.kill('SIGTERM'); const ended = await Promise.race([exitApp!, sleep(15_000).then(() => { throw new Error('完整index正常停机未确认'); })]);
+      application.kill('SIGTERM'); const ended = await waitForBootstrapExit(exitApp!, 15_000);
+      if (!ended) throw new Error('完整index正常停机未确认');
       (report.shutdownAttempts ??= []).push({ requestedAt, exitedAt: new Date().toISOString(), elapsedMs: performance.now() - began, ...ended });
       assert.equal(ended.code, 0); return ended;
     };
@@ -293,7 +296,7 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
   }
   finally {
     if (application?.pid && application.exitCode === null) { for (const row of descendants(application.pid)) knownPids.add(row.pid);
-      application.kill('SIGTERM'); await Promise.race([exitApp!, sleep(15_000)]); if (application.exitCode === null) application.kill('SIGKILL'); }
+      application.kill('SIGTERM'); await waitForBootstrapExit(exitApp!, 15_000); if (application.exitCode === null) application.kill('SIGKILL'); }
     // 仅自有临时进程ID；私有工厂是detached，不用广播killall。
     for (const pid of knownPids) {
       if (pid === mongod?.pid) continue;

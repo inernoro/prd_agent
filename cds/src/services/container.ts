@@ -780,8 +780,18 @@ export class ContainerService {
 
   async stopRuntimeGroup(service: ServiceState, reason?: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
     const failures: unknown[] = [];
-    for (const runtime of serviceRuntimeRefs(service)) {
-      try { await this.stop(runtime.containerId || runtime.containerName, reason, context); }
+    for (const runtime of serviceRuntimeRefs(service).map(runtimeRef)) {
+      try {
+        if (runtime.creationIssued && !runtime.containerId) {
+          if (!context.branchId || !context.projectId) throw new ContainerStopUnconfirmedError(undefined);
+          const owned = await this.inspectOwnedRuntime({ id: context.branchId, projectId: context.projectId } as BranchEntry,
+            context.profileId || service.profileId, runtime, false);
+          if (!owned) throw new ContainerStopUnconfirmedError(undefined);
+          Object.assign(runtime, owned);
+        }
+        await this.stop(runtime.containerId || runtime.containerName, reason, context);
+        deploymentPhaseBudget.releaseMemory(runtime.containerName);
+      }
       catch (error) { failures.push(error); }
     }
     if (failures.length === 1) throw failures[0];
@@ -2658,7 +2668,7 @@ export class ContainerService {
     try {
       await this.shell.exec(
         `docker exec ${containerName} sh -c "echo '${line}' > /proc/1/fd/1 2>/dev/null"`,
-        { timeout: 3000 },
+        { timeout: 3000, executionLane: 'operation', executionPurpose: 'temporary-cleanup' },
       );
     } catch {
       /* best-effort:哨兵写失败不影响停止,判定走 CDS 账本 */
@@ -2724,7 +2734,7 @@ export class ContainerService {
       operation: context.operation ?? null,
       source: context.source ?? null,
     });
-    const result = await this.shell.exec(`docker stop ${containerName}`);
+    const result = await this.shell.exec(`docker stop ${containerName}`, { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
     const after = await this.captureContainerDiagnostics(containerName, 120);
     const state = after.inspect?.state as Record<string, unknown> | undefined;
     const confirmed = state?.running === false
@@ -2805,8 +2815,8 @@ export class ContainerService {
       },
     });
     this.noteLifecycleIntent(containerName, kind, reason, context);
-    const stopResult = await shell.exec(`docker stop ${containerName}`);
-    const rmResult = await shell.exec(`docker rm ${containerName}`);
+    const stopResult = await shell.exec(`docker stop ${containerName}`, { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
+    const rmResult = await shell.exec(`docker rm ${containerName}`, { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
     const completion = classifyRemoveCompletion(rmResult);
     if (completion.severity !== 'error') deploymentPhaseBudget.releaseMemory(containerName);
     this.recordContainerEvent({
