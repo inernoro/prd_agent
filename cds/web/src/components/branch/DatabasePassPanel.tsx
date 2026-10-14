@@ -39,14 +39,16 @@ export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId
     finally{if(current())setBusy('');}
   }
   if(!allowed)return <div className="rounded border border-border p-3 text-xs text-muted-foreground">数据库通行证需要项目管理员审查和签发；当前角色没有放行权限。</div>;
+  const latest=overview?.passes.at(-1);
+  const terminal=latest&&['expired','revoked'].includes(latest.status);
   const current=overview?.passes.filter(p=>['prepared','active','cleanup-failed','preparing'].includes(p.status)).at(-1);
   return <section className="space-y-3 rounded-md border border-border bg-background/50 p-3" aria-label="数据库通行证">
     <div className="flex flex-wrap items-center gap-2"><ShieldCheck className="h-4 w-4"/><h3 className="text-sm font-semibold">数据库通行证 · 本地工具直连</h3><span className="text-xs text-muted-foreground">默认只读 · 30 分钟 · 独立临时账号</span></div>
     <p className="text-xs leading-5 text-muted-foreground">申请后复制账号、密码和 TLS 证书，再放行白名单。期限从成功放行开始；到期断开现有连接并回收账号。当前 IP 是本次页面访问的来源，数据库工具经 VPN 或内网访问时可能不同，请核对。</p>
     {overview?.capability.enabled?<p className="text-xs">直连主机：<code>{overview.capability.host}</code>。网络需能访问该地址；内网地址仅供内网验收。</p>:<p className="text-xs text-muted-foreground">{overview?.capability.reason||'正在读取实例通行证配置…'}</p>}
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_9rem]">
-      <label className="grid min-w-0 gap-1 text-xs">白名单 IP（每行一个 IPv4/CIDR）<textarea aria-label="通行证白名单 IP" disabled={!!busy||!!current} value={ip} onChange={e=>setIp(e.target.value)} className="h-10 min-h-10 min-w-0 rounded border border-border bg-background px-2 py-2 font-mono" rows={1}/></label>
-      <label className="grid min-w-0 gap-1 text-xs">有效期（分钟）<input aria-label="通行证有效期" disabled={!!busy||!!current} type="number" min={1} max={30} value={ttl} onChange={e=>setTtl(e.target.value)} className="h-10 min-w-0 rounded border border-border bg-background px-2 font-mono"/></label>
+      <label className="grid min-w-0 gap-1 text-xs">白名单 IP（每行一个 IPv4/CIDR）<textarea aria-label="通行证白名单 IP" disabled={!!busy||!!current} value={current?current.allowlist.join('\n'):ip} onChange={e=>setIp(e.target.value)} className="h-10 min-h-10 min-w-0 rounded border border-border bg-background px-2 py-2 font-mono" rows={1}/></label>
+      <label className="grid min-w-0 gap-1 text-xs">有效期（分钟）<input aria-label="通行证有效期" disabled={!!busy||!!current} type="number" min={1} max={30} value={current?String(current.ttlMinutes):ttl} onChange={e=>setTtl(e.target.value)} className="h-10 min-w-0 rounded border border-border bg-background px-2 font-mono"/></label>
     </div>
     {current?<p className="text-xs text-muted-foreground">当前通行证的白名单和期限已固定；如需调整，请先撤销再申请。</p>:null}
     <div className="flex flex-wrap gap-2">
@@ -73,10 +75,10 @@ export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId
         <Button size="sm" variant="outline" disabled={!!busy} onClick={()=>void run('revoke',()=>apiRequest(`${base}/${current.id}`,{method:'DELETE'}))}>撤销通行证</Button>
       </div>
     </div>:null}
-    {notice?<p className="text-xs leading-5" role="status">{notice}</p>:null}
+    {notice&&!terminal?<p className="text-xs leading-5" role="status">{notice}</p>:null}
     {loadError?<p className="rounded border border-destructive/30 bg-destructive/10 p-2 text-xs" role="alert">{loadError}</p>:null}
     {error?<p className="rounded border border-destructive/30 bg-destructive/10 p-2 text-xs" role="alert">{error}</p>:null}
     {overview?.events.length?<details className="text-xs"><summary className="cursor-pointer">审计记录（{overview.events.length}）</summary><div className="mt-2 max-h-44 space-y-1 overflow-auto font-mono">{overview.events.slice(0,30).map((event,index)=><div key={event.ts+index}>{new Date(event.ts).toLocaleTimeString()} · {eventNames[event.event]||event.event}{event.ip?` · ${event.ip}`:''}</div>)}</div></details>:null}
-    {overview?.passes.some(p=>p.status==='expired'||p.status==='revoked')?<p className="text-xs text-muted-foreground">已到期或撤销的账号已回收；重新访问须申请新通行证。</p>:null}
+    {terminal&&latest?<p className="rounded border border-border p-2 text-xs" role="status">最近通行证 {latest.username}：{statusNames[latest.status]}。重新访问须申请新通行证。</p>:null}
   </section>;
 }
