@@ -7,11 +7,13 @@ const inheritedProductionSourceChanges = ["cds/src/config/known-env-keys.ts", "c
 const memoryStageHead = '1b84130d1d636ca4553de95f76c43693f3d0465e';
 const onboardingProductionHead = 'ccc5dcae5bd1ceda070024d734de8615787efb3e';
 const onboardingProductionSourceChanges = ["cds/src/routes/access-requests.ts", "cds/src/routes/projects.ts", "cds/src/services/bootstrap-target.ts", "cds/src/types.ts"];
+const notificationProductionHead = '18b49cfc20b18e4d92b4a163575d94e4461dd8c7';
+const notificationProductionSourceChanges = ["cds/src/index.ts", "cds/src/routes/alarm-channels.ts", "cds/src/services/alarm-dispatch.ts", "cds/src/services/alarm-identity.ts", "cds/src/services/alarm-relay.ts", "cds/src/services/alarm-route.ts", "cds/src/services/map-notifier.ts", "cds/src/services/monitor-reconcile.ts", "cds/src/services/self-check.ts", "cds/src/services/uptime-custom-monitor.ts", "cds/src/services/uptime-metrics.ts", "cds/src/services/uptime-monitor.ts"];
 const cpuStageSourceChanges = ["cds/src/executor/routes.ts", "cds/src/routes/branches.ts", "cds/src/services/build-gate.ts", "cds/src/services/container.ts", "cds/src/services/deployment-phase-budget.ts", "cds/src/services/docker-lifecycle-classifier.ts", "cds/src/services/project-admission-order.ts"];
 const memoryStageSourceChanges = ["cds/src/index.ts", "cds/src/infra/state-store/mongo-split-store.ts", "cds/src/services/container.ts", "cds/src/services/orphan-container-reaper.ts", "cds/src/services/resource-usage-sampler.ts", "cds/src/services/scheduler-service-stop.ts", "cds/src/services/scheduler.ts", "cds/src/services/service-replacement.ts", "cds/src/services/service-runtime.ts"];
 
 export function assertCurrentSourceQualification(expectedPreviousSources: readonly string[], report: Record<string, any>, native = true): void {
-  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead], { stdio: 'pipe', timeout: 120000 });
+  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead], { stdio: 'pipe', timeout: 120000 });
   const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
     { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
   report.previousQualifiedHead = previousQualifiedHead;
@@ -25,6 +27,9 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
   report.onboardingProductionHead = onboardingProductionHead;
   report.onboardingProductionSources = changedSince(memoryStageHead, onboardingProductionHead);
   assert.deepEqual(report.onboardingProductionSources, onboardingProductionSourceChanges.slice().sort());
-  report.cpuStageProductionSources = changedSince(onboardingProductionHead, report.head);
+  report.notificationProductionHead = notificationProductionHead;
+  report.notificationProductionSources = changedSince(onboardingProductionHead, notificationProductionHead);
+  assert.deepEqual(report.notificationProductionSources, notificationProductionSourceChanges.slice().sort());
+  report.cpuStageProductionSources = changedSince(notificationProductionHead, report.head);
   assert.deepEqual(report.cpuStageProductionSources, cpuStageSourceChanges.slice().sort());
 }
