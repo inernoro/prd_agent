@@ -10,3 +10,4 @@
 | fix | cds | 验收报告简版保留操作入口与覆盖账本并更新数据库技能 |
 | security | cds | 修复嵌套审批参数摘要及迁移管理、数据面项目隔离门禁 |
 | fix | cds | PostgreSQL 克隆检查源导出失败，MongoDB 跨 CDS 恢复保留库名映射 |
+| chore | prd-api | 同步验收技能 1.0.2 的官方分发目录生成物 |
