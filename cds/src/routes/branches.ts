@@ -3821,8 +3821,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     context: {
       requestId?: string | null;
       operationId?: string | null;
-      operationGeneration?: number;
-      assertCurrent?: (step: string) => void;
       actor?: string | null;
       trigger?: string | null;
       deploymentRunId?: string;
@@ -3835,14 +3833,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       env?: Record<string, string>;
     } = {},
   ): Promise<'completed' | 'failed'> {
-    const originalProjectId = entry.projectId, originalBranch = entry.branch;
-    const assertCurrent = (step: string) => {
-      context.assertCurrent?.(step);
-      if (stateService.getBranch(entry.id) !== entry || entry.projectId !== originalProjectId || entry.branch !== originalBranch) {
-        throw new BranchOperationSupersededError(context.operationId || '', entry.id, step);
-      }
-    };
-    assertCurrent('before remote dispatch');
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
     res.writeHead(200, {
@@ -3911,8 +3901,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 远端运行时就绪时刻 —— 收到成功的 complete 事件时戳。用作 opLog.runtimeStartedAt，
     // 让执行器构建路径也能像本地路径一样采集部署耗时样本（见下方 finally）。
     let remoteRuntimeReadyAt: string | null = null;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-    let upstreamBody: ReadableStream<Uint8Array> | null = null;
 
     // Prepare the payload the remote's /exec/deploy expects. The remote has
     // its own worktree + state, so we pass branch metadata + profiles + the
@@ -3955,8 +3943,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       env,
       requestId: context.requestId || null,
       operationId: context.operationId || null,
-      operationGeneration: context.operationGeneration,
-      executorId: executor.id,
       deploymentRunId: context.deploymentRunId || null,
       actor: context.actor || null,
       trigger: context.trigger || 'manual',
@@ -3972,12 +3958,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
         body: JSON.stringify(payload),
       });
-      upstreamBody = upstream.body;
-      assertCurrent('after remote fetch');
 
       if (!upstream.ok || !upstream.body) {
         const errText = await (upstream.text ? upstream.text() : Promise.resolve('(no body)'));
-        assertCurrent('after remote rejection body');
         const errEvent = {
           message: `执行器拒绝部署请求 (HTTP ${upstream.status}): ${errText.slice(0, 200)}`,
         };
@@ -3995,7 +3978,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // browser's EventSource parser handles boundaries correctly.
       // 同时增量解析 SSE frame 写入 opLog.events,远端执行器结束后 master
       // 的 GET /api/branches/:id/logs 也能取到完整构建历史(用户反馈 #3)。
-      reader = upstream.body.getReader();
+      const reader = upstream.body.getReader();
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
       // SSE 帧边界 = 双换行;parseSseFrames 取出完整帧、保留尾部不完整片段。
@@ -4011,7 +3994,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return { frames: out, tail: rest };
       };
       const ingestFrame = (frame: string): void => {
-        assertCurrent('before remote frame');
         if (!frame.trim()) return;
         let eventName = 'message';
         const dataLines: string[] = [];
@@ -4024,14 +4006,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         let parsed: Record<string, unknown> = {};
         try { parsed = JSON.parse(dataStr) as Record<string, unknown>; }
         catch { /* 非 JSON 数据降级为 raw chunk */ opLog.events.push({ step: eventName, status: 'log', chunk: dataStr.slice(0, 500), timestamp: new Date().toISOString() }); return; }
-        // 等待回执只是远端有界队列的可见性，不是业务进展，不能经append伪造run心跳。
-        if (eventName === 'phase-wait') {
-          if (parsed && parsed.runId === context.deploymentRunId && parsed.operationId === context.operationId
-            && parsed.operationGeneration === context.operationGeneration) {
-            deploymentRunService?.observeRemoteExecutionWait(executor.id, parsed);
-          }
-          return;
-        }
         // Reuse complete frames already parsed for history; never forward raw
         // executor network chunks to members, including split credentials.
         if (res.locals.cdsScopedHuman) sendSSE(res, eventName, parsed);
@@ -4155,7 +4129,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       while (true) {
         const { done, value } = await reader.read();
-        assertCurrent('after remote stream read');
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
         buffer += chunk;
@@ -4195,7 +4168,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         for (const frame of drained.frames) ingestFrame(frame);
         if (drained.tail.trim()) ingestFrame(drained.tail);
       }
-      assertCurrent('before remote stream completion');
 
       // Master-side state is best-effort — the executor has the source of
       // truth via its next heartbeat, which will reconcile status.
@@ -4241,8 +4213,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       entry.lastAccessedAt = new Date().toISOString();
       stateService.save();
     } catch (err) {
-      assertCurrent('before remote error write');
-      if (err instanceof BranchOperationSupersededError) throw err;
       const msg = (err as Error).message;
       const errEvent = { message: `派发到执行器失败: ${msg}` };
       sendSSE(res, 'error', errEvent);
@@ -4252,8 +4222,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       opLog.events.push({ step: 'error', status: 'error', title: errEvent.message, timestamp: new Date().toISOString() });
       stateService.save();
     } finally {
-      try {
-      assertCurrent('before remote finalization');
       // 收尾:remote 部署的 OperationLog 落库,与本地部署 (line 2724) 对齐
       opLog.finishedAt = new Date().toISOString();
       opLog.status = proxyHasError ? 'error' : 'completed';
@@ -4321,7 +4289,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         actor: context.actor || null,
         trigger: context.trigger || null,
       });
-      assertCurrent('after remote finalization flush');
       if (flushResult !== 'flushed') {
         proxyHasError = true;
         if (!entry.errorMessage) entry.errorMessage = branchStateFlushFailureMessage(flushResult, '远端部署执行完成');
@@ -4337,11 +4304,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           commitSha: entry.githubCommitSha,
         });
       }
-      } finally {
-        // 无论资格检查在哪个await后失败，仅关闭原流；清理异常不能覆盖资格异常。
-        try { if (reader) await reader.cancel(); else await upstreamBody?.cancel(); } catch { /* old stream cleanup only */ }
-        try { res.end(); } catch { /* ignore */ }
-      }
+      try { res.end(); } catch { /* ignore */ }
     }
     return proxyHasError ? 'failed' : 'completed';
   }
@@ -13285,8 +13248,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchOperationFinalStatus = await proxyDeployToExecutor(remoteTarget, entry, res, {
           requestId: requestId || null,
           operationId: branchOperationLease?.operationId || null,
-          operationGeneration: branchOperationLease?.generation,
-          assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           deploymentRunId: deploymentRun?.id,
@@ -13309,14 +13270,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
-        if (err instanceof BranchOperationSupersededError) {
-          // proxy把资格异常带到路由边界，旧流只结束；不能改写后继分支或把旧run重新落失败。
-          if (!res.writableEnded) {
-            sendSSE(res, 'error', { code: 'target_request_superseded', message: '原部署已结束，请查看最新任务' });
-            res.end();
-          }
-          return;
-        }
         throw err;
       } finally {
         completeBranchOperation(branchOperationLease, branchOperationFinalStatus);

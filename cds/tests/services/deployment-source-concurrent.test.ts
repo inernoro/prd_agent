@@ -21,13 +21,24 @@ describe('实际不同服务并行准备独立源码', () => {
       fs.writeFileSync(path.join(repo, 'version.txt'), 'B'); git(['commit', '-am', '版本B'], repo);
       const shaB = git(['rev-parse', 'HEAD'], repo), current = path.join(root, 'current');
       git(['clone', repo, current], root);
-      const shell = new ShellExecutor();
+      const native = new ShellExecutor(); let metadataActive = 0, metadataOverlap = false, firstAdd = true;
+      const shell = { exec: async (command: string, options?: import('../../src/types.js').ExecOptions) => {
+        const metadata = /^git (?:fetch|worktree (?:add|prune|remove))/.test(command);
+        if (!metadata) return native.exec(command, options);
+        metadataActive++; if (metadataActive > 1) metadataOverlap = true;
+        try {
+          // 保持一次真实add在途，暴露另一调用进入共享Git元数据的窗口；不改断言或Git返回值。
+          if (command.startsWith('git worktree add') && firstAdd) { firstAdd = false; await new Promise(resolve => setTimeout(resolve, 100)); }
+          return await native.exec(command, options);
+        } finally { metadataActive--; }
+      } };
       const first = new WorktreeService(shell), second = new WorktreeService(shell);
       const results = await Promise.allSettled([first.prepareDeploymentSource(current, 'main', current, shaA),
         second.prepareDeploymentSource(current, 'main', current, shaB)]);
       console.info(JSON.stringify({ concurrentResults: results.map(r => r.status === 'fulfilled'
         ? { status: r.status, target: r.value.afterFull } : { status: r.status, reason: r.reason?.message }) }));
       expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      expect(metadataOverlap, 'same repository metadata mutations must not overlap across service instances').toBe(false);
       if (results[0].status !== 'fulfilled' || results[1].status !== 'fulfilled') throw new Error('Parallel owned preparation failed');
       const a = results[0].value, b = results[1].value;
       expect(a.afterFull).toBe(shaA); expect(b.afterFull).toBe(shaB); expect(a.sourcePath).not.toBe(b.sourcePath);

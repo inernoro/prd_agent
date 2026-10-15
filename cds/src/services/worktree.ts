@@ -6,7 +6,20 @@ import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
 import { fetchWithLockRetry } from './git-fetch-retry.js';
-import { worktreePathActivity } from './worktree-path-activity.js';
+import { worktreePathActivity, WorktreePathActivity } from './worktree-path-activity.js';
+
+// 同一控制进程/规范repoRoot共用；元数据清理未知时复用现有活动围栏，不放行后继写入。
+const repositoryMutations = new Map<string, Promise<void>>();
+const repositoryMutationActivity = new WorktreePathActivity();
+async function withRepositoryMutation<T>(repoRoot: string, operation: () => Promise<T>): Promise<T> {
+  const key = await fs.promises.realpath(repoRoot).catch(() => path.resolve(repoRoot));
+  const previous = repositoryMutations.get(key) ?? Promise.resolve();
+  const running = previous.then(() => repositoryMutationActivity.run([key], operation));
+  const settled = running.then(() => undefined, () => undefined);
+  repositoryMutations.set(key, settled);
+  try { return await running; }
+  finally { if (repositoryMutations.get(key) === settled) repositoryMutations.delete(key); }
+}
 
 /**
  * Current worktree layout version. See `CdsState.worktreeLayoutVersion`
@@ -258,9 +271,10 @@ export class WorktreeService {
     cwd: string,
     branch: string,
     maxAttempts = 3,
+    repoRoot = cwd,
   ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
     const env = await this.gitEnvProvider?.(cwd);
-    return fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts, env });
+    return withRepositoryMutation(repoRoot, () => fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts, env }));
   }
 
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
@@ -276,26 +290,28 @@ export class WorktreeService {
       throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
     }
 
-    // Always prune stale worktree references before creating a new one.
-    // This handles the case where git has a registered worktree whose
-    // directory no longer exists (e.g. after a crash or manual rm).
-    await this.shell.exec('git worktree prune', { cwd: repoRoot });
-
-    // Remove leftover directory if it still exists
-    const checkDir = await this.shell.exec(`test -d "${targetDir}" && echo exists`);
-    if (checkDir.stdout.trim() === 'exists') {
-      await this.shell.exec(`rm -rf "${targetDir}"`);
-    }
-
-    const addCommand = `git worktree add "${targetDir}" "origin/${branch}"`;
-    let addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
-    if (addResult.exitCode !== 0 && isMissingRegisteredWorktreeError(addResult)) {
+    await withRepositoryMutation(repoRoot, async () => {
+      // Always prune stale worktree references before creating a new one.
+      // This handles the case where git has a registered worktree whose
+      // directory no longer exists (e.g. after a crash or manual rm).
       await this.shell.exec('git worktree prune', { cwd: repoRoot });
-      addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
-    }
-    if (addResult.exitCode !== 0) {
-      throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
-    }
+
+      // Remove leftover directory if it still exists
+      const checkDir = await this.shell.exec(`test -d "${targetDir}" && echo exists`);
+      if (checkDir.stdout.trim() === 'exists') {
+        await this.shell.exec(`rm -rf "${targetDir}"`);
+      }
+
+      const addCommand = `git worktree add "${targetDir}" "origin/${branch}"`;
+      let addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+      if (addResult.exitCode !== 0 && isMissingRegisteredWorktreeError(addResult)) {
+        await this.shell.exec('git worktree prune', { cwd: repoRoot });
+        addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+      }
+      if (addResult.exitCode !== 0) {
+        throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
+      }
+    });
   }
 
   private async ensureDeploymentWorktree(
@@ -425,14 +441,14 @@ export class WorktreeService {
         throw new DeploymentSourcePreparationError('invalid-branch-ref', '无法准备非法分支的部署源码');
       }
       const before = await this.ensureDeploymentWorktree(repoRoot, branch, targetDir);
-      const fetched = await this.fetchWithLockRetry(targetDir, branch);
+      const fetched = await this.fetchWithLockRetry(targetDir, branch, 3, repoRoot);
       if (fetched.exitCode !== 0) throw new Error(`部署源码拉取失败:\n${combinedOutput(fetched)}`);
       const ref = commitSha || `origin/${branch}`;
       const resolve = () => this.shell.exec(`git rev-parse --verify ${quote(`${ref}^{commit}`)}`, { cwd: targetDir });
       let resolved = await resolve();
       // 浅克隆或已前进的分支可能不含旧提交；全长身份可向原仓库精确取回，不能退到 HEAD。
       if (resolved.exitCode !== 0 && commitSha?.length === 40) {
-        const targeted = await this.fetchWithLockRetry(targetDir, commitSha);
+        const targeted = await this.fetchWithLockRetry(targetDir, commitSha, 3, repoRoot);
         if (targeted.exitCode === 0) resolved = await resolve();
       }
       const sha = resolved.stdout.trim().toLowerCase();
@@ -440,14 +456,14 @@ export class WorktreeService {
       const sourceRoot = WorktreeService.deploymentSourceRootFor(targetDir);
       fs.mkdirSync(sourceRoot, { recursive: true, mode: 0o700 });
       const sourcePath = path.join(sourceRoot, randomUUID());
-      const added = await this.shell.exec(`git worktree add --detach ${quote(sourcePath)} ${quote(sha)}`, { cwd: targetDir });
+      const added = await withRepositoryMutation(repoRoot, () => this.shell.exec(`git worktree add --detach ${quote(sourcePath)} ${quote(sha)}`, { cwd: targetDir }));
       if (added.exitCode !== 0) {
         await fs.promises.rm(sourcePath, { recursive: true, force: true });
         throw new Error(`部署源码目录准备失败:\n${combinedOutput(added)}`);
       }
       const actual = await this.shell.exec('git rev-parse HEAD', { cwd: sourcePath });
       if (actual.exitCode !== 0 || actual.stdout.trim().toLowerCase() !== sha) {
-        await this.shell.exec(`git worktree remove --force ${quote(sourcePath)}`, { cwd: targetDir });
+        await withRepositoryMutation(repoRoot, () => this.shell.exec(`git worktree remove --force ${quote(sourcePath)}`, { cwd: targetDir }));
         await fs.promises.rm(sourcePath, { recursive: true, force: true });
         throw new Error('部署源码目录未匹配目标提交，已拒绝执行');
       }
@@ -459,10 +475,10 @@ export class WorktreeService {
 
   async remove(repoRoot: string, targetDir: string): Promise<void> {
     return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)], async () => {
-      const result = await this.shell.exec(
+      const result = await withRepositoryMutation(repoRoot, () => this.shell.exec(
         `git worktree remove --force "${targetDir}"`,
         { cwd: repoRoot },
-      );
+      ));
       if (result.exitCode !== 0) {
         throw new Error(`删除工作树 "${targetDir}" 失败:\n${combinedOutput(result)}`);
       }
