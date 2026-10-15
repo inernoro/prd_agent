@@ -20,13 +20,15 @@ const localQueueProductionHead = '2db92a866e6b935efae35e320dc3777da810dfa4';
 const localQueueProductionSourceChanges = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/deployment-run.ts'];
 const alarmQueueProductionHead = 'f5ed37799f95967d66b57c95c4d3425a68a3bed8';
 const alarmQueueProductionSources = ['cds/src/index.ts', 'cds/src/routes/alarm-channels.ts', 'cds/src/services/alarm-dispatch.ts', 'cds/src/services/phone-dispatch-queue.ts'];
+const cleanupQualificationProductionHead = '97dee9019981fe99b4a8ebb6cb280db53e56abb1';
+const cleanupQualificationProductionSources = ['cds/src/routes/branches.ts', 'cds/src/services/container.ts', 'cds/src/services/service-replacement.ts'];
 const coldRecoverySourceChanges = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/worktree.ts'];
 const cleanupStageSourceChanges = ['cds/src/services/worktree.ts', 'cds/src/services/project-admission-order.ts', 'cds/src/routes/branches.ts', 'cds/src/services/isolated-shell-executor.ts', 'cds/src/services/observation-executor-process.ts', 'cds/src/services/observation-process-group.ts', 'cds/src/services/observation-process.ts', 'cds/src/services/observation-supervisor-process.ts', 'cds/src/services/shell-executor.ts', 'cds/src/services/self-update-checkout.ts', 'cds/src/services/self-update-failure-diagnosis.ts'];
 const cpuStageSourceChanges = ["cds/src/executor/routes.ts", "cds/src/routes/branches.ts", "cds/src/services/build-gate.ts", "cds/src/services/container.ts", "cds/src/services/deployment-phase-budget.ts", "cds/src/services/docker-lifecycle-classifier.ts", "cds/src/services/project-admission-order.ts"];
 const memoryStageSourceChanges = ["cds/src/index.ts", "cds/src/infra/state-store/mongo-split-store.ts", "cds/src/services/container.ts", "cds/src/services/orphan-container-reaper.ts", "cds/src/services/resource-usage-sampler.ts", "cds/src/services/scheduler-service-stop.ts", "cds/src/services/scheduler.ts", "cds/src/services/service-replacement.ts", "cds/src/services/service-runtime.ts"];
 
 export function assertCurrentSourceQualification(expectedPreviousSources: readonly string[], report: Record<string, any>, native = true): void {
-  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead], { stdio: 'pipe', timeout: 120000 });
+  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead], { stdio: 'pipe', timeout: 120000 });
   const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
     { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
   report.previousQualifiedHead = previousQualifiedHead;
@@ -62,6 +64,9 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
   report.alarmQueueProductionHead = alarmQueueProductionHead;
   report.alarmQueueProductionSources = changedSince(localQueueProductionHead, alarmQueueProductionHead);
   assert.deepEqual(report.alarmQueueProductionSources, alarmQueueProductionSources.slice().sort());
-  report.cleanupStageSources = changedSince(alarmQueueProductionHead, report.head);
+  report.cleanupQualificationProductionHead = cleanupQualificationProductionHead;
+  report.cleanupQualificationProductionSources = changedSince(alarmQueueProductionHead, cleanupQualificationProductionHead);
+  assert.deepEqual(report.cleanupQualificationProductionSources, cleanupQualificationProductionSources.slice().sort());
+  report.cleanupStageSources = changedSince(cleanupQualificationProductionHead, report.head);
   assert.deepEqual(report.cleanupStageSources, cleanupStageSourceChanges.slice().sort());
 }

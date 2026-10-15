@@ -552,6 +552,7 @@ async function main(): Promise<void> {
       os: view.Os, architecture: view.Architecture });
   };
   let finiteCache: { finish: () => Promise<void>; stop: () => void } | undefined;
+  let capabilityFixtureReference: string | undefined, capabilityFixtureImageId: string | undefined;
   const prepareFiniteCoreCache = async (applicationCoreImageId: string) => {
     // Only this independent fixture's single lease overlaps application stop.
     // Prune/release assertions still follow the original application assertions.
@@ -574,7 +575,7 @@ async function main(): Promise<void> {
     try {
       await cache.resume(); assert.equal(evidence.events.length, 0);
       evidence.foreignReferencesBefore = {};
-      for (const reference of ['mongo:7.0', 'registry:2', 'node:22-alpine'])
+      for (const reference of ['mongo:7.0', 'registry:2', 'node:22-alpine', capabilityImage])
         evidence.foreignReferencesBefore[reference] = await docker(['image', 'inspect', reference, '--format', '{{.Id}}']);
       const makeFixture = async (role: string) => {
         const context = path.join(root, `finite-cache-${role}`); await fs.mkdir(context);
@@ -674,6 +675,15 @@ async function main(): Promise<void> {
       finally { row.finishedAt = new Date().toISOString(); }
     }, capabilityImage);
     await checkpoint('owned-fixture-image-pulls-complete');
+    // digest-only镜像可被原Janitor当悬空回收；夹具仅保留唯一tag，不关闭原prune或改探针镜像。
+    capabilityFixtureImageId = await docker(['image', 'inspect', capabilityImage, '--format', '{{.Id}}']);
+    assert.match(capabilityFixtureImageId, /^sha256:[a-f0-9]{64}$/);
+    capabilityFixtureReference = `${source.owner}-capability-fixture:retained`;
+    await docker(['tag', capabilityImage, capabilityFixtureReference]);
+    assert.equal(await docker(['image', 'inspect', capabilityFixtureReference, '--format', '{{.Id}}']), capabilityFixtureImageId);
+    report.capabilityFixtureReference = { reference: capabilityFixtureReference, imageId: capabilityFixtureImageId,
+      exactOriginalDigest: capabilityImage, originalPruneEnabled: true, removed: false };
+    await checkpoint('owned-capability-fixture-reference-retained');
     const mongoPort = await availablePort(), registryPort = await availablePort(); assert.notEqual(mongoPort, registryPort);
     await run('mongo', ['--network', 'host', '--cpus', '0.5', '--memory', '768m', 'mongo:7.0', 'mongod', '--bind_ip', '127.0.0.1', '--port', String(mongoPort), '--wiredTigerCacheSizeGB', '0.25']);
     await run('registry', ['--network', 'host', '--cpus', '0.25', '--memory', '128m', '-e', `REGISTRY_HTTP_ADDR=127.0.0.1:${registryPort}`, 'registry:2']);
@@ -1544,6 +1554,15 @@ async function main(): Promise<void> {
     }
     try { for (const id of images) { const view = JSON.parse(await docker(['image', 'inspect', id]))[0]; assert.equal(view.Config.Labels['cds.acceptance.owner'], source.owner); await docker(['image', 'rm', '-f', id]); } report.ownedImagesRemoved = true; }
     catch (error) { cleanupErrors.push(String(error)); }
+    if (capabilityFixtureReference) {
+      try {
+        assert.equal(JSON.parse(await docker(['info', '--format', '{{json .}}'])).ID, info.ID);
+        assert.equal(await docker(['image', 'inspect', capabilityFixtureReference, '--format', '{{.Id}}']), capabilityFixtureImageId);
+        await docker(['image', 'rm', capabilityFixtureReference]);
+        assert.equal(await docker(['image', 'ls', '-q', '--filter', `reference=${capabilityFixtureReference}`]), '');
+        report.capabilityFixtureReference.removed = true;
+      } catch (error) { cleanupErrors.push(String(error)); }
+    }
     await fs.rm(root, { recursive: true, force: true }); report.isolatedFilesRemoved = true;
     // 外层最后按归属销毁整个独占daemon卷；不对任何共享Docker做prune。
     try { report.remainingNetworksBeforeOwnedDaemonRemoval = JSON.parse(await docker(['network', 'ls', '--format', '{{json .}}']).then(s => '[' + s.split('\n').filter(Boolean).join(',') + ']')); }
