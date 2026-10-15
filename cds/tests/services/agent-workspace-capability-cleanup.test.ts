@@ -8,6 +8,9 @@ import { describe, expect, it, vi } from 'vitest';
 import { AgentWorkspaceSessionRuntime } from '../../src/services/agent-workspace-session-runtime.js';
 import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js';
 const result = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({ stdout, stderr, exitCode });
+// 夹具会真实刷盘；留出调度余量，截止时间和确认窗口仍使用同一个固定预算。
+const cleanupBudgetMs = 300;
+const cleanupPollMs = 20;
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
 function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean;
@@ -70,21 +73,21 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
   };
   if (config.queued) shell.execOwnedOperation = (command, options) => shell.exec(command, options);
   const runtime = new AgentWorkspaceSessionRuntime(shell, { rootDir, instanceId: 'cancel-owner', autoPullImage: false,
-    probeCleanupTimeoutMs: 60, probeCleanupPollMs: 5, serverEventLogStore: { record: event => events.push(event) } });
+    probeCleanupTimeoutMs: cleanupBudgetMs, probeCleanupPollMs: cleanupPollMs, serverEventLogStore: { record: event => events.push(event) } });
   return { runtime, shell, accepted, calls, events, rootDir, containerId, reveal: () => { visible = true; },
     get journalAtAdmission() { return journalAtAdmission; }, get aborted() { return aborted; }, get visible() { return visible; } };
 }
 
 describe('capability probe cancellation reconciliation', () => {
   it('uses the fixed confirmed-resource window after one step expires, without extending any step or reissuing a name', async () => {
-    const f = fixture(true, { delayedRemovalMs: 80 });
+    const f = fixture(true, { delayedRemovalMs: cleanupBudgetMs + 100 });
     try {
       const probe = f.runtime.capability(true); await f.accepted.promise;
       await expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined(); await probe;
       const window = f.events.find(event => event.action === 'agent.probe.cleanup.confirmation-window.started');
-      expect(window.details.confirmationDeadline - window.details.originalDeadline).toBe(60);
+      expect(window.details.confirmationDeadline - window.details.originalDeadline).toBe(cleanupBudgetMs);
       const steps = f.events.filter(event => event.action === 'agent.probe.cleanup.step.requested');
-      expect(steps.every(event => event.details.deadline - event.details.requestedAt > 0 && event.details.deadline - event.details.requestedAt <= 60)).toBe(true);
+      expect(steps.every(event => event.details.deadline - event.details.requestedAt > 0 && event.details.deadline - event.details.requestedAt <= cleanupBudgetMs)).toBe(true);
       expect(f.calls.filter(call => call.command.startsWith('docker rm -f')).every(call => call.command === `docker rm -f '${f.containerId}'`)).toBe(true);
       expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmed')).toBe(true);
       expect(f.visible).toBe(false);
@@ -155,7 +158,7 @@ describe('capability probe cancellation reconciliation', () => {
       expect(f.visible).toBe(true); expect(f.events.some(x => x.action === 'agent.probe.cleanup.confirmed')).toBe(false);
       const removals = f.calls.filter(x => x.command.startsWith('docker rm -f'));
       expect(removals.length).toBeGreaterThan(2); expect(removals.length).toBeLessThan(40);
-      expect(removals.every(x => x.command === `docker rm -f '${f.containerId}'` && x.options?.timeout! <= 60)).toBe(true);
+      expect(removals.every(x => x.command === `docker rm -f '${f.containerId}'` && x.options?.timeout! <= cleanupBudgetMs)).toBe(true);
       const journals = fs.readdirSync(f.rootDir, { recursive: true }).filter(name => String(name).endsWith('probe.json'));
       expect(journals.length).toBeGreaterThan(0);
       const receipt = JSON.parse(fs.readFileSync(path.join(f.rootDir, String(journals[0])), 'utf8'));
@@ -174,7 +177,7 @@ describe('capability probe cancellation reconciliation', () => {
   it('retains an issued but unacknowledged generation across restart and later removes only the owned ID', async () => {
     const f = fixture(false, { emptyCidFile: true });
     const restarted = new AgentWorkspaceSessionRuntime(f.shell, { rootDir: f.rootDir, instanceId: 'cancel-owner', autoPullImage: false,
-      probeCleanupTimeoutMs: 60, probeCleanupPollMs: 5, serverEventLogStore: { record: event => f.events.push(event) } });
+      probeCleanupTimeoutMs: cleanupBudgetMs, probeCleanupPollMs: cleanupPollMs, serverEventLogStore: { record: event => f.events.push(event) } });
     try {
       const probe = f.runtime.capability(true); await f.accepted.promise;
       expect(f.journalAtAdmission).toMatchObject({ schema: 1, instanceId: 'cancel-owner', leases: [{ issued: true, cleaned: false }] });
@@ -193,7 +196,7 @@ describe('capability probe cancellation reconciliation', () => {
   it('autonomously retries recovered unknown ownership and clears it after the late allocation appears', async () => {
     const f = fixture(false, { emptyCidFile: true }); const cleaned = deferred<void>();
     const restarted = new AgentWorkspaceSessionRuntime(f.shell, { rootDir: f.rootDir, instanceId: 'cancel-owner', autoPullImage: false,
-      probeCleanupTimeoutMs: 60, probeCleanupPollMs: 5, cleanupRetryBaseMs: 5, cleanupRetryMaxMs: 10,
+      probeCleanupTimeoutMs: cleanupBudgetMs, probeCleanupPollMs: cleanupPollMs, cleanupRetryBaseMs: 5, cleanupRetryMaxMs: 10,
       serverEventLogStore: { record: event => { f.events.push(event); if (event.action === 'agent.probe.cleanup.confirmed') cleaned.resolve(); } } });
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -245,7 +248,7 @@ describe('capability probe cancellation reconciliation', () => {
   it('waits for pending restart receipt loading before deciding that shutdown is clean', async () => {
     const f = fixture(false), loading = deferred<void>(), release = deferred<void>();
     const restarted = new AgentWorkspaceSessionRuntime(f.shell, { rootDir: f.rootDir, instanceId: 'cancel-owner', autoPullImage: false,
-      probeCleanupTimeoutMs: 60, probeCleanupPollMs: 5 });
+      probeCleanupTimeoutMs: cleanupBudgetMs, probeCleanupPollMs: cleanupPollMs });
     const probe = f.runtime.capability(true); await f.accepted.promise;
     await expect(f.runtime.closeCapabilityProbes()).rejects.toMatchObject({ code: 'workspace_probe_cleanup_unconfirmed' }); await probe;
     const open = fs.promises.open.bind(fs.promises); let held = false;
