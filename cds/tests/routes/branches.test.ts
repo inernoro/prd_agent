@@ -17,6 +17,9 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService, resolveEffectiveProfile } from '../../src/services/container.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
+import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
+import { commitServiceReplacements } from '../../src/services/service-replacement.js';
+import { branchAppNetworkName } from '../../src/services/branch-network.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
 import { refreshArtifactWaiters, requestArtifactWaitRefresh } from '../../src/services/artifact-admission-wait.js';
 import { componentInputComparator } from '../../src/services/prebuilt-reuse.js';
@@ -301,7 +304,10 @@ describe('Branch Routes', () => {
       },
     };
     branchOperationCoordinator = new BranchOperationCoordinator(serverEventLogStore);
-    deploymentRunService = new DeploymentRunService(stateService);
+    deploymentRunService = new DeploymentRunService(stateService, {
+      isExecutionWaiting: (run, now) => !!run.operationId && run.operationGeneration !== undefined
+        && (deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt || 0) > now.getTime(),
+    });
     deploymentVersionService = new DeploymentVersionService(stateService);
     managedProjectService = new ManagedProjectService(stateService);
 
@@ -5065,6 +5071,98 @@ describe('Branch Routes', () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    for (const pathKind of ['pre-pull', 'empty-profiles', 'retirement'] as const) for (const expired of [true, false]) {
+      it(`local queued cleanup ${pathKind}: ${expired ? 'revoked old slot cannot delete the successor' : 'valid wait survives 15 minutes and still cleans up'}`, async () => {
+        const id = `queued-cleanup-${pathKind}`, serviceId = pathKind === 'retirement' ? 'api' : 'orphan';
+        const containerName = `cds-${id}-${serviceId}`, oldCid = 'a'.repeat(64);
+        if (pathKind !== 'empty-profiles') await request(server, 'POST', '/api/build-profiles', {
+          id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+        });
+        stateService.addBranch({ id, projectId: 'default', branch: `feature/${id}`,
+          worktreePath: path.join(tmpDir, 'worktrees', id), status: 'running', createdAt: new Date().toISOString(),
+          services: { [serviceId]: { profileId: serviceId, containerName, hostPort: 10002, status: 'running',
+            ...(pathKind === 'retirement' ? { containerId: oldCid, networkName: 'cds-test-network',
+              servingRuntime: { containerName, containerId: oldCid, hostPort: 10002, networkName: 'cds-test-network' } } : {}) } } });
+        stateService.save();
+        const release = await deploymentPhaseBudget.acquire('cleanup', { branchId: 'unrelated-cleanup-holder' });
+        const deploy = request(server, 'POST', `/api/branches/${id}/deploy`);
+        try {
+          await vi.waitFor(() => expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(true));
+          const run = deploymentRunService.list({ branchId: id })[0];
+          const queued = deploymentPhaseBudget.snapshot().cleanup.queued.find(item => item.branchId === id)!;
+          let successor: ReturnType<BranchOperationCoordinator['begin']> | undefined;
+          if (expired) {
+            expect(deploymentRunService.reconcileInterrupted(new Date(queued.enqueuedAt + 21 * 60_000)).map(item => item.id)).toContain(run.id);
+            successor = branchOperationCoordinator.begin({ projectId: 'default', branchId: id, kind: 'deploy', trigger: 'manual',
+              commitSha: 'b'.repeat(40), commitPinned: true });
+            expect(successor.status).toBe('started');
+            stateService.getBranch(id)!.services[serviceId].containerId = 'd'.repeat(64);
+          } else {
+            const heartbeat = run.heartbeatAt;
+            expect(deploymentRunService.reconcileInterrupted(new Date(queued.enqueuedAt + 16 * 60_000))).toEqual([]);
+            expect(run.heartbeatAt).toBe(heartbeat);
+            expect(queued.operationGeneration).toBe(run.operationGeneration);
+          }
+          release();
+          const response = await deploy;
+          expect(response.status).toBe(200);
+          const removal = mock.commands.filter(command => /^docker (?:stop|rm) /.test(command)
+            && command.includes(pathKind === 'retirement' ? oldCid : containerName));
+          if (expired) {
+            expect(removal).toEqual([]);
+            expect(successor!.lease!.isCurrent()).toBe(true);
+            expect(stateService.getBranch(id)!.services[serviceId].containerId).toBe('d'.repeat(64));
+          } else {
+            expect(removal.some(command => command.startsWith('docker rm '))).toBe(true);
+            if (pathKind !== 'retirement') expect(stateService.getBranch(id)!.services.orphan).toBeUndefined();
+            else expect(stateService.getBranch(id)!.services.api.retainedRuntimes).toEqual([]);
+          }
+          expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(false);
+        } finally { release(); await deploy; }
+      });
+    }
+
+    it.each(['failed-candidate', 'unused-network'])('local replacement cleanup %s keeps the exact bounded wait', async kind => {
+      const id = `replacement-${kind}`, oldCid = 'a'.repeat(64), candidateCid = 'b'.repeat(64);
+      const unusedNetwork = `${branchAppNetworkName(id).slice(0, 27)}-r-${'c'.repeat(32)}`;
+      mock.addResponsePatternFirst(/^docker network rm /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const entry: BranchEntry = { id, projectId: 'default', branch: `feature/${id}`,
+        worktreePath: path.join(tmpDir, 'worktrees', id), status: 'running', createdAt: new Date().toISOString(),
+        replacementNetwork: unusedNetwork, replacementNetworks: [unusedNetwork], services: { api: {
+          profileId: 'api', containerName: 'candidate-api', containerId: candidateCid, hostPort: 10002,
+          status: kind === 'failed-candidate' ? 'error' : 'running', creationIssued: true,
+          networkName: kind === 'failed-candidate' ? unusedNetwork : 'current-network',
+          ...(kind === 'failed-candidate' ? { servingRuntime: { containerName: 'old-api', containerId: oldCid,
+            hostPort: 10001, networkName: 'old-network' } } : { retainedRuntimes: [{ containerName: 'unknown-old-api', hostPort: 10003 }] }),
+        } } };
+      stateService.addBranch(entry);
+      const lease = branchOperationCoordinator.begin({ projectId: 'default', branchId: id, kind: 'deploy', trigger: 'manual' }).lease!;
+      const run = await deploymentRunService.begin({ projectId: 'default', branchId: id, trigger: 'manual',
+        operationId: lease.operationId, operationGeneration: lease.generation });
+      deploymentRunService.transition(run.id, 'preparing', { phase: 'cleanup', message: '真实替换清理' });
+      const heartbeat = run.heartbeatAt;
+      const release = await deploymentPhaseBudget.acquire('cleanup', { branchId: 'unrelated-cleanup-holder' });
+      const cleanup = commitServiceReplacements({ entry, profileIds: ['api'], state: stateService, container: containerService,
+        operationId: lease.operationId, operationGeneration: lease.generation, assertCurrent: step => lease.assertCurrent(step) });
+      const result = cleanup.then(() => undefined, error => error);
+      try {
+        await vi.waitFor(() => expect(deploymentPhaseBudget.snapshot().cleanup.queued.some(item => item.branchId === id)).toBe(true));
+        const queued = deploymentPhaseBudget.snapshot().cleanup.queued.find(item => item.branchId === id)!;
+        expect(deploymentRunService.reconcileInterrupted(new Date(queued.enqueuedAt + 16 * 60_000))).toEqual([]);
+        expect(run.heartbeatAt).toBe(heartbeat);
+        expect(queued.operationGeneration).toBe(lease.generation);
+        release(); expect(await result).toBeUndefined();
+        if (kind === 'failed-candidate') {
+          expect(mock.commands.some(command => command === `docker rm ${candidateCid}`)).toBe(true);
+          expect(entry.services.api.containerId).toBe(oldCid);
+        } else {
+          expect(mock.commands.some(command => command === `docker network rm '${unusedNetwork}'`)).toBe(true);
+          expect(entry.replacementNetworks).toEqual([]);
+        }
+        expect(mock.commands.some(command => command === `docker rm ${oldCid}`)).toBe(false);
+      } finally { release(); await result; }
     });
 
     it('orphan-service removal does not delete entry.services when the deploy lease is superseded mid-loop', async () => {
