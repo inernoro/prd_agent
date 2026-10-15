@@ -131,6 +131,28 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
         if (replacement is not null) cancel |= replacement.ToBsonDocument().Any(field => IsCancellation(field.Name, field.Value));
         var authorizationChange = typeof(T) == typeof(User) && (cancel || set?.Contains("Status") == true || replacement is not null)
             || typeof(T) == typeof(AgentApiKey) && (cancel || replacement is not null || set?.Names.Any(n => n is "RevokedAt" or "IsActive" or "Scopes" or "ScopeMode" or "ApiKeyHash" or "OwnerUserId" or "ExpiresAt") == true);
+        if (!cancel && typeof(ITaskAuthorizedRun).IsAssignableFrom(typeof(T))
+            && (set?.Contains("Status") == true || set?.Contains("State") == true || replacement is not null))
+        {
+            var filterIndex = Array.FindIndex(args, x => x is FilterDefinition<T>);
+            if (filterIndex >= 0)
+            {
+                var original = (FilterDefinition<T>)args[filterIndex]!;
+                FilterDefinition<T> open = new BsonDocument
+                {
+                    ["CancelRequested"] = new BsonDocument("$ne", true),
+                    ["CancelRequestedAt"] = BsonNull.Value,
+                    ["Status"] = new BsonDocument("$nin", CancelledValues("Status")),
+                    ["State"] = new BsonDocument("$nin", CancelledValues("State"))
+                };
+                var nextPermit = replacement is ITaskAuthorizedRun next ? next.TaskPermitId
+                    : set?.GetValue("TaskPermitId", BsonNull.Value) is { IsString: true } proposed ? proposed.AsString : null;
+                // 只有已获得新许可且一并替换引用的明确重试可离开取消状态。
+                if (TaskExecutionContext.Current?.Lease is { } fresh && nextPermit == fresh.PermitId)
+                    open |= Builders<T>.Filter.Ne("TaskPermitId", nextPermit);
+                args[filterIndex] = original & open;
+            }
+        }
         if (!cancel && !authorizationChange) return;
         var filter = args.OfType<FilterDefinition<T>>().FirstOrDefault()
             ?? throw new InvalidOperationException("任务取消或删除缺少明确的对象条件。");
@@ -199,6 +221,13 @@ public class TaskLifecycleMongoCollection<T> : DispatchProxy where T : class
                 foreach (var child in children)
                     if (child is ITaskAuthorizedRun)
                         foreach (var reference in References(child, run)) yield return reference;
+    }
+    private static BsonArray CancelledValues(string field)
+    {
+        var values = new BsonArray { "cancelled", "Cancelled", "canceled", "Canceled" };
+        var type = typeof(T).GetProperty(field)?.PropertyType;
+        if (type?.IsEnum == true && Enum.TryParse(type, "Cancelled", out var value)) values.Add(Convert.ToInt32(value));
+        return values;
     }
     private static bool IsLifecycleField(string field) => field is "CancelRequested" or "CancelRequestedAt" or "Status" or "State"
         or "TaskPermitId" or "RevokedAt" or "IsActive" or "Scopes" or "ScopeMode" or "ApiKeyHash" or "OwnerUserId" or "ExpiresAt";

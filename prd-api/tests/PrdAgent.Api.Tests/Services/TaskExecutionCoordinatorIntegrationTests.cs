@@ -425,6 +425,29 @@ public sealed class TaskExecutionCoordinatorIntegrationTests : IAsyncLifetime
         Assert.True(await Coordinator.ValidateAsync(nextLease.Proof, false, default));
     }
 
+    [DesignScopeMongoFact]
+    public async Task LateFailureOutsideWorkerScope_CannotOverwriteCancellation_ButExplicitNewIntentCanRun()
+    {
+        var oldPermit = Permit(Guid.NewGuid().ToString("N")); await Coordinator.RegisterAsync(oldPermit, false, default);
+        var tasks = _data.Database.GetCollection<FutureBusinessRun>("cancel_monotonic");
+        await tasks.InsertOneAsync(new() { Id = "cancelled-row", TaskPermitId = oldPermit.Id });
+        await tasks.UpdateOneAsync(x => x.Id == "cancelled-row", Builders<FutureBusinessRun>.Update.Set(x => x.Status, "cancelled"));
+        // 特意模拟作用域已经退出后旧 Worker 的通用异常兜底。
+        var late = await tasks.UpdateOneAsync(x => x.Id == "cancelled-row", Builders<FutureBusinessRun>.Update.Set(x => x.Status, "failed"));
+        Assert.Equal(0, late.ModifiedCount);
+        Assert.Equal("cancelled", (await tasks.Find(x => x.Id == "cancelled-row").SingleAsync()).Status);
+        var nextPermit = Permit(Guid.NewGuid().ToString("N"));
+        var admitted = await Coordinator.RegisterAsync(nextPermit, true, default);
+        await using var root = admitted.Lease!;
+        using (TaskExecutionContext.Enter(root.Identity))
+        {
+            var retry = await tasks.UpdateOneAsync(x => x.Id == "cancelled-row", Builders<FutureBusinessRun>.Update
+                .Set(x => x.TaskPermitId, nextPermit.Id).Set(x => x.Status, "queued").Set(x => x.CancelRequested, false));
+            Assert.Equal(1, retry.ModifiedCount);
+        }
+        Assert.Equal(nextPermit.Id, (await tasks.Find(x => x.Id == "cancelled-row").SingleAsync()).TaskPermitId);
+    }
+
     public sealed class FutureBusinessRun : ITaskAuthorizedRun
     {
         public string Id { get; set; } = Guid.NewGuid().ToString("N");
