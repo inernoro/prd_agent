@@ -21,8 +21,8 @@ const output = path.resolve('cpu-fairness-output'); await fs.mkdir(output, { rec
 const names: string[] = []; const ids = new Set<string>(); const observations: any[] = [];
 const report: any = { head: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   githubRunId: process.env.GITHUB_RUN_ID, owner, startedAt: new Date().toISOString(), verdict: 'failed',
-  scope: 'three original StateService projects and owned real Docker/HTTP executions; bounded startup and durable fixture recovery, not full production peak or historical data-integrity proof',
-  physicalPressureInjected: false, startupLoadSampleInjected: true, checks: [], releases: [] };
+  scope: 'three original plus eighteen dynamic StateService projects and owned real Docker/HTTP executions; bounded startup and durable fixture recovery, not full production peak or historical data-integrity proof',
+  physicalPressureInjected: false, startupLoadSampleInjected: true, checks: [], releases: [], dynamicFairness: [], dynamicReleases: [] };
 function docker(args: string[], timeout = 30000): string {
   return execFileSync('docker', args, { encoding: 'utf8', timeout, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
@@ -30,7 +30,7 @@ function owned(name: string): any {
   assert.ok(names.includes(name) || ids.has(name));
   const v = JSON.parse(docker(['inspect', '--type', 'container', name]))[0];
   assert.equal(v.Config.Labels['cds.acceptance.owner'], owner);
-  assert.equal(v.HostConfig.Memory, 134217728); assert.equal(v.HostConfig.NanoCpus, 250000000);
+  assert.equal(v.HostConfig.Memory, 134217728); assert.equal(v.HostConfig.NanoCpus, 250000000); assert.equal(v.HostConfig.PidsLimit, 64);
   return v;
 }
 const shell = new ShellExecutor();
@@ -54,13 +54,13 @@ async function port(): Promise<number> {
   await new Promise<void>(r => server.close(() => r())); return address.port;
 }
 const program = `const fs=require('fs'),http=require('http');const file='/data/records.json';let rows=fs.existsSync(file)?JSON.parse(fs.readFileSync(file)):{};function save(){const fd=fs.openSync(file,'w');fs.writeFileSync(fd,JSON.stringify(rows));fs.fsyncSync(fd);fs.closeSync(fd);}http.createServer((q,r)=>{const u=new URL(q.url,'http://owned');if(q.method==='POST'){const id=u.searchParams.get('id');if(u.searchParams.get('pending')!=='1'){if(!rows[id])rows[id]={id,project:process.env.FIXTURE_PROJECT};save();}r.statusCode=u.searchParams.get('pending')==='1'?202:200;}r.setHeader('content-type','application/json');r.end(JSON.stringify({project:process.env.FIXTURE_PROJECT,version:process.env.FIXTURE_HEAD,rows}));}).listen(3000,'0.0.0.0');process.on('SIGTERM',()=>{if(process.env.FIXTURE_MODE==='forced')return;save();process.exit(process.env.FIXTURE_MODE==='term143'?143:0);});`;
-async function launch(key: string, suffix: string, mode = 'normal'): Promise<{ name: string; id: string; port: number }> {
+async function launch(key: string, suffix: string, mode = 'normal'): Promise<{ name: string; id: string; port: number; dockerStartedAt: string; httpReadyAt: string }> {
   const name = `${owner}-${key}-${suffix}`, p = await port(); names.push(name);
   const data = path.join(root, key); await fs.mkdir(data, { recursive: true });
   const id = docker(['run', '-d', '--name', name, '--label', `cds.acceptance.owner=${owner}`, '--label', `cds.project.id=${owner}-${key}`,
     '--memory', '128m', '--cpus', '.25', '--pids-limit', '64', '--stop-timeout', '1',
     '-v', `${data}:/data`, '-p', `127.0.0.1:${p}:3000`, '-e', `FIXTURE_PROJECT=${owner}-${key}`, '-e', `FIXTURE_MODE=${mode}`, '-e', `FIXTURE_HEAD=${report.head}`, fixtureImage]); ids.add(id); owned(id);
-  const runtime = { name, id, port: p }; const body = await read(runtime); assert.equal(body.version, report.head);
+  const runtime = { name, id, port: p, dockerStartedAt: String(owned(id).State.StartedAt), httpReadyAt: '' }; const body = await read(runtime); runtime.httpReadyAt = new Date().toISOString(); assert.equal(body.version, report.head);
   assert.equal(owned(id).Image, report.fixtureImageId);
   const branch = state.getBranch(`${owner}-${key}`)!;
   branch.services[suffix] = { profileId: suffix, containerName: name, containerId: id, hostPort: p, status: 'running', creationIssued: true };
@@ -118,6 +118,85 @@ try {
     assert.ok(order.indexOf('c') < 3); assert.deepEqual(order.slice(0, 3).sort(), ['a', 'b', 'c']);
     report.checks.push({ case: `three-project-${phase}`, order, actualExecutions: actual, currentQualifiedProjectBound: 3 });
   }
+  // 保留原三项目静态场景；另核持续新项目到达及真实停止完成后的动态资格。
+  assert.equal(state.getProjects().filter(project => project.id.startsWith(owner)).length, 3);
+  const dynamicProjects = new Set<string>();
+  for (const phase of ['compile', 'pull', 'start'] as const) {
+    const budget = new DeploymentPhaseBudget(() => 8192, { pull: 1, start: 1 });
+    const acquire = async (key: string): Promise<() => void> => {
+      const holder = { projectId: `${owner}-${key}`, branchId: `${owner}-${key}`, profileId: 'owned-dynamic' };
+      return phase === 'compile' ? (await acquireBuildSlot({ holder })).release : budget.acquire(phase, holder);
+    };
+    const ensureProject = (key: string): void => {
+      if (key === 'a' || key === 'b') return;
+      const projectId = `${owner}-${key}`; if (dynamicProjects.has(projectId)) return;
+      dynamicProjects.add(projectId);
+      state.addProject({ id: projectId, name: `Owned ${key}`, slug: projectId, createdAt: new Date().toISOString(),
+        repoUrl: `https://example.invalid/${projectId}.git`, buildProfiles: [] } as unknown as Project);
+      state.addBranch({ id: projectId, projectId, branch: 'owned-dynamic', worktreePath: root,
+        status: 'idle', createdAt: new Date().toISOString(), services: {} } as BranchEntry);
+    };
+    const firstA = await acquire('a'); const previousA = await launch('a', `dynamic-${phase}-previous`);
+    await container.stop(previousA.name, 'owned-dynamic-history-retirement', { projectId: `${owner}-a`, kind: 'cds-stop' });
+    assert.equal(owned(previousA.id).State.Running, false); firstA();
+    const heldB = await acquire('b');
+    const initial = await launch('b', `dynamic-${phase}-initial`);
+    const admitted: any[] = [], completed: any[] = [], jobs: Promise<void>[] = [];
+    const counts = new Map<string, number>(); let serial = 0, newProjects = 0, lastReleaseId: string | undefined, failure: unknown;
+    const queued = (): string[] => [...new Set(phase === 'compile' ? buildGateStatus().waiters.map(item => item.projectId!)
+      : budget.snapshot()[phase].queued.map(item => item.projectId!))];
+    const retire = async (runtime: Awaited<ReturnType<typeof launch>>, key: string, release: () => void): Promise<void> => {
+      await container.stop(runtime.name, 'owned-dynamic-fairness-retirement', { projectId: `${owner}-${key}`, kind: 'cds-stop' });
+      assert.equal(owned(runtime.id).State.Running, false);
+      const event = { id: `${phase}-${completed.length}`, phase, releasedProject: `${owner}-${key}`, actualCid: runtime.id,
+        releaseCompletedAt: new Date().toISOString(), releaseCompletedMonotonicMs: performance.now(), eligibleProjects: queued() };
+      completed.push(event); report.dynamicReleases.push(event); lastReleaseId = event.id; release();
+    };
+    const schedule = (key: string): void => {
+      ensureProject(key); const sequence = serial++; const enqueuedAt = new Date().toISOString(), enqueuedAfterReleaseCount = completed.length;
+      const run = async (): Promise<void> => {
+        const release = await acquire(key);
+        if (failure) { release(); return; }
+        const record: any = { projectId: `${owner}-${key}`, enqueuedAt, enqueuedAfterReleaseCount, admittedAfterReleaseCount: completed.length, admittedAt: new Date().toISOString(),
+          admittedMonotonicMs: performance.now(), precedingReleaseId: lastReleaseId };
+        admitted.push(record);
+        counts.set(key, (counts.get(key) || 0) + 1);
+        if ((key === 'a' || key === 'b') && counts.get(key)! < 3) schedule(key);
+        if (key !== 'a' && key !== 'b' && newProjects < 6) schedule(`${phase}-arrival-${newProjects++}`);
+        let released = false;
+        try {
+          const runtime = await launch(key, `dynamic-${phase}-${sequence}`); const body = await read(runtime);
+          assert.equal(body.project, record.projectId);
+          Object.assign(record, { actualCid: runtime.id, actualVersion: body.version,
+            dockerStartedAt: runtime.dockerStartedAt, httpReadyAt: runtime.httpReadyAt });
+          await retire(runtime, key, () => { released = true; release(); });
+        } finally { if (!released) release(); }
+      };
+      jobs.push(run().catch(error => { failure ??= error; }));
+    };
+    schedule('a'); schedule('b'); schedule(`${phase}-arrival-${newProjects++}`);
+    await retire(initial, 'b', heldB);
+    for (let index = 0; index < jobs.length; index++) await jobs[index];
+    if (failure) throw failure;
+    const initialEligible = completed[0].eligibleProjects;
+    assert.equal(initialEligible.length, 3);
+    for (const key of ['a', 'b']) {
+      const index = admitted.findIndex(record => record.projectId === `${owner}-${key}`);
+      assert.ok(index >= 0 && index < initialEligible.length, `${phase}: stable ${key} starved by fresh projects`);
+    }
+    for (const record of admitted) {
+      const firstRelease = completed[record.enqueuedAfterReleaseCount];
+      assert.ok(firstRelease.eligibleProjects.includes(record.projectId));
+      record.eligibleAtFirstRelease = firstRelease.eligibleProjects;
+      record.waitedReleaseRounds = record.admittedAfterReleaseCount - record.enqueuedAfterReleaseCount;
+      assert.ok(record.waitedReleaseRounds >= 1 && record.waitedReleaseRounds <= firstRelease.eligibleProjects.length,
+        `${phase}: dynamic project exceeded actual qualified-project release bound`);
+    }
+    assert.equal(newProjects, 6); assert.equal(admitted.length, 12);
+    assert.ok(admitted.every(record => record.actualCid && record.actualVersion === report.head && record.precedingReleaseId));
+    report.dynamicFairness.push({ case: `dynamic-projects-${phase}`, previousAExecution: previousA, initialEligibleProjects: initialEligible,
+      subsequentDistinctNewProjects: 6, admitted, releases: completed });
+  }
   const budget = new DeploymentPhaseBudget(() => 8192); setBuildGateHostLoadProvider(() => ({ load1: os.availableParallelism(), cores: os.availableParallelism() }));
   const first = await budget.acquire('start', { projectId: `${owner}-a` }, { reservationKey: 'warming-a' }); first();
   let admitted = false; const queuedAt = Date.now(); const next = budget.acquire('start', { projectId: `${owner}-b` }, { reservationKey: 'warming-b' }).then(release => { admitted = true; return release; });
@@ -144,7 +223,7 @@ try {
     report.checks.push({ case: `durable-${mode}`, actualCid: runtime.id, actualExit: stopped.State.ExitCode,
       acknowledgedRecordRetained: true, unacknowledgedNotClaimed: true, replayDeduplicated: true, fixtureOnly: true });
   }
-  await state.flush(); assert.equal(state.getProjects().filter(p => p.id.startsWith(owner)).length, 3); report.verdict = 'passed';
+  await state.flush(); assert.equal(state.getProjects().filter(p => p.id.startsWith(owner)).length, 3 + dynamicProjects.size); report.actualProjectCount = 3 + dynamicProjects.size; report.verdict = 'passed';
 } catch (error) { report.error = String(error); throw error; }
 finally {
   for (const name of names) { try { const v = owned(name); docker(['rm', '-f', v.Id]); } catch (error) { report.cleanupError = String(error); } }

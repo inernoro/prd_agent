@@ -1,10 +1,12 @@
 import importlib.util
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 import json
 import io
 from pathlib import Path
 import threading
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("window", Path(__file__).with_name("control-plane-window.py"))
 window = importlib.util.module_from_spec(spec)
@@ -103,7 +105,15 @@ class WindowEvidenceTests(unittest.TestCase):
             def log_message(self, *_):
                 pass
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class FixtureServer(ThreadingHTTPServer):
+            def server_bind(self):
+                # 该协议夹具固定本机IP，不能把外部反向DNS等待混入原15秒验证。
+                TCPServer.server_bind(self)
+                self.server_name = "127.0.0.1"
+                self.server_port = self.server_address[1]
+
+        with patch("socket.getfqdn", side_effect=AssertionError("local HTTP fixture must not wait for DNS")):
+            server = FixtureServer(("127.0.0.1", 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:

@@ -64,6 +64,10 @@ jobs:
         run: |
           pnpm -C cds install --frozen-lockfile
           pnpm -C cds/web install --frozen-lockfile
+      - name: Fetch the unchanged historical stop reference required by the original test
+        run: |
+          git fetch --depth 1 origin 1fd44e98489f312eee3fa0ff6fe47a6b0d44e4b8
+          git cat-file -e 1fd44e98489f312eee3fa0ff6fe47a6b0d44e4b8:cds/src/routes/branches.ts
       - name: Original default parallel suite and unchanged test deadlines
         shell: bash
         run: |
