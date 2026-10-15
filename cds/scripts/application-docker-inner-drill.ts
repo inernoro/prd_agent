@@ -667,14 +667,14 @@ async function main(): Promise<void> {
   try {
     report.stage = 'owned-fixtures-ready';
     report.fixtureImagePulls = [];
-    await checkpoint('before-owned-fixture-image-pulls');
+    report.fixturePreparation = { startedAt: new Date().toISOString() };
     await prepareOwnedDockerImages(async (image, timeout) => {
       const row: any = { image, timeoutMs: timeout, startedAt: new Date().toISOString() }; report.fixtureImagePulls.push(row);
       try { await docker(['pull', image], timeout); row.verdict = 'passed'; }
       catch (error) { row.verdict = 'failed'; throw error; }
       finally { row.finishedAt = new Date().toISOString(); }
     }, capabilityImage);
-    await checkpoint('owned-fixture-image-pulls-complete');
+    report.fixturePreparation.pullsCompletedAt = new Date().toISOString();
     // digest-only镜像可被原Janitor当悬空回收；夹具仅保留唯一tag，不关闭原prune或改探针镜像。
     capabilityFixtureImageId = await docker(['image', 'inspect', capabilityImage, '--format', '{{.Id}}']);
     assert.match(capabilityFixtureImageId, /^sha256:[a-f0-9]{64}$/);
@@ -683,7 +683,7 @@ async function main(): Promise<void> {
     assert.equal(await docker(['image', 'inspect', capabilityFixtureReference, '--format', '{{.Id}}']), capabilityFixtureImageId);
     report.capabilityFixtureReference = { reference: capabilityFixtureReference, imageId: capabilityFixtureImageId,
       exactOriginalDigest: capabilityImage, originalPruneEnabled: true, removed: false };
-    await checkpoint('owned-capability-fixture-reference-retained');
+    report.fixturePreparation.referenceRetainedAt = new Date().toISOString();
     const mongoPort = await availablePort(), registryPort = await availablePort(); assert.notEqual(mongoPort, registryPort);
     await run('mongo', ['--network', 'host', '--cpus', '0.5', '--memory', '768m', 'mongo:7.0', 'mongod', '--bind_ip', '127.0.0.1', '--port', String(mongoPort), '--wiredTigerCacheSizeGB', '0.25']);
     await run('registry', ['--network', 'host', '--cpus', '0.25', '--memory', '128m', '-e', `REGISTRY_HTTP_ADDR=127.0.0.1:${registryPort}`, 'registry:2']);
@@ -1519,13 +1519,13 @@ async function main(): Promise<void> {
   } catch (error) { report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) }; throw error; }
   finally {
     finiteCache?.stop();
-    await checkpoint('before-owned-driver-cleanup');
+    report.driverCleanup = { startedAt: new Date().toISOString() };
     const cleanupErrors: string[] = [];
     if (probeProxy) {
       try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; report.proxyTraffic = probeProxy.traffic(); }
       catch (error) { cleanupErrors.push(String(error)); }
       await probeProxy.close();
-      await checkpoint('owned-proxy-cleanup-complete');
+      report.driverCleanup.proxyClosedAt = new Date().toISOString();
       report.probeProxyRequestTimeline = probeProxy.requestTimeline; report.probeProxyTraceOverflow = probeProxy.traceOverflow();
     }
     try {
