@@ -649,8 +649,11 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   assert.match(source, /browser\.newContext\(\{ \.\.\.devices\['iPhone 13'\]/);
   assert.match(
     source,
-    /CDS-VISUAL-FILE-PARSING-04[\s\S]*?data-phase', 'parsing'[\s\S]*?CDS-VISUAL-FILE-PARSING-06[\s\S]*?__stableSmokeResumeDocumentUpload\?\.\(\)/,
+    /CDS-VISUAL-FILE-PARSING-04[\s\S]*?findDocumentUploadCard\(page, \{ fileName: name, phase: 'parsing'[\s\S]*?toBeGreaterThan\(initialParsingSeconds\)[\s\S]*?CDS-VISUAL-FILE-PARSING-06/,
   );
+  const uploadObserver = readFileSync(new URL('../../e2e/utils/stableSmokeDocumentUpload.mjs', import.meta.url), 'utf8');
+  assert.match(source, /observeDocumentUploadPhases\(\{[\s\S]*?releaseResponse: releaseControlledResponse/);
+  assert.match(uploadObserver, /finally \{[\s\S]*?await releaseResponse\(\)/);
   assert.match(
     source,
     /CDS-VISUAL-FILE-PARSING-08[\s\S]*?CDS-VISUAL-FILE-PARSING-09[\s\S]*?retryResponsePromise[\s\S]*?CDS-VISUAL-FILE-PARSING-10/,
