@@ -16,6 +16,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class HostedSiteEditRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private static readonly TimeSpan RunTtl = TimeSpan.FromHours(24);
     internal static readonly TimeSpan LeaseDuration = TimeSpan.FromMinutes(2);
     internal static readonly TimeSpan RecoveryInterval = TimeSpan.FromSeconds(15);
@@ -47,8 +48,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IServiceScopeFactory scopeFactory,
         IRunQueue queue,
         IRunEventStore events,
-        ILogger<HostedSiteEditRunWorker> logger)
+        ILogger<HostedSiteEditRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _events = events;
@@ -103,8 +106,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             LeaseDuration,
             ct);
         if (run == null) return;
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         var projection = new RunProjection(_logger, runId);
         var meta = new RunMeta

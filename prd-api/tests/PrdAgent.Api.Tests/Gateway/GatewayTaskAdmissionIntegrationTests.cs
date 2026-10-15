@@ -1,3 +1,5 @@
+using PrdAgent.Infrastructure.Security;
+using PrdAgent.Api.Tests.Gateway;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
@@ -213,7 +215,7 @@ public sealed class GatewayTaskAdmissionIntegrationTests
             Content = JsonContent.Create(new { AppCallerCode = Caller, ModelType = "chat", Context = new { SourceSystem = "map" } }),
         };
         request.Headers.Add("X-Gateway-Key", TransportKey); request.Headers.Add("X-Gateway-Source", "map");
-        request.Headers.Add("X-Gateway-App-Caller", Caller); request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id);
+        request.Headers.Add("X-Gateway-App-Caller", Caller); request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id); PlatformExecutionFixture.Headers(request, permit.Id);
         var response = await host.GetTestClient().SendAsync(request);
 
         response.StatusCode.ShouldBe(ambiguous ? HttpStatusCode.Forbidden : HttpStatusCode.OK);
@@ -241,7 +243,7 @@ public sealed class GatewayTaskAdmissionIntegrationTests
         };
         request.Headers.Add("X-Gateway-Key", TransportKey); request.Headers.Add("X-Gateway-Source", "map");
         request.Headers.Add("X-Gateway-App-Caller", Caller); request.Headers.Add("X-Gateway-Execution-Origin", "scheduled");
-        request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id);
+        request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id); PlatformExecutionFixture.Headers(request, permit.Id);
         var response = await host.GetTestClient().SendAsync(request);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
@@ -470,6 +472,8 @@ public sealed class GatewayTaskAdmissionIntegrationTests
         var permit = await database.PermitAsync(maxCalls: 3); permit.AllowedAppCallerCodes = [caller];
         await database.Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
         var http = new DefaultHttpContext(); http.Request.Headers[GatewayTaskAdmission.HeaderName] = permit.Id;
+        http.Request.Headers[TaskExecutionHeaders.LeaseToken] = PlatformExecutionFixture.Token(permit.Id);
+        http.Request.Headers[TaskExecutionHeaders.LeaseFence] = "1";
         var authorization = new GatewayKeyAuthorization(true, true, 200, "", "", TenantId: permit.TenantId, LegacySharedKey: true);
         var admission = new GatewayTaskAdmission(database.Data, new ConfigurationBuilder().Build(), NullLogger<GatewayTaskAdmission>.Instance);
         (await admission.AdmitAsync(http, authorization, caller, true, CancellationToken.None)).Allowed.ShouldBeTrue();
@@ -598,7 +602,7 @@ public sealed class GatewayTaskAdmissionIntegrationTests
             }),
         };
         request.Headers.Add("X-Gateway-Key", TransportKey); request.Headers.Add("X-Gateway-Source", "map");
-        request.Headers.Add("X-Gateway-App-Caller", caller); request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id);
+        request.Headers.Add("X-Gateway-App-Caller", caller); request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id); PlatformExecutionFixture.Headers(request, permit.Id);
         var response = await host.GetTestClient().SendAsync(request);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var chunks = (await response.Content.ReadAsStringAsync()).Split('\n')
@@ -637,8 +641,74 @@ public sealed class GatewayTaskAdmissionIntegrationTests
         request.Headers.Add("X-Gateway-Execution-Origin", "interactive");
         request.Headers.Add("X-Gateway-Source-Deployment", "forged-deployment");
         request.Headers.Add("X-Gateway-User-Id", subject);
-        if (permitId is not null) request.Headers.Add(GatewayTaskAdmission.HeaderName, permitId);
+        if (permitId is not null) { request.Headers.Add(GatewayTaskAdmission.HeaderName, permitId); PlatformExecutionFixture.Headers(request, permitId); }
         return await client.SendAsync(request);
+    }
+
+    [Fact]
+    public async Task CancellationAfterIngressBeforePhysicalSend_StopsTheActualCoreTransport()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var caller = AppCallerRegistry.Admin.ModelLab.Run;
+        var permit = await database.PermitAsync(); permit.AllowedAppCallerCodes = [caller];
+        await database.Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
+        await database.Data.Database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers").InsertOneAsync(new()
+            { TenantId = permit.TenantId, AppCallerCode = caller, RequestType = ModelTypes.Chat, Status = "active", RateLimitPerMinute = 1000 });
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .Returns(async () => { entered.TrySetResult(); await release.Task; return new ModelResolutionResult
+            { Success = true, ActualPlatformId = "fixture", ActualModel = "fixture-model", PlatformType = "openai", Protocol = "openai", ApiUrl = "https://paid-fixture.invalid", ApiKey = "isolated-test-key" }; });
+        var vendor = new ClientStreamVendor();
+        var outbound = new Mock<IHttpClientFactory>(); outbound.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(new HttpClient(vendor));
+        var accessor = new LLMRequestContextAccessor(); var http = new HttpContextAccessor();
+        var core = new LlmGateway(resolver.Object, outbound.Object, NullLogger<LlmGateway>.Instance,
+            contextAccessor: accessor, invocationAuthority: new GatewayInvocationAuthority(http, new ConfigurationBuilder().Build()));
+        await using var host = await Server(database, implementation: core, suppliedAccessor: accessor, suppliedHttpAccessor: http);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/client-stream")
+        { Content = JsonContent.Create(new { AppCallerCode = caller, ModelType = ModelTypes.Chat, Messages = new[] { new { Role = "user", Content = "受控取消测试" } } }) };
+        request.Headers.Add("X-Gateway-Key", TransportKey); request.Headers.Add("X-Gateway-Source", "map");
+        request.Headers.Add("X-Gateway-App-Caller", caller); request.Headers.Add(GatewayTaskAdmission.HeaderName, permit.Id);
+        PlatformExecutionFixture.Headers(request, permit.Id);
+        var pending = host.GetTestClient().SendAsync(request);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await new TaskExecutionCoordinator(database.Data).RevokeAsync(permit.Id, null, default);
+        release.TrySetResult();
+        using var response = await pending;
+        var body = await response.Content.ReadAsStringAsync();
+        body.ShouldContain("TASK_EXECUTION_LEASE_INVALID");
+        vendor.Calls.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task SdkGrant_RemainsUnexpired_ButOldFenceAndCancelledScopeAreRejected()
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.PermitAsync(); var coordinator = new TaskExecutionCoordinator(database.Data);
+        await using var old = await coordinator.AcquireAsync(permit.Id, "sdk-run", default);
+        var (oldGrant, oldKey) = await database.SidecarAsync(permit, old.Proof);
+        var current = await database.Permits.Find(x => x.Id == permit.Id).SingleAsync();
+        var index = current.Executions.FindIndex(x => x.RunId == "sdk-run");
+        await database.Permits.UpdateOneAsync(x => x.Id == permit.Id,
+            Builders<GatewayTaskPermitRecord>.Update.Set($"Executions.{index}.LeaseUntil", DateTime.UtcNow.AddMinutes(-1)));
+        await using var next = await coordinator.AcquireAsync(permit.Id, "sdk-run", default);
+        next.Proof.Fence.ShouldBe(old.Proof.Fence + 1);
+        var (_, newKey) = await database.SidecarAsync(permit, next.Proof);
+        await using var host = await Server(database);
+        using var staleRequest = SdkRequest("/v1/messages", oldKey);
+        using var stale = await host.GetTestClient().SendAsync(staleRequest);
+        stale.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await stale.Content.ReadAsStringAsync()).ShouldContain("TASK_EXECUTION_LEASE_INVALID");
+        using var validRequest = SdkRequest("/v1/messages", newKey);
+        using var valid = await host.GetTestClient().SendAsync(validRequest);
+        valid.StatusCode.ShouldBe(HttpStatusCode.OK);
+        await coordinator.RevokeAsync(permit.Id, "sdk-run", default);
+        using var cancelledRequest = SdkRequest("/v1/messages", newKey);
+        using var cancelled = await host.GetTestClient().SendAsync(cancelledRequest);
+        cancelled.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        database.PaidCalls.ShouldBe(1);
+        oldGrant.ExpiresAt.ShouldBeGreaterThan(DateTime.UtcNow);
     }
 
     private static async Task<WebApplication> Server(TestDatabase database, bool omitAdmissionService = false,
@@ -709,17 +779,19 @@ public sealed class GatewayTaskAdmissionIntegrationTests
                 Origin = origin, SourceDeployment = "prd-agent:production", SourceTask = "request:fixture",
                 AllowedAppCallerCodes = [Caller], MaxCalls = maxCalls, MaxRuns = 1, ExpiresAt = DateTime.UtcNow.AddMinutes(5),
             };
-            await Permits.InsertOneAsync(permit); return permit;
+            await Permits.InsertOneAsync(PlatformExecutionFixture.Prepare(permit)); return permit;
         }
         public ValueTask DisposeAsync() => new(_client.DropDatabaseAsync(Data.DatabaseName));
-        public async Task<(GatewayRuntimeGrantRecord Grant, string Key)> SidecarAsync(GatewayTaskPermitRecord permit)
+        public async Task<(GatewayRuntimeGrantRecord Grant, string Key)> SidecarAsync(GatewayTaskPermitRecord permit, TaskExecutionLeaseProof? proof = null)
         {
+            permit = await Permits.Find(x => x.Id == permit.Id).SingleAsync();
             permit.BoundRunIds = ["sdk-run"]; await Permits.ReplaceOneAsync(x => x.Id == permit.Id, permit);
             var key = "gwrg_" + Guid.NewGuid().ToString("N");
             var grant = new GatewayRuntimeGrantRecord
             {
                 Purpose = GatewayRuntimeGrantPurposePolicy.TaskSidecar, TenantId = permit.TenantId, UserId = "server-actor",
-                AppCallerCode = Caller, RunId = "sdk-run", TaskPermitId = permit.Id, SourceDeployment = permit.SourceDeployment, Model = "nonexistent-fixture-model",
+                AppCallerCode = Caller, RunId = "sdk-run", TaskPermitId = permit.Id,
+                TaskLeaseRunId = proof?.RunId, TaskLeaseOwnerHash = TaskExecutionCoordinator.OwnerHash(proof?.OwnerToken ?? PlatformExecutionFixture.Token(permit.Id)), TaskLeaseFence = proof?.Fence ?? 1, SourceDeployment = permit.SourceDeployment, Model = "nonexistent-fixture-model",
                 KeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key))).ToLowerInvariant(),
                 MaxCalls = permit.MaxCalls, ExpiresAt = DateTime.UtcNow.AddMinutes(1),
             };

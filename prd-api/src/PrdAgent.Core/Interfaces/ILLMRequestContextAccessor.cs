@@ -59,7 +59,10 @@ public record LlmRequestContext(
     string? TriggerActorUserId = null,
     string? SourceDeployment = null,
     string? SourceTask = null,
-    string? SourceSystem = null);
+    string? SourceSystem = null,
+    string? TaskLeaseRunId = null,
+    string? TaskLeaseOwnerHash = null,
+    long? TaskLeaseFence = null);
 
 public interface ILLMRequestContextAccessor
 {

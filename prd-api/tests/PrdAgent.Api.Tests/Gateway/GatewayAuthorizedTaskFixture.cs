@@ -64,6 +64,7 @@ internal sealed class GatewayAuthorizedTaskFixture : IGatewayTaskAdmission, ITas
         if (reserveCall && Interlocked.Increment(ref _calls) > _permit.MaxCalls)
             return Task.FromResult(GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_EXHAUSTED", "协议测试任务已达到执行上限，请重新建立测试任务。", 429));
         http.Items[GatewayTaskAdmission.HttpContextPermitKey] = _permit;
+        http.Items[GatewayTaskAdmission.HttpContextLeaseKey] = new GatewayTaskLeaseFact(_permit.Id, "", "protocol-fixture", 1);
         http.Items[GatewayTaskAdmission.HttpContextSubjectKey] = _permit.ActorUserId;
         return Task.FromResult(GatewayTaskAdmissionDecision.Allow(_permit));
     }

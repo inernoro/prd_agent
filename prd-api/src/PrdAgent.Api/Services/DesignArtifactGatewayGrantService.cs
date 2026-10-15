@@ -78,8 +78,7 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
         if (string.IsNullOrWhiteSpace(run.TaskPermitId))
             throw new TaskExecutionAdmissionException("TASK_EXECUTION_NOT_ADMITTED",
                 "本次设计任务没有获得执行许可，已停止模型调用；请重新明确提交操作。");
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        using var taskExecutionScope = TaskExecutionContext.Enter(TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         using var admissionRequest = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/gw/v1/responses");
         await _taskAuthorizer.AuthorizeOutboundAsync(admissionRequest, caller, new GatewayRequestContext
         {
@@ -104,6 +103,9 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
             KeyHash = hash,
             RunId = run.Id,
             TaskPermitId = run.TaskPermitId,
+            TaskLeaseRunId = TaskExecutionContext.Current!.Lease!.RunId,
+            TaskLeaseOwnerHash = PrdAgent.Infrastructure.Security.TaskExecutionCoordinator.OwnerHash(TaskExecutionContext.Current.Lease.OwnerToken),
+            TaskLeaseFence = TaskExecutionContext.Current.Lease.Fence,
             UserId = run.UserId,
             AppCallerCode = caller,
             Environment = NormalizeEnvironment(_environment.EnvironmentName),

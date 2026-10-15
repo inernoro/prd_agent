@@ -21,6 +21,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class VideoToDocRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<VideoToDocRunWorker> _logger;
     private readonly IConfiguration _config;
@@ -34,8 +35,10 @@ public class VideoToDocRunWorker : BackgroundService
     public VideoToDocRunWorker(
         IServiceScopeFactory scopeFactory,
         ILogger<VideoToDocRunWorker> logger,
-        IConfiguration config)
+        IConfiguration config,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _logger = logger;
         _config = config;
@@ -89,8 +92,10 @@ public class VideoToDocRunWorker : BackgroundService
 
     private async Task ProcessRunAsync(VideoToDocRun run, IServiceProvider sp)
     {
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         var db = sp.GetRequiredService<MongoDbContext>();
         var runStore = sp.GetRequiredService<IRunEventStore>();
         var gateway = sp.GetRequiredService<ILlmGateway>();

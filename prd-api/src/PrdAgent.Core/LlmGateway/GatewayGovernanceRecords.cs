@@ -128,6 +128,12 @@ public sealed class GatewayRuntimeGrantRecord
     /// <summary>设计执行器仅继承发起任务的服务端许可，不能凭短期模型密钥扩大任务范围。</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string? TaskPermitId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskLeaseRunId { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TaskLeaseOwnerHash { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long? TaskLeaseFence { get; set; }
     /// <summary>新执行器短凭据必须绑定发行环境；旧设计凭据仍从父许可恢复来源。</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string? SourceDeployment { get; set; }

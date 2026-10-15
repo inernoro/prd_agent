@@ -41,6 +41,7 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabase
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
 builder.Services.AddSingleton<IGatewayRuntimeGrantCallCounter, GatewayRuntimeGrantCallCounter>();
+builder.Services.AddSingleton<ITaskExecutionCoordinator, PrdAgent.Infrastructure.Security.TaskExecutionCoordinator>();
 builder.Services.AddSingleton<IGatewayTaskAdmission, GatewayTaskAdmission>();
 builder.Services.AddSingleton<IGatewayInvocationAuthority, GatewayInvocationAuthority>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();

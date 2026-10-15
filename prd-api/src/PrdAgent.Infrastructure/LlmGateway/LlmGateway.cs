@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
@@ -636,12 +637,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 var attemptStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(providerAttempts);
                     response = await httpClient.SendAsync(httpRequest, ct);
                 }
-                catch (Exception sendException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
                 {
                     var sendAttemptDurationMs = (long)(DateTime.UtcNow - attemptStartedAt).TotalMilliseconds;
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
@@ -772,7 +774,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 _logWriter?.MarkError(logId, msg, code);
             }
-            return GatewayResponse.Fail("GATEWAY_ERROR", msg, code);
+            return GatewayResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -828,6 +830,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpResponseMessage? rawResponse = null;
             IGatewayAdapter? adapter = null;
             string? terminalError = null;
+            string? terminalErrorCode = null;
             int? terminalStatusCode = null;
 
             for (var attemptIndex = 0; attemptIndex < retryResolutions.Count; attemptIndex++)
@@ -919,9 +922,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 Exception? sendException = null;
                 var attemptStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(providerAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(providerAttempts);
                     rawResponse = await httpClient.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
                 }
                 catch (Exception ex)
@@ -934,12 +938,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 {
                     var (sendMsg, sendCode) = ClassifyTransportException(sendException, ct.IsCancellationRequested);
                     terminalError = sendMsg;
+                    terminalErrorCode = (sendException as TaskExecutionAdmissionException)?.Code;
                     terminalStatusCode = sendCode;
                     _logger.LogWarning(sendException,
                         "[LlmGateway] HttpClient.SendAsync 失败 status={Code} model={Model}",
                         sendCode, resolution.ActualModel);
                     CompleteLastSendAttempt(providerAttempts, sendCode, attemptDurationMs, sendMsg);
-                    if (HasTrackedHealthRoute(resolution))
+                    if (sendException is not TaskExecutionAdmissionException && HasTrackedHealthRoute(resolution))
                         await _modelResolver.RecordFailureAsync(resolution, ct);
                     if (attemptIndex < retryResolutions.Count - 1 && ShouldRetryProviderStatus(sendCode))
                     {
@@ -1002,7 +1007,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         resolution.ToGatewayResolution());
                     yield break;
                 }
-                yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败");
+                yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败", terminalErrorCode);
                 yield break;
             }
 
@@ -1522,6 +1527,9 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 SessionId = sourceContext?.SessionId,
                 RunId = sourceContext?.RunId,
                 TaskPermitId = sourceContext?.TaskPermitId,
+                TaskLeaseRunId = sourceContext?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = sourceContext?.TaskLeaseOwnerHash,
+                TaskLeaseFence = sourceContext?.TaskLeaseFence,
                 ExecutionOrigin = sourceContext?.ExecutionOrigin,
                 TriggerCredentialId = sourceContext?.TriggerCredentialId,
                 TriggerActorUserId = sourceContext?.TriggerActorUserId,
@@ -2606,9 +2614,10 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.SendAsync(httpRequest, ct);
+                if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    response = await httpClient.SendAsync(httpRequest, ct);
             }
-            catch (Exception sendException)
+            catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
             {
                 var (sendMessage, sendStatusCode) = ClassifyTransportException(
                     sendException,
@@ -2754,12 +2763,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     retryResolutions.Count);
 
                 submitStartedAt = DateTime.UtcNow;
-                MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                 try
                 {
+                    if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
+                    MarkLastSendAttemptReachedProvider(rawProviderAttempts);
                     response = await httpClient.SendAsync(nextBuild.HttpRequest, ct);
                 }
-                catch (Exception sendException)
+                catch (Exception sendException) when (sendException is not TaskExecutionAdmissionException)
                 {
                     var (sendMessage, sendStatusCode) = ClassifyTransportException(
                         sendException,
@@ -2871,6 +2881,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         queryClient.Timeout = TimeSpan.FromSeconds(30);
                         var queryStartedAt = DateTime.UtcNow;
                         HttpResponseMessage queryResp;
+                        if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
                         try
                         {
                             queryResp = await queryClient.SendAsync(queryRequest, ct);
@@ -3106,7 +3117,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     _logWriter?.MarkError(logId, msg, code);
                 }
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+            return GatewayRawResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
         finally
         {
@@ -3176,6 +3187,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 audioName,
                 audioBytes.Length);
 
+            if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, ct);
             MarkLastSendAttemptReachedProvider(providerAttempts);
             var streamResult = await _doubaoStreamAsr.TranscribeAsync(
                 wsUrl,
@@ -3263,7 +3275,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     CancellationToken.None,
                     providerAttempts);
             }
-            return GatewayRawResponse.Fail("GATEWAY_ERROR", msg, code);
+            return GatewayRawResponse.Fail(ex is TaskExecutionAdmissionException task ? task.Code : "GATEWAY_ERROR", msg, code);
         }
     }
 
@@ -3564,6 +3576,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         return ex switch
         {
+            TaskExecutionAdmissionException task => (task.Message, task.StatusCode),
             TaskCanceledException => ("上游超时未响应（HttpClient timeout）", 504),
             OperationCanceledException => ("上游超时未响应", 504),
             HttpRequestException http => ($"网络请求失败：{http.Message}", 502),
@@ -4425,6 +4438,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     SessionId: request.Context?.SessionId,
                     UserId: request.Context?.UserId,
                     TaskPermitId: request.Context?.TaskPermitId,
+                    TaskLeaseRunId: request.Context?.TaskLeaseRunId,
+                    TaskLeaseFence: request.Context?.TaskLeaseFence,
                     ExecutionOrigin: request.Context?.ExecutionOrigin,
                     TriggerCredentialId: request.Context?.TriggerCredentialId,
                     TriggerActorUserId: request.Context?.TriggerActorUserId,
@@ -4802,6 +4817,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     SessionId: request.Context?.SessionId,
                     UserId: request.Context?.UserId,
                     TaskPermitId: request.Context?.TaskPermitId,
+                    TaskLeaseRunId: request.Context?.TaskLeaseRunId,
+                    TaskLeaseFence: request.Context?.TaskLeaseFence,
                     ExecutionOrigin: request.Context?.ExecutionOrigin,
                     TriggerCredentialId: request.Context?.TriggerCredentialId,
                     TriggerActorUserId: request.Context?.TriggerActorUserId,

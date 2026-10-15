@@ -19,7 +19,7 @@ public sealed class TaskScopedRuntimeGrantIssuer(
     LlmGatewayDataContext data,
     ITaskExecutionAuthorizer authorizer,
     IConfiguration configuration,
-    IHostEnvironment environment) : ITaskScopedRuntimeGrantIssuer
+    IHostEnvironment environment, TaskContinuationTokens? continuations = null) : ITaskScopedRuntimeGrantIssuer
 {
     public async Task<SidecarRunRequest> PrepareAsync(SidecarRunRequest request, CancellationToken ct)
     {
@@ -93,6 +93,9 @@ public sealed class TaskScopedRuntimeGrantIssuer(
             Purpose = "task-sidecar",
             TenantId = permit.TenantId,
             TaskPermitId = permit.Id,
+            TaskLeaseRunId = identity.Lease!.RunId,
+            TaskLeaseOwnerHash = TaskExecutionCoordinator.OwnerHash(identity.Lease.OwnerToken),
+            TaskLeaseFence = identity.Lease.Fence,
             SourceDeployment = permit.SourceDeployment,
             RunId = identity.RunId,
             UserId = context.UserId,
@@ -116,7 +119,7 @@ public sealed class TaskScopedRuntimeGrantIssuer(
                 "任务保护暂时无法登记，本次运行未启动；请稍后重试。", 503);
         }
 
-        return CopyWithGrant(request, baseUrl, plainKey, context.UserId);
+        return CopyWithGrant(request, baseUrl, plainKey, context.UserId, continuations?.Issue(identity, request.RunId, context.UserId, expiresAt));
     }
 
     private string GatewayBaseUrl()
@@ -138,7 +141,7 @@ public sealed class TaskScopedRuntimeGrantIssuer(
         return configured;
     }
 
-    private static SidecarRunRequest CopyWithGrant(SidecarRunRequest request, string baseUrl, string key, string subject) => new()
+    private static SidecarRunRequest CopyWithGrant(SidecarRunRequest request, string baseUrl, string key, string subject, string? callbackToken) => new()
     {
         RunId = request.RunId,
         SubjectUserId = subject,
@@ -150,7 +153,7 @@ public sealed class TaskScopedRuntimeGrantIssuer(
         MaxTurns = request.MaxTurns,
         TimeoutSeconds = request.TimeoutSeconds,
         CallbackBaseUrl = request.CallbackBaseUrl,
-        AgentApiKey = request.AgentApiKey,
+        AgentApiKey = callbackToken,
         AppCallerCode = request.AppCallerCode,
         SidecarTag = request.SidecarTag,
         StickyKey = request.StickyKey,

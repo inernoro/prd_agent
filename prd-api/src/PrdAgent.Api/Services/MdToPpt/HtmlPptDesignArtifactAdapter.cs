@@ -81,8 +81,7 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
 
     public async Task BeginAsync(MdToPptRun run, CancellationToken ct = default)
     {
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        using var taskExecutionScope = TaskExecutionContext.Enter(TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         EnsureAdapterOwnedRun(run);
         var current = await FindPublicRunAsync(run.Id);
         if (current == null)

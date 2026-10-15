@@ -22,6 +22,16 @@ public sealed class GatewayTaskPermitRecord
     public static readonly TimeSpan MaximumLifetime = TimeSpan.FromHours(24);
     public const string CollectionName = "llmgw_task_permits";
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public int ExecutionContractVersion { get; set; }
+    public string? BusinessKeyHash { get; set; }
+    public string? RequestFingerprint { get; set; }
+    public string? AdmissionOwnerHash { get; set; }
+    public long ActorAuthorizationVersion { get; set; }
+    public long CredentialAuthorizationVersion { get; set; }
+    public List<TaskExecutionLeaseRecord> Executions { get; set; } = new();
+    public int? AcceptedResponseStatus { get; set; }
+    public string? AcceptedResponseContentType { get; set; }
+    public string? AcceptedResponseBody { get; set; }
     public string TenantId { get; set; } = string.Empty;
     public string ActorUserId { get; set; } = string.Empty;
     public List<string> SubjectUserIds { get; set; } = new();
@@ -38,4 +48,36 @@ public sealed class GatewayTaskPermitRecord
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime ExpiresAt { get; set; }
     public DateTime? RevokedAt { get; set; }
+}
+
+/// <summary>嵌入父任务的有界执行账本；主键、额度、撤销与租约在同一 Mongo 文档上原子裁决。</summary>
+[BsonIgnoreExtraElements]
+public sealed class TaskExecutionLeaseRecord
+{
+    public string RunId { get; set; } = string.Empty;
+    public string State { get; set; } = TaskExecutionLeaseStates.Pending;
+    public string OwnerHash { get; set; } = string.Empty;
+    public long Fence { get; set; }
+    public DateTime LeaseUntil { get; set; }
+    public DateTime? FinishedAt { get; set; }
+    public int DispatchCount { get; set; }
+}
+
+public static class TaskExecutionLeaseStates
+{
+    public const string Pending = "pending";
+    public const string Running = "running";
+    public const string Completed = "completed";
+    public const string Cancelled = "cancelled";
+    public const string OutcomeUnknown = "outcome-unknown";
+}
+
+[BsonIgnoreExtraElements]
+public sealed class TaskAuthorizationRevocationRecord
+{
+    public const string CollectionName = "llmgw_task_authorizations";
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public long Version { get; set; }
+    public bool Disabled { get; set; }
+    public DateTime ChangedAt { get; set; }
 }

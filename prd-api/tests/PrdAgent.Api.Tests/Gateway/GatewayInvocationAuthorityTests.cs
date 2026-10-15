@@ -105,9 +105,11 @@ public sealed class GatewayInvocationAuthorityTests
         http.Items[GatewayInvocationAuthority.PaidAdmissionKey] = true;
         http.Items[GatewayInvocationAuthority.AdmittedCallerKey] = Caller;
         http.Items[GatewayTaskAdmission.HttpContextPermitKey] = permit;
+        http.Items[GatewayTaskAdmission.HttpContextLeaseKey] = new GatewayTaskLeaseFact(permit.Id, "bound-run", "fixture-owner", 1);
         http.Items[GatewayTaskAdmission.HttpContextSubjectKey] = "owner";
         return (http, new GatewayRequestContext
         {
+            TaskLeaseRunId = "bound-run", TaskLeaseOwnerHash = "fixture-owner", TaskLeaseFence = 1,
             TenantId = permit.TenantId, ServiceKeyId = "map-transport", SourceSystem = "map", TaskPermitId = permit.Id,
             UserId = "owner", TriggerActorUserId = permit.ActorUserId, TriggerCredentialId = permit.TriggerCredentialId,
             SourceDeployment = permit.SourceDeployment, SourceTask = permit.SourceTask, ExecutionOrigin = permit.Origin, RunId = "bound-run",

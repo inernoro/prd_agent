@@ -373,8 +373,10 @@ public class ReviewAssessmentController : ControllerBase
 
     private async Task RunAssessmentAsync(RequirementAssessmentRun run)
     {
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(
+            HttpContext.RequestServices.GetRequiredService<ITaskExecutionCoordinator>(), run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity);
         var userId = run.OwnerUserId;
 
         // 1) 列映射 LLM 精化（仅首次；失败保留启发式结果，不阻塞评估）

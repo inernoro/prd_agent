@@ -24,6 +24,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class SubtitleGenerationProcessor
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     internal static readonly IReadOnlyList<string> RecordingAsrCallerChain =
     [
         AppCallerRegistry.TranscriptAgent.Transcribe.Audio,
@@ -49,8 +50,10 @@ public class SubtitleGenerationProcessor
         IHttpClientFactory httpClientFactory,
         ILLMRequestContextAccessor llmCtx,
         ContentReprocessApplyService applyService,
-        ILogger<SubtitleGenerationProcessor> logger)
+        ILogger<SubtitleGenerationProcessor> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _modelResolver = modelResolver;
         _llmGateway = llmGateway;
         _documentService = documentService;
@@ -62,8 +65,10 @@ public class SubtitleGenerationProcessor
 
     public async Task ProcessAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         // 1) 读源 entry
         var entry = await db.DocumentEntries.Find(e => e.Id == run.SourceEntryId).FirstOrDefaultAsync();
         if (entry == null)
@@ -211,8 +216,10 @@ public class SubtitleGenerationProcessor
     /// </summary>
     public async Task ProcessTranscribeAsync(DocumentStoreAgentRun run, MongoDbContext db, IRunEventStore runStore)
     {
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
         // 「换个整理方式」：跳过 ASR，用原 run 的转录文本按新风格重生成摘要并更新原笔记
         if (!string.IsNullOrEmpty(run.RestyleOfRunId))
         {

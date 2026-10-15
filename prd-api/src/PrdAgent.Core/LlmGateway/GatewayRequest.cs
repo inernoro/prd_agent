@@ -163,6 +163,9 @@ public class GatewayRequestContext
 {
     /// <summary>网关核验后写入的任务准入与触发来源，禁止相信请求自报值。</summary>
     public string? TaskPermitId { get; set; }
+    public string? TaskLeaseRunId { get; set; }
+    public string? TaskLeaseOwnerHash { get; set; }
+    public long? TaskLeaseFence { get; set; }
     public string? ExecutionOrigin { get; set; }
     public string? TriggerCredentialId { get; set; }
     public string? TriggerActorUserId { get; set; }
@@ -345,6 +348,9 @@ public class GatewayRequestContext
             ImageReferences = source?.ImageReferences,
             GatewayTransport = transport,
             TaskPermitId = source?.TaskPermitId,
+            TaskLeaseRunId = source?.TaskLeaseRunId,
+            TaskLeaseOwnerHash = source?.TaskLeaseOwnerHash,
+            TaskLeaseFence = source?.TaskLeaseFence,
             ExecutionOrigin = source?.ExecutionOrigin,
             TriggerCredentialId = source?.TriggerCredentialId,
             TriggerActorUserId = source?.TriggerActorUserId,
@@ -411,6 +417,9 @@ public sealed class GatewayIngressRequest
                 SessionId = Context?.SessionId,
                 RunId = Context?.RunId,
                 TaskPermitId = Context?.TaskPermitId,
+                TaskLeaseRunId = Context?.TaskLeaseRunId,
+                TaskLeaseOwnerHash = Context?.TaskLeaseOwnerHash,
+                TaskLeaseFence = Context?.TaskLeaseFence,
                 ExecutionOrigin = Context?.ExecutionOrigin,
                 TriggerCredentialId = Context?.TriggerCredentialId,
                 TriggerActorUserId = Context?.TriggerActorUserId,

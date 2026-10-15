@@ -110,6 +110,8 @@ public record LlmLogStart(
     string? LogicalRequestId = null,
     string? ProviderTaskId = null,
     string? TaskPermitId = null,
+    string? TaskLeaseRunId = null,
+    long? TaskLeaseFence = null,
     string? ExecutionOrigin = null,
     string? TriggerCredentialId = null,
     string? TriggerActorUserId = null,

@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
@@ -373,7 +374,7 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
             case "different-tenant": permit.TenantId = "foreign-tenant"; break;
             case "different-caller": permit.AllowedAppCallerCodes = ["other.operation::chat"]; break;
         }
-        await Permits.InsertOneAsync(permit);
+        await Permits.InsertOneAsync(PlatformExecutionFixture.Prepare(permit));
         using var scope = TaskExecutionContext.Enter(new(permit.Id, "run"));
         using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
         await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => Authorize(message,
@@ -389,7 +390,7 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         await Permits.ReplaceOneAsync(item => item.Id == permit.Id, permit);
         var successes = await Task.WhenAll(Enumerable.Range(0, 20).Select(async index =>
         {
-            using var scope = TaskExecutionContext.Enter(new(permit.Id, "run-" + index));
+            using var scope = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "run-" + index));
             using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
             try { await Authorize(message, new GatewayRequestContext { UserId = "actor" }); return true; }
             catch (TaskExecutionAdmissionException) { return false; }
@@ -425,12 +426,12 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
             admission.AdmitRequestAsync(HttpAction("RunStream"), default));
         Assert.Equal(503, error.StatusCode);
-        Assert.Equal("TASK_ADMISSION_UNAVAILABLE", error.Code);
+        Assert.Equal("TASK_EXECUTION_UNAVAILABLE", error.Code);
         var continued = false;
         await new TaskAdmissionMiddleware(_ => { continued = true; return Task.CompletedTask; })
             .InvokeAsync(HttpAction("FuturePlainCrud"), admission);
         Assert.True(continued);
-        using var scope = TaskExecutionContext.Enter(new(Guid.NewGuid().ToString("N")));
+        using var scope = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(Guid.NewGuid().ToString("N")));
         using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
         error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
             new TaskExecutionAuthorizer(offline, _config).AuthorizeOutboundAsync(message, Caller,
@@ -475,7 +476,8 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         Assert.False(permit.AllowDelegatedSubjects);
         Assert.Equal(8, permit.MaxCalls);
         Assert.Equal(1, permit.MaxRuns);
-        using var scope = TaskExecutionContext.Enter(identity with { RunId = "job-run" });
+        await using var execution = await new TaskExecutionCoordinator(_data).AcquireAsync(identity.PermitId, "job-run", default);
+        using var scope = TaskExecutionContext.Enter(execution.Identity);
         using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
         var context = new GatewayRequestContext();
         await Authorize(message, context);
@@ -507,7 +509,8 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         var permit = await Permits.Find(item => item.Id == identity.PermitId).SingleAsync();
         permit.AllowDelegatedSubjects = delegated;
         await Permits.ReplaceOneAsync(item => item.Id == permit.Id, permit);
-        using var scope = TaskExecutionContext.Enter(identity with { RunId = "job-run" });
+        await using var execution = await new TaskExecutionCoordinator(_data).AcquireAsync(identity.PermitId, "job-run", default);
+        using var scope = TaskExecutionContext.Enter(execution.Identity);
         using var message = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gateway/send");
         var context = new GatewayRequestContext { UserId = subject == "scheduler-actor" ? permit.ActorUserId : subject };
         var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => Authorize(message, context));
@@ -516,8 +519,53 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         Assert.Null(context.TaskPermitId);
         var unchanged = await Permits.Find(item => item.Id == permit.Id).SingleAsync();
         Assert.Equal(["business-owner"], unchanged.SubjectUserIds);
-        Assert.Empty(unchanged.BoundRunIds);
+        Assert.Equal(["job-run"], unchanged.BoundRunIds);
         Assert.Equal(0, unchanged.CallCount);
+    }
+
+    [DesignScopeMongoFact]
+    public async Task DuplicateHttpIntent_ReplaysAcceptedResult_ConflictingParametersReject_ExplicitNewIntentRuns()
+    {
+        var sideEffects = 0;
+        var admission = new TaskAdmissionService(_data, _config);
+        var middleware = new TaskAdmissionMiddleware(async http =>
+        {
+            Interlocked.Increment(ref sideEffects);
+            await http.Response.WriteAsJsonAsync(new { runId = TaskExecutionContext.Current!.PermitId });
+        });
+        DefaultHttpContext Request(string intent, string text)
+        {
+            var http = HttpAction("RunStream"); http.Request.Method = "POST";
+            http.Request.Headers["Idempotency-Key"] = intent; http.Request.ContentType = "application/json";
+            http.Request.Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { text })));
+            http.Response.Body = new MemoryStream(); return http;
+        }
+        var key = Guid.NewGuid().ToString("N");
+        var first = Request(key, "same"); await middleware.InvokeAsync(first, admission);
+        var replay = Request(key, "same"); await middleware.InvokeAsync(replay, admission);
+        Assert.Equal("true", replay.Response.Headers["Idempotency-Replayed"]);
+        Assert.Equal(1, sideEffects);
+        Assert.Equal(((MemoryStream)first.Response.Body).ToArray(), ((MemoryStream)replay.Response.Body).ToArray());
+        var conflict = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => middleware.InvokeAsync(Request(key, "different"), admission));
+        Assert.Equal("TASK_IDEMPOTENCY_CONFLICT", conflict.Code);
+        await middleware.InvokeAsync(Request(Guid.NewGuid().ToString("N"), "same"), admission);
+        Assert.Equal(2, sideEffects);
+        Assert.Equal(2, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
+    }
+
+    [DesignScopeMongoFact]
+    public async Task RepeatedScheduledDelivery_ReusesBusinessIdentity_AndNextOccurrenceGetsItsOwnIdentity()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Deployment:Identity"] = "synthetic-branch", ["Deployment:SharedScheduledWorkEnabled"] = "true" }).Build();
+        using var source = AutomaticTaskExecutionContext.Enter("synthetic/WorkflowScheduleWorker/authority");
+        var admission = new TaskAdmissionService(_data, config);
+        var first = await admission.AdmitScheduledTaskAsync("WorkflowScheduleWorker", "job:2030-01-01T00:00:00Z", "owner", default);
+        var replay = await admission.AdmitScheduledTaskAsync("WorkflowScheduleWorker", "job:2030-01-01T00:00:00Z", "owner", default);
+        var next = await admission.AdmitScheduledTaskAsync("WorkflowScheduleWorker", "job:2030-01-02T00:00:00Z", "owner", default);
+        Assert.Equal(first.PermitId, replay.PermitId);
+        Assert.NotEqual(first.PermitId, next.PermitId);
+        Assert.Equal(2, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
     }
 
     public async Task DisposeAsync() => await _data.Database.Client.DropDatabaseAsync(_database);
@@ -552,7 +600,7 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
     private async Task<GatewayTaskPermitRecord> SeedAsync()
     {
         var permit = NewPermit();
-        await Permits.InsertOneAsync(permit);
+        await Permits.InsertOneAsync(PlatformExecutionFixture.Prepare(permit));
         return permit;
     }
     private static GatewayTaskPermitRecord NewPermit() => new()
@@ -567,6 +615,12 @@ public sealed class TaskAdmissionIntegrationTests : IAsyncLifetime
         string controller = Controller)
     {
         var http = new DefaultHttpContext();
+        http.Request.Headers["Idempotency-Key"] = Guid.NewGuid().ToString("N");
+        if (controller == "PrdAgent.Api.Controllers.McpGatewayController" && action == "Handle")
+        {
+            http.Request.ContentType = "application/json";
+            http.Request.Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{}}"));
+        }
         var type = typeof(TaskAdmissionService).Assembly.GetType(controller)!;
         http.SetEndpoint(new Endpoint(_ => Task.CompletedTask, new EndpointMetadataCollection(
             new ControllerActionDescriptor { ControllerTypeInfo = type.GetTypeInfo(), ActionName = action }), "synthetic"));

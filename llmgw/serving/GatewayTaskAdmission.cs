@@ -6,6 +6,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 
@@ -76,9 +77,12 @@ public interface IGatewayTaskAdmission
 }
 
 public sealed class GatewayTaskAdmission(
-    LlmGatewayDataContext data, IConfiguration configuration, ILogger<GatewayTaskAdmission> logger)
+    LlmGatewayDataContext data, IConfiguration configuration, ILogger<GatewayTaskAdmission> logger,
+    ITaskExecutionCoordinator? executions = null)
     : IGatewayTaskAdmission
 {
+    private readonly ITaskExecutionCoordinator _executions = executions ?? new TaskExecutionCoordinator(data);
+    public const string HttpContextLeaseKey = "llmgw.task.lease";
     public const string HeaderName = "X-Gateway-Task-Permit";
     public const string HttpContextPermitKey = "llmgw.task.permit";
     public const string HttpContextSubjectKey = "llmgw.task.subject";
@@ -117,6 +121,7 @@ public sealed class GatewayTaskAdmission(
             var now = DateTime.UtcNow;
             var deployment = TaskPermitDeployment.Resolve(configuration);
             if (permit is null || permit.RevokedAt is not null || permit.ExpiresAt <= now || permit.CreatedAt > now
+                || permit.ExecutionContractVersion != TaskExecutionCoordinator.ContractVersion
                 || permit.ExpiresAt <= permit.CreatedAt || permit.ExpiresAt - permit.CreatedAt > GatewayTaskPermitRecord.MaximumLifetime
                 || permit.MaxCalls <= 0 || permit.MaxCalls > GatewayTaskPermitRecord.MaximumCalls
                 || permit.MaxRuns <= 0 || permit.MaxRuns > GatewayTaskPermitRecord.MaximumRuns
@@ -157,6 +162,23 @@ public sealed class GatewayTaskAdmission(
             if (runIds.Any(runId => !permit.BoundRunIds.Contains(runId, StringComparer.Ordinal)))
                 return GatewayTaskAdmissionDecision.Deny("TASK_PERMIT_RUN_DENIED", "当前任务授权与执行记录不匹配，已停止本次调用；请重新发起任务。");
 
+            var hash = authorization.RuntimeGrant?.TaskLeaseOwnerHash;
+            var fence = authorization.RuntimeGrant?.TaskLeaseFence;
+            if (authorization.RuntimeGrant is null)
+            {
+                var token = http.Request.Headers[PrdAgent.Core.Security.TaskExecutionHeaders.LeaseToken].ToString();
+                if (token.Length == 32 && token.All(char.IsAsciiHexDigit)) hash = TaskExecutionCoordinator.OwnerHash(token);
+                if (long.TryParse(http.Request.Headers[PrdAgent.Core.Security.TaskExecutionHeaders.LeaseFence], out var parsed)) fence = parsed;
+            }
+            var execution = permit.Executions.SingleOrDefault(x => x.OwnerHash == hash && x.Fence == fence);
+            if (execution is null || fence is null || hash is null
+                || authorization.RuntimeGrant is { } leaseGrant && (leaseGrant.TaskLeaseRunId ?? "") != execution.RunId
+                || runIds.Any(id => permit.Executions.Any(x => x.RunId == id && x.State == TaskExecutionLeaseStates.Cancelled))
+                || !await _executions.ValidateHashAsync(permit.Id, execution.RunId, hash, fence.Value, false, ct))
+                return GatewayTaskAdmissionDecision.Deny("TASK_EXECUTION_LEASE_INVALID", "任务执行租约已失效、已取消或未领取，已停止本次调用；请查看任务状态。");
+            var leaseFact = new GatewayTaskLeaseFact(permit.Id, execution.RunId, hash, fence.Value);
+            http.Items[HttpContextLeaseKey] = leaseFact;
+
             if (authorization.RuntimeGrant is { UserId.Length: > 0 } runtimeGrant) declared.SubjectUserIds.Add(runtimeGrant.UserId);
             var defaultSubject = permit.Origin == TaskExecutionOrigins.Scheduled
                 ? permit.SubjectUserIds.Count == 1 ? permit.SubjectUserIds[0] : string.Empty
@@ -194,6 +216,7 @@ public sealed class GatewayTaskAdmission(
                     Builders<GatewayTaskPermitRecord>.Filter.Eq(x => x.MaxCalls, permit.MaxCalls),
                     Builders<GatewayTaskPermitRecord>.Filter.Lt(x => x.CallCount, permit.MaxCalls));
                 foreach (var runId in runIds) filter &= Builders<GatewayTaskPermitRecord>.Filter.AnyEq(x => x.BoundRunIds, runId);
+                filter &= TaskExecutionCoordinator.CurrentLeaseFilter(permit.Id, execution.RunId, hash, fence.Value);
                 foreach (var user in declared.SubjectUserIds) filter &= Builders<GatewayTaskPermitRecord>.Filter.AnyEq(x => x.SubjectUserIds, user);
                 permit = await collection.FindOneAndUpdateAsync(filter,
                     Builders<GatewayTaskPermitRecord>.Update.Inc(x => x.CallCount, 1),
@@ -309,3 +332,5 @@ public sealed class GatewayTaskAdmission(
         return new(result, users, subject);
     }
 }
+
+public sealed record GatewayTaskLeaseFact(string PermitId, string RunId, string OwnerHash, long Fence);

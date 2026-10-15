@@ -26,7 +26,15 @@ public sealed class McpLoopbackSignal
         message.Headers.TryAddWithoutValidation(HeaderName, Token);
         message.Headers.Remove(TaskPermitHeaderName);
         if (PrdAgent.Core.Security.TaskExecutionContext.Current is { } task)
+        {
             message.Headers.TryAddWithoutValidation(TaskPermitHeaderName, task.PermitId);
+            if (task.Lease is { } lease)
+            {
+                message.Headers.TryAddWithoutValidation(PrdAgent.Core.Security.TaskExecutionHeaders.LeaseToken, lease.OwnerToken);
+                message.Headers.TryAddWithoutValidation(PrdAgent.Core.Security.TaskExecutionHeaders.LeaseFence, lease.Fence.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                message.Headers.TryAddWithoutValidation("X-Map-Task-Run", lease.RunId ?? "");
+            }
+        }
     }
 
     private readonly byte[] _tokenBytes;

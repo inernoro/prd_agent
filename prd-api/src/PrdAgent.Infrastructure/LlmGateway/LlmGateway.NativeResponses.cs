@@ -1,3 +1,4 @@
+using PrdAgent.Core.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -98,6 +99,7 @@ public partial class LlmGateway
             using var client = CreateOutboundClient(request.Context?.TenantId);
             // 本次 deadline 管理完整请求；不使用 HttpClient 的默认 100 秒截断原生长流。
             client.Timeout = Timeout.InfiniteTimeSpan;
+            if (_invocationAuthority is not null) await _invocationAuthority.AssertCurrentAsync(request.AppCallerCode, request.Context, deadline.Token);
             MarkLastSendAttemptReachedProvider(attempts);
             reachedProvider = true;
             using var response = await client.SendAsync(message, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
@@ -169,6 +171,11 @@ public partial class LlmGateway
                 LogId = logId,
                 DurationMs = (long)(DateTime.UtcNow - started).TotalMilliseconds,
             };
+            return outcome;
+        }
+        catch (TaskExecutionAdmissionException task)
+        {
+            outcome = GatewayRawResponse.Fail(task.Code, task.Message, task.StatusCode);
             return outcome;
         }
         catch (OperationCanceledException)

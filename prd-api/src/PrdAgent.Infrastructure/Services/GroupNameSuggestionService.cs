@@ -9,6 +9,7 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class GroupNameSuggestionService : IGroupNameSuggestionService
 {
+    private readonly ITaskExecutionCoordinator? _taskExecutions;
     private readonly IGroupService _groupService;
     private readonly IDocumentService _documentService;
     private readonly IModelDomainService _modelDomainService;
@@ -18,8 +19,9 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
         IGroupService groupService,
         IDocumentService documentService,
         IModelDomainService modelDomainService,
-        ILogger<GroupNameSuggestionService> logger)
+        ILogger<GroupNameSuggestionService> logger, ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _groupService = groupService;
         _documentService = documentService;
         _modelDomainService = modelDomainService;
@@ -38,9 +40,11 @@ public class GroupNameSuggestionService : IGroupNameSuggestionService
         // 使用 Task.Run 将任务放到后台线程池执行，不阻塞当前请求
         _ = Task.Run(async () =>
         {
-            using var taskExecution = TaskExecutionContext.Enter(taskIdentity);
             try
             {
+                await using var attempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, taskIdentity.PermitId, groupId);
+                if (attempt.ShouldSkip) return;
+                using var taskExecution = TaskExecutionContext.Enter(attempt.Lease?.Identity);
                 await SuggestAndUpdateGroupNameAsync(groupId, fileName, prdDocumentId);
             }
             catch (Exception ex)

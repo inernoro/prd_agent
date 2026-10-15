@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 
@@ -11,14 +12,19 @@ namespace PrdAgent.Api.Services.BackgroundTasks;
 
 /// <summary>认证与权限中间件通过后，由平台为已登记动作签发有限任务许可。</summary>
 public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfiguration configuration,
-    PrdAgent.Api.Services.Mcp.McpLoopbackSignal? loopback = null)
+    PrdAgent.Api.Services.Mcp.McpLoopbackSignal? loopback = null, ITaskExecutionCoordinator? executions = null)
 {
+    private readonly ITaskExecutionCoordinator _executions = executions ?? new TaskExecutionCoordinator(data);
+    public Task SaveAcceptedResponseAsync(string permitId, int status, string contentType, string? body, CancellationToken ct)
+        => _executions.SaveAcceptedResponseAsync(permitId, status, contentType, body, ct);
     public async Task<TaskExecutionIdentity?> AdmitRequestAsync(HttpContext http, CancellationToken ct)
     {
         var action = http.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>();
         if (action is null || http.User.Identity?.IsAuthenticated != true) return null;
         var policy = TaskAdmissionPolicies.Find(action.ControllerTypeInfo.FullName!, action.ActionName);
         if (policy is null || policy.Timing != TaskAdmissionTiming.Middleware) return null;
+        if (policy.Operation == "PrdAgent.Api.Controllers.McpGatewayController.Handle"
+            && !await TaskBusinessIntent.IsMcpToolCallAsync(http, ct)) return null;
         var actor = ResolveActor(http.User);
         if (actor is null || policy.AppCallers.Count == 0) return null;
         return await AdmitAuthenticatedActionAsync(http, policy, actor, ct);
@@ -42,6 +48,7 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
     private async Task<TaskExecutionIdentity> AdmitAuthenticatedActionAsync(
         HttpContext http, TaskAdmissionPolicy policy, string actor, CancellationToken ct)
     {
+        if (TaskAdmissionRequestState.Get(http).Identity is { } admitted) return admitted;
         if (loopback?.IsGatewayContinuation(http.Request) == true)
         {
             // 已验证的同进程回环沿用父任务额度；外部自写相同头不能证明续跳。
@@ -53,14 +60,21 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
                 || parent.ExpiresAt <= DateTime.UtcNow
                 || parent.SourceDeployment != TaskPermitDeployment.Resolve(configuration))
                 throw new TaskExecutionAdmissionException("TASK_CONTINUATION_NOT_ADMITTED", "任务续跳缺少有效的原始执行许可，已停止；请重新明确提交任务。");
-            return new(parent.Id);
+            var token = http.Request.Headers[TaskExecutionHeaders.LeaseToken].ToString();
+            var run = http.Request.Headers["X-Map-Task-Run"].ToString();
+            if (token.Length != 32 || !token.All(char.IsAsciiHexDigit)
+                || !long.TryParse(http.Request.Headers[TaskExecutionHeaders.LeaseFence], out var fence)
+                || !await _executions.ValidateHashAsync(parent.Id, run, TaskExecutionCoordinator.OwnerHash(token), fence, false, ct))
+                throw new TaskExecutionAdmissionException("TASK_EXECUTION_LEASE_INVALID", "任务续跳的执行租约已失效，已停止；请重新明确提交任务。");
+            return new(parent.Id, string.IsNullOrEmpty(run) ? null : run, new(parent.Id, string.IsNullOrEmpty(run) ? null : run, token, fence));
         }
         var (origin, credential) = ResolveOrigin(http.User, actor);
-        return await IssueAsync(policy, actor, origin, credential, ct);
+        var intent = await TaskBusinessIntent.ResolveAsync(http, policy.Operation, origin, false, ct);
+        return await IssueAsync(policy, actor, origin, credential, intent, http, ct);
     }
 
     /// <summary>只在既有分享/快捷方式门禁已验证后调用，外部触发不能升级为登录会话来源。</summary>
-    public Task<TaskExecutionIdentity> AdmitVerifiedIntegrationAsync(
+    public async Task<TaskExecutionIdentity> AdmitVerifiedIntegrationAsync(
         HttpContext http, string actorUserId, string credentialReference, CancellationToken ct)
     {
         var action = http.GetEndpoint()?.Metadata.GetMetadata<ControllerActionDescriptor>();
@@ -70,8 +84,9 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             or "PrdAgent.Api.Controllers.Api.LlmGatewayOpsCanaryController.RunAsrCanary"))
             throw new TaskExecutionAdmissionException("TASK_SOURCE_NOT_REGISTERED", "此外部触发入口未登记执行策略，已停止任务；请联系管理员核对入口。");
         var policy = TaskAdmissionPolicies.Find(action!.ControllerTypeInfo.FullName!, action.ActionName)!;
-        return IssueAsync(policy, actorUserId, TaskExecutionOrigins.Agent,
-            $"verified-integration:{credentialReference}", ct);
+        var intent = await TaskBusinessIntent.ResolveAsync(http, policy.Operation, TaskExecutionOrigins.Agent, true, ct);
+        return await IssueAsync(policy, actorUserId, TaskExecutionOrigins.Agent,
+            $"verified-integration:{credentialReference}", intent, http, ct);
     }
 
     /// <summary>平台调度每次只签发一个具体任务，后台服务启动授权不是付费通票。</summary>
@@ -93,12 +108,14 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             .Where(x => prefixes.Length == 0 || prefixes.Any(p => x.StartsWith(p, StringComparison.Ordinal)))
             .Distinct().ToArray();
         // 自动调度服务是执行来源；业务归属用户不是点击发起任务的人，不能把两者混为一谈。
-        return IssueAsync(new($"{worker}:{taskId}", callers), $"platform-scheduler:{worker}",
-            TaskExecutionOrigins.Scheduled, $"schedule:{worker}:{taskId}", ct, subjectUserId);
+        var operation = $"{worker}:{taskId}";
+        return IssueAsync(new(operation, callers), $"platform-scheduler:{worker}",
+            TaskExecutionOrigins.Scheduled, $"schedule:{worker}:{taskId}",
+            new(taskId, TaskExecutionCoordinator.Fingerprint(subjectUserId), operation), null, ct, subjectUserId);
     }
 
     private async Task<TaskExecutionIdentity> IssueAsync(TaskAdmissionPolicy policy, string actor,
-        string origin, string credential, CancellationToken ct, string? subjectUserId = null)
+        string origin, string credential, TaskBusinessIntent intent, HttpContext? http, CancellationToken ct, string? subjectUserId = null)
     {
         if (string.IsNullOrWhiteSpace(actor) || string.IsNullOrWhiteSpace(credential)
             || actor.Length > 200 || credential.Length > 400 || policy.AppCallers.Count == 0
@@ -124,17 +141,20 @@ public sealed class TaskAdmissionService(LlmGatewayDataContext data, IConfigurat
             CreatedAt = now,
             ExpiresAt = now + GatewayTaskPermitRecord.MaximumLifetime,
         };
-        try
+        permit.ExecutionContractVersion = TaskExecutionCoordinator.ContractVersion;
+        permit.Id = TaskExecutionCoordinator.BusinessId(permit.TenantId, actor, intent.Scope, intent.Key);
+        permit.BusinessKeyHash = TaskExecutionCoordinator.Fingerprint(intent.Key);
+        permit.RequestFingerprint = intent.Fingerprint;
+        var result = await _executions.RegisterAsync(permit, http is not null, ct);
+        if (result.Replayed && origin != TaskExecutionOrigins.Scheduled) throw new TaskIntentReplayException(result.Permit);
+        var identity = result.Lease?.Identity ?? new TaskExecutionIdentity(result.Permit.Id);
+        if (http is not null)
         {
-            await data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
-                .InsertOneAsync(permit, cancellationToken: ct);
+            var state = TaskAdmissionRequestState.Get(http);
+            state.Identity = identity;
+            if (result.Lease is not null) state.Leases.Add(result.Lease);
         }
-        catch (Exception error) when (error is MongoException or TimeoutException)
-        {
-            throw new TaskExecutionAdmissionException("TASK_ADMISSION_UNAVAILABLE",
-                "任务保护暂时无法登记，本次操作未启动；请稍后重试。", 503);
-        }
-        return new(permit.Id);
+        return identity;
     }
 
     public static string? ResolveActor(ClaimsPrincipal user)

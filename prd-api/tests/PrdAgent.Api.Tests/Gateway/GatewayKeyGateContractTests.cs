@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Json;
@@ -822,6 +823,7 @@ public class GatewayKeyGateContractTests
             {
                 var broker = new Moq.Mock<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker>();
                 broker.Setup(x => x.ReserveModelCallAsync(run.Id, "ticket", Moq.It.IsAny<CancellationToken>())).ReturnsAsync(run);
+                broker.Setup(x => x.RestoreExecutionAsync(run.Id, "ticket", Moq.It.IsAny<CancellationToken>())).ReturnsAsync(PlatformExecutionFixture.Identity(GatewayAuthorizedTaskFixture.PermitId, run.Id));
                 var proxy = new PrdAgent.Api.Controllers.Api.DesignArtifactRuntimeController(broker.Object,
                     new FrozenOmitClientFactory(GatewayAuthorizedTaskFixture.Client(app)), configuration,
                     Microsoft.Extensions.Logging.Abstractions.NullLogger<PrdAgent.Api.Controllers.Api.DesignArtifactRuntimeController>.Instance,

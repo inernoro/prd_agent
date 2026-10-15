@@ -91,6 +91,8 @@ public class LlmRequestLog
     public string? RunId { get; set; }
     /// <summary>来自网关核验后的任务事实，不存储许可密钥或用户输入。</summary>
     public string? TaskPermitId { get; set; }
+    public string? TaskLeaseRunId { get; set; }
+    public long? TaskLeaseFence { get; set; }
     public string? ExecutionOrigin { get; set; }
     public string? TriggerCredentialId { get; set; }
     public string? TriggerActorUserId { get; set; }

@@ -17,6 +17,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class ArenaRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunQueue _queue;
     private readonly IRunEventStore _runStore;
@@ -30,8 +31,10 @@ public sealed class ArenaRunWorker : BackgroundService
         IRunQueue queue,
         IRunEventStore runStore,
         IConfiguration config,
-        ILogger<ArenaRunWorker> logger)
+        ILogger<ArenaRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _runStore = runStore;
@@ -157,8 +160,10 @@ public sealed class ArenaRunWorker : BackgroundService
     {
         var meta = await _runStore.GetRunAsync(RunKinds.Arena, runId, stoppingToken);
         if (meta == null) return;
-        using var taskExecutionScope = TaskExecutionContext.Enter(meta.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(meta.TaskPermitId, meta.RunId));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, meta.TaskPermitId, meta.RunId);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(meta.TaskPermitId, meta.RunId));
         if (meta.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled) return;
 
         var input = ParseInput(meta.InputJson);

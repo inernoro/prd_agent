@@ -19,6 +19,7 @@ namespace PrdAgent.Infrastructure.Services.ChatAgent;
 /// </summary>
 public sealed class ChatAgentService : IChatAgentService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private static readonly JsonSerializerOptions JsonOpts = new(JsonSerializerDefaults.Web);
 
     private readonly MongoDbContext _db;
@@ -36,8 +37,10 @@ public sealed class ChatAgentService : IChatAgentService
         IChatAgentTurnQueue queue,
         IChatAgentOneOffRunRegistry oneOffRuns,
         IOptionsMonitor<ChatAgentOptions> options,
-        ILogger<ChatAgentService> logger)
+        ILogger<ChatAgentService> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _runtime = runtime;
         _tools = tools;
@@ -227,8 +230,10 @@ public sealed class ChatAgentService : IChatAgentService
 
         var turn = await _db.ChatAgentMessages.Find(message => message.SessionId == sessionId
             && message.TurnId == turnId && message.Role == ChatAgentRoles.User).FirstOrDefaultAsync(ct);
-        using var taskExecutionScope = TaskExecutionContext.Enter(turn?.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(turn.TaskPermitId, turnId));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, turn?.TaskPermitId, turnId);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(turn?.TaskPermitId, turnId));
 
         var opts = _options.CurrentValue;
         var history = await BuildHistoryAsync(sessionId, turnId, opts.HistoryLimit, ct);
@@ -468,8 +473,10 @@ public sealed class ChatAgentService : IChatAgentService
         var opts = _options.CurrentValue;
         var runId = Guid.NewGuid().ToString("N");
         var taskIdentity = TaskExecutionContext.Current;
-        using var taskExecutionScope = TaskExecutionContext.Enter(taskIdentity == null
-            ? null : new TaskExecutionIdentity(taskIdentity.PermitId, runId));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, taskIdentity?.PermitId, runId);
+        if (taskExecutionAttempt.ShouldSkip) yield break;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(taskIdentity?.PermitId, runId));
 
         var messages = new List<SidecarChatMessage>();
         foreach (var item in request.History ?? Array.Empty<ChatAgentOneOffMessage>())

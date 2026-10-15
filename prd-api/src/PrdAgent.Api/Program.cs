@@ -209,6 +209,8 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.DocumentStore.IDocum
 // LLM 请求上下文与日志（旁路写入，便于后台调试）
 builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.BackgroundTasks.TaskAdmissionService>();
+builder.Services.AddSingleton<ITaskExecutionCoordinator, PrdAgent.Infrastructure.Security.TaskExecutionCoordinator>();
+builder.Services.AddSingleton<PrdAgent.Infrastructure.Security.TaskContinuationTokens>();
 builder.Services.AddSingleton<ITaskExecutionAuthorizer, PrdAgent.Infrastructure.Security.TaskExecutionAuthorizer>();
 builder.Services.AddMapModelEgressGuard();
 builder.Services.AddSingleton<LlmRequestLogBackground>();
@@ -797,7 +799,7 @@ builder.Services.AddSingleton<IIdGenerator>(sp =>
 
 // Run 事件存储（断线续传/观测）：生产用 Redis（高频写，避免 Mongo 写放大）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
-    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24)));
+    new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24), taskExecutions: sp.GetRequiredService<ITaskExecutionCoordinator>()));
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
     new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
 

@@ -133,6 +133,8 @@ public static class LiveAsrGatewayEndpoint
                     var next = await service.ReserveContinuationAsync(http, admission.Authorization,
                         admission.Ingress.AppCallerCode, CancellationToken.None);
                     if (!next.Allowed) throw new TaskExecutionAdmissionException(next.ErrorCode, next.Message, next.StatusCode);
+                    await http.RequestServices.GetRequiredService<IGatewayInvocationAuthority>()
+                        .AssertCurrentAsync(admission.Ingress.AppCallerCode, admission.Ingress.Context, CancellationToken.None);
                 }, admission.Ingress.AppCallerCode);
         }
         finally
@@ -237,6 +239,8 @@ public static class LiveAsrGatewayEndpoint
             Environment: admission.Authorization.Environment,
             ServiceKeyPrefix: admission.Authorization.KeyPrefixSnapshot,
             TaskPermitId: admission.Ingress.Context?.TaskPermitId,
+            TaskLeaseRunId: admission.Ingress.Context?.TaskLeaseRunId,
+            TaskLeaseFence: admission.Ingress.Context?.TaskLeaseFence,
             ExecutionOrigin: admission.Ingress.Context?.ExecutionOrigin,
             TriggerCredentialId: admission.Ingress.Context?.TriggerCredentialId,
             SourceDeployment: admission.Ingress.Context?.SourceDeployment,

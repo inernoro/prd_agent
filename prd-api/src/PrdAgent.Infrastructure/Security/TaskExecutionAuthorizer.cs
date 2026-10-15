@@ -9,9 +9,11 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Security;
 
 /// <summary>统一出口只接受平台注册的任务引用，不能由业务自行声明人工来源。</summary>
-public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfiguration configuration)
+public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfiguration configuration,
+    ITaskExecutionCoordinator? executions = null)
     : ITaskExecutionAuthorizer
 {
+    private readonly ITaskExecutionCoordinator _executions = executions ?? new TaskExecutionCoordinator(data);
     public async Task AuthorizeOutboundAsync(HttpRequestMessage message, string appCallerCode,
         GatewayRequestContext? context, CancellationToken ct)
     {
@@ -29,6 +31,10 @@ public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfigu
         var identity = TaskExecutionContext.Current;
         if (identity is null || !ValidPermitId(identity.PermitId))
             throw Denied("TASK_EXECUTION_NOT_ADMITTED", "本次任务没有获得执行许可，已停止模型调用；请重新明确提交操作。");
+        if (identity.Lease is not { } lease || lease.PermitId != identity.PermitId
+            || !await _executions.ValidateHashAsync(lease.PermitId, lease.RunId, TaskExecutionCoordinator.OwnerHash(lease.OwnerToken),
+                lease.Fence, false, ct, identity.RunId ?? context?.RunId))
+            throw Denied("TASK_EXECUTION_LEASE_INVALID", "任务执行租约已失效或尚未领取，已停止模型调用；请查看任务状态后重新提交。");
         var permits = data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName);
         GatewayTaskPermitRecord? permit;
         try { permit = await permits.Find(x => x.Id == identity.PermitId).FirstOrDefaultAsync(ct); }
@@ -107,12 +113,19 @@ public sealed class TaskExecutionAuthorizer(LlmGatewayDataContext data, IConfigu
 
         message.Headers.Remove("X-Gateway-Task-Permit");
         message.Headers.TryAddWithoutValidation("X-Gateway-Task-Permit", permit.Id);
+        message.Headers.Remove(TaskExecutionHeaders.LeaseToken);
+        message.Headers.TryAddWithoutValidation(TaskExecutionHeaders.LeaseToken, lease.OwnerToken);
+        message.Headers.Remove(TaskExecutionHeaders.LeaseFence);
+        message.Headers.TryAddWithoutValidation(TaskExecutionHeaders.LeaseFence, lease.Fence.ToString(System.Globalization.CultureInfo.InvariantCulture));
         message.Headers.Remove("X-Gateway-Execution-Origin");
         message.Headers.TryAddWithoutValidation("X-Gateway-Execution-Origin", permit.Origin);
         message.Headers.Remove("X-Gateway-Source-Deployment");
         if (context is not null)
         {
             context.TaskPermitId = permit.Id;
+            context.TaskLeaseRunId = lease.RunId;
+            context.TaskLeaseOwnerHash = TaskExecutionCoordinator.OwnerHash(lease.OwnerToken);
+            context.TaskLeaseFence = lease.Fence;
             context.ExecutionOrigin = permit.Origin;
             context.TriggerCredentialId = permit.TriggerCredentialId;
             context.TriggerActorUserId = permit.ActorUserId;

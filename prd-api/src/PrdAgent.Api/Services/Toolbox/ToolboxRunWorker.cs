@@ -14,6 +14,7 @@ namespace PrdAgent.Api.Services.Toolbox;
 /// </summary>
 public class ToolboxRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceProvider _serviceProvider;
     private readonly IRunQueue _runQueue;
     private readonly IConfiguration _configuration;
@@ -28,8 +29,10 @@ public class ToolboxRunWorker : BackgroundService
         IServiceProvider serviceProvider,
         IRunQueue runQueue,
         IConfiguration configuration,
-        ILogger<ToolboxRunWorker> logger)
+        ILogger<ToolboxRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _serviceProvider = serviceProvider;
         _runQueue = runQueue;
         _configuration = configuration;
@@ -140,8 +143,10 @@ public class ToolboxRunWorker : BackgroundService
             return;
         }
 
-        using var taskExecutionScope = TaskExecutionContext.Enter(run.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(run.TaskPermitId, run.Id));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, run.TaskPermitId, run.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(run.TaskPermitId, run.Id));
 
         // 更新状态为运行中
         run.Status = ToolboxRunStatus.Running;

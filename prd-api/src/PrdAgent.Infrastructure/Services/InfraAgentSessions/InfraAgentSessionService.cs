@@ -22,6 +22,7 @@ namespace PrdAgent.Infrastructure.Services.InfraAgentSessions;
 /// </summary>
 public class InfraAgentSessionService : IInfraAgentSessionService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private sealed class CdsMessageDispatchUncertainException : InfraAgentSessionException
     {
         public CdsMessageDispatchUncertainException()
@@ -77,8 +78,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         IInfraAgentRuntimeJobQueue runtimeJobs,
         IAgentToolRegistry toolRegistry,
         HttpClient http,
-        AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null)
+        AgentRuntime.GatewayReviewRuntimeAdapter? liteReviewAdapter = null,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _db = db;
         _logger = logger;
         _connections = connections;
@@ -1011,8 +1014,10 @@ public class InfraAgentSessionService : IInfraAgentSessionService
         if (session == null) return;
         var turn = await _db.InfraAgentMessages.Find(message => message.Id == messageId
             && message.SessionId == id && message.Role == InfraAgentMessageRoles.User).FirstOrDefaultAsync(ct);
-        using var taskExecutionScope = TaskExecutionContext.Enter(turn?.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(turn.TaskPermitId, messageId));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, turn?.TaskPermitId, messageId);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(turn?.TaskPermitId, messageId));
 
         if (!IsMapDirectRuntimeFallbackEnabled())
         {

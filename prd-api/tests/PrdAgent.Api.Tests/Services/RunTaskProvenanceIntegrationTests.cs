@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Services;
@@ -55,7 +56,7 @@ public sealed class RunTaskProvenanceIntegrationTests : IAsyncLifetime
         await store.SetRunAsync(RunKinds.Chat, new RunMeta { RunId = "queued-task", TaskPermitId = permit.Id });
         using var unrelated = TaskExecutionContext.Enter(new TaskExecutionIdentity(Guid.NewGuid().ToString("N"), "new-request"));
         var run = (await store.GetRunAsync(RunKinds.Chat, "queued-task"))!;
-        using (TaskExecutionContext.Enter(new TaskExecutionIdentity(run.TaskPermitId!, run.RunId)))
+        using (TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(run.TaskPermitId!, run.RunId)))
         {
             var context = new GatewayRequestContext { RunId = run.RunId, UserId = "owner" };
             using var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gw/v1/responses");
@@ -68,7 +69,7 @@ public sealed class RunTaskProvenanceIntegrationTests : IAsyncLifetime
         await Permits.UpdateOneAsync(item => item.Id == permit.Id,
             Builders<GatewayTaskPermitRecord>.Update.Set(item => item.CallCount, 2));
         // The next process reconstructs the same identity and authorizer rather than issuing a permit.
-        using (TaskExecutionContext.Enter(new TaskExecutionIdentity(run.TaskPermitId!, run.RunId)))
+        using (TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(run.TaskPermitId!, run.RunId)))
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:1/gw/v1/responses");
             await new TaskExecutionAuthorizer(_gateway, _configuration).AuthorizeOutboundAsync(request, Caller,
@@ -125,6 +126,7 @@ public sealed class RunTaskProvenanceIntegrationTests : IAsyncLifetime
         environment.SetupGet(item => item.EnvironmentName).Returns("Production");
         var service = new DesignArtifactGatewayGrantService(_gateway, _map, _configuration, environment.Object,
             new TaskExecutionAuthorizer(_gateway, _configuration));
+        using var activeExecution = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, run.Id));
         var exhausted = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => service.IssueAsync(run,
             DateTime.UtcNow.AddMinutes(5), default));
         Assert.Equal("TASK_PERMIT_INVALID", exhausted.Code);
@@ -185,7 +187,7 @@ public sealed class RunTaskProvenanceIntegrationTests : IAsyncLifetime
             AllowedAppCallerCodes = [Caller], MaxCalls = 3, MaxRuns = 2,
             CreatedAt = DateTime.UtcNow.AddMinutes(-1), ExpiresAt = DateTime.UtcNow.AddMinutes(20),
         };
-        await Permits.InsertOneAsync(permit);
+        await Permits.InsertOneAsync(PlatformExecutionFixture.Prepare(permit));
         return permit;
     }
 

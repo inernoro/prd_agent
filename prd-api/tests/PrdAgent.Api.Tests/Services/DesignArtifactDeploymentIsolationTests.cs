@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using PrdAgent.Infrastructure.Security;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -731,10 +732,11 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             ExpiresAt = Now.AddMinutes(15),
         };
         await _gateway.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName)
-            .InsertOneAsync(permit);
+            .InsertOneAsync(PlatformExecutionFixture.Prepare(permit));
         var authorizer = new TaskExecutionAuthorizer(_gateway, configuration);
         var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object, authorizer);
 
+        using var execution = PrdAgent.Core.Security.TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, run.Id));
         var issued = await service.IssueAsync(run, Now.AddMinutes(15), default);
         var stored = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .Find(item => item.Id == issued.Id)

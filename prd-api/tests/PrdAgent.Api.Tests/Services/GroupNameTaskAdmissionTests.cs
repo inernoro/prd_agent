@@ -99,7 +99,7 @@ public sealed class GroupNameTaskAdmissionTests : IAsyncLifetime
             It.IsAny<string?>(), It.IsAny<int?>(), It.IsAny<int?>()), Times.Once);
         fixture.Groups.Verify(item => item.GetByIdAsync(It.IsAny<string>()), Times.Never);
         fixture.Gateway.VerifyNoOtherCalls();
-        Assert.Contains(fixture.ControllerLog.Messages, message => message.Contains("TASK_ADMISSION_UNAVAILABLE", StringComparison.Ordinal)
+        Assert.Contains(fixture.ControllerLog.Messages, message => message.Contains("TASK_EXECUTION_UNAVAILABLE", StringComparison.Ordinal)
             && message.Contains("群组已创建", StringComparison.Ordinal));
         Assert.Equal(0, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
     }
@@ -169,12 +169,12 @@ public sealed class GroupNameTaskAdmissionTests : IAsyncLifetime
             Builders<GatewayTaskPermitRecord>.Update.Set(item => item.ExpiresAt, DateTime.UtcNow.AddSeconds(-1)));
         fixture.ReleaseRead.TrySetResult();
         var diagnosis = await fixture.ServiceLog.Diagnosed.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Contains("TASK_PERMIT_INVALID", diagnosis, StringComparison.Ordinal);
+        Assert.Contains("TASK_EXECUTION_LEASE_INVALID", diagnosis, StringComparison.Ordinal);
         Assert.Equal(0, fixture.PaidSends);
         Assert.Empty(fixture.AuthorizedRequests);
         fixture.Groups.Verify(item => item.UpdateGroupNameAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
         var unchanged = await Permits.Find(item => item.Id == captured!.PermitId).SingleAsync();
-        Assert.Empty(unchanged.BoundRunIds);
+        Assert.Equal([fixture.Group.GroupId], unchanged.BoundRunIds);
         Assert.Equal(0, unchanged.CallCount);
         Assert.Equal(1, await Permits.CountDocumentsAsync(FilterDefinition<GatewayTaskPermitRecord>.Empty));
     }
@@ -201,6 +201,7 @@ public sealed class GroupNameTaskAdmissionTests : IAsyncLifetime
     private static DefaultHttpContext AuthenticatedCreate(string scheme = "Bearer", string? auth = null)
     {
         var http = new DefaultHttpContext();
+        http.Request.Headers["Idempotency-Key"] = Guid.NewGuid().ToString("N");
         http.SetEndpoint(new Endpoint(_ => Task.CompletedTask, new EndpointMetadataCollection(
             new ControllerActionDescriptor
             {
@@ -270,7 +271,7 @@ public sealed class GroupNameTaskAdmissionTests : IAsyncLifetime
                 .Returns((GatewayRequest request, CancellationToken ct) => SendLocallyAsync(request, data, configuration, ct));
             var modelDomain = new ModelDomainService(business, Mock.Of<IHttpClientFactory>(), configuration,
                 Mock.Of<ILlmRequestLogWriter>(), context, Gateway.Object, NullLogger<ClaudeClient>.Instance);
-            Service = new GroupNameSuggestionService(Groups.Object, _documents.Object, modelDomain, ServiceLog);
+            Service = new GroupNameSuggestionService(Groups.Object, _documents.Object, modelDomain, ServiceLog, new TaskExecutionCoordinator(data));
         }
 
         public GroupsController Controller(HttpContext http) => new(Groups.Object, _bots.Object, _documents.Object,

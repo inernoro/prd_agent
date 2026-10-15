@@ -6,4 +6,5 @@ namespace PrdAgent.Core.Interfaces;
 public interface IGatewayInvocationAuthority
 {
     void AssertAuthorized(string appCallerCode, GatewayRequestContext? context);
+    Task AssertCurrentAsync(string appCallerCode, GatewayRequestContext? context, CancellationToken ct);
 }

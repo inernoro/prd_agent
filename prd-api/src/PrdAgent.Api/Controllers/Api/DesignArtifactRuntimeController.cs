@@ -191,8 +191,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 throw new InvalidOperationException("模型请求缺少任务上下文，请重新发起任务");
 
             var run = await _broker.ReserveModelCallAsync(runId, ticket, ct);
-            using var taskScope = TaskExecutionContext.Enter(
-                run.TaskPermitId is { Length: > 0 } permitId ? new TaskExecutionIdentity(permitId, run.Id) : null);
+            using var taskScope = TaskExecutionContext.Enter(await _broker.RestoreExecutionAsync(runId, ticket, ct));
             var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
             if (responses)
                 selection.ApplyToResponsesRequest(body);

@@ -15,6 +15,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class WorkflowRunWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunQueue _queue;
     private readonly IRunEventStore _eventStore;
@@ -22,8 +23,10 @@ public sealed class WorkflowRunWorker : BackgroundService
 
     private const string EventKind = "workflow";
 
-    public WorkflowRunWorker(IServiceScopeFactory scopeFactory, IRunQueue queue, IRunEventStore eventStore, ILogger<WorkflowRunWorker> logger)
+    public WorkflowRunWorker(IServiceScopeFactory scopeFactory, IRunQueue queue, IRunEventStore eventStore, ILogger<WorkflowRunWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _eventStore = eventStore;
@@ -89,8 +92,10 @@ public sealed class WorkflowRunWorker : BackgroundService
             return;
         }
 
-        using var taskExecutionScope = TaskExecutionContext.Enter(execution.TaskPermitId == null
-            ? null : new TaskExecutionIdentity(execution.TaskPermitId, execution.Id));
+        await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, execution.TaskPermitId, execution.Id);
+        if (taskExecutionAttempt.ShouldSkip) return;
+        using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+            ?? TaskExecutionContext.ForRun(execution.TaskPermitId, execution.Id));
 
         if (execution.Status is WorkflowExecutionStatus.Completed
             or WorkflowExecutionStatus.Failed

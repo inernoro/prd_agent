@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using System.Net;
 using System.Text;
 using Microsoft.AspNetCore.Http;
@@ -70,6 +71,7 @@ public sealed class DesignArtifactTaskTransportTests
         var broker = new Mock<IDesignArtifactWorkspaceBroker>();
         broker.Setup(x => x.ValidateModelTicketAsync(run.Id, "valid-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
         broker.Setup(x => x.ReserveModelCallAsync(run.Id, "valid-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        broker.Setup(x => x.RestoreExecutionAsync(run.Id, "valid-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run.TaskPermitId is null ? null! : PlatformExecutionFixture.Identity(run.TaskPermitId, run.Id));
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["LlmGateway:ServeBaseUrl"] = "https://gateway.invalid",

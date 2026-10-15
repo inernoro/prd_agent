@@ -258,6 +258,7 @@ public sealed class GatewayMinimumProtectionIntegrationTests
         request.Headers.Add("X-Gateway-Key", key);
         request.Headers.Add("X-Gateway-Source", "map");
         request.Headers.Add(GatewayTaskAdmission.HeaderName, automatic ? AutomaticPermitId : ManualPermitId);
+        PlatformExecutionFixture.Headers(request, automatic ? AutomaticPermitId : ManualPermitId);
         if (automatic)
         {
             request.Headers.Add("X-Gateway-Execution-Origin", "automatic");
@@ -352,14 +353,14 @@ public sealed class GatewayMinimumProtectionIntegrationTests
             var database = new DiagnosticDatabase(connection);
             await database.Data.Database.RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
             foreach (var (id, origin) in new[] { (ManualPermitId, TaskExecutionOrigins.Interactive), (AutomaticPermitId, TaskExecutionOrigins.Agent) })
-                await database.Data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName).InsertOneAsync(new GatewayTaskPermitRecord
+                await database.Data.Database.GetCollection<GatewayTaskPermitRecord>(GatewayTaskPermitRecord.CollectionName).InsertOneAsync(PlatformExecutionFixture.Prepare(new GatewayTaskPermitRecord
                 {
                     Id = id, TenantId = Tenant, ActorUserId = "normal-user", SubjectUserIds = ["normal-user"],
                     TriggerCredentialId = "phase0-test-task", Origin = origin, SourceDeployment = "prd-agent:production",
                     SourceTask = "request:minimum-protection-fixture", MaxCalls = GatewayTaskPermitRecord.MaximumCalls, MaxRuns = 1,
                     ExpiresAt = DateTime.UtcNow.AddHours(1),
                     AllowedAppCallerCodes = [Caller, "future-business.first::chat", "future-business.second::chat", "future-business.third::chat"],
-                });
+                }));
             return database;
         }
         public Task AddCallerAsync(string tenantId, int? rate = null)

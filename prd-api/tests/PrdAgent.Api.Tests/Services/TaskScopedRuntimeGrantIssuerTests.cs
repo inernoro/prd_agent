@@ -1,3 +1,4 @@
+using PrdAgent.Api.Tests.Gateway;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using MongoDB.Bson;
@@ -46,7 +47,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         var configuration = Configuration("http://internal-gateway:8091", "https://actual-cds-serving.example");
         var permit = await SeedPermitAsync(configuration, count: 1);
         var input = Request();
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         var prepared = await Issuer(configuration).PrepareAsync(input, default);
         var stored = await Grants.Find(FilterDefinition<GatewayRuntimeGrantRecord>.Empty).SingleAsync();
         var expectedHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
@@ -79,7 +80,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         Assert.Same(input.Tools, prepared.Tools);
         Assert.Same(input.BuiltinTools, prepared.BuiltinTools);
         Assert.Equal(input.CallbackBaseUrl, prepared.CallbackBaseUrl);
-        Assert.Equal(input.AgentApiKey, prepared.AgentApiKey);
+        Assert.StartsWith("map-task-v2.", prepared.AgentApiKey);
         Assert.Equal(input.Protocol, prepared.Protocol);
         Assert.Equal(input.RuntimeAdapter, prepared.RuntimeAdapter);
         Assert.Equal(input.MapSessionId, prepared.MapSessionId);
@@ -107,7 +108,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         permit.ActorUserId = "administrator";
         permit.AllowDelegatedSubjects = true;
         await Permits.ReplaceOneAsync(item => item.Id == permit.Id, permit);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "delegated-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "delegated-task"));
         var prepared = await Issuer(configuration).PrepareAsync(Request(subject: "owner"), default);
         var grant = await Grants.Find(FilterDefinition<GatewayRuntimeGrantRecord>.Empty).SingleAsync();
         var frozen = await Permits.Find(item => item.Id == permit.Id).SingleAsync();
@@ -127,7 +128,8 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         Assert.Equal("platform-scheduler:WorkflowScheduleWorker", permit.ActorUserId);
         Assert.Equal(["business-owner"], permit.SubjectUserIds);
         Assert.False(permit.AllowDelegatedSubjects);
-        using var task = TaskExecutionContext.Enter(identity with { RunId = "scheduled-job-run" });
+        await using var execution = await new TaskExecutionCoordinator(_data).AcquireAsync(identity.PermitId, "scheduled-job-run", default);
+        using var task = TaskExecutionContext.Enter(execution.Identity);
         var prepared = await Issuer(configuration).PrepareAsync(Request(subject: null), default);
         var grant = await Grants.Find(FilterDefinition<GatewayRuntimeGrantRecord>.Empty).SingleAsync();
         Assert.StartsWith("gwrg_", prepared.ApiKey!);
@@ -156,14 +158,15 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         var permit = await Permits.Find(item => item.Id == identity.PermitId).SingleAsync();
         permit.AllowDelegatedSubjects = delegated;
         await Permits.ReplaceOneAsync(item => item.Id == permit.Id, permit);
-        using var task = TaskExecutionContext.Enter(identity with { RunId = "scheduled-job-run" });
+        await using var execution = await new TaskExecutionCoordinator(_data).AcquireAsync(identity.PermitId, "scheduled-job-run", default);
+        using var task = TaskExecutionContext.Enter(execution.Identity);
         var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => Issuer(configuration).PrepareAsync(
             Request(subject: subject == "scheduler-actor" ? permit.ActorUserId : subject), default));
         Assert.Equal(delegated ? "TASK_PERMIT_INVALID" : "TASK_PERMIT_SUBJECT_DENIED", error.Code);
         Assert.Equal(0, await Grants.CountDocumentsAsync(FilterDefinition<GatewayRuntimeGrantRecord>.Empty));
         var unchanged = await Permits.Find(item => item.Id == permit.Id).SingleAsync();
         Assert.Equal(["business-owner"], unchanged.SubjectUserIds);
-        Assert.Empty(unchanged.BoundRunIds);
+        Assert.Equal(["scheduled-job-run"], unchanged.BoundRunIds);
         Assert.Equal(0, unchanged.CallCount);
     }
 
@@ -207,7 +210,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
             case "wrong-deployment": permit.SourceDeployment = "another-deployment"; break;
         }
         await Permits.ReplaceOneAsync(item => item.Id == permit.Id, permit);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() => Issuer(configuration).PrepareAsync(
             Request(subject: condition == "foreign-subject" ? "unapproved-user" : "owner"), default));
         Assert.Equal(0, await Grants.CountDocumentsAsync(FilterDefinition<GatewayRuntimeGrantRecord>.Empty));
@@ -227,7 +230,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
     {
         var configuration = Configuration(gateway);
         var permit = await SeedPermitAsync(configuration);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
             Issuer(configuration).PrepareAsync(Request(), default));
         Assert.Equal("TASK_RUNTIME_GATEWAY_UNAVAILABLE", error.Code);
@@ -244,7 +247,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
     {
         var configuration = CdsConfiguration("https://platform-declared-gateway.example/", serviceTable);
         var permit = await SeedPermitAsync(configuration);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         var prepared = await Issuer(configuration).PrepareAsync(Request(), default);
         Assert.Equal("https://platform-declared-gateway.example", prepared.BaseUrl);
         Assert.StartsWith("gwrg_", prepared.ApiKey!);
@@ -262,7 +265,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         var configuration = CdsConfiguration(console,
             "{\"llmgw\":\"https://alias-must-not-be-used.example\",\"llmgw-web\":\"https://other-alias.example\"}");
         var permit = await SeedPermitAsync(configuration);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
             Issuer(configuration).PrepareAsync(Request(), default));
         Assert.Equal("TASK_RUNTIME_GATEWAY_UNAVAILABLE", error.Code);
@@ -277,7 +280,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
         var configuration = CdsConfiguration("https://platform-declared-gateway.example",
             external: "https://administrator-configured-serving.example/");
         var permit = await SeedPermitAsync(configuration);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         var prepared = await Issuer(configuration).PrepareAsync(Request(), default);
         Assert.Equal("https://administrator-configured-serving.example", prepared.BaseUrl);
     }
@@ -289,7 +292,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
     {
         var configuration = CdsConfiguration("https://platform-declared-gateway.example", external: external);
         var permit = await SeedPermitAsync(configuration);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         var error = await Assert.ThrowsAsync<TaskExecutionAdmissionException>(() =>
             Issuer(configuration).PrepareAsync(Request(), default));
         Assert.Equal("TASK_RUNTIME_GATEWAY_UNAVAILABLE", error.Code);
@@ -301,7 +304,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
     {
         var configuration = Configuration("http://internal-gateway:8091", "");
         var permit = await SeedPermitAsync(configuration, count: 2);
-        using var task = TaskExecutionContext.Enter(new TaskExecutionIdentity(permit.Id, "real-task"));
+        using var task = TaskExecutionContext.Enter(PlatformExecutionFixture.Identity(permit.Id, "real-task"));
         var first = await Issuer(configuration).PrepareAsync(Request(), default);
         var second = await Issuer(configuration).PrepareAsync(Request(), default);
         Assert.NotEqual(first.ApiKey, second.ApiKey);
@@ -318,7 +321,8 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
     {
         var host = new Mock<IHostEnvironment>();
         host.SetupGet(item => item.EnvironmentName).Returns("Production");
-        return new(_data, new TaskExecutionAuthorizer(_data, configuration), configuration, host.Object);
+        return new(_data, new TaskExecutionAuthorizer(_data, configuration), configuration, host.Object,
+            new TaskContinuationTokens(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(), new TaskExecutionCoordinator(_data)));
     }
 
     private async Task<GatewayTaskPermitRecord> SeedPermitAsync(IConfiguration configuration, int count = 0)
@@ -331,7 +335,7 @@ public sealed class TaskScopedRuntimeGrantIssuerTests : IAsyncLifetime
             AllowedAppCallerCodes = [Caller], MaxCalls = 3, CallCount = count, MaxRuns = 2,
             CreatedAt = DateTime.UtcNow.AddMinutes(-1), ExpiresAt = DateTime.UtcNow.AddMinutes(5),
         };
-        await Permits.InsertOneAsync(permit);
+        await Permits.InsertOneAsync(PlatformExecutionFixture.Prepare(permit));
         return permit;
     }
 

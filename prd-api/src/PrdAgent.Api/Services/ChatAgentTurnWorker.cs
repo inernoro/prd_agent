@@ -10,6 +10,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class ChatAgentTurnWorker : BackgroundService
 {
+    private readonly PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? _taskExecutions;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IChatAgentTurnQueue _queue;
     private readonly ILogger<ChatAgentTurnWorker> _logger;
@@ -20,8 +21,10 @@ public sealed class ChatAgentTurnWorker : BackgroundService
     public ChatAgentTurnWorker(
         IServiceScopeFactory scopeFactory,
         IChatAgentTurnQueue queue,
-        ILogger<ChatAgentTurnWorker> logger)
+        ILogger<ChatAgentTurnWorker> logger,
+        PrdAgent.Core.Interfaces.ITaskExecutionCoordinator? taskExecutions = null)
     {
+        _taskExecutions = taskExecutions;
         _scopeFactory = scopeFactory;
         _queue = queue;
         _logger = logger;
@@ -38,8 +41,10 @@ public sealed class ChatAgentTurnWorker : BackgroundService
             {
                 try
                 {
-                    using var taskExecutionScope = TaskExecutionContext.Enter(job.TaskPermitId == null
-                        ? null : new TaskExecutionIdentity(job.TaskPermitId, job.TurnId));
+                    await using var taskExecutionAttempt = await TaskExecutionAttempt.AcquireAsync(_taskExecutions, job.TaskPermitId, job.TurnId);
+                    if (taskExecutionAttempt.ShouldSkip) return;
+                    using var taskExecutionScope = TaskExecutionContext.Enter(taskExecutionAttempt.Lease?.Identity
+                        ?? TaskExecutionContext.ForRun(job.TaskPermitId, job.TurnId));
                     using var scope = _scopeFactory.CreateScope();
                     var chat = scope.ServiceProvider.GetRequiredService<IChatAgentService>();
                     await chat.RunTurnAsync(job.SessionId, job.TurnId, stoppingToken);

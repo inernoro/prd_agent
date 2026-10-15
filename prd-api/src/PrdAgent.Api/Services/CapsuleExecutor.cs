@@ -5636,7 +5636,7 @@ function safeChart(canvasId, config) {
         var admittedTask = PrdAgent.Core.Security.TaskExecutionContext.Current;
         using var runtimeTaskScope = PrdAgent.Core.Security.TaskExecutionContext.Enter(
             admittedTask is not null && string.IsNullOrWhiteSpace(admittedTask.RunId)
-                ? new PrdAgent.Core.Security.TaskExecutionIdentity(admittedTask.PermitId, runId)
+                ? admittedTask with { RunId = runId }
                 : admittedTask);
         var appCallerCode = AppCallerRegistry.PageAgent.Generate;
         var effectiveModel = string.IsNullOrWhiteSpace(model) ? "claude-opus-4-5" : model;
