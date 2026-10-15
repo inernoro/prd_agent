@@ -31,6 +31,15 @@ public interface IVideoGenService
     /// <summary>请求取消任务</summary>
     Task<bool> CancelRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default);
 
+    /// <summary>
+    /// 超级管理员终止不再由 worker 持有的停滞任务。该入口不按 owner 过滤，但只接受安全的空闲状态，
+    /// 并在同一次原子更新中写入脱敏审计记录。
+    /// </summary>
+    Task<AdminTerminateStalledVideoRunResult?> TerminateStalledRunAsAdminAsync(
+        string runId,
+        string actorAdminId,
+        CancellationToken ct = default);
+
     /// <summary>删除终态任务及其不再被引用的生成产物；可同时回收仅属于该任务的空项目。</summary>
     Task<DeleteVideoGenRunResult?> DeleteRunAsync(
         string runId,

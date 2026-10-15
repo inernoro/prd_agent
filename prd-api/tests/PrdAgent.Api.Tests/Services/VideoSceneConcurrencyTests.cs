@@ -11,12 +11,161 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
+using System.Text.Json;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
 
 public class VideoSceneConcurrencyTests
 {
+    [Fact]
+    public async Task AdminTerminateStalledEditingRun_ShouldCrossOwnerAtomicallyAuditAndRollBackLatestProject()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var project = await test.CreateService().CreateProjectAsync(
+            "video-agent",
+            test.OwnerId,
+            new CreateVideoProjectRequest { Title = "管理员收口分镜", SourceMarkdown = "测试" });
+        var run = NewRun("admin-terminate", test.OwnerId, SceneItemStatus.Done, SceneItemStatus.Draft);
+        run.ProjectId = project.Id;
+        run.PhaseProgress = 100;
+        run.Scenes[0].OfferingId = "offering-reference-only";
+        run.DirectPrompt = "不得进入审计的提示词";
+        run.ArticleMarkdown = "不得进入审计的素材正文";
+        await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.UpdateOneAsync(
+            item => item.Id == project.Id,
+            Builders<VideoProject>.Update
+                .Set(item => item.LatestRunId, run.Id)
+                .Set(item => item.Status, VideoProjectStatus.Editing));
+        var service = test.CreateService();
+
+        var result = await service.TerminateStalledRunAsAdminAsync(run.Id, "root-admin");
+
+        result.ShouldNotBeNull();
+        result.RunId.ShouldBe(run.Id);
+        result.PreviousStatus.ShouldBe(VideoGenRunStatus.Editing);
+        result.AppKey.ShouldBe(run.AppKey);
+        result.HadOfferingReference.ShouldBeTrue();
+        var persisted = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persisted.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        persisted.CurrentPhase.ShouldBe("cancelled");
+        persisted.PhaseProgress.ShouldBe(100);
+        persisted.CancelRequested.ShouldBeTrue();
+        persisted.EndedAt.ShouldNotBeNull();
+        var audit = persisted.AdministrativeAudits.ShouldHaveSingleItem();
+        audit.RunId.ShouldBe(run.Id);
+        audit.ActorAdminId.ShouldBe("root-admin");
+        audit.PreviousStatus.ShouldBe(VideoGenRunStatus.Editing);
+        audit.AppKey.ShouldBe(run.AppKey);
+        audit.HadOfferingReference.ShouldBeTrue();
+        audit.Action.ShouldBe("terminate-stalled-run");
+        typeof(VideoGenAdministrativeAudit).GetProperties().Select(property => property.Name).OrderBy(name => name)
+            .ShouldBe(new[]
+            {
+                nameof(VideoGenAdministrativeAudit.Action),
+                nameof(VideoGenAdministrativeAudit.ActorAdminId),
+                nameof(VideoGenAdministrativeAudit.AppKey),
+                nameof(VideoGenAdministrativeAudit.CreatedAt),
+                nameof(VideoGenAdministrativeAudit.HadOfferingReference),
+                nameof(VideoGenAdministrativeAudit.Id),
+                nameof(VideoGenAdministrativeAudit.PreviousStatus),
+                nameof(VideoGenAdministrativeAudit.RunId),
+            }.OrderBy(name => name));
+        var auditJson = JsonSerializer.Serialize(audit);
+        auditJson.ShouldNotContain(run.DirectPrompt);
+        auditJson.ShouldNotContain(run.ArticleMarkdown);
+        JsonSerializer.Serialize(persisted).ShouldNotContain(nameof(VideoGenRun.AdministrativeAudits));
+        (await test.Context.VideoProjects.Find(item => item.Id == project.Id).SingleAsync()).Status
+            .ShouldBe(VideoProjectStatus.Draft);
+    }
+
+    [Theory]
+    [InlineData(VideoGenRunStatus.Queued)]
+    [InlineData(VideoGenRunStatus.Scripting)]
+    [InlineData(VideoGenRunStatus.Rendering)]
+    [InlineData(VideoGenRunStatus.Completed)]
+    [InlineData(VideoGenRunStatus.Failed)]
+    [InlineData(VideoGenRunStatus.Cancelled)]
+    public async Task AdminTerminateStalledRun_ShouldRejectNonEditingStates(string status)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun($"admin-reject-{status}", test.OwnerId, SceneItemStatus.Draft);
+        run.Status = status;
+        await test.SaveRunAsync(run);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() =>
+            test.CreateService().TerminateStalledRunAsAdminAsync(run.Id, "root-admin"));
+
+        error.Message.ShouldContain(status);
+        var persisted = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persisted.Status.ShouldBe(status);
+        persisted.AdministrativeAudits.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(SceneItemStatus.Generating)]
+    [InlineData(SceneItemStatus.Submitting)]
+    [InlineData(SceneItemStatus.SubmittingClaimed)]
+    [InlineData(SceneItemStatus.Polling)]
+    [InlineData(SceneItemStatus.PollingClaimed)]
+    [InlineData(SceneItemStatus.Rendering)]
+    public async Task AdminTerminateStalledRun_ShouldRejectWorkerOwnedEditingScenes(string sceneStatus)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun($"admin-worker-{sceneStatus}", test.OwnerId, sceneStatus);
+        await test.SaveRunAsync(run);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() =>
+            test.CreateService().TerminateStalledRunAsAdminAsync(run.Id, "root-admin"));
+
+        error.Message.ShouldContain("worker");
+        var persisted = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persisted.Status.ShouldBe(VideoGenRunStatus.Editing);
+        persisted.AdministrativeAudits.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AdminTerminateStalledRun_ShouldRejectLegacyExportRequestedWork()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("admin-export-requested", test.OwnerId, SceneItemStatus.Done);
+        run.ExportRequested = true;
+        await test.SaveRunAsync(run);
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(() =>
+            test.CreateService().TerminateStalledRunAsAdminAsync(run.Id, "root-admin"));
+
+        error.Message.ShouldContain("worker");
+        var persisted = await test.Context.VideoGenRuns.Find(item => item.Id == run.Id).SingleAsync();
+        persisted.Status.ShouldBe(VideoGenRunStatus.Editing);
+        persisted.AdministrativeAudits.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task AdminTerminateStalledRun_ShouldNotRollBackProjectWhenRunIsNotLatest()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var project = await test.CreateService().CreateProjectAsync(
+            "video-agent",
+            test.OwnerId,
+            new CreateVideoProjectRequest { Title = "较新任务保护", SourceMarkdown = "测试" });
+        var run = NewRun("admin-not-latest", test.OwnerId, SceneItemStatus.Draft);
+        run.ProjectId = project.Id;
+        await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.UpdateOneAsync(
+            item => item.Id == project.Id,
+            Builders<VideoProject>.Update
+                .Set(item => item.LatestRunId, "newer-run")
+                .Set(item => item.Status, VideoProjectStatus.Editing));
+
+        (await test.CreateService().TerminateStalledRunAsAdminAsync(run.Id, "root-admin")).ShouldNotBeNull();
+
+        var persistedProject = await test.Context.VideoProjects.Find(item => item.Id == project.Id).SingleAsync();
+        persistedProject.Status.ShouldBe(VideoProjectStatus.Editing);
+        persistedProject.LatestRunId.ShouldBe("newer-run");
+    }
+
     [Fact]
     public async Task CancelEditingRun_ShouldImmediatelyReachTerminalState_ForOwnerOnly()
     {

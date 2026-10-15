@@ -12,6 +12,17 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class VideoGenService : IVideoGenService
 {
+    private const int MaxAdministrativeAuditsPerRun = 20;
+    private static readonly string[] WorkerActiveSceneStatuses =
+    [
+        SceneItemStatus.Generating,
+        SceneItemStatus.Submitting,
+        SceneItemStatus.SubmittingClaimed,
+        SceneItemStatus.Polling,
+        SceneItemStatus.PollingClaimed,
+        SceneItemStatus.Rendering,
+    ];
+
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _runStore;
     private readonly IAssetStorage _assetStorage;
@@ -629,6 +640,84 @@ public class VideoGenService : IVideoGenService
 
         // Terminal cancellation is idempotent, while a missing or foreign run stays hidden.
         return await _db.VideoGenRuns.Find(ownedFilter).AnyAsync(ct);
+    }
+
+    public async Task<AdminTerminateStalledVideoRunResult?> TerminateStalledRunAsAdminAsync(
+        string runId,
+        string actorAdminId,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            throw new ArgumentException("runId 不能为空", nameof(runId));
+        if (string.IsNullOrWhiteSpace(actorAdminId))
+            throw new ArgumentException("管理员身份不能为空", nameof(actorAdminId));
+
+        var fb = Builders<VideoGenRun>.Filter;
+        var existing = await _db.VideoGenRuns.Find(
+                fb.Eq(x => x.Id, runId) & fb.Eq(x => x.DeletionRequestedAt, null))
+            .FirstOrDefaultAsync(ct);
+        if (existing == null) return null;
+
+        if (!string.Equals(existing.Status, VideoGenRunStatus.Editing, StringComparison.Ordinal))
+            throw new InvalidOperationException($"仅允许终止停滞的 Editing 任务，当前状态为 {existing.Status}");
+        if (existing.ExportRequested || existing.Scenes.Any(scene => WorkerActiveSceneStatuses.Contains(scene.Status)))
+            throw new InvalidOperationException("任务仍由 worker 处理，不能通过停滞任务入口终止");
+
+        var now = DateTime.UtcNow;
+        var hadOfferingReference = !string.IsNullOrWhiteSpace(existing.DirectVideoOfferingId)
+                                   || existing.Scenes.Any(scene => !string.IsNullOrWhiteSpace(scene.OfferingId));
+        var audit = new VideoGenAdministrativeAudit
+        {
+            RunId = existing.Id,
+            ActorAdminId = actorAdminId,
+            PreviousStatus = existing.Status,
+            AppKey = existing.AppKey,
+            HadOfferingReference = hadOfferingReference,
+            CreatedAt = now,
+        };
+        var noWorkerActiveScene = fb.Not(fb.ElemMatch(
+            x => x.Scenes,
+            scene => WorkerActiveSceneStatuses.Contains(scene.Status)));
+        var safeStalledFilter = fb.Eq(x => x.Id, existing.Id)
+                                & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                                & fb.Eq(x => x.DeletionRequestedAt, null)
+                                & fb.Eq(x => x.ExportRequested, false)
+                                & noWorkerActiveScene;
+        var cancelled = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            safeStalledFilter,
+            Builders<VideoGenRun>.Update
+                .Set(x => x.CancelRequested, true)
+                .Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                .Set(x => x.CurrentPhase, "cancelled")
+                .Set(x => x.PhaseProgress, 100)
+                .Set(x => x.EndedAt, now)
+                .PushEach(x => x.AdministrativeAudits, [audit], slice: -MaxAdministrativeAuditsPerRun),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (cancelled == null)
+            throw new InvalidOperationException("任务状态已变化或已被 worker 接管，请刷新后重试");
+
+        if (!string.IsNullOrWhiteSpace(cancelled.ProjectId))
+        {
+            await _db.VideoProjects.UpdateOneAsync(
+                project => project.Id == cancelled.ProjectId
+                           && project.OwnerAdminId == cancelled.OwnerAdminId
+                           && project.AppKey == cancelled.AppKey
+                           && project.LatestRunId == cancelled.Id,
+                Builders<VideoProject>.Update
+                    .Set(project => project.Status, VideoProjectStatus.Draft)
+                    .Set(project => project.UpdatedAt, now),
+                cancellationToken: ct);
+        }
+
+        await PublishEventAsync(runId, "run.cancel.requested", new { source = "admin-stalled-run" });
+        await PublishEventAsync(runId, "run.cancelled", new { source = "admin-stalled-run" });
+        return new AdminTerminateStalledVideoRunResult(
+            cancelled.Id,
+            existing.Status,
+            cancelled.AppKey,
+            hadOfferingReference,
+            now);
     }
 
     public async Task<DeleteVideoGenRunResult?> DeleteRunAsync(

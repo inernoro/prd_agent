@@ -363,6 +363,13 @@ public class VideoGenRun
     public string? ErrorMessage { get; set; }
 
     /// <summary>
+    /// 超级管理员对停滞任务执行的有界审计记录。只在 MongoDB 中保存，不进入普通用户 Run DTO，
+    /// 避免暴露管理员标识，也避免审计字段被误当成视频任务输入。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<VideoGenAdministrativeAudit> AdministrativeAudits { get; set; } = new();
+
+    /// <summary>
     /// 删除请求的持久化标记。设置后该任务不再对普通查询可见，失败重试只继续清理，不再恢复播放。
     /// </summary>
     public DateTime? DeletionRequestedAt { get; set; }
@@ -373,6 +380,26 @@ public class VideoGenRun
     /// <summary>删除开始前固化的生成视频对象清单，保证中途失败后仍可幂等续作。</summary>
     public List<VideoGenDeletionArtifact> DeletionArtifacts { get; set; } = new();
 }
+
+/// <summary>停滞视频任务的管理员终止审计；禁止放入提示词、素材、凭据或上游响应。</summary>
+public sealed class VideoGenAdministrativeAudit
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Action { get; set; } = "terminate-stalled-run";
+    public string RunId { get; set; } = string.Empty;
+    public string ActorAdminId { get; set; } = string.Empty;
+    public string PreviousStatus { get; set; } = string.Empty;
+    public string AppKey { get; set; } = string.Empty;
+    public bool HadOfferingReference { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public sealed record AdminTerminateStalledVideoRunResult(
+    string RunId,
+    string PreviousStatus,
+    string AppKey,
+    bool HadOfferingReference,
+    DateTime EndedAt);
 
 public sealed class VideoGenDeletionArtifact
 {

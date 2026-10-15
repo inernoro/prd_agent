@@ -68,3 +68,5 @@
 | fix | prd-admin | 视频分镜编辑态补充停止任务入口，并在任务终态停止后台轮询 |
 | test | prd-api | 覆盖 Editing 取消终态、项目状态回落、跨用户与跨应用隔离 |
 | test | prd-admin | 覆盖 Editing 可停止和 Cancelled 即使残留活动镜头也不再轮询 |
+| feat | prd-api | 增加超级管理员终止停滞视频任务的受审计入口，仅允许无 worker 活动的 Editing 任务 |
+| test | prd-api | 覆盖管理员权限门、跨 owner 成功终止、状态拒绝、项目回落与审计脱敏 |
