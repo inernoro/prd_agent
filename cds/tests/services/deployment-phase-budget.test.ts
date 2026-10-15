@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DeploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 
 describe('部署阶段容量准入', () => {
+  beforeEach(() => setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 })));
+  afterEach(() => setBuildGateHostLoadProvider(null));
   it('拉取满额不阻塞就绪和清理；失败及重复归还不会泄漏名额', async () => {
     const budget = new DeploymentPhaseBudget(() => 10000, { pull: 1, start: 1, ready: 1, cleanup: 1 });
     const pull = await budget.acquire('pull', { projectId: 'a' });
@@ -18,7 +21,7 @@ describe('部署阶段容量准入', () => {
     const order: string[] = [];
     const jobs = ['a', 'a', 'b', 'c'].map((projectId, index) => budget.run('pull', { projectId }, async () => { order.push(`${projectId}${index}`); }));
     first(); await Promise.all(jobs);
-    expect(order).toEqual(['b2', 'a0', 'c3', 'a1']);
+    expect(order).toEqual(['b2', 'c3', 'a0', 'a1']);
   });
 
   it('内存不足保持等待；新增预留一起计入，资源恢复后推进，取消仍立即退队', async () => {
@@ -73,5 +76,49 @@ describe('部署阶段容量准入', () => {
     expect(budget.memorySnapshot()[0].pids).toBe(64);
     pids = 192; budget.pump(); const release = await next; release();
     budget.releaseMemory('warming'); budget.releaseMemory('next');
+  });
+
+  it('三个项目都有资格时，单项目积压不能使第三项目超过三个释放轮次才获准', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000, { pull: 1 });
+    const first = await budget.acquire('pull', { projectId: 'a' });
+    const order: string[] = [];
+    const jobs = [...Array(8).fill('a'), ...Array(8).fill('b'), 'c'].map(projectId =>
+      budget.run('pull', { projectId }, async () => { order.push(projectId); }));
+    first(); await Promise.all(jobs);
+    expect(order.indexOf('c')).toBeLessThan(3);
+    expect(order.slice(0, 3).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('创建回执归还阶段槽后，未就绪的三份预留仍阻止第四次启动', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000);
+    for (const projectId of ['a', 'b', 'c']) {
+      const release = await budget.acquire('start', { projectId }, { reservationKey: projectId });
+      release();
+    }
+    let admitted = false;
+    const next = budget.acquire('start', { projectId: 'd' }, { reservationKey: 'd' }).then(release => {
+      admitted = true; release();
+    });
+    await Promise.resolve();
+    expect(admitted).toBe(false);
+    expect((budget.snapshot().start as { queued: Array<{ reason: string }> }).queued[0].reason).toBe('cpu-startup-capacity');
+    budget.releaseMemory('a'); await next;
+    for (const key of ['b', 'c', 'd']) budget.releaseMemory(key);
+  });
+
+  it('宿主达到既有饱和线时只保留一份启动期预留，恢复容量后半秒内推进', async () => {
+    let load1 = 18;
+    setBuildGateHostLoadProvider(() => ({ load1, cores: 18 }));
+    const budget = new DeploymentPhaseBudget(() => 10000);
+    const first = await budget.acquire('start', { projectId: 'a' }, { reservationKey: 'a' });
+    first();
+    let admitted = false;
+    const second = budget.acquire('start', { projectId: 'b' }, { reservationKey: 'b' }).then(release => {
+      admitted = true; release();
+    });
+    await Promise.resolve(); expect(admitted).toBe(false);
+    expect((budget.snapshot().start as { queued: Array<{ reason: string }> }).queued[0].reason).toBe('cpu-startup-capacity');
+    load1 = 8; await second; expect(admitted).toBe(true);
+    budget.releaseMemory('a'); budget.releaseMemory('b');
   });
 });

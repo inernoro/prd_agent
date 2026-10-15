@@ -359,7 +359,10 @@ async function main(): Promise<void> {
     assert.equal(recoveredProfile.dockerImage, repositoryDigest);
     secondary(['pull', recoveredProfile.dockerImage!]);
     const recoveredImage = JSON.parse(secondary(['image', 'inspect', repositoryDigest]))[0];
-    assert.equal(recoveredImage.Id, localPeerRuntime.Image); assert.ok(recoveredImage.RepoDigests.includes(repositoryDigest));
+    const [repositoryWithTag, contentDigest] = repositoryDigest.split('@');
+    const canonicalRepositoryDigest = `${repositoryWithTag.replace(/:[^/:]+$/, '')}@${contentDigest}`;
+    // Docker保留运行配置里的提交tag，但RepoDigests按仓库+内容digest登记，不含tag。
+    assert.equal(recoveredImage.Id, localPeerRuntime.Image); assert.ok(recoveredImage.RepoDigests.includes(canonicalRepositoryDigest));
     assert.equal(recoveredImage.Config.Labels['cds.acceptance.owner'], owner);
     assert.equal(recoveredImage.Config.Labels['org.opencontainers.image.revision'], head);
     assert.equal(recoveredImage.Os, 'linux'); assert.equal(recoveredImage.Architecture, JSON.parse(docker(['image', 'inspect', repositoryDigest]))[0].Architecture);
@@ -374,7 +377,7 @@ async function main(): Promise<void> {
     assert.equal(recoveredRuntime.Image, recoveredImage.Id); assert.deepEqual(recoveredRuntime.Config.Cmd, recoveredImage.Config.Cmd);
     await waitHttp(`http://127.0.0.1:${secondPort}/`); assert.equal(await read(`http://127.0.0.1:${secondPort}/`), `web:${head}`);
     report.secondDaemonRecovery = { primaryDaemonId: primaryInfo.ID, secondaryDaemonId: secondaryInfo.ID,
-      daemonImage: daemonImage.RepoDigests, initiallyEmpty: true, volume: secondaryVolume, repositoryDigest,
+      daemonImage: daemonImage.RepoDigests, initiallyEmpty: true, volume: secondaryVolume, repositoryDigest, canonicalRepositoryDigest,
       imageId: recoveredImage.Id, revision: head, platform: `${recoveredImage.Os}/${recoveredImage.Architecture}`,
       defaultCommandPreserved: true, actualHttpContentVerified: true, noPrimaryCacheOrSocketMounted: true };
     report.actualSecondDaemonDigestRecoveryVerified = true;

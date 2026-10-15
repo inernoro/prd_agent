@@ -121,6 +121,10 @@ export interface ProbeTarget {
   id: string;
   /** 同源自检的采集通道，子指标共享一次请求。 */
   collection?: boolean;
+  collectionKey?: string;
+  collectionTargetId?: string;
+  collectionMembers?: Array<{ id: string; name: string }>;
+  collectionEnvironment?: MonitorEnvironment;
   source: ProbeSource;
   branchId: string;
   projectId: string;
@@ -178,6 +182,14 @@ function isSelfMetric(target: ProbeTarget): boolean {
   return target.projectId === SELF_PROJECT_ID && target.monitor?.kind === 'health-json' && isSelfCheckEndpoint(target.url || '');
 }
 
+/** 仅合并同项目、环境、地址及请求策略一致的只读自检。 */
+function healthCollectionKey(target: ProbeTarget): string | undefined {
+  const m = target.monitor;
+  if (m?.kind !== 'health-json' || !m.url) return undefined;
+  return JSON.stringify([target.projectId, m.environment || 'production', m.boundBranchId || '', m.previewBranchId || '',
+    m.url, m.method || 'GET', m.expectedStatus || '200-399', target.timeoutMs, target.intervalMs]);
+}
+
 /**
  * 用户视角探测的落盘状态（挂在分支目标的台账上）。
  *
@@ -203,6 +215,11 @@ export interface UserViewState {
 export type UptimeAlertEventType = 'uptime.target.down' | 'uptime.target.recovered';
 
 export interface UptimeAlertEventData {
+  businessName?: string;
+  finding?: string;
+  assessment?: 'observation-unavailable' | 'check-failed';
+  affectedChecks?: number;
+  environmentLabel?: string;
   /** 自监控恢复只发给实际接收过本轮故障的通道。 */
   recoveryChannelIds?: string[];
   targetId: string;
@@ -224,6 +241,9 @@ export interface UptimeAlertEventData {
 }
 
 export interface UptimeTargetRecord {
+  collectionTargetId?: string;
+  collectionMembers?: Array<{ id: string; name: string }>;
+  collectionEnvironment?: MonitorEnvironment;
   notification?: SelfMonitorAlarmState;
   id: string;
   /** 旧台账可缺省，load 时按 id 前缀回填 */
@@ -924,6 +944,9 @@ function emptyRecord(target: ProbeTarget, now: number): UptimeTargetRecord {
 
 /** 对外摘要里的单个 target。 */
 export interface UptimeTargetSummary {
+  collectionTargetId?: string;
+  collectionMembers?: Array<{ id: string; name: string }>;
+  collectionEnvironment?: MonitorEnvironment;
   id: string;
   source: ProbeSource;
   name: string;
@@ -1411,9 +1434,9 @@ export class UptimeMonitorService {
       // 下一轮照常探分支 / 生产，只是自定义目标跳过这一轮。
       const builtinTargets = activeTargets.filter((t) => t.source !== 'custom');
       const customTargets = activeTargets.filter((t) => t.source === 'custom');
-      const dueSelfUrls = new Set(customTargets.filter(t => t.collection || isSelfMetric(t)).map(t => t.url));
+      const dueCollections = new Set(customTargets.map(t => t.collectionKey).filter(Boolean));
       for (const t of targets) {
-        if (t.active && dueSelfUrls.has(t.url) && (t.collection || isSelfMetric(t)) && !customTargets.some(m => m.id === t.id)) customTargets.push(t);
+        if (t.active && t.collectionKey && dueCollections.has(t.collectionKey) && !customTargets.some(m => m.id === t.id)) customTargets.push(t);
       }
       customLane = this.trackProbe(this.runCustomLane(customTargets));
 
@@ -1488,7 +1511,7 @@ export class UptimeMonitorService {
       // 采集通道与子指标共享一次请求，一次接口故障只产生一个事件。
       const handled = new Set<string>();
       for (const collector of targets.filter(t => t.collection)) {
-        const members = targets.filter(t => isSelfMetric(t) && t.url === collector.url && t.active);
+        const members = targets.filter(t => !t.collection && t.collectionKey === collector.collectionKey && t.active);
         if (!members.length) continue;
         const result = await probeHealthJsonBatch(members.map(t => t.monitor!), collector.timeoutMs || this.deps.config.timeoutMs);
         const at = this.now();
@@ -1537,14 +1560,26 @@ export class UptimeMonitorService {
       },
     );
     const groups = new Map<string, ProbeTarget[]>();
-    for (const t of targets) if (isSelfMetric(t)) groups.set(t.url!, [...(groups.get(t.url!) || []), t]);
-    for (const [url, members] of groups) {
+    for (const target of targets) {
+      const key = healthCollectionKey(target);
+      if (!key) continue;
+      target.collectionKey = key;
+      groups.set(key, [...(groups.get(key) || []), target]);
+    }
+    for (const [key, members] of groups) {
       const first = members[0];
-      const id = `self-collection-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`;
-      targets.push({ ...first, id: `monitor@${id}`, profileId: id, monitor: undefined, collection: true,
-        name: 'CDS · 自检数据获取', active: members.some(t => t.active), excluded: members.every(t => t.excluded),
-        intervalMs: Math.min(...members.map(t => t.intervalMs || this.deps.config.intervalMs)),
-        probeDescription: `统一读取 ${members.length} 项自检；读取失败不代表各项业务故障` });
+      // 保留旧 CDS 自检事件 ID，发布和重启不重报旧事件。
+      const legacy = isSelfMetric(first) && [...groups.values()].filter(group => group[0].url === first.url).length === 1;
+      const id = `${legacy ? 'self' : 'health'}-collection-${createHash('sha256').update(legacy ? first.url! : key).digest('hex').slice(0, 16)}`;
+      const targetId = `monitor@${id}`;
+      members.forEach(t => { t.collectionTargetId = targetId; });
+      const environment = resolveMonitorEnvironment({ source: 'custom', declared: first.monitor?.environment,
+        boundBranchId: first.monitor?.boundBranchId, previewBranchId: first.monitor?.previewBranchId });
+      targets.push({ ...first, id: targetId, profileId: id, monitor: undefined, collection: true,
+        collectionTargetId: undefined, collectionMembers: members.filter(t => t.active).map(t => ({ id: t.id, name: t.name })),
+        collectionEnvironment: environment,
+        name: `${first.projectName || first.projectId} · 自检数据获取`, active: members.some(t => t.active), excluded: members.every(t => t.excluded),
+        probeDescription: `统一读取 ${members.length} 项检查；读取失败表示状态待确认，不代表各项业务故障` });
     }
     return targets;
   }
@@ -1619,6 +1654,9 @@ export class UptimeMonitorService {
 
   /** 把目标定义上会变的展示字段同步进台账（改名、改地址、改间隔都要立刻反映）。 */
   private syncRecordIdentity(record: UptimeTargetRecord, target: ProbeTarget): void {
+    record.collectionTargetId = target.collectionTargetId;
+    record.collectionMembers = target.collectionMembers;
+    record.collectionEnvironment = target.collectionEnvironment;
     record.source = target.source;
     record.name = target.name;
     record.probeKind = target.probeKind;
@@ -1763,9 +1801,9 @@ export class UptimeMonitorService {
     const target = this.selectTargets().find((t) => t.id === targetId);
     if (!target) return null;
     const now = this.now();
-    if ((target.collection || isSelfMetric(target)) && target.active) {
+    if (target.collectionKey && target.active) {
       if (this.customLaneRunning) return { ok: false, skipped: '自检正在读取，请稍后刷新' };
-      const related = this.selectTargets().filter(t => t.url === target.url && (t.collection || isSelfMetric(t)));
+      const related = this.selectTargets().filter(t => t.collectionKey === target.collectionKey);
       for (const t of related) {
         const row = this.records.get(t.id) || emptyRecord(t, now);
         this.syncRecordIdentity(row, t); this.records.set(t.id, row);
@@ -1804,6 +1842,7 @@ export class UptimeMonitorService {
     if (!record) return;
     const sample = options.allowDegrade ? this.maybeDegrade(target, record, rawSample) : rawSample;
     if (sample.noData) {
+      appendCapped(record.samples, sample, this.deps.config.maxSamples);
       if (!record.lastSample?.noData && target.source === 'custom') this.deps.onAlarmSuppressed?.({
         targetId: target.id, targetName: target.name, projectId: target.projectId, reason: 'no-data', at: sample.t,
       });
@@ -1885,11 +1924,16 @@ export class UptimeMonitorService {
     try {
       this.deps.onAlert(type, {
         targetId: target.id,
+        businessName: target.projectId === SELF_PROJECT_ID ? '部署平台' : target.projectName,
+        finding: record.lastSample?.finding,
+        assessment: target.collection ? 'observation-unavailable' : 'check-failed',
+        affectedChecks: target.collectionMembers?.length,
+        environmentLabel: this.environmentFacet(record, this.previewBranchLookup()).environmentLabel,
         ...(type === 'uptime.target.recovered' && target.source === 'custom'
           ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),
         projectId: target.projectId,
         branchId: target.branchId,
-        targetName: target.name,
+        targetName: target.monitor?.publicName || target.name,
         source: target.source,
         probeKind: target.probeKind,
         ...(target.url ? { probeUrl: target.url } : {}),
@@ -1996,6 +2040,8 @@ export class UptimeMonitorService {
           ? (lastClosed?.endedAt ?? record.firstSeenAt)
           : null;
       targets.push({
+        collectionTargetId: record.collectionTargetId,
+        collectionMembers: record.collectionMembers,
         id: record.id,
         source: record.source || probeSourceOfId(record.id),
         name: record.name,
@@ -2098,7 +2144,7 @@ export class UptimeMonitorService {
     const monitor = source === 'custom'
       ? (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === record.profileId)
       : undefined;
-    const environment = resolveMonitorEnvironment({
+    const environment = record.collectionEnvironment ?? resolveMonitorEnvironment({
       source,
       declared: monitor?.environment,
       // 写入时盖的戳优先；没有戳就当场反查一次（存量监控是在这个字段出现之前

@@ -71,6 +71,13 @@ describe('renderCause 是句子的唯一出口', () => {
 
 // ── 第二层：分类判断（哪一类、要不要紧）——句子的形状不在这里重复测 ──
 describe('classifyDockerLifecycleEvent 的分类判断', () => {
+  it('主动降温后的强制退出仍标明数据待核对，不误报OOM或无需处理', () => {
+    const result = classifyDockerLifecycleEvent({ ...base, action: 'die', exitCode: 137,
+      attrs: { signal: '9' }, lifecycleIntent: intentOf({ kind: 'cds-stop-idle' }) });
+    expect(result.source).toBe('cds'); expect(result.stopClass).toBe('cds-stop-idle');
+    expect(result.nextServiceStatus).toBe('stopped');
+    expect(result.reason).toContain('持久化结果'); expect(result.reason).not.toContain('无需处理');
+  });
   it('匹配到 CDS 意图：可追溯字段一个不丢', () => {
     const result = classifyDockerLifecycleEvent({
       ...base,

@@ -146,6 +146,79 @@ describe('部署心跳过期后的精确租约回收', () => {
     } finally { controller.abort(); await waiting; now.mockRestore(); }
   });
 
+  async function remoteWaitingDeployment() {
+    const old = await trackedDeployment();
+    runs.transition(old.run.id, 'starting', { phase: 'dispatch', message: '远端部署', executorId: 'remote-1' });
+    const enqueuedAt = clock.getTime();
+    const receipt = { runId: old.run.id, executorId: 'remote-1', projectId: 'p1', branchId: 'b1',
+      operationId: old.lease.operationId, operationGeneration: old.lease.generation,
+      wait: { phase: 'start', enqueuedAt, deadlineAt: enqueuedAt + 20 * 60_000 } };
+    clock = new Date(enqueuedAt + 16 * 60_000);
+    return { ...old, receipt };
+  }
+
+  it('旧预算中没有资格check的队列不能生成等待事实或阻止收割', async () => {
+    const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
+    runs = new DeploymentRunService(state, { now: () => new Date(clock), isExecutionWaiting: run =>
+      !!budget.waitingOperation(run.operationId!, run.operationGeneration!) });
+    runs.bindOperationCoordinator(coordinator);
+    const old = await trackedDeployment();
+    const waiting = budget.acquire('start', { operationId: old.lease.operationId, operationGeneration: old.lease.generation },
+      { signal: controller.signal }).catch(() => undefined);
+    try {
+      expect(budget.waitingOperation(old.lease.operationId, old.lease.generation)).toBeUndefined();
+      expect(reapAfterSilence().map(run => run.id)).toEqual([old.run.id]);
+    } finally { controller.abort(); await waiting; }
+  });
+
+  it('远端真实等待回执仅在30秒内豁免，重复回执不写心跳且原20分钟后仍回收', async () => {
+    const old = await remoteWaitingDeployment(); const heartbeat = old.run.heartbeatAt;
+    expect((runs as any).observeRemoteExecutionWait('remote-1', old.receipt)).toBe(true);
+    expect(runs.reconcileInterrupted()).toEqual([]);
+    clock = new Date(clock.getTime() + 20_000);
+    expect((runs as any).observeRemoteExecutionWait('remote-1', old.receipt)).toBe(true);
+    expect(runs.reconcileInterrupted()).toEqual([]);
+    expect(old.run.heartbeatAt).toBe(heartbeat);
+    clock = new Date(old.receipt.wait.deadlineAt + 1);
+    expect((runs as any).observeRemoteExecutionWait('remote-1', old.receipt)).toBe(false);
+    expect(runs.reconcileInterrupted().map(run => run.id)).toEqual([old.run.id]);
+    expect(old.lease.isCurrent()).toBe(false);
+  });
+
+  it.each(['executor', 'runId', 'executorId', 'projectId', 'branchId', 'operationId', 'operationGeneration', 'expired', 'future', 'unbounded'])
+  ('错范围或无效远端等待%s不能豁免原run', async (field) => {
+    const old = await remoteWaitingDeployment(); const receipt: any = structuredClone(old.receipt);
+    if (field === 'expired') { receipt.wait.enqueuedAt -= 21 * 60_000; receipt.wait.deadlineAt -= 21 * 60_000; }
+    else if (field === 'future') { receipt.wait.enqueuedAt = clock.getTime() + 1; receipt.wait.deadlineAt = receipt.wait.enqueuedAt + 20 * 60_000; }
+    else if (field === 'unbounded') receipt.wait.deadlineAt++;
+    else if (field !== 'executor') receipt[field] = field === 'operationGeneration' ? old.lease.generation + 1 : 'wrong';
+    expect((runs as any).observeRemoteExecutionWait(field === 'executor' ? 'wrong' : 'remote-1', receipt)).toBe(false);
+    expect(runs.reconcileInterrupted().map(run => run.id)).toEqual([old.run.id]);
+  });
+
+  it('重复回执不能伪造新enqueue/deadline续命，失去新鲜度即回收', async () => {
+    const old = await remoteWaitingDeployment();
+    expect((runs as any).observeRemoteExecutionWait('remote-1', old.receipt)).toBe(true);
+    clock = new Date(clock.getTime() + 31_000);
+    expect((runs as any).observeRemoteExecutionWait('remote-1', { ...old.receipt,
+      wait: { ...old.receipt.wait, enqueuedAt: clock.getTime(), deadlineAt: clock.getTime() + 20 * 60_000 } })).toBe(false);
+    expect(runs.reconcileInterrupted().map(run => run.id)).toEqual([old.run.id]);
+  });
+
+  it.each(['expired-freshness', 'stopped', 'cancelled', 'missing-qualification'])
+  ('等待回执在%s后不再保护旧执行体', async (change) => {
+    const old = await remoteWaitingDeployment();
+    expect((runs as any).observeRemoteExecutionWait('remote-1', old.receipt)).toBe(true);
+    if (change === 'expired-freshness') clock = new Date(clock.getTime() + 30_001);
+    else if (change === 'cancelled') runs.cancel(old.run.id, '已取消');
+    else if (change === 'stopped') coordinator.begin({ ...request, kind: 'stop' });
+    else coordinator.completeAll(old.lease, 'completed');
+    if (change !== 'expired-freshness') expect((runs as any).observeRemoteExecutionWait('remote-1', old.receipt)).toBe(false);
+    const result = runs.reconcileInterrupted();
+    expect(result.map(run => run.id)).toEqual(['expired-freshness', 'missing-qualification'].includes(change) ? [old.run.id] : []);
+    if (change !== 'cancelled') expect(old.lease.isCurrent()).toBe(false);
+  });
+
   it.each([
     { projectId: 'p2', branchId: 'b1', profileId: 'api' },
     { projectId: 'p1', branchId: 'b2', profileId: 'api' },
@@ -161,7 +234,7 @@ describe('部署心跳过期后的精确租约回收', () => {
     const server = fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
     const routes = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
     expect(server).toContain('deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt');
-    expect(routes.match(/operationGeneration: branchOperationLease\?\.generation/g)).toHaveLength(2);
+    expect(routes.match(/operationGeneration: branchOperationLease\?\.generation/g)).toHaveLength(3);
     expect(routes).toContain('operationGeneration: options.operationGeneration');
   });
 
@@ -173,5 +246,6 @@ describe('部署心跳过期后的精确租约回收', () => {
     expect(restore).toBeGreaterThan(source.indexOf('const containerService = new ContainerService('));
     expect(reconcile).toBeGreaterThan(restore);
     expect(reconcile).toBeLessThan(source.indexOf('const app = createServer('));
+    expect(source).toContain('creationSettled: (_owner, runtime) => Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId))');
   });
 });

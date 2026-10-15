@@ -51,7 +51,7 @@ async function main(): Promise<void> {
     const snapshot = path.join(root, 'snapshot'); await fs.mkdir(snapshot);
     for (const name of ['src', 'dist']) await fs.cp(path.resolve(name), path.join(snapshot, name), { recursive: true });
     await fs.mkdir(path.join(snapshot, 'scripts'));
-    for (const name of ['application-bootstrap-drill.ts', 'application-docker-host-drill.ts', 'application-docker-inner-drill.ts']) {
+    for (const name of ['application-bootstrap-drill.ts', 'bootstrap-exit-wait.ts', 'application-docker-host-drill.ts', 'application-docker-inner-drill.ts']) {
       await fs.copyFile(path.join('scripts', name), path.join(snapshot, 'scripts', name));
     }
     await fs.copyFile('package.json', path.join(snapshot, 'package.json')); await fs.mkdir(path.join(snapshot, 'web'));

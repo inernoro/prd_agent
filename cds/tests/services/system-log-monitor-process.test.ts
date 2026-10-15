@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile, access } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -16,6 +16,10 @@ const monitors: SystemLogMonitor[] = [];
 const dirs: string[] = [];
 const originalPath = process.env.PATH;
 const originalSince = process.env.CDS_JOURNAL_BACKFILL_SINCE;
+beforeEach(async () => {
+  // 每条仍启动独立真实进程池，保留生产启动期限；夹具预热不占用日志行为的断言期限。
+  const streams = new ObservationStreamExecutor(1); pools.push(streams); await streams.start(); vi.clearAllMocks();
+});
 async function until(predicate: () => boolean | Promise<boolean>, attempts = 500): Promise<void> {
   for (let i = 0; i < attempts; i++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)); }
   throw new Error('Journal fixture did not become ready');
@@ -43,7 +47,7 @@ if(!args.includes('-f')) {
 `;
   await writeFile(path.join(dir, 'journalctl'), script, { mode: 0o700 });
   process.env.PATH = `${dir}:${originalPath || ''}`;
-  const streams = new ObservationStreamExecutor(1); pools.push(streams); await streams.start(); vi.clearAllMocks();
+  const streams = pools[pools.length - 1];
   const trace = async (): Promise<Array<{ pid: number; ppid: number; args: string[] }>> => {
     try { return (await readFile(traceFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch { return []; }
   };
@@ -84,7 +88,7 @@ describe('系统journal独立读取与真实收尾', () => {
     expect(rows.some(row => row.action === 'tail.stderr' && row.message.includes('synthetic-journal-stderr'))).toBe(true);
     await monitor.stop(); expect(f.streams.getStats().admitted).toBe(0); expect(monitor.getStats().bufferedBytes).toBe(0);
   });
-  it('12MiB历史和未换行超长尾部不积累全文，跳过整行后继续记录', async () => {
+  it('12MiB历史不积累全文，跳过整行后继续记录', async () => {
     const f = await fixture('large-backfill'); const rows: any[] = [];
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
     await monitor.start(); await until(() => rows.some(row => row.action === 'journal.tail'));
@@ -94,6 +98,8 @@ describe('系统journal独立读取与真实收尾', () => {
     expect(rows.every(row => Buffer.byteLength(row.message) <= 65536)).toBe(true);
     expect(monitor.getStats().overflowLines).toBe(1);
     await monitor.stop(); expect(f.streams.getStats().admitted).toBe(0);
+  });
+  it('未换行超长尾部保持缓冲上限，跳过整行后继续记录', async () => {
     const next = await fixture('overflow'); const tailRows: any[] = [];
     const tail = new SystemLogMonitor(new ShellExecutor(), { record: row => tailRows.push(row) }, ['fixture.service'], next.streams); monitors.push(tail);
     await tail.start(); await until(() => tail.getStats().overflowLines === 1);
@@ -117,7 +123,7 @@ describe('系统journal独立读取与真实收尾', () => {
   it('stop取消正在历史读取的真实父子进程，完成后不启动迟到监听', async () => {
     const f = await fixture('hang'); const rows: any[] = [];
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
-    void monitor.start(); await until(async () => { try { await access(f.childFile); return true; } catch { return false; } });
+    void monitor.start(); await until(async () => { try { return Number((await readFile(f.childFile, 'utf8')).trim()) > 1; } catch { return false; } });
     const pid = Number((await readFile(f.childFile, 'utf8')).trim());
     const stopping = monitor.stop(); expect(stopping).toBeInstanceOf(Promise); await stopping;
     expect(f.streams.getStats().admitted).toBe(0);

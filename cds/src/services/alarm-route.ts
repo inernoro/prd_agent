@@ -97,7 +97,7 @@ export interface AlarmLastDelivery {
 }
 
 export interface AlarmChannelConfig {
-  /** 独立事件入口，仅用于 CDS 自身告警。 */
+  /** 独立事件入口，保留目标深链。 */
   incidentPageUrl?: string;
   id: string;
   /** 给人看的名字：「我的手机」「运维群」。出现在面板与投递记录里。 */
@@ -138,7 +138,15 @@ export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | '
 
 /** 一条要发出去的事。已经过分类，协议层只认它，不认 uptime 的原始事件。 */
 export interface AlarmEvent {
+  businessName?: string;
+  correlationKey?: string;
+  recoveryConfirmed?: boolean;
+  drill?: boolean;
+  finding?: string;
   identity?: AlarmIdentity;
+  assessment?: 'observation-unavailable' | 'check-failed';
+  affectedChecks?: number;
+  environmentLabel?: string;
   targetId?: string;
   kind: AlarmEventKind;
   projectId: string;
@@ -185,6 +193,7 @@ export function routeAlarm(
 
 /** 一条渲染好的通知。协议层只管把它变成各自的请求，不再自己拼句子。 */
 export interface AlarmMessage {
+  icon?: string;
   group?: string;
   title: string;
   body: string;
@@ -205,41 +214,23 @@ export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string 
   const message = renderAlarmContent(event, opts);
   if (!event.identity) return message;
   const { observer, subject } = event.identity;
-  return { ...message, title: `[${identityLabel(subject)}] ${message.title}`,
-    body: `检查方：${identityLabel(observer)}\n故障对象：${identityLabel(subject)}\n${message.body}`,
-    group: `CDS / ${identityLabel(subject)} / ${subject.id}` };
+  return { ...message, icon: observer.iconUrl,
+    group: `${event.businessName || event.projectId} · ${event.environmentLabel || subject.environment}` };
 }
 function renderAlarmContent(event: AlarmEvent, opts: { boardUrl?: string }): AlarmMessage {
-  const where = event.projectId ? `项目 ${event.projectId}` : '未归属项目';
-  if (event.projectId === 'cds-self-monitor') {
-    const recovered = event.kind.endsWith('-recovered');
-    const collection = event.targetId?.startsWith('monitor@self-collection-');
-    return { title: `${event.targetName} ${recovered ? '已稳定恢复' : collection ? '异常' : '指标异常'}`,
-      body: recovered ? '该项检查已连续稳定 10 分钟。其他未解决故障请查看事件详情。' : collection ? `多项内部指标暂时无法更新，已合并为一个事件；业务影响待确认。下一步：查看外部访问结果与处理进展。${event.message}` : `CDS 自检发现异常，需要检查；不等同于业务不可用。${event.message}`,
-      level: recovered ? 'passive' : 'active', ...(opts.boardUrl ? { url: opts.boardUrl } : {}) };
-  }
-  if (event.kind === 'business-recovered' || event.kind === 'infra-recovered') {
-    return {
-      title: `${event.targetName} 恢复了`,
-      body: `${where} · 探测已连续成功，这一条重新可用。无需处理。`,
-      level: 'passive',
-      ...(opts.boardUrl ? { url: opts.boardUrl } : {}),
-    };
-  }
-  const isBusiness = event.kind === 'business-down';
-  // 第一句就把「要不要紧」说完：业务挂了是用户现在用不了，基础设施挂了是服务本身没起来。
-  const impact = isBusiness
-    ? '用户现在用不了这条业务'
-    : '这项基础设施没通，依赖它的业务随时会跟着挂';
-  const times = event.consecutiveFailures > 1 ? `已连续 ${event.consecutiveFailures} 次` : '';
+  const recovered = event.kind.endsWith('-recovered');
+  const collection = event.assessment === 'observation-unavailable';
+  const scope = event.environmentLabel ? ` · ${event.environmentLabel}` : '';
+  const result = recovered ? '已稳定恢复' : collection ? '暂时无法确认状态' : '检查异常';
+  const impact = collection
+    ? `${event.affectedChecks || '多'} 项检查暂时无法读取，尚未确认业务中断。`
+    : (event.finding || '检查连续未通过，影响范围需结合实际业务核实。');
   return {
-    title: `${event.targetName} 挂了`,
-    body: [
-      `${where} · ${impact}。`,
-      `${times}判据未通过：${event.message}`,
-      opts.boardUrl ? `去看：${opts.boardUrl}` : '',
-    ].filter(Boolean).join(' '),
-    level: isBusiness ? 'critical' : 'active',
+    title: event.drill ? '通知演练：新通知样式已启用' : `${collection ? event.businessName || event.targetName : event.targetName}${scope}：${result}`,
+    body: event.drill ? '这是一条演练通知。共同异常会合并，独立故障仍分别报告。点击查看示例。' : recovered
+      ? '检查已持续恢复。点击查看处理记录。'
+      : `${impact}\n下一步：查看原因与处理建议。`,
+    level: recovered ? 'passive' : 'active',
     ...(opts.boardUrl ? { url: opts.boardUrl } : {}),
   };
 }

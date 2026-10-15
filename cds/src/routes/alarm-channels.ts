@@ -1,3 +1,4 @@
+import type { AlarmRelay } from '../services/alarm-relay.js';
 import { parseAlarmIdentity, identityForAlarm, type AlarmIdentitySettings } from '../services/alarm-identity.js';
 /*
  * 通知通道的读写接口（CDS 系统设置 → 接入 → 通知）。
@@ -39,6 +40,7 @@ import {
 } from '../services/alarm-route.js';
 
 export interface AlarmChannelRoutesDeps {
+  relay?: AlarmRelay;
   getIdentity?: () => AlarmIdentitySettings | undefined;
   setIdentity?: (identity: AlarmIdentitySettings) => void;
   list: () => AlarmChannelConfig[];
@@ -349,6 +351,10 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     if (!channel) { res.status(404).json({ error: '通道不存在' }); return; }
     const now = Date.now();
     const boardUrl = deps.boardUrl?.();
+    if (deps.relay?.owns(channel.id)) {
+      const id = deps.relay.enqueue(channel.id, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, boardUrl);
+      res.json({ queued: true, id, owner: '独立监控' }); return;
+    }
     const result = await sendAlarm(channel, { ...drillEvent(now), identity: identityForAlarm(deps.getIdentity?.()) }, { boardUrl, history: deps.history, deliveryKind: 'drill' });
     deps.ledger.record(channel.id, result, 'drill', now);
     res.json({ ...result, status: deps.ledger.view(channel, channelConfigured(channel)) });

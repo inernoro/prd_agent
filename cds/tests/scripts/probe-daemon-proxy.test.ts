@@ -142,10 +142,12 @@ describe('owned Docker probe proxy wire conformance', () => {
     } finally { await proxy.close(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
   }, 10_000);
-  it.each(['release', 'deadline', 'close'] as const)('binds an original app create ID to only its start response until %s', async mode => {
+  it.each(['release', 'deadline', 'close', 'tagged-release'] as const)('binds an original app create ID to only its start response until %s', async mode => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-app-start-'));
     const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
-    const id = 'c'.repeat(64), otherId = 'd'.repeat(64), imageReference = `127.0.0.1:43210/owned-api@sha256:${'e'.repeat(64)}`;
+    const policy = mode === 'tagged-release' ? 'release' : mode;
+    const tag = mode === 'tagged-release' ? `:sha-${'f'.repeat(40)}` : '';
+    const id = 'c'.repeat(64), otherId = 'd'.repeat(64), imageReference = `127.0.0.1:43210/owned-api${tag}@sha256:${'e'.repeat(64)}`;
     const target = { projectId: 'owned-project', branchId: 'owned-project-branch', profileId: 'api-owned', imageReference };
     const labels = { 'cds.managed': 'true', 'cds.type': 'app', 'cds.project.id': target.projectId,
       'cds.branch.id': target.branchId, 'cds.profile.id': target.profileId };
@@ -189,9 +191,9 @@ describe('owned Docker probe proxy wire conformance', () => {
       const original = post(`/v1.53/containers/${id}/start`, 'original-start-body').then(value => { completed = true; return value; });
       expect(await gate.caught).toMatchObject({ status: 204, containerId: id, containerName: 'owned-app-api', imageReference });
       expect(completed).toBe(false); expect(rows.at(-1)?.body).toBe('original-start-body');
-      if (mode === 'release') { gate.release(); gate.release(); } else if (mode === 'close') await proxy.close();
-      const result = await original; if (mode !== 'close') expect(result).toEqual({ status: 204, body: '', receipt: 'started' });
-      expect(gate.expired()).toBe(mode === 'deadline');
+      if (policy === 'release') { gate.release(); gate.release(); } else if (policy === 'close') await proxy.close();
+      const result = await original; if (policy !== 'close') expect(result).toEqual({ status: 204, body: '', receipt: 'started' });
+      expect(gate.expired()).toBe(policy === 'deadline');
       expect(proxy.timeline.filter(event => event.phase === 'original-app-create-replied')).toHaveLength(1);
       expect(proxy.timeline.filter(event => event.phase === 'original-app-start-reply-held')).toHaveLength(1);
       expect(proxy.timeline.filter(event => event.phase === 'fixture-app-start-reply-released')).toHaveLength(1);

@@ -1,5 +1,6 @@
 import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import { requestArtifactWaitRefresh } from './services/artifact-admission-wait.js';
+import { AlarmRelay, registerAlarmRelayRoutes } from './services/alarm-relay.js';
 import { identityForAlarm } from './services/alarm-identity.js';
 import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
 import { isSelfUpdateDraining } from './services/deploy-drain.js';
@@ -113,7 +114,9 @@ import { hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
 import { AsyncStuckDeployReconciler } from './services/async-stuck-deploy-reconciler.js';
 import { createReleaseGitRunner } from './services/release-git-reader.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
-import { ResourceUsageSampler } from './services/resource-usage-sampler.js';
+import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmedStoppedContainers } from './services/resource-usage-sampler.js';
+import { serviceRuntimeRefs } from './services/service-runtime.js';
+import { stopServiceForCooling } from './services/scheduler-service-stop.js';
 import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
 import { isRemoteExecutorOwned } from './services/executor-ownership.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
@@ -158,7 +161,7 @@ import { backfillReportReadScope } from './services/connection/pairing-service.j
 import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
-import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
+import { channelConfigured, classifyAlert, routeAlarm, renderAlarmMessage } from './services/alarm-route.js';
 import { sendAlarm } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
@@ -2585,7 +2588,8 @@ const localMemoryBranches = stateService.getAllBranches().filter(branch =>
   config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
 restoreDeploymentMemoryReservations(localMemoryBranches, branch => stateService.getEffectiveProfilesForBranch(branch));
 const memoryRecovery = await containerService.reconcileDeploymentMemoryReservations(localMemoryBranches, {
-  creationSettled: () => true,
+  // 旧CLI结束不等于daemon创建结束；无不可变CID时不能凭一次缺席释放未知创建责任。
+  creationSettled: (_owner, runtime) => Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
 });
 if (memoryRecovery.released.length || memoryRecovery.retained.length) console.log(
   `  [deployment-memory] 已核实释放 ${memoryRecovery.released.length} 项历史预约，保留 ${memoryRecovery.retained.length} 项待确认预约`,
@@ -2874,6 +2878,9 @@ let shutdownInProgress = false;
   }
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
+schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
+schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
+  .some(operation => operation.request.kind !== 'scheduler-cooling'));
 // coolFn: stop all containers of a branch but keep the branch entry in state.
 // A later explicit deploy/webhook/cdscli action can bring it back to HOT;
 // passive preview requests must only show state and must not start containers.
@@ -2894,14 +2901,14 @@ schedulerService.setCoolFn(async (slug: string) => {
   stateService.save();
   for (const svc of Object.values(branch.services)) {
     branchOperationLease?.assertCurrent(`scheduler cooling before ${svc.profileId}`);
-    if (svc.status === 'running' || svc.status === 'starting') {
-      // 先把 svc.status 翻成 stopping 再 await stop()。stop() 重构后容器
-      // 停止仍保留(exited)，若此处仍是 running，30s auto-restart tick 命中
-      // 这段 await 窗口会把"正在主动降温"的容器误判为 crash、bump stopCount、
-      // 还 docker start 抢跑（Cursor Bugbot High）。与手动 /stop 处理一致。
-      svc.status = 'stopping';
+    const observed = getObservedRunningContainerNames();
+    const resident = serviceRuntimeRefs(svc).some(runtime => observed?.has(runtime.containerName));
+    if (resident || ['running', 'starting', 'restarting'].includes(svc.status)) {
       try {
-        await containerService.stopRuntimeGroup(svc, '调度器降温（保留容器，可秒级唤醒）', {
+        await stopServiceForCooling({ service: svc, container: containerService,
+          assertCurrent: () => branchOperationLease?.assertCurrent(`scheduler cooling after ${svc.profileId}`),
+          confirmedStopped: forgetConfirmedStoppedContainers,
+          context: {
           kind: 'cds-stop-idle',
           projectId: branch.projectId,
           branchId: branch.id,
@@ -2911,11 +2918,14 @@ schedulerService.setCoolFn(async (slug: string) => {
           trigger: 'scheduler',
           operation: 'scheduler-cooling',
           source: 'schedulerService.setCoolFn',
+          },
         });
       } catch (err) {
-        console.warn(`[scheduler] stop(${svc.containerName}) failed: ${(err as Error).message}`);
+        branchOperationLease?.assertCurrent('scheduler cooling failure persistence');
+        branch.status = 'error';
+        stateService.save([{ kind: 'branches', id: branch.id }]);
+        throw err;
       }
-      svc.status = 'stopped';
     }
   }
   // 复制集成员级联降温（Codex P1 连带修复，2026-07-26）：成员容器不在
@@ -2946,7 +2956,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       // 停止必须核实再落状态（Codex 第三十五轮 P1 点名的三处循环之一，
       // 判定见 services/replica-stop.ts）。无容器的 provisioning 成员照旧标 stopped，
       // 物化栅栏按状态放弃，防止降温后后台任务把副本容器起出来。
-      await settleMemberAfterStop(member, {
+      const settled = await settleMemberAfterStop(member, {
         isRunning: (name) => containerService.isRunning(name),
         interruptedMessage: '物化被调度器降温中断，可在画布删除后重建',
         onStillRunning: (containerName) => {
@@ -2962,6 +2972,13 @@ schedulerService.setCoolFn(async (slug: string) => {
           });
         },
       });
+      branchOperationLease?.assertCurrent('scheduler cooling after replica confirmation');
+      if (settled !== 'stopped') {
+        branch.status = 'error';
+        stateService.save([{ kind: 'branches', id: branch.id }]);
+        throw new Error('副本停止未确认，分支保持驻留并等待降温重试');
+      }
+      if (member.containerName) forgetConfirmedStoppedContainers([member.containerName]);
     }
   }
   await archiveBranchContainerLogs({
@@ -6020,6 +6037,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
    * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
    */
+  const alarmRelay = new AlarmRelay(path.join(config.repoRoot, '.cds', 'alarm-relay.json'));
   const alarmLedger = new AlarmLedger({
     // 最近一次投递结果写回通道配置：进程重启后台账清空，已验证过的通道不该退回「未知」。
     persist: (channelId, last) => {
@@ -6124,6 +6142,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
       if (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map')) void sendLegacyAlarm({
         type,
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         targetId: data.targetId,
         targetName: data.targetName,
         projectId: data.projectId,
@@ -6151,8 +6170,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 上游已去抖，重试会把一次翻转变成多条通知）。
       const event = {
         identity: identityForAlarm(stateService.getAlarmIdentity(), data.targetId),
+        correlationKey: data.assessment === 'observation-unavailable'
+          ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
+          : data.targetId,
         targetId: data.targetId,
         kind: classifyAlert(type, data.source),
+        businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         projectId: data.projectId,
         targetName: data.targetName,
         message: data.message,
@@ -6163,6 +6186,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       const boardUrl = alarmBoardUrl(data.targetId);
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
         if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
+        if (alarmRelay.owns(channel.id)) {
+          alarmRelay.enqueue(channel.id, { ...event, recoveryConfirmed: data.recoveryChannelIds?.includes(channel.id) }, boardUrl);
+          continue;
+        }
         void sendAlarm(channel, event, { boardUrl, history: activeServerEventLogStore })
           .then((r) => {
             alarmLedger.record(channel.id, r, 'alert', Date.now());
@@ -6418,7 +6445,29 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // 通知通道的读写与演练。挂在同一个 /api 前缀下，与监控摘要同一条身份闸。
   app.use('/api', (() => {
     const r = express.Router();
+    registerAlarmRelayRoutes(r, alarmRelay, {
+      channels: () => stateService.listAlarmChannels(),
+      acknowledged: async (item, result) => {
+        if (result.merged) activeServerEventLogStore?.record({
+          category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',
+          operationId: item.id, projectId: item.event.projectId, message: '同源检查已归入已有事故',
+          details: { kind: 'policy', targetId: item.event.targetId, targetName: item.event.targetName, reason: 'shared-incident' },
+        });
+        else alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
+        const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
+        const message = renderAlarmMessage(item.event);
+        if (channel && !result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
+          channelId: channel.id, channelName: channel.name, channelKind: channel.kind,
+          kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
+          targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
+          title: message.title, body: message.body,
+        }, async () => result);
+        if (result.ok && item.event.kind.endsWith('-down') && item.event.targetId && !item.event.drill)
+          await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channelId, item.event.detectedAt);
+      },
+    });
     registerAlarmChannelRoutes(r, {
+      relay: alarmRelay,
       getIdentity: () => stateService.getAlarmIdentity(),
       setIdentity: (identity) => stateService.setAlarmIdentity(identity),
       list: () => stateService.listAlarmChannels(),
