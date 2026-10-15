@@ -10,7 +10,7 @@ import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeB
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput } from '../utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -2343,8 +2343,44 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
   });
 
-  test('[REG-avatar-asset-001] 本人头像完成上传、生成、保存、刷新和移动端闭环', { tag: '@cleanup' }, async ({ page, request, browser }, testInfo) => {
-    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止创建一次性头像用户和执行头像生成');
+  test('[REG-avatar-asset-001] 头像资源按环境核验：正式只读，CDS上传生成与持久化', { tag: '@cleanup' }, async ({ page, request, browser }, testInfo) => {
+    if (requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production') {
+      // 原 REG 的正式合同只读验证默认资源，不执行下方 CDS 用户/头像写入专项。
+      const failedImages: string[] = [];
+      await page.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
+      page.on('requestfailed', failed => {
+        if (failed.resourceType() === 'image' && !/ERR_ABORTED/i.test(failed.failure()?.errorText || '')) failedImages.push('图片网络请求失败');
+      });
+      page.on('response', response => {
+        if (response.request().resourceType() === 'image' && response.status() >= 400) failedImages.push(`图片响应失败 ${response.status()}`);
+      });
+      await loginAndReadToken(page, request, '/');
+      const account = page.getByRole('button', { name: '打开用户菜单', exact: true }).and(page.locator(':visible'));
+      await expect(account).toHaveCount(1);
+      const avatar = account.locator('img[alt="avatar"]');
+      await expect(avatar).toHaveCount(1);
+      await expect.poll(() => avatar.evaluate(image => (image as HTMLImageElement).naturalWidth), { timeout: 15_000 }).toBeGreaterThan(0);
+      const snapshot = await avatar.evaluate(image => {
+        const img = image as HTMLImageElement;
+        return { source: img.currentSrc || img.src, complete: img.complete, width: img.naturalWidth, height: img.naturalHeight };
+      });
+      const asset = await page.request.get('/avatars/nohead.webp');
+      const proof = validateReadOnlyAvatarAsset({ ...snapshot, pageUrl: page.url(), status: asset.status(), mime: asset.headers()['content-type'] || '', byteLength: (await asset.body()).byteLength });
+      await expectNoBrokenImages(page, '正式巡检默认头像', failedImages);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), '正式首页不得横向溢出').toBeLessThanOrEqual(1);
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-10',
+        target: page.locator('#root'),
+        themeTarget: page.locator('#root'),
+        overviewJustification: '需同时记录真实首页导航、默认头像和当前视口，几何断言证明没有横向溢出。',
+        caption: '正式现有巡检身份首页的默认头像可解码，实测横向溢出不超过1像素；不证明头像上传、生成和保存专项。',
+      });
+      await account.click();
+      await expect(page.getByRole('button', { name: '修改我的头像', exact: true })).toBeVisible();
+      await testInfo.attach('production-avatar-read-only', { body: JSON.stringify({ ...proof, environment: 'production', readOnly: true, userCreated: false, modelCalls: 0, proofBoundary: '仅默认头像资源和真实用户菜单，不证明上传/生成/保存专项' }), contentType: 'application/json' });
+      await testInfo.attach('production-avatar-menu', { body: await page.screenshot(), contentType: 'image/png' });
+      return;
+    }
     test.setTimeout(420_000);
     const username = `stsmk_avatar_${Date.now().toString(36)}`;
     assertScopedSyntheticUsername(username, requiredEnv('STABLE_SMOKE_RUN_ID'));
@@ -3559,6 +3595,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[LIT-003][LIT-004] 文学续写停止后内容稳定且改写只替换选中段落', { tag: '@cleanup' }, async ({ page, request }) => {
+    blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'LIT-004');
     test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学续改-r${test.info().retry}`;
@@ -8355,6 +8392,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[MVIS-010] 多图引用失败只显示结果与恢复动作', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'MVIS-010');
     test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'multi-image-readable-error');

@@ -21,6 +21,11 @@ export interface GatewayLogicalModelAuditIdentity {
 
 export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenticationMethods: string[] };
 export function assertScopedSyntheticUsername(username: string, runId: string): void;
+export function blockUnsafeProductionFixture(test: { skip(condition: boolean, description: string): void }, environment: string, caseId: 'LIT-004' | 'MVIS-010'): void;
+export function validateReadOnlyAvatarAsset(snapshot: {
+  pageUrl: string; source: string; complete: boolean; width: number; height: number;
+  status: number; mime: string; byteLength: number;
+}): { source: string; width: number; height: number; byteLength: number };
 export function getQuickEditInput(page: Page): Locator;
 export function getMapLoginTarget(page: Page, options?: { timeout?: number }): Promise<{ target: Locator; authenticationMethods: string[] }>;
 export function selectGatewayImageLogicalModel<T extends GatewayLogicalModelAuditIdentity>(items: T[]): T;

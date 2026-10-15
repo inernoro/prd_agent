@@ -11,6 +11,33 @@ export function assertScopedSyntheticUsername(username, runId) {
   '临时账号不属于本轮 stsmk- 资源范围；停止账号创建和权限修改，需预置独立隔离身份', 'test/resource-scope');
 }
 
+/** Stop legacy fixtures before they can broaden production inspection privileges. */
+export function blockUnsafeProductionFixture(test, environment, caseId) {
+  const reasons = {
+    'LIT-004': '验收债务：正式改写须走真实页面；旧夹具签发临时 Agent API Key 并直接替换正文，不能证明真实改写。未执行，不增加凭据权限。',
+    'MVIS-010': '验收债务：正式只观察自然失败；禁止构造不存在的参考图创建失败任务。未发现本轮自然失败证据，本项未执行。',
+  };
+  contract(Object.hasOwn(reasons, caseId), '正式危险夹具须绑定已登记的原用例');
+  if (environment === 'production') test.skip(true, reasons[caseId]);
+}
+
+/** Validate the real rendered default avatar and its independently downloaded bytes. */
+export function validateReadOnlyAvatarAsset(snapshot) {
+  let source;
+  let pageOrigin;
+  try {
+    pageOrigin = new URL(snapshot?.pageUrl).origin;
+    source = new URL(snapshot?.source, snapshot?.pageUrl);
+  } catch {
+    contract(false, '头像证据缺少真实页面或图片地址');
+  }
+  contract(source.origin === pageOrigin && source.pathname === '/avatars/nohead.webp', '默认头像必须使用同源轻量 WebP，不能退回对象存储旧图');
+  contract(snapshot.complete === true && snapshot.width > 0 && snapshot.height > 0, '页面默认头像必须真实解码，碎图或未加载不能通过');
+  contract(snapshot.status === 200 && /^image\/webp(?:;|$)/i.test(snapshot.mime || ''), '默认头像必须下载为真实 WebP 图片');
+  contract(Number.isInteger(snapshot.byteLength) && snapshot.byteLength > 0 && snapshot.byteLength < 32 * 1024, '默认头像字节数须非空且小于32KB');
+  return { source: source.href, width: snapshot.width, height: snapshot.height, byteLength: snapshot.byteLength };
+}
+
 export function getQuickEditInput(page) {
   return page.getByRole('textbox', {name:'快捷编辑描述',exact:true})
     .or(page.getByPlaceholder('Describe your edit here', {exact:true}))

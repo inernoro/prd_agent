@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput } from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
+import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
 
 test('巡检主旅程接入语义登录与精确模型详情，且仅改被测文件也触发CI守卫',()=>{
  const spec=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
@@ -17,6 +18,70 @@ test('巡检主旅程接入语义登录与精确模型详情，且仅改被测�
 });
 
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
+
+test('REG-stsmk-account-scope-001 正式危险夹具在任何写入前阻断，CDS原夹具不被误放行到正式', () => {
+  for (const caseId of ['LIT-004', 'MVIS-010']) {
+    let writes = 0;
+    const execute = boundary => {
+      boundary({ skip: (condition, reason) => {
+        assert.equal(condition, true);
+        assert.match(reason, /验收债务/);
+        assert.match(reason, /未执行/);
+        throw new Error(`not-run:${caseId}`);
+      } }, 'production', caseId);
+      writes += 1;
+    };
+    assert.throws(() => execute(blockUnsafeProductionFixture), new RegExp(`not-run:${caseId}`));
+    assert.equal(writes, 0, '正式拦截之后不得签发钥匙或创建人为失败任务');
+    blockUnsafeProductionFixture({ skip: () => { throw Error('CDS夹具不应被正式策略误拦'); } }, 'cds', caseId);
+  }
+  assert.throws(() => blockUnsafeProductionFixture({}, 'production', 'not-registered'), /绑定已登记/);
+});
+
+test('REG-stsmk-account-scope-001 正式危险夹具拦截接入原case并发生在认证和创建之前', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  for (const [title, caseId] of [
+    ['[LIT-003][LIT-004] 文学续写停止后内容稳定且改写只替换选中段落', 'LIT-004'],
+    ['[MVIS-010] 多图引用失败只显示结果与恢复动作', 'MVIS-010'],
+  ]) {
+    const body = source.split(`test('${title}'`)[1]?.split("\n  test('")[0];
+    assert.ok(body);
+    const boundary = `blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), '${caseId}')`;
+    assert.ok(body.indexOf(boundary) >= 0 && body.indexOf(boundary) < body.indexOf('loginAndReadToken('), `${caseId}必须先阻断再认证/写入`);
+  }
+});
+
+test('REG-stsmk-account-scope-001 正式停跑原因经当前reporter形状进入每轮未执行账本', () => {
+  const annotations = [];
+  assert.throws(() => blockUnsafeProductionFixture({ skip: (condition, description) => {
+    assert.equal(condition, true);
+    annotations.push({ type: 'skip', description });
+    throw new Error('not-run');
+  } }, 'production', 'MVIS-010'), /not-run/);
+  const rows = collectPlaywrightCases({ suites: [{ specs: [{ title: '[MVIS-010] 多图失败', tests: [{ results: [{ status: 'skipped', annotations }] }] }] }] }, 'production');
+  assert.equal(rows[0].status, 'not-run');
+  assert.equal(buildNotRunLedger(rows, { production: true })[0].reason, annotations[0].description);
+});
+
+const avatarSnapshot = { pageUrl: 'https://fixture.test/', source: 'https://fixture.test/avatars/nohead.webp', complete: true, width: 128, height: 128, status: 200, mime: 'image/webp', byteLength: 5_120 };
+test('REG-avatar-asset-001 默认头像同源、解码、真实MIME和轻量字节必须同时成立', () => {
+  assert.equal(validateReadOnlyAvatarAsset(avatarSnapshot).byteLength, 5_120);
+  for (const bad of [
+    { source: 'https://objects.test/nohead.png' }, { source: '/avatars/nohead.png' },
+    { complete: false }, { width: 0 }, { height: 0 }, { status: 404 },
+    { mime: 'text/html' }, { byteLength: 0 }, { byteLength: 3 * 1024 * 1024 },
+  ]) assert.throws(() => validateReadOnlyAvatarAsset({ ...avatarSnapshot, ...bad }), /test\/ui-contract/);
+});
+
+test('REG-avatar-asset-001 正式原case走现有身份的只读菜单和资源，不创建头像用户或调用模型', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[REG-avatar-asset-001]")[1]?.split("\n  test('")[0];
+  const readOnly = body?.split("if (requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production') {")[1]?.split('      return;')[0];
+  assert.ok(readOnly, '原REG须有真实正式只读变体，不能整体skip');
+  for (const call of ['loginAndReadToken(page, request,', 'validateReadOnlyAvatarAsset(', 'expectNoBrokenImages(', 'account.click()', "page.request.get('/avatars/nohead.webp')", "'CDS-VISUAL-ERRORS-PROGRESS-RESPONSIVE-10'", "page.route('**/api/submissions/public**'"]) assert.ok(readOnly.includes(call), `${call}未接入`);
+  assert.doesNotMatch(readOnly, /(?:request|page\.request)\.(?:post|put|patch|delete)\(|issueTicketDetails|\/api\/users|apply-generated|avatar\/generate|test\.skip/);
+  assert.match(readOnly, /proofBoundary: '仅默认头像资源和真实用户菜单，不证明上传\/生成\/保存专项'/);
+});
 
 test('REG-visual-policy-001 快捷编辑同时识别已部署英文placeholder和当前中文aria，不取第一个冒充唯一', async () => {
   for (const layout of ['deployed','current','missing','duplicate']) {
