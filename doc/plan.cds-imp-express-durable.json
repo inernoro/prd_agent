@@ -1,6 +1,6 @@
 {
   "goal_id": "CDS-IMP-EXPRESS-DURABLE-20261010",
-  "plan_version": "v1.92",
+  "plan_version": "v2.04",
   "tasks": [
     {
       "id": "P0-01",
@@ -596,5 +596,133 @@
       "local_evidence_note": "v1.71 当前全局检查点见status_note；本条保留部分实施，局部证据按其原SHA回查，本条正式判据未执行。"
     }
   ],
-  "status_note": "用户确认只有现有两台服务器：隔离是运行环境/资源/数据边界，不要求第三台。当前mycds31GiB/16核可用约25.6GiB，本任务B01独立daemon已就绪，owner/CID/挂载/网络及实际cgroup4CPU/6GiB/PID1024/swap0由末尾15项有限核验；另一500任务A01完全保留。Docker info仍报物理16核/31GiB，后续准入按有效4CPU/6GiB，不按物理值放大；privileged功能隔离不声称完整VM安全隔离。仅环境准备通过，目标CDS/IMP应用、八分支、性能和视觉未验。既有实际并发及性能门槛保持，八分支完整交付可按容量分批，不能用分批替代并发压测结论。当前另一任务同负载窗口在执行，B01保持空daemon，不在该窗口叠加业务负载。 发布与原IMP基线证据见resume-publication-v1/pre-rollout-consolidated-receipt.json；环境协议见 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-main/two-host-isolation-review/owned-environment-protocol.json；独立回执 /Users/inernoro/.codex/visualizations/2026/10/12/cds-imp-express-tail-rollout/b01-independent-admission/independent-environment-admission-receipt.json。"
+  "status_note": "2026-10-15T07:06:54Z：CDS9046/CI38693461818/B02实际同源，helper666/104原路由匹配；最终A03及A01已真实13运行/worker回调/4真实Forwarder入口/黄及同页stop灰闭环通过，2/8；A02正在新纪元部署，其余5待执行。原49正式0；卡片runtime类型推断/成功时间与部分入口菜单发现性仍未闭，不把port/CID更新通过扩为全部UI语义通过。",
+  "current_execution": {
+    "cds_target_sha": "9046ed743348441ff7f923cc5ca9bc689e40334e",
+    "imp_helper_sha": "666e0cf2bd18e66cd965fa0b791ce3f4c1d90347",
+    "deployed_cds_sha": "9046ed743348441ff7f923cc5ca9bc689e40334e",
+    "environment": "owned mycds B02 only; stable IMP/canonical read-only",
+    "final_eight_positive_executed": 8,
+    "formal49_closed_pass": 0,
+    "ci_run": 38693461818,
+    "accepted_serial_samples": [
+      {
+        "sample": "A03",
+        "targetSha": "0420dbaa038bf6f86791bc31d369905826a15a67",
+        "runId": "dr_2989f3444f9130089b4d8877",
+        "driverElapsedSeconds": 261.486,
+        "queueSamples": 79,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "63ad58daa6942e10a7a31de8dc4d887a46e5592315cec502165d9f3bf3c68802"
+      },
+      {
+        "sample": "A01",
+        "targetSha": "a32e294d67b03b87b04ff90a634c1f96541ffe07",
+        "runId": "dr_bc6abdf149e6979bfc92641c",
+        "driverElapsedSeconds": 267.58,
+        "queueSamples": 79,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "6874445b85d0416a7b6ecd3dfdd707bf5a390d5e2bd20f546361203aa792fe32"
+      },
+      {
+        "sample": "A02",
+        "targetSha": "75fcfebb815216ae591586035e357806dc950d38",
+        "runId": "dr_aefeb3c6784b4dfac919e4ed",
+        "driverElapsedSeconds": 269.252,
+        "queueSamples": 80,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "95c88c8a695edeaeab34e663e988752d1675247eddc9bdc854bd95b9a2464b9e"
+      },
+      {
+        "sample": "A04",
+        "targetSha": "1215c731c8e72044ddda21105cb0949df8321990",
+        "runId": "dr_2795c4e03ae9478a9f1d31b0",
+        "driverElapsedSeconds": 248.483,
+        "queueSamples": 74,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "80efbd204ec47dd40e051e63eff0d5d64f1951964ef6fb60c82fae1146c9e480"
+      },
+      {
+        "sample": "A05",
+        "targetSha": "83b667694f14c34e73a99506b45ecc9108aa04dc",
+        "runId": "dr_49396a90cb9505f8413df6f8",
+        "driverElapsedSeconds": 240.462,
+        "queueSamples": 72,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "589510d34e7a6a4f846e5b3e77703ccfc33a339d541e72d72e523bcb48dd9c7b"
+      },
+      {
+        "sample": "A06",
+        "targetSha": "2e494dc7087710942f931e52e4775427ba5560e0",
+        "runId": "dr_ae26f87726824947c89aca91",
+        "driverElapsedSeconds": 254.423,
+        "queueSamples": 73,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "3032312615a3439e8f9aa5c85b4421dcc60873b7836eca3a6b427c75b5c6c1b4"
+      },
+      {
+        "sample": "A07",
+        "targetSha": "16ee22896d3425dea13dca7a036819af428dbb4e",
+        "runId": "dr_8f91773c1563a6da2ac5b534",
+        "driverElapsedSeconds": 223.853,
+        "queueSamples": 66,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "321d539dc990f9f6ca4d68934da2626e6c75b12645cee01415929c6298cefea5"
+      },
+      {
+        "sample": "A08",
+        "targetSha": "873bbef36135b931716362defbbfdeb6a65309de",
+        "runId": "dr_6c7219eebeacd18df31b1a7e",
+        "driverElapsedSeconds": 261.172,
+        "queueSamples": 75,
+        "sourceActiveMax": 0,
+        "sourceQueuedMax": 0,
+        "runningAndStoppedNativeVisualPassed": true,
+        "stopReceiptSha256": "df92c77eeb70e1cdbadaaa15ad6e4582d5739d8bfa86649af5fca60a1d513d97"
+      }
+    ],
+    "final_eight_serial_closed": 8,
+    "observed_at": "2026-10-15T08:06:01.965943+00:00",
+    "inflight": "none",
+    "ordinary_report": {
+      "id": "044c9030493242c591584167130103ba",
+      "verdict": "conditional",
+      "tier": "L2",
+      "htmlSha256": "64f9edb28d742e3f62c14fe97c79d59c8ebd0d9722c8e92609150b6b77bfb2b9",
+      "assetCount": 35,
+      "apiAndRawReadbackPassed": true,
+      "browserReadback": "passed actual side navigation/report iframe/all35loaded+anchors",
+      "boundAcceptanceRun": false,
+      "formal49Pass": 0,
+      "browserReceiptPath": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-tail/epochs/9046ed74-final/report-browser-readback/receipt.json",
+      "browserReceiptSha256": "9fa7fcd95956a718f21d4a93f39633ca6d642ae1fa12b67c05dd2cb333f6a038",
+      "offlineExportPath": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-tail/eight-serial-report-v201/offline-export.html",
+      "offlineExportSha256": "55254d0d03f91aca9bd831b7080de66011270a87bec460ab95cd16957f7fc510"
+    },
+    "overall_goal_status": "active",
+    "batch_status": "eight-serial-and-ordinary-report-complete",
+    "round2": {
+      "phase": "recovery-pre-push",
+      "observed_at": "2026-10-15T09:56:29.605762+00:00",
+      "threeScenarios": "not-executed",
+      "canonicalSha": "5d7f3d71311b0805e9b8f081d333d96d180096fc",
+      "mycdsConcurrencyAdmission": "not-admitted current6GiB",
+      "sharedUpdate": "only after all priority real gates pass and latest collaborator integration",
+      "newPushScope": "eight existing owned refs only; tree-preserving new commits; no main/test/PR/merge"
+    }
+  }
 }

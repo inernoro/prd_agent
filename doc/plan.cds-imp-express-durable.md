@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.99；日期：2026-10-15；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v2.13；日期：2026-10-15；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -8,9 +8,11 @@
 
 ## 当前检查点（2026-10-15）
 
-B01已停止封存，A01旧候选自动回收、A02原12意图仅4身份回执保持未知，未手改journal。B02实际4CPU/6GiB/PID1024/swap0，独立daemon/state/网络/卷，稳定IMP与canonical本任务未写。CDS d4b051e8由成功CI38684050579精确部署，373/134文件与Git/self/web一致。
+B01已停止封存。B02实际4CPU/6GiB/PID2048/swap0、当前9046运行、八支完整13服务均已运行并独立复验后官方停止，当前八idle/104stopped；A01/A02旧13运行/原生健康/4worker回调均通过，来源队列0，但stop漏SSE、资源chip旧代与helper路由5错误使完整视觉未通过。当前本地CDS9046已修停止/资源投影，固定692文件10381测试全绿、19跳过/core+web tsc0；独立旧stop4红→同fixture新6谓词绿。IMP helper666路由两红→41绿、实际8支HTTP同步保13极速、104原生Git Compose路由/子域全匹配。
 
-本批真实create意图/未知网络守卫已完成红绿，最终692文件10374测试绿、19跳过/core tsc0。官方接口准备8精确目标分支与13角色，96镜像摘要已核；四项独立依赖、8套全新四库、helper60ef实际HTTP同步8/8完成，13极速模式保留。末尾正做最终准入，下一步A01完整13部署。八支完整运行尚未通过；49条已映射、正式闭环pass0，不能因准备完成或换环境抹除旧失败。
+已按原授权push9046、CI38693461818 success、B02实际373/134官方文件通过。最终9046纪元8/8串行有界闭环通过（A03、A01、A02、A04、A05、A06、A07、A08）；八支运行后均已官方stop释放测试应用资源。各13实际镜像/SHA/9Java4Nginx/9HTTP/4worker注册带令牌心跳/4Forwarder应用页、当前chip及同活页黄→官方stop→灰、13原CID保留exited独立通过。源码gate采样均0/0；不推断采样间绝对无等待、冷拉取或新push完整链路。停止瞬态A02仅AX、A04/A07未观察，原件限制保留；当前运行类型chip、成功tooltip旧时间、部分入口发现问题未关闭。原49正式pass0，公网/八并发31服务100连接/48小时/一周尚未执行；共享新版审计集成后才能更新，禁止9046覆盖协作者较新修复。
+
+本轮普通报告实际ID `044c9030493242c591584167130103ba`，conditional/L2，无AR绑定；35原JPEG及正文API字节回读、实际报告35图加载/35内部锚点均独立通过。离线导出与逐支完整SHA/run见仓外最终报告。原49完整目标仍active，不宣称八并发/无SHA最新pull/公网或长期通过。
 
 ## 冻结门槛
 
@@ -808,3 +810,7 @@ v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc11
 补取原八推送CI GitHub provider事实（首次网络EOF失败，后逐项有界重读成功，原文件保留）：8/8 success且SHA与固定分母逐字匹配，每支9 jobs。workflow created→updated观察242–285秒，job created→started最大8秒（含依赖/调度，不冒称纯runner排队），Java统一reactor job执行174–230秒。原Oct11推送历史，不伪称Oct15新push；CI生产和B02暖本地镜像拉取分开，不冒充公网冷拉取/当前Master已通过。
 
 2026-10-15 独立5227原样复验4/5：真实SSE runtime all/yellow及errorMessage已闭合，原断言还发现ciImageError undefined被省略后在实际reducer残留；不夸为已观察到React仍显示旧CI文案。主新增原CI失败→ready清空反例2红，补显式ciImageError空串后相关3文件36绿/core tsc0。原全量运行期间出现此新源变更，主按精确cwd+stdout归属终止原本地vitest PID48471，旧日志不作为固定源码全量证据；准备固定新修订后重跑。IMP eb3实际八支32worker配置/角色/run/SHA/四库/Admin/token均经独立SSOT+API复核，104express配置保留；真实Spring展开、实时黄灯、8支运行仍待新epoch。
+
+2026-10-15 固定81d最终回归：692文件10376测试通过、6文件19测试跳过，179.64秒/core tsc0；此前同源一轮1现有projects互斥HTTP用例5秒超时、10375通过原件保留，独立91用例全绿并随后完整同源复跑全绿，不声称旧超时根因已闭。独立SSE原5/5及status/partial/unknown/drain四组通过，receipt 04868da03826bf5d42ef0193455ce845b06185715005cd3b5a687ad15889e0d8；不相加唯一分母、不继承真实UI/Daemon。现在按原授权push81d修复分支，等待精确CI后仅更新B02；原稳定IMP/canonical无本任务写入。
+
+真实新epoch负控设计已独立审查：仅A02 rootAPI临时未监听containerPort9与B02项目floor1（原实际1200）；不存在HTTP path的404会被既有探针接受，故不用其伪造失败，且默认floor会抬高timeout，时长不预称15秒。保存完整rootOverride，绑定project/SHA写入，其他7支不部署；真实readiness失败与自动回收取证后完整还原override，project官方恢复0继承=原1200，记录字段absent→explicit0语义恢复，非字节还原。恢复13图后同SHA正常部署，尾持续活UI不reload验黄灯/错误清除与4真实DNS注册地址及tokenbeat。负控不代替八正向及并发/公网/长期分母。
