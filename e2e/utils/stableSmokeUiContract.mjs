@@ -2,6 +2,15 @@ function contract(condition, message, classification = 'test/ui-contract') {
   if (!condition) throw new Error(`[${classification}] ${message}`);
 }
 
+// Usernames currently reject hyphens in the application. Do not silently replace
+// the authorized stsmk- namespace with stsmk_ to make a fixture fit that API.
+// Such tests need a separately provisioned isolated identity, not a wider runner.
+export function assertScopedSyntheticUsername(username, runId) {
+  contract(typeof runId === 'string' && /^stsmk-[a-z0-9-]+$/i.test(runId)
+    && typeof username === 'string' && username.startsWith(`${runId}-`),
+  '临时账号不属于本轮 stsmk- 资源范围；停止账号创建和权限修改，需预置独立隔离身份', 'test/resource-scope');
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

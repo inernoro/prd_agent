@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot } from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
+import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 
 test('巡检主旅程接入语义登录与精确模型详情，且仅改被测文件也触发CI守卫',()=>{
  const spec=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
@@ -16,6 +17,41 @@ test('巡检主旅程接入语义登录与精确模型详情，且仅改被测�
 });
 
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
+
+test('REG-stsmk-account-scope-001 下划线替代与其它轮次账号在写入前变红', () => {
+  for (const username of ['stsmk_avatar_abc', 'stsmk_noauth_abc', 'stsmk-other-avatar', 'real-user']) {
+    assert.throws(() => assertScopedSyntheticUsername(username, 'stsmk-this-run'), /test\/resource-scope/);
+  }
+  assert.doesNotThrow(() => assertScopedSyntheticUsername('stsmk-this-run-avatar', 'stsmk-this-run'));
+});
+
+test('REG-stsmk-account-scope-001 基础登录不得混入头像专项或临时账号写入', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const login = source.split("test('[CORE-002][CORE-003] 专用巡检身份登录与刷新保持同一会话'")[1]?.split("test('")[0];
+  assert.ok(login, '双环境须有独立的只读登录旅程');
+  assert.doesNotMatch(login, /test\.skip|\/api\/users|avatar-editor/);
+  assert.match(login, /readStableAuthSnapshot/);
+  assert.doesNotMatch(source, /\[CORE-002\]\[CORE-003\]\[REG-avatar-asset-001\]/);
+  for (const name of ['avatar', 'noauth']) {
+    const fragment = source.split('const username = `stsmk_' + name + '_')[1]?.split('await request.post(\'/api/users\'')[0];
+    assert.ok(fragment?.includes('assertScopedSyntheticUsername(username,'), `${name}账号写入必须先做本轮资源范围检查`);
+  }
+});
+
+test('REG-stsmk-account-scope-001 正式受限模式仍复测登录、身份权限与手机真实入口，不夹带业务写入', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const matcher = new RegExp(productionReadOnlyGrep);
+  const selected = [...source.matchAll(/test\('([^']+)'/g)].filter(match => matcher.test(match[1]));
+  for (const caseId of ['CORE-001', 'CORE-002', 'CORE-003', 'CORE-010']) {
+    assert.ok(selected.some(match => match[1].includes(`[${caseId}]`)), `${caseId}未进入正式只读集合`);
+  }
+  for (const match of selected) {
+    const body = source.slice(match.index + match[0].length).split("\n  test('")[0];
+    assert.ok(body);
+    assert.doesNotMatch(body, /(?:request|page\.request)\.(?:post|put|patch|delete)\(/, match[1]);
+    assert.doesNotMatch(match[1], /avatar|COMMON-002|CORE-009|白桃|生成/);
+  }
+});
 
 test('登录页不依赖已删除的 login-card；账号表单和仅SSO均可核验，残缺入口变红', async () => {
   assert.deepEqual(validateMapLoginSnapshot(passwordSnapshot), { authenticationMethods: ['password'] });

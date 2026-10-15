@@ -44,10 +44,17 @@ export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreat
   if(!response.ok()||!body.success||!body.data?.runId)throw Error(`真人默认生图提交失败：${body.error?.code||response.status()}`);
   onCreated(body.data.runId);
   const request=response.request().postDataJSON();
-  const proof={runId:body.data.runId,targetKey:request.targetKey,selectedLabel,request:{prompt:request.prompt,size:request.size,modelId:request.modelId,platformId:request.platformId,expectedImageRefCount:request.expectedImageRefCount,imageRefCount:(request.imageRefs||[]).length}};
+  const proof={runId:body.data.runId,targetKey:request.targetKey,selectedLabel,placement:{x:request.x,y:request.y,w:request.w,h:request.h},request:{prompt:request.prompt,size:request.size,modelId:request.modelId,platformId:request.platformId,expectedImageRefCount:request.expectedImageRefCount,imageRefCount:(request.imageRefs||[]).length}};
   if(onSubmitted)await onSubmitted(proof);
   assertDefaultPeachRequest({pool,selectedLabel,request});
   return proof;
+}
+
+export function secondaryImagePlacement(primary) {
+  if (!primary || !['x','y','w','h'].every(key => Number.isFinite(primary[key])) || primary.w <= 0 || primary.h <= 0) {
+    throw Error('[test/canvas-fixture] 首张图片缺少真实画布位置，不猜测并发图片坐标');
+  }
+  return { x: primary.x + primary.w + 96, y: primary.y };
 }
 
 export function selectSupportedDefaultSizes(info,modelId) {

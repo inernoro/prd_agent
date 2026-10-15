@@ -42,7 +42,7 @@ const flagOptions = new Set([
   '--capture-visual',
   '--help',
 ]);
-export const productionReadOnlyGrep = '\\[CORE-001\\]|\\[REG-stsmk-production-read-only-001\\]';
+export const productionReadOnlyGrep = '\\[CORE-001\\]|\\[CORE-002\\]|\\[CORE-003\\]|\\[CORE-010\\]|\\[REG-stsmk-production-read-only-001\\]';
 
 export const runnerHelpText = `稳定冒烟本地运行器
 

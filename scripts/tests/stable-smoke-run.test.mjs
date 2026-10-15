@@ -902,11 +902,11 @@ test('正式环境只读模式只对账安全门实际执行的健康检查', ()
 
   assert.deepEqual(
     selectCoverageCaseIds(required, '', ['production'], gate),
-    ['CORE-001', 'REG-stsmk-production-read-only-001'],
+    ['CORE-001', 'CORE-002', 'CORE-003', 'CORE-010', 'REG-stsmk-production-read-only-001'],
   );
   assert.deepEqual(
     selectCoverageCaseIds(required, '\\[VIS-001\\]', ['production'], gate),
-    ['CORE-001', 'REG-stsmk-production-read-only-001'],
+    ['CORE-001', 'CORE-002', 'CORE-003', 'CORE-010', 'REG-stsmk-production-read-only-001'],
   );
   assert.deepEqual(
     selectCoverageCaseIds(required, '', ['cds', 'production'], { ...gate, restricted: false }),

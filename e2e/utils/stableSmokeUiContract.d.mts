@@ -20,6 +20,7 @@ export interface GatewayLogicalModelAuditIdentity {
 }
 
 export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenticationMethods: string[] };
+export function assertScopedSyntheticUsername(username: string, runId: string): void;
 export function getMapLoginTarget(page: Page, options?: { timeout?: number }): Promise<{ target: Locator; authenticationMethods: string[] }>;
 export function selectGatewayImageLogicalModel<T extends GatewayLogicalModelAuditIdentity>(items: T[]): T;
 export function openGatewayLogicalModelDetails(page: Page, logical: { publicId: string }, options?: { timeout?: number }): Promise<{

@@ -9,8 +9,8 @@ import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
-import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes } from '../utils/stableSmokeDefaultJourney.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails } from '../utils/stableSmokeUiContract.mjs';
+import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -2320,10 +2320,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     ).toEqual([]);
   });
 
-  test('[CORE-002][CORE-003][REG-avatar-asset-001] 登录与本人头像完成上传、生成、保存、刷新和移动端闭环', { tag: '@cleanup' }, async ({ page, request, browser }, testInfo) => {
-    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止创建一次性头像用户和执行头像生成');
-    test.setTimeout(420_000);
-
+  test('[CORE-002][CORE-003] 专用巡检身份登录与刷新保持同一会话', async ({ page, request }, testInfo) => {
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
     const { target: loginCard } = await getMapLoginTarget(page);
     await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -2332,7 +2329,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       caption: '未认证登录页的品牌、欢迎标题与当前认证入口可见；本图不证明认证成功。',
     });
 
-    const adminToken = await loginAndReadToken(page, request, '/');
+    await loginAndReadToken(page, request, '/');
     const beforeReload = await readStableAuthSnapshot(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
     const afterReload = await readStableAuthSnapshot(page);
@@ -2344,8 +2341,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       target: shell,
       caption: '合成登录后刷新仍保留同一认证快照，真实应用侧栏和当前身份入口可见。',
     });
+  });
 
+  test('[REG-avatar-asset-001] 本人头像完成上传、生成、保存、刷新和移动端闭环', { tag: '@cleanup' }, async ({ page, request, browser }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止创建一次性头像用户和执行头像生成');
+    test.setTimeout(420_000);
     const username = `stsmk_avatar_${Date.now().toString(36)}`;
+    assertScopedSyntheticUsername(username, requiredEnv('STABLE_SMOKE_RUN_ID'));
+    const adminToken = await loginAndReadToken(page, request, '/');
     const password = `StsmkAvatar_${Date.now()}_A9`;
     let avatarUserId = '';
     let avatarToken = '';
@@ -2673,7 +2676,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-002][CORE-003][CORE-009][COMMON-002][REG-auth-diagnosis-001] 合成会话刷新恢复、授权诊断且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[CORE-009][REG-auth-diagnosis-001] 授权诊断不改变当前合成会话', async ({ page, request }) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动注入错误凭据和撤销会话');
     const adminToken = await loginAndReadToken(page, request, '/');
     const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(adminToken) });
@@ -2708,8 +2711,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(JSON.stringify(body)).not.toContain('stsmk-invalid');
     }
     expect(await readStableAuthSnapshot(page)).toBe(beforeReload);
+  });
 
+  test('[COMMON-002] 受限隔离身份入口和直达均被拒绝', { tag: '@cleanup' }, async ({ page, request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境禁止创建用户或修改权限；需预置独立隔离身份');
     const username = `stsmk_noauth_${Date.now().toString(36)}`;
+    assertScopedSyntheticUsername(username, requiredEnv('STABLE_SMOKE_RUN_ID'));
+    const adminToken = await loginAndReadToken(page, request, '/');
     const password = `StsmkOnly_${Date.now()}_A9`;
     let restrictedUserId = '';
     let restrictedToken = '';
@@ -7144,6 +7152,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       runId = created.runId;
       squareTargetKey = created.targetKey;
+      const boundaryPosition = secondaryImagePlacement(created.placement);
 
       const boundaryCreate = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-wide-boundary-run` },
@@ -7156,8 +7165,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           size: supportedSizes.landscape.size,
           responseFormat: 'url',
           expectedImageRefCount: 0,
-          x: 1100,
-          y: 0,
+          x: boundaryPosition.x,
+          y: boundaryPosition.y,
           w: supportedSizes.landscape.width,
           h: supportedSizes.landscape.height,
         },
@@ -7335,7 +7344,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await gatewayAuditPage.close();
       }
       await page.reload({ waitUntil: 'domcontentloaded' });
-      const generatedImage = page.getByTestId('canvas-image').first();
+      const generatedImage = page.locator(`[data-canvas-key="${squareTargetKey}"]`).getByTestId('canvas-image');
       await expect(generatedImage, '任务完成并刷新后画布必须恢复真实图片').toBeVisible({ timeout: 30_000 });
       await expect.poll(
         () => generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
