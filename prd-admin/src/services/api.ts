@@ -734,6 +734,18 @@ export const api = {
       viewsSummary: (id: string) => `/api/report-agent/reports/${id}/views-summary`,
       planComparison: (id: string) => `/api/report-agent/reports/${id}/plan-comparison`,
     },
+    monthlyReports: {
+      list: () => '/api/report-agent/monthly-reports',
+      byId: (id: string) => `/api/report-agent/monthly-reports/${id}`,
+      submit: (id: string) => `/api/report-agent/monthly-reports/${id}/submit`,
+      views: (id: string) => `/api/report-agent/monthly-reports/${id}/views`,
+      viewsSummary: (id: string) => `/api/report-agent/monthly-reports/${id}/views-summary`,
+      weeklyCandidates: () => '/api/report-agent/monthly-reports/weekly-candidates',
+      comments: (id: string) => `/api/report-agent/monthly-reports/${id}/comments`,
+      comment: (id: string, commentId: string) => `/api/report-agent/monthly-reports/${id}/comments/${commentId}`,
+      commentImages: (id: string) => `/api/report-agent/monthly-reports/${id}/comments/images`,
+      likes: (id: string) => `/api/report-agent/monthly-reports/${id}/likes`,
+    },
     dailyLogs: {
       list: () => '/api/report-agent/daily-logs',
       byDate: (date: string) => `/api/report-agent/daily-logs/${date}`,

@@ -333,6 +333,7 @@ public class ReportAgentController : ControllerBase
             dataCollectionWorkflowId = team.DataCollectionWorkflowId,
             workflowTemplateKey = team.WorkflowTemplateKey,
             reportVisibility = team.ReportVisibility,
+            monthlyReportVisibility = team.MonthlyReportVisibility,
             autoSubmitSchedule = team.AutoSubmitSchedule,
             customDailyLogTags = team.CustomDailyLogTags,
             createdAt = team.CreatedAt,
@@ -546,6 +547,8 @@ public class ReportAgentController : ControllerBase
             Description = req.Description,
             ReportVisibility = ReportVisibilityMode.All.Contains(req.ReportVisibility ?? "")
                 ? req.ReportVisibility! : ReportVisibilityMode.AllMembers,
+            MonthlyReportVisibility = ReportVisibilityMode.All.Contains(req.MonthlyReportVisibility ?? "")
+                ? req.MonthlyReportVisibility! : ReportVisibilityMode.AllMembers,
             AutoSubmitSchedule = req.AutoSubmitSchedule,
             WeeklyDeadline = string.IsNullOrWhiteSpace(req.WeeklyDeadline) ? "sunday-23:59" : req.WeeklyDeadline!,
             CustomDailyLogTags = req.CustomDailyLogTags ?? new List<string>()
@@ -596,6 +599,8 @@ public class ReportAgentController : ControllerBase
         }
         if (req.ReportVisibility != null && ReportVisibilityMode.All.Contains(req.ReportVisibility))
             update = update.Set(t => t.ReportVisibility, req.ReportVisibility);
+        if (req.MonthlyReportVisibility != null && ReportVisibilityMode.All.Contains(req.MonthlyReportVisibility))
+            update = update.Set(t => t.MonthlyReportVisibility, req.MonthlyReportVisibility);
         if (req.AutoSubmitSchedule != null)
             update = update.Set(t => t.AutoSubmitSchedule, req.AutoSubmitSchedule == "" ? null : req.AutoSubmitSchedule);
         if (!string.IsNullOrWhiteSpace(req.WeeklyDeadline))
@@ -2226,6 +2231,8 @@ public class ReportAgentController : ControllerBase
         public string? Description { get; set; }
         /// <summary>周报可见性: all_members / leaders_only</summary>
         public string? ReportVisibility { get; set; }
+        /// <summary>月报可见性: all_members / leaders_only（与周报独立）</summary>
+        public string? MonthlyReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
         /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>
@@ -2241,6 +2248,8 @@ public class ReportAgentController : ControllerBase
         public string? Description { get; set; }
         /// <summary>周报可见性: all_members / leaders_only</summary>
         public string? ReportVisibility { get; set; }
+        /// <summary>月报可见性: all_members / leaders_only（与周报独立）</summary>
+        public string? MonthlyReportVisibility { get; set; }
         /// <summary>自动提交时间 (如 "friday-18:00")</summary>
         public string? AutoSubmitSchedule { get; set; }
         /// <summary>周报提交截止时间 (如 "sunday-23:59")</summary>

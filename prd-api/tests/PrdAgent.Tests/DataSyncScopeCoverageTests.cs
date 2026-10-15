@@ -1054,6 +1054,8 @@ public class DataSyncScopeCoverageTests
             ["DocumentStoreController.cs"] = 2,
             ["DocumentStoreSyncResource.cs"] = 1,
             ["ReportAgentController.cs"] = 3,
+            // 周报 / 月报共用的评论图片上传
+            ["ReportInteractionService.cs"] = 1,
             ["ReviewAgentController.cs"] = 1,
         };
         Assert.True(

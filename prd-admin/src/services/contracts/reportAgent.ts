@@ -15,6 +15,8 @@ export interface ReportTeam {
   workflowTemplateKey?: string;
   /** 周报可见性: all_members / leaders_only */
   reportVisibility?: string;
+  /** 月报可见性: all_members / leaders_only（与周报独立设置） */
+  monthlyReportVisibility?: string;
   /** 每周自动提交时间 (如 "friday-18:00")，null 不自动提交 */
   autoSubmitSchedule?: string;
   /** 周报提交截止时间 (如 "sunday-23:59")，未设置则按默认 sunday-23:59 处理 */
@@ -398,6 +400,7 @@ export type CreateReportTeamContract = (input: {
   parentTeamId?: string;
   description?: string;
   reportVisibility?: string;
+  monthlyReportVisibility?: string;
   autoSubmitSchedule?: string;
   weeklyDeadline?: string;
   customDailyLogTags?: string[];
@@ -409,6 +412,7 @@ export type UpdateReportTeamContract = (input: {
   leaderUserId?: string;
   description?: string;
   reportVisibility?: string;
+  monthlyReportVisibility?: string;
   autoSubmitSchedule?: string;
   weeklyDeadline?: string;
   customDailyLogTags?: string[];
