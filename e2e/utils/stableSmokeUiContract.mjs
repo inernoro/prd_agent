@@ -9,9 +9,17 @@ export async function blockPublicCommunityReads(surface) {
   await surface.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
 }
 
+/** Block real out-of-run background reads, without replacing them with fake success. */
+export async function blockUnscopedBackgroundReads(surface) {
+  await blockPublicCommunityReads(surface);
+  await surface.route(url => url.pathname === '/gw/logical-models/usage'
+    || url.pathname === '/api/dashboard/notifications', route => route.abort('blockedbyclient'));
+}
+
 /** Both inspection identities must stop before reading unscoped global observations. */
 export function blockUnscopedObservationFixture(test, environment, observation) {
   const reasons = {
+    'dashboard-notifications': '验收债务：首页通知列表含全局及非本轮历史内容，当前接口没有本轮runId范围；原用户错误断言保留但未执行，不读取后再过滤，不伪造通知响应。',
     'authorization-health': '验收债务：授权健康端点返回全局近期鉴权日志，未限定本轮身份或请求；当前巡检范围下未执行。补具备本轮范围的只读观测契约后按原case复验，不代表已证明读取他人数据或产品越权。',
     'gateway-failure-health': '验收债务：网关失败聚合端点返回全局登录观测，身份哈希也不等于本轮巡检范围；本项未执行。补具备本轮范围的只读观测契约后按原REG复验，不得借配置检查通过关闭。',
   };
