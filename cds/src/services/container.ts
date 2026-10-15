@@ -20,6 +20,7 @@ import {
   targetShaOf,
   normalizeBuildScope,
   proveFallbackImage,
+  normalizeFallbackImages,
   type ReuseCandidate,
 } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
@@ -28,7 +29,7 @@ import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkP
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
-import { inspectDeploymentArtifacts } from './artifact-admission.js';
+import { admittedArtifactProfile, inspectDeploymentArtifacts, type ArtifactInspectionOptions } from './artifact-admission.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
 /**
@@ -482,10 +483,7 @@ export function resolveEffectiveProfile(
 }
 
 /** 把 BuildProfile.fallbackImage(string | string[] | undefined) 规整为有序候选数组。 */
-export function normalizeFallbackImages(fallback: string | string[] | undefined): string[] {
-  if (!fallback) return [];
-  return (Array.isArray(fallback) ? fallback : [fallback]).map((s) => (s || '').trim()).filter(Boolean);
-}
+export { normalizeFallbackImages } from './prebuilt-reuse.js';
 
 /**
  * 2026-06-24 发布探活分阶段（R4）。发布(部署)首启可能很慢（构建/迁移/JVM 暖机），
@@ -876,7 +874,7 @@ export class ContainerService {
     private readonly logStreams?: ContainerLogStreamHub,
   ) {}
 
-  inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void, options: { inspectLocalArtifacts?: boolean } = {}) {
+  inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void, options: ArtifactInspectionOptions = {}) {
     return inspectDeploymentArtifacts(this.qualifiedShell(assertCurrent), profiles, targetCommitSha, assertCurrent, options);
   }
 
@@ -1497,11 +1495,14 @@ export class ContainerService {
       const target = context.artifactCommitSha || sourceCheckout?.commitSha || entry.pinnedCommit || entry.ciTargetSha || entry.githubCommitSha;
       if (!target || !/^[0-9a-f]{40}$/i.test(target)) throw new Error('本地产物目标尚未确认，请选择完整部署版本后重试');
       const admitted = await this.inspectDeploymentArtifacts([profile], target,
-        () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true });
+        () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true,
+          isComponentUnchangedSince: context.isComponentUnchangedSince });
       if (admitted.state !== 'ready') throw new Error('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本');
       // 已有仓库内容摘要保留其可跨执行器取回的引用；可变本地标签才收敛为本机固定ID。
-      profile = { ...profile, dockerImage: admitted.artifacts[0].image };
-      localArtifactCommitSha = admitted.targetCommitSha;
+      const originalImage = profile.dockerImage;
+      profile = admittedArtifactProfile({ ...profile, localArtifact: false }, admitted);
+      if (originalImage === admitted.artifacts[0].image) profile.dockerImage = originalImage;
+      localArtifactCommitSha = admitted.artifacts[0].revision;
     }
     const profileAliases = computeProfileAliases(
       profile.id,
@@ -1543,7 +1544,7 @@ export class ContainerService {
     // 而非空白等待。
     // 方案甲：用上了「刚 pull 到的提交」的镜像时，容器里注入的提交号元数据（GIT_COMMIT /
     // CDS_COMMIT_SHA / VITE_BUILD_ID）也要跟着写这个提交，否则应用自报的版本还是旧提交。
-    let runCommitSha: string | undefined = context.artifactCommitSha || managedCommitSha || localArtifactCommitSha;
+    let runCommitSha: string | undefined = localArtifactCommitSha || managedCommitSha || context.artifactCommitSha;
     if (profile.prebuiltImage === true && !managedArtifactReady) {
       // 极速版「逐组件有序回退」(用户 2026-06-23 决策 + Codex P1)：CI 按 path-filter 只构建
       // 改动的组件(不重复构建),所以某 commit 可能缺本组件镜像。按**有序回退链**尝试:

@@ -14,6 +14,7 @@ import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { componentInputComparator } from '../services/prebuilt-reuse.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError, type BranchOperationTrigger } from '../services/branch-operation-coordinator.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
@@ -81,7 +82,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       res.status(400).json({ error: '产物核验输入无效' }); return;
     }
     try {
-      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, () => {});
+      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, () => {},
+        { isComponentUnchangedSince: componentInputComparator(shell, config.repoRoot) });
       res.json(result);
     } catch {
       res.status(503).json({ error: '产物核验暂不可用，尚未开始部署' });
@@ -200,7 +202,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       if (requiresArtifactAdmission) {
         sendEvent('step', { step: 'artifact-preflight', status: 'running', title: '正在核验全部必需镜像及本地产物' });
         try {
-          admission = await containerService.inspectDeploymentArtifacts(profilesData as BuildProfile[], target!, assertCurrent, { inspectLocalArtifacts: true });
+          admission = await containerService.inspectDeploymentArtifacts(profilesData as BuildProfile[], target!, assertCurrent, { inspectLocalArtifacts: true,
+            isComponentUnchangedSince: componentInputComparator(shell, config.repoRoot, assertCurrent) });
         } catch (error) {
           assertCurrent();
           if (error instanceof BranchOperationSupersededError) throw error;
@@ -408,6 +411,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
               operationId: operationId || null,
               assertCurrent,
               artifactCommitSha: admission?.targetCommitSha,
+              isComponentUnchangedSince: componentInputComparator(shell, config.repoRoot, assertCurrent),
               sourceCheckout: artifactOnly ? undefined : { path: pullResult.sourcePath, commitSha: pullResult.afterFull },
               actor: actor || 'executor',
               trigger: trigger || 'executor-deploy',
