@@ -11,6 +11,7 @@ import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvid
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
 import { assertDefaultJpegPrimary, submitDefaultJpegThroughUi } from '../utils/stableSmokeJpegJourney.mjs';
+import { findDocumentUploadCard, readDocumentUploadView, observeDocumentUploadPhases, releaseDocumentUploadResponse } from '../utils/stableSmokeDocumentUpload.mjs';
 import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockPublicCommunityReads } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
@@ -3125,6 +3126,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-progress`;
     let storeId = '';
     let entryId = '';
+    let controlledUploadStarted = false;
+    let controlledResponseReleased = false;
+    const releaseControlledResponse = async () => {
+      if (controlledUploadStarted && !controlledResponseReleased) {
+        await releaseDocumentUploadResponse(page);
+        controlledResponseReleased = true;
+      }
+    };
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -3202,53 +3211,68 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const chooserPromise = page.waitForEvent('filechooser');
       await uploadFileAction.click();
       const chooser = await chooserPromise;
+      controlledUploadStarted = true;
       await chooser.setFiles({
         name,
         mimeType: 'text/plain',
         buffer: Buffer.from(`${marker}\n${'文件解析阶段必须持续反馈。\n'.repeat(4_096)}`, 'utf8'),
       });
-      const progressCard = page.getByTestId('document-upload-progress');
-      const uploadTitle = page.getByText(`正在上传 ${name}`, { exact: true });
-      await expect(progressCard).toHaveAttribute('data-phase', 'uploading');
-      await expect(uploadTitle).toBeVisible({ timeout: 10_000 });
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-FILE-PARSING-15',
-        target: uploadTitle,
-        caption: '超长中文文件名在桌面上传卡内安全截断，没有挤压右侧百分比与阶段状态。',
+      let progressCard: Locator | undefined;
+      const phaseResult = await observeDocumentUploadPhases({
+        releaseResponse: releaseControlledResponse,
+        onFailure: async failure => {
+          await testInfo.attach('file-upload-phase-failure', { body: JSON.stringify({ ...failure, boundary: '测试只扣住XHR.onload回调，当前截图不证明自然网络或服务端卡死' }), contentType: 'application/json' });
+          await testInfo.attach('file-upload-phase-failure-before-release', { body: await page.screenshot(), contentType: 'image/png' });
+        },
+        observe: async () => {
+          progressCard = await findDocumentUploadCard(page, { fileName: name, phase: 'uploading', timeout: 5_000 });
+          const uploadCardElement = await progressCard.elementHandle();
+          const uploadTitle = page.getByText(`正在上传 ${name}`, { exact: true });
+          await expect(uploadTitle).toBeVisible({ timeout: 10_000 });
+          await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-FILE-PARSING-15',
+            target: uploadTitle,
+            caption: '超长中文文件名在桌面上传卡内安全截断，没有挤压右侧百分比与阶段状态。',
+          });
+          await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-FILE-PARSING-03',
+            target: progressCard,
+            caption: '所选 TXT 类型和超长中文文件名在上传卡中被正确识别，状态区仍保留完整空间。',
+          });
+          await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-FILE-PARSING-04',
+            target: progressCard,
+            caption: '文件字节正在真实上传，文件名、当前阶段和实时百分比同时可见。',
+          });
+          const parsingTitle = page.getByText(`正在解析 ${name}`, { exact: true });
+          const parsingCard = await findDocumentUploadCard(page, { fileName: name, phase: 'parsing', timeout: 15_000 });
+          expect(await parsingCard.evaluate((element, previous) => element === previous, uploadCardElement), '上传和解析必须是同一张真实卡').toBe(true);
+          progressCard = parsingCard;
+          await expect(parsingTitle).toBeVisible();
+          await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-FILE-PARSING-05',
+            target: parsingTitle,
+            caption: '文件字节上传完成后明确切换到解析准备态，不再把服务端等待伪装成上传 99%。',
+          });
+          const initialParsingSeconds = (await readDocumentUploadView(parsingCard, { fileName: name, phase: 'parsing' })).parsingSeconds!;
+          await expect.poll(async () => (await readDocumentUploadView(parsingCard, { fileName: name, phase: 'parsing' })).parsingSeconds, { timeout: 10_000 }).toBeGreaterThan(initialParsingSeconds);
+          await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-FILE-PARSING-06',
+            target: progressCard,
+            caption: '服务端解析等待期间持续显示旋转反馈和递增秒数，超过两秒也不会成为静止加载。',
+          });
+        },
       });
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-FILE-PARSING-03',
-        target: progressCard,
-        caption: '所选 TXT 类型和超长中文文件名在上传卡中被正确识别，状态区仍保留完整空间。',
-      });
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-FILE-PARSING-04',
-        target: page.getByTestId('document-upload-status'),
-        caption: '文件字节正在真实上传，文件名、当前阶段和实时百分比同时可见。',
-      });
-      const parsingTitle = page.getByText(`正在解析 ${name}`, { exact: true });
-      await expect(progressCard).toHaveAttribute('data-phase', 'parsing', { timeout: 15_000 });
-      await expect(parsingTitle).toBeVisible();
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-FILE-PARSING-05',
-        target: parsingTitle,
-        caption: '文件字节上传完成后明确切换到解析准备态，不再把服务端等待伪装成上传 99%。',
-      });
-      await expect(page.getByTestId('document-upload-status')).toContainText(/已等待 [1-9]\d* 秒/, { timeout: 10_000 });
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-FILE-PARSING-06',
-        target: progressCard,
-        caption: '服务端解析等待期间持续显示旋转反馈和递增秒数，超过两秒也不会成为静止加载。',
-      });
-      await page.evaluate(() => {
-        (window as Window & { __stableSmokeResumeDocumentUpload?: () => void }).__stableSmokeResumeDocumentUpload?.();
-      });
+      await testInfo.attach('file-upload-phase-observation', { body: JSON.stringify(phaseResult), contentType: 'application/json' });
+      expect.soft(phaseResult.status, phaseResult.failure?.message || '上传/明确解析阶段及递增等待必须通过；后续产物事实不能替代本红项').toBe('pass');
+      expect.soft(phaseResult.evidenceFailure, '阶段失败取证不得丢失；有取证失败仍保持红项，继续观察原任务').toBeNull();
 
       const uploadResponse = await uploadResponsePromise;
       const uploadBody = await uploadResponse.json() as ApiEnvelope<{ entry: { id: string } }>;
       expect(uploadResponse.ok(), uploadBody.error?.message || '文件上传解析失败').toBe(true);
       expect(uploadBody.success, uploadBody.error?.message || '文件上传解析失败').toBe(true);
       entryId = uploadBody.data.entry.id;
+      await testInfo.attach('file-upload-terminal', { body: JSON.stringify({ storeId, entryId, status: uploadResponse.status(), success: uploadBody.success, phaseStatus: phaseResult.status, controlledWait: phaseResult.controlledWait }), contentType: 'application/json' });
       const readableResult = page.getByText(marker, { exact: false }).first();
       await expect(readableResult).toBeVisible({ timeout: 30_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -3269,22 +3293,33 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       await page.getByRole('button', { name: '取消', exact: true }).click();
 
+      const beforeRefresh = page.url();
+      expect(new URL(beforeRefresh).searchParams.get('store')).toBe(storeId);
+      expect(new URL(beforeRefresh).searchParams.get('entry')).toBe(entryId);
       await page.reload({ waitUntil: 'domcontentloaded' });
       await dismissCdsPreviewWidget(page);
       const persistedResult = page.getByText(marker, { exact: false }).first();
       await expect(persistedResult).toBeVisible({ timeout: 30_000 });
+      expect(page.url()).toBe(beforeRefresh);
+      await testInfo.attach('file-upload-refresh', { body: JSON.stringify({ storeId, entryId, beforeRefresh, afterRefresh: page.url(), readableMarkerVisible: true, phaseStatus: phaseResult.status }), contentType: 'application/json' });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-FILE-PARSING-11',
         target: persistedResult,
         caption: '刷新页面后同一文件解析正文仍可回读，条目与内容持久化均未丢失。',
       });
     } finally {
+      await releaseControlledResponse().catch(async error => {
+        await testInfo.attach('file-upload-release-failure', { body: String(error), contentType: 'text/plain' });
+        expect.soft(false, '测试控速回调释放失败，保持执行链失败并继续精确清理').toBe(true);
+      });
       if (storeId) {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
-        if (entryId) {
-          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
+        const storeReadback = await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
+        const entryReadback = entryId ? await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) }) : null;
+        await testInfo.attach('file-upload-cleanup', { body: JSON.stringify({ storeId, entryId: entryId || null, deletionStatus: deleted.status(), storeReadbackStatus: storeReadback.status(), entryReadbackStatus: entryReadback?.status() ?? null, boundary: '清理通过不关闭原阶段失败' }), contentType: 'application/json' });
+        expect(storeReadback.status()).toBe(404);
+        if (entryReadback) expect(entryReadback.status()).toBe(404);
       }
     }
   });
