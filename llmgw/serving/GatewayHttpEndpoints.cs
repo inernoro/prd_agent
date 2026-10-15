@@ -3736,7 +3736,45 @@ public static class GatewayHttpEndpoints
                 {
                     ["role"] = (obj["role"] ?? "user").DeepClone(),
                 };
-                if (obj.TryGetPropertyValue("content", out var contentNode) && contentNode is not null)
+                if (obj.TryGetPropertyValue("content", out var contentNode) && contentNode is JsonArray blocks)
+                {
+                    var ordinary = new JsonArray();
+                    var calls = new JsonArray();
+                    var hasResults = false;
+                    foreach (var block in blocks)
+                    {
+                        if (block is JsonObject native && ReadString(native, "type") == "tool_use")
+                        {
+                            calls.Add(new JsonObject
+                            {
+                                ["id"] = native["id"]?.DeepClone(),
+                                ["type"] = "function",
+                                ["function"] = new JsonObject
+                                {
+                                    ["name"] = native["name"]?.DeepClone(),
+                                    ["arguments"] = native["input"]?.ToJsonString() ?? "{}",
+                                },
+                            });
+                        }
+                        else if (block is JsonObject resultBlock && ReadString(resultBlock, "type") == "tool_result")
+                        {
+                            hasResults = true;
+                            messages.Add(new JsonObject
+                            {
+                                ["role"] = "tool",
+                                ["tool_call_id"] = resultBlock["tool_use_id"]?.DeepClone(),
+                                ["content"] = resultBlock["content"] is { } resultContent
+                                    ? ConvertClaudeContentToOpenAiContent(resultContent) : JsonValue.Create(string.Empty),
+                            });
+                        }
+                        else ordinary.Add(block?.DeepClone());
+                    }
+                    if (hasResults && ordinary.Count == 0 && calls.Count == 0) continue;
+                    converted["content"] = ordinary.Count == 0 && calls.Count > 0
+                        ? null : ConvertClaudeContentToOpenAiContent(ordinary);
+                    if (calls.Count > 0) converted["tool_calls"] = calls;
+                }
+                else if (contentNode is not null)
                     converted["content"] = ConvertClaudeContentToOpenAiContent(contentNode);
                 foreach (var (key, value) in obj)
                 {
@@ -3757,7 +3795,23 @@ public static class GatewayHttpEndpoints
         CopyJsonField(claudeBody, result, "top_p");
         CopyJsonField(claudeBody, result, "top_k");
         CopyJsonField(claudeBody, result, "stream");
-        CopyJsonField(claudeBody, result, "tools");
+        if (claudeBody["tools"] is JsonArray tools)
+        {
+            // 入站先转成网关既有的 OpenAI 规范，最终供应商协议仍由模型 Adapter 处理。
+            var declarations = new JsonArray();
+            foreach (var tool in tools)
+            {
+                if (tool is JsonObject nativeTool && nativeTool["input_schema"] is JsonObject schema
+                    && ReadString(nativeTool, "name") is { Length: > 0 } name)
+                {
+                    var function = new JsonObject { ["name"] = name, ["parameters"] = schema.DeepClone() };
+                    CopyJsonField(nativeTool, function, "description");
+                    declarations.Add(new JsonObject { ["type"] = "function", ["function"] = function });
+                }
+                else declarations.Add(tool?.DeepClone());
+            }
+            result["tools"] = declarations;
+        }
         CopyJsonField(claudeBody, result, "tool_choice");
         if (claudeBody.TryGetPropertyValue("stop_sequences", out var stop) && stop is not null)
             result["stop"] = stop.DeepClone();

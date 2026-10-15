@@ -385,6 +385,11 @@ public sealed class GatewayTaskAdmissionIntegrationTests
         sent.Context!.RunId.ShouldBe("sdk-run"); sent.Context.UserId.ShouldBe("server-actor");
         sent.Context.TriggerActorUserId.ShouldBe("server-actor"); sent.Context.TaskPermitId.ShouldBe(permit.Id);
         sent.Context.ExecutionOrigin.ShouldBe(TaskExecutionOrigins.Interactive);
+        if (path == "/v1/messages")
+        {
+            sent.RequestBody!["tools"]![0]!["type"]!.GetValue<string>().ShouldBe("function");
+            sent.RequestBody["tools"]![0]!["function"]!["name"]!.GetValue<string>().ShouldBe("map_read_only_tool");
+        }
         (await database.Permits.Find(x => x.Id == permit.Id).SingleAsync()).CallCount.ShouldBe(1);
         (await database.Grants.Find(x => x.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(1);
         database.PaidCalls.ShouldBe(1);
@@ -491,9 +496,12 @@ public sealed class GatewayTaskAdmissionIntegrationTests
 
     private static HttpRequestMessage SdkRequest(string path, string key, string model = "nonexistent-fixture-model")
     {
+        var body = JsonSerializer.SerializeToNode(new { model, messages = new[] { new { role = "user", content = "hello" } }, input = "hello", max_tokens = 32 })!.AsObject();
+        if (path == "/v1/messages")
+            body["tools"] = JsonSerializer.SerializeToNode(new[] { new { name = "map_read_only_tool", input_schema = new { type = "object" } } });
         var request = new HttpRequestMessage(HttpMethod.Post, path)
         {
-            Content = JsonContent.Create(new { model, messages = new[] { new { role = "user", content = "hello" } }, input = "hello", max_tokens = 32 }),
+            Content = JsonContent.Create(body),
         };
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", key); return request;
     }

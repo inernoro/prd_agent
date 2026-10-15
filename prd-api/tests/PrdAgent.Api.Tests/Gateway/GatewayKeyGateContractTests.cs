@@ -3111,13 +3111,19 @@ public class GatewayKeyGateContractTests
                 {
                     model = "claude-tool-picked",
                     max_tokens = 32,
-                    messages = new[] { new { role = "user", content = "check weather" } },
+                    messages = new object[]
+                    {
+                        new { role = "user", content = "check weather" },
+                        new { role = "assistant", content = new[] { new { type = "tool_use", id = "call_weather", name = "get_weather", input = new { city = "Shanghai" } } } },
+                        new { role = "user", content = new object[] { new { type = "tool_result", tool_use_id = "call_weather", content = "23C" }, new { type = "text", text = "Summarize" } } },
+                    },
                     tools = new[]
                     {
                         new
                         {
                             name = "get_weather",
-                            input_schema = new { type = "object" },
+                            description = "Query weather",
+                            input_schema = new { type = "object", properties = new { city = new { type = "string" } }, required = new[] { "city" } },
                         },
                     },
                     stream = false,
@@ -3139,6 +3145,22 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.ShouldNotBeNull();
             gateway.LastRequest.RequestBody.ShouldNotBeNull();
             gateway.LastRequest.RequestBody!.ContainsKey("tools").ShouldBeTrue();
+            var declaration = gateway.LastRequest.RequestBody["tools"]![0]!;
+            declaration["type"]!.GetValue<string>().ShouldBe("function");
+            declaration["function"]!["name"]!.GetValue<string>().ShouldBe("get_weather");
+            declaration["function"]!["description"]!.GetValue<string>().ShouldBe("Query weather");
+            declaration["function"]!["parameters"]!["properties"]!["city"]!["type"]!.GetValue<string>().ShouldBe("string");
+            declaration["function"]!["parameters"]!["required"]![0]!.GetValue<string>().ShouldBe("city");
+            declaration.AsObject().ContainsKey("input_schema").ShouldBeFalse();
+            var history = gateway.LastRequest.RequestBody["messages"]!.AsArray();
+            history.Count.ShouldBe(4);
+            history[1]!["tool_calls"]![0]!["id"]!.GetValue<string>().ShouldBe("call_weather");
+            history[1]!["tool_calls"]![0]!["function"]!["arguments"]!.GetValue<string>().ShouldBe("{\"city\":\"Shanghai\"}");
+            history[2]!["role"]!.GetValue<string>().ShouldBe("tool");
+            history[2]!["tool_call_id"]!.GetValue<string>().ShouldBe("call_weather");
+            history[2]!["content"]!.GetValue<string>().ShouldBe("23C");
+            history[3]!["role"]!.GetValue<string>().ShouldBe("user");
+            history[3]!["content"]![0]!["text"]!.GetValue<string>().ShouldBe("Summarize");
         }
         finally
         {
@@ -3197,6 +3219,10 @@ public class GatewayKeyGateContractTests
             gateway.LastRequest.Stream.ShouldBeTrue();
             gateway.LastRequest.RequestBody.ShouldNotBeNull();
             gateway.LastRequest.RequestBody!.ContainsKey("tools").ShouldBeTrue();
+            var declaration = gateway.LastRequest.RequestBody["tools"]![0]!;
+            declaration["type"]!.GetValue<string>().ShouldBe("function");
+            declaration["function"]!["name"]!.GetValue<string>().ShouldBe("get_weather");
+            declaration["function"]!["parameters"]!["type"]!.GetValue<string>().ShouldBe("object");
         }
         finally
         {
