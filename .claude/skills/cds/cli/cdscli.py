@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.16.11"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.12"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -3807,6 +3807,34 @@ def _restore_auth_env(previous: dict[str, str | None]) -> None:
             os.environ[key] = value
 
 
+def _wait_for_original_project_access(project_id: str, proof: str, deadline: float,
+                                      interval: int) -> bool:
+    """只读等待原身份/原授权恢复；绝不改成匿名申请或签发替代权限。"""
+    last_progress = 0.0
+    waited = False
+    while time.monotonic() < deadline:
+        status, body, _ = _request(
+            "GET", f"/api/projects/{urllib.parse.quote(project_id)}/access-status",
+            timeout=10, extra_headers={"x-ai-access-key": proof}, fatal_network_errors=False,
+        )
+        if status != 200 or not isinstance(body, dict):
+            die(f"原访问身份暂时无法核对（HTTP {status}），未创建匿名申请、未覆盖凭据。", code=2)
+        state = body.get("state")
+        if state in ("ready", "approval-required", "credential-unusable"):
+            if proof.startswith("cdsu_") and state == "credential-unusable":
+                die("原身份凭据已失效，未改成匿名申请；请管理员恢复原身份凭据。", code=2)
+            return waited or state == "ready"
+        if state not in ("account-disabled", "project-access-revoked", "access-update-pending"):
+            die("CDS 返回了无法识别的恢复状态，未改变任何授权或凭据。", code=2)
+        waited = True
+        now = time.monotonic()
+        if now - last_progress >= 10:
+            print(str(body.get("message") or "原访问权限暂停，等待管理员恢复；同一条命令将自动继续。"), file=sys.stderr)
+            last_progress = now
+        time.sleep(interval)
+    die("等待原访问权限恢复超时；原项目和凭据保留，恢复后重跑原命令即可。", code=2)
+
+
 def cmd_connect(args: argparse.Namespace) -> None:
     """免密发起页面授权，并把一次性结果保存为当前项目凭据。"""
     raw_host = str(getattr(args, "host", "") or os.environ.get("CDS_HOST", "")).strip()
@@ -3891,6 +3919,9 @@ def cmd_connect(args: argparse.Namespace) -> None:
     os.environ.pop("CDS_PROJECT_KEY", None)
     os.environ.pop("AI_ACCESS_KEY", None)
 
+    saved_user_cred = _load_user_credential(host)
+    recovery_deadline = time.monotonic() + timeout_seconds
+    local_key = ""
     if not new_project:
         local_key = str(local.get("projectKey") or "") if str(local.get("host") or "").rstrip("/") == host and local.get("projectId") == project_id else ""
         if local_key:
@@ -3911,8 +3942,37 @@ def cmd_connect(args: argparse.Namespace) -> None:
             if check_status not in (401, 403):
                 _restore_auth_env(previous)
                 die(f"原项目暂时无法核对（HTTP {check_status}），未新建或覆盖凭据，请稍后重试。", code=2)
+            try:
+                waited = _wait_for_original_project_access(project_id, local_key, recovery_deadline, interval_seconds)
+            except SystemExit:
+                _restore_auth_env(previous)
+                raise
+            if waited:
+                check_status, check_body, _ = _request(
+                    "GET", f"/api/projects/{urllib.parse.quote(project_id)}", timeout=10,
+                    extra_headers={"x-ai-access-key": local_key}, fatal_network_errors=False,
+                )
+                if check_status == 200 and isinstance(check_body, dict):
+                    actual = check_body.get("project", check_body)
+                    if not isinstance(actual, dict) or actual.get("id") != project_id:
+                        _restore_auth_env(previous)
+                        die("恢复后的项目身份不一致，未覆盖凭据。", code=2)
+                    _save_local_credentials(host=host, project_id=project_id, project_key=local_key,
+                                            project_name=actual.get("name"), project_slug=actual.get("slug"))
+                    _restore_auth_env(previous)
+                    ok({"projectId": project_id, "reused": True}, note="原访问权限已恢复，已自动继续原项目。")
+                    return
+                if check_status not in (401, 403):
+                    _restore_auth_env(previous)
+                    die(f"恢复后原项目暂时无法核对（HTTP {check_status}），未改变凭据。", code=2)
             print("原项目凭据已失效，正在申请恢复原项目访问；不会重新建项目。", file=sys.stderr)
         else:
+            if saved_user_cred:
+                try:
+                    _wait_for_original_project_access(project_id, saved_user_cred, recovery_deadline, interval_seconds)
+                except SystemExit:
+                    _restore_auth_env(previous)
+                    raise
             # 有效身份与仍有效的授权可恢复丢失文件；已撤销密钥始终走页面确认。
             healed = try_self_heal_project_credential(host, project_id)
             if healed and healed.get("healed"):
@@ -3931,12 +3991,9 @@ def cmd_connect(args: argparse.Namespace) -> None:
         if new_project
         else "申请恢复或连接原项目访问；项目由 CDS 自动核对，批准后自动保存凭据，不会重新建项目。"
     )
-    # 带上本机已保存的用户级凭证（如果有）。这条路由是免鉴权的，但服务端会顺手
-    # 认一次主体，并在批准时据此写一条项目授权 —— 少了这个头，批准只会签出一把
-    # 无主的钥匙，钥匙一丢又得重新申请，「批一次就够」根本不成立。
-    # 上面刻意清掉了项目级 / 静态密钥（申请阶段不该带旧凭据），用户级是另一回事：
-    # 它代表「我是谁」，正是这次申请要登记的东西。
-    saved_user_cred = _load_user_credential(host)
+    # 优先沿用原项目凭据的身份；丢文件时才用已保存的用户身份。
+    # 不把停用、撤权或失效身份降级成匿名申请。
+    request_proof = local_key or saved_user_cred
     status, body, _ = _request(
         "POST",
         request_path,
@@ -3950,7 +4007,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         # 创建请求会触发持久化与事件通知；共享控制面忙时可能超过 10 秒，
         # 但该 POST 不能盲目重试，否则响应丢失时会生成重复审批单。
         timeout=30,
-        extra_headers=({"x-ai-access-key": saved_user_cred} if saved_user_cred else None),
+        extra_headers=({"x-ai-access-key": request_proof} if request_proof else None),
     )
     if status not in (200, 201) or not isinstance(body, dict):
         _restore_auth_env(previous)
@@ -3972,7 +4029,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         if new_project
         else f"/api/projects/{urllib.parse.quote(project_id)}/access-requests/{urllib.parse.quote(request_id)}"
     )
-    deadline = time.monotonic() + timeout_seconds
+    deadline = recovery_deadline
     last_progress_at = 0.0
     authorization_key: str | None = None
     while time.monotonic() < deadline:
@@ -4005,10 +4062,14 @@ def cmd_connect(args: argparse.Namespace) -> None:
             _restore_auth_env(previous)
             reason = poll_body.get("rejectReason") or "用户拒绝"
             die(f"授权未通过: {reason}", code=2)
+        if state not in ("pending", "blocked"):
+            _restore_auth_env(previous)
+            die("无法识别授权状态，未保存凭据。", code=2)
         now = time.monotonic()
         if now - last_progress_at >= 10:
             remaining = max(0, int(deadline - now))
-            print(f"仍在等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
+            print((str(poll_body.get("message") or "等待管理员恢复原访问权限，同一条命令将自动继续。")
+                   if state == "blocked" else f"仍在等待批准，剩余约 {remaining} 秒。"), file=sys.stderr)
             last_progress_at = now
         time.sleep(interval_seconds)
 

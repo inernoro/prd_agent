@@ -148,6 +148,8 @@ def test_same_new_project_command_recovers_original_project(workspace, monkeypat
     monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "")
     def fake_request(method, path, body=None, extra_headers=None, **kwargs):
         calls.append((method, path))
+        if path.endswith("/access-status"):
+            return 200, {"state": "credential-unusable"}, {}
         if path == "/api/projects/proj-demo" and extra_headers:
             return 401, {"error": "unauthorized"}, {}
         if method == "POST":
@@ -177,6 +179,77 @@ def test_valid_connect_is_reused_and_network_failure_never_creates_request(works
         assert code == (0 if status == 200 else 2)
         assert calls == [("GET", "/api/projects/p")]
         assert "cdsp_valid" not in output
+
+
+@pytest.mark.parametrize("blocked", ["account-disabled", "project-access-revoked", "access-update-pending"])
+@pytest.mark.parametrize("loss", [False, True])
+def test_original_command_waits_for_admin_then_resumes_without_new_approval(workspace, monkeypatch, blocked, loss):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_original")
+    path = workspace / ".cds/credentials.json"
+    before = path.read_bytes()
+    if loss:
+        path.unlink()
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "cdsu_original")
+    states = iter([blocked, blocked, "ready"])
+    calls = []
+    project_reads = 0
+
+    def fake_request(method, url, body=None, extra_headers=None, **kwargs):
+        nonlocal project_reads
+        calls.append((method, url))
+        if url.endswith("/access-status"):
+            assert extra_headers == {"x-ai-access-key": "cdsu_original" if loss else "cdsp_original"}
+            assert not path.exists() if loss else path.read_bytes() == before
+            return 200, {"state": next(states), "message": "等待管理员恢复原访问"}, {}
+        if url == "/api/identity/project-credentials":
+            assert loss and body == {"projectId": "p"}
+            return 201, {"plaintext": "cdsp_recovered"}, {}
+        assert method == "GET" and url == "/api/projects/p"
+        project_reads += 1
+        return (401 if project_reads == 1 else 200), {"id": "p"}, {}
+
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
+    code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
+    assert code == 0, output
+    assert not any("access-requests" in url or "bootstrap" in url for _, url in calls)
+    assert sum(method == "POST" for method, _ in calls) == int(loss)
+    assert json.loads(path.read_text())["projectKey"] == ("cdsp_recovered" if loss else "cdsp_original")
+    assert "cdsp_original" not in output and "cdsu_original" not in output
+
+
+@pytest.mark.parametrize("status,state", [(401, ""), (503, ""), (200, "unknown"), (200, "credential-unusable")])
+def test_unusable_saved_identity_never_downgrades_to_anonymous(workspace, monkeypatch, status, state):
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "cdsu_expired")
+    calls = []
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url))
+        return status, {"state": state}, {}
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
+    assert code == 2
+    assert calls == [("GET", "/api/projects/p/access-status")]
+    assert not (workspace / ".cds/credentials.json").exists()
+
+
+def test_suspended_ticket_waits_without_creating_another_approval(workspace, monkeypatch):
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "")
+    states = iter([{"status": "blocked", "message": "等待管理员恢复原账号"},
+                   {"status": "approved", "authorizationKey": "cdsp_after_restore"}])
+    posts = []
+    def fake_request(method, url, **kwargs):
+        if method == "POST":
+            posts.append(url)
+            return 201, {"requestId": "r", "pollToken": "poll"}, {}
+        if url.endswith("/r"):
+            return 200, next(states), {}
+        return 200, {"id": "p"}, {}
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    monkeypatch.setattr(cdscli.time, "sleep", lambda _: None)
+    code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
+    assert code == 0, output
+    assert posts == ["/api/projects/p/access-requests"]
+    assert "cdsp_after_restore" not in output
 
 
 def test_rejected_connect_does_not_write_credentials(workspace, monkeypatch):

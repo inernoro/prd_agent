@@ -23,7 +23,7 @@ import { randomBytes, createHash, timingSafeEqual } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
-import { resolveUserCredential } from './identity.js';
+import { inspectAccessRecovery, principalRecoveryBlock, recoveryMessage } from '../services/access-recovery.js';
 import { bootstrapTarget } from '../services/bootstrap-target.js';
 import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
 import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
@@ -91,6 +91,15 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   const authDisabled = deps.authMode === 'disabled';
   const router = Router();
 
+  router.get('/projects/:id/access-status', (req, res) => {
+    const project = stateService.getProject(req.params.id);
+    const proof = project && inspectAccessRecovery(stateService, project.id, presentedKey(req));
+    if (!proof) {
+      res.status(401).json({ error: 'recovery_credential_required', message: '无法核对原访问凭据，未改变任何授权。' }); return;
+    }
+    res.json({ projectId: project!.id, state: proof.state, message: recoveryMessage(proof.state) });
+  });
+
   // ───────────────────────────────────────────────────────────────────────
   // Agent 通道:发起 / 轮询(免密,server.ts 已把这两个路径放行为 public)
   // ───────────────────────────────────────────────────────────────────────
@@ -117,9 +126,20 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       ? body.purpose.trim().slice(0, 500) : '请求项目授权密钥(全权访问)。';
 
     // 这条路由是免鉴权的（鸡生蛋：还没凭据才来申请），所以主体身份只能在这里
-    // 顺手认一次：带了用户级凭证就记下它是谁，没带就照旧匿名。批准时据此写授权，
-    // 让「批一次，以后丢凭据自己补」真的成立。
-    const principalId = resolveUserCredential(stateService, presentedKey(req))?.principalId;
+    // 核对原身份：已知身份停用或项目撤权时只等待恢复，不能退成匿名申请。
+    // 无凭据的首次接入保持兼容；已知项目密钥也保留原主体约束。
+    const key = presentedKey(req);
+    const proof = inspectAccessRecovery(stateService, project.id, key);
+    if (key.startsWith('cdsu_') || key.startsWith('cdsp_')) {
+      if (!proof || (proof.kind === 'user' && proof.state === 'credential-unusable')) {
+        res.status(401).json({ error: 'recovery_credential_invalid', message: '原身份凭据已失效，不能改为匿名申请；请管理员恢复原身份。' }); return;
+      }
+      if (['account-disabled', 'project-access-revoked', 'access-update-pending'].includes(proof.state)) {
+        res.status(proof.state === 'access-update-pending' ? 409 : 403)
+          .json({ error: proof.state, message: recoveryMessage(proof.state) }); return;
+      }
+    }
+    const principalId = proof?.principalId;
 
     const pollToken = randomBytes(24).toString('base64url');
     const item: AccessRequest = {
@@ -205,6 +225,12 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (!ok) {
       res.status(403).json({ error: 'poll_token_invalid', message: '轮询票据无效。' });
       return;
+    }
+
+    const blocked = item.principalId && item.status !== 'rejected'
+      ? principalRecoveryBlock(stateService, item.principalId, project.id) : undefined;
+    if (blocked) {
+      res.json({ status: 'blocked', recoveryState: blocked, message: recoveryMessage(blocked) }); return;
     }
 
     if (item.status === 'pending') {
@@ -373,6 +399,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (!project) {
       res.status(404).json({ error: 'project_not_found', message: `Project '${item.projectId}' no longer exists.` });
       return;
+    }
+    const blocked = item.principalId && principalRecoveryBlock(stateService, item.principalId, project.id);
+    if (blocked) {
+      res.status(409).json({ error: blocked, message: recoveryMessage(blocked) }); return;
     }
     const slugHead = project.slug.slice(0, 12).toLowerCase();
     const suffix = randomBytes(32).toString('base64url');

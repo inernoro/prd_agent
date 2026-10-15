@@ -1008,6 +1008,75 @@ describe('human project grants through the production server', () => {
     }
   });
 
+  it.each(['account', 'grant'] as const)('keeps %s recovery bound to the original principal without anonymous requests or new keys', async (reason) => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const key = (await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).body.plaintext;
+    const keyCount = state.getProject('project-a')!.agentKeys!.length;
+    const requestCount = state.listAccessRequests().length;
+    if (reason === 'account') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    else await grant([]);
+    for (const proof of [userKey, key]) {
+      const status = await credentialCall('GET', '/api/projects/project-a/access-status', proof);
+      expect(status).toMatchObject({ status: 200, body: { projectId: 'project-a', state: reason === 'account' ? 'account-disabled' : 'project-access-revoked' } });
+      expect(Object.keys(status.body).sort()).toEqual(['message', 'projectId', 'state']);
+      expect((await credentialCall('POST', '/api/projects/project-a/access-requests', proof, { agentName: 'recovery' })).status).toBe(403);
+      expect((await credentialCall('POST', '/api/identity/project-credentials', proof, { projectId: 'project-a' })).status).not.toBe(201);
+    }
+    expect(state.listAccessRequests()).toHaveLength(requestCount);
+    expect(state.getProject('project-a')!.agentKeys).toHaveLength(keyCount);
+    expect((await credentialCall('GET', '/api/projects/project-b/access-status', key)).status).toBe(401);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', 'cdsu_unknown')).status).toBe(401);
+    if (reason === 'account') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    else await grant(['project-a']);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('ready');
+    expect((await credentialCall('GET', '/api/projects/project-a', key)).status).toBe(200);
+    expect((await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).status).toBe(201);
+  });
+
+  it('withholds pending approval and approved plaintext while the bound account is disabled, then resumes the same ticket', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
+    const init = await credentialCall('POST', '/api/projects/project-a/access-requests', userKey, { agentName: 'recovery' });
+    expect(init.status).toBe(201);
+    const id = init.body.requestId;
+    const poll = async () => {
+      const res = await fetch(`${base}/api/projects/project-a/access-requests/${id}`, { headers: { 'X-Poll-Token': init.body.pollToken } });
+      return res.json();
+    };
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect((await call('POST', `/api/access-requests/${id}/approve`, owner, {})).status).toBe(409);
+    expect(await poll()).toMatchObject({ status: 'blocked', recoveryState: 'account-disabled' });
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect((await call('POST', `/api/access-requests/${id}/approve`, owner, {})).status).toBe(200);
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    expect(await poll()).not.toHaveProperty('authorizationKey');
+    expect(state.getAccessRequest(id)!.deliveredAt).toBeUndefined();
+    await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' });
+    expect(await poll()).toMatchObject({ status: 'approved', authorizationKey: expect.stringMatching(/^cdsp_/) });
+    expect(await poll()).not.toHaveProperty('authorizationKey');
+  });
+
+  it('reports durable access updates without releasing the gate and never treats revoked identity as anonymous', async () => {
+    await grant(['project-a']);
+    const principalId = humanPrincipalId(memberId);
+    const issued = await call('POST', '/api/identity/user-credentials', owner, { principalId });
+    const key = issued.body.plaintext;
+    const release = beginHumanProjectGrantUpdate(state, principalId)!;
+    try {
+      expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('access-update-pending');
+      expect((await credentialCall('POST', '/api/projects/project-a/access-requests', key, {})).status).toBe(409);
+      expect(state.listAccessRequests()).toHaveLength(0);
+    } finally { release(); }
+    const credential = state.findUserCredentialByPlaintext(key)!;
+    expect((await call('POST', `/api/identity/user-credentials/${credential.id}/revoke`, owner, {})).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', key)).body.state).toBe('credential-unusable');
+    expect((await credentialCall('POST', '/api/projects/project-a/access-requests', key, {})).status).toBe(401);
+    expect(state.listAccessRequests()).toHaveLength(0);
+  });
+
   it('disables linked user and project credentials with the account, preserving unrelated machines and restoring on enable', async () => {
     await grant(['project-a']);
     const principalId = humanPrincipalId(memberId);
@@ -1059,9 +1128,12 @@ describe('human project grants through the production server', () => {
     const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId: humanPrincipalId(memberId) })).body.plaintext;
     const derived = (await credentialCall('POST', '/api/identity/project-credentials', key, { projectId: 'project-a' })).body.plaintext;
     expect((await credentialCall('GET', '/api/build-profiles?project=project-a', derived)).status).toBe(200);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', derived)).body.state).toBe('ready');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' })).status).toBe(200);
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
     expect((await credentialCall('GET', '/api/build-profiles?project=project-a', derived)).status).toBe(401);
+    expect((await credentialCall('GET', '/api/projects/project-a/access-status', derived)).body.state).toBe('account-disabled');
+    expect((await credentialCall('POST', '/api/projects/project-a/access-requests', derived, {})).status).toBe(403);
   });
 
   it('creates a disabled principal when granting an already-disabled account for the first time', async () => {
