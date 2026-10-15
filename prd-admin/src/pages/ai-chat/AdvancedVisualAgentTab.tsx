@@ -6420,12 +6420,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       // 只在画板获得焦点或鼠标位于画板内时响应，避免抢占页面其它区域。
       if (!isMod && !e.altKey && isH) {
         e.preventDefault();
+        setPlacing(null);
         setActiveTool('hand');
         return;
       }
 
       if (!isMod && !e.altKey && isV) {
         e.preventDefault();
+        setPlacing(null);
         setActiveTool('select');
         return;
       }
