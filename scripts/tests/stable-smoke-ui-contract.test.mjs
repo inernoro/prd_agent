@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockPublicCommunityReads } from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockPublicCommunityReads, blockRetiredAsrPoolAudit } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
@@ -18,6 +18,46 @@ test('巡检主旅程接入语义登录与精确模型详情，且仅改被测�
 });
 
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
+
+test('REG-stsmk-account-scope-001 原GW配置不读取退场ASR池，原ASR断言保留且先于取数停跑', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const config = source.split("test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001]")[1]?.split("\n  test('")[0];
+  assert.ok(config);
+  assert.doesNotMatch(config, /REG-asr-routing-001|pool-types|pools\?modelType=asr|asrType|asrPools/);
+  for (const kept of ['/gw/auth/context', '/gw/models?enabled=true', '/gw/logical-models?enabled=true', '/gw/key-health', '/gw/config-authority/report', 'readGatewayNoCallLogProbe(', 'offering.protocol', 'offering.endpointPath', 'offering.priority', 'offering.weight']) assert.ok(config.includes(kept), `${kept}原配置合同不得丢失`);
+  const asr = source.split("test('[REG-asr-routing-001] ASR实际路由不得由退场池主备替代'")[1]?.split("\n  test('")[0];
+  assert.ok(asr, '原ASR REG必须独立保留，不能由配置绿关闭');
+  const boundary = asr.indexOf("blockRetiredAsrPoolAudit(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'))");
+  assert.ok(boundary >= 0 && boundary < asr.indexOf('loginGateway('));
+  assert.ok(boundary < asr.indexOf('request.get('));
+  for (const kept of ['/gw/pool-types', '/gw/pools?modelType=asr&sinceHours=168', 'ASR 默认池必须至少有主备两个成员', 'asrType?.ready', 'defaultAsrPool?.isDefaultForType', 'defaultAsrPool?.healthyMembers', 'model.platformId', 'model.priority']) assert.ok(asr.includes(kept), `${kept}旧失败判据必须保留`);
+  assert.equal((asr.match(/toBeGreaterThanOrEqual\(2\)/g) || []).length, 3);
+  assert.equal((source.match(/\[REG-asr-routing-001\]/g) || []).length, 1, '原ASR业务分母不能新增或借位');
+});
+
+test('REG-stsmk-account-scope-001 退场ASR审计两环境零网络且原REG保留未执行原因', () => {
+  for (const environment of ['cds', 'production']) {
+    let network = 0;
+    const annotations = [];
+    assert.throws(() => {
+      blockRetiredAsrPoolAudit({ skip: (condition, description) => {
+        assert.equal(condition, true);
+        annotations.push({ type: 'skip', description });
+        throw Error('not-run-before-auth');
+      } }, environment);
+      network += 1;
+    }, /not-run-before-auth/);
+    assert.equal(network, 0);
+    assert.match(annotations[0].description, /已退场.*不是真实ASR路由.*未执行/);
+    for (const required of ['Offering', 'requestId', 'reference', '持久化', '清理', '旧失败保留']) assert.ok(annotations[0].description.includes(required));
+    const rows = collectPlaywrightCases({ suites: [{ specs: [{ title: '[REG-asr-routing-001] ASR实际路由不得由退场池主备替代', tests: [{ results: [{ status: 'skipped', annotations }] }] }] }] }, environment);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].caseId, 'REG-ASR-ROUTING-001');
+    assert.equal(rows[0].status, 'not-run');
+    assert.equal(buildNotRunLedger(rows, { production: environment === 'production' })[0].reason, annotations[0].description);
+  }
+  assert.throws(() => blockRetiredAsrPoolAudit({}, 'unknown'), /已登记环境/);
+});
 
 test('REG-stsmk-account-scope-001 公开社区旁路在共享context及独立页面登录导航前均被阻断', async () => {
   let handler;

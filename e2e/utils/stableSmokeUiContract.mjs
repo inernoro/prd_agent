@@ -9,6 +9,12 @@ export async function blockPublicCommunityReads(surface) {
   await surface.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
 }
 
+/** Retired pool cardinality cannot prove the active ASR logical route. */
+export function blockRetiredAsrPoolAudit(test, environment) {
+  contract(['cds', 'production'].includes(environment), 'ASR验收必须绑定已登记环境', 'test/api-contract');
+  test.skip(true, '验收债务：已退场模型池的主备数量不是真实ASR路由，本项未执行。须接入实际逻辑默认与Offering、原录音真实requestId、独立reference、持久化及清理合同后按原REG恢复；旧失败保留，不代表已证明ASR产品或主备故障，也不得借配置绿关闭。');
+}
+
 /** Both inspection identities must stop before reading unscoped global observations. */
 export function blockUnscopedObservationFixture(test, environment, observation) {
   const reasons = {
