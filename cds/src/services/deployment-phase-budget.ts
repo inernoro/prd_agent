@@ -2,6 +2,9 @@ import os from 'node:os';
 import { readFile } from 'node:fs/promises';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import { ProjectAdmissionOrder } from './project-admission-order.js';
+import { buildLoadPressure, type BuildLoadPressure } from './build-gate.js';
+import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
 let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
 let memoryRead: Promise<void> | undefined;
@@ -61,20 +64,22 @@ interface Request {
 export class DeploymentPhaseBudget {
   private readonly active = new Map<DeploymentPhase, Set<Request>>();
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
-  private readonly lastProject = new Map<DeploymentPhase, string>();
+  private readonly projectOrders = new Map<DeploymentPhase, ProjectAdmissionOrder>();
   private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner }>();
   private timer?: NodeJS.Timeout;
   private readonly limits: Record<DeploymentPhase, number>;
   constructor(private readonly availableMemoryMB: () => number = () => memoryProvider(),
     limits: Partial<Record<DeploymentPhase, number>> = {},
-    private readonly headroomMB = 1024, private readonly availablePids = sampleHostAvailablePids) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
+    private readonly headroomMB = 1024, private readonly availablePids = sampleHostAvailablePids,
+    private readonly hostLoad: () => BuildLoadPressure = buildLoadPressure) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
 
   snapshot() {
     return Object.fromEntries((['pull', 'start', 'ready', 'cleanup', 'terminal'] as const).map(phase => [phase, {
       limit: this.limits[phase], active: [...(this.active.get(phase) || [])].map(request => ({ ...request.owner, memoryMB: request.memoryMB })),
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
         reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom'
-          : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom' : 'phase-capacity' })),
+          : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom'
+          : phase === 'start' && !this.cpuAllows(request) ? 'cpu-startup-capacity' : 'phase-capacity' })),
     }]));
   }
 
@@ -93,6 +98,15 @@ export class DeploymentPhaseBudget {
     const reserved = [...this.memoryReservations].reduce((sum, [key, value]) => sum + (key === request.reservationKey ? 0 : value.pids), 0)
       + [...(this.active.get('start') || [])].filter(item => !item.reservationKey).reduce((sum, item) => sum + item.pids, 0);
     return this.availablePids() >= reserved + request.pids;
+  }
+
+  private cpuAllows(request: Request): boolean {
+    // docker start很快返回，但启动期CPU争抢持续到实际就绪；不以创建回执提前释放。
+    const warming = [...this.memoryReservations.keys()].filter(key => key !== request.reservationKey).length
+      + [...(this.active.get('start') || [])].filter(item => !item.reservationKey).length;
+    const pressure = this.hostLoad();
+    const limit = pressure.ratio >= HOST_LOAD_SATURATED_RATIO ? 1 : this.limits.start;
+    return warming < limit;
   }
 
   acquire(phase: DeploymentPhase, owner: DeploymentPhaseOwner, options: {
@@ -130,14 +144,15 @@ export class DeploymentPhaseBudget {
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
       while (active.size < this.limits[phase] && queue.length) {
-        const previous = this.lastProject.get(phase);
-        let index = queue.findIndex(request => (request.owner.projectId || '_unknown') !== previous
-          && (phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request)));
-        if (index < 0) index = queue.findIndex(request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey) && this.pidsAllow(request));
+        const order = this.projectOrders.get(phase) || new ProjectAdmissionOrder();
+        this.projectOrders.set(phase, order);
+        const index = order.next(queue, request => request.owner.projectId,
+          request => phase !== 'start' || this.memoryAllows(request.memoryMB, request.reservationKey)
+            && this.pidsAllow(request) && this.cpuAllows(request));
         if (index < 0) break;
         const [request] = queue.splice(index, 1);
         request.signal?.removeEventListener('abort', request.abort!);
-        active.add(request); this.lastProject.set(phase, request.owner.projectId || '_unknown');
+        active.add(request); order.grant(request.owner.projectId);
         if (phase === 'start' && request.reservationKey) this.reserveKnownMemory(request.reservationKey, request.memoryMB, request.owner, request.pids);
         let released = false;
         request.resolve(() => { if (released) return; released = true; active.delete(request); this.pump(); });

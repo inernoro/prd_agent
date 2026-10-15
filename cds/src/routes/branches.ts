@@ -1732,6 +1732,7 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
+  onBeforeSourceStart?: () => Promise<void>;
   sourceCheckout?: { path: string; commitSha: string };
   /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
   ledgerImages?: readonly string[];
@@ -1838,6 +1839,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           } : undefined,
           sourceCheckout: options.sourceCheckout,
           onSourceCompileFallback: options.onSourceCompileFallback,
+          onBeforeSourceStart: options.onBeforeSourceStart,
           ledgerImages: options.ledgerImages,
           isComponentUnchangedSince: options.isComponentUnchangedSince,
           latestCommitSha: options.latestCommitSha,
@@ -13835,6 +13837,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             try {
               const slot = await acquireBuildSlot({
                 holder: {
+                  projectId: entry.projectId,
                   branchId: id,
                   profileId: profile.id,
                   runId: deploymentRun?.id,
@@ -13847,10 +13850,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   logEvent({
                     step: `queue-${profile.id}`,
                     status: 'info',
-                    title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                    title: `${effectiveProfile.name} 排队等待构建槽位：另有 ${ahead} 个等待，按项目轮转（${active} 个正在构建，并发上限 ${max}）`,
                     timestamp: new Date().toISOString(),
                   });
-                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+                  sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 按项目轮转：另有 ${ahead} 个构建等待（${active}/${max} 进行中）...\n` });
                   // 分支卡排队 chip：挂到 entry.buildQueue 并发 branch.updated（2026-07-09）。
                   deployQueueTracker.onQueued(profile.id, { ahead, active, max });
                   // 每 15s 刷新一次排队位置，长时间排队也持续有动静（不像卡死）。
@@ -13915,11 +13918,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           };
           // 极速版（prebuilt）：仅拉镜像 + 启动，零编译，不占构建槽。
           const isPrebuiltDeploy = effectiveProfile.prebuiltImage === true;
-          let buildSlot: BuildSlot | null = null;
+          const buildSlot: { current: BuildSlot | null } = { current: null };
           if (isPrebuiltDeploy) {
             sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
-          } else {
-            buildSlot = await acquireGateSlot();
           }
 
           logEvent({
@@ -13994,10 +13995,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
               actor: resolveActorFromRequest(req),
               trigger: triggerFromRequest(req),
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+              onBeforeSourceStart: async () => { if (!buildSlot.current) buildSlot.current = await acquireGateSlot(); },
               // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
-                if (!buildSlot) buildSlot = await acquireGateSlot();
+                if (!buildSlot.current) buildSlot.current = await acquireGateSlot();
                 // 回退成源码编译 = 这台服务实际跑的是 worktree 当前 HEAD，不再是
                 // 镜像 tag 锁定的那个 sha。后续 run 流转 / 版本记录必须跟着改口径，
                 // 否则审计又挂在一份没被部署过的代码上（Codex 六轮 P2）。
@@ -14079,7 +14081,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                   if (line.trim()) logDeploy(id, line);
                 }
               });
-              if (ready) buildSlot?.release();
+              if (ready) buildSlot.current?.release();
             }
 
             // Always run the port-level readiness probe (even after a
@@ -14121,6 +14123,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
 
             if (ready) {
+              deploymentPhaseBudget.releaseMemory(svc.containerName);
               svc.status = 'running';
               svc.errorMessage = undefined;
               // 2026-05-14 真实态徽章：钉住容器**实际**用哪个 deploy mode 启动。
@@ -14166,7 +14169,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } finally {
             // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
             clearQueueTimer();
-            buildSlot?.release();
+            buildSlot.current?.release();
           }
         }, {
           // Superseded 优先（整个 run 收敛为 cancelled）；真实构建错误次之；
@@ -14940,6 +14943,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         try {
           const slot = await acquireBuildSlot({
             holder: {
+              projectId: entry.projectId,
               branchId: id,
               profileId: profile.id,
               runId: deploymentRun?.id,
@@ -14952,10 +14956,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
               logEvent({
                 step: `queue-${profile.id}`,
                 status: 'info',
-                title: `${effectiveProfile.name} 排队等待构建槽位：前面还有 ${ahead} 个在等待（${active} 个正在构建，并发上限 ${max}）`,
+                title: `${effectiveProfile.name} 排队等待构建槽位：另有 ${ahead} 个等待，按项目轮转（${active} 个正在构建，并发上限 ${max}）`,
                 timestamp: new Date().toISOString(),
               });
-              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 排队中：前面还有 ${ahead} 个构建（${active}/${max} 进行中）...\n` });
+              sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 按项目轮转：另有 ${ahead} 个构建等待（${active}/${max} 进行中）...\n` });
               deployQueueTracker.onQueued(profile.id, { ahead, active, max });
               queueRefreshTimer = setInterval(() => {
                 if (leaseCancelled()) {
@@ -15010,11 +15014,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           throw err;
         }
       };
-      let buildSlot: BuildSlot | null = null;
+      const buildSlot: { current: BuildSlot | null } = { current: null };
       if (effectiveProfile.prebuiltImage === true) {
         sendSSE(res, 'log', { profileId: profile.id, chunk: `[build-gate] 极速版部署（仅拉取镜像），不占用构建槽位\n` });
-      } else {
-        buildSlot = await acquireGateSlot();
       }
 
       try {
@@ -15051,9 +15053,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+          onBeforeSourceStart: async () => { if (!buildSlot.current) buildSlot.current = await acquireGateSlot(); },
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
-            if (!buildSlot) buildSlot = await acquireGateSlot();
+            if (!buildSlot.current) buildSlot.current = await acquireGateSlot();
             // 同主路径：回退源码编译后，实际落地的是 pull 到的 HEAD（Codex 六轮 P2）。
             if (fallbackPulledSha) {
               deployedCommitSha = fallbackPulledSha;
@@ -15111,7 +15114,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
           });
           ready = signalReady;
-          if (signalReady) buildSlot?.release();
+          if (signalReady) buildSlot.current?.release();
         }
         if (!profile.startupSignal || ready) {
           advanceDeploymentRun(deploymentRun?.id, 'verifying', {
@@ -15145,6 +15148,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           );
         }
         if (ready) {
+          deploymentPhaseBudget.releaseMemory(svc.containerName);
           svc.status = 'running';
           svc.errorMessage = undefined;
           // 2026-05-14 真实态徽章：单服务 redeploy 同样钉住实际 deploy mode。
@@ -15174,7 +15178,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } finally {
         // 释放构建槽位（幂等），唤醒下一个排队的构建。极速版未占槽则为 no-op。
         clearQueueTimer();
-        buildSlot?.release();
+        buildSlot.current?.release();
         // 排队 chip 兜底清理（部署 throw 也不许留下「排队中」残影）。
         deployQueueTracker.dispose();
       }

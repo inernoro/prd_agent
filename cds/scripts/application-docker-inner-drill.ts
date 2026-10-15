@@ -917,10 +917,18 @@ async function main(): Promise<void> {
           operationId: originalRequest.operationId, instanceId: originalRequest.instanceId, restartRequestedAt: new Date().toISOString() };
         report.probeEventsAtFailedShutdown = await context.readProbeEvents();
         await checkpoint('original-first-shutdown-failed-before-responsibility-recovery');
-        await context.restartForFailureRecovery();
+        await context.restartForFailureRecovery(async phase => {
+          report.failureRecovery.bootstrapMilestones ??= [];
+          report.failureRecovery.bootstrapMilestones.push({ phase, at: new Date().toISOString(), pid: context.applicationPid() });
+          await checkpoint(`original-recovery-${phase}`);
+        });
         const recoveryTree = context.applicationProcessTree(); report.failureRecovery.processTree = recoveryTree;
         try { await until(async () => { const response = await context.request(`/api/projects/${capabilityProjectId}/agent-runtime-providers`);
           assert.equal(response.status, 200); const item = response.json.items.find((item: any) => item.id === 'open-design');
+          const firstProviderRead = !report.failureRecovery.lastProviderRead;
+          report.failureRecovery.lastProviderRead = { at: new Date().toISOString(), status: response.status,
+            healthy: item?.healthy, resourcePolicyEnforcedPerSession: item?.resourcePolicyEnforcedPerSession };
+          if (firstProviderRead) await checkpoint('original-recovery-provider-first-read');
           return item?.healthy && item.resourcePolicyEnforcedPerSession ? true : undefined; }, 90_000); }
         catch (error) {
           // Run only after the original joint recovery failed; this driver-owned

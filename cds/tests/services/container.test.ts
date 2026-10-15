@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { nodeModulesVolumeName } from '../../src/util/node-modules-volume.js';
+import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
 
 const makeConfig = (): CdsConfig => ({
@@ -86,6 +88,32 @@ describe('ContainerService', () => {
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     });
     afterEach(() => { aliveStub?.mockRestore(); });
+
+    it('启动容量等待期间不申请源码编译槽，容量恢复后才创建运行容器', async () => {
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+      for (const name of ['owned-warm-a', 'owned-warm-b', 'owned-warm-c'])
+        deploymentPhaseBudget.reserveKnownMemory(name, 512, { projectId: name });
+      const runtime = makeService(); const acquireCompile = vi.fn(async () => {});
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'owned-cid', stderr: '', exitCode: 0 }));
+      const running = service.runService(makeEntry(), makeProfile(), runtime, undefined, undefined,
+        { onBeforeSourceStart: acquireCompile });
+      try {
+        for (let i = 0; i < 200 && !deploymentPhaseBudget.snapshot().start.queued.length; i++)
+          await new Promise<void>(resolve => setImmediate(resolve));
+        expect(deploymentPhaseBudget.snapshot().start.queued[0].reason).toBe('cpu-startup-capacity');
+        expect(acquireCompile).not.toHaveBeenCalled();
+        expect(mock.commands.some(command => command.startsWith('docker run'))).toBe(false);
+        deploymentPhaseBudget.releaseMemory('owned-warm-a'); await running;
+        expect(acquireCompile).toHaveBeenCalledOnce();
+        expect(mock.commands.some(command => command.startsWith('docker run'))).toBe(true);
+      } finally {
+        for (const key of ['owned-warm-a', 'owned-warm-b', 'owned-warm-c', runtime.containerName])
+          deploymentPhaseBudget.releaseMemory(key);
+        setBuildGateHostLoadProvider(null);
+      }
+    });
 
     it('should run docker container with correct mounts and env', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

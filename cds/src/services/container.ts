@@ -1373,6 +1373,8 @@ export class ContainerService {
        * 失败风暴让编译绕过闸门（2026-07-16 队列堵死复盘）。
        */
       onSourceCompileFallback?: () => Promise<void>;
+      /** 启动容量已准入后才申请源码编译槽，容量等待不占编译槽。 */
+      onBeforeSourceStart?: () => Promise<void>;
       /**
        * 版本台账里该分支该服务的历史构建镜像（由新到旧）。预构建镜像拉不到时，
        * 用来找「上一版可复用镜像」，避免明明组件没改却在宿主全量重编
@@ -1398,6 +1400,7 @@ export class ContainerService {
   ): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
+    const hadMemoryReservation = deploymentPhaseBudget.memorySnapshot().some(row => row.key === service.containerName);
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
@@ -1920,6 +1923,8 @@ export class ContainerService {
       releaseStart = await deploymentPhaseBudget.acquire('start', phaseOwner,
         { check: phaseCheck, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
       phaseCheck();
+      if (!profile.prebuiltImage) await context.onBeforeSourceStart?.();
+      phaseCheck();
       this.runtimePhaseOwners.set(service.containerName, { owner: phaseOwner, check: phaseCheck });
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
@@ -2071,6 +2076,7 @@ export class ContainerService {
       }
     } catch (error) {
       this.runtimePhaseOwners.delete(service.containerName);
+      if (!hadMemoryReservation && !service.creationIssued) deploymentPhaseBudget.releaseMemory(service.containerName);
       throw error;
     } finally {
       releaseStart?.();
@@ -2698,6 +2704,7 @@ export class ContainerService {
   }
 
   private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
+    const requestedAt = Date.now();
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
@@ -2740,7 +2747,7 @@ export class ContainerService {
     const confirmed = state?.running === false
       || (state?.running !== true && (result.exitCode === 0 || isDockerNoSuchContainer(result)));
     this.recordContainerEvent({
-      severity: confirmed ? 'info' : 'error',
+      severity: !confirmed ? 'error' : state?.exitCode === 137 ? 'warn' : 'info',
       source: 'cds-container-service',
       action: confirmed ? 'container.stop.completed' : 'container.stop.failed',
       message: confirmed ? `docker stop completed for ${containerName}: ${reason}` : `docker stop not confirmed for ${containerName}: ${reason}`,
@@ -2760,6 +2767,9 @@ export class ContainerService {
       error: after.error,
       details: {
         reason,
+        elapsedMs: Date.now() - requestedAt,
+        shutdownOutcome: !confirmed ? 'unconfirmed' : state?.exitCode === 137 ? 'forced-exit' : 'stopped',
+        dataIntegrity: 'unverified',
         actor: context.actor ?? null,
         trigger: context.trigger ?? null,
         operation: context.operation ?? null,

@@ -50,7 +50,7 @@ export interface ApplicationBootstrapContext {
   readProbeEvents: () => Promise<any[]>;
   readDispatchEvents: (projectId: string, branchId: string) => Promise<any[]>;
   readInfraEvents: (projectId: string, serviceId: string) => Promise<any[]>;
-  restartForFailureRecovery: () => Promise<void>;
+  restartForFailureRecovery: (milestone?: (phase: 'process-started' | 'index-ready') => Promise<void>) => Promise<void>;
   stopForFailureRecovery: () => Promise<{ code: number | null; signal: string | null }>;
 }
 export interface ApplicationBootstrapOptions {
@@ -220,9 +220,9 @@ export async function runApplicationBootstrap(options: ApplicationBootstrapOptio
       applicationProcessTree: () => application?.pid ? descendants(application.pid) : [],
       readProbeEvents,
       readDispatchEvents, readInfraEvents,
-      restartForFailureRecovery: async () => {
+      restartForFailureRecovery: async milestone => {
         assert.equal(application?.exitCode, 1); // A separate recovery after the original failed stop, never a replacement success assertion.
-        start(); await ready();
+        start(); await milestone?.('process-started'); await ready(); await milestone?.('index-ready');
         for (const row of descendants(application!.pid!)) knownPids.add(row.pid);
       },
       stopForFailureRecovery: stop,
