@@ -859,26 +859,25 @@ function notificationModuleLabel(row, plan) {
   return title || '稳定冒烟执行项';
 }
 
-function notificationRequestId(row, runId) {
-  const diagnosticText = [row.error, ...(row.attemptErrors || [])].filter(Boolean).join(' ');
-  const match = diagnosticText.match(/\brequest(?:id)?\s*[:=]\s*([a-z0-9._-]{4,128})/i);
-  return match?.[1] || `${runId}:${row.environment || 'all'}:${row.caseId || 'run'}`;
-}
-
 export function buildAffectedNotificationTargets({ rows, plan, runId, verdict, visualResult }) {
-  const targets = rows
-    .filter((row) => row.status !== 'pass' || Number(row.retryCount || 0) > 0)
-    .map((row) => ({
-      environment: notificationEnvironmentLabel(row.environment),
-      module: notificationModuleLabel(row, plan),
-      caseId: String(row.caseId || 'RUN-GATE'),
-      requestId: notificationRequestId(row, runId),
-      recovery: row.status === 'not-run'
-        ? `补齐 ${row.environment}:${row.caseId} 的执行条件后，按相同 runId 定向补跑并核对报告。`
-        : row.status === 'pass'
-          ? `核对 ${row.environment}:${row.caseId} 首次失败是否留下副作用，再按相同 runId 复测。`
-          : `处理 ${row.environment}:${row.caseId} 的失败原因后，按相同 runId 定向补跑并核对清理结果。`,
-    }));
+  if (verdict === 'pass') return [];
+  const affected = rows.filter(row => row.status !== 'pass' || row.hadFailedAttempt || Number(row.retryCount || 0) > 0);
+  const targets = [];
+  if (affected.length) {
+    const environments = [...new Set(affected.map(row => row.environment))];
+    const modules = [...new Set(affected.map(row => notificationModuleLabel(row, plan)))];
+    const failed = affected.filter(row => row.status === 'fail').length;
+    const notRun = affected.filter(row => ['not-run', 'blocked'].includes(row.status)).length;
+    const flaky = affected.filter(row => row.status === 'flaky' || (row.status === 'pass' && (row.hadFailedAttempt || Number(row.retryCount || 0) > 0))).length;
+    targets.push({
+      environment: environments.length === 1 ? notificationEnvironmentLabel(environments[0]) : '双环境',
+      module: modules.length > 3 ? `${modules.slice(0, 3).join(' / ')}等 ${modules.length} 个模块` : modules.join(' / '),
+      // Stable per-run identity: report revisions update one event, never fan out by caseId.
+      caseId: 'RUN-SUMMARY',
+      requestId: `${runId}:summary`,
+      recovery: `失败 ${failed} 项；未执行 ${notRun} 项；不稳定 ${flaky} 项。逐项原因和实际追踪号见在线报告，由巡检智能体继续修复、按原用例复测并核对清理；未执行不代表产品损坏。`,
+    });
+  }
 
   if (targets.length === 0 && verdict !== 'pass') {
     const visualBlocked = visualResult?.verdict && !['通过', '不适用'].includes(visualResult.verdict);
