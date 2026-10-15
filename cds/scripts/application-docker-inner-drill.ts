@@ -20,6 +20,15 @@ const host = 'unix:///var/run/owned.sock';
 const docker = async (args: string[], timeout = 120_000) => (await execute('docker', ['--host', host, ...args],
   { encoding: 'utf8', timeout, maxBuffer: 2 * 1024 * 1024 })).stdout.trim();
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+/** 仅独占演练daemon准备镜像；调用完成前保留所有拉取责任。 */
+export async function prepareOwnedDockerImages(pull: (image: string, timeout: number) => Promise<unknown>, capability: string): Promise<void> {
+  const results = await Promise.allSettled([
+    (async () => { for (const image of ['mongo:7.0', 'registry:2', 'node:22-alpine']) await pull(image, 120_000); })(),
+    pull(capability, 600_000),
+  ]);
+  for (const result of results) if (result.status === 'rejected') throw result.reason;
+}
+
 async function until<T>(read: () => Promise<T | undefined>, timeout = 120_000): Promise<T> {
   const deadline = performance.now() + timeout;
   for (;;) { const value = await read(); if (value !== undefined) return value;
@@ -656,7 +665,15 @@ async function main(): Promise<void> {
   };
   try {
     report.stage = 'owned-fixtures-ready';
-    for (const image of ['mongo:7.0', 'registry:2', 'node:22-alpine']) await docker(['pull', image]);
+    report.fixtureImagePulls = [];
+    await checkpoint('before-owned-fixture-image-pulls');
+    await prepareOwnedDockerImages(async (image, timeout) => {
+      const row: any = { image, timeoutMs: timeout, startedAt: new Date().toISOString() }; report.fixtureImagePulls.push(row);
+      try { await docker(['pull', image], timeout); row.verdict = 'passed'; }
+      catch (error) { row.verdict = 'failed'; throw error; }
+      finally { row.finishedAt = new Date().toISOString(); }
+    }, capabilityImage);
+    await checkpoint('owned-fixture-image-pulls-complete');
     const mongoPort = await availablePort(), registryPort = await availablePort(); assert.notEqual(mongoPort, registryPort);
     await run('mongo', ['--network', 'host', '--cpus', '0.5', '--memory', '768m', 'mongo:7.0', 'mongod', '--bind_ip', '127.0.0.1', '--port', String(mongoPort), '--wiredTigerCacheSizeGB', '0.25']);
     await run('registry', ['--network', 'host', '--cpus', '0.25', '--memory', '128m', '-e', `REGISTRY_HTTP_ADDR=127.0.0.1:${registryPort}`, 'registry:2']);
@@ -665,7 +682,6 @@ async function main(): Promise<void> {
     await until(async () => { const probe = new MongoClient(`mongodb://127.0.0.1:${mongoPort}/?directConnection=true`, { serverSelectionTimeoutMS: 500 });
       try { await probe.connect(); return (await probe.db('admin').command({ hello: 1 })).isWritablePrimary ? true : undefined; }
       catch { return undefined; } finally { await probe.close(); } });
-    await docker(['pull', capabilityImage], 600_000);
     const dockerVersions = JSON.parse(await docker(['version', '--format', '{{json .}}'], 5000));
     report.ownedDockerVersions = { client: dockerVersions.Client?.Version, clientApi: dockerVersions.Client?.ApiVersion,
       server: dockerVersions.Server?.Version, serverApi: dockerVersions.Server?.ApiVersion };
@@ -813,8 +829,7 @@ async function main(): Promise<void> {
         // can be pruned during the earlier deployment exercise; establish the
         // required image again immediately before this bounded cancellation
         // fault, without replacing the app's own capability safety checks.
-        await docker(['pull', capabilityImage], 600_000);
-        const preparedImageId = (await execute('docker', ['--host', proxyHost, 'image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
+            const preparedImageId = (await execute('docker', ['--host', proxyHost, 'image', 'inspect', capabilityImage, '--format', '{{.Id}}'],
           { encoding: 'utf8', timeout: 10_000 })).stdout.trim();
         assert.equal(preparedImageId, directImageId);
         report.probeImageReadyAtFault = { at: new Date().toISOString(), imageId: preparedImageId, originalReclaimEnabled: true };
@@ -1494,11 +1509,13 @@ async function main(): Promise<void> {
   } catch (error) { report.failure = { stage: report.stage, message: String((error as Error).message).slice(0, 4000) }; throw error; }
   finally {
     finiteCache?.stop();
+    await checkpoint('before-owned-driver-cleanup');
     const cleanupErrors: string[] = [];
     if (probeProxy) {
       try { await probeProxy.settle(); report.probeRequestTimeline = probeProxy.timeline; report.proxyTraffic = probeProxy.traffic(); }
       catch (error) { cleanupErrors.push(String(error)); }
       await probeProxy.close();
+      await checkpoint('owned-proxy-cleanup-complete');
       report.probeProxyRequestTimeline = probeProxy.requestTimeline; report.probeProxyTraceOverflow = probeProxy.traceOverflow();
     }
     try {
