@@ -21,6 +21,7 @@
  * JSON 转义。一律当纯文本塞，第一条带引号的错误信息就会把 body 变成非法 JSON，
  * 而那时通道会以「400」的形式失败——排查的人会以为是对方接口的问题。
  */
+import { PhoneDispatchQueue, type PhoneItem } from './phone-dispatch-queue.js';
 import { withAlarmDeliveryHistory } from './alarm-delivery-history.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import { MapNotifier, buildNotificationPayload } from './map-notifier.js';
@@ -32,6 +33,23 @@ export interface AlarmDeliveryResult {
   status?: number;
   reason?: string;
 }
+
+let phoneQueue: PhoneDispatchQueue | undefined;
+export function configurePhoneDispatch(file: string, history: ServerEventLogSink | null | undefined,
+  delivered: (item: PhoneItem, result: AlarmDeliveryResult) => Promise<void>) {
+  phoneQueue = new PhoneDispatchQueue(file, async (items, message) => {
+    const first = items[0];
+    return withAlarmDeliveryHistory(history, {
+      channelId: first.channel.id, channelName: first.channel.name, channelKind: 'bark',
+      kind: first.event.drill ? 'drill' : 'alert', eventKind: first.event.kind,
+      projectId: first.event.projectId, targetId: first.event.targetId, targetName: first.event.targetName,
+      detectedAt: first.event.detectedAt, title: message.title, body: message.body,
+    }, () => httpSend(buildBarkUrl(first.channel, message), { method: 'GET' }, DEFAULT_TIMEOUT_MS));
+  }, delivered);
+  const timer = setInterval(() => { void phoneQueue?.flush().catch(() => console.warn('[alarm] 手机摘要队列处理失败，待投递事件已保留')); }, 5000);
+  timer.unref();
+}
+export function phoneDispatchConfigured() { return Boolean(phoneQueue); }
 
 const DEFAULT_BARK_SERVER = 'https://api.day.app';
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -127,6 +145,7 @@ export async function sendAlarm(
 ): Promise<AlarmDeliveryResult> {
   const boardUrl = independentIncidentUrl(channel, event, opts.boardUrl) || opts.boardUrl;
   const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
+  if (channel.kind === 'bark' && phoneQueue) return phoneQueue.enqueue({ channel, event, message, boardUrl: opts.boardUrl });
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
     identity: event.identity,
     finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,

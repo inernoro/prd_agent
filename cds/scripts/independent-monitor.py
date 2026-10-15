@@ -122,7 +122,7 @@ def incident_url(config, event_id):
     return urllib.parse.urlunsplit(url._replace(query=urllib.parse.urlencode(query, doseq=True)))
 
 
-def notify(config, state, transition, now):
+def notify(config, state, transition, now, dispatcher=None):
     bark = config.get('bark')
     if not bark or not bark.get('key') or not transition:
         return
@@ -143,6 +143,13 @@ def notify(config, state, transition, now):
         parsed = urllib.parse.urlsplit(icon)
         if parsed.scheme == 'https' and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment:
             payload['icon'] = icon
+    if dispatcher is not None:
+        message = {k: v for k, v in payload.items() if k != 'device_key'}
+        accepted = dispatcher.submit({'bark': bark}, message, 'platform:' + event['id'] + ':' + transition, now)
+        if accepted is None:
+            return 'queued'
+        state['deliveries'] = [{'at': iso(now), 'incidentId': event['id'], 'transition': transition, 'accepted': accepted}, *state.get('deliveries', [])][:200]
+        return accepted
     ok = None
     try:
         request = urllib.request.Request(bark.get('serverUrl', 'https://api.day.app').rstrip('/') + '/push',
@@ -167,7 +174,7 @@ def publish(config, snapshot):
                       ACL='public-read', ContentType='application/json; charset=utf-8', CacheControl='no-store')
 
 
-def tick(config, state, now):
+def tick(config, state, now, dispatcher=None, persist=lambda: None):
     observation = inspect(config, now)
     observation['failureThreshold'] = config.get('failureThreshold', 3)
     transition = advance(state, observation, now)
@@ -178,11 +185,14 @@ def tick(config, state, now):
     elif event and eligible and (state.get('notificationIncidentId') != event['id'] or transition == 'escalated'):
         state['notificationIncidentId'] = event['id']
         state['pending'] = {'transition': 'escalated' if transition == 'escalated' else 'down', 'attempts': 0, 'nextAt': now}
+    persist()
     # 页面先留证，再发通知；手机链接不会指向尚未发布的事件。
     publish(config, public_snapshot(state, config, now))
     pending = state.get('pending')
     if pending and (eligible or pending['transition'] == 'recovered') and config.get('bark') and now >= pending['nextAt']:
-        accepted = notify(config, state, pending['transition'], now)
+        accepted = notify(config, state, pending['transition'], now, dispatcher)
+        if accepted == 'queued':
+            return
         pending['attempts'] += 1
         pending['nextAt'] = now + 300
         if accepted or accepted is None or pending['attempts'] >= 3:
@@ -203,10 +213,13 @@ def main():
     config = json.loads(config_path.read_text())
     path = config_path.with_name('state.json')
     state = json.loads(path.read_text()) if path.exists() else {}
-    relay = None
-    if config.get('relayPrivateKey'):
-        spec = importlib.util.spec_from_file_location('alarm_relay', Path(__file__).with_name('independent-alarm-relay.py'))
-        relay = importlib.util.module_from_spec(spec); spec.loader.exec_module(relay)
+    spec = importlib.util.spec_from_file_location('alarm_relay', Path(__file__).with_name('independent-alarm-relay.py'))
+    relay = importlib.util.module_from_spec(spec); spec.loader.exec_module(relay)
+    guard_spec = importlib.util.spec_from_file_location('phone_dispatch', Path(__file__).with_name('phone-dispatch.py'))
+    guard_module = importlib.util.module_from_spec(guard_spec); guard_spec.loader.exec_module(guard_module)
+    dispatch_path = config_path.with_name('phone-dispatch-state.json')
+    dispatch_state = json.loads(dispatch_path.read_text()) if dispatch_path.exists() else {}
+    dispatcher = guard_module.PhoneDispatch(dispatch_state, lambda: relay.save(dispatch_path, dispatch_state), relay.send)
     relay_path = config_path.with_name('relay-state.json')
     relay_state = json.loads(relay_path.read_text()) if relay_path.exists() else {}
     cached_channels = relay_state.get('channels', [])
@@ -217,7 +230,7 @@ def main():
     while True:
         started = time.time()
         try:
-            if relay:
+            if config.get('relayPrivateKey'):
                 try:
                     relay.poll(config, relay_state, started)
                     relay.save(relay_path, relay_state)
@@ -231,10 +244,11 @@ def main():
                 except Exception:
                     print(json.dumps({'at': iso(started), 'result': 'relay-sync-unavailable'}), flush=True)
                 relay.process(relay_state, started, lambda: relay.save(relay_path, relay_state),
-                    platform_incident=state.get('incident') if any(d.get('accepted') and d.get('incidentId') == (state.get('incident') or {}).get('id') for d in state.get('deliveries', [])) else None)
+                    dispatcher=dispatcher, platform_incident=state.get('incident') if any(d.get('accepted') and d.get('incidentId') == (state.get('incident') or {}).get('id') for d in state.get('deliveries', [])) else None)
             if started - last_inspect >= config.get('intervalSeconds', 60):
-                tick(config, state, started)
+                tick(config, state, started, dispatcher, lambda: relay.save(path, state))
                 last_inspect = started
+            dispatcher.flush(started)
             print(json.dumps({'at': iso(started), 'result': 'published', 'incident': bool(state.get('incident'))}), flush=True)
         except Exception as error:
             print(json.dumps({'at': iso(started), 'result': 'failed', 'errorType': type(error).__name__}), flush=True)
@@ -246,7 +260,7 @@ def main():
             os.replace(tmp, path)
         if args.once:
             break
-        time.sleep(max(1, (10 if relay else config.get('intervalSeconds', 60)) - (time.time() - started)))
+        time.sleep(max(1, 10 - (time.time() - started)))
 
 
 if __name__ == '__main__':
