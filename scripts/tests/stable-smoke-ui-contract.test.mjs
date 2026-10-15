@@ -55,7 +55,8 @@ function model(publicId, overrides = {}) {
 test('图片模型来自真实API身份，不硬编码 default-generation、不用停用或无Offering配置顶替', () => {
   const selected = model('peach.v2+real', { isDefaultForType: true });
   assert.equal(selectGatewayImageLogicalModel([model('default-generation', { enabled: false }), model('other'), selected]), selected);
-  assert.throws(() => selectGatewayImageLogicalModel([model('default-generation', { offerings: [] })]), /未找到/);
+  assert.throws(() => selectGatewayImageLogicalModel([model('default-generation', { offerings: [] })]), /configuration\/gateway.*未找到/);
+  assert.throws(() => selectGatewayImageLogicalModel(undefined), /test\/api-contract/);
   assert.throws(() => selectGatewayImageLogicalModel([model('a', { modelType: 'chat' })]), /未找到/);
   assert.throws(() => selectGatewayImageLogicalModel([model('same'), model('same')]), /publicId 重复/);
 });

@@ -1,5 +1,5 @@
-function contract(condition, message) {
-  if (!condition) throw new Error(`[test/ui-contract] ${message}`);
+function contract(condition, message, classification = 'test/ui-contract') {
+  if (!condition) throw new Error(`[${classification}] ${message}`);
 }
 
 function escapeRegExp(value) {
@@ -53,15 +53,15 @@ export async function getMapLoginTarget(page, { timeout = 20_000 } = {}) {
 
 /** Audit a real API identity; this is not a substitute for the visual journey's configured default. */
 export function selectGatewayImageLogicalModel(items) {
-  contract(Array.isArray(items), '逻辑模型响应缺少列表');
+  contract(Array.isArray(items), '逻辑模型响应缺少列表', 'test/api-contract');
   const candidates = items.filter((item) => item?.enabled === true
     && typeof item.id === 'string' && item.id.trim() && typeof item.publicId === 'string' && item.publicId.trim()
     && Array.isArray(item.offerings) && item.offerings.some((offering) => offering?.enabled === true)
     && (/image|generation/i.test(item.modelType || '')
       || (Array.isArray(item.capabilities) && item.capabilities.some((value) => /image|text2img|img2img/i.test(value)))));
-  contract(candidates.length > 0, '未找到已启用且含已启用 Offering 的图片逻辑模型');
+  contract(candidates.length > 0, '未找到已启用且含已启用 Offering 的图片逻辑模型', 'configuration/gateway');
   const selected = candidates.find((item) => item.isDefaultForType === true) || candidates[0];
-  contract(items.filter((item) => item.publicId === selected.publicId).length === 1, '逻辑模型 publicId 重复，无法绑定唯一真实配置');
+  contract(items.filter((item) => item.publicId === selected.publicId).length === 1, '逻辑模型 publicId 重复，无法绑定唯一真实配置', 'configuration/gateway');
   return selected;
 }
 
