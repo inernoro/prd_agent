@@ -498,6 +498,70 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
+    public void AttachmentOutline_RejectsOnePageWhenTwentyWereRequested()
+    {
+        var ex = Assert.Throws<MdToPptOutlineContractException>(() =>
+            MdToPptController.EnsureOutlinePageCount(
+                reportedPages: 1,
+                actualPages: 1,
+                targetPages: 20));
+
+        Assert.Equal(MdToPptController.OutlinePageCountMismatchCode, ex.Code);
+        Assert.Contains("目标 20 页", ex.Message);
+        Assert.Contains("实际生成 1 页", ex.Message);
+    }
+
+    [Fact]
+    public void AttachmentOutline_AcceptsExactlyTwentyReportedAndActualPages()
+    {
+        MdToPptController.EnsureOutlinePageCount(
+            reportedPages: 20,
+            actualPages: 20,
+            targetPages: 20);
+
+        var ex = Assert.Throws<MdToPptOutlineContractException>(() =>
+            MdToPptController.EnsureOutlinePageCount(
+                reportedPages: 20,
+                actualPages: 21,
+                targetPages: 20));
+        Assert.Equal(MdToPptController.OutlinePageCountMismatchCode, ex.Code);
+    }
+
+    [Fact]
+    public void OutlineEndpoints_ValidateTheSameExactPageContractBeforeSuccess()
+    {
+        var source = File.ReadAllText(LocateController());
+        var nonStreamingValidation = source.IndexOf(
+            "EnsureOutlinePageCount(\n                reportedPages,",
+            StringComparison.Ordinal);
+        var nonStreamingNormalization = source.IndexOf(
+            "var normalized = NormalizeOutlinePayload(raw, targetPages);",
+            StringComparison.Ordinal);
+        var nonStreamingDone = source.IndexOf("outlineRun.Status = \"done\"", StringComparison.Ordinal);
+        Assert.True(
+            nonStreamingValidation > 0
+            && nonStreamingValidation < nonStreamingNormalization
+            && nonStreamingNormalization < nonStreamingDone,
+            "非流式大纲必须在截断归一化和持久化完成态前校验模型实际页数");
+
+        var streamingValidation = source.IndexOf(
+            "EnsureOutlinePageCount(ReadOutlineTotalPages(metaObj), emittedPages, targetPages);",
+            StringComparison.Ordinal);
+        var streamingPersist = source.IndexOf("await PersistOutlineAsync();", StringComparison.Ordinal);
+        var streamingDone = source.IndexOf("WriteEventAsync(\"done\", new { pages = emittedPages", StringComparison.Ordinal);
+        Assert.True(
+            streamingValidation > 0 && streamingValidation < streamingPersist && streamingPersist < streamingDone,
+            "流式大纲必须在持久化与 done 事件前校验页数");
+
+        Assert.DoesNotContain("metaObj[\"totalPages\"] = targetPages", source);
+        Assert.DoesNotContain("[\"totalPages\"] = targetPages", source);
+        Assert.Contains("totalPagesEl.TryGetInt32(out var reportedTotalPages)", source);
+        Assert.Contains("源文档只作为内容材料", source);
+        Assert.Contains("随后必须从 index=1", source);
+        Assert.Contains("errorCode = run.ErrorCode", source);
+    }
+
+    [Fact]
     public void ConsoleDashboardBrief_AvoidsPosterTheme()
     {
         var theme = MdToPptController.EffectiveThemeForRequest(
@@ -570,5 +634,25 @@ public class MdToPptSectionSanitizeTests
         var noParent = MdToPptController.InheritPatchProvenance(null);
         Assert.Equal(DesignArtifactSourceSurfaces.HtmlPpt, noParent.SourceSurface);
         Assert.Empty(noParent.KnowledgeReferences);
+    }
+
+    private static string LocateController()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null
+               && !Directory.Exists(Path.Combine(directory.FullName, "prd-api", "src")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+
+        var path = Path.Combine(
+            directory!.FullName,
+            "prd-api",
+            "src",
+            "PrdAgent.Api",
+            "Controllers",
+            "Api",
+            "MdToPptController.cs");
+        Assert.True(File.Exists(path), $"找不到 {path}");
+        return path;
     }
 }
