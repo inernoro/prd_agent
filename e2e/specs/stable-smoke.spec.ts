@@ -10,7 +10,7 @@ import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeB
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe } from '../utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -2890,6 +2890,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[REG-auth-diagnosis-001][REG-auth-health-entry-001] 授权健康中心从桌面搜索与移动抽屉均可进入并回读', async ({ page, request, browser }, testInfo) => {
+    blockUnscopedObservationFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'authorization-health');
     const token = await loginAndReadToken(page, request, '/');
     const authState = await readStableAuthSnapshot(page);
 
@@ -6165,7 +6166,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-auth-synthetic-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }, testInfo) => {
+  test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001][REG-asr-routing-001] 网关配置与路由可由专用身份审计', async ({ request }, testInfo) => {
     const { baseUrl, headers } = await loginGateway(request);
     const context = await request.get(`${baseUrl}/gw/auth/context`, { headers });
     const contextBody = await context.json() as ApiEnvelope<{ id: string }>;
@@ -6175,7 +6176,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
     // 旧裸列表未约束巡检读取范围；未据此证明实际读到过他人数据。
     // 空探针只证明鉴权与精确查询；真实模型调用仍由本轮任务的 requestId 单独取证。
-    const [models, logicalModels, health, authority, logProbe, poolTypes, asrPools, authFailureHealth] = await Promise.all([
+    const [models, logicalModels, health, authority, logProbe, poolTypes, asrPools] = await Promise.all([
       request.get(`${baseUrl}/gw/models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/logical-models?enabled=true`, { headers }),
       request.get(`${baseUrl}/gw/key-health`, { headers }),
@@ -6183,31 +6184,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       readGatewayNoCallLogProbe(request, { baseUrl, headers, runId: requiredEnv('STABLE_SMOKE_RUN_ID') }),
       request.get(`${baseUrl}/gw/pool-types`, { headers }),
       request.get(`${baseUrl}/gw/pools?modelType=asr&sinceHours=168`, { headers }),
-      request.get(`${baseUrl}/gw/auth/failure-health?windowMinutes=10&threshold=3`, { headers }),
     ]);
-    for (const response of [models, logicalModels, health, authority, poolTypes, asrPools, authFailureHealth]) {
+    for (const response of [models, logicalModels, health, authority, poolTypes, asrPools]) {
       expect(response.ok(), `网关审计接口 ${response.url()} 不可用`).toBe(true);
     }
     await testInfo.attach('gateway-log-no-call-probe', { body: JSON.stringify(logProbe), contentType: 'application/json' });
-
-    const authFailureBody = await authFailureHealth.json() as ApiEnvelope<{
-      status: 'healthy' | 'recovered' | 'warning';
-      incidents: Array<{ scope: 'identity' | 'platform'; attempts: number; affectedIdentities: number }>;
-      recoveries: Array<{ attempts: number; identityFingerprint: string }>;
-      recovery: { browserSession: string; machineIdentity: string; circuitBreaker: string };
-    }>;
-    expect(authFailureBody.success).toBe(true);
-    expect(authFailureBody.data.recovery.browserSession).toBe('single-refresh-single-retry');
-    expect(authFailureBody.data.recovery.machineIdentity).toBe('one-time-ticket-auto-provision');
-    expect(authFailureBody.data.recovery.circuitBreaker).toBe('manual-disable-role-drift-repeated-failure');
-    for (const incident of authFailureBody.data.incidents) {
-      expect(incident.attempts).toBeGreaterThanOrEqual(3);
-      expect(incident.affectedIdentities).toBeGreaterThanOrEqual(1);
-    }
-    for (const recovery of authFailureBody.data.recoveries) {
-      expect(recovery.attempts).toBeGreaterThanOrEqual(1);
-      expect(recovery.identityFingerprint).toMatch(/^[a-f0-9]{12}$/);
-    }
 
     const modelsBody = await models.text();
     const logicalBody = await logicalModels.text();
@@ -6262,6 +6243,31 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(model.modelId).toBeTruthy();
       expect(model.platformId).toBeTruthy();
       expect(model.priority).toBeGreaterThan(0);
+    }
+  });
+
+  test('[REG-auth-synthetic-001] 网关鉴权失败聚合观测须限定巡检范围', async ({ request }) => {
+    blockUnscopedObservationFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'gateway-failure-health');
+    const { baseUrl, headers } = await loginGateway(request);
+    const authFailureHealth = await request.get(`${baseUrl}/gw/auth/failure-health?windowMinutes=10&threshold=3`, { headers });
+    expect(authFailureHealth.ok(), `网关审计接口 ${authFailureHealth.url()} 不可用`).toBe(true);
+    const authFailureBody = await authFailureHealth.json() as ApiEnvelope<{
+      status: 'healthy' | 'recovered' | 'warning';
+      incidents: Array<{ scope: 'identity' | 'platform'; attempts: number; affectedIdentities: number }>;
+      recoveries: Array<{ attempts: number; identityFingerprint: string }>;
+      recovery: { browserSession: string; machineIdentity: string; circuitBreaker: string };
+    }>;
+    expect(authFailureBody.success).toBe(true);
+    expect(authFailureBody.data.recovery.browserSession).toBe('single-refresh-single-retry');
+    expect(authFailureBody.data.recovery.machineIdentity).toBe('one-time-ticket-auto-provision');
+    expect(authFailureBody.data.recovery.circuitBreaker).toBe('manual-disable-role-drift-repeated-failure');
+    for (const incident of authFailureBody.data.incidents) {
+      expect(incident.attempts).toBeGreaterThanOrEqual(3);
+      expect(incident.affectedIdentities).toBeGreaterThanOrEqual(1);
+    }
+    for (const recovery of authFailureBody.data.recoveries) {
+      expect(recovery.attempts).toBeGreaterThanOrEqual(1);
+      expect(recovery.identityFingerprint).toMatch(/^[a-f0-9]{12}$/);
     }
   });
 

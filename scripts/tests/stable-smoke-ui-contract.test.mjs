@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe } from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
@@ -18,6 +18,65 @@ test('巡检主旅程接入语义登录与精确模型详情，且仅改被测�
 });
 
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
+
+test('REG-stsmk-account-scope-001 全局鉴权观测在两环境认证与导航前阻断，不能借配置绿关闭', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const sections = [
+    ['[REG-auth-diagnosis-001][REG-auth-health-entry-001] 授权健康中心从桌面搜索与移动抽屉均可进入并回读', 'authorization-health', 'loginAndReadToken('],
+    ['[REG-auth-synthetic-001] 网关鉴权失败聚合观测须限定巡检范围', 'gateway-failure-health', 'loginGateway('],
+  ];
+  for (const [title, kind, authCall] of sections) {
+    const body = source.split(`test('${title}'`)[1]?.split("\n  test('")[0];
+    assert.ok(body, `原观测项必须保留：${title}`);
+    const boundary = body.indexOf(`blockUnscopedObservationFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), '${kind}')`);
+    assert.ok(boundary >= 0 && boundary < body.indexOf(authCall), `${kind}必须在认证与导航之前明确未执行`);
+  }
+  const config = source.split("test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001]")[1]?.split("\n  test('")[0];
+  assert.ok(config);
+  assert.equal(/REG-auth-synthetic-001|failure-health|authFailureBody/.test(config), false, '配置通过不得冒充全局鉴权聚合已验');
+  for (const endpoint of ['/api/authorization-health', '/gw/auth/failure-health']) {
+    const allowed = sections.map(([title]) => source.split(`test('${title}'`)[1]?.split("\n  test('")[0] || '').join('\n');
+    assert.equal(source.split(endpoint).length - 1, allowed.split(endpoint).length - 1, `${endpoint}只能留在被护栏阻断的原观测段`);
+  }
+});
+
+test('REG-stsmk-account-scope-001 两环境全局观测前置停跑且具体原因进入原REG未执行账本', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const configTitle = source.match(/test\('([^']+网关配置与路由可由专用身份审计)'/)?.[1];
+  const observationTitle = source.match(/test\('([^']+网关鉴权失败聚合观测须限定巡检范围)'/)?.[1];
+  const authorizationTitle = source.match(/test\('([^']+授权健康中心从桌面搜索与移动抽屉均可进入并回读)'/)?.[1];
+  assert.ok(configTitle && observationTitle && authorizationTitle);
+  for (const environment of ['cds', 'production']) {
+    for (const observation of ['authorization-health', 'gateway-failure-health']) {
+      let network = 0;
+      const annotations = [];
+      assert.throws(() => {
+        blockUnscopedObservationFixture({ skip: (condition, description) => {
+          assert.equal(condition, true);
+          annotations.push({ type: 'skip', description });
+          throw Error('not-run-before-network');
+        } }, environment, observation);
+        network += 1;
+      }, /not-run-before-network/);
+      assert.equal(network, 0);
+      assert.match(annotations[0].description, /验收债务.*未执行/);
+      assert.match(annotations[0].description, /本轮/);
+      const rows = collectPlaywrightCases({ suites: [{ specs: [
+        { title: configTitle, tests: [{ results: [{ status: 'passed' }] }] },
+        { title: observation === 'authorization-health' ? authorizationTitle : observationTitle, tests: [{ results: [{ status: 'skipped', annotations }] }] },
+      ] }] }, environment);
+      for (const caseId of observation === 'authorization-health'
+        ? ['REG-AUTH-DIAGNOSIS-001', 'REG-AUTH-HEALTH-ENTRY-001'] : ['REG-AUTH-SYNTHETIC-001']) {
+        const original = rows.filter(row => row.caseId === caseId);
+        assert.equal(original.length, 1, '配置旅程不能借位为聚合观测打勾');
+        assert.equal(original[0].status, 'not-run');
+        assert.equal(buildNotRunLedger(original, { production: environment === 'production' })[0].reason, annotations[0].description);
+      }
+    }
+  }
+  assert.throws(() => blockUnscopedObservationFixture({}, 'unknown', 'authorization-health'), /已登记环境/);
+  assert.throws(() => blockUnscopedObservationFixture({}, 'production', 'other'), /原观测项/);
+});
 
 test('REG-stsmk-account-scope-001 网关配置先确认上下文且不得无筛选读取日志', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');

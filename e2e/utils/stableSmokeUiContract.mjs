@@ -4,6 +4,17 @@ function contract(condition, message, classification = 'test/ui-contract') {
   if (!condition) throw new Error(`[${classification}] ${message}`);
 }
 
+/** Both inspection identities must stop before reading unscoped global observations. */
+export function blockUnscopedObservationFixture(test, environment, observation) {
+  const reasons = {
+    'authorization-health': '验收债务：授权健康端点返回全局近期鉴权日志，未限定本轮身份或请求；当前巡检范围下未执行。补具备本轮范围的只读观测契约后按原case复验，不代表已证明读取他人数据或产品越权。',
+    'gateway-failure-health': '验收债务：网关失败聚合端点返回全局登录观测，身份哈希也不等于本轮巡检范围；本项未执行。补具备本轮范围的只读观测契约后按原REG复验，不得借配置检查通过关闭。',
+  };
+  contract(['cds', 'production'].includes(environment) && Object.hasOwn(reasons, observation),
+    '巡检全局观测必须绑定已登记环境与原观测项', 'test/resource-scope');
+  test.skip(true, reasons[observation]);
+}
+
 /** Exact empty lookup only; this probe must never count as a real model call. */
 export async function readGatewayNoCallLogProbe(request, { baseUrl, headers, runId, nonce = randomUUID() }) {
   contract(typeof runId === 'string' && /^stsmk-[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(runId),
