@@ -162,7 +162,7 @@ import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
 import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
 import { channelConfigured, classifyAlert, routeAlarm, renderAlarmMessage } from './services/alarm-route.js';
-import { sendAlarm } from './services/alarm-dispatch.js';
+import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
 import { buildSelfCheck, readSelfCheckRuntimeStatus, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
@@ -6204,6 +6204,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           });
       }
     },
+  });
+  configurePhoneDispatch(path.join(config.repoRoot, '.cds', 'phone-dispatch.json'), activeServerEventLogStore, async (item, result) => {
+    alarmLedger.record(item.channel.id, result, item.event.drill ? 'drill' : 'alert', Date.now());
+    if (result.ok && !item.event.drill && item.event.targetId && !item.event.kind.endsWith('-recovered')) {
+      await uptimeMonitor.markAlarmDelivered(item.event.targetId, item.channel.id, item.event.detectedAt);
+    }
   });
   // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
   // 不让状态页把已删的目标和它的故障再挂一个探测间隔（Codex PR #1517 P2）。

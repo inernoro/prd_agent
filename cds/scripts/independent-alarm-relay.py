@@ -59,7 +59,7 @@ def send(channel, message):
         return False
 
 
-def process(state, now, persist, sender=send, platform_incident=None):
+def process(state, now, persist, sender=send, platform_incident=None, dispatcher=None):
     channels = {c['id']: c for c in state.get('channels', []) if c.get('enabled')}
     for item in list(state.get('inbox', {}).values()):
         if now - item['receivedAt'] < 30 and not item['event'].get('drill'): continue
@@ -84,10 +84,19 @@ def process(state, now, persist, sender=send, platform_incident=None):
             incident['notified'] = not recovered
             incident['accepted'] = ok and not recovered
         elif should_send:
+            if dispatcher is not None and incident.get('pendingItemId') not in (None, item['id']):
+                continue
+            if dispatcher is not None:
+                outcome = dispatcher.submit(channel, item['message'], 'relay:' + item['id'], now)
+                if outcome is None:
+                    incident['pendingItemId'] = item['id']
+                    persist()
+                    continue
+            incident.pop('pendingItemId', None)
             delivery = {'itemId': item['id'], 'at': now, 'state': 'sending', 'accepted': False}
             incident['deliveries'].append(delivery)
             persist()
-            ok = sender(channel, item['message'])
+            ok = outcome if dispatcher is not None else sender(channel, item['message'])
             delivery.update(accepted=ok, state='accepted' if ok else 'unconfirmed')
             incident['notified'] = not recovered
             incident['accepted'] = ok and not recovered
