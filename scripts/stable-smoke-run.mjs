@@ -14,6 +14,7 @@ import {
 import { renderVisualPlan, routineVisualSequences } from './stable-smoke-visual-plan.mjs';
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
 import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
+import { freezeRecordingCasePlanEnvironment } from '../e2e/utils/stableSmokeRecording.mjs';
 import { persistRunExperience, readPools, updatePools, renderExperienceSummary } from './stable-smoke-memory.mjs';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -925,7 +926,7 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
 }
 
-function runPlaywright(environment, values, runDir, grep = '', visualCapture = null, artifactStem = environment) {
+function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', visualCapture = null, artifactStem = environment) {
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const resultPath = resolve(runDir, `${artifactStem}-results.json`);
   const htmlPath = resolve(runDir, `${artifactStem}-playwright-report`);
@@ -947,6 +948,7 @@ function runPlaywright(environment, values, runDir, grep = '', visualCapture = n
     STABLE_SMOKE_RUN_ID: values.STABLE_SMOKE_RUN_ID,
     STABLE_SMOKE_COMMIT: values.STABLE_SMOKE_COMMIT,
     STABLE_SMOKE_RUN: '1',
+    ...freezeRecordingCasePlanEnvironment(environment, allowedCaseIds),
     STABLE_SMOKE_JSON_OUTPUT: resultPath,
     STABLE_SMOKE_HTML_OUTPUT: htmlPath,
     STABLE_SMOKE_TEST_OUTPUT: testResultPath,
@@ -2017,6 +2019,7 @@ async function main() {
           'production',
           values,
           runDir,
+          grepCaseIds(productionReadOnlyGrep),
           productionReadOnlyGrep,
           null,
           'production-baseline',
@@ -2355,10 +2358,16 @@ async function main() {
       const effectiveGrep = environment === 'production' && productionSafetyGate.restricted
         ? productionSafetyGate.grep
         : policyGrep;
+      const frozenEnvironmentCases = plan?.requiredCaseIdsByEnvironment?.[environment];
+      if (!Array.isArray(frozenEnvironmentCases)) throw new Error('缺少本环境冻结清单，拒绝使用全局计划兜底授权整理');
+      const frozenAllowedCaseIds = selectRequiredCaseIds(frozenEnvironmentCases,
+        environment === 'production' && productionSafetyGate.restricted ? productionSafetyGate.grep : grep)
+        .filter(caseId => frozenEnvironmentCases.includes(caseId));
       const execution = runPlaywright(
         environment,
         values,
         runDir,
+        frozenAllowedCaseIds,
         effectiveGrep,
         captureVisual && (environment === 'cds' || !productionSafetyGate.restricted)
           ? { planPath: environment === 'cds' ? visualPlanPath : productionVisualPlanPath, outputPath: environment === 'cds' ? automaticCdsVisualOutput : resolve(runDir, 'production-visual-evidence') }
