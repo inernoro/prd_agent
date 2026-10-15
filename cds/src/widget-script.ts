@@ -471,7 +471,9 @@ export function buildWidgetScript(
       try{
         var transport=JSON.parse(msg.data);
         if(transport.state!=='connected')branchInfoFetchSequence++;
-        branchConnectionState=transport.state==='connected'?'refreshing':transport.state==='forbidden'?'forbidden':transport.state==='unavailable'?'unavailable':'reconnecting';
+        if(transport.state==='connected')branchConnectionState='refreshing';
+        else if(transport.state==='forbidden'||transport.state==='unavailable')branchConnectionState=transport.state;
+        else if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
         render();
       }catch(e){}
     });
@@ -546,7 +548,7 @@ export function buildWidgetScript(
 
     source.onerror=function(){
       if(branchEventSource!==source)return;
-      branchConnectionState='reconnecting';
+      if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
       render();
       branchInfoFetchSequence++;
       source.close();

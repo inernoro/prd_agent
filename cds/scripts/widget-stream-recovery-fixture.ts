@@ -13,6 +13,7 @@ if (process.argv[2] === '--upstream') {
   const status = process.argv[4] || 'running';
   const server = http.createServer((req, res) => {
     if (req.headers['x-cds-source-branch-id'] !== 'fixture-owned') { res.writeHead(403); res.end(); return; }
+    if (status === 'forbidden') { res.writeHead(403); res.end(); return; }
     if (req.url === '/api/branches/stream') {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.write('event: snapshot\ndata: {"branches":[]}\n\n');
@@ -62,6 +63,7 @@ if (process.argv[2] === '--upstream') {
           <h1>隔离流恢复验收</h1><p>只作用于本夹具的独立上游进程。</p>
           <button id="stop" onclick="fetch('/_fixture/stop',{method:'POST'}).then(()=>document.querySelector('#phase').textContent='上游已停')">停止自有上游</button>
           <button id="start" onclick="fetch('/_fixture/start',{method:'POST'}).then(()=>document.querySelector('#phase').textContent='上游已恢复为失败终态')">恢复自有上游</button>
+          <button id="deny" onclick="fetch('/_fixture/start-denied',{method:'POST'}).then(()=>document.querySelector('#phase').textContent='上游已恢复但拒绝权限')">恢复为权限拒绝</button>
           <button id="theme" onclick="document.body.classList.toggle('dark')">切换主题</button>
           <p id="phase" role="status">上游运行中</p><label for="business-editor">未保存的业务编辑</label><textarea id="business-editor"></textarea>
           <p id="load" data-load="${++loads}">页面加载序号 ${loads}</p>${buildWidgetScript('fixture-owned', 'fixture/main')}</html>`);
@@ -69,6 +71,7 @@ if (process.argv[2] === '--upstream') {
       }
       if (req.url === '/_fixture/stop' && req.method === 'POST') { await stop(); res.end('stopped'); return; }
       if (req.url === '/_fixture/start' && req.method === 'POST') { if (!child) await start('error'); res.end('started'); return; }
+      if (req.url === '/_fixture/start-denied' && req.method === 'POST') { if (!child) await start('forbidden'); res.end('started-denied'); return; }
       if (req.url === '/_fixture/evidence') {
         res.setHeader('content-type', 'application/json');
         const sources = ['../src/widget-script.ts', '../src/forwarder/proxy-handler.ts', '../src/forwarder/control-plane-stream.ts'];

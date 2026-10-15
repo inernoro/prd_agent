@@ -40,6 +40,25 @@ function client() {
 
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
+it.each(['forbidden', 'unavailable'])('已知%s随后真实连接关闭的onerror不能抹去原因，下一次授权补读成功才恢复', async reason => {
+  const { state } = client();
+  Source.instances[0].emit('cds.transport', { state: reason });
+  Source.instances[0].onerror?.();
+  expect(state.branchConnectionState).toBe(reason);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(Source.instances).toHaveLength(2); // 保留原重连动作，不引入永久禁重连。
+  Source.instances[1].emit('cds.transport', { state: 'reconnecting' });
+  Source.instances[1].onerror?.();
+  expect(state.branchConnectionState).toBe(reason);
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(Source.instances).toHaveLength(3);
+  Source.instances[2].emit('cds.transport', { state: 'connected' });
+  Source.instances[2].emit('snapshot', {});
+  await vi.advanceTimersByTimeAsync(1);
+  expect(state.branchConnectionState).toBe('connected');
+  expect(state.branchStatus).toBe('error');
+});
+
 it('重连快照触发真实权威补读，补到离线期间的失败终态', async () => {
   const { state } = client();
   Source.instances[0].emit('snapshot', { branches: [{ id: 'unrelated', status: 'running' }] });
