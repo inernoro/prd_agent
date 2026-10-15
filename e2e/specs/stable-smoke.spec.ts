@@ -9,7 +9,7 @@ import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
-import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi } from '../utils/stableSmokeDefaultJourney.mjs';
+import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes } from '../utils/stableSmokeDefaultJourney.mjs';
 import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
@@ -52,6 +52,23 @@ async function captureWebEvidence(page: Page, info: TestInfo, name: string, capt
   } finally {
     await harness.clearBoxes(page);
   }
+}
+async function captureDefaultJourneyEvidence(page: Page, info: TestInfo, name: string, caption: string, target: Locator, failed = false) {
+  const harness = await import(webEvidenceHarnessUrl);
+  const out = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), `default-journey-${info.testId}-r${info.retry}`);
+  await harness.box(page, target, failed ? '失败：本轮默认白桃未完成' : '输入：白桃，保持具体默认型号', { color: failed ? '#ea580c' : '#22c55e' });
+  try {
+    const evidence = await harness.shot(page, out, name, caption, {
+      skipReady: true, module: 'single-image-creation', primaryState: name, testType: '回归',
+      breadcrumb: '首页 → 视觉创作智能体 → 本轮项目 → 默认白桃',
+      environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), runId: requiredEnv('STABLE_SMOKE_RUN_ID'),
+      commit: requiredEnv('STABLE_SMOKE_COMMIT'), methodAnchor: 'method-f17',
+      status: failed ? '不通过' : '通过', failureEvidence: failed,
+      failureReason: failed ? '本轮默认白桃任务没有完成完整业务断言，具体原始失败保留于对应case与请求证据' : '',
+    });
+    harness.writeManifest(out, { runId: requiredEnv('STABLE_SMOKE_RUN_ID'), commit: requiredEnv('STABLE_SMOKE_COMMIT') });
+    await info.attach(name, { path: evidence.path, contentType: 'image/png' });
+  } finally { await harness.clearBoxes(page); }
 }
 const catalog = JSON.parse(readFileSync(
   resolve(specDir, '../../.claude/skills/stable-smoke/reference/business-function-catalog.json'),
@@ -7111,16 +7128,22 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const pool = pools.find((item) => item.isDefault);
       expect(pool, 'MAP 未配置业务默认，禁止用第一个可用模型替代').toBeTruthy();
       expect(pools.filter(item=>item.isDefault), '业务默认只能有一个').toHaveLength(1);
-      expect(pool!.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')), '默认型号不可用').toBe(true);
+      expect(pool!.models.some((model) => /^(Healthy|Degraded)$/.test(model.healthStatus || '')), '默认型号不可用或健康状态未知').toBe(true);
+      const capabilities = await readEnvelope<Parameters<typeof selectSupportedDefaultSizes>[0]>(await page.request.get(
+        `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(pool!.code)}`, { headers: authHeaders(token) },
+      ));
+      const supportedSizes = selectSupportedDefaultSizes(capabilities, pool!.code);
+      await testInfo.attach('default-model-supported-sizes', { body: JSON.stringify(supportedSizes), contentType: 'application/json' });
       await createDefaultWorkspaceThroughUi(page, { runId: requiredEnv('STABLE_SMOKE_RUN_ID'), onCreated: created => { workspace=created; } });
       await dismissBlockingTutorial(page);
       const generationStartedAt = Date.now();
       const created = await submitDefaultPeachThroughUi(page, {
         workspaceId: workspace.id, pool: pool!, onCreated: createdRunId => { runId=createdRunId; },
+        beforeSubmit: async input => { await captureDefaultJourneyEvidence(page, testInfo, '01-default-white-peach-input', '默认白桃：真实页面输入白桃，无参考图，界面保持本环境后端具体默认与1K方图；尚未提交，不证明生图成功。', input); },
+        onSubmitted: async proof => { await testInfo.attach('default-white-peach-actual-request', { body: JSON.stringify({ ...proof, submittedAt: new Date(generationStartedAt).toISOString() }), contentType: 'application/json' }); },
       });
       runId = created.runId;
       squareTargetKey = created.targetKey;
-      await testInfo.attach('default-white-peach-actual-request',{body:JSON.stringify({runId,selectedLabel:created.selectedLabel,...created.request,submittedAt:new Date(generationStartedAt).toISOString()}),contentType:'application/json'});
 
       const boundaryCreate = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-wide-boundary-run` },
@@ -7130,13 +7153,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           targetKey: wideTargetKey,
           platformId: 'logical-model',
           modelId: pool!.code,
-          size: '1536x1024',
+          size: supportedSizes.landscape.size,
           responseFormat: 'url',
           expectedImageRefCount: 0,
           x: 1100,
           y: 0,
-          w: 1501,
-          h: 1001,
+          w: supportedSizes.landscape.width,
+          h: supportedSizes.landscape.height,
         },
       });
       boundaryRunId = (await readEnvelope<{ runId: string }>(boundaryCreate)).runId;
@@ -7180,7 +7203,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-18',
         overviewJustification: '同一桌面画板同时显示方图与宽图的真实生成进度，可核对两种容器边界。',
-        caption: '1024×1024 与 1536×1024 两个真实任务都恢复到画板，仍在运行的任务保留完整进度描边。',
+        caption: `1024×1024 与本型号支持的 ${supportedSizes.landscape.size} 两个真实任务都恢复到画板，仍在运行的任务保留完整进度描边。`,
       });
 
       const resumedStream = await probeImageRunSse(page, token, runId, lastObservedSeq, 'next');
@@ -7408,6 +7431,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await testInfo.attach('single-image-download', { body: downloadedBytes, contentType: downloadedMime });
       await page.waitForTimeout(500);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
+    } catch (error) {
+      // 失败也保留真实页面；取证故障不得阻止随后的资源清理。
+      try { await captureDefaultJourneyEvidence(page, testInfo, '02-default-white-peach-failure', '默认白桃：真实点击后的页面失败或未完成，保留原始现象；本图不证明成功产物，详细失败理由由原case与请求状态给出。', page.locator('[data-tour-id="visual-editor-root"]'), true); } catch { /* 原测试失败保留，继续清理 */ }
+      throw error;
     } finally {
       for (const candidateRunId of [runId, boundaryRunId, retryRunId].filter(Boolean)) {
         const current = await page.request.get(`/api/visual-agent/image-gen/runs/${candidateRunId}`, {
@@ -7415,6 +7442,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         });
         if (current.ok()) {
           const state = await current.json() as ApiEnvelope<ImageRunDetail>;
+          await testInfo.attach(`default-task-state-${candidateRunId}`, { body: JSON.stringify({ runId: candidateRunId, status: state.data.run.status, modelId: state.data.run.modelId, logicalModelPublicId: state.data.run.logicalModelPublicId, size: state.data.run.size, done: state.data.run.done, total: state.data.run.total, failed: state.data.run.failed, items: state.data.items?.map(item => ({ requestedSize: item.requestedSize, effectiveSize: item.effectiveSize, errorMessage: item.errorMessage })) }), contentType: 'application/json' });
+          if (/Failed/i.test(state.data.run.status)) {
+            // 仅查询本轮确切requestId；不使用不支持requestId过滤的应用域宽列表。
+            try {
+              const log = await waitForGatewayLog(request, `${candidateRunId}-0-0`, 10_000);
+              await testInfo.attach(`default-failed-call-${candidateRunId}`, { body: JSON.stringify({ requestId: log.requestId, logicalModelPublicId: log.logicalModelPublicId, offeringId: log.offeringId, provider: log.provider, model: log.model, status: log.status, statusCode: log.statusCode, isFallback: log.isFallback, providerAttempts: log.providerAttempts?.map(attempt => ({ order: attempt.order, provider: attempt.provider, model: attempt.model, status: attempt.status, statusCode: attempt.statusCode })), routerTrace: log.routerTrace }), contentType: 'application/json' });
+            } catch {
+              await testInfo.attach(`default-call-chain-missing-${candidateRunId}`, { body: JSON.stringify({ requestId: `${candidateRunId}-0-0`, status: '监控未完成', recovery: '恢复专用身份对本轮确切调用的审计，不使用管理员或宽列表替代' }), contentType: 'application/json' });
+            }
+          }
           if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
             await page.request.post(`/api/visual-agent/image-gen/runs/${candidateRunId}/cancel`, {
               headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
@@ -7437,6 +7474,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
         })).status()).toBe(404);
       }
+      await testInfo.attach('default-workspace-cleanup-readback', { body: JSON.stringify({ workspaceId: workspace.id, runId: requiredEnv('STABLE_SMOKE_RUN_ID'), deleted: true, workspaceReadback: 404, taskIds: [runId, boundaryRunId, retryRunId].filter(Boolean), taskReadback: 404 }), contentType: 'application/json' });
       for (const artifact of generatedArtifacts) {
         const remaining = await readEnvelope<{ items: UploadArtifactItem[] }>(await page.request.get(
           `/api/visual-agent/upload-artifacts?requestId=${encodeURIComponent(artifact.requestId)}`,

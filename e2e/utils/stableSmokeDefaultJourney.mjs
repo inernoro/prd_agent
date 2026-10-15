@@ -1,7 +1,8 @@
 export function assertDefaultPeachRequest({ pool, selectedLabel, request }) {
   if (!pool?.isDefault || !pool.code || !pool.name || /默认池|default\s*pool|图片生成默认池/i.test(pool.name)) throw Error('后端未明确配置具体默认型号');
   if (!selectedLabel?.includes(pool.name) || /默认池|图片生成默认池/i.test(selectedLabel)) throw Error('界面默认型号与后端配置不一致');
-  if (request?.prompt !== '白桃' || request?.size !== '1024x1024') throw Error('真人默认主例必须为白桃1024方图');
+  const prompts = ['白桃', 'Generate an image based on the following description:\n白桃'];
+  if (!prompts.includes(request?.prompt) || request?.size !== '1024x1024') throw Error('真人默认主例必须为白桃1024方图');
   if (request.modelId !== pool.code || request.platformId !== 'logical-model') throw Error('界面选择与真实发送模型不一致');
   if (request.expectedImageRefCount !== 0 || (request.imageRefs?.length || 0) !== 0) throw Error('无参考主例不得静默带入引用');
   if (!request.targetKey) throw Error('真实请求缺少画布任务身份');
@@ -24,7 +25,7 @@ export async function createDefaultWorkspaceThroughUi(page, { runId, onCreated }
   return body.data.workspace;
 }
 
-export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreated,beforeSubmit}) {
+export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreated,beforeSubmit,onSubmitted}) {
   const model=page.getByRole('button',{name:'模型偏好',exact:true});
   await model.filter({hasText:pool.name}).waitFor({state:'visible',timeout:30000});
   const selectedLabel=(await model.innerText()).trim();
@@ -43,6 +44,19 @@ export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreat
   if(!response.ok()||!body.success||!body.data?.runId)throw Error(`真人默认生图提交失败：${body.error?.code||response.status()}`);
   onCreated(body.data.runId);
   const request=response.request().postDataJSON();
+  const proof={runId:body.data.runId,targetKey:request.targetKey,selectedLabel,request:{prompt:request.prompt,size:request.size,modelId:request.modelId,platformId:request.platformId,expectedImageRefCount:request.expectedImageRefCount,imageRefCount:(request.imageRefs||[]).length}};
+  if(onSubmitted)await onSubmitted(proof);
   assertDefaultPeachRequest({pool,selectedLabel,request});
-  return {runId:body.data.runId,targetKey:request.targetKey,selectedLabel,request:{prompt:request.prompt,size:request.size,modelId:request.modelId,platformId:request.platformId,expectedImageRefCount:request.expectedImageRefCount}};
+  return proof;
+}
+
+export function selectSupportedDefaultSizes(info,modelId) {
+  if(!info?.matched||info.modelId!==modelId||info.sizesNotApplicable)throw Error('[configuration/model-size] 当前具体型号没有可核对的尺寸合同');
+  const sizes=Object.values(info.sizesByResolution||{}).flat().map(x=>x.size).filter(x=>/^\d+x\d+$/.test(x||''));
+  const parsed=[...new Set(sizes)].map(size=>{const [width,height]=size.split('x').map(Number);return {size,width,height};}).filter(x=>x.width>0&&x.height>0);
+  const square=parsed.find(x=>x.size==='1024x1024');
+  const choose=(predicate,preferred)=>parsed.find(x=>x.size===preferred&&predicate(x))||parsed.filter(predicate).sort((a,b)=>a.width*a.height-b.width*b.height)[0];
+  const landscape=choose(x=>x.width>x.height,'1536x1024'),portrait=choose(x=>x.width<x.height,'1024x1536');
+  if(!square||!landscape||!portrait)throw Error('[configuration/model-size] 具体型号未公布本例所需方横竖尺寸，不猜测或强制不支持尺寸');
+  return {square,landscape,portrait};
 }
