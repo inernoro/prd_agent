@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "stsmk-clear-en-say-v1",
+  "sourceText": "The white peach is on the table.",
+  "expectedTranscript": "The white peach is on the table.",
+  "language": "en-US",
+  "mimeType": "audio/wav",
+  "normalization": "nfkc-space-ascii-case-terminal-punctuation-v1",
+  "byteLength": 63306,
+  "durationSeconds": 1.9769375,
+  "sha256": "39cb64c3b6833046515ae12dda9a1c4c5662c03bf729c1db9bf4916d29c54287",
+  "provenance": {
+    "sourceKind": "authored-complete-sentence",
+    "referenceBasis": "synthesis-input-not-asr",
+    "engine": "macos-say",
+    "voice": "Samantha",
+    "requestedRateWordsPerMinute": 145,
+    "humanListeningVerified": false,
+    "inputCommand": "say -v Samantha -r 145 -o speech.aiff 'The white peach is on the table.'",
+    "conversion": "ffmpeg: full input, PCM s16le, 16000 Hz, mono, apad=pad_dur=0.25, metadata removed; no trimming",
+    "format": "RIFF/WAVE PCM16 mono 16000Hz",
+    "boundary": "Source text is independent of ASR output; signal checks and successful synthesis do not constitute human listening approval or proof of ASR accuracy."
+  }
+}
