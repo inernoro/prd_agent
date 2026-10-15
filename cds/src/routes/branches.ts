@@ -1725,6 +1725,7 @@ interface RunServiceWithPortRetryOptions {
   customEnv?: Record<string, string>;
   requestId?: string | null;
   operationId?: string | null;
+  operationGeneration?: number;
   actor?: string | null;
   trigger?: string | null;
   assertCurrent?: (step: string) => void;
@@ -1826,6 +1827,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
         {
           requestId: options.requestId ?? null,
           operationId: options.operationId ?? null,
+          operationGeneration: options.operationGeneration,
           actor: options.actor ?? null,
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
@@ -1852,6 +1854,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
       }
       return;
     } catch (err) {
+      options.assertCurrent?.(`before candidate error ${options.profile.id}`);
       if (replacing && options.service.pendingRuntime?.containerName === target.containerName) {
         options.service.pendingRuntime = runtimeRef(target);
         options.stateService.save([{ kind: 'branches', id: options.entry.id }]);
@@ -1859,6 +1862,7 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
       if (!isPortConflictError(err) || attempt === maxAttempts) throw err;
       const oldPort = target.hostPort;
       const listeningPorts = await collectListeningPorts(options.shell);
+      options.assertCurrent?.(`after port inspection ${options.profile.id}`);
       listeningPorts.add(oldPort);
       const newPort = options.stateService.allocatePort(options.config.portStart, listeningPorts);
       target.hostPort = newPort;
@@ -13999,6 +14003,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               actor: resolveActorFromRequest(req),
               trigger: triggerFromRequest(req),
               assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+              operationGeneration: branchOperationLease?.generation,
               // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
@@ -14125,6 +14130,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               ready = ready ? probeReady : probeReady;
             }
 
+            assertBranchOperationCurrent(branchOperationLease, `after-readiness-${profile.id}`);
             if (ready) {
               svc.status = 'running';
               svc.errorMessage = undefined;
@@ -14143,8 +14149,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 timestamp: new Date().toISOString(),
               });
             } else {
+              const errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+              assertBranchOperationCurrent(branchOperationLease, `after-readiness-error-${profile.id}`);
               svc.status = 'error';
-              svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+              svc.errorMessage = errorMessage;
               logDeploy(id, `${profile.name} 就绪探测超时`);
               logEvent({
                 step: `build-${profile.id}`,
@@ -14157,6 +14165,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             stateService.save();
           } catch (err) {
             if (err instanceof BranchOperationSupersededError) throw err;
+            assertBranchOperationCurrent(branchOperationLease, `before-service-error-${profile.id}`);
             svc.status = 'error';
             svc.errorMessage = (err as Error).message;
             const elapsed = Date.now() - serviceStartTime;
@@ -15061,6 +15070,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           actor: resolveActorFromRequest(req),
           trigger: triggerFromRequest(req),
           assertCurrent: (step) => assertBranchOperationCurrent(branchOperationLease, step),
+          operationGeneration: branchOperationLease?.generation,
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();
@@ -15154,6 +15164,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             svc.containerName,
           );
         }
+        assertBranchOperationCurrent(branchOperationLease, `after-readiness-${profile.id}`);
         if (ready) {
           svc.status = 'running';
           svc.errorMessage = undefined;
@@ -15164,13 +15175,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.deployedMode = svc.deployedMode || effectiveProfile.activeDeployMode || '';
           logDeploy(id, `${profile.name} 启动成功 OK`);
         } else {
+          const errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+          assertBranchOperationCurrent(branchOperationLease, `after-readiness-error-${profile.id}`);
           svc.status = 'error';
-          svc.errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
+          svc.errorMessage = errorMessage;
           logDeploy(id, `${profile.name} 就绪探测超时`);
         }
         stateService.save();
       } catch (err) {
         if (err instanceof BranchOperationSupersededError) throw err;
+        assertBranchOperationCurrent(branchOperationLease, `before-service-error-${profile.id}`);
         svc.status = 'error';
         svc.errorMessage = (err as Error).message;
         logEvent({

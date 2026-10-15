@@ -52,6 +52,8 @@ export interface DeploymentRunServiceOptions {
   now?: () => Date;
   idFactory?: () => string;
   maxEvents?: number;
+  /** 仅认可持有原代次资格、未超过截止时间的实际阶段待办，不续写假心跳。 */
+  isExecutionWaiting?: (run: DeploymentRun, now: Date) => boolean;
 }
 
 export interface DeploymentRunEventsAfter {
@@ -64,6 +66,7 @@ export class DeploymentRunService {
   private readonly now: () => Date;
   private readonly idFactory: () => string;
   private readonly maxEvents: number;
+  private readonly isExecutionWaiting: NonNullable<DeploymentRunServiceOptions['isExecutionWaiting']>;
   private readonly acceptanceWrites = new Map<string, Promise<void>>();
   private readonly boundCoordinators = new Set<BranchOperationCoordinator>();
 
@@ -74,6 +77,7 @@ export class DeploymentRunService {
     this.now = options.now || (() => new Date());
     this.idFactory = options.idFactory || (() => `dr_${crypto.randomBytes(12).toString('hex')}`);
     this.maxEvents = Math.max(1, options.maxEvents || 500);
+    this.isExecutionWaiting = options.isExecutionWaiting || (() => false);
   }
 
   async begin(input: BeginDeploymentRunInput): Promise<DeploymentRun> {
@@ -340,6 +344,7 @@ export class DeploymentRunService {
       if (TERMINAL_STATUSES.has(run.status)) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || now.getTime() - heartbeat < staleAfterMs) continue;
+      if (this.isExecutionWaiting(run, now)) continue;
       reconciled.push(this.fail(run.id, {
         code: 'cds.run.interrupted',
         owner: 'cds',
@@ -349,6 +354,12 @@ export class DeploymentRunService {
         evidenceRefs: [],
         suggestedAction: '确认执行器与容器状态后重新部署',
       }));
+      if (run.operationId && run.operationGeneration !== undefined) {
+        for (const coordinator of this.boundCoordinators) coordinator.revokeInterrupted({
+          operationId: run.operationId, generation: run.operationGeneration,
+          branchId: run.branchId, projectId: run.projectId, profileId: run.profileId,
+        });
+      }
     }
     return reconciled;
   }

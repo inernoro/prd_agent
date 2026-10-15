@@ -82,3 +82,11 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 |------|------|
 | 版本双值对账 | `prd-api/Dockerfile`（build 阶段 `ARG GIT_COMMIT` + `-p:SourceRevisionId`）、`prd-api/src/PrdAgent.Core/Diagnostics/BuildIdentity.cs`、`prd-api/src/PrdAgent.Api/Program.cs` 的 `VersionInfo`、`prd-api/tests/PrdAgent.Tests/BuildIdentityTests.cs`、`.claude/rules/config-runtime-drift.md` 第三点五节；未覆盖项：`llmgw/console-api/Dockerfile`、`llmgw/serving/Dockerfile` |
 | 总览 | `.github/workflows/branch-image.yml`、`cds-compose.yml`、`cds/src/services/{container,deploy-runtime,github-webhook-dispatcher,state,branch-events}.ts`、`cds/src/routes/{branches,github-webhook}.ts`、`cds/web/src/pages/BranchListPage.tsx`、`cds/src/services/compose-parser.ts` |
+
+## 2026-10-15 部署排队与中断复查
+
+实际运行版本的三个验收部署已结束，不能继续称为排队中：文件和画布部署被心跳收割器判中断；问答部署仅部分服务启动，其他服务等待超时。同期源码构建闸为空、CPU 未饱和，启动阶段却因内存余量排队，并保留十六项历史启动预约。容量保护本身不能通过提高上限或停止其他项目来绕过。
+
+当前恢复候选分别处理：失败运行与执行资格同步结束；合法阶段排队保留原二十分钟截止，不伪造心跳；迟到就绪及错误结果不得覆盖后继；启动时只读核对历史预约，未知身份或创建结果继续保留。单元与本地 HTTP 红绿回归不代表共享 CDS 已恢复，只有实际版本切换、目标部署完成、公网入口及功能闭环证据齐备后才能关闭本次故障。
+
+独立未关闭项：增量构建允许未变组件没有目标提交镜像，但当前产物准入在等价复用前就拒绝该组件；消费端和远端回执还有第二次精确提交检查。已有跨模块反例，不能靠每次全量构建消账。后续须在准入、实际启动与回执中使用同一等价证明，固定真实镜像摘要和平台，保留镜像实际提交与目标提交的区别；缺证明保持等待，不冒充目标版本。当前三个业务候选已有完整固定镜像，先恢复启动链路，不借本次窄修复宣布这一独立契约缺口已解决。

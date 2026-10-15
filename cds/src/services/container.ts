@@ -701,6 +701,44 @@ export class ContainerStopUnconfirmedError extends Error {
 
 export class ContainerService {
   private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
+
+  /** 冷恢复与已确认结束的创建共用同一真实盘点；未知或在途创建不能仅凭缺席快照释放。 */
+  async reconcileDeploymentMemoryReservations(branches: readonly BranchEntry[], options: {
+    creationSettled: (owner: DeploymentPhaseOwner, runtime: import('../types.js').ServiceRuntimeRef) => boolean;
+  } = { creationSettled: () => false }): Promise<{ released: string[]; retained: string[] }> {
+    const deadline = performance.now() + 15_000;
+    let checked = 0;
+    const refs = new Map<string, { entry: BranchEntry; profileId: string; runtime: import('../types.js').ServiceRuntimeRef } | null>();
+    for (const entry of branches) for (const service of Object.values(entry.services)) for (const runtime of serviceRuntimeRefs(service)) {
+      const previous = refs.get(runtime.containerName);
+      if (refs.has(runtime.containerName) && (!previous || previous.entry.id !== entry.id
+        || previous.entry.projectId !== entry.projectId || previous.profileId !== service.profileId)) refs.set(runtime.containerName, null);
+      else refs.set(runtime.containerName, { entry, profileId: service.profileId, runtime: runtimeRef(runtime) });
+    }
+    return deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner) => {
+      const item = refs.get(key);
+      if (!item || item.entry.id !== owner.branchId || item.entry.projectId !== owner.projectId
+        || item.profileId !== owner.profileId || !options.creationSettled(owner, item.runtime)) return false;
+      const remaining = deadline - performance.now();
+      if (checked >= 64 || remaining <= 0) return false;
+      checked += 1;
+      const unused = await this.isDeploymentRuntimeUnused(item.entry, item.profileId, item.runtime, Math.min(5000, remaining));
+      return unused && options.creationSettled(owner, item.runtime);
+    });
+  }
+
+  private async isDeploymentRuntimeUnused(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, timeoutMs = 5000): Promise<boolean> {
+    const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"restarting":{{json .State.Restarting}},"status":{{json .State.Status}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}}}';
+    const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`,
+      { timeout: Math.max(1, Math.floor(timeoutMs)), executionLane: 'observation' });
+    if (result.exitCode !== 0) return isDockerNoSuchContainer(result);
+    let value: { id?: string; running?: boolean; restarting?: boolean; status?: string; project?: string; branch?: string; profile?: string };
+    try { value = JSON.parse(result.stdout); } catch { return false; }
+    return typeof value?.id === 'string' && /^[a-f0-9]{64}$/.test(value.id)
+      && (!runtime.containerId || value.id === runtime.containerId)
+      && value.project === (entry.projectId || '_unknown') && value.branch === entry.id && value.profile === profileId
+      && value.running === false && value.restarting === false && ['created', 'exited', 'dead'].includes(value.status || '');
+  }
   async inspectOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, requireRunning = true): Promise<import('../types.js').ServiceRuntimeRef | null> {
     const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}},"networks":{{json .NetworkSettings.Networks}}}';
     const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`, { timeout: 5000, executionLane: 'observation' });
@@ -722,11 +760,12 @@ export class ContainerService {
   }
   async removeOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef,
     context: ContainerRemoveContext = {}): Promise<void> {
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(runtime.containerName);
     const owned = await this.inspectOwnedRuntime(entry, profileId, runtime, false);
     context.assertCurrent?.('after runtime retirement identity');
     if (!owned) {
       if (!runtime.containerId && runtime.creationIssued) throw new Error('迟到创建身份未确认，保留回收责任');
-      deploymentPhaseBudget.releaseMemory(runtime.containerName);
+      releaseMemory();
       return;
     }
     await this.remove(owned.containerId!, context);
@@ -734,7 +773,7 @@ export class ContainerService {
     const after = await this.shell.exec(`docker inspect --format ${this.shellQuote('{{.Id}}')} ${this.shellQuote(owned.containerId!)}`,
       { timeout: 5000, executionLane: 'observation' });
     if (after.exitCode === 0 || !/No such (?:container|object):/i.test(combinedOutput(after))) throw new Error('旧运行身份回收未确认，保留责任及容量占用');
-    deploymentPhaseBudget.releaseMemory(runtime.containerName);
+    releaseMemory();
   }
   async connectReplacementPeer(
     entry: BranchEntry, profile: BuildProfile, service: ServiceState, network: string,
@@ -781,7 +820,11 @@ export class ContainerService {
   async stopRuntimeGroup(service: ServiceState, reason?: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
     const failures: unknown[] = [];
     for (const runtime of serviceRuntimeRefs(service)) {
-      try { await this.stop(runtime.containerId || runtime.containerName, reason, context); }
+      const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(runtime.containerName);
+      try {
+        await this.stop(runtime.containerId || runtime.containerName, reason, context);
+        releaseMemory();
+      }
       catch (error) { failures.push(error); }
     }
     if (failures.length === 1) throw failures[0];
@@ -1352,6 +1395,7 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
+      operationGeneration?: number;
       assertCurrent?: (step: string) => void;
       preserveContainerNames?: readonly string[];
       onRuntimeCreated?: (service: ServiceState) => Promise<void>;
@@ -1387,9 +1431,13 @@ export class ContainerService {
     } = {},
   ): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
-    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
+    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id,
+      operationId: context.operationId, operationGeneration: context.operationGeneration };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
+    let releaseOwnMemory: (() => boolean) | undefined;
+    let installedPhaseOwner: { owner: DeploymentPhaseOwner; check?: () => void } | undefined;
+    let creationIssued = false, creationSettled = false;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -1909,12 +1957,16 @@ export class ContainerService {
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
       releaseStart = await deploymentPhaseBudget.acquire('start', phaseOwner,
         { check: phaseCheck, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+      releaseOwnMemory = deploymentPhaseBudget.captureMemoryRelease(service.containerName, phaseOwner);
       phaseCheck();
-      this.runtimePhaseOwners.set(service.containerName, { owner: phaseOwner, check: phaseCheck });
+      installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
+      this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
       phaseCheck();
+      creationIssued = true;
       const result = await shell.exec(runCmd);
+      creationSettled = true;
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
           severity: 'error',
@@ -2060,7 +2112,16 @@ export class ContainerService {
         throw err;
       }
     } catch (error) {
-      this.runtimePhaseOwners.delete(service.containerName);
+      if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) === installedPhaseOwner) this.runtimePhaseOwners.delete(service.containerName);
+      if (releaseStart) {
+        releaseStart(); releaseStart = undefined;
+        // 命令未发出可直接退还；发出但结果未知时保留，确定结束后仍须真实盘点。
+        if (!creationIssued) releaseOwnMemory?.();
+        else if (creationSettled) await deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner) =>
+          key === service.containerName && owner.operationId === context.operationId
+            && owner.operationGeneration === context.operationGeneration
+            && await this.isDeploymentRuntimeUnused(entry, profile.id, runtimeRef(service)));
+      }
       throw error;
     } finally {
       releaseStart?.();
@@ -2352,12 +2413,15 @@ export class ContainerService {
     containerName?: string,
   ): Promise<boolean> {
     const scope = containerName ? this.runtimePhaseOwners.get(containerName) : undefined;
+    const releaseMemory = containerName ? deploymentPhaseBudget.captureMemoryRelease(containerName) : undefined;
     try {
       const ready = await deploymentPhaseBudget.run('ready', scope?.owner || {},
         () => this.waitForReadinessUnbudgeted(hostPort, probe, onAttempt, onOutput, containerName), { check: scope?.check });
-      if (ready && containerName) deploymentPhaseBudget.releaseMemory(containerName);
+      if (ready) { scope?.check?.(); releaseMemory?.(); }
       return ready;
-    } finally { if (containerName) this.runtimePhaseOwners.delete(containerName); }
+    } finally {
+      if (containerName && scope && this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
+    }
   }
 
   private async waitForReadinessUnbudgeted(
@@ -2688,6 +2752,7 @@ export class ContainerService {
   }
 
   private async stopUnbudgeted(containerName: string, reason: string, context: Parameters<ContainerService['stop']>[2] = {}): Promise<void> {
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName);
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
       severity: 'info',
@@ -2757,7 +2822,7 @@ export class ContainerService {
       },
     });
     if (!confirmed) throw new ContainerStopUnconfirmedError(typeof state?.running === 'boolean' ? state.running : undefined);
-    deploymentPhaseBudget.releaseMemory(containerName);
+    releaseMemory();
   }
 
   /**
@@ -2774,6 +2839,7 @@ export class ContainerService {
   }
 
   private async removeUnbudgeted(containerName: string, context: ContainerRemoveContext): Promise<void> {
+    const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName);
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
@@ -2808,7 +2874,7 @@ export class ContainerService {
     const stopResult = await shell.exec(`docker stop ${containerName}`);
     const rmResult = await shell.exec(`docker rm ${containerName}`);
     const completion = classifyRemoveCompletion(rmResult);
-    if (completion.severity !== 'error') deploymentPhaseBudget.releaseMemory(containerName);
+    if (completion.severity !== 'error') releaseMemory();
     this.recordContainerEvent({
       severity: completion.severity,
       source: 'cds-container-service',

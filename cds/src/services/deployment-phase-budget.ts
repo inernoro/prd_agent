@@ -48,7 +48,8 @@ export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null
 }
 
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
-export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null }
+export const DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS = 20 * 60_000;
+export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null; operationGeneration?: number }
 interface Request {
   owner: DeploymentPhaseOwner; check?: () => void; signal?: AbortSignal;
   resolve: (release: () => void) => void; reject: (error: Error) => void;
@@ -83,6 +84,45 @@ export class DeploymentPhaseBudget {
     this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, value]) => ({ key, ...value })); }
+
+  /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
+  captureMemoryRelease(key: string, owner?: DeploymentPhaseOwner): () => boolean {
+    const reservation = this.memoryReservations.get(key);
+    const owned = !owner || reservation && (['projectId', 'branchId', 'profileId', 'operationId', 'operationGeneration'] as const)
+      .every(field => reservation.owner[field] === owner[field]);
+    return () => {
+      if (!owned || !reservation || this.memoryReservations.get(key) !== reservation) return false;
+      this.releaseMemory(key); return true;
+    };
+  }
+
+  /** 只观测真实、有界且资格仍有效的排队，不把执行中或已过期任务伪装成等待。 */
+  waitingOperation(operationId: string, generation: number): { phase: DeploymentPhase; enqueuedAt: number; deadlineAt: number } | undefined {
+    if (!operationId || !Number.isSafeInteger(generation) || generation < 1) return undefined;
+    for (const [phase, queue] of this.waiting) for (const request of queue) {
+      if (request.owner.operationId !== operationId || request.owner.operationGeneration !== generation
+        || !request.check || request.signal?.aborted || Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) continue;
+      try { request.check?.(); } catch { continue; }
+      return { phase, enqueuedAt: request.enqueuedAt, deadlineAt: request.enqueuedAt + DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS };
+    }
+    return undefined;
+  }
+
+  /** 真实盘点只释放同一份已终结预约；读取期间的新预约或在途创建不能被旧回执清掉。 */
+  async reconcileMemoryReservations(unused: (key: string, owner: DeploymentPhaseOwner) => Promise<boolean>): Promise<{ released: string[]; retained: string[] }> {
+    const released: string[] = [], retained: string[] = [];
+    const activeStart = (key: string) => [...(this.active.get('start') || [])].some(request => request.reservationKey === key);
+    for (const [key, reservation] of [...this.memoryReservations]) {
+      let confirmed = false;
+      if (!activeStart(key)) {
+        try { confirmed = await unused(key, { ...reservation.owner }); } catch { /* 未确认仍保留 */ }
+      }
+      if (confirmed && this.memoryReservations.get(key) === reservation && !activeStart(key)) {
+        this.releaseMemory(key); released.push(key);
+      } else retained.push(key);
+    }
+    return { released, retained };
+  }
   private memoryAllows(memoryMB: number, key?: string): boolean {
     const available = this.availableMemoryMB();
     const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
@@ -126,7 +166,7 @@ export class DeploymentPhaseBudget {
       for (let index = queue.length - 1; index >= 0; index--) {
         const request = queue[index];
         try { request.check?.(); if (request.signal?.aborted) throw new Error('部署阶段等待已取消');
-          if (Date.now() - request.enqueuedAt > 1200000) throw new Error('部署阶段等待超时，旧服务保持可用');
+          if (Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new Error('部署阶段等待超时，旧服务保持可用');
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
       while (active.size < this.limits[phase] && queue.length) {
@@ -149,7 +189,7 @@ export class DeploymentPhaseBudget {
   async run<T>(phase: DeploymentPhase, owner: DeploymentPhaseOwner, task: () => Promise<T>,
     options: Parameters<DeploymentPhaseBudget['acquire']>[2] = {}): Promise<T> {
     const release = await this.acquire(phase, owner, options);
-    try { options.check?.(); return await task(); } finally { release(); }
+    try { options.check?.(); const result = await task(); options.check?.(); return result; } finally { release(); }
   }
 }
 

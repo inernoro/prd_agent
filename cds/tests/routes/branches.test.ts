@@ -5567,6 +5567,61 @@ describe('Branch Routes', () => {
       expect(events.map((event) => event.action)).toContain('branch.operation.cancelled');
     });
 
+    it.each(['/deploy', '/deploy/api'].flatMap(endpoint =>
+      ['ready', 'probe-error', 'diagnostic', 'port-error', 'port-inspection'].map(stage => [endpoint, stage])))
+    ('心跳收割后%s的%s迟到结果不能覆盖后继服务状态', async (endpoint, stage) => {
+      await request(server, 'POST', '/api/build-profiles', {
+        id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
+      });
+      const id = 'stale-readiness';
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/stale-readiness',
+        worktreePath: path.join(tmpDir, 'worktrees', id), status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      let successor: ReturnType<BranchOperationCoordinator['begin']> | undefined;
+      let probeVisited = false;
+      let portFailure = false;
+      const takeOver = () => {
+        const [old] = deploymentRunService.list({ branchId: id });
+        expect(deploymentRunService.reconcileInterrupted(new Date(Date.now() + 16 * 60_000)).map(run => run.id)).toContain(old.id);
+        successor = branchOperationCoordinator.begin({ projectId: 'default', branchId: id,
+          kind: 'deploy', trigger: 'manual', commitSha: 'b'.repeat(40), commitPinned: true });
+        expect(successor.status).toBe('started');
+        const branch = stateService.getBranch(id)!;
+        branch.services.api.status = 'stopped';
+        branch.services.api.errorMessage = '后继操作保留的状态';
+        branch.status = 'idle';
+      };
+      const originalExec = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (stage === 'port-inspection' && portFailure && command === 'ss -H -ltn' && !successor) takeOver();
+        return originalExec(command, options);
+      };
+      vi.spyOn(containerService, 'runService').mockImplementation(async () => {
+        if (!stage.startsWith('port-')) return;
+        probeVisited = true; portFailure = true;
+        if (stage === 'port-error') takeOver();
+        throw new Error('Bind for 0.0.0.0:10001 failed: port is already allocated');
+      });
+      vi.spyOn(containerService, 'waitForReadiness').mockImplementation(async () => {
+        probeVisited = true;
+        if (stage === 'diagnostic') return false;
+        takeOver();
+        if (stage === 'probe-error') throw new Error('迟到探测错误');
+        return true;
+      });
+      vi.spyOn(containerService, 'getLogs').mockImplementation(async () => {
+        if (probeVisited && !successor) takeOver();
+        return 'Error: old runtime failed';
+      });
+      const response = await request(server, 'POST', `/api/branches/${id}${endpoint}`, { commitSha: 'a'.repeat(40) });
+      expect(response.status).toBe(200);
+      expect(probeVisited).toBe(true);
+      expect(successor?.lease?.isCurrent()).toBe(true);
+      expect(stateService.getBranch(id)?.services.api).toMatchObject({ status: 'stopped', errorMessage: '后继操作保留的状态' });
+      expect(stateService.getBranch(id)?.status).toBe('idle');
+      expect(deploymentRunService.list({ branchId: id })[0]).toMatchObject({ status: 'failed', failure: { code: 'cds.run.interrupted' } });
+      if (successor?.lease) branchOperationCoordinator.completeAll(successor.lease, 'completed');
+    });
+
     it('manual delete after pre-run cleanup still fences before docker run', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api',
