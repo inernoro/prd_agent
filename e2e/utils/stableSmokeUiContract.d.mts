@@ -23,6 +23,7 @@ export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenti
 export function blockPublicCommunityReads(surface: Page | BrowserContext): Promise<void>;
 export function blockUnscopedBackgroundReads(surface: Page | BrowserContext): Promise<void>;
 export function blockUnscopedObservationFixture(test: { skip(condition: boolean, description: string): void }, environment: string, observation: 'authorization-health' | 'gateway-failure-health' | 'dashboard-notifications'): void;
+export function blockRetiredAsrPoolAudit(test: { skip(condition: boolean, description: string): void }, environment: string): void;
 export function readGatewayNoCallLogProbe(request: APIRequestContext, options: {
   baseUrl: string; headers: Record<string, string>; runId: string; nonce?: string;
 }): Promise<{ requestId: string; items: never[]; total: number; pageSize: number; modelCalls: number; proofBoundary: string }>;
