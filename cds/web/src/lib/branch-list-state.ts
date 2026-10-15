@@ -1,6 +1,8 @@
 export interface BranchListItem {
   id: string;
   projectId?: string;
+  services?: unknown;
+  resources?: unknown[];
 }
 
 export interface BranchListSlice<T extends BranchListItem> {
@@ -45,6 +47,16 @@ function withGoodBranches<T extends BranchListItem>(
     lastKnownGoodBranches: branches.length > 0 ? branches : state.lastKnownGoodBranches,
     projectWarning: warning,
   };
+}
+
+function mergeBranchUpdate<T extends BranchListItem>(current: T, update: Partial<T>): T {
+  const merged = { ...current, ...update };
+  // GET resources are a derived projection of services. Incremental streams
+  // carry the new graph, but no resource projection: force the card's existing
+  // derivation to use current ports, container names and statuses.
+  if (Object.prototype.hasOwnProperty.call(update, 'services')
+    && !Object.prototype.hasOwnProperty.call(update, 'resources')) delete merged.resources;
+  return merged;
 }
 
 export function reduceBranchListState<T extends BranchListItem>(
@@ -133,7 +145,7 @@ export function reduceBranchListState<T extends BranchListItem>(
     }
     const exists = state.branches.some((branch) => branch.id === action.branch.id);
     const branches = exists
-      ? state.branches.map((branch) => (branch.id === action.branch.id ? { ...branch, ...action.branch } : branch))
+      ? state.branches.map((branch) => (branch.id === action.branch.id ? mergeBranchUpdate(branch, action.branch) : branch))
       : [action.branch, ...state.branches];
     return {
       state: withGoodBranches(state, branches, undefined),
@@ -148,7 +160,7 @@ export function reduceBranchListState<T extends BranchListItem>(
     if (!exists) return { state, needsEmptyRecheck: false };
     const branches = state.branches.map((branch) => (
       branch.id === action.branchId && branch.projectId === action.projectId
-        ? { ...branch, ...action.patch, projectId: branch.projectId }
+        ? { ...mergeBranchUpdate(branch, action.patch), projectId: branch.projectId }
         : branch
     ));
     return {

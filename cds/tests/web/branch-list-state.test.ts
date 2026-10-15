@@ -24,6 +24,30 @@ function slice(items: TestBranch[]): BranchListSlice<TestBranch> {
 }
 
 describe('branch list state reducer', () => {
+  it.each(['sseBranchUpsert', 'sseBranchPatch'] as const)('invalidates old resource chips on %s services changes', type => {
+    const original = { ...branches(1)[0], services: { api: { hostPort: 9000 } },
+      resources: [{ id: 'app:api', port: 9000, containerName: 'old-api' }] };
+    const services = { api: { hostPort: 11000 } };
+    const action = type === 'sseBranchUpsert'
+      ? { type, projectId: 'prd-agent', branch: { ...branches(1)[0], services } }
+      : { type, projectId: 'prd-agent', branchId: original.id, patch: { services } };
+    const next = reduceBranchListState(slice([original]), action).state.branches[0];
+    expect(next.services).toBe(services);
+    expect(next.resources).toBeUndefined();
+    expect(original.resources[0].port).toBe(9000);
+  });
+
+  it('keeps a supplied resource projection and preserves it across metadata-only patches', () => {
+    const original = { ...branches(1)[0], resources: [{ id: 'app:api', port: 9000 }] };
+    const resources = [{ id: 'app:api', port: 11000 }];
+    const updated = reduceBranchListState(slice([original]), { type: 'sseBranchUpsert', projectId: 'prd-agent',
+      branch: { ...original, services: { api: { hostPort: 11000 } }, resources } }).state;
+    expect(updated.branches[0].resources).toBe(resources);
+    const metadata = reduceBranchListState(updated, { type: 'sseBranchPatch', projectId: 'prd-agent',
+      branchId: original.id, patch: { status: 'idle' } }).state;
+    expect(metadata.branches[0].resources).toBe(resources);
+  });
+
   it('keeps the current list when SSE snapshot is empty', () => {
     const current = slice(branches(12));
     const result = reduceBranchListState(current, {

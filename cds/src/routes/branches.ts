@@ -15702,6 +15702,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (branchOperationCoordinator && !branchOperationLease) return;
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
     const stopAttribution = stopAttributionFromRequest(req);
+    const publishStopStatus = () => branchEvents.emitEvent({
+      type: 'branch.status',
+      payload: { branchId: id, projectId: entry.projectId || 'default', status: entry.status, ts: nowIso() },
+    });
 
     // ── Cluster-aware stop ──
     //
@@ -15722,6 +15726,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
         stateService.save();
+        publishStopStatus();
         const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/stop`;
         const upstream = await fetch(upstreamUrl, {
           method: 'POST',
@@ -15763,6 +15768,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           note: entry.lastStopReason,
         });
         stateService.save();
+        publishStopStatus();
         const candidateReconciliationPending = Boolean(unresolvedCandidateRun(stateService, id));
         res.json({ message: candidateReconciliationPending ? `已请求执行器 ${remoteExecutor.id} 停止当前服务；候选实例仍待对账`
           : `已请求执行器 ${remoteExecutor.id} 停止所有服务`, ...(candidateReconciliationPending ? { candidateReconciliationPending: true } : {}) });
@@ -15787,6 +15793,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       // Actually stop containers
+      publishStopStatus();
       for (const svc of Object.values(entry.services)) {
         try {
           await containerService.stop(svc.containerName, stopAttribution.reason, {
@@ -15876,6 +15883,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         note: stopAttribution.reason,
       });
       stateService.save();
+      publishStopStatus();
       const candidateReconciliationPending = Boolean(unresolvedCandidateRun(stateService, id));
       res.json({ message: candidateReconciliationPending ? '已请求停止当前服务；候选实例仍待对账' : '所有服务已停止',
         ...(candidateReconciliationPending ? { candidateReconciliationPending: true } : {}) });

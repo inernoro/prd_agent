@@ -27,6 +27,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { branchEvents, nowIso } from '../../src/services/branch-events.js';
 import { reduceBranchListState } from '../../web/src/lib/branch-list-state.js';
 import { branchRuntimeBadge } from '../../web/src/lib/deploy-runtime-badge.js';
+import { buildBranchResources } from '../../web/src/lib/resources.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -111,6 +112,8 @@ describe('GET /api/branches/stream', () => {
   let stateService: StateService;
   let blockedResponse: http.ServerResponse | undefined;
   let writes: number;
+  let registryNodes: any[];
+  let executorServer: http.Server | undefined;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bstream-'));
@@ -137,6 +140,8 @@ describe('GET /api/branches/stream', () => {
     app.use(express.json());
     writes = 0;
     blockedResponse = undefined;
+    registryNodes = [];
+    executorServer = undefined;
     app.use((req, res, next) => {
       const scope = req.headers['x-test-project-key'];
       if (typeof scope === 'string') (req as any).cdsProjectKey = { projectId: scope };
@@ -155,6 +160,7 @@ describe('GET /api/branches/stream', () => {
     });
     app.use('/api', createBranchRouter({
       stateService, worktreeService, containerService, shell: mock, config,
+      registry: { getAll: () => registryNodes } as any,
     }));
     server = await new Promise<http.Server>((resolve) => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
@@ -164,6 +170,7 @@ describe('GET /api/branches/stream', () => {
   afterEach(async () => {
     await flushAllJsonStateStores();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (executorServer) await new Promise<void>((resolve) => executorServer!.close(() => resolve()));
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     // remove any lingering test listeners so each test starts clean
     branchEvents.removeAllListeners('any');
@@ -214,7 +221,8 @@ describe('GET /api/branches/stream', () => {
       dockerImage: 'owned/prebuilt:sha-' + target, command: '', workDir: '.', containerPort: 8080,
       activeDeployMode: 'express', deployModes: { express: { label: 'Express', prebuilt: true, dockerImage: 'owned/prebuilt:sha-' + target } } });
     let client: any = { branches: [{ ...branch, deployRuntime: { kind: 'source', activeProfiles: 2,
-      prebuilt: true, actualPrebuiltCoverage: 'unknown' } }], lastKnownGoodBranches: [] };
+      prebuilt: true, actualPrebuiltCoverage: 'unknown' },
+      resources: [{ id: 'app:api', port: 9000, containerName: 'old-generation-api' }] }], lastKnownGoodBranches: [] };
     await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
       if (ev.event === 'snapshot') {
         branch.status = 'running'; branch.errorMessage = undefined;
@@ -234,9 +242,62 @@ describe('GET /api/branches/stream', () => {
       expect(branchRuntimeBadge(visible)?.lightning).toBe('yellow');
       expect(visible.errorMessage).toBe('');
       expect(visible.ciImageError).toBe('');
+      expect(visible.resources).toBeUndefined();
+      const resources = buildBranchResources({ branchId: visible.id, branchName: visible.branch,
+        services: visible.services, profiles: stateService.getEffectiveProfilesForBranch(branch) });
+      expect(resources.find(resource => resource.id === 'app:api')).toMatchObject({ port: 10001, containerName: 'owned-api' });
       expect(branch.errorMessage).toBeUndefined();
       return true;
     });
+  });
+
+  it.each(['local', 'remote'] as const)('publishes actual stopping and stopped runtime after the official stop request (%s) without reload', async placement => {
+    const branch = stateService.getBranch('existing')!;
+    if (placement === 'remote') {
+      executorServer = http.createServer((req, res) => {
+        expect(req.url).toBe('/exec/stop');
+        expect(req.method).toBe('POST');
+        req.resume();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      });
+      await new Promise<void>(resolve => executorServer!.listen(0, '127.0.0.1', resolve));
+      registryNodes.push({ id: 'owned-executor', role: 'remote', host: '127.0.0.1',
+        port: (executorServer.address() as { port: number }).port });
+      branch.executorId = 'owned-executor';
+    }
+    const target = 'a'.repeat(40);
+    branch.githubCommitSha = target;
+    stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'api',
+      dockerImage: 'owned/prebuilt:sha-' + target, command: '', workDir: '.', containerPort: 8080,
+      activeDeployMode: 'express', deployModes: { express: { label: 'Express', prebuilt: true } } });
+    branch.services.api = { profileId: 'api', containerName: 'owned-api', hostPort: 10001,
+      status: 'running', deployedMode: 'express', deployedPrebuilt: true, deployedCommitSha: target,
+      deployedImage: 'sha256:' + 'b'.repeat(64) };
+    let client: any;
+    let stopRequest: Promise<Response> | undefined;
+    const seen: string[] = [];
+    await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
+      if (ev.event === 'snapshot') {
+        client = { branches: ev.data.branches, lastKnownGoodBranches: [] };
+        expect(branchRuntimeBadge(client.branches[0])?.lightning).toBe('yellow');
+        const address = server.address() as { port: number };
+        stopRequest = fetch(`http://127.0.0.1:${address.port}/api/branches/existing/stop`, { method: 'POST' });
+        return;
+      }
+      if (ev.event !== 'branch.status') return;
+      client = reduceBranchListState(client, { type: 'sseBranchUpsert', branch: ev.data.branch, projectId: 'default' }).state;
+      const visible = client.branches[0];
+      seen.push(visible.status);
+      if (visible.status !== 'idle') return;
+      expect(visible.services.api.status).toBe('stopped');
+      expect(visible.deployRuntime.drift.healthyCount).toBe(0);
+      expect(visible.deployRuntime.actualPrebuiltCoverage).toBe('unknown');
+      expect(branchRuntimeBadge(visible)?.lightning).not.toBe('yellow');
+      return true;
+    });
+    expect((await stopRequest!).status).toBe(200);
+    expect(seen).toEqual(['stopping', 'idle']);
   });
 
   it('emits an initial snapshot event containing all branches', async () => {
