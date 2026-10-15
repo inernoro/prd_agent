@@ -2,6 +2,7 @@ import type { BranchEntry, SchedulerConfig } from '../types.js';
 import type { StateService } from './state.js';
 import { resolveBranchProtection } from './branch-protection.js';
 import { serviceRuntimeRefs } from './service-runtime.js';
+import { resolvePreviewActivity, type PreviewActivityUnknownReason } from '../forwarder/preview-activity.js';
 
 /**
  * SchedulerService — branch warm-pool manager for small servers.
@@ -29,12 +30,27 @@ import { serviceRuntimeRefs } from './service-runtime.js';
  * behavior bit-for-bit.
  */
 
+export interface PreviewActivityStatus {
+  status: 'ready' | 'unknown';
+  reason?: PreviewActivityUnknownReason;
+  observedAt?: string;
+  lastUnknownAt?: string;
+  recoveryGraceRemainingMs: number;
+}
+
+export interface PreviewActivityTransition {
+  status: 'ready' | 'unknown';
+  reason?: PreviewActivityUnknownReason;
+  observedAt: string;
+}
+
 export interface SchedulerSnapshot {
   enabled: boolean;
   config: SchedulerConfig;
   hot: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
   cold: Array<{ slug: string; lastAccessedAt: string | undefined }>;
   capacityUsage: { current: number; max: number };
+  previewActivity?: PreviewActivityStatus;
 }
 
 export type WakeFn = (slug: string) => Promise<void>;
@@ -45,6 +61,7 @@ export type CoolFn = (slug: string) => Promise<void>;
  */
 export interface Clock {
   now(): number;
+  monotonicNow?(): number;
 }
 
 export const systemClock: Clock = {
@@ -57,6 +74,7 @@ export const systemClock: Clock = {
  * don't need each one to hit disk. In-memory timestamps are always fresh.
  */
 const TOUCH_PERSIST_THROTTLE_MS = 15_000;
+const ACTIVITY_RECOVERY_GRACE_MS = 60_000;
 
 export class SchedulerService {
   private tickHandle: NodeJS.Timeout | null = null;
@@ -67,6 +85,16 @@ export class SchedulerService {
   private readonly cooling = new Set<string>();
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
+  private activitySource?: { read: () => Promise<unknown>; isProbe: (fingerprint: string) => boolean; masterStartedAt: number };
+  private activityRefresh?: Promise<boolean>;
+  private activityUnknown = false;
+  private activityGraceDeadline?: number;
+  private activityUnknownReported = false;
+  private activityReason?: PreviewActivityUnknownReason;
+  private activityObservedAt?: string;
+  private activityLastUnknownAt?: string;
+  private activityLastObservedStatus?: PreviewActivityStatus['status'];
+  private activityTransition?: (event: PreviewActivityTransition) => void;
 
   constructor(
     private readonly stateService: StateService,
@@ -76,6 +104,59 @@ export class SchedulerService {
 
   setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
   setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
+
+  setPreviewActivitySource(read: () => Promise<unknown>, isProbe: (fingerprint: string) => boolean,
+    masterStartedAt = Date.now() - process.uptime() * 1000): void {
+    this.activitySource = { read, isProbe, masterStartedAt };
+    this.activityUnknown = true;
+  }
+
+  private activityMonotonicNow(): number { return this.clock.monotonicNow?.() ?? performance.now(); }
+
+  setPreviewActivityTransitionListener(listener: (event: PreviewActivityTransition) => void): void {
+    this.activityTransition = listener;
+  }
+
+  async readPreviewActivityStatus(): Promise<PreviewActivityStatus | undefined> {
+    await this.refreshPreviewActivity();
+    return this.getSnapshot().previewActivity;
+  }
+
+  private async refreshPreviewActivity(): Promise<boolean> {
+    const source = this.activitySource;
+    if (!source) return true;
+    if (this.activityRefresh) return this.activityRefresh;
+    this.activityRefresh = (async () => {
+      try {
+        const value = await source.read();
+        const historicalBoundarySettled = this.activityGraceDeadline !== undefined
+          && this.activityMonotonicNow() >= this.activityGraceDeadline;
+        const result = resolvePreviewActivity(value, this.clock.now(), source.masterStartedAt, source.isProbe, historicalBoundarySettled);
+        for (const observation of result.observations) this.touchAt(observation.branchId, observation.at);
+        this.activityUnknown = result.unknown;
+        this.activityReason = result.reason;
+      } catch { this.activityUnknown = true; this.activityReason = 'read-failed'; }
+      const status = this.activityUnknown ? 'unknown' : 'ready';
+      this.activityObservedAt = new Date(this.clock.now()).toISOString();
+      if (this.activityUnknown) this.activityLastUnknownAt = this.activityObservedAt;
+      const previousStatus = this.activityLastObservedStatus;
+      this.activityLastObservedStatus = status;
+      if (status !== previousStatus && (previousStatus !== undefined || status === 'unknown')) {
+        try { this.activityTransition?.({ status, reason: this.activityReason, observedAt: this.activityObservedAt }); }
+        catch { console.warn('[scheduler] 预览活动状态事件未写入，请检查诊断存储'); }
+      }
+      if (!this.activityUnknown) return true;
+      // 每进程只有一次恢复宽限。重复旧收据、持续读取失败及墙钟回拨都不能续期。
+      this.activityGraceDeadline ??= this.activityMonotonicNow() + ACTIVITY_RECOVERY_GRACE_MS;
+      if (this.activityMonotonicNow() >= this.activityGraceDeadline && !this.activityUnknownReported) {
+        this.activityUnknownReported = true;
+        console.warn('[scheduler] 预览访问状态仍不可确认，暂停自动降温和需要腾位的新唤醒');
+      }
+      return false; // 当前未知永远不是闲置证明；宽限只结算启动前的历史标记。
+    })();
+    try { return await this.activityRefresh; }
+    finally { this.activityRefresh = undefined; }
+  }
 
   private hasResidentRuntime(branch: BranchEntry): boolean {
     const names = this.runtimePresence?.();
@@ -183,12 +264,17 @@ export class SchedulerService {
    * No-op when scheduler is disabled.
    */
   touch(slug: string): void {
+    this.touchAt(slug, this.clock.now());
+  }
+
+  private touchAt(slug: string, observedAt: number): void {
     if (!this.isEnabled()) return;
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
-
     const now = this.clock.now();
-    branch.lastAccessedAt = new Date(now).toISOString();
+    if (!Number.isFinite(observedAt) || observedAt > now || observedAt < Date.parse(branch.createdAt)
+      || observedAt <= (Date.parse(branch.lastAccessedAt ?? '') || 0)) return;
+    branch.lastAccessedAt = new Date(observedAt).toISOString();
 
     const lastPersist = this.lastPersistedTouch.get(slug) || 0;
     if (now - lastPersist >= TOUCH_PERSIST_THROTTLE_MS) {
@@ -360,9 +446,11 @@ export class SchedulerService {
     const hotCount = this.getHotBranches().filter(b => b.id !== excludeSlug).length;
     // +1 for the branch we're about to wake (if it's not already hot).
     if (hotCount + 1 <= max) return 0;
+    if (!await this.refreshPreviewActivity()) throw new Error('预览访问状态暂不可确认，请稍后重试');
 
     const victim = this.selectLruVictim(excludeSlug);
     if (!victim) {
+      if (this.activityUnknown) throw new Error('预览访问状态暂不可确认，且没有可安全降温的分支，请稍后重试');
       console.warn(`[scheduler] capacity overrun: ${hotCount + 1} hot but no evictable branch (all pinned)`);
       return 0;
     }
@@ -377,6 +465,7 @@ export class SchedulerService {
    */
   async tick(): Promise<void> {
     if (!this.isEnabled()) return;
+    if (!await this.refreshPreviewActivity()) return;
 
     const now = this.clock.now();
     const idleTTLMs = (this.config.idleTTLSeconds || 900) * 1000;
@@ -456,6 +545,10 @@ export class SchedulerService {
         current: hot.length,
         max: this.config.maxHotBranches,
       },
+      ...(this.activitySource ? { previewActivity: { status: this.activityUnknown ? 'unknown' as const : 'ready' as const,
+        reason: this.activityReason, observedAt: this.activityObservedAt, lastUnknownAt: this.activityLastUnknownAt,
+        recoveryGraceRemainingMs: this.activityUnknown && this.activityGraceDeadline !== undefined
+          ? Math.max(0, this.activityGraceDeadline - this.activityMonotonicNow()) : 0 } } : {}),
     };
   }
 }

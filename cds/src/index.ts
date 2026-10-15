@@ -69,6 +69,8 @@ import {
 } from './services/external-port-audit.js';
 import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
+import { readForwarderPreviewActivity } from './forwarder/preview-activity.js';
+import { isTrustedProbeFingerprint } from './services/probe-marker.js';
 import { JanitorService, defaultDiskUsage, createJanitorDockerAdapters } from './services/janitor.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
@@ -165,7 +167,7 @@ import { channelConfigured, classifyAlert, routeAlarm, renderAlarmMessage } from
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
-import { buildSelfCheck, readSelfCheckRuntimeStatus, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { buildSelfCheck, readSelfCheckRuntimeStatus, readHttpSelfCheckStats, wireSchedulerPreviewActivitySelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
 import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from './services/self-status-cache.js';
 import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
@@ -2119,18 +2121,22 @@ try {
 // See doc/guide.cds.env.md §3 and doc/design.cds.fu-02-auth-store-mongo.md.
 let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
 const activeHttpLogStore = httpLogStoreFromEnv();
+let activeHttpLogStoreReady = false;
 if (activeHttpLogStore) {
   try {
     await activeHttpLogStore.init();
+    activeHttpLogStoreReady = true;
     console.log('  [http-log] persistent request logging enabled (collection=cds_http_logs)');
   } catch (err) {
     console.warn(`  [http-log] init failed, persistent request logging disabled: ${(err as Error).message}`);
   }
 }
 const localServerEventLogStore = serverEventLogStoreFromEnv();
+let localServerEventLogReady = false;
 if (localServerEventLogStore) {
   try {
     await localServerEventLogStore.init();
+    localServerEventLogReady = true;
     console.log('  [server-event-log] persistent diagnostics enabled (collection=cds_server_events)');
   } catch (err) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
@@ -2878,6 +2884,12 @@ let shutdownInProgress = false;
   }
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
+let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
+if (process.env.CDS_USE_FORWARDER === '1' || process.env.CDS_FORWARDER_PORT) {
+  const diagnosticsPort = Number.parseInt(process.env.CDS_FORWARDER_PORT || '9090', 10);
+  schedulerService.setPreviewActivitySource(() => readForwarderPreviewActivity(diagnosticsPort), isTrustedProbeFingerprint);
+  previewActivitySelfCheck = wireSchedulerPreviewActivitySelfCheck(schedulerService, activeServerEventLogStore, () => localServerEventLogReady);
+}
 schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
 schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
   .some(operation => operation.request.kind !== 'scheduler-cooling'));
@@ -6285,6 +6297,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    */
   const selfCheckDeps: SelfCheckDeps = {
     now: () => Date.now(),
+    ...(previewActivitySelfCheck ? { previewActivity: previewActivitySelfCheck } : {}),
     deploymentRuns: () => stateService.getDeploymentRuns(),
     unresolvedWebhookDispatches: () => unresolvedWebhookDispatches(stateService.getAllBranches()),
     webhookDeliveries: (limit) => stateService.getGithubWebhookDeliveries(limit),
@@ -6315,29 +6328,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         return { ok: false, ms: Date.now() - startedAt, detail: (err as Error).message };
       }
     },
-    httpStats: async (sinceMs) => {
-      const store = activeHttpLogStore;
-      if (!store?.findRecent) return null;
-      // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
-      // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
-      const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
-      // 恢复流可能给浏览器200，但原上游失败必须被常设监控读到；有限查询不扫描整个集合。
-      const streamErrors = await store.findRecent({ layer: 'forwarder', minStatus: 500,
-        pathContains: '/_cds/api/', since: new Date(Date.now() - 6 * 60 * 60_000), limit: 5000, sort: 'recent' });
-      const branches = rows
-        .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
-        .map((r) => r.durationMs)
-        .filter((ms) => Number.isFinite(ms));
-      const sorted = [...branches].sort((a, b) => a - b);
-      const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
-      return {
-        requests: rows.length,
-        serverErrors: rows.filter((r) => r.status >= 500).length,
-        branchesP95Ms: p95,
-        branchesRequests: branches.length,
-        widgetStreamFailures: streamErrors.filter(r => /^\/_cds\/api\/(?:branches\/stream|activity-stream)(?:\?|$)/.test(r.path)).length,
-      };
-    },
+    httpStats: (sinceMs) => readHttpSelfCheckStats(activeHttpLogStore, activeHttpLogStoreReady, sinceMs),
     // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
     liveAlarmChannels: () => countLiveAlarmChannels(
       stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),

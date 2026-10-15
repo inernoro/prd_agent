@@ -28,6 +28,7 @@ import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
+import { PreviewActivityCollector, type PreviewActivitySnapshot } from './preview-activity.js';
 import {
   classifyHttpRequestKind,
   createBodyCapture,
@@ -150,6 +151,7 @@ export class ProxyHandler {
   private opts: ResolvedProxyOptions;
   private stats = new StatsCollector();
   private readonly widgetStreams: ControlPlaneStreams;
+  private readonly previewActivity = new PreviewActivityCollector();
 
   constructor(opts: ProxyHandlerOptions = {}) {
     this.widgetStreams = new ControlPlaneStreams(opts.widgetStreamRecovery);
@@ -315,6 +317,7 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
+    this.previewActivity.record(route.branchId, req.headers);
     const requestKind = classifyHttpRequestKind({
       layer: 'forwarder',
       method: req.method || 'GET',
@@ -863,8 +866,12 @@ export class ProxyHandler {
     });
   }
 
-  getStats(): ProxyStats {
-    return { ...this.stats.snapshot(), widgetStreams: this.widgetStreams.snapshot() };
+  getStats(): ProxyStats & { previewActivity: PreviewActivitySnapshot } {
+    return { ...this.stats.snapshot(), widgetStreams: this.widgetStreams.snapshot(), previewActivity: this.previewActivity.snapshot() };
+  }
+
+  reconcilePreviewActivityRoutes(routes: readonly RouteRecord[]): void {
+    this.previewActivity.retainBranches(new Set(routes.map(route => route.branchId).filter((id): id is string => typeof id === 'string')));
   }
 
   getActiveRequests(filter: HttpActiveRequestFilter = {}): ActiveHttpRequestRecord[] {
