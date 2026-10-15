@@ -75,6 +75,7 @@ function pointerdown() {
   // 离散键盘事件已结束；用下一次渲染的状态重新创建生产回调，不预先点击消耗 placing。
   const context = {
     placing, effectiveTool: activeTool, stageRef, panRef, isMobile: false,
+    canEditCanvas: () => true, // 本组键盘场景前置为画板已恢复；门禁另有独立回归。
     cameraRef: { current: { x: 0, y: 0 } }, zoomRef: { current: 1 }, worldRef: { current: null },
     pinchActiveRef: { current: false }, setCanvas, setPlacing, setTextEdit, setMarquee,
     setSelectionWithoutChip: vi.fn(), setPanning: vi.fn(),
