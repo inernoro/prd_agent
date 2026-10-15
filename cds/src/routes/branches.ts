@@ -12953,6 +12953,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 profileId: sid,
                 requestId: cleanupReqId || null,
                 operationId: cleanupLease?.operationId || null,
+                operationGeneration: cleanupLease?.generation,
+                assertCurrent: step => assertBranchOperationCurrent(cleanupLease, step),
                 actor: cActor,
                 trigger: cTrigger,
                 operation: 'deploy-empty-profiles-cleanup',
@@ -13426,6 +13428,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
               await containerService.remove(svc.containerName, {
                 projectId: entry.projectId, branchId: entry.id, profileId: sid,
                 requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
+                operationGeneration: branchOperationLease?.generation,
+                assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
                 actor: oActor, trigger: oTrigger,
                 operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
                 reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
@@ -14262,6 +14266,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
               profileId: sid,
               requestId: requestId || null,
               operationId: branchOperationLease?.operationId || null,
+              operationGeneration: branchOperationLease?.generation,
+              assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
               actor: zActor,
               trigger: zTrigger,
               operation: 'deploy-remove-orphan-service',
@@ -14279,6 +14285,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
       }
       await commitServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
+        operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
         container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
@@ -15208,6 +15215,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       await commitServiceReplacements({ entry, profileIds: [profile.id], state: stateService,
+        operationId: branchOperationLease?.operationId, operationGeneration: branchOperationLease?.generation,
         container: containerService, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step) });
       // Update overall status
       assertBranchOperationCurrent(branchOperationLease, 'before-profile-deploy-finalize');

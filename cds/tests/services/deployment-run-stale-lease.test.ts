@@ -219,7 +219,10 @@ describe('部署心跳过期后的精确租约回收', () => {
     const server = fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
     const routes = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
     expect(server).toContain('deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt');
-    expect(routes.match(/operationGeneration: branchOperationLease\?\.generation/g)).toHaveLength(2);
+    const leasedLaunches = (routes.match(/await runServiceWithPortRetry\(\{[\s\S]*?\n\s*\}\);/g) || [])
+      .filter(call => call.includes('assertBranchOperationCurrent(branchOperationLease'));
+    expect(leasedLaunches).toHaveLength(2);
+    for (const call of leasedLaunches) expect(call).toContain('operationGeneration: branchOperationLease?.generation');
     expect(routes).toContain('operationGeneration: options.operationGeneration');
   });
 
