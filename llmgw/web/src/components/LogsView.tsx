@@ -32,6 +32,7 @@ import {
   fmtMs,
   fmtCompact,
   fmtCost,
+  costKindBadgeLabel,
   costKindLabel,
   appDisplayName,
   statusBadgeStyle,
@@ -118,14 +119,12 @@ function formatOutputUsage(item: LlmLogListItem) {
   return DASH;
 }
 
-function formatRecordedCost(it: LlmLogListItem) {
-  const amount = it.providerReportedCost != null
+function recordedCostAmount(it: LlmLogListItem) {
+  return it.providerReportedCost != null
     ? fmtCost(it.providerReportedCost, it.providerCostCurrency || 'USD')
     : it.estimatedCost != null
       ? fmtCost(it.estimatedCost, it.estimatedCostCurrency)
       : null;
-  const label = costKindLabel(it.costKind, it.platformName || it.provider);
-  return amount ? `${label} ${amount}` : label;
 }
 
 function formatThroughput(item: LlmLogListItem) {
@@ -852,16 +851,22 @@ export function LogsView() {
             {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
           </span>
         );
-      case 'cost':
+      case 'cost': {
+        const amount = recordedCostAmount(it);
+        const fullLabel = costKindLabel(it.costKind, it.platformName || it.provider);
+        const badgeLabel = costKindBadgeLabel(it.costKind, it.platformName || it.provider);
         return (
           <span
-            className="tabular"
-            style={{ color: 'var(--log-text-muted)' }}
-            title={costKindLabel(it.costKind, it.platformName || it.provider)}
+            style={{ display: 'inline-flex', minWidth: 0, flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}
+            title={fullLabel}
           >
-            {formatRecordedCost(it)}
+            <strong className="tabular" style={{ color: 'var(--text-primary)', fontWeight: 650 }}>
+              {amount ?? DASH}
+            </strong>
+            <Chip label={badgeLabel} color="var(--text-muted)" bg="var(--bg-elevated)" title={fullLabel} />
           </span>
         );
+      }
       case 'latency':
         return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {

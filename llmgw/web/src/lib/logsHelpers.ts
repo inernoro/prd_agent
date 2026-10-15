@@ -70,6 +70,15 @@ export function costKindLabel(kind?: string | null, provider?: string | null): s
   }
 }
 
+/**
+ * 金额列表和概览卡只需要一眼可扫的短标签；完整供应商语义仍由
+ * `costKindLabel` 提供给 title 与审计详情，避免长说明抢过金额本身。
+ */
+export function costKindBadgeLabel(kind?: string | null, provider?: string | null): string {
+  if (kind === 'official_baseline_estimate') return '官方基准价估算';
+  return costKindLabel(kind, provider);
+}
+
 export function fmtShortTime(iso?: string | null): string {
   if (!iso) return DASH;
   const d = new Date(iso);
@@ -202,7 +211,7 @@ export const GENERATIONS_COLUMNS: ColumnDef[] = [
   { key: 'app', label: 'App', width: 'minmax(288px, 2.88fr)', tip: '点击查看 appCaller 摘要与治理入口' },
   { key: 'input', label: '输入', width: 'minmax(60px, 0.6fr)' },
   { key: 'output', label: '输出', width: 'minmax(64px, 0.64fr)' },
-  { key: 'cost', label: '金额口径', width: 'minmax(112px, 1.12fr)' },
+  { key: 'cost', label: '金额', width: 'minmax(112px, 1.12fr)' },
   { key: 'usage', label: '用途', width: 'minmax(84px, 0.84fr)', defaultVisible: false },
   { key: 'speed', label: '速度', width: 'minmax(88px, 0.88fr)' },
   { key: 'finish', label: '结束原因', width: 'minmax(88px, 0.88fr)', defaultVisible: false },

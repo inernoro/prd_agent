@@ -70,3 +70,4 @@
 | test | prd-admin | 覆盖 Editing 可停止和 Cancelled 即使残留活动镜头也不再轮询 |
 | feat | prd-api | 增加超级管理员终止停滞视频任务的受审计入口，仅允许无 worker 活动的 Editing 任务 |
 | test | prd-api | 覆盖管理员权限门、跨 owner 成功终止、状态拒绝、项目回落与审计脱敏 |
+| polish | llmgw | 请求日志与详情以金额为主信息，将估算或实际口径收进次要徽标并保留完整审计说明 |

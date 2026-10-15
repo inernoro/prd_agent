@@ -8,11 +8,11 @@ import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Coins, Copy
 import { Link } from 'react-router-dom';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
-import { SectionLoader } from './ui';
+import { Chip, SectionLoader } from './ui';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
-import { DASH, appDisplayName, computeTokPerSec, costKindLabel, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
+import { DASH, appDisplayName, computeTokPerSec, costKindBadgeLabel, costKindLabel, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
-function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: string; icon: ReactNode }) {
+function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: ReactNode; icon: ReactNode }) {
   return (
     <div
       style={{
@@ -26,7 +26,7 @@ function MetricCard({ title, value, note, icon }: { title: string; value: string
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-secondary)', color: 'var(--text-muted)' }}>{icon}{title}</div>
       <div className="tabular" style={{ marginTop: 4, fontSize: 'var(--fs-heading)', fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
-      {note ? <div style={{ fontSize: 'var(--fs-caption)', marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
+      {note ? <div style={{ display: 'flex', alignItems: 'center', minWidth: 0, fontSize: 'var(--fs-caption)', marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
   );
 }
@@ -575,18 +575,31 @@ export function GenerationDetailsDrawer({
                     <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} icon={<Timer size={15} aria-hidden="true" />} />
                     <MetricCard title="生成速度" value={generationSpeed(detail)} note={detail.imageSuccessCount ? '图片为平均每张生成耗时' : undefined} icon={<Gauge size={15} aria-hidden="true" />} />
                     <MetricCard
-                      title="金额口径"
+                      title="金额"
                       value={detail.providerReportedCost == null
                         ? fmtCost(detail.estimatedCost, detail.estimatedCostCurrency)
                         : fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
                       note={detail.providerReportedCost != null
-                        ? `${costKindLabel(detail.costKind, detail.platformName || detail.provider)}${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
+                        ? <>
+                            <Chip
+                              label={costKindBadgeLabel(detail.costKind, detail.platformName || detail.provider)}
+                              color="var(--text-muted)"
+                              bg="var(--bg-elevated)"
+                              title={costKindLabel(detail.costKind, detail.platformName || detail.provider)}
+                            />
+                            {detail.reconciliationStatus ? <span style={{ marginLeft: 6 }}>{detail.reconciliationStatus}</span> : null}
+                          </>
                         : detail.estimatedCost == null
                           // 后端已经算过「为什么算不出」，直接把那句话端出来：
                           // 「缺输入单价」和「价格还是 CNY 口径」是两件要做不同事的情况，
                           // 笼统一句「未知」逼用户自己去猜该动哪儿。兜底文案保持不变。
                           ? (detail.costUnpricedReason || '未知：缺 token 或价格快照')
-                          : costKindLabel(detail.costKind, detail.platformName || detail.provider)}
+                          : <Chip
+                              label={costKindBadgeLabel(detail.costKind, detail.platformName || detail.provider)}
+                              color="var(--text-muted)"
+                              bg="var(--bg-elevated)"
+                              title={costKindLabel(detail.costKind, detail.platformName || detail.provider)}
+                            />}
                       icon={<Coins size={15} aria-hidden="true" />}
                     />
                     <MetricCard
