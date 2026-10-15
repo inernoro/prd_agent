@@ -1004,6 +1004,12 @@ public class ModelResolver : IModelResolver
             && string.Equals(member.PlatformId, resolution.ActualPlatformId, StringComparison.Ordinal)
             && string.Equals(member.ModelId, resolution.ActualModel, StringComparison.Ordinal)));
 
+    private async Task<bool> IsLogicalOfferingAllowedForRequestAsync(
+        ModelResolutionResult resolution, IReadOnlyCollection<ModelGroup>? allowedGroups, CancellationToken ct)
+        => IsLogicalOfferingAllowed(resolution, allowedGroups)
+            && (await JudgeAsync(resolution.ActualModel, resolution.ActualPlatformId, ct) != CatalogVerdict.Blocked
+                || !await CatalogGateEnforcesAsync(ct));
+
     private async Task<List<AvailableModelPool>> GetAvailableLogicalModelsAsPoolsAsync(
         string appCallerCode,
         string modelType,
@@ -1083,7 +1089,7 @@ public class ModelResolver : IModelResolver
             foreach (var offering in catalogOfferings)
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
-                if (candidate is null || !IsLogicalOfferingAllowed(candidate, allowedGroups)) continue;
+                if (candidate is null) continue;
                 // 名录门也要过一遍。
                 //
                 // 上面那句注释说的是「目录与执行链路采用同一规则」，但它只覆盖了「解析得出来」
@@ -1091,11 +1097,8 @@ public class ModelResolver : IModelResolver
                 // ApplyCatalogGateAsync 会拒掉。少了这一道，选择器里列出来的模型选中即失败
                 // （MODEL_NOT_IN_CATALOG），而用户没做错任何事。
                 // 对外的 /v1/models 上一轮已经补了这一道，应用侧这条清单是它的同类，一起补。
-                if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct) == CatalogVerdict.Blocked
-                    && await CatalogGateEnforcesAsync(ct))
-                {
+                if (!await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
                     continue;
-                }
                 catalogResolution = candidate;
                 catalogOffering = offering;
                 break;
@@ -1325,7 +1328,7 @@ public class ModelResolver : IModelResolver
         // 没有这一步，GatewayRouteSelection 把熔断线路剔出队列就是一扇单向门：Offering 被摘掉
         // 之后再也拿不到一次成功来翻身，只能等人去控制台改密钥。租约保证同一时刻只有一个请求在试。
         // 它刻意不进那个纯函数——要抢租约、要写库。面板也因此不把它当成确定的下一跳。
-        var halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
+        var halfOpen = await TryClaimHalfOpenOfferingAsync(logical, available, allowedGroups, ct);
         if (halfOpen is not null)
         {
             var probe = await TryBuildLogicalOfferingResolutionAsync(logical, halfOpen, expectedModel, ct);
@@ -1753,6 +1756,8 @@ public class ModelResolver : IModelResolver
     /// </summary>
     private async Task<GatewayModelOffering?> TryClaimHalfOpenOfferingAsync(
         GatewayLogicalModel logical,
+        List<GatewayModelOffering> available,
+        IReadOnlyCollection<ModelGroup>? allowedGroups,
         CancellationToken ct)
     {
         if (_gatewayDb is null) return null;
@@ -1764,10 +1769,22 @@ public class ModelResolver : IModelResolver
             _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenLeaseSecondsKey));
         var cutoff = now.AddSeconds(-cooldownSeconds);
 
+        var eligibleIds = new List<string>();
+        foreach (var offering in available.Where(x => x.Enabled
+            && GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt, now, cutoff)))
+        {
+            var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
+            if (candidate is not null && await IsLogicalOfferingAllowedForRequestAsync(candidate, allowedGroups, ct))
+                eligibleIds.Add(offering.Id);
+        }
+        if (eligibleIds.Count == 0) return null;
+
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
         var fb = Builders<GatewayModelOffering>.Filter;
         var claimed = await offerings.FindOneAndUpdateAsync(
             fb.And(
+                fb.In(x => x.Id, eligibleIds),
                 fb.Eq(x => x.TenantId, CurrentTenantId),
                 fb.Eq(x => x.LogicalModelId, logical.Id),
                 fb.Eq(x => x.Enabled, true),
@@ -1786,7 +1803,7 @@ public class ModelResolver : IModelResolver
             new FindOneAndUpdateOptions<GatewayModelOffering>
             {
                 ReturnDocument = ReturnDocument.After,
-                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority),
+                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority).Ascending(x => x.Id),
             },
             ct);
         if (claimed is null) return null;

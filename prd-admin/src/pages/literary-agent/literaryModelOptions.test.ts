@@ -53,6 +53,28 @@ describe('buildLiteraryModelOptions', () => {
     expect(buildLiteraryModelOptions([pool(), duplicate])).toHaveLength(1);
   });
 
+  it('仍忽略没有成员的旧目录项', () => {
+    expect(buildLiteraryModelOptions([pool({ models: undefined! }), pool({ models: [] }), pool()])).toHaveLength(1);
+  });
+
+  it.each([
+    ['Healthy', 'Unavailable'], ['Healthy', 'Degraded'], ['Degraded', 'Unavailable'],
+    ['Healthy', 'Healthy'], ['Degraded', 'Degraded'], ['Unavailable', 'Unavailable'],
+  ])('重复型号按 %s 优于 %s、同级稳定 Id 选择，不依赖目录顺序', (betterHealth, worseHealth) => {
+    const entry = (id: string, healthStatus: string) => pool({
+      id, code: `public-${id}`,
+      models: [{ ...pool().models[0], healthStatus, isRecoveryProbeAvailable: true }],
+    });
+    const better = entry('a', betterHealth);
+    const worse = entry('z', worseHealth);
+    const unrelated = pool({ id: 'other', code: 'other-public', models: [{ ...pool().models[0], actualModelId: 'future-image-1699' }] });
+    for (const candidates of [[worse, unrelated, better], [better, unrelated, worse]]) {
+      const options = buildLiteraryModelOptions(candidates);
+      expect(options.map((model) => model.modelName)).toEqual([better.code, unrelated.code]);
+      expect(selectLiteraryModelOption(options, 'pool_a')?.modelName).toBe(better.code);
+    }
+  });
+
   it('无用户偏好时使用显式默认，而不是目录第一项', () => {
     const options = buildLiteraryModelOptions([
       pool({ id: 'sunburst', code: 'gpt-image-2.5-sunburst', isDefault: false, models: [{ modelId: 'gpt-image-2.5-sunburst', actualModelId: 'gpt-image-2.5-sunburst', platformId: 'logical-model', actualPlatformId: 'openai', priority: 1, healthStatus: 'Healthy' }] }),

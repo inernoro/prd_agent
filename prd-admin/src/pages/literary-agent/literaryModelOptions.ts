@@ -33,10 +33,14 @@ function officialModelId(pool: LiteraryAgentModelPool): string | null {
  * 业务选择器只展示实际上游型号。pool.code/default-* 是路由契约，不是模型名称。
  */
 export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): LiteraryModelOption[] {
-  const seenActualModels = new Set<string>();
+  const poolsWithMembers = pools.filter((pool) => pool.models && pool.models.length > 0);
+  const availabilityRank = new Map(poolsWithMembers.map((pool) => [
+    pool.id, pool.models.some((model) => model.healthStatus === 'Healthy') ? 0
+      : pool.models.some((model) => model.healthStatus === 'Degraded') ? 1 : 2,
+  ]));
+  const bestActualModels = new Map<string, LiteraryModelOption>();
 
-  return pools
-    .filter((pool) => pool.models && pool.models.length > 0)
+  const candidates = poolsWithMembers
     .map((pool): LiteraryModelOption | null => {
       const first = pool.models[0]!;
       const displayModelId = officialModelId(pool);
@@ -56,13 +60,17 @@ export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): Lite
         isDefault: pool.isDefault,
       };
     })
-    .filter((model): model is LiteraryModelOption => model !== null && model.enabled)
-    .filter((model) => {
-      const identity = `${model.actualPlatformId}:${model.actualModelId}`;
-      if (seenActualModels.has(identity)) return false;
-      seenActualModels.add(identity);
-      return true;
-    });
+    .filter((model): model is LiteraryModelOption => model !== null && model.enabled);
+  for (const model of candidates) {
+    const identity = `${model.actualPlatformId}:${model.actualModelId}`;
+    const previous = bestActualModels.get(identity);
+    const rank = availabilityRank.get(model.poolId)!;
+    const previousRank = previous && availabilityRank.get(previous.poolId)!;
+    if (!previous || rank < previousRank! || (rank === previousRank && model.poolId < previous.poolId)) {
+      bestActualModels.set(identity, model);
+    }
+  }
+  return [...bestActualModels.values()];
 }
 
 /**
