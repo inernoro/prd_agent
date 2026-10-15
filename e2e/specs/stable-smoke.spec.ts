@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
+import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan } from '../utils/stableSmokeRecording.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
@@ -32,6 +33,7 @@ type BusinessCatalog = {
 };
 
 const specDir = dirname(fileURLToPath(import.meta.url));
+const recordingJourneyPlan = readRecordingJourneyPlan(process.env);
 const webEvidenceHarnessUrl = pathToFileURL(resolve(specDir,
   '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs')).href;
 async function captureWebEvidence(page: Page, info: TestInfo, name: string, caption: string, target: Locator) {
@@ -5204,8 +5206,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-003][REC-007][REC-011][REC-012] 页面选择音频、显示阶段、真实转写、可选整理、回读与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test(recordingJourneyPlan.title, { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
+    // 真值来自完整合成输入，不来自历史ASR输出；尚未经过人工真听核准。
+    const speechReference = loadStableSmokeSpeechReference();
     const token = await loginAndReadToken(page, request, '/document-store');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-audio`;
     let storeId = '';
@@ -5213,11 +5217,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     let runId = '';
     let restyleRunId = '';
     try {
-      const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
+      const storeResponse = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: { name: title, description: '稳定冒烟真实录音转录，执行后自动清理', isPublic: false },
-      }));
-      storeId = store.id;
+      });
+      const storeBody = await storeResponse.json() as ApiEnvelope<{ id: string }>;
+      storeId = storeBody.data?.id || '';
+      expect(storeResponse.ok(), storeBody.error?.message || '录音空间创建失败').toBe(true);
+      expect(storeBody.success, storeBody.error?.message || '录音空间创建失败').toBe(true);
+      expect(storeId).not.toBe('');
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}`, { waitUntil: 'domcontentloaded' });
       const storeTitle = page.getByText(title, { exact: true }).first();
       await expect(storeTitle).toBeVisible({ timeout: 30_000 });
@@ -5241,11 +5249,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const uploadResponsePromise = page.waitForResponse((response) => (
         response.url().includes(uploadPath) && response.request().method() === 'POST'
       ), { timeout: 60_000 });
-      const fileName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-speech.m4a`;
+      const fileName = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${speechReference.fileName}`;
       const setFile = page.locator('input[type="file"][accept="audio/*"]').setInputFiles({
         name: fileName,
-        mimeType: 'audio/mp4',
-        buffer: speechFixture,
+        mimeType: speechReference.mimeType,
+        buffer: speechReference.audio,
       });
       await uploadIntercepted;
       await expect(page.getByText(fileName, { exact: true })).toBeVisible();
@@ -5272,18 +5280,20 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const uploadBody = await uploadResponse.json() as ApiEnvelope<{
         entry: { id: string; title: string };
       }>;
+      entryId = uploadBody.data?.entry?.id || '';
       expect(uploadResponse.ok(), uploadBody.error?.message || '录音上传失败').toBe(true);
       expect(uploadBody.success, uploadBody.error?.message || '录音上传失败').toBe(true);
       const uploaded = uploadBody.data;
-      entryId = uploaded.entry.id;
-      expect(uploaded.entry.title).toContain('speech');
+      expect(entryId).not.toBe('');
+      expect(uploaded.entry.title).toContain(speechReference.reference.fixtureId);
       await page.unroute(`**${uploadPath}`);
 
       const transcribeResponse = await transcribeResponsePromise;
       const transcribeBody = await transcribeResponse.json() as ApiEnvelope<{ runId: string }>;
+      runId = transcribeBody.data?.runId || '';
       expect(transcribeResponse.ok(), transcribeBody.error?.message || '启动录音转录失败').toBe(true);
       expect(transcribeBody.success, transcribeBody.error?.message || '启动录音转录失败').toBe(true);
-      runId = transcribeBody.data.runId;
+      expect(runId).not.toBe('');
       const transcribeStep = page.getByTestId('transcribe-step-transcribe');
       await expect(uploadStep).toHaveAttribute('data-state', 'done');
       await expect(transcribeStep).toHaveAttribute('data-state', 'active', { timeout: 30_000 });
@@ -5323,13 +5333,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect((run.transcriptText || '').trim().length).toBeGreaterThan(10);
       expect(run.outputEntryId).toBe(entryId);
       const transcriptText = (run.transcriptText || '').trim();
+      const referenceComparison = assertSpeechMatchesReference(transcriptText, speechReference.reference);
+      await testInfo.attach('recording-independent-reference', {
+        body: JSON.stringify({ ...referenceComparison, language: speechReference.reference.language, sha256: speechReference.reference.sha256 }),
+        contentType: 'application/json',
+      });
+      // 服务端将实际ASR分段逐行写入transcriptText；不按标点猜断句，也不从UI反推预期。
+      const expectedLines = transcriptText.split('\n');
       const persisted = await readEnvelope<{ items: Array<{ id: string }> }>(
         await page.request.get(`/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) }),
       );
       expect(persisted.items.map((item) => item.id)).toContain(entryId);
 
-      const transcriptResult = page.getByText(transcriptText, { exact: false }).first();
+      const transcriptResult = page.locator('button[title="点击修改原文"]');
       await expect(transcriptResult).toBeVisible({ timeout: 30_000 });
+      expect((await transcriptResult.textContent())?.trim()).toBe(transcriptText);
       await expect(page.getByRole('button', { name: '一键整理', exact: true })).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-RECORDING-AUDIO-13',
@@ -5337,61 +5355,77 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '暗色桌面完成抽屉展示真实转录原文、编辑入口和后续整理操作。',
       });
 
-      const styles = await readEnvelope<{ items: Array<{ key: string; label: string }> }>(
-        await page.request.get('/api/document-store/transcribe-styles', {
-          headers: authHeaders(token),
-          timeout: stableSmokeCleanupTimeoutMs,
-        }),
-      );
-      const style = styles.items.find((item) => item.key !== 'custom');
-      expect(style, '转录完成后必须有可用的整理方式').toBeTruthy();
-      const restyle = await readEnvelope<{ runId: string }>(
-        await page.request.post(`/api/document-store/agent-runs/${runId}/restyle`, {
-          headers: authHeaders(token),
-          data: { styleKey: style!.key },
-          timeout: stableSmokeCleanupTimeoutMs,
-        }),
-      );
-      restyleRunId = restyle.runId;
-      let restyled!: {
-        status: string;
-        transcriptText?: string;
-        generatedText?: string;
-        outputEntryId?: string;
-        restyleOfRunId?: string;
-      };
-      await expect.poll(async () => {
-        restyled = await readEnvelope<typeof restyled>(
-          await page.request.get(`/api/document-store/agent-runs/${restyleRunId}`, {
+      if (recordingJourneyPlan.restyleSelected) {
+        const styles = await readEnvelope<{ items: Array<{ key: string; label: string }> }>(
+          await page.request.get('/api/document-store/transcribe-styles', {
             headers: authHeaders(token),
             timeout: stableSmokeCleanupTimeoutMs,
           }),
         );
-        return restyled.status;
-      }, {
-        message: '主动整理必须进入终态',
-        timeout: 180_000,
-        intervals: [1_000, 2_000, 3_000],
-      }).toBe('done');
-      expect(restyled.restyleOfRunId).toBe(runId);
-      expect(restyled.outputEntryId).toBe(entryId);
-      expect(restyled.transcriptText).toBe(transcriptText);
-      expect((restyled.generatedText || '').trim().length).toBeGreaterThan(0);
-      const originalAfterRestyle = await readEnvelope<{ transcriptText?: string }>(
-        await page.request.get(`/api/document-store/agent-runs/${runId}`, {
+        const style = styles.items.find((item) => item.key !== 'custom');
+        expect(style, '转录完成后必须有可用的整理方式').toBeTruthy();
+        const restyleResponse = await page.request.post(`/api/document-store/agent-runs/${runId}/restyle`, {
           headers: authHeaders(token),
+          data: { styleKey: style!.key },
           timeout: stableSmokeCleanupTimeoutMs,
-        }),
-      );
-      expect(originalAfterRestyle.transcriptText).toBe(transcriptText);
+        });
+        const restyleBody = await restyleResponse.json() as ApiEnvelope<{ runId: string }>;
+        restyleRunId = restyleBody.data?.runId || '';
+        expect(restyleResponse.ok(), restyleBody.error?.message || '启动主动整理失败').toBe(true);
+        expect(restyleBody.success, restyleBody.error?.message || '启动主动整理失败').toBe(true);
+        expect(restyleRunId).not.toBe('');
+        let restyled!: {
+          status: string;
+          transcriptText?: string;
+          generatedText?: string;
+          outputEntryId?: string;
+          restyleOfRunId?: string;
+        };
+        await expect.poll(async () => {
+          restyled = await readEnvelope<typeof restyled>(
+            await page.request.get(`/api/document-store/agent-runs/${restyleRunId}`, {
+              headers: authHeaders(token),
+              timeout: stableSmokeCleanupTimeoutMs,
+            }),
+          );
+          return restyled.status;
+        }, {
+          message: '主动整理必须进入终态',
+          timeout: 180_000,
+          intervals: [1_000, 2_000, 3_000],
+        }).toBe('done');
+        expect(restyled.restyleOfRunId).toBe(runId);
+        expect(restyled.outputEntryId).toBe(entryId);
+        expect(restyled.transcriptText).toBe(transcriptText);
+        expect((restyled.generatedText || '').trim().length).toBeGreaterThan(0);
+        const originalAfterRestyle = await readEnvelope<{ transcriptText?: string }>(
+          await page.request.get(`/api/document-store/agent-runs/${runId}`, {
+            headers: authHeaders(token),
+            timeout: stableSmokeCleanupTimeoutMs,
+          }),
+        );
+        expect(originalAfterRestyle.transcriptText).toBe(transcriptText);
+      }
 
       const openOriginal = page.getByRole('button', { name: '查看录音原文' });
       await expect(openOriginal).toBeVisible();
       await openOriginal.click();
-      await expect(page.getByText(transcriptText, { exact: false }).first()).toBeVisible({ timeout: 30_000 });
+      await expect(page.locator('[data-transcript-row]').first()).toBeVisible({ timeout: 30_000 });
+      const originalRows = await readRecordingTranscriptRows(page);
+      assertRecordingTranscriptEquals(originalRows, expectedLines);
+      await expect.poll(() => new URL(page.url()).searchParams.get('entry')).toBe(entryId);
+      expect(new URL(page.url()).searchParams.get('store')).toBe(storeId);
       await page.reload({ waitUntil: 'domcontentloaded' });
-      const persistedResult = page.getByText(transcriptText, { exact: false }).first();
+      expect(new URL(page.url()).searchParams.get('entry')).toBe(entryId);
+      expect(new URL(page.url()).searchParams.get('store')).toBe(storeId);
+      const persistedResult = page.locator('[data-transcript-row]').first();
       await expect(persistedResult).toBeVisible({ timeout: 30_000 });
+      const persistedRows = await readRecordingTranscriptRows(page);
+      assertRecordingTranscriptEquals(persistedRows, expectedLines);
+      expect(persistedRows).toEqual(originalRows);
+      await testInfo.attach('recording-persisted-original-rows', {
+        body: JSON.stringify({ entryId, before: originalRows, after: persistedRows }), contentType: 'application/json',
+      });
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-RECORDING-AUDIO-11',
         target: persistedResult,

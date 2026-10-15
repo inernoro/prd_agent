@@ -1,4 +1,6 @@
 import type { Locator } from '@playwright/test';
+export function freezeRecordingCasePlanEnvironment(environment: string, allowedCaseIds: readonly string[]): { STABLE_SMOKE_ALLOWED_CASE_IDS_JSON: string };
+export function readRecordingJourneyPlan(env?: Record<string, string | undefined>): Readonly<{ title: string; restyleSelected: boolean }>;
 export interface RecordingTranscriptRow { index: number; body: string; timestamp: string }
 export interface SpeechReference {
   schemaVersion: number; fixtureId: string; sourceText: string; expectedTranscript: string;

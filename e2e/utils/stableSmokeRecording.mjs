@@ -1,6 +1,38 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
+function validateRecordingCasePlan(plan, environment) {
+  if (!['cds', 'production'].includes(environment) || plan?.environment !== environment) {
+    throw Error('录音冻结清单环境缺失或与当前巡检环境不一致');
+  }
+  if (!Array.isArray(plan.allowedCaseIds) || plan.allowedCaseIds.some(id => typeof id !== 'string' || !id || id !== id.trim())
+    || new Set(plan.allowedCaseIds).size !== plan.allowedCaseIds.length) {
+    throw Error('录音冻结清单必须是无重复的精确caseId数组');
+  }
+  return Object.freeze({ environment, allowedCaseIds: Object.freeze([...plan.allowedCaseIds]) });
+}
+
+export function freezeRecordingCasePlanEnvironment(environment, allowedCaseIds) {
+  const plan = validateRecordingCasePlan({ environment, allowedCaseIds }, environment);
+  return { STABLE_SMOKE_ALLOWED_CASE_IDS_JSON: JSON.stringify(plan) };
+}
+
+export function readRecordingJourneyPlan(env = process.env) {
+  let restyleSelected = true;
+  if (env.STABLE_SMOKE_RUN === '1') {
+    let parsed;
+    try { parsed = JSON.parse(env.STABLE_SMOKE_ALLOWED_CASE_IDS_JSON); }
+    catch { throw Error('巡检启用时必须显式传入有效的录音冻结清单JSON'); }
+    const plan = validateRecordingCasePlan(parsed, env.STABLE_SMOKE_ENVIRONMENT);
+    // 仅精确REC-011授权本旅程的已知付费整理动作，不从标题或grep猜授权。
+    restyleSelected = plan.allowedCaseIds.includes('REC-011');
+  }
+  return Object.freeze({
+    title: `[REC-003][REC-007]${restyleSelected ? '[REC-011]' : ''}[REC-012] 页面选择音频、显示阶段、真实转写、可选整理、回读与清理`,
+    restyleSelected,
+  });
+}
+
 export async function readRecordingTranscriptRows(surface) {
   const rows = await surface.locator('[data-transcript-row]').evaluateAll(elements => elements.map(row => ({
     index: Number(row.getAttribute('data-transcript-row')),
