@@ -4,9 +4,56 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
+import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
 
 const runId = 'stsmk-visual-evidence-test';
 const commit = 'a'.repeat(40);
+
+test('REG-stsmk-account-scope-001 MVIS012走首页真实新建且仅清理本轮空间并回读detail404', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[MVIS-012]")[1].split("test('[CORE-004]")[0];
+  assert.match(body, /loginAndReadToken\(page, request, '\/'\)/);
+  assert.match(body, /enterVisualFromHome\(page, \{ touch: true \}\)/);
+  assert.match(body, /createDefaultWorkspaceThroughUi\(page,[\s\S]*?onCreated: created => \{ workspace = created; \}/);
+  assert.doesNotMatch(body, /createVisualWorkspace\(|page\.goto\(|selectOption\(/);
+  const cleanup = body.split('} finally {')[1];
+  assert.match(cleanup, /if \(workspace\.id\)/);
+  assert.match(cleanup, /get\(`\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}\/detail`/);
+  assert.match(cleanup, /\.status\(\)\)\.toBe\(404\)/);
+  assert.match(body, /finally \{[\s\S]*?await context\.close\(\)/);
+  for (const original of ['mobile-reference.png', '移除参考图', 'canvasFileInput.setInputFiles(file)', 'toHaveCount(index + 1', "toContainText('@img3')", 'toBeLessThanOrEqual(1)']) assert.ok(body.includes(original), `原界面判据不得丢失：${original}`);
+});
+
+test('REG-stsmk-account-scope-001 短视频真实清理函数须回读空间404并在抛错前留精确回执', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const raw = source.split('async function cleanupShortVideoFixture(')[1].split('\ntype UploadArtifactItem')[0];
+  let body = raw.slice(raw.indexOf(') {') + 3).trim();
+  body = body.slice(0, body.lastIndexOf('}')).replace('const errors: string[]', 'const errors').replace('const receipt: Record<string, unknown>', 'const receipt');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const execute = new AsyncFunction('page', 'token', 'runId', 'storeId', 'uploadedEntryId', 'testInfo', 'retryTransientTransport', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'requiredEnv', 'redactStableSmokeDiagnosticText', body);
+  for (const storeStatus of [404, 200, 'throw']) {
+    const calls = []; const receipts = [];
+    const respond = (method, path) => {
+      calls.push({ method, path });
+      if (method === 'GET' && path === '/api/document-store/stores/own-store' && storeStatus === 'throw') throw Error('只读回读失败 token=offline-canary');
+      return { status: () => method === 'GET' && path === '/api/document-store/stores/own-store' ? storeStatus : method === 'GET' ? 404 : 200 };
+    };
+    const page = { request: Object.fromEntries(['get', 'post', 'delete'].map(method => [method, async path => respond(method.toUpperCase(), path)])) };
+    const action = () => execute(page, 'offline-token', 'own-run', 'own-store', 'own-entry', {
+      attach: async (name, attachment) => { assert.equal(name, 'short-video-cleanup-receipt'); receipts.push(JSON.parse(attachment.body)); },
+    }, async (_label, operation) => operation(), () => ({}), 100, () => 'stsmk-offline-cleanup', redactStableSmokeDiagnosticText);
+    if (storeStatus === 404) await action(); else await assert.rejects(action, /短视频测试清理未闭环/);
+    assert.equal(receipts.length, 1, '成功和残留失败都必须先留回执');
+    assert.equal(receipts[0].storeReadbackStatus, storeStatus === 'throw' ? null : storeStatus);
+    assert.equal(JSON.stringify(receipts[0]).includes('offline-canary'), false, '异常回读的清理回执也不能保留敏感内容');
+    assert.equal(receipts[0].entryReadbackStatus, 404);
+    assert.equal(receipts[0].runReadbackStatus, 404);
+    assert.equal(receipts[0].storeId, 'own-store');
+    assert.equal(receipts[0].runId, 'own-run');
+    assert.ok(calls.some(call => call.method === 'GET' && call.path === '/api/document-store/stores/own-store'));
+  }
+  assert.equal((source.match(/cleanupShortVideoFixture\(page, token, runId, storeId, uploadedEntryId, testInfo\)/g) || []).length, 2, '两个原旅程都须保存真实清理回执');
+});
 
 function slot(slotId, overrides = {}) {
   return {

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
 import { assertDefaultJpegPrimary, assertJpegUploadRequest, assertDefaultJpegRequest, jpegReferencePrompt, submitDefaultJpegThroughUi } from '../../e2e/utils/stableSmokeJpegJourney.mjs';
 
 const pool = { isDefault: true, code: 'existing-default', name: '明确配置型号' };
@@ -139,4 +140,44 @@ test('REG-image-input-001 原JPEG旅程接真人入口且不另选模型，下�
   assert.match(body, /\}\)\)\.status\(\)\)\.toBe\(404\)/);
   const helper = readFileSync(new URL('../../e2e/utils/stableSmokeJpegJourney.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(helper, /request\.(?:post|put)|\.goto\(|\.route\(|\.fulfill\(/);
+});
+
+test('REG-image-input-001 JPEG硬失败须先留脱敏原因，清理独立回读detail404', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[VIS-003][REG-image-input-001]")[1].split("test('[MVIS-001]")[0];
+  const catchBody = body.split('} catch (error) {')[1]?.split('} finally {')[0];
+  assert.ok(catchBody, 'finally覆盖前必须保存原始业务硬失败');
+  assert.match(catchBody, /testInfo\.attach\('jpeg-original-hard-failure'/);
+  assert.match(catchBody, /redactStableSmokeDiagnosticText\(/);
+  assert.match(catchBody, /throw error/);
+  const cleanup = body.split('} finally {')[1];
+  assert.match(cleanup, /get\(`\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}\/detail`/);
+  assert.match(cleanup, /\.status\(\)\)\.toBe\(404\)/);
+  assert.doesNotMatch(cleanup, /get\(`\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}`/);
+  assert.match(body, /expect\.soft\(completed\.detail\.run\.expectedImageRefCount,[\s\S]*?\)\.toBe\(1\)/);
+  assert.match(body, /expect\(completed\.detail\.run\.imageRefs\)\.toHaveLength\(1\)/);
+  assert.match(body, /expect\(completed\.detail\.run\.imageRefs\?\.\[0\]\.assetSha256\)\.toBe\(created\.reference\.sha256\)/);
+  assert.match(body, /width: 1024, height: 1024/);
+  assert.match(body, /field: 'image\[\]'/);
+});
+
+test('REG-image-input-001 真实JPEG catch在finally再失败前仍保留原硬断言与脱敏回执', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[VIS-003][REG-image-input-001]")[1].split("test('[MVIS-001]")[0];
+  const catchBody = body.split('} catch (error) {')[1].split('} finally {')[0];
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const execute = new AsyncFunction('testInfo', 'error', 'workspace', 'runId', 'redactStableSmokeDiagnosticText', catchBody);
+  const original = new Error('原始imageRefs硬断言失败，token=offline-canary');
+  const cleanup = new Error('后续清理失败');
+  const attachments = [];
+  await assert.rejects(async () => {
+    try {
+      await execute({ attach: async (name, value) => attachments.push({ name, body: value.body }) }, original, { id: 'own-workspace' }, 'own-run', redactStableSmokeDiagnosticText);
+    } finally { throw cleanup; }
+  }, error => error === cleanup);
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].name, 'jpeg-original-hard-failure');
+  assert.match(attachments[0].body, /原始imageRefs硬断言失败/);
+  assert.doesNotMatch(attachments[0].body, /offline-canary/);
+  assert.equal(JSON.parse(attachments[0].body).workspaceId, 'own-workspace');
 });
