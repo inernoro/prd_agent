@@ -1,4 +1,4 @@
-import type { BranchEntry } from '../types.js';
+import type { BranchEntry, DeploymentRun } from '../types.js';
 import { hasBranchDeleteIntentReason } from './branch-wake-eligibility.js';
 
 export interface DiscoveredAppContainer {
@@ -76,4 +76,44 @@ export function shouldPruneDeletedBranchStartupResidue(
   if (services.length === 0) return true;
 
   return services.every((profileId) => !appContainers.has(`${branch.id}/${profileId}`));
+}
+
+export function reconcileBranchStatusFromServices(branch: BranchEntry, latestRun?: DeploymentRun): { previousStatus: string; nextStatus: string; changed: boolean } {
+  const previousStatus = branch.status;
+  const previousError = branch.errorMessage;
+  // No published services is a normal result of a failed first candidate.
+  // Their absence cannot erase the deployment failure during Master startup.
+  if (!Object.keys(branch.services || {}).length && previousStatus !== 'stopping') {
+    const stoppedAt = branch.lastStoppedAt ? Date.parse(branch.lastStoppedAt) : -Infinity;
+    const failedTarget = latestRun?.status === 'failed' && latestRun.branchId === branch.id &&
+      latestRun.projectId === branch.projectId && /^[a-f0-9]{40}$/.test(latestRun.commitSha || '') &&
+      latestRun.commitSha === branch.githubCommitSha && stoppedAt < Date.parse(latestRun.startedAt);
+    if (previousStatus === 'error' || failedTarget) {
+      branch.status = 'error';
+      branch.errorMessage ||= failedTarget ? latestRun?.failure?.summary || '部署失败，请查看最近部署记录' : undefined;
+      return { previousStatus, nextStatus: branch.status, changed: previousStatus !== branch.status || previousError !== branch.errorMessage };
+    }
+  }
+  let serviceErrorCleared = false;
+  for (const service of Object.values(branch.services || {})) {
+    if (service.status === 'running' && service.errorMessage) {
+      service.errorMessage = undefined;
+      serviceErrorCleared = true;
+    }
+  }
+  const statuses = Object.values(branch.services || {}).map((service) => service.status);
+  if (statuses.some((status) => status === 'error')) branch.status = 'error';
+  else if (statuses.some((status) => status === 'building')) branch.status = 'building';
+  else if (statuses.some((status) => status === 'starting' || status === 'restarting')) branch.status = 'starting';
+  else if (statuses.some((status) => status === 'running')) branch.status = 'running';
+  else branch.status = 'idle';
+
+  const failedReasons = Object.entries(branch.services || {})
+    .filter(([, service]) => service.status === 'error')
+    .map(([id, service]) => `${id}: ${service.errorMessage || '启动失败'}`);
+  branch.errorMessage = failedReasons.length ? failedReasons.join('\n') : undefined;
+  if (branch.status === 'running' && previousStatus !== 'running') {
+    branch.lastReadyAt = new Date().toISOString();
+  }
+  return { previousStatus, nextStatus: branch.status, changed: previousStatus !== branch.status || serviceErrorCleared };
 }

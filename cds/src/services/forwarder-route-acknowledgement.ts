@@ -62,17 +62,31 @@ export class ForwarderRouteAcknowledgement {
   }
 
   async wait(branchId: string, options: { signal?: AbortSignal; timeoutMs?: number; intervalMs?: number } = {}): Promise<boolean> {
-    const expected = this.publisher.getDesiredRoutes().filter(route => route.branchId === branchId).map(route => ({ ...route }));
-    if (!expected.length || options.signal?.aborted) return false;
+    return this.waitForSnapshot(branchId, options, false);
+  }
+
+  /** Recovery of a failed first deployment has no original serving graph.
+   * Prove complete route withdrawal, never interpret emptiness as readiness. */
+  async waitForWithdrawal(branchId: string, options: { signal?: AbortSignal; timeoutMs?: number; intervalMs?: number } = {}): Promise<boolean> {
+    return this.waitForSnapshot(branchId, options, true);
+  }
+
+  private async waitForSnapshot(branchId: string, options: { signal?: AbortSignal; timeoutMs?: number; intervalMs?: number }, withdrawal: boolean): Promise<boolean> {
+    const desired = this.publisher.getDesiredRoutes();
+    const expected = (withdrawal ? desired : desired.filter(route => route.branchId === branchId)).map(route => ({ ...route }));
+    if (options.signal?.aborted || (withdrawal ? expected.some(route => route.branchId === branchId) : !expected.length)) return false;
+    const acknowledged = (actual: readonly RouteRecord[]) => withdrawal
+      ? !actual.some(route => route.branchId === branchId) && JSON.stringify(expected.map(routingKey).sort()) === JSON.stringify(actual.map(routingKey).sort())
+      : branchRoutesAcknowledged(branchId, expected, actual);
     const deadline = Date.now() + Math.max(1, options.timeoutMs ?? 10_000);
     while (Date.now() < deadline && !options.signal?.aborted) {
       // A concurrent state change cannot silently redefine the acknowledgement target.
-      if (!branchRoutesAcknowledged(branchId, expected, this.publisher.getDesiredRoutes())) return false;
+      if (!acknowledged(this.publisher.getDesiredRoutes())) return false;
       this.publisher.publishNow();
       try {
         const routes = await readConsumer(this.port, Math.min(1000, Math.max(1, deadline - Date.now())), options.signal);
-        if (!options.signal?.aborted && branchRoutesAcknowledged(branchId, expected, routes) &&
-          branchRoutesAcknowledged(branchId, expected, this.publisher.getDesiredRoutes())) return true;
+        if (!options.signal?.aborted && acknowledged(routes) &&
+          acknowledged(this.publisher.getDesiredRoutes())) return true;
       } catch { /* Retry until the bounded deadline; no acknowledgement is inferred from read failure. */ }
       try { await delay(Math.min(Math.max(1, options.intervalMs ?? 100), Math.max(1, deadline - Date.now())), undefined, { signal: options.signal }); }
       catch { return false; }

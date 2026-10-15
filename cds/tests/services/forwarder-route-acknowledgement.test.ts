@@ -13,6 +13,39 @@ async function serve(handler: http.RequestListener, test: (port: number) => Prom
   finally { for (const socket of sockets) socket.destroy(); await new Promise<void>(resolve => server.close(() => resolve())); }
 }
 describe('P3 actual forwarder acknowledgement', () => {
+  it('proves withdrawal of a never-published branch through the actual consumer without accepting an empty readiness graph', async () => {
+    let reads = 0;
+    await serve((_req, res) => { reads++; res.end(JSON.stringify({ routes: [] })); }, async port => {
+      const ack = new ForwarderRouteAcknowledgement({ getDesiredRoutes: () => [], publishNow: () => true }, port);
+      expect(await ack.wait('branch')).toBe(false);
+      expect(await ack.waitForWithdrawal('branch', { timeoutMs: 100 })).toBe(true);
+      expect(reads).toBe(1);
+    });
+  });
+  it.each(['candidate', 'foreign', 'changed-port', 'unavailable', 'desired-drift'])('rejects unconfirmed empty-graph withdrawal: %s', async variant => {
+    const other = { ...route(), branchId: 'other', host: 'other.example.test' };
+    let desired = [other];
+    await serve((_req, res) => {
+      if (variant === 'unavailable') { res.statusCode = 503; res.end(); return; }
+      if (variant === 'desired-drift') desired = [];
+      const actual = variant === 'candidate' ? [other, route()]
+        : variant === 'foreign' ? [other, { ...route(), branchId: 'foreign' }]
+        : variant === 'changed-port' ? [{ ...other, upstreamPort: 10003 }] : [other];
+      res.end(JSON.stringify({ routes: actual }));
+    }, async port => {
+      const ack = new ForwarderRouteAcknowledgement({ getDesiredRoutes: () => desired, publishNow: () => true }, port);
+      expect(await ack.waitForWithdrawal('branch', { timeoutMs: 50, intervalMs: 1 })).toBe(false);
+    });
+  });
+  it('requires the unchanged complete global snapshot to withdraw an empty branch', async () => {
+    const other = { ...route(), branchId: 'other', host: 'other.example.test' };
+    await serve((_req, res) => res.end(JSON.stringify({ routes: [other] })), async port => {
+      const ack = new ForwarderRouteAcknowledgement({ getDesiredRoutes: () => [other], publishNow: () => true }, port);
+      expect(await ack.waitForWithdrawal('branch', { timeoutMs: 100 })).toBe(true);
+      expect(await ack.waitForWithdrawal('other', { timeoutMs: 100 })).toBe(false);
+    });
+  });
+
   it('settles a non-200 HTTP response within its deadline even when destruction emits no later error', async () => {
     await serve((_req, res) => { res.statusCode = 503; res.end('not ready'); }, async port => {
       const ack = new ForwarderRouteAcknowledgement({ getDesiredRoutes: () => [route()], publishNow: () => true }, port);

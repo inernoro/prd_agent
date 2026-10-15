@@ -124,7 +124,7 @@ import { AuditLiveness, recordAuditFailure } from './services/audit-liveness.js'
 import { reconcileSelfUpdateOutcome } from './services/self-update-outcome.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { AutoWakeAdmission } from './services/auto-wake-admission.js';
-import { reconcileHostRebootBranch, shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
+import { reconcileBranchStatusFromServices, reconcileHostRebootBranch, shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
 import { readPreviewMirror, registerLoadedPreviewMirror } from './services/preview-mirror.js';
@@ -1799,31 +1799,6 @@ function dispatchRecoveredWebhookDeploys(
   }
 }
 
-function reconcileBranchStatusFromServices(branch: BranchEntry): { previousStatus: string; nextStatus: string; changed: boolean } {
-  const previousStatus = branch.status;
-  let serviceErrorCleared = false;
-  for (const service of Object.values(branch.services || {})) {
-    if (service.status === 'running' && service.errorMessage) {
-      service.errorMessage = undefined;
-      serviceErrorCleared = true;
-    }
-  }
-  const statuses = Object.values(branch.services || {}).map((service) => service.status);
-  if (statuses.some((status) => status === 'error')) branch.status = 'error';
-  else if (statuses.some((status) => status === 'building')) branch.status = 'building';
-  else if (statuses.some((status) => status === 'starting' || status === 'restarting')) branch.status = 'starting';
-  else if (statuses.some((status) => status === 'running')) branch.status = 'running';
-  else branch.status = 'idle';
-
-  const failedReasons = Object.entries(branch.services || {})
-    .filter(([, service]) => service.status === 'error')
-    .map(([id, service]) => `${id}: ${service.errorMessage || '启动失败'}`);
-  branch.errorMessage = failedReasons.length ? failedReasons.join('\n') : undefined;
-  if (branch.status === 'running' && previousStatus !== 'running') {
-    branch.lastReadyAt = new Date().toISOString();
-  }
-  return { previousStatus, nextStatus: branch.status, changed: previousStatus !== branch.status || serviceErrorCleared };
-}
 
 // ── State ──
 //
@@ -4033,8 +4008,11 @@ janitorService.setRemoveFn(async (slug: string) => {
     }
 
     let branchStatusReconciled = 0;
+    const deploymentRows = stateService.getDeploymentRuns();
+    const latestRunsByBranch = new Map<string, (typeof deploymentRows)[number]>();
+    for (const run of deploymentRows) if (!latestRunsByBranch.has(run.branchId)) latestRunsByBranch.set(run.branchId, run);
     for (const branch of stateService.getAllBranches()) {
-      const result = reconcileBranchStatusFromServices(branch);
+      const result = reconcileBranchStatusFromServices(branch, latestRunsByBranch.get(branch.id));
       if (!result.changed) continue;
       branchStatusReconciled++;
       activeServerEventLogStore?.record({
@@ -5339,8 +5317,13 @@ const serverDeps: ServerDeps = {
     admit: async (_graph, _stops, context) => {
       await admitCandidateCapacity(stateService, shell, context);
     },
-    acknowledge: (branch, signal) => new ForwarderRouteAcknowledgement(forwarderRoutePublisher!,
-      Number.parseInt(process.env.CDS_FORWARDER_PORT ?? '9090', 10)).wait(branch.id, { signal }),
+    acknowledge: (branch, signal) => {
+      const acknowledgement = new ForwarderRouteAcknowledgement(forwarderRoutePublisher!,
+        Number.parseInt(process.env.CDS_FORWARDER_PORT ?? '9090', 10));
+      return Object.keys(branch.services).length
+        ? acknowledgement.wait(branch.id, { signal })
+        : acknowledgement.waitForWithdrawal(branch.id, { signal });
+    },
   } : undefined,
   getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,

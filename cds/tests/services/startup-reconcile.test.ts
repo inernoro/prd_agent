@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { hasBranchDeleteCleanupIntent, shouldPruneDeletedBranchStartupResidue } from '../../src/services/startup-reconcile.js';
-import type { BranchEntry } from '../../src/types.js';
+import { hasBranchDeleteCleanupIntent, reconcileBranchStatusFromServices, shouldPruneDeletedBranchStartupResidue } from '../../src/services/startup-reconcile.js';
+import type { BranchEntry, DeploymentRun } from '../../src/types.js';
 
 function branch(overrides: Partial<BranchEntry> = {}): BranchEntry {
   return {
@@ -29,6 +29,44 @@ function branch(overrides: Partial<BranchEntry> = {}): BranchEntry {
     ...overrides,
   };
 }
+
+describe('startup reconciliation of a first deployment failure', () => {
+  const empty = () => branch({ services: {}, status: 'idle', githubCommitSha: 'a'.repeat(40),
+    lastStopSource: undefined, lastStopReason: undefined });
+  const failure = (b: BranchEntry): DeploymentRun => ({ id: 'dr_first', projectId: b.projectId!, branchId: b.id,
+    trigger: 'manual', status: 'failed', phase: 'starting', seq: 1, firstEventSeq: 1,
+    commitSha: b.githubCommitSha, startedAt: '2026-10-15T03:00:00Z', updatedAt: '2026-10-15T03:01:00Z',
+    finishedAt: '2026-10-15T03:01:00Z', events: [], failure: { code: 'candidate_create_identity', owner: 'cds',
+      summary: 'candidate_create_identity: creation identity cannot be overwritten', retryable: false, evidenceRefs: [] } });
+
+  it('does not erase a failure just because there was never a published service', () => {
+    const b = empty(); b.status = 'error'; b.errorMessage = 'original first deployment error';
+    expect(reconcileBranchStatusFromServices(b).changed).toBe(false);
+    expect(b.status).toBe('error'); expect(b.errorMessage).toBe('original first deployment error');
+  });
+  it.each(['idle', 'starting', 'building'] as const)('restores an already-erased first failure from the same branch and exact target run: %s', status => {
+    const b = empty(); b.status = status; const run = failure(b); const original = JSON.stringify(run);
+    expect(reconcileBranchStatusFromServices(b, run).changed).toBe(true);
+    expect(b.status).toBe('error'); expect(b.errorMessage).toBe(run.failure!.summary);
+    expect(JSON.stringify(run)).toBe(original);
+  });
+  it.each(['branch', 'project', 'target', 'completed', 'cancelled', 'stopped', 'stopping'])('does not restore unrelated or superseded failures: %s', variant => {
+    const b = empty(); const run = failure(b);
+    if (variant === 'branch') run.branchId = 'other';
+    if (variant === 'project') run.projectId = 'other';
+    if (variant === 'target') run.commitSha = 'b'.repeat(40);
+    if (variant === 'completed') run.status = 'completed';
+    if (variant === 'cancelled') run.status = 'cancelled';
+    if (variant === 'stopped') b.lastStoppedAt = '2026-10-15T03:02:00Z';
+    if (variant === 'stopping') b.status = 'stopping';
+    reconcileBranchStatusFromServices(b, run); expect(b.status).toBe('idle');
+  });
+  it('continues to derive a successfully published graph from actual service states', () => {
+    const b = branch({ status: 'error', errorMessage: 'old failure' });
+    reconcileBranchStatusFromServices(b, failure(b));
+    expect(b.status).toBe('running'); expect(b.errorMessage).toBeUndefined();
+  });
+});
 
 describe('startup reconcile delete cleanup residue', () => {
   it('recognizes branch delete cleanup intent from persisted stop metadata', () => {
