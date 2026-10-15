@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """独立 CDS 探测与状态快照。配置只从权限 0600 的文件读取，日志不输出凭据。"""
 import argparse
+import concurrent.futures
+import importlib.util
 import datetime as dt
 import json
 import os
@@ -17,7 +19,7 @@ def iso(now):
 
 def read_url(url, headers=None, limit=2_000_000):
     request = urllib.request.Request(url, headers={'User-Agent': 'cds-independent-monitor', **(headers or {})})
-    with urllib.request.urlopen(request, timeout=8) as response:
+    with urllib.request.urlopen(request, timeout=15) as response:
         body = response.read(limit + 1)
         if len(body) > limit:
             raise ValueError('response too large')
@@ -26,13 +28,17 @@ def read_url(url, headers=None, limit=2_000_000):
 
 def inspect(config, now):
     root_ok = False
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+    root_request = pool.submit(read_url, config['cdsBase'] + '/status')
+    summary_request = pool.submit(read_url, config['cdsBase'] + '/api/uptime/summary?segments=12', config['headers'])
+    pool.shutdown(wait=False)
     try:
-        html = read_url(config['cdsBase'] + '/status').decode('utf-8')
+        html = root_request.result().decode('utf-8')
         root_ok = '<html' in html.lower() and '<script' in html.lower()
     except Exception:
         pass
     try:
-        summary = json.loads(read_url(config['cdsBase'] + '/api/uptime/summary?segments=12', config['headers']))
+        summary = json.loads(summary_request.result())
         generated = float(summary['generatedAt']) / 1000
         targets = [t for t in summary['targets'] if t.get('projectId') == 'cds-self-monitor']
         fresh = -60 <= now - generated <= 180
@@ -66,7 +72,7 @@ def advance(state, observation, now):
     if observation['reason']:
         state['healthySince'] = None
         state['failures'] = state.get('failures', 0) + 1
-        if not event and state['failures'] >= 3:
+        if not event and state['failures'] >= observation.get('failureThreshold', 3):
             event = {'id': str(uuid.uuid4()), 'startedAt': iso(now), 'state': 'open', 'reason': observation['reason']}
             state['incident'] = event
             transition = 'down'
@@ -102,7 +108,7 @@ def public_snapshot(state, config, now):
             'metrics': [], 'summaryAt': obs.get('summaryAt'),
             'identity': {'observer': display(public.get('observer', {})), 'subject': display(public.get('subject', {}))},
             'checking': bool(state.get('failures')) and not state.get('incident'),
-            'notificationReady': bool(config.get('bark')), 'consoleUrl': config.get('publicConsoleUrl', '')}
+            'notificationReady': bool(config.get('bark', {}).get('key')), 'timeoutSeconds': 15, 'checkIntervalSeconds': config.get('intervalSeconds', 60), 'consoleUrl': config.get('publicConsoleUrl', '')}
 
 
 def identity_label(value):
@@ -116,25 +122,39 @@ def incident_url(config, event_id):
     return urllib.parse.urlunsplit(url._replace(query=urllib.parse.urlencode(query, doseq=True)))
 
 
-def notify(config, state, transition, now):
+def notify(config, state, transition, now, dispatcher=None):
     bark = config.get('bark')
-    if not bark or not transition:
+    if not bark or not bark.get('key') or not transition:
         return
     event = state.get('incident') or state.get('history', [{}])[0]
     if transition == 'recovered' and not any(d.get('accepted') and d.get('incidentId') == event.get('id') and d.get('transition') != 'recovered' for d in state.get('deliveries', [])):
         return True
-    title = 'CDS 已稳定恢复' if transition == 'recovered' else 'CDS 外部访问异常' if event.get('reason') == 'unreachable' else 'CDS 自检数据获取异常'
     identity = config.get('identity', {})
-    observer = identity_label(identity.get('observer', {})); subject = identity_label(identity.get('subject', {}))
-    payload = {'device_key': bark['key'], 'title': '[' + subject + '] ' + title,
-               'body': '检查方：' + observer + '\n故障对象：' + subject + '\n同一故障已合并。点击查看业务影响、最近检查时间和下一步处理。',
+    subject = config.get('displayName', '监控平台')
+    environment = identity.get('subject', {}).get('environment', '生产')
+    result = '已恢复' if transition == 'recovered' else '访问无响应' if event.get('reason') == 'unreachable' else '状态暂时无法确认'
+    title = subject + ' · ' + environment + '：' + result
+    payload = {'device_key': bark['key'], 'title': title,
+               'body': '外部检查持续失败，相关检查已合并。点击查看影响与处理建议。' if transition != 'recovered' else '外部访问已持续恢复。点击查看处理记录。',
                'url': incident_url(config, event.get('id', '')),
-               'group': 'CDS / ' + subject + ' / ' + identity.get('subject', {}).get('id', 'unconfigured'), 'level': 'passive' if transition == 'recovered' else 'active'}
-    ok = False
+               'group': subject + ' · ' + identity.get('subject', {}).get('environment', '生产'), 'level': 'passive' if transition == 'recovered' else 'active'}
+    icon = identity.get('observer', {}).get('iconUrl') or bark.get('iconUrl')
+    if icon:
+        parsed = urllib.parse.urlsplit(icon)
+        if parsed.scheme == 'https' and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment:
+            payload['icon'] = icon
+    if dispatcher is not None:
+        message = {k: v for k, v in payload.items() if k != 'device_key'}
+        accepted = dispatcher.submit({'bark': bark}, message, 'platform:' + event['id'] + ':' + transition, now)
+        if accepted is None:
+            return 'queued'
+        state['deliveries'] = [{'at': iso(now), 'incidentId': event['id'], 'transition': transition, 'accepted': accepted}, *state.get('deliveries', [])][:200]
+        return accepted
+    ok = None
     try:
         request = urllib.request.Request(bark.get('serverUrl', 'https://api.day.app').rstrip('/') + '/push',
                                          data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(request, timeout=8) as response:
+        with urllib.request.urlopen(request, timeout=15) as response:
             result = json.loads(response.read(4096))
             ok = response.status == 200 and result.get('code') == 200
     except Exception:
@@ -154,8 +174,9 @@ def publish(config, snapshot):
                       ACL='public-read', ContentType='application/json; charset=utf-8', CacheControl='no-store')
 
 
-def tick(config, state, now):
+def tick(config, state, now, dispatcher=None, persist=lambda: None):
     observation = inspect(config, now)
+    observation['failureThreshold'] = config.get('failureThreshold', 3)
     transition = advance(state, observation, now)
     event = state.get('incident')
     eligible = observation.get('notifyEligible', True)
@@ -164,14 +185,17 @@ def tick(config, state, now):
     elif event and eligible and (state.get('notificationIncidentId') != event['id'] or transition == 'escalated'):
         state['notificationIncidentId'] = event['id']
         state['pending'] = {'transition': 'escalated' if transition == 'escalated' else 'down', 'attempts': 0, 'nextAt': now}
+    persist()
     # 页面先留证，再发通知；手机链接不会指向尚未发布的事件。
     publish(config, public_snapshot(state, config, now))
     pending = state.get('pending')
     if pending and (eligible or pending['transition'] == 'recovered') and config.get('bark') and now >= pending['nextAt']:
-        accepted = notify(config, state, pending['transition'], now)
+        accepted = notify(config, state, pending['transition'], now, dispatcher)
+        if accepted == 'queued':
+            return
         pending['attempts'] += 1
         pending['nextAt'] = now + 300
-        if accepted or pending['attempts'] >= 3:
+        if accepted or accepted is None or pending['attempts'] >= 3:
             state.pop('pending', None)
 
 
@@ -183,13 +207,48 @@ def main():
     config_path = Path(args.config)
     if config_path.stat().st_mode & 0o077:
         raise SystemExit('配置文件必须仅服务账号可读（0600）')
+    import fcntl
+    lock = config_path.with_name('monitor.lock').open('w')
+    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     config = json.loads(config_path.read_text())
     path = config_path.with_name('state.json')
     state = json.loads(path.read_text()) if path.exists() else {}
+    spec = importlib.util.spec_from_file_location('alarm_relay', Path(__file__).with_name('independent-alarm-relay.py'))
+    relay = importlib.util.module_from_spec(spec); spec.loader.exec_module(relay)
+    guard_spec = importlib.util.spec_from_file_location('phone_dispatch', Path(__file__).with_name('phone-dispatch.py'))
+    guard_module = importlib.util.module_from_spec(guard_spec); guard_spec.loader.exec_module(guard_module)
+    dispatch_path = config_path.with_name('phone-dispatch-state.json')
+    dispatch_state = json.loads(dispatch_path.read_text()) if dispatch_path.exists() else {}
+    dispatcher = guard_module.PhoneDispatch(dispatch_state, lambda: relay.save(dispatch_path, dispatch_state), relay.send)
+    relay_path = config_path.with_name('relay-state.json')
+    relay_state = json.loads(relay_path.read_text()) if relay_path.exists() else {}
+    cached_channels = relay_state.get('channels', [])
+    if cached_channels and relay_state.get('enabled'):
+        config['bark'] = cached_channels[0].get('bark', {})
+        config['publicUrl'] = cached_channels[0].get('incidentPageUrl') or config['publicUrl']
+    last_inspect = 0
     while True:
         started = time.time()
         try:
-            tick(config, state, started)
+            if config.get('relayPrivateKey'):
+                try:
+                    relay.poll(config, relay_state, started)
+                    relay.save(relay_path, relay_state)
+                    # 外部监控保留既有通道的安全副本，主站不可达时也能发送平台事故。
+                    channels = relay_state.get('channels', [])
+                    if channels and relay_state.get('enabled'):
+                        config['bark'] = channels[0].get('bark', {})
+                        config['publicUrl'] = channels[0].get('incidentPageUrl') or config['publicUrl']
+                    else:
+                        config.pop('bark', None)
+                except Exception:
+                    print(json.dumps({'at': iso(started), 'result': 'relay-sync-unavailable'}), flush=True)
+                relay.process(relay_state, started, lambda: relay.save(relay_path, relay_state),
+                    dispatcher=dispatcher, platform_incident=state.get('incident') if any(d.get('accepted') and d.get('incidentId') == (state.get('incident') or {}).get('id') for d in state.get('deliveries', [])) else None)
+            if started - last_inspect >= config.get('intervalSeconds', 60):
+                tick(config, state, started, dispatcher, lambda: relay.save(path, state))
+                last_inspect = started
+            dispatcher.flush(started)
             print(json.dumps({'at': iso(started), 'result': 'published', 'incident': bool(state.get('incident'))}), flush=True)
         except Exception as error:
             print(json.dumps({'at': iso(started), 'result': 'failed', 'errorType': type(error).__name__}), flush=True)
@@ -201,7 +260,7 @@ def main():
             os.replace(tmp, path)
         if args.once:
             break
-        time.sleep(max(1, 60 - (time.time() - started)))
+        time.sleep(max(1, 10 - (time.time() - started)))
 
 
 if __name__ == '__main__':

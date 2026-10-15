@@ -8,7 +8,8 @@ describe('stuck runtime diff production wiring', () => {
     const end = source.indexOf('function dispatchRecoveredWebhookDeploys(', start);
     const watchdog = source.slice(start, end);
     expect(watchdog).not.toContain('execSync(');
-    expect(watchdog).toContain('new StuckDeployRuntimeDiff(shell)');
-    expect(watchdog).toContain('runtimeDiff.hasRuntimeChanges(b)');
+    expect(watchdog).toContain('new AsyncStuckDeployReconciler(');
+    expect(watchdog).toContain('git: createReleaseGitRunner(shell)');
+    expect(watchdog).toContain('stuckReconciler.run()');
   });
 });

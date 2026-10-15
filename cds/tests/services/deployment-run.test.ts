@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BranchOperationCoordinator } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError } from '../../src/services/branch-operation-coordinator.js';
 import { StateService } from '../../src/services/state.js';
@@ -29,6 +30,45 @@ describe('DeploymentRunService', () => {
     clock = new Date('2026-07-10T01:00:00.000Z');
   });
 
+  it('有效排队不按执行心跳超时，队列取消立即更新同一代次run', async () => {
+    const runs = new DeploymentRunService(stateService, { now: () => clock });
+    const coordinator = new BranchOperationCoordinator(); runs.bindOperationCoordinator(coordinator);
+    const active = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'manual' });
+    const queued = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'webhook', commitSha: 'b'.repeat(40), commitPinned: true, configHash: 'cfg' });
+    const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook', initialStatus: 'queued', operationId: queued.operationId, operationGeneration: queued.generation });
+    clock = new Date(clock.getTime() + 30 * 60_000);
+    expect(runs.reconcileInterrupted()).toEqual([]); expect(runs.get(run.id)?.status).toBe('queued');
+    coordinator.completeAll(active.lease!, 'completed');
+    expect(runs.reconcileInterrupted()).toEqual([]);
+    coordinator.cancelBranch('b1', '停止分支');
+    expect(runs.get(run.id)?.status).toBe('cancelled');
+  });
+
+  it('重放凭据过期在等待查询中取消原run，不重复迁移终态', async () => {
+    let realNow = Date.now();
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow);
+    try {
+      const runs = new DeploymentRunService(stateService, { now: () => clock });
+      const coordinator = new BranchOperationCoordinator(); runs.bindOperationCoordinator(coordinator);
+      const active = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'manual' });
+      const queued = coordinator.begin({ projectId: 'p1', branchId: 'b1', kind: 'deploy', trigger: 'webhook', commitSha: 'b'.repeat(40), commitPinned: true, configHash: 'cfg' });
+      const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook', initialStatus: 'queued', operationId: queued.operationId, operationGeneration: queued.generation });
+      coordinator.completeAll(active.lease!, 'completed');
+      realNow += 6 * 60_000; clock = new Date(clock.getTime() + 30 * 60_000);
+      expect(() => runs.reconcileInterrupted()).not.toThrow();
+      expect(runs.get(run.id)?.status).toBe('cancelled');
+      expect(runs.get(run.id)?.events.filter((event) => event.phase === 'superseded')).toHaveLength(1);
+    } finally { nowSpy.mockRestore(); }
+  });
+
+  it('没有对应实际待办的过期queued记录仍收敛为失败', async () => {
+    const runs = new DeploymentRunService(stateService, { now: () => clock });
+    const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual', initialStatus: 'queued', operationId: 'op_missing', operationGeneration: 2 });
+    clock = new Date(clock.getTime() + 30 * 60_000);
+    expect(runs.reconcileInterrupted().map((r) => r.id)).toEqual([run.id]);
+    expect(runs.get(run.id)?.status).toBe('failed');
+  });
+
   afterEach(async () => {
     await stateService.flush();
     const dir = path.dirname(stateFile);
@@ -42,6 +82,37 @@ describe('DeploymentRunService', () => {
       maxEvents,
     });
   }
+
+  it('缺产物等待可靠保存并恢复原run、配置和代次，领取后不再次恢复', async () => {
+    const target = 'b'.repeat(40); const coordinator = new BranchOperationCoordinator();
+    const runs = new DeploymentRunService(stateService); runs.bindOperationCoordinator(coordinator);
+    const request = { projectId: 'p1', branchId: 'b1', profileId: 'api', kind: 'deploy-profile' as const,
+      trigger: 'manual' as const, actor: 'original', source: 'api.deploy-profile', commitSha: target, commitPinned: true, configHash: 'cfg' };
+    const decision = coordinator.begin(request, { waitForArtifacts: true });
+    const input = { profiles: [{ id: 'api', name: 'API', dockerImage: `ghcr.io/owned/api:sha-${target}`, workDir: '.', command: '',
+      containerPort: 3000, prebuiltImage: true }], configuredEnv: { SECRET: 'original-private-value' }, configHash: 'cfg',
+      profileOverrides: undefined, ciTargetSha: target, targetCommitSha: target,
+      artifactAdmission: { state: 'waiting' as const, targetCommitSha: target, checkedAt: '', reason: 'missing' as const, artifacts: [] } };
+    coordinator.rememberDeploymentInput(decision.operationId, decision.generation, input);
+    const run = await runs.begin({ projectId: 'p1', branchId: 'b1', profileId: 'api', trigger: 'manual', initialStatus: 'queued',
+      operationId: decision.operationId, operationGeneration: decision.generation, commitSha: target, configHash: 'cfg', phase: 'artifact-wait',
+      executionInput: { request, input } });
+    const cold = new StateService(stateFile); cold.load();
+    const recovered = new DeploymentRunService(cold); const nextCoordinator = new BranchOperationCoordinator();
+    expect(recovered.restoreQueued(nextCoordinator).map(item => item.id)).toEqual([run.id]);
+    const [{ pending, input: restored }] = nextCoordinator.getArtifactWaiters();
+    expect(pending).toMatchObject({ operationId: decision.operationId, generation: decision.generation, request: { source: 'api.deploy-profile', actor: 'original', profileId: 'api' } });
+    expect(restored.configuredEnv).toEqual(input.configuredEnv); expect(nextCoordinator.drainReady()).toEqual([]);
+    nextCoordinator.updateArtifactWaiter(pending, { ...restored.artifactAdmission!, state: 'ready' });
+    const [claim] = nextCoordinator.drainReady();
+    const replay = nextCoordinator.begin({ ...claim.request, pendingReplay: { operationId: claim.operationId, generation: claim.generation } });
+    expect(replay).toMatchObject({ status: 'started', operationId: decision.operationId, generation: decision.generation });
+    await recovered.claimQueued(run.id);
+    const afterClaim = new StateService(stateFile); afterClaim.load();
+    expect(new DeploymentRunService(afterClaim).restoreQueued(new BranchOperationCoordinator())).toEqual([]);
+    expect(afterClaim.getDeploymentRun(run.id)?.status).toBe('preparing');
+    await recovered.flush();
+  });
 
   it('persists the run before execution and links it from the branch', async () => {
     const service = createService();

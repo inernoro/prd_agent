@@ -1,3 +1,4 @@
+import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import { describeRestartWait, getRestartWait, resolveRestartStatus } from './services/self-restart-wait.js';
@@ -70,6 +71,7 @@ import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createGithubWebhookRouter, getWebhookNoiseStats } from './routes/github-webhook.js';
 import { buildGateStatus } from './services/build-gate.js';
+import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { getEventLoopLag } from './services/event-loop-lag.js';
 import { getWorkloadCgroupStatus } from './services/workload-cgroup.js';
 import { collectControlPlanePressure } from './services/control-plane-pressure.js';
@@ -567,6 +569,8 @@ export interface ServerDeps {
    * worker abort 完成后再退出。
    */
   gracefulShutdown?: GracefulShutdownController;
+  /** Resources must settle before the shared execution pools close. */
+  registerResourceShutdown?: (close: () => Promise<void>) => void;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -1107,6 +1111,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
     'GET /projects/:id/activity-logs': '获取项目活动日志',
+    'GET /projects/:id/identity-history': '查看设置记录',
     'GET /projects/:id/recent-auto-deploys': '查看自动部署历史',
     'GET /projects/:id/preview-mode': '获取项目预览模式',
     'PUT /projects/:id/preview-mode': '更新项目预览模式',
@@ -1396,6 +1401,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back\/preview$/, '预览回写'],
     [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back$/, '回写派生库'],
     [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-backs\/[^/]+\/rollback$/, '回退回写'],
+    [/^GET \/projects\/[^/]+\/identity-history$/, '查看设置记录'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -1838,7 +1844,14 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     ),
   );
-  const deploymentRunService = new DeploymentRunService(deps.stateService);
+  const deploymentRunService = new DeploymentRunService(deps.stateService, {
+    isExecutionWaiting: (run, now) => Boolean(run.operationId && run.operationGeneration !== undefined
+      && (deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt || 0) > now.getTime()),
+  });
+  if (deps.branchOperationCoordinator && deps.config.mode !== 'executor') {
+    const restored = deploymentRunService.restoreQueued(deps.branchOperationCoordinator);
+    if (restored.length) console.warn(`[deployment-run] 已恢复 ${restored.length} 个尚未执行的排队意图`);
+  }
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   const managedProjectService = new ManagedProjectService(deps.stateService);
   const aiExplanationEndpoint = String(process.env.CDS_AI_EXPLANATION_GATEWAY_URL || '').trim();
@@ -2022,6 +2035,13 @@ export function createServer(deps: ServerDeps): express.Express {
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
     return globalJsonParser(req, res, next);
   });
+
+  const pendingReplayGate = internalPendingReplayAuth.middleware({
+    coordinator: deps.branchOperationCoordinator,
+    projectForBranch: (id) => { const branch = deps.stateService.getBranch(id); return branch ? branch.projectId || 'default' : undefined; },
+  });
+  // 无效的专用签名先拒绝，不能回落到 legacy 内部标记或用户会话。
+  app.use(pendingReplayGate.gate);
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -2724,6 +2744,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      isPendingReplay: pendingReplayGate.isTrusted,
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
     }));
@@ -2774,6 +2795,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
+      if (pendingReplayGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
@@ -4629,6 +4651,7 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
     shell: deps.shell,
+    registerResourceShutdown: deps.registerResourceShutdown,
     serverEventLogStore: deps.serverEventLogStore,
   }));
   // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
@@ -4646,8 +4669,8 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   app.use('/api', createReleasesRouter({
-    stateService: deps.stateService,
     shell: deps.shell,
+    stateService: deps.stateService,
     config: deps.config,
     // 与定时调度器共用同一个实例：settling 期的在途句柄只存在于实例内存里，
     // 分两个实例等于两侧互相看不见对方的在途发布。见 ReleasesRouterDeps.releaseService。

@@ -124,6 +124,15 @@ describe('DeploymentVersionService', () => {
       .toThrow('replacement_contract_version');
   });
 
+  it.each([
+    { buildTimeout: 30 }, { buildScope: ['src'] }, { cacheMounts: [{ hostPath: '/tmp/pnpm-cache', containerPath: '/cache' }] },
+    { fallbackImage: 'node:22' }, { localArtifact: true }, { dbScope: 'per-branch' as const }, { dbInit: 'clone' as const },
+    { sourceFallbackProfile: { ...profile(), command: 'node fallback.js' } },
+  ])('构建、回退或数据库配置改变不得并入同提交旧目标: %j', (changed) => {
+    const service = new DeploymentVersionService(stateService);
+    expect(service.computeConfigHash([{ ...profile(), ...changed }], {})).not.toBe(service.computeConfigHash([profile()], {}));
+  });
+
   it('creates an immutable content-addressed version and reuses the same identity', () => {
     const service = new DeploymentVersionService(stateService, () => new Date('2026-07-10T01:00:00.000Z'));
     branch.services.web = {
@@ -204,6 +213,17 @@ describe('DeploymentVersionService', () => {
     expect(isImmutableImageReference('repo/web:sha-abcdef1')).toBe(true);
     expect(isImmutableImageReference('repo/web:branch-main')).toBe(false);
     expect(isImmutableImageReference('repo/web:latest')).toBe(false);
+  });
+
+  it('版本重放冻结原完整buildScope，旧版本缺范围不能借当前配置补证明', () => {
+    const service = new DeploymentVersionService(stateService);
+    const original = profile({ buildScope: ['src/**', 'Dockerfile'] });
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'b'.repeat(40), configHash: 'd'.repeat(64),
+      profiles: [original], branch, createdByRunId: 'owned-scope-proof' });
+    original.buildScope!.push('not-part-of-frozen-input');
+    expect(service.materializeProfiles(version, [profile({ buildScope: ['src/one-file'] })])[0].buildScope).toEqual(['src/**', 'Dockerfile']);
+    const historical = structuredClone(version); delete historical.profiles[0].buildScope;
+    expect(service.materializeProfiles(historical, [profile({ buildScope: ['src/one-file'] })])[0].buildScope).toBeUndefined();
   });
 
   it('survives a state service restart with the same immutable snapshot', async () => {

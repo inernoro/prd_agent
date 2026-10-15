@@ -13,6 +13,8 @@
  * 判定做成纯函数：真实的 readdir / stat / rm 由调用方注入，测试不碰磁盘。
  */
 
+import type { WorktreeDirectoryIdentity } from './worktree-path-activity.js';
+
 /** 磁盘上枚举到的一个 worktree 目录。 */
 export interface DiskWorktreeDir {
   /** 绝对路径（与 BranchEntry.worktreePath 同一形态，便于直接比对）。 */
@@ -28,6 +30,8 @@ export interface DiskWorktreeDir {
    * 项目桶白名单里）。
    */
   realPath?: string;
+  /** 实际枚举时的对象身份；与mtime一起复核，避免同年龄重建或别名换目标。 */
+  identity?: WorktreeDirectoryIdentity;
 }
 
 /** 一轮枚举的结果：目录清单 + **读失败**的位置（两者必须分开，见下）。 */

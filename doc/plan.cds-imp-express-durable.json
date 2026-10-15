@@ -1,6 +1,6 @@
 {
   "goal_id": "CDS-IMP-EXPRESS-DURABLE-20261010",
-  "plan_version": "v2.04",
+  "plan_version": "v2.16",
   "tasks": [
     {
       "id": "P0-01",
@@ -596,7 +596,7 @@
       "local_evidence_note": "v1.71 当前全局检查点见status_note；本条保留部分实施，局部证据按其原SHA回查，本条正式判据未执行。"
     }
   ],
-  "status_note": "2026-10-15T07:06:54Z：CDS9046/CI38693461818/B02实际同源，helper666/104原路由匹配；最终A03及A01已真实13运行/worker回调/4真实Forwarder入口/黄及同页stop灰闭环通过，2/8；A02正在新纪元部署，其余5待执行。原49正式0；卡片runtime类型推断/成功时间与部分入口菜单发现性仍未闭，不把port/CID更新通过扩为全部UI语义通过。",
+  "status_note": "v2.14本轮以current_execution.round2为准；旧9046串行/普通conditional报告仅历史，不传播为新并发或无SHA通过。",
   "current_execution": {
     "cds_target_sha": "9046ed743348441ff7f923cc5ca9bc689e40334e",
     "imp_helper_sha": "666e0cf2bd18e66cd965fa0b791ce3f4c1d90347",
@@ -716,13 +716,135 @@
     "overall_goal_status": "active",
     "batch_status": "eight-serial-and-ordinary-report-complete",
     "round2": {
-      "phase": "recovery-pre-push",
-      "observed_at": "2026-10-15T09:56:29.605762+00:00",
-      "threeScenarios": "not-executed",
+      "phase": "publishing",
+      "observed_at": "2026-10-15T11:59:50.001981+00:00",
+      "threeScenarios": "fresh-CI 8/8 independently verified; unpinned local TDD in progress; actual concurrent runtime not executed",
       "canonicalSha": "5d7f3d71311b0805e9b8f081d333d96d180096fc",
       "mycdsConcurrencyAdmission": "not-admitted current6GiB",
       "sharedUpdate": "only after all priority real gates pass and latest collaborator integration",
-      "newPushScope": "eight existing owned refs only; tree-preserving new commits; no main/test/PR/merge"
+      "newPushScope": "eight existing owned refs only; tree-preserving new commits; no main/test/PR/merge",
+      "b03ContainerId": "3295c1a9927fd46fe9beae63c4f7199b1e9892d3bcf1252ef7589c59f0ed2ab6",
+      "b03DaemonId": "14ec807b-a29f-4c3f-951c-d5843a7def7d",
+      "b03Stage": "96 original CI image configs/RootFS verified and mirrored; own registry only, no CDS/infra/apps",
+      "eightLoadAdmission": false,
+      "newPushReceipt": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/eight-new-push-receipt.json",
+      "freshCIReceipt": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/ci-observation-02/summary.json",
+      "exportRun": 38723237723,
+      "exportHead": "4d210857bbd8058edd578ec48e2a3b3e8a279d7c",
+      "localIntegration": "77c555 + MERGE_HEAD5d7f3d7 + owned pending admission guards; uncommitted",
+      "formal49Pass": 0,
+      "checkpoint_v215": {
+        "at": "2026-10-15T11:39:03.311031+00:00",
+        "status": "active",
+        "phase": "implementation",
+        "source": "77c5551 + 5d7f3d7 merge remains dirty and uncommitted",
+        "fresh_push_ci": {
+          "branches": 8,
+          "jobs": 72,
+          "conclusion": "success",
+          "job_prestart_wait_seconds": [
+            2,
+            5
+          ]
+        },
+        "fresh_original_artifacts": {
+          "export_run": 38723237723,
+          "downloaded_and_zip_inner_hash_verified": 8,
+          "native_loading": "A01-A03 verified, A04 loading at last observation; no application started"
+        },
+        "local_regression": {
+          "first_full": {
+            "files": 761,
+            "passed_files": 740,
+            "failed_files": 15,
+            "skipped_files": 6,
+            "tests_passed": 11197,
+            "tests_failed": 91,
+            "skipped": 19,
+            "note": "Historical dirty source epoch; fixing integration conflicts, not a release gate pass"
+          },
+          "subsequent": {
+            "actual_branch_executor_http": "406/408 passed before last two fixture corrections",
+            "dual_ack": "6 actual negative tests red before repair; 38/38 green after repair",
+            "new_unpinned_real_git": "2/2 green, actual ls-remote/fetch/detached B while origin advances C; mocked Docker, not runtime acceptance",
+            "acceptance_resource_web_managed_policy": "3 suites passed in targeted rerun; remaining 22 failures in pending/CI HTTP fixture contracts"
+          }
+        },
+        "formal49_closed_pass": 0,
+        "shared_cds_updated": false,
+        "stable_imp_mutated": false,
+        "runtime_baseline": "tail observed app03 source endpoints 200 then scheduler normal stop; public403 and existing mdimp-test crash remain separate facts"
+      },
+      "checkpoint_v216": {
+        "at": "2026-10-15T12:05:23.281212+00:00",
+        "status": "active",
+        "phase": "publishing",
+        "source": "77c555 + MERGE_HEAD5d7f3d7 + owned pending admission guards; uncommitted",
+        "fresh_push_ci": {
+          "branches": 8,
+          "jobs": 72,
+          "conclusion": "success",
+          "job_prestart_wait_seconds": [
+            2,
+            5
+          ]
+        },
+        "fresh_original_artifacts": {
+          "export_run": 38723237723,
+          "native_loaded_verified": 8,
+          "native_images": 96,
+          "mirror_config_rootfs_verified": 96,
+          "apps_started": 0
+        },
+        "local_regression": {
+          "full_third_before_PD7_PD8_PD9": {
+            "passed_files": 755,
+            "skipped_files": 6,
+            "passed_tests": 11294,
+            "skipped_tests": 19,
+            "log": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/merge-full-third.log"
+          },
+          "PD7_PD8_original_negative": {
+            "failed": 5,
+            "log": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/pending-join-drain-clean-red.log"
+          },
+          "PD9_original_negative": {
+            "failed": 1,
+            "log": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/pending-revoked-red.log"
+          },
+          "targeted_final": {
+            "files": 6,
+            "passed": 162,
+            "log": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/pending-all-final.log"
+          },
+          "backend_types": "merge-tsc-final-v216.log exit0",
+          "full_final": {
+            "passed_files": 755,
+            "passed_tests": 11302,
+            "skipped_files": 6,
+            "skipped_tests": 19,
+            "obsolete_snapshots": 1,
+            "seconds": 163.67,
+            "log": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/merge-full-final-v216.log",
+            "source_manifest": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/merge-final-v216-source-manifest.json"
+          },
+          "PD9_State_terminal_negative": {
+            "failed": 1,
+            "log": "/Users/inernoro/.codex/visualizations/2026/10/15/cds-imp-express-round2-main/pending-revoked-state-red.log",
+            "verification": "real native HTTP + actual observer, State JSON reload same process; not new OS"
+          }
+        },
+        "formal49_closed_pass": 0,
+        "shared_cds_updated": false,
+        "stable_imp_mutated": false,
+        "next": "final full run, commit+push owned CDS, exact CI carrier, fresh B03 CDS/infra, 1/2 calibration then 8 unpinned concurrent deployment",
+        "independent_tail": {
+          "bounded_source_review": "pending-dual-durable-review-v217",
+          "receipt_sha256": "fed9a0ac353bb9de60b8c74489f738cc2892e4cef55a21278f7e62256a441d10",
+          "native_96_images_and_registry": "b03-eight-images-preflight-20261015",
+          "receipt_sha256_native": "044c0e3646b504dbfbbacf07282b31e4085361761b0997350168d330db1f9c7f"
+        }
+      }
     }
   }
 }

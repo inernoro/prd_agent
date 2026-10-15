@@ -31,6 +31,7 @@ export function buildWidgetScript(
   const safeSha = String(initialSha || '').replace(/[^a-fA-F0-9]/g, '').slice(0, 40);
   const safeMode = String(initialModeLabel || '').replace(/[^一-龥A-Za-z]/g, '').slice(0, 8);
   const bridgeEnabled = process.env.CDS_BRIDGE_ENABLED === '1';
+  const mobileIdleBadge = '#cds-widget .cds-badge:not(:is(.is-expanded,.is-syncing,.is-sync-success,.is-sync-error))';
 
   return `
 <script data-cds-widget>
@@ -59,7 +60,7 @@ export function buildWidgetScript(
     .cds-ai-badge-stop:hover{background:rgba(248,81,73,0.3);border-color:#f85149;color:#fff}
     .cds-ai-badge-stop:disabled{opacity:0.5;cursor:wait}
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
-    #cds-widget{position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
+    #cds-widget{--cds-safe-top:env(safe-area-inset-top,0px);--cds-safe-right:env(safe-area-inset-right,0px);--cds-safe-bottom:env(safe-area-inset-bottom,0px);--cds-safe-left:env(safe-area-inset-left,0px);position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
     #cds-widget .cds-badge{position:relative;display:inline-flex;flex-direction:column;align-items:stretch;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1;overflow:hidden;transition:background .22s ease,border-color .22s ease,box-shadow .22s ease}
     #cds-widget .cds-badge:active{cursor:grabbing}
@@ -137,12 +138,12 @@ export function buildWidgetScript(
     #cds-widget .cds-mode-select:hover{border-color:#58a6ff}
     #cds-widget .cds-mode-select:focus{outline:none;border-color:#58a6ff}
     @media (max-width:640px){
-      #cds-widget{max-width:calc(100vw - 24px)}
+      #cds-widget{width:max-content;max-width:calc(100vw - 24px)}
       #cds-widget .cds-badge{max-width:calc(100vw - 24px);padding:4px 6px}
-      #cds-widget .cds-badge:not(.is-expanded){width:44px;height:44px;min-width:44px;max-width:44px;padding:0;border-radius:12px}
-      #cds-widget .cds-badge:not(.is-expanded) .cds-badge-main{width:100%;height:100%;justify-content:center;gap:0}
-      #cds-widget .cds-badge:not(.is-expanded) .cds-badge-main>:not(button[data-action="toggle"]){display:none}
-      #cds-widget .cds-badge:not(.is-expanded) button[data-action="toggle"]{width:44px;height:44px;padding:0;opacity:1}
+      ${mobileIdleBadge}{width:44px;height:44px;min-width:44px;max-width:44px;padding:0;border-radius:12px}
+      ${mobileIdleBadge} .cds-badge-main{width:100%;height:100%;justify-content:center;gap:0}
+      ${mobileIdleBadge} .cds-badge-main>:not(button[data-action="toggle"]){display:none}
+      ${mobileIdleBadge} button[data-action="toggle"]{width:44px;height:44px;padding:0;opacity:1}
       #cds-widget .cds-branch,#cds-widget .cds-mode{display:none}
       #cds-widget .cds-panel{width:calc(100vw - 24px);min-width:min(260px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
       #cds-widget .cds-panel-header{position:sticky;top:-10px;z-index:2;background:rgba(22,27,34,0.98)}
@@ -553,6 +554,81 @@ export function buildWidgetScript(
   var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
   var dragState=null;
   var widgetWasDragged=false;
+  var avoidanceFrame=null;
+
+  function visibleObstacle(el){
+    if(root.contains(el))return null;
+    var r=el.getBoundingClientRect();
+    var rect={left:Math.max(0,r.left),top:Math.max(0,r.top),right:Math.min(window.innerWidth,r.right),bottom:Math.min(window.innerHeight,r.bottom)};
+    for(var node=el;node;node=node.parentElement){
+      var style=window.getComputedStyle(node);
+      if(style.display==='none'||style.visibility==='hidden'||style.contentVisibility==='hidden'||Number(style.opacity)===0)return null;
+      if(node!==el){
+        var clip=node.getBoundingClientRect();
+        if(/auto|scroll|hidden|clip/.test(style.overflowX)){rect.left=Math.max(rect.left,clip.left);rect.right=Math.min(rect.right,clip.right);}
+        if(/auto|scroll|hidden|clip/.test(style.overflowY)){rect.top=Math.max(rect.top,clip.top);rect.bottom=Math.min(rect.bottom,clip.bottom);}
+      }
+    }
+    return rect.right>rect.left&&rect.bottom>rect.top?rect:null;
+  }
+
+  function avoidSemanticOverlays(){
+    if(!root.isConnected)return;
+    if(!isMobileViewport()||expanded){root.removeAttribute('data-cds-placement');return;}
+    if(dragState)return;
+    var obstacles=[],seen=[];
+    function add(el){
+      if(seen.indexOf(el)!==-1)return;
+      seen.push(el);
+      var rect=visibleObstacle(el);
+      if(rect)obstacles.push(rect);
+    }
+    document.querySelectorAll('[role="status"],[role="alert"],[aria-live="polite"],[aria-live="assertive"]').forEach(function(el){
+      if(!visibleObstacle(el))return;
+      for(var node=el;node;node=node.parentElement){
+        var position=window.getComputedStyle(node).position;
+        if(position==='fixed'||position==='sticky'){add(node);break;}
+      }
+    });
+    document.querySelectorAll('button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,[role="heading"][aria-level="1"]').forEach(add);
+    var view=window.visualViewport,style=window.getComputedStyle(root),r=root.getBoundingClientRect();
+    function inset(side){return Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-'+side))||0)+12;}
+    var left=(view?view.offsetLeft:0)+inset('left'),top=(view?view.offsetTop:0)+inset('top');
+    var right=(view?view.offsetLeft+view.width:window.innerWidth)-inset('right');
+    var bottom=(view?view.offsetTop+view.height:window.innerHeight)-inset('bottom');
+    var maxX=right-r.width,maxY=bottom-r.height,midX=(left+maxX)/2,midY=(top+maxY)/2;
+    // 有限候选：保留安全原位，其次同高两边、四角和四边中点，不猜某个应用的导航高度。
+    var candidates=[[r.left,r.top],[left,r.top],[maxX,r.top],[left,top],[maxX,top],[left,maxY],[maxX,maxY],[left,midY],[maxX,midY],[midX,top],[midX,maxY]];
+    root.setAttribute('data-cds-placement','blocked');
+    for(var i=0;i<candidates.length;i++){
+      var x=candidates[i][0],y=candidates[i][1];
+      if(x<left||y<top||x>maxX||y>maxY)continue;
+      var hit=obstacles.some(function(o){return x<o.right+8&&x+r.width>o.left-8&&y<o.bottom+8&&y+r.height>o.top-8;});
+      if(hit)continue;
+      pos.x=x;pos.y=window.innerHeight-y-r.height;
+      root.style.left=pos.x+'px';root.style.bottom=pos.y+'px';
+      // fixed 元素落位后仍可能受页面 CSS 影响；只按真实边界承认安全，不以预估尺寸宣称成功。
+      var placed=root.getBoundingClientRect();
+      if(placed.left<left||placed.top<top||placed.right>right||placed.bottom>bottom)continue;
+      if(obstacles.some(function(o){return placed.left<o.right+8&&placed.right>o.left-8&&placed.top<o.bottom+8&&placed.bottom>o.top-8;}))continue;
+      root.setAttribute('data-cds-placement','clear');
+      return;
+    }
+  }
+
+  function scheduleWidgetAvoidance(){
+    if(avoidanceFrame||!root.isConnected)return;
+    avoidanceFrame=requestAnimationFrame(function(){avoidanceFrame=null;avoidSemanticOverlays();});
+  }
+  var avoidanceObserver=new MutationObserver(function(records){
+    if(records.some(function(record){return !root.contains(record.target);}))scheduleWidgetAvoidance();
+  });
+  avoidanceObserver.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['style','class','hidden','role','aria-live']});
+  document.addEventListener('scroll',scheduleWidgetAvoidance,true);
+  if(window.visualViewport){
+    window.visualViewport.addEventListener('resize',scheduleWidgetAvoidance);
+    window.visualViewport.addEventListener('scroll',scheduleWidgetAvoidance);
+  }
 
   function setWidgetPosition(x,y){
     var compactMobile=window.innerWidth<=640&&!expanded;
@@ -564,6 +640,7 @@ export function buildWidgetScript(
     pos.y=Math.max(0,Math.min(maxY,y));
     root.style.left=pos.x+'px';
     root.style.bottom=pos.y+'px';
+    scheduleWidgetAvoidance();
   }
 
   function onMouseDown(e){
@@ -578,7 +655,7 @@ export function buildWidgetScript(
       dragState.px+(e.clientX-dragState.mx),
       dragState.py-(e.clientY-dragState.my));
   });
-  document.addEventListener('mouseup',function(){dragState=null;});
+  document.addEventListener('mouseup',function(){dragState=null;scheduleWidgetAvoidance();});
   window.addEventListener('resize',function(){
     if(!isMobileViewport()&&compact){compact=false;render();}
     else if(isMobileViewport()&&!compact&&!compactTimer)scheduleMobileCompact(4000);
@@ -606,6 +683,7 @@ export function buildWidgetScript(
       root.innerHTML=h;
       root.style.left=pos.x+'px';
       root.style.bottom=pos.y+'px';
+      scheduleWidgetAvoidance();
       renderLogModal();
       return;
     }
@@ -826,7 +904,13 @@ export function buildWidgetScript(
     var btn=e.target.closest('button');
     if(!btn)return;
     var action=btn.getAttribute('data-action');
-    if(action==='dismiss'){root.remove();return;}
+    if(action==='dismiss'){
+      avoidanceObserver.disconnect();
+      if(avoidanceFrame)cancelAnimationFrame(avoidanceFrame);
+      document.removeEventListener('scroll',scheduleWidgetAvoidance,true);
+      if(window.visualViewport){window.visualViewport.removeEventListener('resize',scheduleWidgetAvoidance);window.visualViewport.removeEventListener('scroll',scheduleWidgetAvoidance);}
+      root.remove();return;
+    }
     // 两侧各加了一个独立动作，语义不冲突，都保留。
     // close-panel 是本分支的面板关闭钮；收起之后照 main 的新约定安排手机端重新收成徽章，
     // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收，两条路各行其是。
@@ -911,12 +995,9 @@ export function buildWidgetScript(
       var profileRes=res.profileRes||{};
       var found=res.found||null;
       branchStatus=found?found.status:'';
-      // Codex P2「Keep ciTargetSha when refreshing the widget badge」：服务端已按
-      // ciTargetSha 注入了正确的初始 sha（反映容器实际跑的镜像 commit）。客户端刷新**不要**
-      // 用 /api/branches 的 commitSha（docs-only push 会更新它但镜像没换）把它降级覆盖；
-      // 优先保留服务端注入值，仅服务端没给时才用 API 值兜底。
-      commitSha=commitSha||(found&&(found.commitSha||found.githubCommitSha))||'';
-      commitMsg=found&&found.subject?found.subject:'';
+      // 每次刷新采用最新运行事实；缺证据时清空，不能保留注入的旧版本。
+      commitSha=(found&&found.runningCommitSha)||'';
+      commitMsg=found&&found.githubCommitSha===commitSha&&found.subject?found.subject:'';
       branchTags=(found&&found.tags)||[];
       var sourceProfiles=(profileRes&&profileRes.profiles)||[];
       profiles=found&&found.projectId

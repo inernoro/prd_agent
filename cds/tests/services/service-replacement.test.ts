@@ -1,0 +1,144 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { BranchEntry, ServiceState } from '../../src/types.js';
+import type { StateService } from '../../src/services/state.js';
+import type { ContainerService } from '../../src/services/container.js';
+import { commitServiceReplacements, replacementLaunchEntry, reserveServiceReplacements } from '../../src/services/service-replacement.js';
+import { resolveBranchUpstream } from '../../src/services/proxy.js';
+
+function fixture() {
+  const service: ServiceState = { profileId: 'api', containerName: 'new-api', hostPort: 10002, status: 'starting',
+    networkName: 'new-network', servingRuntime: { containerName: 'old-api', containerId: 'a'.repeat(64), hostPort: 10001, networkName: 'old-network' } };
+  const entry = { id: 'branch', projectId: 'project', services: { api: service } } as BranchEntry;
+  let port = 10010;
+  const state = { save: vi.fn(), flush: vi.fn().mockResolvedValue(undefined), allocatePort: () => port++ } as unknown as StateService;
+  const container = { cleanupUnusedReplacementNetworks: vi.fn().mockResolvedValue(undefined), removeOwnedRuntime: vi.fn().mockResolvedValue(undefined) } as unknown as ContainerService;
+  return { entry, service, state, container };
+}
+
+describe('就绪切换与保旧回退', () => {
+  it('同轮身份和环境提前预约，接口仍指向旧服务；下一轮另分网络', () => {
+    const { entry, state, service } = fixture();
+    entry.services.web = { ...service, profileId: 'web', containerName: 'old-web', hostPort: 10003,
+      servingRuntime: { containerName: 'old-web', hostPort: 10003 } };
+    reserveServiceReplacements({ entry, profileIds: ['api', 'web'], state, portStart: 10000, operationId: 'first' });
+    const first = entry.replacementNetwork;
+    const names = Object.values(entry.services).map(service => service.pendingRuntime!.containerName);
+    expect(new Set(names).size).toBe(2);
+    const prospective = replacementLaunchEntry(entry);
+    expect(prospective.services.api.containerName).toBe(names[0]);
+    expect(prospective.services.web.networkName).toBe(first);
+    expect(resolveBranchUpstream(entry, 'api')).toBe('http://127.0.0.1:10001');
+    reserveServiceReplacements({ entry, profileIds: ['api'], state, portStart: 10000, operationId: 'second' });
+    expect(entry.replacementNetwork).not.toBe(first);
+    expect(service.retainedRuntimes?.some(runtime => runtime.containerName === names[0])).toBe(true);
+  });
+
+  it.each(['starting', 'error'] as const)('候选%s或任一必需服务失败时不切换、不删旧容器', async status => {
+    const f = fixture(); f.service.status = status;
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    f.service.status = 'running';
+    f.entry.services.web = { profileId: 'web', containerName: 'web', hostPort: 10003, status: 'error' };
+    await commitServiceReplacements({ ...f, profileIds: ['api', 'web'] });
+    expect(f.service.servingRuntime?.containerName).toBe('old-api');
+  });
+
+  it('切换关键保存失败时恢复旧入口且不回收，随后重试以精确旧ID回收', async () => {
+    const f = fixture(); f.service.status = 'running';
+    vi.mocked(f.state.flush).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('disk failed'));
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('disk failed');
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledWith(f.entry, 'api', expect.objectContaining({ containerId: 'a'.repeat(64) }), expect.objectContaining({ profileId: 'api' }));
+  });
+
+  it('切换保存尚未返回时继续旧入口，确认后才发布新入口', async () => {
+    const f = fixture(); f.service.status = 'running';
+    let entered!: () => void, release!: () => void;
+    const saving = new Promise<void>(resolve => { entered = resolve; });
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    vi.mocked(f.state.flush).mockResolvedValueOnce(undefined).mockImplementationOnce(async () => { entered(); await pending; });
+    const commit = commitServiceReplacements({ ...f, profileIds: ['api'] });
+    await saving;
+    expect(f.service.servingRuntime?.containerName).toBe('new-api');
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    release(); await commit;
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10002');
+  });
+
+  it('保存期间新操作取代时，不改其候选身份；未发布指针回到原确认入口', async () => {
+    const f = fixture(); f.service.status = 'running';
+    vi.mocked(f.state.flush).mockResolvedValueOnce(undefined).mockImplementationOnce(async () => {
+      f.service.containerName = 'newer-api'; f.service.hostPort = 10005;
+    });
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'], assertCurrent: step => {
+      if (step === 'after runtime cutover persistence') throw new Error('superseded');
+    } })).rejects.toThrow('superseded');
+    expect(f.service.containerName).toBe('newer-api');
+    expect(f.service.servingRuntime?.containerName).toBe('old-api');
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+  });
+
+  it('未替换Web仍依赖旧API时保留旧API，Web随后迁移才回收历史API', async () => {
+    const f = fixture(); f.service.status = 'running';
+    f.entry.services.web = { profileId: 'web', containerName: 'old-web', hostPort: 10003, status: 'running', networkName: 'old-network' };
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    f.entry.services.web = { profileId: 'web', containerName: 'new-web', hostPort: 10004, status: 'running', networkName: 'new-network',
+      servingRuntime: { containerName: 'old-web', hostPort: 10003, containerId: 'b'.repeat(64), networkName: 'old-network' } };
+    await commitServiceReplacements({ ...f, profileIds: ['web'] });
+    expect(f.container.removeOwnedRuntime).toHaveBeenCalledTimes(2);
+    expect(f.service.retainedRuntimes).toEqual([]);
+  });
+
+  it('整体失败后收回已就绪但未发布的候选，旧入口及失败结果保持', async () => {
+    const f = fixture(); f.entry.replacementNetwork = 'new-network';
+    Object.assign(f.service, { status: 'running', containerId: 'b'.repeat(64), creationIssued: true });
+    f.entry.services.web = { profileId: 'web', containerName: 'failed-web', containerId: 'c'.repeat(64), creationIssued: true,
+      networkName: 'new-network', hostPort: 10003, status: 'error', errorMessage: 'readiness failed',
+      servingRuntime: { containerName: 'old-web', containerId: 'd'.repeat(64), hostPort: 10004, networkName: 'old-network' } };
+    f.container.inspectOwnedRuntime = vi.fn().mockImplementation(async (_entry, _id, runtime) => runtime);
+    await commitServiceReplacements({ ...f, profileIds: ['api', 'web'] });
+    expect(vi.mocked(f.container.removeOwnedRuntime).mock.calls.map(call => call[2].containerId)).toEqual(['b'.repeat(64), 'c'.repeat(64)]);
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+    expect(resolveBranchUpstream(f.entry, 'web')).toBe('http://127.0.0.1:10004');
+    expect(f.service.containerName).toBe('old-api'); expect(f.entry.services.web.status).toBe('error');
+    expect(f.entry.services.web.errorMessage).toBe('readiness failed');
+  });
+
+  it('旧入口死亡或已发布角色消费候选时保留责任，不误回收唯一可用资源', async () => {
+    const f = fixture(); f.entry.replacementNetwork = 'new-network';
+    Object.assign(f.service, { status: 'error', containerId: 'b'.repeat(64), creationIssued: true });
+    f.container.inspectOwnedRuntime = vi.fn().mockResolvedValue(null);
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    vi.mocked(f.container.inspectOwnedRuntime).mockImplementation(async (_entry, _id, runtime) => runtime);
+    f.entry.services.web = { profileId: 'web', containerName: 'published-web', hostPort: 10004, networkName: 'new-network', status: 'running' };
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled(); expect(f.service.containerId).toBe('b'.repeat(64));
+  });
+
+  it('候选回收未确认时不移除身份或清除容量责任', async () => {
+    const f = fixture(); f.entry.replacementNetwork = 'new-network';
+    Object.assign(f.service, { status: 'error', containerId: 'b'.repeat(64), creationIssued: true });
+    f.container.inspectOwnedRuntime = vi.fn().mockImplementation(async (_entry, _id, runtime) => runtime);
+    vi.mocked(f.container.removeOwnedRuntime).mockRejectedValueOnce(new Error('removal unconfirmed'));
+    await expect(commitServiceReplacements({ ...f, profileIds: ['api'] })).rejects.toThrow('removal unconfirmed');
+    expect(f.service.containerId).toBe('b'.repeat(64)); expect(f.service.servingRuntime?.containerId).toBe('a'.repeat(64));
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+  });
+
+  it('候选名称不同但携带旧入口实际CID时绝不删除旧资源', async () => {
+    const f = fixture(); f.entry.replacementNetwork = 'new-network';
+    Object.assign(f.service, { status: 'error', creationIssued: true, containerId: f.service.servingRuntime!.containerId });
+    f.container.inspectOwnedRuntime = vi.fn().mockImplementation(async (_entry, _id, runtime) => runtime);
+    await commitServiceReplacements({ ...f, profileIds: ['api'] });
+    expect(f.container.removeOwnedRuntime).not.toHaveBeenCalled();
+    expect(resolveBranchUpstream(f.entry, 'api')).toBe('http://127.0.0.1:10001');
+  });
+
+});

@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
+import { ContainerLogStreamHub } from '../../src/services/container-log-stream-hub.js';
+import type { ObservationStreamExecutor } from '../../src/services/observation-stream-executor.js';
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { nodeModulesVolumeName } from '../../src/util/node-modules-volume.js';
+import { deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
+import { setBuildGateHostLoadProvider } from '../../src/services/build-gate.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
 
 const makeConfig = (): CdsConfig => ({
@@ -46,15 +50,18 @@ const makeService = (): ServiceState => ({
 });
 
 describe('P2 container streaming uses the execution boundary', () => {
-  it('detects a startup signal split across chunks, cancels the bounded command and never invokes native spawn', async () => {
-    const executor = new MockShellExecutor(); const container = new ContainerService(executor, makeConfig());
-    const exec = vi.spyOn(executor, 'exec').mockImplementation(async (_command, options) => {
+  it('detects a split startup signal through the dedicated stream and confirms its owned cancellation', async () => {
+    const executor = new MockShellExecutor();
+    const exec = vi.fn(async (_command, options) => {
       options?.onData?.('boot Sta'); options?.onData?.('rted application');
       expect(options?.signal?.aborted).toBe(true);
-      return { stdout: 'Started application', stderr: '', exitCode: 130 };
+      throw Object.assign(new Error('owned stream cancelled'), { code: 'cancelled' });
     });
+    const container = new ContainerService(executor, makeConfig(), undefined, undefined,
+      { exec } as unknown as ObservationStreamExecutor);
     expect(await container.waitForStartupSignal('cds-owned-signal-test', 'Started application', undefined, 1)).toBe(true);
     expect(exec).toHaveBeenCalledTimes(1); expect(exec.mock.calls[0][1]?.timeout).toBe(1000);
+    expect(executor.commands).toEqual([]);
   });
   it('calls stream completion once even if the caller completion callback throws', async () => {
     const executor = new MockShellExecutor(); const container = new ContainerService(executor, makeConfig());
@@ -64,19 +71,21 @@ describe('P2 container streaming uses the execution boundary', () => {
     await new Promise(resolve => setTimeout(resolve, 1));
     expect(close).toHaveBeenCalledTimes(1);
   });
-  it('cancels log streaming through the same executor and does not call onClose after abort', async () => {
-    const executor = new MockShellExecutor(); const container = new ContainerService(executor, makeConfig());
+  it('cancels the shared private log reader and suppresses completion after consumer abort', async () => {
+    const executor = new MockShellExecutor();
     let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
-    const exec = vi.spyOn(executor, 'exec').mockImplementation(async (_command, options) => {
+    const exec = vi.fn(async (_command, options) => {
       options?.onData?.('log'); await wait;
       expect(options?.signal?.aborted).toBe(true);
-      return { stdout: 'log', stderr: '', exitCode: 130 };
+      throw Object.assign(new Error('owned stream cancelled'), { code: 'cancelled' });
     });
+    const hub = new ContainerLogStreamHub({ exec } as unknown as ObservationStreamExecutor);
+    const container = new ContainerService(executor, makeConfig(), undefined, undefined, undefined, hub);
     const chunks: string[] = []; const close = vi.fn();
     const abort = container.streamLogs('cds-owned-stream-test', chunk => chunks.push(chunk), close);
     expect(exec).toHaveBeenCalledTimes(1); expect(chunks).toEqual(['log']);
-    expect(exec.mock.calls[0][1]?.priority).toBe('diagnostic');
-    abort.abort(); release(); await new Promise(resolve => setTimeout(resolve, 1));
+    expect(executor.commands).toEqual([]);
+    abort.abort(); release(); await hub.close();
     expect(close).not.toHaveBeenCalled();
   });
 });
@@ -100,6 +109,20 @@ describe('ContainerService', () => {
     else process.env.CDS_BRANCH_NETWORK_ISOLATION = prevIsolation;
   });
 
+  function stubManagedIdentity() {
+    const target = '1234567890abcdef1234567890abcdef12345678', fixedId = `sha256:${'c'.repeat(64)}`;
+    let built = false, contractHash = '';
+    mock.addResponsePatternFirst(/git rev-parse HEAD/, () => ({ stdout: target, stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker commit (.*)/, (match) => { built = true; contractHash = match[1].match(/LABEL cds\.managed\.contract=([a-f0-9]{64})/)?.[1] || ''; return { stdout: fixedId, stderr: '', exitCode: 0 }; });
+    mock.addResponsePatternFirst(/docker image inspect(.*)/, (match) => {
+      if (!built) return { stdout: '', stderr: 'No such image', exitCode: 1 };
+      const labels = { 'org.opencontainers.image.revision': target, 'cds.managed.contract': contractHash };
+      return { stdout: JSON.stringify(match[1].includes('--format') ? labels : [{ Id: fixedId, Os: 'linux', Architecture: 'amd64', Config: { Labels: labels } }]), stderr: '', exitCode: 0 };
+    });
+    return fixedId;
+  }
+
   describe('runService', () => {
     it('rejects a bound auxiliary before network, source build, or candidate actions', async () => {
       const input = makeProfile({ deploymentScope: { projectId: 'default', branchId: 'main', repoBranch: 'main' } } as any);
@@ -114,6 +137,35 @@ describe('ContainerService', () => {
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     });
     afterEach(() => { aliveStub?.mockRestore(); });
+
+    it('启动容量等待期间不申请源码编译槽，容量恢复后才创建运行容器', async () => {
+      setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
+      for (const name of ['owned-warm-a', 'owned-warm-b', 'owned-warm-c']) {
+        const release = await deploymentPhaseBudget.acquire('start', { projectId: name },
+          { memoryMB: 512, reservationKey: name });
+        release();
+      }
+      const runtime = makeService(); const acquireCompile = vi.fn(async () => {});
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'owned-cid', stderr: '', exitCode: 0 }));
+      const running = service.runService(makeEntry(), makeProfile(), runtime, undefined, undefined,
+        { onBeforeSourceStart: acquireCompile });
+      try {
+        for (let i = 0; i < 200 && !deploymentPhaseBudget.snapshot().start.queued.length; i++)
+          await new Promise<void>(resolve => setImmediate(resolve));
+        expect(deploymentPhaseBudget.snapshot().start.queued[0].reason).toBe('cpu-startup-capacity');
+        expect(acquireCompile).not.toHaveBeenCalled();
+        expect(mock.commands.some(command => command.startsWith('docker run'))).toBe(false);
+        deploymentPhaseBudget.releaseMemory('owned-warm-a'); await running;
+        expect(acquireCompile).toHaveBeenCalledOnce();
+        expect(mock.commands.some(command => command.startsWith('docker run'))).toBe(true);
+      } finally {
+        for (const key of ['owned-warm-a', 'owned-warm-b', 'owned-warm-c', runtime.containerName])
+          deploymentPhaseBudget.releaseMemory(key);
+        setBuildGateHostLoadProvider(null);
+      }
+    });
 
     it('should run docker container with correct mounts and env', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -175,6 +227,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact-id', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'runtime-id', stderr: '', exitCode: 0 }));
       const runtime = makeService();
+      const fixedId = stubManagedIdentity();
 
       try {
         await service.runService({
@@ -203,13 +256,13 @@ describe('ContainerService', () => {
       expect(mock.commands.some((command) => command.includes('docker commit') && command.includes('cds-managed/p1-api:sha-'))).toBe(true);
       expect(mock.commands.some((command) => command.startsWith('docker pull'))).toBe(false);
       const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
-      expect(runCommand).toContain("'cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678'");
+      expect(runCommand).toContain(fixedId);
       expect(runCommand).toContain("sh -c 'pnpm start'");
       expect(runCommand).not.toContain(`-v '${tmp}':'/app'`);
-      expect(runtime.deployedImage).toBe('cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678');
+      expect(runtime.deployedImage).toBe(fixedId);
     });
 
-    it('rejects a pulled floating fallback image when its source revision changed and uses source build', async () => {
+    it('rejects a pulled floating fallback image when its source revision changed and preserves the current deployment without source build', async () => {
       const targetSha = 'a'.repeat(40);
       const staleSha = 'b'.repeat(40);
       const fallbackImage = 'ghcr.io/acme/api:branch-main';
@@ -232,7 +285,7 @@ describe('ContainerService', () => {
       const runtime = makeService();
       const outputs: string[] = [];
 
-      await service.runService(
+      await expect(service.runService(
         { ...makeEntry(), githubCommitSha: targetSha },
         makeProfile({
           dockerImage: `ghcr.io/acme/api:sha-${targetSha}`,
@@ -249,14 +302,11 @@ describe('ContainerService', () => {
           isComponentUnchangedSince: async () => false,
           onSourceCompileFallback: async () => {},
         },
-      );
+      )).rejects.toThrow('部署未转为源码编译');
 
       expect(mock.commands.some((command) => command.includes('org.opencontainers.image.revision'))).toBe(true);
       expect(outputs.join('')).toContain('无法证明与目标提交等价');
-      const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
-      expect(runCommand).toContain("'node:20-alpine'");
-      expect(runCommand).not.toContain(fallbackImage);
-      expect(runtime.deployedImage).toBe('node:20-alpine');
+      expect(mock.commands.some(command => /^docker (run|create|exec)|^docker rm -f cds-feature-a-api/.test(command))).toBe(false);
     });
 
     /*
@@ -351,17 +401,17 @@ describe('ContainerService', () => {
         expect(outputs.join('')).toContain('CI 镜像还没就绪，改用 CDS 记录的提交');
       });
 
-      it('两个提交都没有镜像：照旧回退源码编译', async () => {
+      it('两个提交都没有镜像：拒绝隐式源码编译，保留原模式', async () => {
         stubDocker(() => false);
         const runtime = makeService();
         let fellBack = false;
-        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, undefined, undefined, {
+        await expect(service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, undefined, undefined, {
           latestCommitSha: latest,
           onSourceCompileFallback: async () => { fellBack = true; },
-        });
-        expect(fellBack).toBe(true);
-        expect(runtime.deployedImage).toBe('maven:3.9');
-        expect(runtime.deployedPrebuilt).toBe(false);
+        })).rejects.toThrow('部署未转为源码编译');
+        expect(fellBack).toBe(false);
+        expect(runtime.deployedImage).toBeUndefined();
+        expect(mock.commands.some(command => /^docker (run|create|exec)|^docker rm -f cds-feature-a-api/.test(command))).toBe(false);
       });
 
       it('调用方没传最新提交（显式点名提交 / 不可变版本）：只拉记录的提交', async () => {
@@ -733,6 +783,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker exec/, () => ({ stdout: 'build complete', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact-id', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'runtime-id', stderr: '', exitCode: 0 }));
+      stubManagedIdentity();
       __setWorkloadCgroupForTest({
         enabled: true, parent: 'system-cdsworkloads.slice', driver: 'systemd', weightManaged: true, reason: 'test',
       });
@@ -919,6 +970,22 @@ describe('ContainerService', () => {
       await expect(service.stop('cds-feature-a-api')).resolves.toBeUndefined();
       expect(mock.commands.some((c) => c === 'docker stop cds-feature-a-api')).toBe(true);
       expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
+    });
+
+    it.each(['command-failed', 'still-running', 'unavailable'])('停止未确认时%s必须失败，不能报告成功', async (mode) => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'isolated command unavailable', exitCode: mode === 'still-running' ? 0 : 1 }));
+      mock.addResponsePattern(/docker inspect/, () => mode === 'unavailable'
+        ? ({ stdout: '', stderr: 'isolated daemon unavailable', exitCode: 1 })
+        : ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64), State: { Status: 'running', Running: true } }]), stderr: '', exitCode: 0 }));
+      await expect(service.stop('cds-feature-a-api')).rejects.toThrow('停止结果未确认');
+    });
+
+    it('停止确认连接失败但随后实际读取已停止时允许确认同一结果', async () => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'acknowledgement unavailable', exitCode: 1 }));
+      mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64), State: { Status: 'exited', Running: false } }]), stderr: '', exitCode: 0 }));
+      await expect(service.stop('cds-feature-a-api')).resolves.toBeUndefined();
     });
 
     it('records operationId and branch identity on stop events', async () => {

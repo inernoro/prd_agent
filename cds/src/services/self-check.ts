@@ -135,8 +135,11 @@ export interface SelfCheckItem {
   status: HealthStatus;
   time: string;
   output?: string;
+  /** 面向通知接收者的简短说明，不含内部地址、提交或凭据。 */
+  publicMessage?: string;
   'cds:monitor'?: {
     name: string;
+    publicName?: string;
     op: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
     value: number | string;
     intervalSeconds: number;
@@ -233,7 +236,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
         ? `没有卡住的部署（在途 ${inFlight.length} 个，心跳都在）`
         : `${stuck.size} 个部署卡住：${tooOld.length} 个在途超过 45 分钟，${heartbeatDead.length} 个心跳停了超过 10 分钟（多半是 CDS 重启把它们打断了，状态没收尸）`,
     },
-    { name: 'CDS · 部署卡住', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · 部署卡住', publicName: '部署任务进度', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
 
@@ -253,7 +256,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       output: finished.length === 0 ? '近 24 小时没有部署结束 —— 无从判断' : `近 24 小时 ${finished.length} 次部署，${failed} 次失败`,
     },
     // 被动：没有部署的夜里不该显示成「失败率 0%，一切正常」，而是「没样本」。
-    { name: 'CDS · 部署失败率', op: 'lte', value: DEPLOY_FAILURE_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'deploy.finished-24h' },
+    { name: 'CDS · 部署失败率', publicName: '部署成功情况', op: 'lte', value: DEPLOY_FAILURE_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'deploy.finished-24h' },
     time,
   ));
 
@@ -266,7 +269,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: gate.queued <= BUILD_QUEUE_MAX ? 'pass' : 'fail',
       output: `${gate.active}/${gate.max} 在构建，${gate.queued} 个排队`,
     },
-    { name: 'CDS · 构建排队', op: 'lte', value: BUILD_QUEUE_MAX, failuresToAlarm: 2, severity: 'P1' },
+    { name: 'CDS · 构建排队', publicName: '构建排队数量', op: 'lte', value: BUILD_QUEUE_MAX, failuresToAlarm: 2, severity: 'P1' },
     time,
   ));
   const oldestWaitMin = gate.waiters.length === 0
@@ -279,7 +282,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: oldestWaitMin <= BUILD_WAIT_MAX_MINUTES ? 'pass' : 'fail',
       output: gate.waiters.length === 0 ? '没有人在等构建槽' : `最久的一个已等 ${oldestWaitMin} 分钟`,
     },
-    { name: 'CDS · 构建最久等待', op: 'lte', value: BUILD_WAIT_MAX_MINUTES, failuresToAlarm: 2, severity: 'P1' },
+    { name: 'CDS · 构建最久等待', publicName: '构建等待时间', op: 'lte', value: BUILD_WAIT_MAX_MINUTES, failuresToAlarm: 2, severity: 'P1' },
     time,
   ));
 
@@ -304,7 +307,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: p95 === null ? 'warn' : p95 <= API_P95_MAX_MS ? 'pass' : 'fail',
       output: p95 === null ? (http ? '近 30 分钟没有分支列表耗时样本' : 'HTTP 日志不可用，无法判断接口耗时') : `分支列表接口 P95 ${p95}ms —— 它是首屏最重的一次请求`,
     },
-    { name: 'CDS · 首屏接口 P95', op: 'lte', value: API_P95_MAX_MS, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'api.branches-requests-30m' },
+    { name: 'CDS · 首屏接口 P95', publicName: '项目列表响应时间', op: 'lte', value: API_P95_MAX_MS, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'api.branches-requests-30m' },
     time,
   ));
   const errorRate = !http || requests === 0 ? 0 : Math.round((http.serverErrors / requests) * 100);
@@ -315,7 +318,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: !http ? 'warn' : errorRate <= API_ERROR_RATE_MAX_PERCENT ? 'pass' : 'fail',
       output: !http ? '读不到请求统计' : `近 30 分钟 ${requests} 个请求里 ${http.serverErrors} 个 5xx`,
     },
-    { name: 'CDS · 接口 5xx 比例', op: 'lte', value: API_ERROR_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P0', observeMode: 'passive', sampleComponentId: 'api.requests-30m' },
+    { name: 'CDS · 接口 5xx 比例', publicName: '平台请求成功情况', op: 'lte', value: API_ERROR_RATE_MAX_PERCENT, failuresToAlarm: 2, severity: 'P0', observeMode: 'passive', sampleComponentId: 'api.requests-30m' },
     time,
   ));
 
@@ -341,7 +344,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
           ? (cycle.stale ? '探测器起来之后一轮都没跑完 —— 停摆' : `进程刚起 ${processAgeSec ?? '?'} 秒，首轮还在跑`)
           : `上一轮 ${sinceSec} 秒前${cycle.watchdogResets > 0 ? `，看门狗复位过 ${cycle.watchdogResets} 次` : ''}`,
     },
-    { name: 'CDS · 探测器上一轮', op: 'lte', value: PROBER_STALE_AFTER_SECONDS, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · 探测器上一轮', publicName: '监控检查更新', op: 'lte', value: PROBER_STALE_AFTER_SECONDS, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
 
@@ -360,7 +363,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: badSig === 0 ? 'pass' : 'fail',
       output: badSig === 0 ? `${deliveryScope} webhook 签名都对` : `${badSig} 条 webhook 签名不对 —— 多半是 webhook secret 和 GitHub 那边不一致（迁移后最常坏的一条）`,
     },
-    { name: 'CDS · Webhook 签名', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · Webhook 签名', publicName: '代码推送校验', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
   checks.push({
@@ -372,10 +375,11 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   const unresolvedDispatches = deps.unresolvedWebhookDispatches();
   checks.push(monitored({
     componentId: 'webhook.dispatch-unresolved', componentType: 'github',
+    publicMessage: `${unresolvedDispatches} 项代码推送尚未触发部署，请查看部署记录后重试。`,
     observedValue: unresolvedDispatches, observedUnit: 'count', status: unresolvedDispatches ? 'fail' : 'pass',
     output: unresolvedDispatches ? `${unresolvedDispatches} 条分支部署派发尚未解决，请检查部署记录后重试` : '当前没有尚未解决的派发失败（历史失败保留供复盘）',
     },
-    { name: 'CDS · Webhook 派发', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1' },
+    { name: 'CDS · Webhook 派发', publicName: '代码推送部署', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1' },
     time,
   ));
 
@@ -385,12 +389,13 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   checks.push(monitored(
     {
       componentId: 'host.disk-used-percent', componentType: 'host',
+      publicMessage: `磁盘已使用 ${usedPercent ?? '未知'}%，请检查并清理无用构建产物。`,
       // 读不到就是 null + fail，不写 0：0% 会被读成一块全空的盘。
       observedValue: usedPercent, observedUnit: 'percent',
       status: usedPercent === null ? 'fail' : usedPercent < DISK_USED_MAX_PERCENT ? 'pass' : 'fail',
       output: usedPercent === null ? '读不到磁盘占用' : `磁盘已用 ${usedPercent}%${usedPercent >= DISK_USED_MAX_PERCENT ? ' —— 到这里部署会被冻结' : ''}`,
     },
-    { name: 'CDS · 磁盘占用', op: 'lt', value: DISK_USED_MAX_PERCENT, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · 磁盘占用', publicName: '部署平台磁盘空间', op: 'lt', value: DISK_USED_MAX_PERCENT, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
   const docker = await dockerRead;
@@ -401,7 +406,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       status: docker.ok && docker.ms <= DOCKER_PING_MAX_MS ? 'pass' : 'fail',
       output: docker.ok ? `Docker ${docker.detail ?? ''} 响应 ${docker.ms}ms`.trim() : `Docker 打不通：${docker.detail ?? '未知原因'}`,
     },
-    { name: 'CDS · Docker 响应', op: 'lte', value: DOCKER_PING_MAX_MS, failuresToAlarm: 1, severity: 'P0' },
+    { name: 'CDS · Docker 响应', publicName: '容器管理响应', op: 'lte', value: DOCKER_PING_MAX_MS, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
 
@@ -410,13 +415,14 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   checks.push(monitored(
     {
       componentId: 'alarm.live-channels', componentType: 'alarm',
+      publicMessage: '尚未确认手机通知能正常送达，请在通知设置中执行一次演练。',
       observedValue: live, observedUnit: 'count',
       status: live >= 1 ? 'pass' : 'fail',
       output: live >= 1
         ? `${live} 条通知通道有成功投递的记录`
         : '没有一条通知通道有成功投递的记录 —— 配了但从没发成功过的也不算；现在出问题不确定有没有人会被通知（去演练一次，成功一次就算通）',
     },
-    { name: 'CDS · 通知通道', op: 'gte', value: 1, failuresToAlarm: 1, severity: 'P1' },
+    { name: 'CDS · 通知通道', publicName: '手机通知连接', op: 'gte', value: 1, failuresToAlarm: 1, severity: 'P1' },
     time,
   ));
 
@@ -435,6 +441,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   checks.push(monitored(
     {
       componentId: 'self.bundle-stale', componentType: 'self',
+      publicMessage: '管理页面仍在运行旧版本，请检查最近的平台更新结果。',
       // 布尔写成 0/1：协议里期望值是字符串比较，数字最不容易被两边解读成不同的东西。
       observedValue: !bundleObservable || !selfKnown ? null : (self!.bundleStale ? 1 : 0), observedUnit: 'flag',
       status: !bundleObservable || !selfKnown ? 'warn' : (self!.bundleStale ? 'fail' : 'pass'),
@@ -442,7 +449,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
         ? (self!.bundleStale ? `前端产物落后于代码 ${self!.headSha}（${self!.currentBranch}）—— 页面跑的是旧版` : `前端产物与 ${self!.headSha} 一致`)
         : selfWarming ? `进程刚起 ${processAgeSec} 秒，自身状态还没算完` : '拿不到自身状态',
     },
-    { name: 'CDS · 前端产物落后', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'self.bundle-samples' },
+    { name: 'CDS · 前端产物落后', publicName: '管理页面版本', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'self.bundle-samples' },
     time,
   ));
   checks.push({

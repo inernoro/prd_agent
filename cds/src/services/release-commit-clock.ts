@@ -23,6 +23,7 @@
 import { commitClockFileIO, type CommitClockFileIO } from './release-commit-file.js';
 import type { IShellExecutor } from '../types.js';
 import { RELEASE_GIT_TIMEOUT_MS, shellGitRunner, workerGitRunner, type GitRunner } from './release-git-reader.js';
+import { createReleaseGitRunner } from './release-git-reader.js';
 
 /**
  * 一条 commit 的元信息。`at` 是台账存在的原始理由（DORA 变更前置时间），
@@ -90,7 +91,7 @@ export function releaseCommitKey(projectId: string, commitSha: string): string {
  * commit sha 白名单校验。
  *
  * 不是洁癖：sha 最终会拼进 git 的 argv，一个以 `-` 开头的值会被 git 当成选项
- * （`--upload-pack=...` 这类可以直接跑命令）。execFile 不过 shell 能挡住管道，
+ * （`--upload-pack=...` 这类可以直接跑命令）。参数逐项 shell 引用能挡住管道，
  * 挡不住「参数被当成选项」这一层，所以必须在这里就把形状卡死。
  */
 export function isCommitShaLike(value: string): boolean {
@@ -117,7 +118,13 @@ function commitMetaReader(runner: GitRunner): CommitTimeReader {
     } catch { return undefined; }
   };
 }
-export const gitCommitMetaReader: CommitTimeReader = commitMetaReader(workerGitRunner);
+export async function gitCommitMetaReader(root: string, sha: string, capability?: AbortSignal | IShellExecutor): Promise<ReleaseCommitMetaRead | undefined> {
+  const shell = capability && 'exec' in capability ? capability : undefined;
+  const signal = capability && 'aborted' in capability ? capability : undefined;
+  const reader = commitMetaReader(shell ? createReleaseGitRunner(shell) : workerGitRunner);
+  const value = await reader(root, sha, signal);
+  return normalizeMetaRead(value);
+}
 export const shellCommitMetaReader = (shell: IShellExecutor): CommitTimeReader =>
   commitMetaReader(shellGitRunner(shell, 'release-meta'));
 
@@ -169,6 +176,7 @@ export class ReleaseCommitClock {
       reader?: CommitTimeReader;
       fileIO?: CommitClockFileIO;
       timeoutMs?: number;
+      shell?: IShellExecutor;
       logger?: { warn?: (m: string) => void };
     } = {},
   ) {
@@ -282,7 +290,7 @@ export class ReleaseCommitClock {
     for (const worktreePath of roots) {
       if (signal.aborted) break;
       try {
-        meta = await readMeta(this.options.reader ?? gitCommitMetaReader, worktreePath, commitSha, signal);
+        meta = await readMeta(this.options.reader ?? (this.options.shell ? shellCommitMetaReader(this.options.shell) : gitCommitMetaReader), worktreePath, commitSha, signal);
       } catch {
         meta = undefined;
       }

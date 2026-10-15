@@ -69,6 +69,8 @@ const GATE_NEXT_ACTIONS: Record<string, string> = {
   expected_from_sha_mismatch:
     '当前 CDS 提交已经变了（可能有人刚更新过）。刷新页面重新读取状态后再发起本次切换。',
   transition_reason_required: '补一条 8-300 字符的切换原因（写清为什么要发布或回滚），再重试。',
+  release_requires_inherited_revision:
+    '将当前线上完整提交合入目标分支，保留双方改动并验证后重新发布；不要为绕过继承检查自动改用强制更新。',
   invalid_transition_sha: '目标版本号不合法，确认分支名或提交 SHA 拼写无误后重试。',
 };
 

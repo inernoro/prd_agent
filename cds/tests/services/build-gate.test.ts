@@ -131,6 +131,18 @@ describe('build-gate 全局构建并发闸', () => {
     expect(buildGateStatus().active).toBe(0);
   });
 
+  it('三个项目合格时，积压项目不能使其他项目超过三个释放轮次才准入', async () => {
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+    const first = await acquireBuildSlot({ holder: { projectId: 'a' } });
+    const order: string[] = [];
+    const jobs = [...Array(8).fill('a'), ...Array(8).fill('b'), 'c'].map(projectId =>
+      acquireBuildSlot({ holder: { projectId } }).then(slot => { order.push(projectId); slot.release(); }));
+    first.release(); await Promise.all(jobs);
+    expect(order.indexOf('c')).toBeLessThan(3);
+    expect(order.slice(0, 3).sort()).toEqual(['a', 'b', 'c']);
+    expect(buildGateStatus().active).toBe(0);
+  });
+
   // ── 2026-07-16 队列堵死复盘扩展：取消 / 身份 / 动态上限 ──
 
   it('排队中 abort → 立即出队并以 BuildSlotCancelledError 拒绝，幸存者 FIFO 不变', async () => {

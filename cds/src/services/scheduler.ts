@@ -1,6 +1,7 @@
 import type { BranchEntry, SchedulerConfig } from '../types.js';
 import type { StateService } from './state.js';
 import { resolveBranchProtection } from './branch-protection.js';
+import { serviceRuntimeRefs } from './service-runtime.js';
 
 /**
  * SchedulerService — branch warm-pool manager for small servers.
@@ -61,6 +62,9 @@ export class SchedulerService {
   private tickHandle: NodeJS.Timeout | null = null;
   private wakeFn: WakeFn | null = null;
   private coolFn: CoolFn | null = null;
+  private runtimePresence?: () => ReadonlySet<string> | null;
+  private operationProtection?: (slug: string) => boolean;
+  private readonly cooling = new Set<string>();
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
 
@@ -69,6 +73,17 @@ export class SchedulerService {
     private readonly config: SchedulerConfig,
     private readonly clock: Clock = systemClock,
   ) {}
+
+  setRuntimePresenceProvider(provider: () => ReadonlySet<string> | null): void { this.runtimePresence = provider; }
+  setOperationProtection(provider: (slug: string) => boolean): void { this.operationProtection = provider; }
+
+  private hasResidentRuntime(branch: BranchEntry): boolean {
+    const names = this.runtimePresence?.();
+    return Boolean(names && (Object.values(branch.services || {}).some(service =>
+      serviceRuntimeRefs(service).some(runtime => names.has(runtime.containerName)))
+      || Object.values(branch.replicaSets || {}).some(set => set.members.some(member =>
+        member.containerName && names.has(member.containerName)))));
+  }
 
   setWakeFn(fn: WakeFn): void {
     this.wakeFn = fn;
@@ -208,8 +223,9 @@ export class SchedulerService {
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
     if (this.isPinned(branch)) return;
-    if (branch.heatState === 'cold' || branch.heatState === 'cooling') return;
+    if ((branch.heatState === 'cold' && !this.hasResidentRuntime(branch)) || this.cooling.has(slug)) return;
 
+    this.cooling.add(slug);
     branch.heatState = 'cooling';
     this.stateService.save();
 
@@ -226,6 +242,8 @@ export class SchedulerService {
       branch.heatState = 'hot';
       this.stateService.save();
       throw err;
+    } finally {
+      this.cooling.delete(slug);
     }
   }
 
@@ -308,7 +326,8 @@ export class SchedulerService {
    * 收敛到同一个函数后，两处漂移在结构上不再可能发生。行为与此前逐条判定完全一致。
    */
   isPinned(branch: BranchEntry): boolean {
-    return resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? []).protected;
+    return resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? []).protected
+      || Boolean(this.operationProtection?.(branch.id));
   }
 
   /**
@@ -403,6 +422,7 @@ export class SchedulerService {
     const all = this.stateService.getAllBranches();
     return all.filter(b => {
       if (b.heatState === 'hot') return true;
+      if (this.hasResidentRuntime(b)) return true;
       if (b.heatState === undefined && b.status === 'running') return true;
       return false;
     });
@@ -414,14 +434,14 @@ export class SchedulerService {
   getSnapshot(): SchedulerSnapshot {
     const all = this.stateService.getAllBranches();
     const hot = all
-      .filter(b => b.heatState === 'hot' || (b.heatState === undefined && b.status === 'running'))
+      .filter(b => b.heatState === 'hot' || this.hasResidentRuntime(b) || (b.heatState === undefined && b.status === 'running'))
       .map(b => ({
         slug: b.id,
         lastAccessedAt: b.lastAccessedAt,
         pinned: this.isPinned(b),
       }));
     const cold = all
-      .filter(b => b.heatState === 'cold' || b.heatState === 'cooling')
+      .filter(b => (b.heatState === 'cold' || b.heatState === 'cooling') && !this.hasResidentRuntime(b))
       .map(b => ({
         slug: b.id,
         lastAccessedAt: b.lastAccessedAt,

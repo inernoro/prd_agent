@@ -39,6 +39,7 @@ export type CdsEventType =
   | 'access-request.created'
   | 'access-request.decided'
   | 'access-request.count'
+  | 'access-request.progress'
   // 2026-05-29:operator 审批请求事件(审批弹窗实时刷新)
   | 'operator.request.created'
   | 'operator.request.approved'
@@ -134,7 +135,7 @@ interface StoreState {
   /** 2026-05-28:infra flap 熔断告警(组件展示右下角 toast) */
   lastFlapEvent: { containerName: string; restartCount: number; message: string; ts: string } | null;
   /** 2026-06-04:被动授权 — agent 授权申请事件的最新 envelope(右下角审批盒据此刷新) */
-  lastAccessRequestEvent: { type: 'created' | 'decided' | 'count'; ts: string; pendingCount?: number; requestId?: string } | null;
+  lastAccessRequestEvent: { type: 'created' | 'decided' | 'count' | 'progress'; ts: string; pendingCount?: number; requestId?: string } | null;
   /** 2026-05-29:operator 审批请求事件(审批弹窗据此实时刷新,不再等 25s heartbeat) */
   lastOperatorRequestEvent: {
     type: 'created' | 'approved' | 'rejected' | 'log' | 'completed' | 'failed';
@@ -279,6 +280,7 @@ function openConnection(): void {
     'access-request.created',
     'access-request.decided',
     'access-request.count',
+    'access-request.progress',
     // Codex review(PR #684, P2):后端发 operator.request.* 时审批弹窗要实时反应,
     // 此前只注册到 heartbeat → 审批请求最多隐身 25s。
     'operator.request.created',
@@ -384,10 +386,12 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
     }
     case 'access-request.created':
     case 'access-request.decided':
+    case 'access-request.progress':
     case 'access-request.count': {
       const data = (envelope.data || {}) as { pendingCount?: number; requestId?: string };
       const evtType = type === 'access-request.created' ? 'created'
-        : type === 'access-request.decided' ? 'decided' : 'count';
+        : type === 'access-request.decided' ? 'decided'
+          : type === 'access-request.progress' ? 'progress' : 'count';
       setState({
         lastAccessRequestEvent: {
           type: evtType,

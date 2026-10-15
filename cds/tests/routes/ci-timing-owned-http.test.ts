@@ -1,3 +1,5 @@
+import { ownedReadyArtifacts } from '../helpers/owned-ready-artifacts.js';
+import { requestArtifactWaitRefresh } from '../../src/services/artifact-admission-wait.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
@@ -30,7 +32,7 @@ describe('actual owned whole/Profile CI timing observation', () => {
     const config = { repoRoot: root, worktreeBase: root, masterPort: 9900, workerPort: 5500, dockerNetwork: 'owned', portStart: 10001, sharedEnv: {}, mode: 'standalone' } as any;
     save = vi.fn(async () => {}); journal = new PendingDeployJournal({ load: async () => null, save }); await journal.ready();
     coordinator = new BranchOperationCoordinator(undefined, undefined, journal); holder = coordinator.begin({ branchId: 'owned', projectId: 'default', kind: 'deploy', trigger: 'manual', commitSha: 'a'.repeat(40), commitPinned: true, configHash: '1'.repeat(64) }).lease!;
-    scopedKey = { projectId: 'default', keyId: 'owned-test' }; runs = new DeploymentRunService(state); shell = new MockShellExecutor(); const app = express(); app.use(express.json());
+    scopedKey = { projectId: 'default', keyId: 'owned-test' }; runs = new DeploymentRunService(state); shell = new MockShellExecutor(); ownedReadyArtifacts(shell, () => 'b'.repeat(40)); const app = express(); app.use(express.json());
     app.use((req, _res, next) => { if (req.headers['x-owned-test-project']) (req as any).cdsProjectKey = req.headers['x-owned-test-project'] === 'default' ? scopedKey : { projectId: req.headers['x-owned-test-project'], keyId: 'owned-test' }; next(); });
     state.addProject({ id: 'default', slug: 'default', name: 'Owned CI project', kind: 'git', legacyFlag: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
     const project = state.getProject('default')!; project.githubRepoFullName = 'owner/repo'; project.githubInstallationId = 1;
@@ -46,13 +48,13 @@ describe('actual owned whole/Profile CI timing observation', () => {
     return new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
       const q = http.request({ host: '127.0.0.1', port: (server.address() as any).port, path: route, method: 'POST', agent: false, headers: { 'content-type': 'application/json', ...headers } }, res => {
         let body = ''; res.on('data', c => body += c); res.on('error', reject); res.on('end', () => resolve({ status: res.statusCode!, body, headers: res.headers }));
-      }); q.on('error', reject); q.setTimeout(4500, () => q.destroy(Error('own request timeout'))); q.end(JSON.stringify(body));
+      }); q.on('error', reject); q.setTimeout(4500, () => q.destroy(Error('own request timeout'))); q.end(JSON.stringify(headers['x-cds-pending-operation-id'] ? { ...body, pendingReplay: { operationId: headers['x-cds-pending-operation-id'], generation: Number(headers['x-cds-pending-generation']) } } : body));
     });
   }
 
   async function pending(route: string) {
-    await post({}, { commitSha: 'b'.repeat(40) }, route); const p = coordinator.complete(holder, 'completed')!;
-    expect(await coordinator.claimPending(p)).toBe(true); expect(coordinator.markPendingSent(p)).toBe(true); return p;
+    await post({}, { commitSha: 'b'.repeat(40) }, route); await requestArtifactWaitRefresh(coordinator); const p = coordinator.complete(holder, 'completed')!;
+    expect(await coordinator.claimPending(p)).toBe(true); expect(coordinator.markPendingSent(p)).toBe(true); shell.commands.length = 0; return p;
   }
   function token(p: { operationId: string; generation: number }) { return { 'x-owned-test-project': 'default', 'x-cds-internal': '1', 'x-cds-pending-operation-id': p.operationId, 'x-cds-pending-generation': String(p.generation) }; }
   function get(url: string, project = 'default') {
@@ -69,7 +71,7 @@ describe('actual owned whole/Profile CI timing observation', () => {
       it('keeps exact owned CI facts and nonblocking artifact admission: '+scenario+' '+route, async () => {
         const p = await pending(route); let entered = false; let releaseArtifact!: () => void; let releaseProvider!: (value: any) => void;
         ciFetch.mockImplementation(() => new Promise(resolve => { releaseProvider = resolve; }));
-        const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7) } as any);
+        const pull = vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7), sourcePath: root } as any);
         const original = shell.exec.bind(shell);
         const exec = vi.spyOn(shell, 'exec').mockImplementation((command, opts) => command.startsWith('docker version')
           ? new Promise(resolve => { entered = true; releaseArtifact = () => resolve({ stdout: '', stderr: 'OWNED_DOCKER_ERROR', exitCode: 1 }); }) : original(command, opts));

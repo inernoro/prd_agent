@@ -5,6 +5,7 @@ import express from 'express';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createCdsSystemDiagnosticsRouter } from '../../src/routes/cds-system-diagnostics.js';
+import { ReleaseCommitRailReader } from '../../src/services/release-commit-rail.js';
 
 async function call(server: http.Server, method: string, urlPath: string, headers: Record<string, string> = {}) {
   const port = (server.address() as { port: number }).port;
@@ -67,6 +68,24 @@ describe('主线程诊断路由', () => {
     const res = await call(server, 'GET', '/api/cds-system/diagnostics/main-thread', { 'x-test-member': '1' });
     expect(res.status).toBe(403);
   });
+
+  it('提交历史等待独立读取时，主线程诊断仍可响应', async () => {
+    let release!: () => void;
+    let completed = false;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const reader = new ReleaseCommitRailReader({
+      repoRootResolver: () => '/owned',
+      runner: async () => { await gate; throw new Error('owned read unavailable'); },
+    });
+    const pending = reader.read({ projectId: 'owned', branch: 'main', targets: [] })
+      .then(result => { completed = true; return result; });
+    try {
+      const response = await call(server, 'GET', '/api/cds-system/diagnostics/main-thread');
+      expect(response.status).toBe(200);
+      expect(completed).toBe(false);
+    } finally { release(); }
+    expect((await pending).rail.unavailableReason).toBeTruthy();
+  });
 });
 
 /**
@@ -93,9 +112,10 @@ describe('主线程诊断接线', () => {
       "'sse.branches.snapshot.all'",
       "'sse.branches.event'",
     ]],
-    ['services/uptime-monitor.ts', ["'uptime.persist'"]],
+    ['services/uptime-monitor.ts', ['writeUptimeHistory(this.deps.config.storePath']],
+    ['services/uptime-history-write.ts', ["'uptime.persist'"]],
+    ['index.ts', ['startMainThreadDiagnostics();']],
     ['services/release-commit-rail.ts', ["'git.release-rail.parse'"]],
-    ['index.ts', ["'git.stuck-deploy-diff.enqueue'", 'startMainThreadDiagnostics();']],
     ['server.ts', [
       "'sse.state.broadcast'",
       'app.use(sseConnectionTrackerMiddleware);',

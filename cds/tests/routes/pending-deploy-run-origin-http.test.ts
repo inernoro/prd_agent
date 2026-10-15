@@ -1,3 +1,6 @@
+import { observePendingDeployDispatch } from '../../src/services/pending-deploy-dispatch.js';
+import { ownedReadyArtifacts } from '../helpers/owned-ready-artifacts.js';
+import { requestArtifactWaitRefresh } from '../../src/services/artifact-admission-wait.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
@@ -24,12 +27,13 @@ describe('actual own HTTP pending-to-run durable binding', () => {
   let journal: PendingDeployJournal; let coordinator: BranchOperationCoordinator; let save: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-owned-pending-http-')); state = new StateService(path.join(root, 'state.json')); state.load();
+    state.addProject({ id: 'default', slug: 'default', name: 'Owned fixture project', repoPath: root } as any);
     state.addBranch({ id: 'owned', projectId: 'default', branch: 'main', worktreePath: root, status: 'running', services: {}, githubCommitSha: 'a'.repeat(40), createdAt: new Date().toISOString() } as any);
     state.addBuildProfile({ id: 'api', projectId: 'default', name: 'api', workDir: '.', dockerImage: 'registry/own/api:sha-${CDS_COMMIT_SHA}', prebuiltImage: true, prebuiltCommitPolicy: 'exact', containerPort: 8080, command: '', activeDeployMode: 'express', deployModes: { express: { label: '极速', prebuilt: true, dockerImage: 'registry/own/api:sha-${CDS_COMMIT_SHA}' } } } as any);
     const config = { repoRoot: root, worktreeBase: root, masterPort: 9900, workerPort: 5500, dockerNetwork: 'owned', portStart: 10001, sharedEnv: {}, mode: 'standalone' } as any;
     save = vi.fn(async () => {}); journal = new PendingDeployJournal({ load: async () => null, save }); await journal.ready();
     coordinator = new BranchOperationCoordinator(undefined, undefined, journal); holder = coordinator.begin({ branchId: 'owned', projectId: 'default', kind: 'deploy', trigger: 'manual', commitSha: 'a'.repeat(40), commitPinned: true, configHash: '1'.repeat(64) }).lease!;
-    scopedKey = { projectId: 'default', keyId: 'owned-test' }; runs = new DeploymentRunService(state); shell = new MockShellExecutor(); const app = express(); app.use(express.json());
+    scopedKey = { projectId: 'default', keyId: 'owned-test' }; runs = new DeploymentRunService(state); shell = new MockShellExecutor(); ownedReadyArtifacts(shell, () => 'b'.repeat(40)); const app = express(); app.use(express.json());
     app.use((req, _res, next) => { if (req.headers['x-owned-test-project']) (req as any).cdsProjectKey = req.headers['x-owned-test-project'] === 'default' ? scopedKey : { projectId: req.headers['x-owned-test-project'], keyId: 'owned-test' }; next(); });
     app.use('/api', createBranchRouter({ stateService: state, worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config), shell, config, branchOperationCoordinator: coordinator, deploymentRunService: runs, deploymentVersionService: new DeploymentVersionService(state), registry: { getAll: () => [], getOnline: () => [] } as any }));
     app.use('/api', createDeploymentRunsRouter({ deploymentRunService: runs, assertProjectAccess }));
@@ -41,13 +45,13 @@ describe('actual own HTTP pending-to-run durable binding', () => {
     return new Promise<{ status: number; body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
       const q = http.request({ host: '127.0.0.1', port: (server.address() as any).port, path: route, method: 'POST', agent: false, headers: { 'content-type': 'application/json', ...headers } }, res => {
         let body = ''; res.on('data', c => body += c); res.on('error', reject); res.on('end', () => resolve({ status: res.statusCode!, body, headers: res.headers }));
-      }); q.on('error', reject); q.setTimeout(4500, () => q.destroy(Error('own request timeout'))); q.end(JSON.stringify(body));
+      }); q.on('error', reject); q.setTimeout(4500, () => q.destroy(Error('own request timeout'))); q.end(JSON.stringify(headers['x-cds-pending-operation-id'] ? { ...body, pendingReplay: { operationId: headers['x-cds-pending-operation-id'], generation: Number(headers['x-cds-pending-generation']) } } : body));
     });
   }
 
   async function pending(route: string) {
-    await post({}, { commitSha: 'b'.repeat(40) }, route); const p = coordinator.complete(holder, 'completed')!;
-    expect(await coordinator.claimPending(p)).toBe(true); expect(coordinator.markPendingSent(p)).toBe(true); return p;
+    await post({}, { commitSha: 'b'.repeat(40) }, route); await requestArtifactWaitRefresh(coordinator); const p = coordinator.complete(holder, 'completed')!;
+    expect(await coordinator.claimPending(p)).toBe(true); expect(coordinator.markPendingSent(p)).toBe(true); shell.commands.length = 0; return p;
   }
   function token(p: { operationId: string; generation: number }) { return { 'x-owned-test-project': 'default', 'x-cds-internal': '1', 'x-cds-pending-operation-id': p.operationId, 'x-cds-pending-generation': String(p.generation) }; }
   function get(url: string, project = 'default') {
@@ -67,7 +71,7 @@ describe('actual own HTTP pending-to-run durable binding', () => {
       });
       await post(token(p), { commitSha: 'b'.repeat(40) }, route);
       expect(diskRun?.pendingOrigin).toEqual({ version: 1, operationId: p.operationId, generation: p.generation, profileId: route.endsWith('/api') ? 'api' : null });
-      expect(diskRun.operationId).toMatch(/^op_/); expect(diskRun.operationId).not.toBe(p.operationId);
+      expect(diskRun.operationId).toMatch(/^op_/); expect(diskRun.operationId).toBe(p.operationId);
       const url = '/api/deployment-runs?project=default&branch=owned&pendingOperationId=' + p.operationId + '&pendingGeneration=' + p.generation;
       const result = await get(url); expect(result.status).toBe(200); expect(result.data.runs).toHaveLength(1); expect(result.data.runs[0].id).toBe(diskRun.id);
       expect((await get(url.replace('&pendingGeneration=' + p.generation, '&pendingGeneration=' + (p.generation + 1)))).data.runs).toHaveLength(0);
@@ -75,6 +79,28 @@ describe('actual own HTTP pending-to-run durable binding', () => {
       expect(coordinator.getActive('owned')).toBeUndefined();
     });
   }
+  it('actual rejected revoked replay persists original State terminal before journal erase and cannot restore a queued run', async () => {
+    const p = await pending('/api/branches/owned/deploy');
+    let releaseJournal!: () => void;
+    save.mockImplementationOnce(() => new Promise<void>(resolve => releaseJournal = resolve));
+    const force = coordinator.begin({ projectId: 'default', branchId: 'owned', kind: 'force-rebuild', profileId: 'api', trigger: 'manual', continueWith: 'deploy-profile' });
+    expect(force.status).toBe('started'); await vi.waitFor(() => expect(releaseJournal).toBeDefined());
+    const url = `http://127.0.0.1:${(server.address() as any).port}/api/branches/owned/deploy`;
+    const result = await observePendingDeployDispatch(url, { method: 'POST', headers: { ...token(p), 'content-type': 'application/json' }, body: JSON.stringify({ commitSha: p.request.commitSha, pendingReplay: { operationId: p.operationId, generation: p.generation } }) });
+    expect(result.outcome).toBe('failed');
+    let releaseState!: () => void;
+    const stateAck = new Promise<void>(resolve => releaseState = resolve);
+    const settling = coordinator.settlePending(p, result, async () => { await stateAck; await runs.flush(); });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(runs.getForOperation(p.operationId, p.generation)?.status).toBe('cancelled');
+      expect(journal.snapshot().claims).toHaveLength(1);
+    } finally { releaseState(); releaseJournal(); await settling; }
+    const reload = new StateService(path.join(root, 'state.json')); reload.load();
+    expect(reload.getDeploymentRuns({ branchId: 'owned', status: 'queued' })).toEqual([]);
+    expect(journal.snapshot().queued).toEqual([]); expect(journal.snapshot().claims).toEqual([]);
+    expect(shell.commands.some(command => /docker (run|create|stop|rm)|git (fetch|pull)/.test(command))).toBe(false);
+  });
   async function holdBinding() {
     const realBind = runs.bindPendingOrigin.bind(runs); let release!: () => Promise<void>; let entered = false;
     vi.spyOn(runs, 'bindPendingOrigin').mockImplementationOnce((id, lease, check) => {
@@ -118,7 +144,7 @@ describe('actual own HTTP pending-to-run durable binding', () => {
   for (const route of ['/api/branches/owned/deploy', '/api/branches/owned/deploy/api']) {
     it('records actual pull boundary with open/failed facts and no guessed CI duration: ' + route, async () => {
       const p = await pending(route); let entered = false; let release!: () => void;
-      const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      const pull = vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockImplementationOnce(() => new Promise((_resolve, reject) => {
         entered = true; release = () => reject(Error('OWNED_PULL_ERROR_NO_SECRETS'));
       }));
       const response = post(token(p), { commitSha: 'b'.repeat(40) }, route);
@@ -142,7 +168,7 @@ describe('actual own HTTP pending-to-run durable binding', () => {
     });
     it('records exact artifact admission at its actual held Docker query: ' + route, async () => {
       const p = await pending(route); let entered = false; let release!: () => void;
-      const pull = vi.spyOn(WorktreeService.prototype, 'pull').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7) } as any);
+      const pull = vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7), sourcePath: root } as any);
       const original = shell.exec.bind(shell);
       const exec = vi.spyOn(shell, 'exec').mockImplementation((command, opts) => command.startsWith('docker version')
         ? new Promise(resolve => { entered = true; release = () => resolve({ stdout: '', stderr: 'OWNED_DOCKER_ERROR', exitCode: 1 }); })

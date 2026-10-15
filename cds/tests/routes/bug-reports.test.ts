@@ -19,6 +19,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -59,7 +60,7 @@ async function request(
   const observations: Array<{ phase: string; elapsedMs: number }> = [];
   const started = Date.now();
   const observe = (phase: string) => { if (observations.length < 24) observations.push({ phase, elapsedMs: Date.now() - started }); };
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   server.on('connection', socket => {
     observe('server-connection');
     socket.once('close', hadError => observe(hadError ? 'server-socket-close-error' : 'server-socket-close'));
@@ -103,7 +104,7 @@ async function request(
     console.warn('[owned-test-http]', JSON.stringify({ method, errorCode: (error as NodeJS.ErrnoException).code || 'unknown', observations }));
     throw error;
   } finally {
-    await new Promise<void>(resolve => server.close(() => resolve()));
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
   }
 }
 

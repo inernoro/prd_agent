@@ -20,6 +20,18 @@ function get(server: http.Server, url: string): Promise<any> {
   });
 }
 
+function backgroundShell() {
+  const shell = new MockShellExecutor();
+  (shell as any).execBackgroundObservation = async (command: string, options: any) => {
+    const result = await shell.exec(command, options);
+    if (result.stdout) options?.onData?.(result.stdout, 'stdout');
+    if (result.stderr) options?.onData?.(result.stderr, 'stderr');
+    return { ...result, stdout: '', stderr: '' };
+  };
+  return shell;
+}
+const isGitCommand = (command: string) => /^(?:git|'git') /.test(command);
+
 describe('P2 release center HTTP history isolation', () => {
   it('records release metadata through the shared executor without holding the run-start hook or other HTTP requests', async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-release-meta-http-'));
@@ -31,12 +43,12 @@ describe('P2 release center HTTP history isolation', () => {
     let hook!: Parameters<ReleaseService['onRunStarted']>[0];
     const subscribe = service.onRunStarted.bind(service);
     service.onRunStarted = listener => { hook = listener; subscribe(listener); };
-    const shell = new MockShellExecutor(); let release!: () => void;
+    const shell = backgroundShell(); let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
     let written!: () => void;
     const writeCompleted = new Promise<void>(resolve => { written = resolve; });
     let observedOptions: any;
-    shell.addResponsePattern(/^git .*$/, async (_match, options) => {
+    shell.addResponsePattern(/^(?:git|'git') .*$/, async (_match, options) => {
       observedOptions = options; await held;
       return { stdout: '2026-01-02T03:04:05Z\x1f真实元信息\x1f实际提交者\n', stderr: '', exitCode: 0 };
     });
@@ -56,10 +68,11 @@ describe('P2 release center HTTP history isolation', () => {
     try {
       const run = { projectId: 'p', commitSha: sha, branchId: 'missing' } as any;
       expect(hook(run)).toBeUndefined(); hook(run);
-      for (let i = 0; i < 50 && !shell.commands.some(command => command.startsWith('git ')); i++) await new Promise(resolve => setTimeout(resolve, 5));
-      expect(shell.commands.filter(command => command.startsWith('git '))).toHaveLength(1);
-      expect(shell.commands.find(command => command.startsWith('git '))!).toContain("'show'"); expect(shell.commands.find(command => command.startsWith('git '))!).toContain(sha);
-      expect(observedOptions).toMatchObject({ timeout: 3_000, priority: 'diagnostic', schedulingGroup: 'release-meta' });
+      for (let i = 0; i < 50 && !shell.commands.some(command => isGitCommand(command)); i++) await new Promise(resolve => setTimeout(resolve, 5));
+      expect(shell.commands.filter(command => isGitCommand(command))).toHaveLength(1);
+      expect(shell.commands.find(command => isGitCommand(command))!).toContain("'show'"); expect(shell.commands.find(command => isGitCommand(command))!).toContain(sha);
+      expect(observedOptions).toMatchObject({ captureOutput: false, onData: expect.any(Function), beforeStart: expect.any(Function) });
+      expect(observedOptions.timeout).toBeGreaterThan(0); expect(observedOptions.timeout).toBeLessThanOrEqual(3000);
       expect(observedOptions.signal.aborted).toBe(false);
       expect(await get(server, '/probe')).toEqual({ status: 200, body: { ok: true } });
       expect(fs.existsSync(storePath)).toBe(false);
@@ -79,9 +92,9 @@ describe('P2 release center HTTP history isolation', () => {
     const timestamp = new Date().toISOString(); const sha = 'a'.repeat(40);
     state.addProject({ id: 'p', name: 'P', slug: 'p', kind: 'git', repoPath: tmp,
       gitDefaultBranch: 'main', createdAt: timestamp, updatedAt: timestamp });
-    const shell = new MockShellExecutor(); let release!: () => void;
+    const shell = backgroundShell(); let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });
-    shell.addResponsePattern(/^git .*$/, async ([command]) => {
+    shell.addResponsePattern(/^(?:git|'git') .*$/, async ([command]) => {
       await held;
       return { stdout: command.includes('rev-parse') ? sha + '\n'
         : sha + '\x1f2026-10-11T00:00:00Z\x1f本地提交\n', stderr: '', exitCode: 0 };
@@ -100,10 +113,10 @@ describe('P2 release center HTTP history isolation', () => {
     try {
       const first = get(server, '/api/releases/center?project=p');
       const second = get(server, '/api/releases/center?project=p');
-      for (let attempt = 0; attempt < 50 && !shell.commands.some(command => command.startsWith('git ')); attempt++) {
+      for (let attempt = 0; attempt < 50 && !shell.commands.some(command => isGitCommand(command)); attempt++) {
         await new Promise(resolve => setTimeout(resolve, 5));
       }
-      expect(shell.commands.filter(command => command.startsWith('git '))).toHaveLength(1);
+      expect(shell.commands.filter(command => isGitCommand(command))).toHaveLength(1);
       expect(await get(server, '/probe')).toEqual({ status: 200, body: { ok: true } });
       release();
       const responses = await Promise.all([first, second]);
@@ -111,7 +124,7 @@ describe('P2 release center HTTP history isolation', () => {
         expect(response.status).toBe(200); expect(response.body.commitRail.nodes[0].sha).toBe(sha);
         expect(response.body.rows).toBeDefined(); expect(response.body.dora).toBeDefined();
       }
-      expect(shell.commands.filter(command => command.startsWith('git '))).toHaveLength(2);
+      expect(shell.commands.filter(command => isGitCommand(command))).toHaveLength(2);
       const historyCommand = shell.commands.find(command => command.includes("'log'"))!;
       expect(historyCommand).toContain(sha); expect(historyCommand).not.toContain('origin/main');
     } finally {
@@ -127,8 +140,8 @@ it('awaits one shared cold clock load before returning persisted metadata while 
   const sha = 'c'.repeat(40), at = '2026-01-02T03:04:05.000Z';
   const now = new Date().toISOString(); state.addProject({ id: 'p', name: 'P', slug: 'p', kind: 'git', repoPath: tmp, gitDefaultBranch: 'main', createdAt: now, updatedAt: now });
   state.getReleaseRuns = (() => [{ id: 'r', releaseId: 'r', projectId: 'p', targetId: 't', planId: 'plan', branchId: 'b', commitSha: sha, status: 'succeeded', startedAt: now, finishedAt: now, seq: 1, logs: [] }]) as any;
-  const shell = new MockShellExecutor(); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
-  shell.addResponsePattern(/^git .*$/, async ([command]) => ({ stdout: command.includes('rev-parse') ? sha + '\n' : sha + '\x1f' + at + '\x1f实际提交\n', stderr: '', exitCode: 0 }));
+  const shell = backgroundShell(); let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  shell.addResponsePattern(/^(?:git|'git') .*$/, async ([command]) => ({ stdout: command.includes('rev-parse') ? sha + '\n' : sha + '\x1f' + at + '\x1f实际提交\n', stderr: '', exitCode: 0 }));
   let loadOptions: any;
   shell.addResponsePattern(/release-commit-file-read/, async (_match, options) => {
     loadOptions = options; await held; return { stdout: JSON.stringify({ version: 1, entries: [['p::' + sha, at]] }), stderr: '', exitCode: 0 };

@@ -61,7 +61,7 @@ describe('guide2.98 original owned single-service HTTP deployment', () => {
   const cid = 'b'.repeat(64), imageId = 'sha256:' + 'c'.repeat(64);
   function actualCli(options: { writable?: boolean; foreign?: boolean; collision?: boolean; wrongImage?: boolean } = {}) {
     let created = false, started = false, exists = false;
-    vi.spyOn(WorktreeService.prototype, 'pull').mockResolvedValue({ head: sha, afterFull: sha } as any);
+    vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockResolvedValue({ head: sha, afterFull: sha, sourcePath: root } as any);
     vi.spyOn(container, 'waitForReadiness').mockResolvedValue(true); // Controlled readiness, not an actual probe.
     shell.addResponsePattern(/^docker version /, () => ({ stdout: 'amd64', stderr: '', exitCode: 0 }));
     shell.addResponsePattern(/^docker pull /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -348,7 +348,7 @@ describe('guide2.98 original owned single-service HTTP deployment', () => {
   },30_000);
   it('binds the actual new server run before the first pull and returns its own ID', async () => {
     let observed: any;
-    vi.spyOn(WorktreeService.prototype, 'pull').mockImplementationOnce(async () => {
+    vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockImplementationOnce(async () => {
       const raw = JSON.parse(fs.readFileSync(path.join(root, 'state.json'), 'utf8'));
       observed = Object.values(raw.deploymentRuns).find((run: any) => run.acceptanceOrigin?.acceptanceRunId === owner.run.id);
       throw Error('owned pull boundary');

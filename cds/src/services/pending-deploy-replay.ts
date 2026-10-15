@@ -1,3 +1,5 @@
+import { internalPendingReplayAuth } from './internal-pending-replay-auth.js';
+import { pendingDeployBody } from './branch-operation-coordinator.js';
 import { observePendingDeployDispatch } from './pending-deploy-dispatch.js';
 import type { StateService } from './state.js';
 import type { BranchOperationCoordinator, PendingWebhookDeploy } from './branch-operation-coordinator.js';
@@ -8,7 +10,9 @@ export interface PendingDeployReplayDeps {
   stateService: Pick<StateService, 'getBranch'>;
   config: Pick<CdsConfig, 'masterPort'>;
   activeServerEventLogStore?: ServerEventLogSink | null;
-  coordinator?: Pick<BranchOperationCoordinator, 'claimPending' | 'markPendingSent' | 'settlePending' | 'discardPending'>;
+  coordinator?: Pick<BranchOperationCoordinator, 'claimPending' | 'markPendingSent' | 'settlePending' | 'discardPending'>
+    & Partial<Pick<BranchOperationCoordinator, 'releasePendingReplay'>>;
+  persistTerminal?: () => Promise<void>;
   fetch?: typeof fetch;
   observation?: { headersTimeoutMs?: number; observationTimeoutMs?: number };
 }
@@ -74,21 +78,16 @@ export function replayPendingDeploy(pending: PendingWebhookDeploy | null, deps: 
   void observePendingDeployDispatch(url, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      'X-CDS-Internal': '1',
+      ...internalPendingReplayAuth.headersFor(url, pending, branch.projectId || 'default'),
       ...(deps.coordinator ? { 'X-CDS-Pending-Operation-Id': pending.operationId, 'X-CDS-Pending-Generation': String(pending.generation) } : {}),
-      // 透传原始 trigger：合并进 pending 的 manual deploy 重发时仍以 manual
-      // 身份进入（保持优先级 80 语义与 run 账本归因），webhook 照旧。
-      'X-CDS-Trigger': pending.request.trigger,
-      'X-CDS-Request-Id': pending.request.requestId || pending.operationId,
-      ...(branch.projectId ? { 'X-CDS-Source-Project-Id': branch.projectId } : {}),
-      'X-CDS-Source-Branch-Id': pending.branchId,
     },
     // An unpinned manual whole request means the branch HEAD at execution time.
-    body: JSON.stringify({ commitSha: pending.request.kind === 'deploy' && pending.request.trigger === 'manual'
-      && pending.request.commitPinned !== true ? undefined : pending.request.commitSha || undefined }),
+    body: JSON.stringify(pendingDeployBody(pending)),
   }, { fetch: deps.fetch, ...deps.observation }).then(async (result) => {
-    await deps.coordinator?.settlePending(pending, result);
+    await deps.coordinator?.settlePending(pending, result, deps.persistTerminal);
+    if (result.outcome === 'failed' || result.outcome === 'unknown') {
+      for (const ready of deps.coordinator?.releasePendingReplay?.(pending, 'dispatch observation ended') || []) replayPendingDeploy(ready, deps);
+    }
     serverEventLogStore?.record({
       category: 'system',
       severity: result.outcome === 'failed' ? 'error' : result.outcome === 'unknown' ? 'warn' : 'info',

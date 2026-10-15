@@ -36,6 +36,71 @@ describe('durable pending intent journal', () => {
       expect(await c.claimPending(handed!)).toBe(true); expect(JSON.parse(fs.readFileSync(file, 'utf8')).claims[0].pending.operationId).toBe(handed!.operationId);
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
+  it('persists an artifact waiter before ACK and claims its original operation when artifacts become ready', async () => {
+    const { journal, io } = await memory();
+    const c = new BranchOperationCoordinator(undefined, undefined, journal);
+    const decision = c.begin({ ...intent().request, trigger: 'manual', commitPinned: false }, { waitForArtifacts: true });
+    expect(decision.status).toBe('merged'); expect(decision.persistence).toBeDefined();
+    await decision.persistence;
+    expect(io.save).toHaveBeenCalledOnce();
+    expect(journal.queued()[0]).toMatchObject({ operationId: decision.operationId, generation: decision.generation });
+    const pending = c.drainReady()[0];
+    expect(pending.operationId).toBe(decision.operationId);
+    expect(await c.claimPending(pending)).toBe(true);
+    expect(journal.snapshot().claims[0].pending.generation).toBe(decision.generation);
+  });
+  it.each([false, true])('State acceptance failure retains the original journal until terminal State ACK; failure=%s', async failState => {
+    const { journal } = await memory(); const c = new BranchOperationCoordinator(undefined, undefined, journal);
+    const decision = c.begin(intent().request, { waitForArtifacts: true }); await decision.persistence;
+    let release!: () => void, reject!: (error: Error) => void;
+    const stateAck = new Promise<void>((resolve, fail) => { release = resolve; reject = fail; });
+    const abandoning = c.abandonAdmission(decision.operationId, decision.generation, () => stateAck);
+    const rejection = failState ? expect(abandoning).rejects.toThrow('State ACK unknown') : undefined;
+    await tick(); expect(journal.queued()).toHaveLength(1);
+    const stop = c.begin({ projectId: 'p', branchId: 'owned', kind: 'stop', trigger: 'manual' });
+    expect(stop.status).toBe('started'); c.complete(stop.lease!, 'completed');
+    expect(c.begin(intent().request).reason).toBe('pending_settlement_unacknowledged'); expect(c.drainReady()).toEqual([]);
+    if (failState) { reject(new Error('State ACK unknown')); await rejection; expect(journal.queued()).toHaveLength(1); }
+    else { release(); await abandoning; expect(journal.queued()).toEqual([]); }
+    if (failState) expect(c.begin(intent().request).status).toBe('rejected');
+  });
+  it.each(['claiming', 'ready', 'sent'] as const)('failed State admission fences an already drained %s dispatch until terminal ACK', async phase => {
+    const { journal } = await memory(); const c = new BranchOperationCoordinator(undefined, undefined, journal);
+    const decision = c.begin(intent().request, { waitForArtifacts: true }); await decision.persistence;
+    const pending = c.drainReady()[0]; expect(pending).toBeDefined();
+    if (phase !== 'claiming') expect(await c.claimPending(pending)).toBe(true);
+    if (phase === 'sent') expect(c.markPendingSent(pending)).toBe(true);
+    const ended = vi.fn(); c.onOperationEnded(ended);
+    let release!: () => void; const stateAck = new Promise<void>(resolve => release = resolve);
+    const abandoning = c.abandonAdmission(decision.operationId, decision.generation, () => stateAck);
+    try {
+      await tick(); expect(ended).toHaveBeenCalledWith(decision.operationId, decision.generation, 'failed');
+      expect(c.getClaimedPendingReplay({ operationId: pending.operationId, generation: pending.generation })).toBeUndefined();
+      expect(c.markPendingSent(pending)).toBe(false);
+      expect(c.begin({ ...pending.request, pendingOperationId: pending.operationId, pendingGeneration: pending.generation }).status).toBe('rejected');
+      expect(c.begin({ ...pending.request, commitSha: 'c'.repeat(40) }).reason).toBe('pending_settlement_unacknowledged');
+      expect(journal.snapshot().queued.length + journal.snapshot().claims.length).toBe(1);
+    } finally { release(); await abandoning; }
+    expect(journal.snapshot().queued).toEqual([]); expect(journal.snapshot().claims).toEqual([]);
+  });
+  it('rejects a durable whole replay whose dispatch was revoked by a newer profile rebuild, even while cancel ACK is held', async () => {
+    const { journal, io } = await memory(); const c = new BranchOperationCoordinator(undefined, undefined, journal);
+    const request = { ...intent().request, kind: 'deploy' as const, profileId: undefined };
+    const first = c.begin({ ...request, trigger: 'manual', commitSha: 'b'.repeat(40) });
+    await c.begin(request).persistence;
+    const pending = c.complete(first.lease!, 'completed')!;
+    expect(await c.claimPending(pending)).toBe(true); expect(c.markPendingSent(pending)).toBe(true);
+    let release!: () => void;
+    io.save.mockImplementationOnce(() => new Promise<void>(resolve => release = resolve));
+    const rebuild = c.begin({ ...request, kind: 'force-rebuild', profileId: 'api', trigger: 'manual', continueWith: 'deploy-profile' });
+    expect(rebuild.status).toBe('started'); await tick();
+    try {
+      const replay = c.begin({ ...request, pendingReplay: { operationId: pending.operationId, generation: pending.generation } });
+      expect(replay.status).toBe('rejected'); expect(replay.reason).toBe('pending_dispatch_stale');
+      expect(c.getPendingWebhookDeploy('owned')).toBeUndefined();
+    } finally { release(); await tick(); }
+    expect(journal.snapshot().claims[0].phase).toBe('unknown');
+  });
   it('waits for write ACK and leaves the old acknowledged snapshot untouched while a claim is held', async () => {
     const { journal, io } = await memory(); const p = intent(); await journal.upsert(p);
     let finish!: () => void; io.save.mockImplementationOnce(() => new Promise<void>(r => { finish = r; }));
@@ -74,6 +139,33 @@ describe('durable pending intent journal', () => {
     await expect(journal.upsert(intent('overflow'))).rejects.toThrow('pending_journal_capacity');
     await journal.upsert({ ...intent('scope0', 3), request: { ...intent('scope0').request, commitSha: 'c'.repeat(40) } });
     expect(journal.snapshot().queued).toHaveLength(64); expect(journal.snapshot().queued[0].generation).toBe(3);
+  });
+  it.each([false, true])('revokes late replay before held cancellation ACK; write failure=%s never advances successors', async (failWrite) => {
+    const { journal, io } = await memory(); const c = new BranchOperationCoordinator(undefined, undefined, journal);
+    const active = c.begin({ branchId: 'owned', projectId: 'p', kind: 'deploy', trigger: 'manual' });
+    await c.begin(intent().request).persistence;
+    const pending = c.complete(active.lease!, 'completed')!;
+    expect(await c.claimPending(pending)).toBe(true); expect(c.markPendingSent(pending)).toBe(true);
+    let finish!: () => void; let reject!: (e: Error) => void;
+    io.save.mockImplementationOnce(() => new Promise<void>((resolve, fail) => { finish = resolve; reject = fail; }));
+    const settling = c.settlePending(pending, { outcome: 'unknown', reason: 'response_timeout' });
+    const rejection = failWrite ? expect(settling).rejects.toThrow() : undefined;
+    await tick();
+    const identity = { operationId: pending.operationId, generation: pending.generation };
+    expect(c.getClaimedPendingReplay(identity)).toBeUndefined();
+    expect(c.begin({ ...pending.request, pendingReplay: identity }).status).toBe('rejected');
+    expect(c.begin({ ...pending.request, pendingOperationId: pending.operationId, pendingGeneration: pending.generation }).status).toBe('rejected');
+    expect(c.begin({ ...pending.request, commitSha: 'c'.repeat(40) }).status).toBe('rejected');
+    expect(c.drainReady()).toEqual([]); expect(c.getActiveOperations()).toEqual([]);
+    const stop = c.begin({ branchId: 'owned', projectId: 'p', kind: 'stop', trigger: 'manual' });
+    expect(stop.status).toBe('started'); c.complete(stop.lease!, 'completed');
+    expect(c.begin({ ...pending.request, commitSha: 'd'.repeat(40) }).status).toBe('rejected');
+    expect(c.drainReady()).toEqual([]);
+    if (failWrite) { reject(new Error('disk unavailable')); await rejection; }
+    else { finish(); await settling; }
+    expect(c.getClaimedPendingReplay(identity)).toBeUndefined();
+    expect(c.begin({ ...pending.request, pendingReplay: identity }).status).toBe('rejected');
+    if (failWrite) { expect(c.drainReady()).toEqual([]); expect(c.begin(pending.request).status).toBe('rejected'); }
   });
   it('a stop during claim invalidates the old one-use token and prevents late begin; other scopes remain', async () => {
     const { journal, io } = await memory(); const c = new BranchOperationCoordinator(undefined, undefined, journal);

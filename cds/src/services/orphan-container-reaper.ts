@@ -123,6 +123,7 @@ async function listCdsContainers(
 ): Promise<DiscoveredContainer[] | null> {
   const result = await shell.exec(
     `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=${type}" --format '{{.Names}}|{{.State}}|{{.CreatedAt}}|{{.Labels}}'`,
+    { executionLane: 'observation', timeout: 5000 },
   );
   if (result.exitCode !== 0) return null;
   const out: DiscoveredContainer[] = [];
@@ -329,7 +330,7 @@ export async function sweepOrphanCdsContainers(opts: {
       actions.push({ containerName: container.name, kind, ownerHint, action: 'already-stopped' });
       return;
     }
-    const res = await shell.exec(`docker stop ${quote(container.name)}`, { timeout: 60_000 });
+    const res = await shell.exec(`docker stop ${quote(container.name)}`, { timeout: 60_000, executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
     const ok = res.exitCode === 0;
     actions.push({
       containerName: container.name,

@@ -3,7 +3,8 @@
  * 不受外层 AppShell 布局影响
  */
 import { ArrowLeft } from 'lucide-react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
+import { useApplyDocumentTheme } from '@/hooks/useApplyDocumentTheme';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
 import { GlobalDefectSubmitDialog } from '@/components/ui/GlobalDefectSubmitDialog';
@@ -13,6 +14,8 @@ import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 
 export default function VisualAgentFullscreenPage() {
+  const { pathname } = useLocation();
+  useApplyDocumentTheme(pathname);
   const params = useParams();
   const workspaceId = params.workspaceId;
   const isMobile = useIsMobile();

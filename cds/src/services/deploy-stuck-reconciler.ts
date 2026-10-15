@@ -308,7 +308,7 @@ function recomputeBranchAggregateFromServices(
 }
 
 export function reconcileStuckDeployStates(
-  branches: BranchEntry[],
+  branches: Iterable<BranchEntry>,
   options: ReconcileStuckDeployOptions = {},
 ): DeployStuckReconcileResult[] {
   const now = options.now ?? new Date();
@@ -508,8 +508,8 @@ export function reconcileStuckDeployStates(
       const headShort = branch.githubCommitSha.slice(0, 7);
       const reason = `极速版镜像落后 HEAD：sha-${targetShort} 已部署，但 HEAD ${headShort} 含未部署的代码改动（CI 认领可能漏处理）`;
       // 幂等前置：reason 由 target..head 两个 sha 完全决定。告警已落过就直接跳过，
-      // 不再进 diffRuntimePaths —— 该回调在Master查询有界异步证据缓存。
-      // 已有告警不再请求查询，未知证据不伪造告警；历史同步git diff造成过事件循环冻结。
+      // 不再索取diff证据；异步协调层也据此跳过重复Git读取。旧同步实现曾在
+      // 幂等判断前执行diff，多条分歧分支叠加冻结事件循环（2026-07-21事故）。
       const alreadyAlarmed = branch.ciImageError === reason;
       const hasRuntimeDiff = !alreadyAlarmed && options.diffRuntimePaths(branch);
       if (hasRuntimeDiff) {

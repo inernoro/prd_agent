@@ -39,7 +39,7 @@ const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 function render(Component: any) { runner.index = 0; h.current = runner; Component({}); for (const effect of runner.pending.splice(0)) effect(); }
 function data(id: string) { const item = { id, sessionId: id, status: 'pending', composeYaml: 'owned', createdAt: '2026-10-11T00:00:00Z', submittedAt: '2026-10-11T00:00:00Z', opDanger: 'safe', title: 'owned', summary: { addedProfiles: [], addedInfra: [], addedEnvKeys: [] } }; return { requests: [item], imports: [item], pending: [item], notices: [item], items: [item], users: [], apps: [], liveCount: 0, historyCount: 1 }; }
 beforeEach(() => {
-  routerReact.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher.current = { useContext: () => ({ matches: [{ params: { projectId: 'owned-project' } }] }) };
+  routerReact.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED.ReactCurrentDispatcher.current = { useContext: () => ({ location: { pathname: '/', search: '' }, matches: [{ params: { projectId: 'owned-project' } }] }) };
   runner = { index: 0, values: [], memo: [], effects: [], pending: [], mounted: true, afterUnmount: 0 }; timers = []; cancelled = new Set(); h.epoch = 0; h.events = {}; h.calls = [];
   vi.stubGlobal('window', { addEventListener: () => {}, removeEventListener: () => {}, setTimeout: (fn: () => void) => { timers.push(fn); return timers.length; }, clearTimeout: (id: number) => cancelled.add(id) });
   vi.stubGlobal('document', { addEventListener: () => {}, removeEventListener: () => {} });

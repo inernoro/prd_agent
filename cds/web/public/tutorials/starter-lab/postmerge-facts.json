@@ -1,0 +1,191 @@
+{
+  "checkedAt": "2026-10-14T11:05:17.552384+00:00",
+  "verdict": "pass",
+  "scope": "已有管理登录和仓库权限下的三案例桌面/CLI功能流程；教程资源随后按同功能代码发布",
+  "functionalAcceptanceCommit": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
+  "functionalIntegrationCommit": "c7a7e5690418d743f8576011aeb3580770737135",
+  "releaseLineage": {
+    "previousLiveCommit": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
+    "originalLiveCommit": "6e92dea1b787ba0d2f28184450e038fcd0514fd9",
+    "mergedMainCommit": "f42255b11efc5c1d82b56f86684d283722089699",
+    "bothPreservedAsAncestors": true
+  },
+  "authorization": {
+    "projectId": "882975cccbb5",
+    "projectName": "小步清单 · 授权专项复验（2026-10-14）",
+    "gitRepoUrl": "https://github.com/inernoro/cds-onboarding-receipt-lab.git",
+    "credentialMode": "0600",
+    "gitIgnored": true,
+    "bootstrapKeyAbsent": true,
+    "credentialFileUnchangedOnReuse": true,
+    "assertions": [
+      {
+        "assertion": "独立新进程静默复用 1",
+        "passed": true
+      },
+      {
+        "assertion": "独立新进程静默复用 2",
+        "passed": true
+      },
+      {
+        "assertion": "跨项目拒绝",
+        "passed": true,
+        "httpStatus": 403
+      },
+      {
+        "assertion": "再次创建拒绝",
+        "passed": true,
+        "httpStatus": 403
+      }
+    ]
+  },
+  "authorizationCodeProvenance": {
+    "firstApprovalCommit": "301a9ecb0edc955d79125d08754ebeba7e3948c4",
+    "latestFunctionalCommit": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
+    "authorizationFilesByteIdentical": true,
+    "paths": [
+      "cds/src/middleware/github-auth.ts",
+      "cds/src/domain/auth.ts",
+      "cds/src/infra/auth-store",
+      "cds/src/routes/projects.ts",
+      "cds/src/routes/access-requests.ts",
+      "cds/src/routes/auth.ts",
+      "cds/src/services/auth-service.ts",
+      "cds/web/src/components/AccessRequestInbox.tsx"
+    ],
+    "latestScopedKeyReuseRetested": true
+  },
+  "oneTimePermissionRevocation": {
+    "id": "58717a6e",
+    "label": "一次性新项目接入 (申请 f947180d236e · Codex 新人闭环复验)",
+    "status": "revoked",
+    "revokedAt": "2026-10-14T07:04:24.466Z"
+  },
+  "failedCandidate": {
+    "commit": "d431a08c06a20c42c9364e3a45650baf50e0c0a2",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38552293750",
+    "passed": true,
+    "runningA": true,
+    "noNewDeploymentRun": true,
+    "fourTaskObjectsUnchanged": true,
+    "ciFailed": true,
+    "platform": "abd1aa5e284eafa3d1626b0a339533965f3edd16"
+  },
+  "recoveredCandidate": {
+    "commit": "19a68dd37842c32118aa27b78aab0ad5673d5757",
+    "versionId": "dv_229e4814aca623ee4a0cb910",
+    "runId": "dr_9742c3f5681b383af9e253af",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38552670434",
+    "automaticWebhookDeployment": true,
+    "manualDrawerRefreshUsed": false
+  },
+  "rollback": {
+    "id": "small-steps-closure-main",
+    "status": "running",
+    "runningCommitSha": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
+    "targetCommitSha": "19a68dd37842c32118aa27b78aab0ad5673d5757",
+    "ciImageStatus": "ready",
+    "ciTargetSha": "19a68dd37842c32118aa27b78aab0ad5673d5757",
+    "currentVersionId": "dv_f4a58820a3f95a66b2f65eda",
+    "lastDeploymentRunId": "dr_086fab8baf3a4266ea6fed81",
+    "previewUrl": "https://main-small-steps-closure.miduo.org",
+    "passed": true,
+    "platform": "abd1aa5e284eafa3d1626b0a339533965f3edd16",
+    "runningA": true,
+    "targetRemainsF": true,
+    "fourCompleteTaskObjectsUnchanged": true,
+    "newDeploymentRun": "dr_086fab8baf3a4266ea6fed81",
+    "selectedVersion": "dv_f4a58820a3f95a66b2f65eda"
+  },
+  "rollbackArtifactQualification": {
+    "sourceCommit": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38530592009",
+    "oldImageNotOverwritten": true,
+    "sameSourceNewVerifiedArtifact": true,
+    "oldImageByteIdentityNotClaimed": true,
+    "selectedVersionId": "dv_f4a58820a3f95a66b2f65eda"
+  },
+  "originalCase": {
+    "projectId": "6fa7d576d84d",
+    "runningCommit": "9be5fd0f68f36fe726034cf28aa743981c9a2e0e",
+    "threePriorTasksPreserved": true,
+    "volumeIncident": {
+      "originalNamedVolumeRestored": true,
+      "priorTaskCount": 3,
+      "allDone": true,
+      "priorAuditTaskPresent": true,
+      "dataOverwritten": false,
+      "note": "中途空列表保留；恢复原卷后公网核对既有任务，后续再次部署以本次恢复快照逐 ID 比较"
+    }
+  },
+  "caseRepositories": [
+    {
+      "role": "基础练习",
+      "github": "https://github.com/inernoro/cds-small-steps-lab",
+      "cds": "https://cds.miduo.org/branches/6fa7d576d84d",
+      "chapters": [
+        2,
+        5
+      ]
+    },
+    {
+      "role": "恢复演练",
+      "github": "https://github.com/inernoro/cds-small-steps-closure-lab",
+      "cds": "https://cds.miduo.org/branches/8e3b69770497",
+      "chapter": 6
+    },
+    {
+      "role": "授权专项",
+      "github": "https://github.com/inernoro/cds-onboarding-receipt-lab",
+      "cds": "https://cds.miduo.org/branches/882975cccbb5",
+      "historicalCds": "https://cds.miduo.org/branches/c6b1b78ef4d0",
+      "applicationDeployed": false
+    }
+  ],
+  "receiptDismissal": "当前标签页会话内保存；跨页面及刷新保持，新标签页可能重新显示；其他项目不显示完成浮卡",
+  "tests": {
+    "passed": 9815,
+    "skipped": 19,
+    "command": "pnpm --dir cds test --maxWorkers=2 --minWorkers=1 --retry=1",
+    "frontendLint": "占位脚本，不能当作实际 ESLint 校验",
+    "initialFailuresRetained": "固定摘要兼容断言及历史版本核验输入问题已修正；完整重跑绿色"
+  },
+  "downloads": [
+    {
+      "file": "small-steps-source.zip",
+      "sourceCommit": "9be5fd0f68f36fe726034cf28aa743981c9a2e0e",
+      "sha256": "2e62a4481b3db2def7692cbc605125dc899abb900f99a7e1b8815f4df7e5f760",
+      "root": "small-steps/",
+      "credentialFiles": 0,
+      "fileCount": 15
+    },
+    {
+      "file": "closure-source.zip",
+      "sourceCommit": "19a68dd37842c32118aa27b78aab0ad5673d5757",
+      "sha256": "7319e13f250defe15f8fbff5673fdc38c2b4341befaa22844dd3923654c2ed7a",
+      "root": "仓库根目录",
+      "credentialFiles": 0,
+      "fileCount": 76
+    }
+  ],
+  "video": {
+    "seconds": 43.8,
+    "segments": 15,
+    "frames": 65,
+    "bytes": 690397,
+    "kind": "真实浏览器帧，按实际顺序剪去等待；无音轨、无界面重绘；排查失败段另存本地",
+    "timelineSeconds": 43.19,
+    "path": "media/postmerge-walkthrough.mp4",
+    "sha256": "0506706217a5b7a6a34ca4ff6a4b311159da1845c6241ec83dfac43da64ed65c"
+  },
+  "reportFolderUrl": "https://cds.miduo.org/reports?project=f9e8b956d3dd&folder=ddb0fcc29d6b47a3ac2f7e8837ee5495",
+  "limits": [
+    "首次开通账号、普通新用户权限分配和 GitHub 首次安装授权未覆盖",
+    "丢失或撤销凭据后的恢复未覆盖",
+    "申报目标未技术绑定仓库，当前实际创建目标已核对",
+    "单服务、专属卷和兼容数据格式；无多服务或破坏性数据库迁移验收",
+    "存量错误卷路径与跨项目卷隔离没有做全局迁移",
+    "无真实移动触控证据；只交付桌面/CLI功能范围",
+    "CLI等待批准超时的申请状态与用户错误提示仍需完善；48小时性能认证另属任务"
+  ]
+}

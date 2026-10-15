@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   MAX_COMMIT_TIME_ENTRIES,
   ReleaseCommitClock,
@@ -10,6 +10,11 @@ import {
   isCommitShaLike,
   releaseCommitKey,
 } from '../../src/services/release-commit-clock.js';
+import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
+import { ShellExecutor } from '../../src/services/shell-executor.js';
+const readPool = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2 });
+beforeAll(async () => { await readPool.start(); });
+afterAll(async () => { await readPool.close(); });
 
 /**
  * 真实 git 读取的「只要时间」口径。
@@ -20,7 +25,7 @@ import {
  * 但覆盖的是生产路径而不是一层没人用的壳。
  */
 const readCommitTime = async (worktreePath: string, commitSha: string): Promise<string | undefined> => {
-  const meta = await gitCommitMetaReader(worktreePath, commitSha);
+  const meta = (await gitCommitMetaReader(worktreePath, commitSha, readPool));
   return typeof meta === 'string' ? meta : meta?.at;
 };
 

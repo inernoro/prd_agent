@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.16.8
+  version: 0.16.11
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.5 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.16.11 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -299,7 +299,7 @@ stdout、命令参数、shell profile 或系统环境变量持久配置中。
 $CLI connect --host https://cds.example --new-project --agent <当前 Agent 名称>
 ```
 
-批准后得到一次性 create-only 授权。`project create` / `onboard` 创建项目成功时，CDS 自动
+Agent 自动读取当前 origin 并申报名称和仓库；服务端将一次性 create-only 授权绑定该目标。更改名称或仓库、并发重放及无目标旧申请会被拦截。批准后得到一次性 create-only 授权。`project create` / `onboard` 创建项目成功时，CDS 自动
 吊销该授权并返回新项目专属 Key；CLI 静默保存并切换，不打印明文。
 
 ### 旧版兼容
@@ -378,16 +378,17 @@ $CLI self update --branch <branch>       # 切 + pull + 重启 CDS 进程
 中无需新增参数，仍可直接使用。若目标分支不包含当前提交，服务端会在 checkout
 之前拒绝，避免一个 Agent 的分支整体覆盖另一个 Agent 已上线的修复。
 
-只有经过核对的正式换代或回滚，才允许显式解除非快进门禁：
+正式发布必须先合入当前线上完整提交并验证。仅填写 release 和原因不能证明已有修正被保留，普通自更新仍拒绝非继承发布。确需回滚时显式锁定当前提交并说明原因：
 
 ```bash
 $CLI self update --branch <branch> \
-  --transition-intent release \
+  --transition-intent rollback \
   --expected-from-sha <当前 self-status headSha> \
   --reason "说明为什么目标分支可以替代当前控制面版本"
 ```
 
-`--transition-intent` 只允许 `release` / `rollback`。不得把它作为日常兼容参数；
+人工强制更新仍是既有逃生通道；Agent 不得为绕过继承检查自动改用强制更新。
+`--transition-intent` 保留 `release` / `rollback` 兼容取值，但 release 不解除普通发布的继承要求。不得把它作为日常兼容参数；
 `expected-from-sha` 是乐观锁，生产版本已变化时请求必须失败并重新审计。
 
 注意：self-update 期间 CDS API 短暂不可用（~10s），CDS 内部 state.json 迁移逻辑会自动跑。
@@ -441,3 +442,9 @@ prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变
 - local 是占位/兜底，容器重建即丢；要持久化预览图片可挂卷到 `ASSETS_LOCAL_DIR` 或直接配 R2。
 
 详见 `.claude/skills/create-visual-test-to-kb/SKILL.md`「报告图片与资产存储」。
+
+### 凭据恢复
+
+重新运行原 connect 口令即可。CLI 保存无密钥的项目定位信息，丢失 credentials.json 时仍连接原项目，不重复创建。有效凭据直接复用；已有有效身份和授权可补发丢失凭据；失效或撤销的项目凭据需要在原审批入口重新批准一次。网络故障不触发新建或覆盖凭据。整个流程不要求新人查项目编号、复制密钥或修改终端配置。
+
+同一目标的原口令会恢复原项目；明确指定不同项目名称、slug 或仓库的新建任务仍申请新目标，不得默默复用旧项目。旧连接的定位信息由 CLI 从已授权项目自动补齐，不要求新人填写。

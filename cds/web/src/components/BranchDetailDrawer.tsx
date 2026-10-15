@@ -7,6 +7,7 @@ import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiRequest, apiUrl, ApiError } from '@/lib/api';
 import { githubPullRequestUrl } from '@/lib/github-urls';
 import { createLatestWinsGate } from '@/lib/latest-wins';
+import { BoundedAuthorityReader } from '@/lib/bounded-authority-reader';
 import { createLatestOnly } from '@/lib/latest-only';
 import { createDeploymentRunReader, type DeploymentRunSnapshot } from '@/lib/deployment-run-reader';
 import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
@@ -91,6 +92,10 @@ interface BranchDetailData {
   replicaSets?: Record<string, ProfileReplicaSetView>;
   resources?: BranchResource[];
   createdAt?: string;
+  runningCommitSha?: string | null;
+  targetCommitSha?: string | null;
+  ciImageStatus?: 'waiting' | 'ready' | 'failed';
+  ciWorkflowRunUrl?: string;
   commitSha?: string;
   subject?: string;
   githubRepoFullName?: string;
@@ -1083,10 +1088,13 @@ export function BranchDetailDrawer({
   } | null>(null);
   const [copiedFailurePrompt, setCopiedFailurePrompt] = useState(false);
 
+  const [factsUpdatedAt, setFactsUpdatedAt] = useState<number | null>(null);
+  const factsGateRef = useRef(createLatestWinsGate());
   const load = useCallback(async () => {
     if (!open || !branchId || !projectId || scopeRef.current !== ledgerScope) return;
     const isLatest = loadGate.begin();
     const isCurrent = () => scopeRef.current === ledgerScope && isLatest();
+    const ticket = factsGateRef.current.begin();
     setLoading(true);
     setError('');
     // Ledger availability must not hold back already available branch content.
@@ -1113,14 +1121,18 @@ export function BranchDetailDrawer({
       ]);
       if (!isCurrent()) return;
       const found = (branchesRes.branches || []).find((b) => b.id === branchId && b.projectId === projectId);
-      if (!found) {
+      const acceptFacts = factsGateRef.current.accept(ticket);
+      if (acceptFacts && !found) {
         setError('branch_not_found');
         setBranch(null);
-      } else {
+      } else if (acceptFacts && found) {
         setBranch(found);
       }
-      setLogs(logsRes.logs || []);
-      setDeploymentVersions(versionsRes.versions || []);
+      if (acceptFacts) {
+        setFactsUpdatedAt(Date.now());
+        setLogs(logsRes.logs || []);
+        setDeploymentVersions(versionsRes.versions || []);
+      }
       setProfileState({ status: 'ok', profiles: profilesRes.profiles || [] });
       setInfraServices(infraRes.services || []);
       setResourceSnapshot(resourcesRes.resources || found?.resources || []);
@@ -1269,6 +1281,8 @@ export function BranchDetailDrawer({
   const failureAutoSwitchedRef = useRef(false);
   useEffect(() => {
     if (!open || !branchId) return;
+    factsGateRef.current.newSession();
+    setFactsUpdatedAt(null);
     failureAutoSwitchedRef.current = false;
     setActiveTab(initialResourceId ? 'services' : 'overview');
     setLogsMode('system');
@@ -1313,9 +1327,30 @@ export function BranchDetailDrawer({
 
   useEffect(() => {
     const reader = ledgerReaderRef.current;
-    reader?.setPolling(open && activeTab === 'deployments');
+    reader?.setPolling(open && (activeTab === 'deployments' || activeTab === 'overview'));
     return () => reader?.setPolling(false);
   }, [activeTab, branchId, open, projectId]);
+
+  useEffect(() => {
+    if (!open || !branchId || !projectId) return;
+    const scope = ledgerScope;
+    const facts = new BoundedAuthorityReader(async signal => {
+      const ticket = factsGateRef.current.begin();
+      const [branches, history, versions] = await Promise.all([
+        apiRequest<{ branches: BranchDetailData[] }>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`, { signal }),
+        apiRequest<{ logs: OperationLog[] }>(`/api/branches/${encodeURIComponent(branchId)}/logs`, { signal }),
+        canManageConsole ? apiRequest<{ versions: DeploymentVersionSummary[] }>(`/api/deployment-versions?project=${encodeURIComponent(projectId)}&branch=${encodeURIComponent(branchId)}&limit=10`, { signal }) : Promise.resolve({ versions: [] }),
+      ]);
+      return { ticket, branches, history, versions };
+    }, value => {
+      if (scopeRef.current !== scope || !factsGateRef.current.accept(value.ticket)) return;
+      const current = value.branches.branches.find(item => item.id === branchId && item.projectId === projectId);
+      if (current) setBranch(current);
+      setFactsUpdatedAt(Date.now()); setLogs(value.history.logs || []); setDeploymentVersions(value.versions.versions || []);
+    });
+    const timer = window.setInterval(() => facts.refresh(), 2000);
+    return () => { window.clearInterval(timer); facts.dispose(); };
+  }, [branchId, open, projectId, ledgerScope, canManageConsole]);
 
   useEffect(() => {
     if (!open || !initialResourceId) return;
@@ -2209,6 +2244,7 @@ export function BranchDetailDrawer({
         className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl md:w-2/3 md:border-l md:border-[hsl(var(--hairline))]"
         style={{ minHeight: 0 }}
       >
+        {factsUpdatedAt ? <div className="shrink-0 px-4 pt-2 text-right text-[0.625rem] text-muted-foreground" aria-label="部署事实更新时间">事实更新于 {new Date(factsUpdatedAt).toLocaleTimeString('zh-CN')} · 自动刷新</div> : null}
         <header className="cds-branch-detail-header flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <span className="shrink-0 whitespace-nowrap text-sm font-semibold">分支详情</span>
@@ -2232,7 +2268,7 @@ export function BranchDetailDrawer({
                     data-testid="drawer-mirror-badge"
                   >镜像 · 采集于 {new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
                 ) : null}
-                {branch.commitSha ? <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}</span>
                 {(() => {
                   const svcList = Object.values(branch.services || {});
                   if (!svcList.length) return null;
@@ -2774,6 +2810,13 @@ export function BranchDetailDrawer({
 
                 {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
                     状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
+                {branch.ciImageStatus === 'failed' ? (
+                  <div role="status" className="mx-4 my-2 rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">
+                    <p>待发布版本 {branch.targetCommitSha?.slice(0, 7) || '未确认'} 未通过 CI，未替换当前运行版本。</p>
+                    <p className="mt-1 text-muted-foreground">查看 CI 日志，修复后重试；检查通过后再部署。</p>
+                    {branch.ciWorkflowRunUrl ? <a className="mt-2 inline-block underline" href={branch.ciWorkflowRunUrl} target="_blank" rel="noreferrer">查看 CI 日志</a> : null}
+                  </div>
+                ) : null}
                 {activeTab === 'overview' ? (
                   <OverviewPanel
                     services={overviewServices}
@@ -2791,8 +2834,9 @@ export function BranchDetailDrawer({
                     // 变成同一件事，部署途中总览会谎报「分支未运行」（Codex P2）。
                     lifecycle={branchStatus || branch.status}
                     branchName={branch.branch}
-                    commitSha={branch.commitSha}
-                    commitMessage={branch.subject}
+                    commitSha={branch.runningCommitSha || undefined}
+                    targetCommitSha={branch.targetCommitSha || undefined}
+                    ciImageStatus={branch.ciImageStatus}
                     lastReadyAt={branch.lastReadyAt}
                     lastDeployAt={branch.lastDeployAt}
                     deployDurationMs={latestDeployDurationMs}

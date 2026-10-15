@@ -89,6 +89,7 @@ class CdsCliAgentIdentityTests(unittest.TestCase):
             {
                 "events": [{"message": "scheduled", "_event": "done"}],
                 "restarted": False,
+                "restartStatus": "not-waited",
                 "agentSessionId": "cdscli_session_789",
                 "requestId": "req_server_123",
                 "operationId": "op_server_456",

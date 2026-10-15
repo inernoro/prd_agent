@@ -1,0 +1,486 @@
+name: CDS Isolated Recovery
+
+on:
+  push:
+    branches: [codex/cds-state-write-throttle-20261009]
+    paths:
+      - cds/src/**
+      - cds/package.json
+      - cds/pnpm-lock.yaml
+      - cds/scripts/deployment-recovery-drill.ts
+      - cds/scripts/replica-confirmation-drill.ts
+      - cds/scripts/actual-stop-drill.ts
+      - cds/scripts/json-write-overlap-drill.ts
+      - cds/scripts/observation-isolation-drill.ts
+      - cds/scripts/artifact-admission-drill.ts
+      - cds/scripts/deployment-queue-drill.ts
+      - cds/scripts/orphan-worktree-recheck-drill.ts
+      - cds/scripts/filesystem-removal-drill.ts
+      - cds/scripts/default-regression-drill.ts
+      - cds/scripts/branch-claim-entry-drill.ts
+      - cds/scripts/current-source-qualification.ts
+      - cds/scripts/application-bootstrap-drill.ts
+      - cds/scripts/application-docker-host-drill.ts
+      - cds/scripts/application-docker-inner-drill.ts
+      - cds/scripts/runtime-memory-stage-drill.ts
+      - cds/scripts/cpu-fairness-stop-drill.ts
+      - cds/tests/services/internal-pending-replay-auth.test.ts
+      - cds/tests/routes/pending-replay-server-auth.test.ts
+      - cds/tests/services/branch-operation-replay.test.ts
+      - cds/tests/middleware/github-auth.test.ts
+      - cds/tests/helpers/**
+      - cds/tests/scripts/probe-daemon-proxy.test.ts
+      - cds/tests/routes/topology.test.ts
+      - cds/tests/services/isolated-shell-executor.test.ts
+      - cds/scripts/orphan-worktree-recheck-probe.ts
+      - cds/scripts/orphan-worktree-ownership-probe.ts
+      - cds/scripts/tsconfig.acceptance.json
+      - .github/workflows/cds-isolated-recovery.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cds-isolated-recovery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  default-parallel-cleanup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the actual source and Web test dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Fetch the unchanged historical stop reference required by the original test
+        run: |
+          git fetch --depth 1 origin 1fd44e98489f312eee3fa0ff6fe47a6b0d44e4b8
+          git cat-file -e 1fd44e98489f312eee3fa0ff6fe47a6b0d44e4b8:cds/src/routes/branches.ts
+      - name: Original default parallel suite and unchanged test deadlines
+        shell: bash
+        run: |
+          node -e 'const fs=require("node:fs"),os=require("node:os");fs.writeFileSync("default-parallel-platform.json",JSON.stringify({head:process.env.GITHUB_SHA,node:process.version,platform:process.platform,arch:process.arch,availableParallelism:os.availableParallelism(),workersOverride:process.env.VITEST_MAX_THREADS||null}))'
+          pnpm -C cds test 2>&1 | tee default-parallel-cleanup.log
+      - name: Preserve complete default parallel result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-default-parallel-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            default-parallel-cleanup.log
+            default-parallel-platform.json
+          if-no-files-found: error
+          retention-days: 14
+
+  cpu-fairness-stop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and compile the actual CDS source
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real three-project admission and durable stop recovery
+        run: pnpm -C cds exec tsx scripts/cpu-fairness-stop-drill.ts
+      - name: Preserve exact CPU fairness and stop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-cpu-fairness-stop-${{ github.sha }}
+          path: cds/cpu-fairness-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  runtime-memory-stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and compile the actual CDS source
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real owned replacement, cooling and reservation recovery
+        run: pnpm -C cds exec tsx scripts/runtime-memory-stage-drill.ts
+      - name: Preserve exact runtime memory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-runtime-memory-stage-${{ github.sha }}
+          path: cds/runtime-memory-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  application-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install original application and web dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Compile original full application and web
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+          pnpm -C cds/web build
+      - name: Verify scoped pending replay through original server
+        run: >-
+          pnpm -C cds exec vitest run tests/services/internal-pending-replay-auth.test.ts
+          tests/routes/pending-replay-server-auth.test.ts tests/services/branch-operation-replay.test.ts
+          tests/middleware/github-auth.test.ts
+      - name: Verify private Docker wait and attach wire conformance
+        run: |
+          docker --version
+          pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
+      - name: Verify unconfirmed delayed creation exit and owned restart recovery
+        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --qualify-unknown-create-shutdown
+      - name: Preserve original application Docker prerequisite evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-application-docker-${{ github.sha }}
+          path: cds/application-docker-output/
+          if-no-files-found: error
+          retention-days: 14
+
+  application-probe-cancel:
+    # Both full cases previously shared a four-CPU primary daemon. Keep each
+    # original workload and budget, but do not overlap these two platforms.
+    needs: application-docker
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install original application and web dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Compile original full application and web
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+          pnpm -C cds/web build
+      - name: Verify separate cancellation boundaries and original wire protocol
+        run: |
+          docker --version
+          pnpm -C cds exec vitest run tests/scripts/probe-daemon-proxy.test.ts
+      - name: Original application cancels after daemon create before CLI acknowledgement
+        run: pnpm -C cds exec tsx scripts/application-docker-host-drill.ts --cancel-after-daemon-create
+      - name: Preserve separate budget cancellation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-application-probe-cancel-${{ github.sha }}
+          path: cds/application-probe-cancel-output/
+          if-no-files-found: error
+          retention-days: 14
+
+  application-bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ["127.0.0.1:27017:27017"]
+        options: >-
+          --cpus 1 --memory 1g
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install original application and web dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Compile original full application and web
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+          pnpm -C cds/web build
+      - name: Original index durable bootstrap login and restart in private runtime
+        run: pnpm -C cds exec tsx scripts/application-bootstrap-drill.ts --native --mongo-uri 'mongodb://127.0.0.1:27017/?directConnection=true'
+      - name: Preserve full application bootstrap prerequisite evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-application-bootstrap-${{ github.sha }}
+          path: cds/application-output/
+          if-no-files-found: error
+          retention-days: 14
+
+  artifact-admission:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check and compile artifact admission
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real owned registry missing publish and durable wait recovery
+        run: pnpm -C cds exec tsx scripts/artifact-admission-drill.ts
+      - name: Preserve artifact admission evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-artifact-admission-${{ github.sha }}
+          path: cds/artifact-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  deployment-queue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check and compile branch deployment
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real owned branch deployment dedup and service queue
+        run: pnpm -C cds exec tsx scripts/deployment-queue-drill.ts
+      - name: Preserve deployment queue evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-deployment-queue-${{ github.sha }}
+          path: cds/queue-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  observation-isolation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check and compile observation processes
+        run: |
+          pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+          pnpm -C cds build
+      - name: Real process cancellation and main-thread isolation regressions
+        run: pnpm -C cds exec vitest run tests/services/isolated-shell-executor.test.ts tests/services/shell-executor.test.ts tests/services/janitor-observation.test.ts tests/services/observation-stream-executor.test.ts tests/services/docker-observation-event-stream.test.ts tests/services/container-log-stream.test.ts tests/services/self-status-cache.test.ts tests/services/system-log-monitor.test.ts tests/services/system-log-monitor-process.test.ts tests/services/operation-process-isolation.test.ts tests/services/container-operation-qualification.test.ts tests/services/container-managed-policy.test.ts tests/services/release-git-isolation.test.ts tests/services/release-commit-clock.test.ts tests/services/release-commit-meta.test.ts tests/services/release-commit-rail.test.ts tests/services/release-promotion-ancestor.test.ts tests/routes/cds-system-diagnostics.test.ts tests/services/nonurgent-git-process.test.ts tests/services/preview-instance.test.ts tests/services/async-stuck-deploy-reconciler.test.ts tests/services/async-stuck-deploy-process.test.ts tests/services/deploy-stuck-reconciler.test.ts tests/services/infra-oom-correlation.test.ts tests/routes/branches.test.ts tests/routes/executor-deploy.test.ts tests/services/artifact-commit-identity.test.ts tests/services/artifact-admission.test.ts tests/services/artifact-admission-wait.test.ts tests/services/deployment-run.test.ts
+      - name: Real owned Docker reads through compiled observation processes
+        run: pnpm -C cds exec tsx scripts/observation-isolation-drill.ts --compiled
+      - name: Real private filesystem late claim comparison
+        run: pnpm -C cds exec vitest run tests/services/janitor-orphan-worktree-recheck.test.ts tests/services/janitor-orphan-worktree-ownership.test.ts tests/services/worktree-path-activity.test.ts tests/services/deployment-source-concurrent.test.ts && pnpm -C cds exec tsx scripts/orphan-worktree-recheck-drill.ts
+      - name: Compiled owned filesystem removal and actual Git claim handoff
+        run: pnpm -C cds exec tsx scripts/filesystem-removal-drill.ts
+      - name: Default regression fixtures with original assertions and native process evidence
+        run: pnpm -C cds exec vitest run tests/routes/topology.test.ts && pnpm -C cds exec tsx scripts/default-regression-drill.ts --native
+      - name: Real manual branch HTTP handoff and typed conflict
+        run: pnpm -C cds exec tsx scripts/branch-claim-entry-drill.ts --native
+      - name: Preserve manual branch HTTP evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-branch-claim-entry-${{ github.sha }}
+          path: cds/branch-claim-entry-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve default regression fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-default-regression-${{ github.sha }}
+          path: cds/default-regression-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve compiled filesystem removal evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-filesystem-removal-${{ github.sha }}
+          path: cds/filesystem-removal-output/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve private filesystem recheck evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-orphan-recheck-${{ github.sha }}
+          path: cds/orphan-recheck-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve observation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-observation-isolation-${{ github.sha }}
+          path: cds/observation-output/report.json
+          if-no-files-found: error
+          retention-days: 14
+
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:7.0
+        ports: ["127.0.0.1:27017:27017"]
+        options: >-
+          --cpus 1 --memory 1g
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1}).ok'"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check recovery drill
+        run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+      - name: Real Mongo persistence and SIGKILL recovery
+        run: pnpm -C cds exec tsx scripts/deployment-recovery-drill.ts --mongo-uri 'mongodb://127.0.0.1:27017/?directConnection=true' --mongo-container-id '${{ job.services.mongo.id }}'
+      - name: Preserve isolated evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-isolated-recovery-${{ github.sha }}
+          path: cds/acceptance-output/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  replica-confirmation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check isolated drills
+        run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+      - name: Replica readiness and ownership regressions
+        run: pnpm -C cds exec vitest run tests/scripts/replica-confirmation-drill.test.ts
+      - name: Real replica quorum loss and confirmation retry
+        run: pnpm -C cds exec tsx scripts/replica-confirmation-drill.ts
+      - name: Preserve replica evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-replica-confirmation-${{ github.sha }}
+          path: cds/replica-output/report.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  actual-stop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 固定历史源码用于真实停止前后对照。
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install CDS dependencies
+        run: pnpm -C cds install --frozen-lockfile
+      - name: Type-check isolated drills
+        run: pnpm -C cds exec tsc --project scripts/tsconfig.acceptance.json
+      - name: Compile CDS for native JSON overlap verification
+        run: pnpm -C cds build
+      - name: Native JSON ownership confirmation and cold recovery
+        run: pnpm -C cds exec tsx scripts/json-write-overlap-drill.ts
+      - name: Native JSON source regressions
+        run: pnpm -C cds exec vitest run tests/infra/json-backing-store-overlap.test.ts tests/infra/json-backing-store.test.ts
+      - name: Real containers demonstrate old false stop confirmation
+        run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts --reference
+      - name: Record original overlapping cold-load lifecycle diagnosis
+        run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts --cold-load-diagnostic
+      - name: Real HTTP stop failure retry restart and supersession
+        run: pnpm -C cds exec tsx scripts/actual-stop-drill.ts
+      - name: Preserve actual stop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-actual-stop-${{ github.sha }}
+          path: |
+            cds/stop-output/
+            cds/json-write-output/
+          if-no-files-found: warn
+          retention-days: 14

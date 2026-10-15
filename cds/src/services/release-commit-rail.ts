@@ -23,14 +23,16 @@
  *
  * 所有 sha 过 isCommitShaLike、所有 ref 过 isSafeGitRef 才准进 argv：这两个值
  * 最终是 git 的命令行参数，`-` 开头的值会被当成选项（`--upload-pack=` 可直接
- * 执行命令）。execFile 不过 shell 能挡住管道，挡不住「参数被当成选项」这一层。
+ * 执行命令）。参数逐项 shell 引用能挡住管道，挡不住「参数被当成选项」这一层。
  */
 
 import { RELEASE_GIT_TIMEOUT_MS as GIT_TIMEOUT_MS, workerGitRunner, type GitRunner } from './release-git-reader.js';
 export { shellGitRunner, workerGitRunner, type GitRunner } from './release-git-reader.js';
+import type { IShellExecutor } from '../types.js';
+import { createReleaseGitRunner } from './release-git-reader.js';
+import { timeMainThreadSection } from './main-thread-diagnostics.js';
 import { isCommitShaLike } from './release-commit-clock.js';
 import { isSafeGitRef } from './github-webhook-dispatcher.js';
-import { timeMainThreadSection } from './main-thread-diagnostics.js';
 
 /** 单元分隔符。commit subject 里什么字符都可能有，只有它足够安全。 */
 const UNIT_SEPARATOR = '\x1f';
@@ -141,6 +143,7 @@ export interface ReleaseCommitRailOptions {
   /** 项目 → 本地 git 仓库根。取不到即「没有可读的本地仓库」。 */
   repoRootResolver: (projectId: string) => string | undefined;
   runner?: GitRunner;
+  shell?: IShellExecutor;
   ttlMs?: number;
   maxNodes?: number;
   now?: () => number;
@@ -156,7 +159,7 @@ export class ReleaseCommitRailReader {
   constructor(private readonly options: ReleaseCommitRailOptions) {}
 
   private get runner(): GitRunner {
-    return this.options.runner ?? workerGitRunner;
+    return this.options.runner ?? createReleaseGitRunner(this.options.shell);
   }
 
   private get ttlMs(): number {

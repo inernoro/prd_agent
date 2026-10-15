@@ -87,6 +87,11 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
       if (req.method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(req.path)) return next();
       // 默认模拟原始账号的人类 cookie 登录;带 x-local-user 时模拟持久化本地会话;
       // 带 x-machine-key 时模拟「机器密钥通过全局鉴权但不是人」。
+      if (req.headers['x-member'] === '1') {
+        (req as any).cdsUser = { username: 'member', isSystemOwner: false, authProvider: 'local' };
+        (req as any).cdsSession = { id: 'member-session' };
+        return next();
+      }
       if (req.headers['x-machine-key'] !== '1') {
         if (req.headers['x-local-user'] === '1') {
           (req as any).cdsUser = {
@@ -105,6 +110,21 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     });
     app.use('/api', createAccessRequestsRouter({ stateService }));
     server = app.listen(0);
+  });
+
+  it('普通成员不能枚举其他项目的授权目标、回执或批准申请', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      agentName: 'test', requestedProject: { name: 'Private', repository: 'https://github.com/acme/private' },
+    });
+    const headers = { 'x-member': '1' };
+    const list = await request(server, 'GET', '/api/access-requests', undefined, headers);
+    expect(list.status).toBe(403);
+    expect(JSON.stringify(list.body)).not.toContain('acme/private');
+    for (const action of ['approve', 'reject']) {
+      const result = await request(server, 'POST', `/api/access-requests/${init.body.requestId}/${action}`, {}, headers);
+      expect(result.status).toBe(403);
+    }
+    expect(stateService.getAccessRequest(init.body.requestId)?.status).toBe('pending');
   });
 
   afterEach(async () => {
@@ -152,6 +172,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     const list = await request(server, 'GET', '/api/access-requests');
     expect(list.body.pendingCount).toBe(1);
     expect(list.body.requests[0]).not.toHaveProperty('pollTokenHash');
+    expect(list.body.requests[0].projectName).toBe('Alpha');
     expect(list.body.requests[0]).not.toHaveProperty('issuedKeyPlaintext');
 
     // 批准 → 操作员响应不含明文
@@ -174,7 +195,7 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
 
   it('首次接入:免密申请 → 人类批准 → 只交付一次性 create-only key', async () => {
     const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
-      agentName: 'Codex', purpose: '部署一个新仓库',
+      agentName: 'Codex', purpose: '部署一个新仓库', requestedProject: { name: 'Demo', repository: 'https://github.com/acme/demo' },
     });
     expect(init.status).toBe(201);
     const reqId = init.body.requestId as string;
@@ -197,11 +218,47 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(match?.access).toEqual({ canCreateProjects: true, projects: [] });
     const entry = stateService.getGlobalAgentKeys().find((key) => key.id === match?.keyId);
     expect(entry?.oneTime).toBe(true);
+    expect(entry?.creationTarget).toEqual({ name: 'Demo', repository: 'github.com/acme/demo' });
+    const receiptList = await request(server, 'GET', '/api/access-requests');
+    const receipt = receiptList.body.requests.find((row: any) => row.id === reqId);
+    expect(receipt.status).toBe('approved');
+    expect(receipt.creationReceiptEnabled).toBe(true);
+    expect(receipt.deliveredAt).toEqual(expect.any(String));
+    expect(receipt.createdProject).toBeUndefined();
+    expect(receipt.issuedKeyPlaintext).toBeUndefined();
 
     const deliverAgain = await request(server, 'GET', `/api/bootstrap-access-requests/${reqId}`, undefined, {
       'X-Poll-Token': token,
     });
     expect(deliverAgain.body).toEqual({ status: 'approved', delivered: true });
+  });
+
+  it('申请目标只保留项目名和脱敏仓库，不采信客户端创建回执', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      agentName: 'Codex',
+      requestedProject: { name: '  新人演练  ', repository: 'https://user:secret@github.com/example/demo.git?token=private#private' },
+      createdProject: { id: 'forged', name: '假的成功' },
+    });
+    expect(init.status).toBe(201);
+    const list = await request(server, 'GET', '/api/access-requests');
+    const item = list.body.requests.find((entry: any) => entry.id === init.body.requestId);
+    expect(item.requestedProject).toEqual({ name: '新人演练', repository: 'github.com/example/demo' });
+    expect(item.createdProject).toBeUndefined();
+    expect(JSON.stringify(item)).not.toContain('secret');
+    expect(JSON.stringify(item)).not.toContain('private');
+  });
+
+  it('新申请缺少合法名称或仓库时不进入审批，不签发无目标权限', async () => {
+    for (const requestedProject of [undefined, { name: 'Demo' }, { name: 'Demo', repository: 'file:///tmp/repo' }]) {
+      const result = await request(server, 'POST', '/api/bootstrap-access-requests', { requestedProject });
+      expect(result.status).toBe(400);
+      expect(result.body.error).toBe('bootstrap_target_required');
+    }
+    expect(stateService.listAccessRequests()).toHaveLength(0);
+    stateService.addAccessRequest({ id: 'old-unbound', kind: 'bootstrap', projectId: '__new_project__',
+      agentName: 'Old', purpose: 'old', status: 'pending', createdAt: new Date().toISOString(), pollTokenHash: 'none' });
+    expect((await request(server, 'POST', '/api/access-requests/old-unbound/approve', {})).status).toBe(409);
+    expect(stateService.getGlobalAgentKeys()).toHaveLength(0);
   });
 
   it('拒绝路径:发起方凭 token 轮询看到 rejected + 原因', async () => {

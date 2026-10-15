@@ -3,7 +3,7 @@ import { replayPendingDeploy } from '../../src/services/pending-deploy-replay.js
 
 const pending: any = { operationId: 'op_pending', branchId: 'owned', generation: 2, mergedCount: 1,
   updatedAt: '2026-10-11T00:00:00Z', request: { branchId: 'owned', projectId: 'p', profileId: 'api/name',
-    kind: 'deploy-profile', trigger: 'manual', commitSha: 'a'.repeat(40), requestId: 'request_pending' } };
+    kind: 'deploy-profile', trigger: 'manual', commitSha: 'a'.repeat(40), commitPinned: true, requestId: 'request_pending' } };
 function fixture(fetcher: typeof fetch) {
   const events: any[] = [];
   const deps: any = { stateService: { getBranch: () => ({ id: 'owned', projectId: 'p' }) },
@@ -21,9 +21,10 @@ describe('shared pending replay from background and route completions', () => {
     expect(fetcher).toHaveBeenCalledOnce();
     expect(fetcher.mock.calls[0][0]).toBe('http://127.0.0.1:9900/api/branches/owned/deploy/api%2Fname');
     const request = (fetcher.mock.calls[0] as any)[1];
-    expect(JSON.parse(request.body)).toEqual({ commitSha: 'a'.repeat(40) });
-    expect(request.headers).toMatchObject({ 'X-CDS-Trigger': 'manual', 'X-CDS-Source-Project-Id': 'p',
-      'X-CDS-Source-Branch-Id': 'owned', 'X-CDS-Request-Id': 'request_pending' });
+    expect(JSON.parse(request.body)).toEqual({ commitSha: 'a'.repeat(40), pendingReplay: { operationId: 'op_pending', generation: 2 } });
+    expect(Object.fromEntries(new Headers(request.headers))).toMatchObject({ 'x-cds-trigger': 'manual', 'x-cds-source-project-id': 'p',
+      'x-cds-source-branch-id': 'owned', 'x-cds-request-id': 'request_pending' });
+    expect(new Headers(request.headers).get('content-type')).toBe('application/json');
   });
 
   it('logs only the bounded rejection classification and never reads its private HTTP body', async () => {
@@ -109,7 +110,7 @@ describe('shared pending replay from background and route completions', () => {
     const fetcher = vi.fn(async () => new Response('event: complete\ndata: {"ok":true,"runId":"dr_latest"}\n\n'));
     const { deps } = fixture(fetcher as typeof fetch);
     replayPendingDeploy({ ...pending, request: { ...pending.request, kind: 'deploy', profileId: null, commitPinned: false } }, deps);
-    await settle(); expect(fetcher).toHaveBeenCalledOnce(); expect(JSON.parse((fetcher.mock.calls[0] as any)[1].body)).toEqual({});
+    await settle(); expect(fetcher).toHaveBeenCalledOnce(); expect(JSON.parse((fetcher.mock.calls[0] as any)[1].body)).toEqual({ pendingReplay: { operationId: 'op_pending', generation: 2 } });
   });
 
 });

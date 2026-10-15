@@ -118,30 +118,65 @@ def test_connect_slug_saves_resolved_project_id(workspace, monkeypatch):
     ]
 
 
-def test_connect_new_project_uses_bootstrap_request(workspace, monkeypatch):
-    secret = "cdsg_bootstrap-secret"
-
-    def fake_request(method, path, body=None, timeout=15, extra_headers=None,
-                     fatal_network_errors=True):
-        if method == "POST":
-            assert path == "/api/bootstrap-access-requests"
-            return 201, {"requestId": "req2", "pollToken": "poll2"}, {}
-        if path == "/api/bootstrap-access-requests/req2":
-            return 200, {"status": "approved", "authorizationKey": secret}, {}
-        assert path == "/api/projects"
-        return 200, {"projects": []}, {}
-
+def test_connect_new_project_infers_origin_and_creates_once(workspace, monkeypatch):
+    subprocess.run(["git", "remote", "add", "origin", "git@github.com:example/demo.git"], check=True)
+    def fake_request(method, path, body=None, **kwargs):
+        if method == "POST" and path == "/api/bootstrap-access-requests":
+            assert body["requestedProject"] == {"name": "demo", "repository": "git@github.com:example/demo.git"}
+            return 201, {"requestId": "r", "pollToken": "poll"}, {}
+        if path == "/api/bootstrap-access-requests/r":
+            return 200, {"status": "approved", "authorizationKey": "cdsg_secret"}, {}
+        if method == "POST" and path == "/api/projects":
+            assert body["gitRepoUrl"] == "git@github.com:example/demo.git"
+            return 201, {"project": {"id": "proj-demo"}, "issuedProjectKey": {"plaintext": "cdsp_secret"}}, {}
+        return 200, {"id": "proj-demo"}, {}
     monkeypatch.setattr(cdscli, "_request", fake_request)
-    monkeypatch.setattr(cdscli.time, "sleep", lambda _seconds: None)
-    code, output = run_command([
-        "connect", "--host", "cds.example", "--new-project", "--agent", "Codex",
-    ])
+    code, output = run_command(["connect", "--host", "cds.example", "--new-project", "--create-project", "demo"])
+    assert code == 0, output
+    saved = json.loads((workspace / ".cds/credentials.json").read_text())
+    assert saved["projectKey"] == "cdsp_secret" and "bootstrapKey" not in saved
+    assert "cdsp_secret" not in output and "cdsg_secret" not in output
 
-    assert code == 0
-    assert secret not in output
-    saved = json.loads((workspace / ".cds" / "credentials.json").read_text())
-    assert saved["bootstrapKey"] == secret
-    assert "projectKey" not in saved
+
+@pytest.mark.parametrize("loss", [True, False])
+def test_same_new_project_command_recovers_original_project(workspace, monkeypatch, loss):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
+    cdscli._save_local_credentials(host="https://cds.example", project_id="proj-demo", project_key="cdsp_old")
+    if loss:
+        (workspace / ".cds/credentials.json").unlink()
+    calls = []
+    monkeypatch.setattr(cdscli, "_load_user_credential", lambda host: "")
+    def fake_request(method, path, body=None, extra_headers=None, **kwargs):
+        calls.append((method, path))
+        if path == "/api/projects/proj-demo" and extra_headers:
+            return 401, {"error": "unauthorized"}, {}
+        if method == "POST":
+            assert path == "/api/projects/proj-demo/access-requests"
+            return 201, {"requestId": "r", "pollToken": "poll", "projectId": "proj-demo"}, {}
+        if path.endswith("/access-requests/r"):
+            return 200, {"status": "approved", "authorizationKey": "cdsp_new"}, {}
+        return 200, {"id": "proj-demo"}, {}
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    code, output = run_command(["connect", "--host", "cds.example", "--new-project", "--create-project", "demo"])
+    assert code == 0, output
+    assert all(path != "/api/projects" and "bootstrap" not in path for _, path in calls)
+    assert json.loads((workspace / ".cds/credentials.json").read_text())["projectKey"] == "cdsp_new"
+    assert "cdsp_old" not in output and "cdsp_new" not in output
+    assert oct((workspace / ".cds/credentials.json").stat().st_mode & 0o777) == "0o600"
+
+
+def test_valid_connect_is_reused_and_network_failure_never_creates_request(workspace, monkeypatch):
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_valid")
+    for status in [200, 503]:
+        calls = []
+        def fake_request(method, path, **kwargs):
+            calls.append((method, path))
+            return status, {"id": "p"}, {}
+        monkeypatch.setattr(cdscli, "_request", fake_request)
+        code, output = run_command(["connect", "--host", "cds.example", "--project", "p"])
+        assert code == (0 if status == 200 else 2)
+        assert calls == [("GET", "/api/projects/p")]
+        assert "cdsp_valid" not in output
 
 
 def test_rejected_connect_does_not_write_credentials(workspace, monkeypatch):
@@ -266,3 +301,60 @@ def test_auth_inspect_strict_rejects_different_workspace_and_environment_keys(wo
     assert payload["credentialSummary"]["conflicts"] == ["projectKeySource"]
     assert "cdsp_workspace-key" not in output
     assert "cdsp_other-key" not in output
+
+
+def test_declared_origin_does_not_send_embedded_credentials():
+    assert cdscli._safe_repository_url("https://user:secret@github.com/acme/demo.git?token=secret#x") == "https://github.com/acme/demo.git"
+    assert cdscli._safe_repository_url("git@github.com:acme/demo.git") == "git@github.com:acme/demo.git"
+
+
+@pytest.mark.parametrize("change", [{"name": "Second"}, {"slug": "second"}, {"repository": "https://github.com/example/second"}])
+def test_explicit_different_creation_target_is_not_silently_reused(workspace, monkeypatch, change):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo"], check=True)
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_keep",
+                                   project_name="Demo", project_slug="demo")
+    calls = []
+    def request(method, path, body=None, **kwargs):
+        calls.append((method, path))
+        if path == "/api/bootstrap-access-requests":
+            assert body["requestedProject"]["name"] == change.get("name", "Demo")
+            return 201, {"requestId": "r", "pollToken": "poll"}, {}
+        if path.endswith("/r"):
+            return 200, {"status": "rejected", "rejectReason": "fixture"}, {}
+        raise AssertionError("新目标不能复用原项目")
+    monkeypatch.setattr(cdscli, "_request", request)
+    args = ["connect", "--host", "cds.example", "--new-project", "--create-project", change.get("name", "Demo")]
+    if change.get("slug"): args += ["--slug", change["slug"]]
+    if change.get("repository"): args += ["--git-url", change["repository"]]
+    code, output = run_command(args)
+    assert code == 2 and "fixture" in output
+    assert json.loads((workspace / ".cds/credentials.json").read_text())["projectKey"] == "cdsp_keep"
+    assert "cdsp_keep" not in output
+
+
+def test_legacy_context_name_is_learned_without_new_approval(workspace, monkeypatch):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo"], check=True)
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_keep")
+    def request(method, path, **kwargs):
+        assert method == "GET" and path == "/api/projects/p"
+        return 200, {"id": "p", "name": "Demo", "slug": "demo"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    code, output = run_command(["connect", "--host", "cds.example", "--new-project", "--create-project", "Demo"])
+    assert code == 0, output
+    assert json.loads((workspace / ".cds/connection.json").read_text())["projectName"] == "Demo"
+
+
+def test_display_rename_keeps_original_creation_command_reusable(workspace, monkeypatch):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo"], check=True)
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_keep", project_name="Demo", project_slug="demo")
+    def request(method, path, **kwargs):
+        assert method == "GET" and path == "/api/projects/p"
+        return 200, {"id": "p", "name": "Renamed", "slug": "renamed"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    args = ["connect", "--host", "cds.example", "--new-project", "--create-project", "Demo", "--slug", "Demo"]
+    for _ in range(2):
+        code, output = run_command(args)
+        assert code == 0, output
+    context = json.loads((workspace / ".cds/connection.json").read_text())
+    assert context["projectName"] == "Renamed" and context["creationName"] == "Demo"
+    assert context["creationSlug"] == "demo"

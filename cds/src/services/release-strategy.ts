@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from './preview-slug.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -141,7 +142,7 @@ export function discoverReleaseStrategies(project: Project, branch: BranchEntry)
       strategy: {
         mode: 'generated-compose',
         composeFile,
-        composeProject: shellSafeName(`${project.slug}-prod`),
+        composeProject: shellSafeName(`${projectResourceNamespace(project)}-prod`),
         detectedFrom: [composeFile],
       },
       requirements: ['远端已安装 Git、Docker、Docker Compose 与 Python 3', '远端发布目录是该项目的 Git 仓库'],
@@ -161,7 +162,7 @@ export function discoverReleaseStrategies(project: Project, branch: BranchEntry)
         mode: 'generated-static',
         buildCommand: buildCommand || '',
         artifactDirectory: artifactDirectory || 'dist',
-        publicDirectory: `/opt/${project.slug}-web`,
+        publicDirectory: `/opt/${projectResourceNamespace(project)}-web`,
         detectedFrom: [
           ...(packageJson ? ['package.json'] : []),
           ...(artifactDirectory ? [artifactDirectory] : []),

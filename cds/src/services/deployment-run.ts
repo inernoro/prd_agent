@@ -10,7 +10,9 @@ import type {
   DeploymentRunTrigger,
 } from '../types.js';
 import type { StateService } from './state.js';
-import { BranchOperationSupersededError, type BranchOperationLease } from './branch-operation-coordinator.js';
+import { BranchOperationSupersededError, cancelsBranchDeployments, type BranchOperationCoordinator, type BranchOperationLease } from './branch-operation-coordinator.js';
+import { captureDeploymentIntent, readDeploymentIntent, type DeploymentExecutionInput } from './deployment-intent.js';
+import { isLocallyOwned } from './executor-ownership.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -51,6 +53,11 @@ export interface BeginDeploymentRunInput {
   trigger: DeploymentRunTrigger;
   commitSha?: string;
   operationId?: string;
+  operationGeneration?: number;
+  operationAdmissionGeneration?: number;
+  executionInput?: DeploymentExecutionInput;
+  profileId?: string;
+  initialStatus?: 'pending' | 'queued';
   executorId?: string;
   versionId?: string;
   configHash?: string;
@@ -64,6 +71,8 @@ export interface DeploymentRunServiceOptions {
   maxEvents?: number;
   pendingOriginTimeoutMs?: number;
   timingClock?: () => number;
+  /** 仅认可持有原代次资格、未超过截止时间的实际阶段待办，不续写假心跳。 */
+  isExecutionWaiting?: (run: DeploymentRun, now: Date) => boolean;
 }
 
 export interface DeploymentRunEventsAfter {
@@ -80,6 +89,9 @@ export class DeploymentRunService {
   private readonly timingClock: () => number;
   private readonly timingBase: number;
   private readonly timingEpochId = `pt_${crypto.randomBytes(12).toString('hex')}`;
+  private readonly isExecutionWaiting: NonNullable<DeploymentRunServiceOptions['isExecutionWaiting']>;
+  private readonly acceptanceWrites = new Map<string, Promise<void>>();
+  private readonly boundCoordinators = new Set<BranchOperationCoordinator>();
 
   constructor(
     private readonly stateService: StateService,
@@ -91,6 +103,7 @@ export class DeploymentRunService {
     this.timingClock = options.timingClock || (() => performance.now());
     this.timingBase = this.timingClock();
     this.pendingOriginTimeoutMs = Math.min(5000, Math.max(1, options.pendingOriginTimeoutMs || 5000));
+    this.isExecutionWaiting = options.isExecutionWaiting || (() => false);
   }
 
   async begin(input: BeginDeploymentRunInput): Promise<DeploymentRun> {
@@ -101,12 +114,15 @@ export class DeploymentRunService {
       projectId: input.projectId,
       branchId: input.branchId,
       trigger: input.trigger,
-      status: 'pending',
+      status: input.initialStatus || 'pending',
       phase,
       seq: 1,
       firstEventSeq: 1,
       commitSha: input.commitSha,
       operationId: input.operationId,
+      operationGeneration: input.operationGeneration,
+      operationAdmissionGeneration: input.operationAdmissionGeneration ?? input.operationGeneration,
+      profileId: input.profileId,
       executorId: input.executorId,
       versionId: input.versionId,
       configHash: input.configHash,
@@ -118,13 +134,143 @@ export class DeploymentRunService {
         at,
         phase,
         level: 'info',
-        status: 'pending',
+        status: input.initialStatus || 'pending',
         message: this.normalizeMessage(input.message || '部署请求已受理'),
       }],
     };
-    const persisted = this.stateService.addDeploymentRun(run);
+    const persisted = this.stateService.addDeploymentRun(run, input.executionInput ? captureDeploymentIntent(run, input.executionInput) : undefined);
+    const write = this.stateService.flushDeploymentRun(persisted.id);
+    this.acceptanceWrites.set(persisted.id, write);
+    try { await write; return persisted; }
+    finally { this.acceptanceWrites.delete(persisted.id); }
+  }
+
+  getForOperation(operationId: string, generation: number): DeploymentRun | undefined {
+    return this.stateService.getDeploymentRunForOperation(operationId, generation);
+  }
+
+  /** 只有本节点归属和原操作作用域均明确时，才可豁免等待或撤销实际执行资格。 */
+  private hasLocalExecution(run: DeploymentRun): boolean {
+    const branch = this.stateService.getBranch(run.branchId);
+    return !!branch && (branch.projectId || 'default') === run.projectId
+      && isLocallyOwned(run.executorId) && isLocallyOwned(branch.executorId)
+      && !!run.operationId && run.operationGeneration !== undefined && [...this.boundCoordinators].some(coordinator =>
+      coordinator.getActiveOperations(run.branchId).some(active => active.operationId === run.operationId
+        && active.generation === run.operationGeneration && !active.cancelled
+        && active.request.branchId === run.branchId && (active.request.projectId || 'default') === run.projectId
+        && (active.request.profileId || undefined) === run.profileId));
+  }
+
+  async waitForAcceptance(id: string): Promise<void> {
+    await this.acceptanceWrites.get(id);
+  }
+
+  async flush(): Promise<void> {
     await this.stateService.flush();
-    return persisted;
+  }
+
+  /** 终止操作先确认覆盖范围内的取消记录，成功后才可停止或删除实际实例。 */
+  async persistBranchCancellation(projectId: string, branchId: string, lease?: BranchOperationLease | null): Promise<void> {
+    if (lease && (!cancelsBranchDeployments(lease.request.kind) || lease.branchId !== branchId || (lease.request.projectId || 'default') !== projectId)) {
+      throw new Error('Durable cancellation requires the current terminating owner');
+    }
+    lease?.assertCurrent('before durable deployment cancellation');
+    const profileId = lease?.request.profileId;
+    const covered = this.list({ projectId, branchId }).filter((run) =>
+      (!profileId || !run.profileId || run.profileId === profileId)
+      && (!lease || run.operationGeneration === undefined || run.operationGeneration < lease.generation));
+    for (const run of covered) {
+      if (!TERMINAL_STATUSES.has(run.status)) this.cancel(run.id, '终止操作取消原部署，旧待办不再恢复', 'operation-stop');
+    }
+    await Promise.all(covered.map((run) => this.stateService.flushDeploymentRun(run.id)));
+    lease?.assertCurrent('after durable deployment cancellation');
+  }
+
+  /** 领取必须先可靠迁移到 preparing，避免已执行任务仍以 queued 落盘而重复恢复。 */
+  async claimQueued(id: string): Promise<void> {
+    const run = this.get(id);
+    if (!run || run.status !== 'queued') return;
+    this.transition(id, 'preparing', { phase: 'admission-replay', message: '排队目标已领取，正在保存执行身份' });
+    const write = this.stateService.flushDeploymentRun(id);
+    this.acceptanceWrites.set(id, write);
+    try { await write; } finally { if (this.acceptanceWrites.get(id) === write) this.acceptanceWrites.delete(id); }
+  }
+
+  /** Boot awaits the journal ACK before HTTP admission, watchers or in-memory replay can begin. */
+  async restoreQueuedDurably(coordinator: BranchOperationCoordinator): Promise<DeploymentRun[]> {
+    const release = coordinator.holdRecovery();
+    try {
+      const intents = this.stateService.getDeploymentIntents().sort((a, b) => a.admissionGeneration - b.admissionGeneration);
+      for (const intent of intents) {
+        const run = this.get(intent.runId);
+        if (!run || run.status !== 'queued') continue;
+        try {
+          const branch = this.stateService.getBranch(run.branchId);
+          const project = this.stateService.getProject(run.projectId);
+          const identity = () => JSON.stringify([branch?.id, branch?.projectId, branch?.branch, branch?.worktreePath,
+            branch?.createdAt, run.seq, run.startedAt, run.updatedAt, run.operationId, run.operationGeneration]);
+          const frozenIdentity = identity();
+          const current = () => {
+            if (identity() !== frozenIdentity || !branch || !project || this.stateService.getBranch(run.branchId) !== branch
+              || this.stateService.getProject(run.projectId) !== project || (branch.projectId || 'default') !== run.projectId
+              || this.get(run.id) !== run || run.status !== 'queued'
+              || this.stateService.getDeploymentIntents().find(row => row.runId === run.id)?.inputDigest !== intent.inputDigest)
+              throw new Error('Deployment recovery identity changed');
+            readDeploymentIntent(run, intent);
+            if (this.list().some(candidate => candidate.branchId === run.branchId && candidate.projectId === run.projectId
+              && candidate.operationAdmissionGeneration !== undefined && candidate.operationAdmissionGeneration > intent.admissionGeneration
+              && (!candidate.profileId || candidate.profileId === run.profileId))) throw new Error('Deployment recovery superseded');
+          };
+          current();
+          await coordinator.preparePendingRestoration({ operationId: intent.operationId, generation: intent.generation,
+            branchId: run.branchId, request: intent.request, mergedCount: 1, updatedAt: run.startedAt }, current);
+        } catch {
+          // The original durable record remains authoritative; synchronous reconciliation explains invalid inputs.
+        }
+      }
+      return this.restoreQueued(coordinator);
+    } finally { release(); }
+  }
+
+  restoreQueued(coordinator: BranchOperationCoordinator): DeploymentRun[] {
+    this.bindOperationCoordinator(coordinator);
+    const runs = this.list();
+    for (const run of runs) if (run.operationGeneration !== undefined) coordinator.seedGeneration(run.branchId, run.operationGeneration);
+    const restored: DeploymentRun[] = [];
+    const intents = this.stateService.getDeploymentIntents().sort((a, b) => a.admissionGeneration - b.admissionGeneration);
+    for (const intent of intents) {
+      const run = this.get(intent.runId);
+      if (!run || run.status !== 'queued') continue;
+      try {
+        const branch = this.stateService.getBranch(run.branchId);
+        if (!branch || (branch.projectId || 'default') !== run.projectId || !this.stateService.getProject(run.projectId)) throw new Error('Deployment intent owner missing');
+        const input = readDeploymentIntent(run, intent);
+        // 最新覆盖范围的已受理结果压住旧排队；重建续接使用原受理顺序，不能取消其后意图。
+        const newer = runs.some((candidate) => candidate.branchId === run.branchId && candidate.projectId === run.projectId
+          && candidate.operationAdmissionGeneration !== undefined && candidate.operationAdmissionGeneration > intent.admissionGeneration
+          && (!candidate.profileId || candidate.profileId === run.profileId));
+        if (newer) { this.cancel(run.id, '已有较新的覆盖范围部署，旧待办不再恢复', 'superseded'); continue; }
+        const restoredPending = coordinator.restorePendingDeployment({ operationId: intent.operationId, generation: intent.generation, branchId: run.branchId,
+          request: intent.request, mergedCount: 1, updatedAt: run.startedAt }, input);
+        if (restoredPending) restored.push(run);
+      } catch {
+        this.fail(run.id, { code: 'cds.intent.unrecoverable', owner: 'cds', retryable: true,
+          summary: '原排队部署的配置或身份无法可靠恢复，请重新部署', phase: 'recovery', evidenceRefs: [], suggestedAction: '重新部署当前目标' });
+      }
+    }
+    return restored;
+  }
+
+  bindOperationCoordinator(coordinator: BranchOperationCoordinator): void {
+    if (this.boundCoordinators.has(coordinator)) return;
+    this.boundCoordinators.add(coordinator);
+    coordinator.onOperationEnded((operationId, generation, status) => {
+      const run = this.getForOperation(operationId, generation);
+      if (!run || TERMINAL_STATUSES.has(run.status)) return;
+      if (status === 'cancelled') this.cancel(run.id, '部署操作被更新的请求或终止操作取代', 'superseded');
+      else this.fail(run.id, { code: `cds.operation.${status}`, owner: 'cds', retryable: true,
+        summary: '部署操作未能继续执行，请查看最新部署结果', phase: 'operation-ended', evidenceRefs: [] });
+    });
   }
 
   get(id: string): DeploymentRun | undefined {
@@ -144,7 +290,10 @@ export class DeploymentRunService {
     check();
     return this.stateService.updateDeploymentRunDurably(id, draft => {
       if (draft.projectId !== (request.projectId || 'default') || draft.branchId !== lease.branchId || request.branchId !== lease.branchId
-        || draft.status !== 'pending' || (draft.operationId && draft.operationId !== lease.operationId)
+        || !(draft.status === 'pending' || (request.pendingReplay?.operationId === origin.operationId
+          && request.pendingReplay.generation === origin.generation && draft.operationGeneration === lease.generation
+          && draft.status === 'preparing' && draft.phase === 'admission-replay'))
+        || (draft.operationId && draft.operationId !== lease.operationId)
         || (draft.pendingOrigin && JSON.stringify(draft.pendingOrigin) !== JSON.stringify(origin))) throw new Error('pending_origin_scope');
       draft.pendingOrigin = origin; draft.operationId = lease.operationId;
     }, async () => {
@@ -362,6 +511,8 @@ export class DeploymentRunService {
     const reconciled: DeploymentRun[] = [];
     for (const run of this.stateService.getDeploymentRuns()) {
       if (TERMINAL_STATUSES.has(run.status)) continue;
+      if (run.status === 'queued' && run.operationId && run.operationGeneration !== undefined
+        && [...this.boundCoordinators].some((coordinator) => coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!))) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || heartbeat >= boundary) continue;
       reconciled.push(this.fail(run.id, {
@@ -381,8 +532,15 @@ export class DeploymentRunService {
     const reconciled: DeploymentRun[] = [];
     for (const run of this.stateService.getDeploymentRuns()) {
       if (TERMINAL_STATUSES.has(run.status)) continue;
+      // 排队尚未进入执行，不以执行心跳判超时；必须仍有协调器中的实际待办。
+      if (run.status === 'queued' && run.operationId && run.operationGeneration !== undefined
+        && [...this.boundCoordinators].some((coordinator) => coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!))) continue;
+      // 等待查询可收敛过期重放凭据，观察器已更新终态时不得再次迁移。
+      if (TERMINAL_STATUSES.has(run.status)) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || now.getTime() - heartbeat < staleAfterMs) continue;
+      const localExecution = this.hasLocalExecution(run);
+      if (localExecution && this.isExecutionWaiting(run, now)) continue;
       reconciled.push(this.fail(run.id, {
         code: 'cds.run.interrupted',
         owner: 'cds',
@@ -392,6 +550,12 @@ export class DeploymentRunService {
         evidenceRefs: [],
         suggestedAction: '确认执行器与容器状态后重新部署',
       }));
+      if (localExecution && run.operationId && run.operationGeneration !== undefined) {
+        for (const coordinator of this.boundCoordinators) coordinator.revokeInterrupted({
+          operationId: run.operationId, generation: run.operationGeneration,
+          branchId: run.branchId, projectId: run.projectId, profileId: run.profileId,
+        });
+      }
     }
     return reconciled;
   }

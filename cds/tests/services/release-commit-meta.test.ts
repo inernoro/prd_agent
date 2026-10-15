@@ -15,13 +15,18 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   MAX_COMMIT_SUBJECT_LENGTH,
   ReleaseCommitClock,
   gitCommitMetaReader,
   releaseCommitKey,
 } from '../../src/services/release-commit-clock.js';
+import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
+import { ShellExecutor } from '../../src/services/shell-executor.js';
+const readPool = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 2 });
+beforeAll(async () => { await readPool.start(); });
+afterAll(async () => { await readPool.close(); });
 
 describe('台账文件版本兼容', () => {
   let dir: string;
@@ -210,7 +215,7 @@ describe('真实 git 元信息读取器', () => {
   });
 
   it('一次 git 调用同时带回时间 / 说明 / 作者', async () => {
-    expect(await gitCommitMetaReader(repo, sha)).toEqual({
+    expect((await gitCommitMetaReader(repo, sha, readPool))).toEqual({
       at: '2026-01-02T03:04:05.000Z',
       subject: 'fix: 门禁 401 的真实原因',
       author: '发布测试',
@@ -219,12 +224,12 @@ describe('真实 git 元信息读取器', () => {
 
   it('形状不合法的 sha 压根不起 git 进程', async () => {
     // 事故值：--upload-pack=/bin/sh 这类进到 argv 里就是一次任意命令执行。
-    expect(await gitCommitMetaReader(repo, '--upload-pack=/bin/echo')).toBeUndefined();
-    expect(await gitCommitMetaReader(repo, 'HEAD')).toBeUndefined();
+    expect((await gitCommitMetaReader(repo, '--upload-pack=/bin/echo', readPool))).toBeUndefined();
+    expect((await gitCommitMetaReader(repo, 'HEAD', readPool))).toBeUndefined();
   });
 
   it('worktree 已回收 / sha 不在本地 → undefined，不抛给发布主链路', async () => {
-    expect(await gitCommitMetaReader(path.join(repo, '不存在'), sha)).toBeUndefined();
-    expect(await gitCommitMetaReader(repo, 'f'.repeat(40))).toBeUndefined();
+    expect((await gitCommitMetaReader(path.join(repo, '不存在'), sha, readPool))).toBeUndefined();
+    expect((await gitCommitMetaReader(repo, 'f'.repeat(40), readPool))).toBeUndefined();
   });
 });

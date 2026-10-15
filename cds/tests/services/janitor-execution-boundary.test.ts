@@ -3,7 +3,7 @@ import cp from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createDockerPrune, createImageDocker, JanitorService, defaultDockerPrune, defaultImageDocker, defaultOrphanWorktreeFs } from '../../src/services/janitor.js';
+import { createDockerPrune, createImageDocker, createJanitorDockerAdapters, JanitorService, defaultDockerPrune, defaultImageDocker, defaultOrphanWorktreeFs } from '../../src/services/janitor.js';
 
 // Named ESM imports must be wrapped before janitor is imported; a late default-export
 // spy does not observe its already-bound execFile reference.
@@ -51,9 +51,9 @@ describe('P2: Janitor finite Docker commands run outside Master', () => {
     expect(await defaultImageDocker.listImages()).toEqual(['owned/image:sha-example']);
     expect(calls.map(call => call.mock.calls.length)).toEqual([0, 0, 0, 0]);
   });
-  it('keeps useful stdout on partial inspect failure outside Master', async () => {
+  it('keeps partial mount inventory unknown after inspect failure outside Master', async () => {
     const calls = nativeCalls();
-    expect(await defaultOrphanWorktreeFs.listMountedHostPaths()).toEqual(['/owned/mounted-path']);
+    expect(await defaultOrphanWorktreeFs.listMountedHostPaths()).toBeNull();
     expect(calls.map(call => call.mock.calls.length)).toEqual([0, 0, 0, 0]);
   });
   it('preserves sequential prune result outside Master', async () => {
@@ -89,8 +89,8 @@ describe('shared scheduling and unchanged Janitor safety', () => {
     expect(await createImageDocker({ exec }).removeImage('owned/image')).toMatch(/^HELD:/);
     expect(exec).toHaveBeenCalledTimes(2);
     expect(exec.mock.calls.map(call => call[1])).toEqual([
-      { timeout: 60_000, priority: 'diagnostic', schedulingGroup: 'janitor' },
-      { timeout: 30_000, priority: 'diagnostic', schedulingGroup: 'janitor' },
+      { timeout: 60_000, priority: 'diagnostic', schedulingGroup: 'janitor', executionLane: 'operation' },
+      { timeout: 30_000, priority: 'diagnostic', schedulingGroup: 'janitor', executionLane: 'observation' },
     ]);
   });
   it('reports capacity refusal and thrown executor errors without false reclamation', async () => {
@@ -119,7 +119,7 @@ describe('shared scheduling and unchanged Janitor safety', () => {
   });
   it('passes the shared executor through the exact production startup constructor', async () => {
     const source = await readFile(new URL('../../src/index.ts', import.meta.url), 'utf8');
-    const start = source.indexOf('const janitorService = new JanitorService(');
+    const start = source.indexOf('const janitorDocker = createJanitorDockerAdapters(shell);');
     const end = source.indexOf('\n);', start) + 3;
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     const state = new StateService(path.join(fixture, 'wiring-state.json')); state.load();
@@ -127,8 +127,8 @@ describe('shared scheduling and unchanged Janitor safety', () => {
     const config = { worktreeBase: fixture, scheduler: { pinnedBranches: [] }, janitor: { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80, sweepIntervalSeconds: 3600, imageRetention: false, orphanWorktrees: false } };
     // Evaluate only the exact production construction expression, with owned dependencies;
     // the Master entry point and its shared services are never started.
-    const create = new Function('JanitorService', 'stateService', 'config', 'shell', 'readDiskUsage', source.slice(start, end) + '\nreturn janitorService;');
-    const janitor = create(JanitorService, state, config, shared, async () => [{ totalBytes: 10000, freeBytes: 5000 }]) as JanitorService;
+    const create = new Function('JanitorService', 'createJanitorDockerAdapters', 'stateService', 'config', 'shell', 'readDiskUsage', source.slice(start, end) + '\nreturn janitorService;');
+    const janitor = create(JanitorService, createJanitorDockerAdapters, state, config, shared, async () => [{ totalBytes: 10000, freeBytes: 5000 }]) as JanitorService;
     expect((await janitor.sweep()).dockerPrune?.reclaimed).toEqual(['悬空镜像: Total reclaimed space: owned-shared', '构建缓存: Total reclaimed space: owned-shared']);
     expect(shared.exec).toHaveBeenCalledTimes(2);
     expect(shared.exec.mock.calls.every(call => call[1].schedulingGroup === 'janitor')).toBe(true);
@@ -141,7 +141,7 @@ describe('shared scheduling and unchanged Janitor safety', () => {
     expect(prune.reclaimed).toEqual([]);
     expect(prune.errors).toHaveLength(2);
     expect(prune.errors.every(error => error.includes('[preview-instance]'))).toBe(true);
-    expect(await createImageDocker(preview).listImages()).toEqual([]);
+    await expect(createImageDocker(preview).listImages()).rejects.toThrow('镜像列表查询失败');
     expect(await createImageDocker(preview).removeImage('owned/image')).toContain('[preview-instance]');
     expect(underlying.exec).not.toHaveBeenCalled();
   });

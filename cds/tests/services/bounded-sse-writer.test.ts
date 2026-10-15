@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BoundedSseWriter } from '../../src/services/bounded-sse-writer.js';
+import { BoundedStateSseWriter } from '../../src/services/bounded-sse-writer.js';
 
 class Peer extends EventEmitter {
   writableLength = 0;
@@ -15,7 +15,7 @@ describe('bounded branch state stream writer', () => {
     peer.write.mockReturnValueOnce(false);
     let state = 'first';
     const snapshot = vi.fn(() => `snapshot:${state}`);
-    const writer = new BoundedSseWriter(peer, snapshot, () => {});
+    const writer = new BoundedStateSseWriter(peer, snapshot, () => {});
     const factory = vi.fn(() => 'event');
     writer.send(factory);
     for (let i = 0; i < 20; i++) writer.send(factory);
@@ -29,7 +29,7 @@ describe('bounded branch state stream writer', () => {
   it('does not create recovery work from a suppressed heartbeat alone', () => {
     const peer = new Peer(); peer.write.mockReturnValueOnce(false);
     const snapshot = vi.fn(() => 'snapshot');
-    const writer = new BoundedSseWriter(peer, snapshot, () => {});
+    const writer = new BoundedStateSseWriter(peer, snapshot, () => {});
     writer.send(() => 'event'); writer.send(() => 'heartbeat', true); peer.emit('drain');
     expect(snapshot).not.toHaveBeenCalled();
     writer.close();
@@ -38,7 +38,7 @@ describe('bounded branch state stream writer', () => {
     vi.useFakeTimers();
     const peer = new Peer(); peer.write.mockReturnValue(false);
     const cleanup = vi.fn();
-    const writer = new BoundedSseWriter(peer, () => 'snapshot', cleanup);
+    const writer = new BoundedStateSseWriter(peer, () => 'snapshot', cleanup);
     writer.send(() => 'event'); vi.advanceTimersByTime(4999);
     expect(cleanup).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
@@ -52,7 +52,7 @@ describe('bounded branch state stream writer', () => {
     vi.useFakeTimers();
     const peer = new Peer(); peer.write.mockReturnValue(false);
     const cleanup = vi.fn();
-    const writer = new BoundedSseWriter(peer, () => 'snapshot', cleanup);
+    const writer = new BoundedStateSseWriter(peer, () => 'snapshot', cleanup);
     writer.send(() => 'event'); peer.emit('close'); vi.advanceTimersByTime(6000);
     expect(cleanup).toHaveBeenCalledTimes(1);
     expect(peer.destroy).not.toHaveBeenCalled();
@@ -60,7 +60,7 @@ describe('bounded branch state stream writer', () => {
   });
   it('limits a frame by UTF-8 bytes before calling peer.write', () => {
     const peer = new Peer();
-    const writer = new BoundedSseWriter(peer, () => '', () => {});
+    const writer = new BoundedStateSseWriter(peer, () => '', () => {});
     expect(writer.send(() => '中'.repeat(90000))).toBe(false);
     expect(peer.write).not.toHaveBeenCalled();
     expect(peer.destroy).toHaveBeenCalledTimes(1);
@@ -68,21 +68,21 @@ describe('bounded branch state stream writer', () => {
   it('refuses excessive existing socket buffering before evaluating the payload', () => {
     const peer = new Peer(); peer.writableLength = 512 * 1024 + 1;
     const factory = vi.fn(() => 'event');
-    const writer = new BoundedSseWriter(peer, () => '', () => {});
+    const writer = new BoundedStateSseWriter(peer, () => '', () => {});
     expect(writer.send(factory)).toBe(false);
     expect(factory).not.toHaveBeenCalled();
     expect(peer.write).not.toHaveBeenCalled();
   });
   it('counts the next frame against existing socket bytes before admitting the write', () => {
     const peer = new Peer(); peer.writableLength = 512 * 1024;
-    const writer = new BoundedSseWriter(peer, () => '', () => {});
+    const writer = new BoundedStateSseWriter(peer, () => '', () => {});
     expect(writer.send(() => 'x'.repeat(256 * 1024))).toBe(false);
     expect(peer.write).not.toHaveBeenCalled();
     expect(peer.destroy).toHaveBeenCalledTimes(1);
   });
   it('detects external socket growth even when this writer is already blocked', () => {
     const peer = new Peer(); peer.write.mockReturnValueOnce(false);
-    const writer = new BoundedSseWriter(peer, () => '', () => {});
+    const writer = new BoundedStateSseWriter(peer, () => '', () => {});
     writer.send(() => 'first');
     peer.writableLength = 512 * 1024 + 1;
     const factory = vi.fn(() => 'later');
@@ -92,11 +92,11 @@ describe('bounded branch state stream writer', () => {
   });
   it('handles failed serialization/write or recovery without throwing into the publisher', () => {
     const peer = new Peer();
-    const writer = new BoundedSseWriter(peer, () => '', () => { throw new Error('cleanup'); });
+    const writer = new BoundedStateSseWriter(peer, () => '', () => { throw new Error('cleanup'); });
     expect(writer.send(() => { throw new Error('private'); })).toBe(false);
     expect(peer.destroy).toHaveBeenCalledTimes(1);
     const recoveryPeer = new Peer(); recoveryPeer.write.mockReturnValueOnce(false);
-    const recoveryWriter = new BoundedSseWriter(recoveryPeer, () => { throw new Error('snapshot'); }, () => {});
+    const recoveryWriter = new BoundedStateSseWriter(recoveryPeer, () => { throw new Error('snapshot'); }, () => {});
     recoveryWriter.send(() => 'first'); recoveryWriter.send(() => 'second');
     expect(() => recoveryPeer.emit('drain')).not.toThrow();
     expect(recoveryPeer.destroy).toHaveBeenCalledTimes(1);
@@ -104,7 +104,7 @@ describe('bounded branch state stream writer', () => {
   it('starts a fresh bounded deadline if the recovery snapshot is also blocked', () => {
     vi.useFakeTimers();
     const peer = new Peer(); peer.write.mockReturnValue(false);
-    const writer = new BoundedSseWriter(peer, () => 'snapshot', () => {});
+    const writer = new BoundedStateSseWriter(peer, () => 'snapshot', () => {});
     writer.send(() => 'first'); writer.send(() => 'second'); vi.advanceTimersByTime(4000);
     peer.emit('drain'); vi.advanceTimersByTime(4999);
     expect(peer.destroy).not.toHaveBeenCalled();

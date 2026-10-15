@@ -25,7 +25,7 @@
  *   在上调后立即唤醒排队者（旧实现只在 release 时唤醒，上调不生效）。
  *
  * 语义要点：
- * - 同项目FIFO、项目间轮转；匿名兼容组保持FIFO。等待总量不是绝对前序位置。
+ * - 按项目最近准入轮转，同项目保留先进先出；排队数是等待总数，不是跨项目固定名次。
  * - 槽位转移（slot transfer）：release 时若有等待者，直接把槽位交给它而**不**
  *   先 active--，避免「release 与被唤醒者的 active++ 之间插入一个快路径 acquire」
  *   导致瞬时超额（over-subscription）。active 只在快路径 acquire 与 pumpWaiters
@@ -35,6 +35,7 @@
  */
 
 import os from 'node:os';
+import { ProjectAdmissionOrder } from './project-admission-order.js';
 
 const DEFAULT_MAX_CONCURRENT_BUILDS = 3;
 function boundedQueueSetting(name: string, fallback: number, min: number, max: number): number {
@@ -187,47 +188,21 @@ interface Waiter {
 
 let active = 0;
 const waiters: Waiter[] = [];
-let lastProject: string | undefined;
-// Keep a cursor over admitted groups, rather than looking up a drained group in rebuilt order.
-const projectRing: string[] = [];
-let nextProjectIndex = 0;
-const projectGroup = (holder?: BuildGateHolder): string => holder?.projectId ? `project:${holder.projectId}` : 'legacy';
+const projectOrder = new ProjectAdmissionOrder();
+function takeNextWaiter(): Waiter | undefined {
+  const index = projectOrder.next(waiters, item => item.holder?.projectId);
+  return index < 0 ? undefined : waiters.splice(index, 1)[0];
+}
 function stopIdleLoadPump(): void {
   if (!waiters.length && loadPumpTimer) { clearInterval(loadPumpTimer); loadPumpTimer = null; }
 }
-function rememberQueuedProject(holder?: BuildGateHolder): void {
-  const group = projectGroup(holder);
-  if (projectRing.includes(group)) return;
-  if (!projectRing.length) nextProjectIndex = group === lastProject ? 1 : 0;
-  projectRing.push(group);
-}
-function forgetDrainedProject(holder?: BuildGateHolder): void {
-  const group = projectGroup(holder);
-  if (waiters.some(w => projectGroup(w.holder) === group)) return;
-  const index = projectRing.indexOf(group);
-  if (index < 0) return;
-  projectRing.splice(index, 1);
-  if (index < nextProjectIndex) nextProjectIndex--;
-  if (!projectRing.length) nextProjectIndex = 0;
-}
-function takeNextWaiter(): Waiter | undefined {
-  if (!projectRing.length) return undefined;
-  const groupIndex = nextProjectIndex % projectRing.length;
-  const group = projectRing[groupIndex];
-  const index = waiters.findIndex(w => projectGroup(w.holder) === group);
-  const [next] = waiters.splice(index, 1);
-  nextProjectIndex = groupIndex + 1;
-  forgetDrainedProject(next.holder);
-  stopIdleLoadPump();
-  return next;
-}
+const forgetDrainedProject = (_holder?: BuildGateHolder): void => {};
 function rejectInvalidWaiter(waiter: Waiter): boolean {
   waiter.cleanup?.();
   if (waiter.isCancelled?.()) {
     waiter.reject(new BuildSlotCancelledError('排队期间操作已被取消/取代')); return true;
   }
   if (waiter.deadline <= Date.now()) { waiter.reject(new BuildSlotWaitTimeoutError()); return true; }
-  lastProject = projectGroup(waiter.holder);
   return false;
 }
 /** 活跃持有者明细（token → 身份 + 拿到槽的时刻）。 */
@@ -240,15 +215,15 @@ export interface BuildSlot {
 
 export interface AcquireOptions {
   /**
-   * 仅当调用方需要排队时触发一次，带当前排队位置信息。
-   * @param info.ahead  入队前的等待总量（不含正在构建的，不承诺绝对执行顺序）
+   * 仅当调用方需要排队时触发一次，带当前等待总数。
+   * @param info.ahead  当前其他等待构建数（按项目轮转，不是固定排队名次）
    * @param info.active 当前正在构建的数量
    * @param info.max    并发上限
    */
   onQueued?(info: { ahead: number; active: number; max: number; throttledByLoad?: boolean; load?: BuildLoadPressure }): void;
   /** 等待结束、拿到槽位时触发（仅排过队的调用方会收到）。 */
   onStart?(info: { waitedMs: number }): void;
-  /** 冻结持有者身份；projectId用于项目间轮转，其余字段用于观测。 */
+  /** 持有者身份（projectId参与项目轮转，其他字段用于观测）。 */
   holder?: BuildGateHolder;
   /** 排队中被 abort → 立即从队列摘除并以 BuildSlotCancelledError 拒绝。 */
   signal?: AbortSignal;
@@ -290,7 +265,7 @@ function grantSlot(holder: BuildGateHolder | undefined): BuildSlot {
       while (next) {
         if (rejectInvalidWaiter(next)) { next = takeNextWaiter(); continue; }
         // 槽位直接转移给下一个等待者：不动 active（它继承当前这把槽位）。
-        next.resolve();
+        projectOrder.grant(next.holder?.projectId); next.resolve();
         return;
       }
       active -= 1;
@@ -313,9 +288,9 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
   }
   if (waiters.length) pumpWaiters();
   const max = maxConcurrentBuilds();
-  if (!waiters.length && admissionAllowed()) {
-    lastProject = projectGroup(opts?.holder);
+  if (waiters.length === 0 && admissionAllowed()) {
     active += 1;
+    projectOrder.grant(opts?.holder?.projectId);
     return grantSlot(opts?.holder);
   }
   if (waiters.length >= maxQueuedBuilds()) throw new BuildSlotQueueCapacityError();
@@ -350,7 +325,7 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
     opts?.signal?.addEventListener('abort', onAbort, { once: true });
     waiter.cleanup = () => { clearTimeout(timer); opts?.signal?.removeEventListener('abort', onAbort); };
     waiters.push(waiter);
-    rememberQueuedProject(waiter.holder);
+    pumpWaiters();
   });
   // 被唤醒 = 槽位已转移给我（或 pumpWaiters 已 active++），不再重复 ++。
   const slot = grantSlot(opts?.holder);
@@ -371,7 +346,7 @@ export function pumpWaiters(): number {
     if (rejectInvalidWaiter(next)) continue;
     active += 1;
     woken += 1;
-    next.resolve();
+    projectOrder.grant(next.holder?.projectId); next.resolve();
   }
   // 还有人排着、且这一轮是被负载挡住（不是被上限挡住），就得有定时器在负载回落时
   // 回来放人。否则出现这条死路：waiter 当初因 active === max 入队（那条路径不开定时器），
@@ -421,9 +396,7 @@ export function __resetBuildGateForTest(): void {
   }
   waiters.length = 0;
   holders.clear();
-  lastProject = undefined;
-  projectRing.length = 0;
-  nextProjectIndex = 0;
+  projectOrder.clear();
   maxProvider = null;
   hostLoadProvider = defaultHostLoad;
   if (loadPumpTimer) {

@@ -26,34 +26,7 @@ export class DeploymentVersionService {
   ) {}
 
   computeConfigHash(profiles: BuildProfile[], effectiveEnv: Record<string, string>): string {
-    const normalizedProfiles = profiles.map((profile) => ({
-      id: profile.id,
-      name: profile.name,
-      dockerImage: profile.dockerImage,
-      command: profile.command || '',
-      workDir: profile.workDir,
-      containerWorkDir: profile.containerWorkDir || '',
-      containerPort: profile.containerPort,
-      env: profile.env || {},
-      pathPrefixes: profile.pathPrefixes || [],
-      subdomain: profile.subdomain || '',
-      webEntry: profile.webEntry || null,
-      dependsOn: profile.dependsOn || [],
-      readinessProbe: profile.readinessProbe || null,
-      startupSignal: profile.startupSignal || '',
-      activeDeployMode: profile.activeDeployMode || '',
-      prebuiltImage: profile.prebuiltImage === true,
-      prebuiltCommitPolicy: profile.prebuiltCommitPolicy || null,
-      ...(profile.artifactSource ? { artifactSource: profile.artifactSource } : {}),
-      ...(profile.deploymentScope !== undefined ? { deploymentScope: profile.deploymentScope } : {}),
-      role: profile.role || null,
-      replacementStrategy: profile.replacementStrategy || null,
-      cacheMounts: profile.cacheMounts || [],
-      entrypoint: profile.entrypoint,
-      resources: profile.resources || null,
-      managedBuild: profile.managedBuild || null,
-    })).sort((left, right) => left.id.localeCompare(right.id));
-    return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
+    return computeDeploymentConfigHash(profiles, effectiveEnv);
   }
 
   create(input: CreateDeploymentVersionInput): DeploymentVersion {
@@ -137,6 +110,7 @@ export class DeploymentVersionService {
         ...current,
         name: snapshot.name,
         dockerImage: snapshot.artifactImage,
+        buildScope: snapshot.buildScope ? [...snapshot.buildScope] : undefined,
         command: snapshot.runtimeCommand,
         containerPort: snapshot.containerPort,
         containerWorkDir: snapshot.containerWorkDir,
@@ -147,6 +121,9 @@ export class DeploymentVersionService {
         readinessProbe: snapshot.readinessProbe,
         startupSignal: snapshot.startupSignal,
         activeDeployMode: snapshot.deployedMode,
+        // 历史产物已物化，不能再让当前模式定义或热更新覆写镜像与启动命令。
+        deployModes: undefined,
+        hotReload: undefined,
         prebuiltImage: true,
         prebuiltCommitPolicy: snapshot.replacementContractVersion === 1 ? snapshot.prebuiltCommitPolicy : snapshot.prebuiltCommitPolicy ?? current.prebuiltCommitPolicy,
         artifactSource: snapshot.replacementContractVersion === 1 ? snapshot.artifactSource : snapshot.artifactSource ?? current.artifactSource,
@@ -166,7 +143,7 @@ export class DeploymentVersionService {
     const service = branch.services[profile.id];
     const artifactImage = service?.deployedArtifactRef || service?.deployedImage || profile.dockerImage;
     const actualMode = service?.deployedMode ?? profile.activeDeployMode ?? '';
-    const managedArtifact = !!profile.managedBuild;
+    const managedArtifact = !!profile.managedBuild || (profile.prebuiltImage === true && /^sha256:[0-9a-f]{64}$/i.test(artifactImage));
     const reusable = (profile.prebuiltImage === true || managedArtifact) && isImmutableImageReference(artifactImage);
     return {
       profileId: profile.id,
@@ -179,6 +156,7 @@ export class DeploymentVersionService {
       prebuiltCommitPolicy: profile.prebuiltCommitPolicy,
       artifactSource: profile.artifactSource,
       deploymentScope: structuredClone(profile.deploymentScope),
+      buildScope: profile.buildScope ? [...profile.buildScope] : undefined,
       artifactKind: reusable ? (managedArtifact ? 'managed-image' : 'prebuilt-image') : 'legacy-runtime',
       reusable,
       reuseBlockedReason: reusable
@@ -205,9 +183,52 @@ export function deploymentVersionFingerprint(version: DeploymentVersion): string
   return 'sha256:' + sha256(stableStringify(version));
 }
 
+/** 部署输入与本地产物共用配置身份，敏感环境值只进入摘要。 */
+export function computeDeploymentConfigHash(profiles: BuildProfile[], effectiveEnv: Record<string, string>): string {
+  const normalizedProfiles = profiles.map((profile) => ({
+    id: profile.id,
+    name: profile.name,
+    dockerImage: profile.dockerImage,
+    command: profile.command || '',
+    workDir: profile.workDir,
+    containerWorkDir: profile.containerWorkDir || '',
+    containerPort: profile.containerPort,
+    env: profile.env || {},
+    pathPrefixes: profile.pathPrefixes || [],
+    subdomain: profile.subdomain || '',
+    webEntry: profile.webEntry || null,
+    dependsOn: profile.dependsOn || [],
+    readinessProbe: profile.readinessProbe || null,
+    startupSignal: profile.startupSignal || '',
+    activeDeployMode: profile.activeDeployMode || '',
+    prebuiltImage: profile.prebuiltImage === true,
+    prebuiltCommitPolicy: profile.prebuiltCommitPolicy || null,
+    ...(profile.artifactSource ? { artifactSource: profile.artifactSource } : {}),
+    ...(profile.deploymentScope !== undefined ? { deploymentScope: profile.deploymentScope } : {}),
+    replacementStrategy: profile.replacementStrategy || null,
+    entrypoint: profile.entrypoint,
+    resources: profile.resources || null,
+    managedBuild: profile.managedBuild || null,
+    buildScope: profile.buildScope,
+    cacheMounts: profile.cacheMounts,
+    buildTimeout: profile.buildTimeout,
+    role: profile.role,
+    calls: profile.calls,
+    hotReload: profile.hotReload,
+    localArtifact: profile.localArtifact,
+    fallbackImage: profile.fallbackImage,
+    sourceFallbackProfile: profile.sourceFallbackProfile,
+    dbScope: profile.dbScope,
+    dbInit: profile.dbInit,
+    deployModes: profile.deployModes,
+  })).sort((left, right) => left.id.localeCompare(right.id));
+  return sha256(stableStringify({ profiles: normalizedProfiles, effectiveEnv }));
+}
+
 export function isImmutableImageReference(image: string): boolean {
   const normalized = image.trim();
-  return /@sha256:[0-9a-f]{64}$/i.test(normalized)
+  return /^sha256:[0-9a-f]{64}$/i.test(normalized)
+    || /@sha256:[0-9a-f]{64}$/i.test(normalized)
     || /:sha-[0-9a-f]{7,40}$/i.test(normalized);
 }
 

@@ -80,6 +80,9 @@ export class PendingDeployJournal {
   isAvailable(): boolean { return this.loaded && !this.unavailable; }
   snapshot(): PendingJournalData { return copy(this.data); }
   queued(): PendingWebhookDeploy[] { return copy(this.data.queued); }
+  requireRecovery(pending: PendingWebhookDeploy): void {
+    if ([...this.data.queued, ...this.data.claims.map(row => row.pending)].some(row => id(row) === id(pending))) this.recovered.add(id(pending));
+  }
   /** Read only acknowledged metadata; never copy requests or poll the executor. */
   getStatus(projectId: string, branchId: string): PendingDeploymentStatus {
     const scoped = (p: PendingWebhookDeploy) => p.branchId === branchId && p.request.projectId === projectId;
