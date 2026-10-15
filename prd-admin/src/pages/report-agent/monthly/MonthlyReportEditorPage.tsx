@@ -6,7 +6,6 @@ import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { useSmartBack } from '@/hooks/useSmartBack';
-import { useAuthStore } from '@/stores/authStore';
 import { deleteMonthlyReport, getMonthlyReport, submitMonthlyReport, updateMonthlyReport } from '@/services';
 import type { MonthlyLinkedWeekly, MonthlyReportDetail } from '@/services/contracts/reportAgentMonthly';
 import { MONTHLY_CHAPTER_UI, formatYearMonth, getMonthlyStatusMeta } from './monthlyMeta';
@@ -34,7 +33,7 @@ function toForm(detail: MonthlyReportDetail): FormState {
     links: detail.linkedWeeklies,
     achievementsText: r.achievementsText ?? '',
     problemsText: r.problemsText ?? '',
-    partners: r.partners.map((p) => ({ userId: p.userId, userName: p.userName, reason: p.reason })),
+    partners: r.partners.map((p) => ({ name: p.displayName || p.name || '', reason: p.reason ?? '' })),
     suggestionsText: r.suggestionsText ?? '',
   };
 }
@@ -43,7 +42,6 @@ export default function MonthlyReportEditorPage() {
   const { reportId = '' } = useParams<{ reportId: string }>();
   const navigate = useNavigate();
   const goBack = useSmartBack('/report-agent');
-  const currentUserId = useAuthStore((s) => s.user?.userId);
 
   const [detail, setDetail] = useState<MonthlyReportDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -96,7 +94,7 @@ export default function MonthlyReportEditorPage() {
       weeklyReportIds: f.links.map((l) => l.weeklyReportId),
       achievementsText: f.achievementsText,
       problemsText: f.problemsText,
-      partners: f.partners.map((p) => ({ userId: p.userId, reason: p.reason })),
+      partners: f.partners.map((p) => ({ name: p.name, reason: p.reason })),
       suggestionsText: f.suggestionsText,
     });
     // 只认最后一次保存的结果，避免慢请求把新内容的状态覆盖掉
@@ -343,7 +341,6 @@ export default function MonthlyReportEditorPage() {
             <PartnerSlots
               value={form.partners}
               onChange={(partners) => patch({ partners })}
-              selfUserId={currentUserId}
               placeholder={MONTHLY_CHAPTER_UI[2].placeholder}
             />
           </MonthlyChapterShell>

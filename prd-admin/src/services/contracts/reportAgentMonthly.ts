@@ -11,11 +11,14 @@ export interface MonthlyReportWeeklyLink {
   periodEnd: string;
 }
 
+/** 第三章伙伴：手写名字 + 多行理由（不要求是系统用户） */
 export interface MonthlyReportPartner {
-  userId: string;
-  userName?: string;
-  avatarFileName?: string;
+  name: string;
   reason: string;
+  /** 早期版本选人时存的显示名，仅兼容旧数据 */
+  legacyUserName?: string | null;
+  /** 后端算好的展示名：name 为空时回退到 legacyUserName */
+  displayName: string;
 }
 
 export interface MonthlyReport {
@@ -77,7 +80,7 @@ export interface UpdateMonthlyReportInput {
   weeklyReportIds: string[];
   achievementsText: string;
   problemsText: string;
-  partners: { userId: string; reason: string }[];
+  partners: { name: string; reason: string }[];
   suggestionsText: string;
 }
 
@@ -87,6 +90,8 @@ export interface MonthlyTeamOverviewItem {
   avatarFileName?: string | null;
   role: string;
   isExcused: boolean;
+  /** 负责人与请假成员免交（交了照样计入已提交） */
+  isExempt: boolean;
   /** not-started / draft / submitted / viewed */
   status: string;
   /** 草稿与未开始为 null（草稿只有作者可见） */
@@ -102,5 +107,7 @@ export interface MonthlyTeamOverview {
   month: number;
   memberCount: number;
   submittedCount: number;
+  /** 非免交且还没提交的人数 */
+  pendingCount: number;
   items: MonthlyTeamOverviewItem[];
 }

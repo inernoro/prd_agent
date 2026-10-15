@@ -85,9 +85,9 @@ public sealed class MonthlyReportRulesTests
         WeeklyLinks = { new MonthlyReportWeeklyLink { WeeklyReportId = "w1" } },
         Partners =
         {
-            new MonthlyReportPartner { UserId = "a", Reason = "帮我顶了上线" },
-            new MonthlyReportPartner { UserId = "b", Reason = "评审很细" },
-            new MonthlyReportPartner { UserId = "c", Reason = "带新人" },
+            new MonthlyReportPartner { Name = "张三", Reason = "帮我顶了上线\n周末还在群里答疑" },
+            new MonthlyReportPartner { Name = "外部顾问李老师", Reason = "评审很细" },
+            new MonthlyReportPartner { Name = "王五", Reason = "" },
         },
     };
 
@@ -118,52 +118,54 @@ public sealed class MonthlyReportRulesTests
 
     [Theory]
     [InlineData(0)]
-    [InlineData(2)]
-    public void ValidateForSubmit_RequiresExactlyThreePartners(int count)
+    [InlineData(1)]
+    [InlineData(3)]
+    public void ValidateForSubmit_PartnersAreOptional(int count)
     {
         var r = CompleteReport();
         r.Partners = r.Partners.Take(count).ToList();
-        Assert.Contains(MonthlyReportRules.ValidateForSubmit(r), i => i.Chapter == MonthlyReportChapters.Partners);
-    }
-
-    [Fact]
-    public void ValidateForSubmit_RequiresReasonForEachPartner()
-    {
-        var r = CompleteReport();
-        r.Partners[1].Reason = " ";
-        Assert.Contains(MonthlyReportRules.ValidateForSubmit(r), i => i.Chapter == MonthlyReportChapters.Partners);
-    }
-
-    [Fact]
-    public void ValidateForSave_RejectsSelfAsPartner_EvenInDraft()
-    {
-        var r = new MonthlyReport { UserId = "me", Partners = { new MonthlyReportPartner { UserId = "me" } } };
-        Assert.Contains(MonthlyReportRules.ValidateForSave(r), i => i.Message.Contains("自己"));
-    }
-
-    [Fact]
-    public void ValidateForSave_RejectsDuplicatePartners()
-    {
-        var r = new MonthlyReport
-        {
-            UserId = "me",
-            Partners = { new MonthlyReportPartner { UserId = "a" }, new MonthlyReportPartner { UserId = "a" } },
-        };
-        Assert.Contains(MonthlyReportRules.ValidateForSave(r), i => i.Message.Contains("重复"));
+        Assert.Empty(MonthlyReportRules.ValidateForSubmit(r));
     }
 
     [Fact]
     public void ValidateForSave_RejectsMoreThanThreePartners()
     {
         var r = CompleteReport();
-        r.Partners.Add(new MonthlyReportPartner { UserId = "d", Reason = "x" });
+        r.Partners.Add(new MonthlyReportPartner { Name = "赵六" });
         Assert.Contains(MonthlyReportRules.ValidateForSave(r), i => i.Chapter == MonthlyReportChapters.Partners);
+    }
+
+    [Fact]
+    public void ValidateForSave_RequiresNameWhenReasonWritten()
+    {
+        var r = CompleteReport();
+        r.Partners[0].Name = "  ";
+        Assert.Contains(MonthlyReportRules.ValidateForSave(r), i => i.Message.Contains("名字"));
+    }
+
+    [Fact]
+    public void ValidateForSave_RejectsOverlongReason()
+    {
+        var r = CompleteReport();
+        r.Partners[0].Reason = new string('x', MonthlyReportRules.MaxPartnerReasonLength + 1);
+        Assert.Contains(MonthlyReportRules.ValidateForSave(r), i => i.Chapter == MonthlyReportChapters.Partners);
+    }
+
+    [Fact]
+    public void LegacyPartner_FallsBackToStoredUserName()
+    {
+        // 早期版本从系统用户里选人，只存了 UserName；改成手写后旧数据仍要能显示、能通过校验
+        var legacy = new MonthlyReportPartner { LegacyUserName = "老数据里的名字", Reason = "x" };
+        Assert.Equal("老数据里的名字", legacy.DisplayName);
+        var r = CompleteReport();
+        r.Partners = new List<MonthlyReportPartner> { legacy };
+        Assert.Empty(MonthlyReportRules.ValidateForSave(r));
     }
 
     [Fact]
     public void ValidateForSave_AllowsIncompleteDraft()
     {
-        var r = new MonthlyReport { UserId = "me", Partners = { new MonthlyReportPartner { UserId = "a" } } };
+        var r = new MonthlyReport { UserId = "me", Partners = { new MonthlyReportPartner { Name = "张三" } } };
         Assert.Empty(MonthlyReportRules.ValidateForSave(r));
     }
 

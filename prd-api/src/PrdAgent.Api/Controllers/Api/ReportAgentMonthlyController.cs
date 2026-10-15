@@ -315,26 +315,15 @@ public class ReportAgentMonthlyController : ControllerBase
             });
         }
 
-        // 第三章：伙伴——必须是在职用户，姓名与头像存快照
-        var partnerInputs = req.Partners ?? new List<MonthlyReportPartnerInput>();
-        var partnerIds = partnerInputs.Select(p => p.UserId).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
-        var partnerUsers = partnerIds.Count == 0
-            ? new List<User>()
-            : await _db.Users.Find(u => partnerIds.Contains(u.UserId)).ToListAsync();
-        var partners = new List<MonthlyReportPartner>();
-        foreach (var input in partnerInputs)
-        {
-            var user = partnerUsers.FirstOrDefault(u => u.UserId == input.UserId);
-            if (user == null || user.Status != UserStatus.Active)
-                return BadRequest(ApiResponse<object>.Fail("INVALID_PARTNER", "选择的伙伴不存在或已停用"));
-            partners.Add(new MonthlyReportPartner
+        // 第三章：伙伴——手写名字 + 多行理由，选填；名字和理由都空的行直接丢掉
+        var partners = (req.Partners ?? new List<MonthlyReportPartnerInput>())
+            .Select(p => new MonthlyReportPartner
             {
-                UserId = user.UserId,
-                UserName = ReportInteractionService.ResolveUserDisplayName(user, null, user.UserId),
-                AvatarFileName = user.AvatarFileName,
-                Reason = (input.Reason ?? string.Empty).Trim(),
-            });
-        }
+                Name = (p.Name ?? string.Empty).Trim(),
+                Reason = (p.Reason ?? string.Empty).Trim(),
+            })
+            .Where(p => p.Name.Length > 0 || p.Reason.Length > 0)
+            .ToList();
 
         var candidate = new MonthlyReport
         {
@@ -486,6 +475,8 @@ public class ReportAgentMonthlyController : ControllerBase
                 byUser.TryGetValue(m.UserId, out var r);
                 var status = r?.Status ?? "not-started";
                 var visible = r != null && r.Status != MonthlyReportStatus.Draft;
+                // 与周报一致：负责人与请假豁免的成员免交月报（交了照样显示、计入已提交）
+                var isExempt = m.IsExcused || m.Role == ReportTeamRole.Leader || m.UserId == team.LeaderUserId;
                 return new
                 {
                     userId = m.UserId,
@@ -493,27 +484,28 @@ public class ReportAgentMonthlyController : ControllerBase
                     avatarFileName = m.AvatarFileName ?? r?.AvatarFileName,
                     role = m.Role,
                     isExcused = m.IsExcused,
+                    isExempt,
                     status,
                     reportId = visible ? r!.Id : null,
                     submittedAt = visible ? r!.SubmittedAt : null,
                     weeklyLinkCount = visible ? r!.WeeklyLinks.Count : 0,
                 };
             })
-            // 已提交的排前面，其次草稿，最后未开始；同组按名字
-            .OrderBy(x => x.status == MonthlyReportStatus.Viewed || x.status == MonthlyReportStatus.Submitted ? 0
-                : x.status == MonthlyReportStatus.Draft ? 1 : 2)
+            // 已提交的按提交时间倒序在前，其次正在写，再次未开始，免交且未交的放最后
+            .OrderBy(x => x.reportId != null ? 0 : x.status == MonthlyReportStatus.Draft ? 1 : x.isExempt ? 3 : 2)
+            .ThenByDescending(x => x.submittedAt)
             .ThenBy(x => x.userName)
             .ToList();
 
-        var counted = items.Where(x => !x.isExcused).ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
             teamId,
             teamName = team.Name,
             year,
             month,
-            memberCount = counted.Count,
-            submittedCount = counted.Count(x => x.reportId != null),
+            memberCount = items.Count,
+            submittedCount = items.Count(x => x.reportId != null),
+            pendingCount = items.Count(x => x.reportId == null && !x.isExempt),
             items,
         }));
     }
@@ -673,6 +665,9 @@ public class UpdateMonthlyReportRequest
 
 public class MonthlyReportPartnerInput
 {
-    public string UserId { get; set; } = string.Empty;
+    /// <summary>伙伴名字（手写，不要求是系统用户）</summary>
+    public string? Name { get; set; }
+
+    /// <summary>理由（多行文本）</summary>
     public string? Reason { get; set; }
 }

@@ -27,9 +27,9 @@ export const MONTHLY_CHAPTER_UI: { requiredLabel: '必填' | '选填'; hint: str
     placeholder: '问题：……\n对策：……',
   },
   {
-    requiredLabel: '必填',
-    hint: '选 3 位本月让你印象最深刻的伙伴，每人写一句理由',
-    placeholder: '一句话说说为什么是 TA',
+    requiredLabel: '选填',
+    hint: '写下本月让你印象最深刻的伙伴（最多 3 位，不限本系统用户）和理由',
+    placeholder: '为什么是 TA？可以写多行',
   },
   {
     requiredLabel: '选填',

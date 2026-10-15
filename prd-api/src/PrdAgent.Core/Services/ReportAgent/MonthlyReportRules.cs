@@ -11,8 +11,9 @@ public sealed record MonthlyReportValidationError(int Chapter, string Message);
 /// </summary>
 public static class MonthlyReportRules
 {
-    public const int RequiredPartnerCount = 3;
-    public const int MaxPartnerReasonLength = 200;
+    public const int MaxPartners = 3;
+    public const int MaxPartnerNameLength = 30;
+    public const int MaxPartnerReasonLength = 500;
     public const int MaxChapterTextLength = 20000;
     public const int MaxWeeklyLinks = 10;
 
@@ -63,33 +64,27 @@ public static class MonthlyReportRules
         CheckLength(errors, MonthlyReportChapters.Problems, report.ProblemsText);
         CheckLength(errors, MonthlyReportChapters.Suggestions, report.SuggestionsText);
 
+        // 第三章选填：最多 3 位；写了理由就必须写名字
         var partners = report.Partners;
-        if (partners.Count > RequiredPartnerCount)
-            errors.Add(new(MonthlyReportChapters.Partners, $"最多选择 {RequiredPartnerCount} 位伙伴"));
-        if (partners.Any(p => string.IsNullOrWhiteSpace(p.UserId)))
-            errors.Add(new(MonthlyReportChapters.Partners, "伙伴不能为空"));
-        if (partners.Any(p => p.UserId == report.UserId))
-            errors.Add(new(MonthlyReportChapters.Partners, "不能选择自己"));
-        if (partners.Select(p => p.UserId).Distinct().Count() != partners.Count)
-            errors.Add(new(MonthlyReportChapters.Partners, "同一位伙伴不能重复选择"));
+        if (partners.Count > MaxPartners)
+            errors.Add(new(MonthlyReportChapters.Partners, $"最多写 {MaxPartners} 位伙伴"));
+        if (partners.Any(p => string.IsNullOrWhiteSpace(p.DisplayName)))
+            errors.Add(new(MonthlyReportChapters.Partners, "请填写伙伴的名字"));
+        if (partners.Any(p => p.DisplayName.Length > MaxPartnerNameLength))
+            errors.Add(new(MonthlyReportChapters.Partners, $"伙伴名字不能超过 {MaxPartnerNameLength} 字"));
         if (partners.Any(p => (p.Reason ?? string.Empty).Length > MaxPartnerReasonLength))
-            errors.Add(new(MonthlyReportChapters.Partners, $"理由不能超过 {MaxPartnerReasonLength} 字"));
+            errors.Add(new(MonthlyReportChapters.Partners, $"每位伙伴的理由不能超过 {MaxPartnerReasonLength} 字"));
 
         return errors;
     }
 
-    /// <summary>提交时的完整校验：结构校验 + 必填项。</summary>
+    /// <summary>提交时的完整校验：结构校验 + 必填项（只有第一章必填）。</summary>
     public static List<MonthlyReportValidationError> ValidateForSubmit(MonthlyReport report)
     {
         var errors = ValidateForSave(report);
 
         if (report.WeeklyLinks.Count == 0 && string.IsNullOrWhiteSpace(report.AchievementsText))
             errors.Add(new(MonthlyReportChapters.Achievements, "请至少关联一份周报，或写下本月工作成果"));
-
-        if (report.Partners.Count != RequiredPartnerCount)
-            errors.Add(new(MonthlyReportChapters.Partners, $"请选满 {RequiredPartnerCount} 位伙伴"));
-        else if (report.Partners.Any(p => string.IsNullOrWhiteSpace(p.Reason)))
-            errors.Add(new(MonthlyReportChapters.Partners, "每位伙伴都需要写一句理由"));
 
         return errors;
     }

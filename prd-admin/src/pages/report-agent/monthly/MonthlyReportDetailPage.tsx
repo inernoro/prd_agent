@@ -4,8 +4,6 @@ import { ArrowLeft, AlertCircle, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
-import { UserAvatar } from '@/components/ui/UserAvatar';
-import { resolveAvatarUrl } from '@/lib/avatar';
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
@@ -27,10 +25,19 @@ function EmptyText() {
   return <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>（未填写）</div>;
 }
 
-export default function MonthlyReportDetailPage() {
-  const { reportId = '' } = useParams<{ reportId: string }>();
+export interface MonthlyReportDetailPageProps {
+  /** 嵌入团队月报视图时直接传 Id（不走路由参数） */
+  reportIdOverride?: string;
+  /** 嵌入时的返回动作（回到团队列表） */
+  onBack?: () => void;
+}
+
+export default function MonthlyReportDetailPage(props: MonthlyReportDetailPageProps = {}) {
+  const { reportId: paramsReportId = '' } = useParams<{ reportId: string }>();
+  const reportId = props.reportIdOverride ?? paramsReportId;
   const navigate = useNavigate();
-  const goBack = useSmartBack('/report-agent');
+  const smartBack = useSmartBack('/report-agent');
+  const goBack = props.onBack ?? smartBack;
 
   const [detail, setDetail] = useState<MonthlyReportDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -270,25 +277,23 @@ export default function MonthlyReportDetailPage() {
         return report.partners.length === 0 ? (
           <EmptyText />
         ) : (
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }} data-testid="monthly-partners">
-            {report.partners.map((p) => (
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }} data-testid="monthly-partners">
+            {report.partners.map((p, i) => (
               <div
-                key={p.userId}
-                className="rounded-xl p-3 flex flex-col gap-2"
+                key={i}
+                className="rounded-xl p-3 flex flex-col gap-1.5"
                 style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
               >
-                <div className="flex items-center gap-2">
-                  <UserAvatar
-                    src={resolveAvatarUrl({ username: p.userName, avatarFileName: p.avatarFileName })}
-                    className="w-8 h-8 rounded-full object-cover"
-                  />
-                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                    {p.userName || p.userId}
-                  </span>
+                <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  {p.displayName || p.name}
                 </div>
-                <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                  {p.reason || '（没有写理由）'}
-                </div>
+                {p.reason?.trim() ? (
+                  <div className="text-[13px] leading-relaxed whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
+                    {p.reason}
+                  </div>
+                ) : (
+                  <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>（没有写理由）</div>
+                )}
               </div>
             ))}
           </div>

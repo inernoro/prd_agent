@@ -1,3 +1,4 @@
+using MongoDB.Bson.Serialization.Attributes;
 using PrdAgent.Core.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -44,7 +45,7 @@ public class MonthlyReport
     /// <summary>第二章：问题与对策（选填，Markdown）</summary>
     public string? ProblemsText { get; set; }
 
-    /// <summary>第三章：本月印象最深刻的三个伙伴（提交时必须恰好 3 位）</summary>
+    /// <summary>第三章：本月印象最深刻的伙伴（选填，最多 3 位）</summary>
     public List<MonthlyReportPartner> Partners { get; set; } = new();
 
     /// <summary>第四章：对上级/团队/公司的建议（选填，Markdown）</summary>
@@ -73,19 +74,26 @@ public class MonthlyReportWeeklyLink
     public DateTime PeriodEnd { get; set; }
 }
 
-/// <summary>月报里提名的伙伴</summary>
+/// <summary>月报里写下的伙伴（手写名字，不要求是系统用户）</summary>
 public class MonthlyReportPartner
 {
-    public string UserId { get; set; } = string.Empty;
+    /// <summary>伙伴名字（手写，可以是系统外的人）</summary>
+    public string Name { get; set; } = string.Empty;
 
-    /// <summary>显示名快照</summary>
-    public string? UserName { get; set; }
-
-    /// <summary>头像快照</summary>
-    public string? AvatarFileName { get; set; }
-
-    /// <summary>一句理由</summary>
+    /// <summary>理由（多行文本）</summary>
     public string Reason { get; set; } = string.Empty;
+
+    /// <summary>
+    /// 兼容字段：早期版本从系统用户里选人时存的显示名（文档字段名 UserName）。
+    /// 只读用于展示与回填 Name，新写入不再产生。
+    /// </summary>
+    [BsonElement("UserName")]
+    [BsonIgnoreIfNull]
+    public string? LegacyUserName { get; set; }
+
+    /// <summary>展示用名字：优先手写名字，旧数据回退到早期存的显示名（只出现在接口返回里，不落库）</summary>
+    [BsonIgnore]
+    public string DisplayName => !string.IsNullOrWhiteSpace(Name) ? Name : LegacyUserName ?? string.Empty;
 }
 
 public static class MonthlyReportStatus

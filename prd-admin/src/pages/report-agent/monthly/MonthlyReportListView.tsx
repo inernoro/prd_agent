@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CalendarRange, FilePlus2, Link2, Users, ArrowRight } from 'lucide-react';
+import { CalendarRange, FilePlus2, Link2, Users, ArrowRight, Trash2, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
-import { createMonthlyReport, listMonthlyReports } from '@/services';
+import { createMonthlyReport, deleteMonthlyReport, listMonthlyReports } from '@/services';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import type { MonthlyReport } from '@/services/contracts/reportAgentMonthly';
 import { currentYearMonth, formatYearMonth, getMonthlyStatusMeta, recentMonths } from './monthlyMeta';
-import { MonthlyTeamOverview } from './MonthlyTeamOverview';
+import { MonthlyTeamView } from './MonthlyTeamView';
 
-/** 写完 / 打开一份月报：草稿进编辑页，已提交进详情页（详情页有评论与点赞） */
+/** 打开一份月报：自己的草稿进编辑页，其余进详情页（详情页有评论与点赞） */
 export function monthlyReportPath(report: Pick<MonthlyReport, 'id' | 'status'>, viewerIsOwner: boolean) {
   return viewerIsOwner && report.status === 'draft'
     ? `/report-agent/monthly/${report.id}/edit`
@@ -35,17 +35,11 @@ export function MonthlyReportListView() {
   const [ym, setYm] = useState(currentYearMonth);
   const [items, setItems] = useState<MonthlyReport[] | null>(null);
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!teamId && myTeams.length > 0) setTeamId(myTeams[0].id);
   }, [myTeams, teamId]);
-
-  // 切到「团队月报」时，团队选择只能落在自己负责的团队上
-  useEffect(() => {
-    if (mode === 'team' && managedTeams.length > 0 && !managedTeams.some((t) => t.id === teamId)) {
-      setTeamId(managedTeams[0].id);
-    }
-  }, [mode, managedTeams, teamId]);
 
   const load = useCallback(async () => {
     const res = await listMonthlyReports({ scope: 'my' });
@@ -81,6 +75,20 @@ export function MonthlyReportListView() {
       navigate(`/report-agent/monthly/${res.data.report.id}/edit`);
     } else {
       toast.error(res.error?.message || '创建月报失败');
+    }
+  };
+
+  const handleDelete = async (report: MonthlyReport) => {
+    if (!window.confirm(`删除 ${formatYearMonth(report.year, report.month)}的月报草稿？删除后不能恢复。`)) return;
+    setDeletingId(report.id);
+    const res = await deleteMonthlyReport({ id: report.id });
+    setDeletingId(null);
+    if (res.success) {
+      // 原地移除，不整页刷新
+      setItems((prev) => prev?.filter((r) => r.id !== report.id) ?? prev);
+      toast.success('草稿已删除');
+    } else {
+      toast.error(res.error?.message || '删除失败');
     }
   };
 
@@ -124,48 +132,44 @@ export function MonthlyReportListView() {
             </div>
           )}
           <div className="flex-1" />
-          {myTeams.length > 1 && (
-            <select
-              className="text-[12px] px-2 py-1.5 rounded-lg shrink-0"
-              style={selectStyle}
-              value={teamId}
-              onChange={(e) => setTeamId(e.target.value)}
-              aria-label="选择团队"
-            >
-              {(mode === 'team' ? managedTeams : myTeams).map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
-              ))}
-            </select>
-          )}
-          <select
-            className="text-[12px] px-2 py-1.5 rounded-lg shrink-0"
-            style={selectStyle}
-            value={`${ym.year}-${ym.month}`}
-            onChange={(e) => {
-              const [y, m] = e.target.value.split('-').map(Number);
-              setYm({ year: y, month: m });
-            }}
-            aria-label="选择月份"
-          >
-            {months.map((m) => (
-              <option key={`${m.year}-${m.month}`} value={`${m.year}-${m.month}`}>{formatYearMonth(m.year, m.month)}</option>
-            ))}
-          </select>
           {mode === 'mine' && (
-            <Button variant="primary" size="sm" onClick={handlePrimary} disabled={creating || myTeams.length === 0}>
-              {creating ? <MapSpinner size={13} /> : existing ? <ArrowRight size={13} /> : <FilePlus2 size={13} />}
-              <span className="whitespace-nowrap">{primaryLabel}</span>
-            </Button>
+            <>
+              {myTeams.length > 1 && (
+                <select
+                  className="text-[12px] px-2 py-1.5 rounded-lg shrink-0"
+                  style={selectStyle}
+                  value={teamId}
+                  onChange={(e) => setTeamId(e.target.value)}
+                  aria-label="选择团队"
+                >
+                  {myTeams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              )}
+              <select
+                className="text-[12px] px-2 py-1.5 rounded-lg shrink-0"
+                style={selectStyle}
+                value={`${ym.year}-${ym.month}`}
+                onChange={(e) => {
+                  const [y, m] = e.target.value.split('-').map(Number);
+                  setYm({ year: y, month: m });
+                }}
+                aria-label="选择月份"
+              >
+                {months.map((m) => (
+                  <option key={`${m.year}-${m.month}`} value={`${m.year}-${m.month}`}>{formatYearMonth(m.year, m.month)}</option>
+                ))}
+              </select>
+              <Button variant="primary" size="sm" onClick={handlePrimary} disabled={creating || myTeams.length === 0}>
+                {creating ? <MapSpinner size={13} /> : existing ? <ArrowRight size={13} /> : <FilePlus2 size={13} />}
+                <span className="whitespace-nowrap">{primaryLabel}</span>
+              </Button>
+            </>
           )}
         </div>
       </GlassCard>
 
       {mode === 'team' ? (
-        <MonthlyTeamOverview
-          teamId={managedTeams.some((t) => t.id === teamId) ? teamId : managedTeams[0]?.id ?? ''}
-          year={ym.year}
-          month={ym.month}
-        />
+        <MonthlyTeamView managedTeams={managedTeams} />
       ) : items === null ? (
         <MapSectionLoader text="正在加载月报…" />
       ) : items.length === 0 ? (
@@ -173,7 +177,7 @@ export function MonthlyReportListView() {
           <CalendarRange size={28} style={{ color: 'var(--text-muted)' }} />
           <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>还没有写过月报</div>
           <div className="text-[12px] max-w-[420px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-            月报分四章：本月工作成果（可直接勾选这个月的周报）、问题与对策、本月印象最深刻的三个伙伴、对上级/团队/公司的建议。
+            月报分四章：本月工作成果（可直接勾选这个月的周报）、问题与对策、本月印象最深刻的伙伴、对上级/团队/公司的建议。只有第一章必填。
           </div>
           <Button variant="primary" size="sm" onClick={handlePrimary} disabled={creating || myTeams.length === 0}>
             {creating ? <MapSpinner size={13} /> : <FilePlus2 size={13} />}
@@ -184,7 +188,14 @@ export function MonthlyReportListView() {
         <div className="flex-1 min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
             {items.map((r) => (
-              <MonthlyReportCard key={r.id} report={r} onOpen={() => navigate(monthlyReportPath(r, true))} />
+              <MonthlyReportCard
+                key={r.id}
+                report={r}
+                deleting={deletingId === r.id}
+                onOpen={() => navigate(monthlyReportPath(r, true))}
+                onEdit={() => navigate(`/report-agent/monthly/${r.id}/edit`)}
+                onDelete={() => void handleDelete(r)}
+              />
             ))}
           </div>
         </div>
@@ -193,13 +204,30 @@ export function MonthlyReportListView() {
   );
 }
 
-function MonthlyReportCard({ report, onOpen }: { report: MonthlyReport; onOpen: () => void }) {
+function MonthlyReportCard({
+  report,
+  deleting,
+  onOpen,
+  onEdit,
+  onDelete,
+}: {
+  report: MonthlyReport;
+  deleting: boolean;
+  onOpen: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
   const meta = getMonthlyStatusMeta(report.status);
+  const isDraft = report.status === 'draft';
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
-      className="text-left rounded-xl p-4 flex flex-col gap-3 transition-colors hover-bg-soft"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onOpen();
+      }}
+      className="group text-left rounded-xl p-4 flex flex-col gap-3 transition-colors hover-bg-soft cursor-pointer"
       style={{ background: 'var(--bg-card)', border: '1px solid var(--border-primary)', minHeight: 148 }}
       data-testid="monthly-report-card"
     >
@@ -222,9 +250,22 @@ function MonthlyReportCard({ report, onOpen }: { report: MonthlyReport; onOpen: 
       </div>
       <div className="mt-auto flex items-center gap-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
         <span className="inline-flex items-center gap-1"><Link2 size={11} /> {report.weeklyLinks.length} 份周报</span>
-        <span className="inline-flex items-center gap-1"><Users size={11} /> {report.partners.length}/3 位伙伴</span>
+        {report.partners.length > 0 && (
+          <span className="inline-flex items-center gap-1"><Users size={11} /> {report.partners.length} 位伙伴</span>
+        )}
         <span className="ml-auto">{new Date(report.updatedAt).toLocaleDateString('zh-CN')}</span>
       </div>
-    </button>
+      {isDraft && (
+        // 提交前可以修改、删除；已提交的月报不能删
+        <div className="flex items-center gap-1.5 -mb-1" onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" size="sm" onClick={onEdit}>
+            <Pencil size={12} /> 修改
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onDelete} disabled={deleting} data-testid="monthly-card-delete">
+            {deleting ? <MapSpinner size={12} /> : <Trash2 size={12} />} 删除
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
