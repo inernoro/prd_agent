@@ -21,6 +21,10 @@ const localQueueProductionSourceChanges = ['cds/src/executor/routes.ts', 'cds/sr
 const alarmQueueProductionHead = 'f5ed37799f95967d66b57c95c4d3425a68a3bed8';
 const alarmQueueProductionSources = ['cds/src/index.ts', 'cds/src/routes/alarm-channels.ts', 'cds/src/services/alarm-dispatch.ts', 'cds/src/services/phone-dispatch-queue.ts'];
 const cleanupQualificationProductionHead = '97dee9019981fe99b4a8ebb6cb280db53e56abb1';
+const cleanupPublishedHead = 'a36cd0cfd32fb842ceba34dc2824391bcccdada4';
+const combinedProductionHead = '5d7f3d71311b0805e9b8f081d333d96d180096fc';
+const combinedProductionSources = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/artifact-admission.ts', 'cds/src/services/container.ts', 'cds/src/services/deployment-version.ts', 'cds/src/services/prebuilt-reuse.ts', 'cds/src/services/worktree.ts', 'cds/src/types.ts', 'cds/src/widget-script.ts'];
+const widgetStreamSources = ['cds/src/forwarder-main.ts', 'cds/src/forwarder/control-plane-stream.ts', 'cds/src/forwarder/diagnostic-routes.ts', 'cds/src/forwarder/proxy-handler.ts', 'cds/src/forwarder/types.ts', 'cds/src/index.ts', 'cds/src/services/self-check.ts', 'cds/src/widget-script.ts'];
 const cleanupQualificationProductionSources = ['cds/src/routes/branches.ts', 'cds/src/services/container.ts', 'cds/src/services/service-replacement.ts'];
 const coldRecoverySourceChanges = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/worktree.ts'];
 const cleanupStageSourceChanges = ['cds/src/services/worktree.ts', 'cds/src/services/project-admission-order.ts', 'cds/src/routes/branches.ts', 'cds/src/services/isolated-shell-executor.ts', 'cds/src/services/observation-executor-process.ts', 'cds/src/services/observation-process-group.ts', 'cds/src/services/observation-process.ts', 'cds/src/services/observation-supervisor-process.ts', 'cds/src/services/shell-executor.ts', 'cds/src/services/self-update-checkout.ts', 'cds/src/services/self-update-failure-diagnosis.ts'];
@@ -28,7 +32,7 @@ const cpuStageSourceChanges = ["cds/src/executor/routes.ts", "cds/src/routes/bra
 const memoryStageSourceChanges = ["cds/src/index.ts", "cds/src/infra/state-store/mongo-split-store.ts", "cds/src/services/container.ts", "cds/src/services/orphan-container-reaper.ts", "cds/src/services/resource-usage-sampler.ts", "cds/src/services/scheduler-service-stop.ts", "cds/src/services/scheduler.ts", "cds/src/services/service-replacement.ts", "cds/src/services/service-runtime.ts"];
 
 export function assertCurrentSourceQualification(expectedPreviousSources: readonly string[], report: Record<string, any>, native = true): void {
-  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead], { stdio: 'pipe', timeout: 120000 });
+  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead], { stdio: 'pipe', timeout: 120000 });
   const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
     { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
   report.previousQualifiedHead = previousQualifiedHead;
@@ -67,6 +71,12 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
   report.cleanupQualificationProductionHead = cleanupQualificationProductionHead;
   report.cleanupQualificationProductionSources = changedSince(alarmQueueProductionHead, cleanupQualificationProductionHead);
   assert.deepEqual(report.cleanupQualificationProductionSources, cleanupQualificationProductionSources.slice().sort());
-  report.cleanupStageSources = changedSince(cleanupQualificationProductionHead, report.head);
+  report.cleanupStageSources = changedSince(cleanupQualificationProductionHead, cleanupPublishedHead);
   assert.deepEqual(report.cleanupStageSources, cleanupStageSourceChanges.slice().sort());
+  report.cleanupPublishedHead = cleanupPublishedHead;
+  report.combinedProductionHead = combinedProductionHead;
+  report.combinedProductionSources = changedSince(cleanupPublishedHead, combinedProductionHead);
+  assert.deepEqual(report.combinedProductionSources, combinedProductionSources.slice().sort());
+  report.widgetStreamSources = changedSince(combinedProductionHead, report.head);
+  assert.deepEqual(report.widgetStreamSources, widgetStreamSources.slice().sort());
 }

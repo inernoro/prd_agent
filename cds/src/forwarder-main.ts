@@ -202,7 +202,8 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
   if (url === '/__forwarder/healthz') {
     const stats = proxy.getStats();
     const body = {
-      status: routesError ? 'degraded' : 'ok',
+      status: routesError || stats.widgetStreams?.recovering ? 'degraded' : 'ok',
+      widgetStreams: stats.widgetStreams,
       uptime: Math.floor((Date.now() - startedAt) / 1000),
       routesCount: routes.length,
       routesSource,

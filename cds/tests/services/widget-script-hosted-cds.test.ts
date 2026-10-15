@@ -72,7 +72,7 @@ describe('预览角标运行版本刷新', () => {
     expect(end).toBeGreaterThan(start);
     let latest: string | null = 'b'.repeat(40);
     const context: Record<string, unknown> = {
-      API: '/api', BRANCH_ID: 'b', commitSha: 'a'.repeat(40), syncState: { visible: false },
+      API: '/api', BRANCH_ID: 'b', branchInfoFetchSequence: 0, commitSha: 'a'.repeat(40), syncState: { visible: false },
       unwatchTitle: () => {},
       fetch: async (url: string) => ({ ok: true, json: async () => url.endsWith('/branches')
         ? { tabTitleEnabled: false, branches: [{ id: 'b', status: 'running', runningCommitSha: latest }] }

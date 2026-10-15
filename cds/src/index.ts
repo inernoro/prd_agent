@@ -6321,6 +6321,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
       // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
       const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
+      // 恢复流可能给浏览器200，但原上游失败必须被常设监控读到；有限查询不扫描整个集合。
+      const streamErrors = await store.findRecent({ layer: 'forwarder', minStatus: 500,
+        pathContains: '/_cds/api/', since: new Date(Date.now() - 6 * 60 * 60_000), limit: 5000, sort: 'recent' });
       const branches = rows
         .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
         .map((r) => r.durationMs)
@@ -6332,6 +6335,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         serverErrors: rows.filter((r) => r.status >= 500).length,
         branchesP95Ms: p95,
         branchesRequests: branches.length,
+        widgetStreamFailures: streamErrors.filter(r => /^\/_cds\/api\/(?:branches\/stream|activity-stream)(?:\?|$)/.test(r.path)).length,
       };
     },
     // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
@@ -6342,7 +6346,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache),
     storeBackend: () => stateService.getBackingStore().kind,
   };
-  // 13 条监控各自打一次这个端点，一轮就是 13 次 docker version + 13 次 Mongo 查询。
+  // 多条监控各自打一次这个端点；同轮共享结果，避免重复 Docker 和 Mongo 查询。
   // 短缓存让同一轮里的探测共用一份文档：15 秒内的重复请求拿同一个 promise。
   const SELF_CHECK_CACHE_MS = 15_000;
   let selfCheckCache: { at: number; doc: Promise<Awaited<ReturnType<typeof buildSelfCheck>>> } | null = null;
@@ -6366,7 +6370,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       res.status(200).json(doc);
     } catch (err) {
       // 自检本身炸了（比如 Mongo 抖一下）回 503，让发现器按「端点打不通」处理——已登记的
-      // 13 条监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
+      // 原监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
       // 一条声明都没有」，把全部自监控当场下线（Codex #1543 P1）。
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
       res.status(503).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message });
