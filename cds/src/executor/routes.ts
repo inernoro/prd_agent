@@ -312,7 +312,12 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           if (missing) { await worktreeService.create(config.repoRoot, entry.branch, entry.worktreePath); assertCurrent(); }
         }
         sendEvent('step', { step: 'pull', status: 'running', title: '正在拉取最新代码...' });
-        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, admission?.targetCommitSha || commitSha);
+        pullResult = await worktreeService.prepareDeploymentSource(
+          config.repoRoot,
+          entry.branch,
+          entry.worktreePath,
+          admission?.targetCommitSha || commitSha,
+        );
         assertCurrent();
         sendEvent('step', { step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`,
           head: pullResult.head, after: pullResult.after, afterFull: pullResult.afterFull });
