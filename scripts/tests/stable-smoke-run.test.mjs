@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import test from 'node:test';
 import { generateKeyPairSync } from 'node:crypto';
 import { expandCompleteReport } from '../../.claude/skills/create-visual-test-to-kb/scripts/report-view.mjs';
+import { collectPlaywrightCases } from '../stable-smoke-results.mjs';
 import {
   acquireLock,
   applyCredentialRegistry,
@@ -27,6 +28,8 @@ import {
   enforceExecutionVerdict,
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
+  isolateCdsPreparation,
+  applyCdsVisualSafetyGate,
   initializeProductionSafetyGate,
   issueGatewayFederationSession,
   mergeVisualPlans,
@@ -118,8 +121,24 @@ test('REG-stsmk-report-risk-001 两次业务失败不能写成重试通过或已
   assert.doesNotMatch(result.error, /确定性重试通过|静态资源网关 502|控制面网关 504|已确认污染/);
 });
 
+test('REG-stsmk-report-risk-001 例行核心只读失败不阻断正式且实质清理未知仍只读', () => {
+  const execution = { status: 'failed', resultPath: '本轮已解析结果', resultObserved: true };
+  const rows = [{ caseId: 'CORE-003', status: 'fail', error: 'CDS身份不可用，未进行业务写入' }];
+  assert.equal(evaluateProductionSafetyGate(execution, rows, false, ['CORE-003'], 'routine').restricted, false);
+  assert.equal(evaluateProductionSafetyGate(execution, rows, false, ['CORE-003'], 'full').restricted, true);
+  assert.equal(evaluateProductionSafetyGate({ status: 'blocked', executionStarted: false }, [], false, ['CORE-003'], 'routine').restricted, false);
+  assert.equal(evaluateProductionSafetyGate({ status: 'failed' }, [], false, [], 'routine').restricted, true);
+  const cleanupRows = collectPlaywrightCases({ suites: [{ specs: [{
+    title: '[REC-003] 原清理旅程失败，finally没有独立清理回读', tags: ['@cleanup'],
+    tests: [{ results: [{ status: 'failed', error: { message: '业务断言失败' } }] }],
+  }] }] }, 'cds');
+  assert.equal(cleanupRows.length, 1);
+  assert.equal(Object.hasOwn(cleanupRows[0], 'cleanupStatus'), false);
+  assert.equal(evaluateProductionSafetyGate(execution, cleanupRows, false, [], 'routine').restricted, true);
+});
+
 test('REG-stsmk-report-risk-001 例行非核心失败不能替代核心判定且真实风险仍阻断', () => {
-  const execution={status:'failed',resultPath:'已解析的本轮结果'};
+  const execution={status:'failed',resultPath:'已解析的本轮结果',resultObserved:true};
   const core=[{caseId:'CORE-001',status:'pass'},{caseId:'REC-003',status:'pass'}];
   const required=['CORE-001','REC-003'];
   const other={caseId:'WEB-005',status:'fail',error:'非核心问答失败'};
@@ -128,8 +147,40 @@ test('REG-stsmk-report-risk-001 例行非核心失败不能替代核心判定且
   assert.equal(evaluateProductionSafetyGate(execution,[...core,{...other,error:'P0 数据污染'}],false,required,'routine').restricted,true);
   assert.equal(evaluateProductionSafetyGate(execution,[...core,{...other,tags:['@cleanup']}],false,required,'routine').restricted,true);
   assert.equal(evaluateProductionSafetyGate(execution,[...core,{...other,tags:['@cleanup'],cleanupStatus:'passed'}],false,required,'routine').restricted,false);
-  assert.equal(evaluateProductionSafetyGate(execution,[...core,{caseId:'REC-003',status:'fail'}],false,required,'routine').restricted,true);
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,{caseId:'CORE-003',status:'fail'}],false,required,'routine').restricted,false);
+  assert.equal(evaluateProductionSafetyGate(execution,[...core,{caseId:'REC-003',status:'fail',tags:['@cleanup']}],false,required,'routine').restricted,true);
   assert.equal(evaluateProductionSafetyGate({status:'failed'},core,false,required,'routine').restricted,true);
+});
+
+test('REG-stsmk-report-risk-001 例行CDS准备未启动阻塞与视觉欠证不吞正式，full旧门不变', async () => {
+  const prepare = async () => { throw Error('CDS权威入口不可用，业务未启动'); };
+  const blocked = await isolateCdsPreparation('routine', ['cds', 'production'], prepare);
+  assert.equal(blocked.blocked, true);
+  assert.equal(blocked.executionStarted, false);
+  assert.match(blocked.reasons[0], /业务未启动/);
+  await assert.rejects(() => isolateCdsPreparation('full', ['cds', 'production'], prepare), /权威入口/);
+  await assert.rejects(() => isolateCdsPreparation('routine', ['cds'], prepare), /权威入口/);
+  assert.deepEqual(await isolateCdsPreparation('routine', ['production'], () => { throw Error('不得读取CDS'); }), { blocked: false, reasons: [] });
+  const gate = { restricted: false, mode: 'full', grep: '', reasons: [] };
+  assert.equal(applyCdsVisualSafetyGate(gate, 'routine', { verdict: '不通过' }).restricted, false);
+  assert.equal(applyCdsVisualSafetyGate(gate, 'full', { verdict: '不通过' }).restricted, true);
+  assert.equal(applyCdsVisualSafetyGate({ ...gate, restricted: true }, 'routine', { verdict: '通过' }).restricted, true);
+});
+
+test('REG-stsmk-report-risk-001 例行视觉记录绑定本轮独立策略，不伪写CDS功能或视觉通过', () => {
+  const identity = { runId: 'stsmk-current', commit: 'a'.repeat(40), profile: 'routine' };
+  const unlock = { status: 'unlocked', ...identity, policy: 'independent-production', cdsSafetyGate: 'clear', unlockedAt: '2026-10-15T01:00:00Z' };
+  assert.equal(validateProductionVisualUnlock(unlock, identity).valid, true);
+  for (const bad of [{ runId: 'stsmk-other' }, { commit: 'b'.repeat(40) }, { policy: 'full' }, { cdsSafetyGate: 'unknown' }]) {
+    assert.equal(validateProductionVisualUnlock({ ...unlock, ...bad }, identity).valid, false);
+  }
+  assert.equal(validateProductionVisualUnlock(unlock, { ...identity, profile: 'full' }).valid, false);
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.match(source, /cdsExecution\.resultObserved = cdsRows\.length > 0/);
+  assert.ok(source.indexOf('cdsExecution.resultObserved =') < source.indexOf('cdsRows.push(...supplementalRows)'));
+  assert.match(source, /const cdsPreparation = await isolateCdsPreparation\(profile, selected/);
+  assert.match(source, /initialVisualEnvironments\.includes\('cds'\)\s*\? mergeVisualPlans/);
+  assert.match(source, /errors\.push\(\.\.\.await validateEnvironmentIdentities\(environment, values\)\)/);
 });
 
 function gatewayToken(securityVersion = '7') {
@@ -229,7 +280,7 @@ test('运行器拒绝未知参数、缺值和冲突环境', () => {
   assert.throws(() => parseRunnerArgs(['--unknown']), /不支持的参数/);
   assert.throws(() => parseRunnerArgs(['--grep']), /必须提供值/);
   assert.throws(() => parseRunnerArgs(['--cds-only', '--production-only']), /不能同时使用/);
-  assert.throws(() => parseRunnerArgs(['--production-only', '--capture-visual']), /只允许先在 CDS 环境使用/);
+  assert.throws(() => parseRunnerArgs(['--production-only', '--capture-visual']), /--production-only 永远只读/);
   assert.throws(
     () => parseRunnerArgs(['--capture-visual', '--visual-manifest', '/tmp/manifest.json']),
     /不能同时使用/,
@@ -1100,16 +1151,18 @@ test('主运行器必须串联视觉门禁、主管报告合并、CDS 归档和 
   assert.match(source, /完整稳定冒烟缺少本轮视觉取证清单/);
   assert.doesNotMatch(source, /if \(!existsSync\(visualManifestPath\)\) writeFileSync\(visualManifestPath, '\[\]\\n'/);
   assert.match(automationPrompt, /--profile routine --capture-visual/);
-  assert.match(automationPrompt, /CDS 核心功能、清理与对应视觉证据通过后解锁正式/);
+  assert.match(automationPrompt, /routine 正式完整安全矩阵按自身身份、模型与依赖独立执行，不以 CDS 功能或视觉通过作为前置/);
+  assert.match(automationPrompt, /full 是专项，保留完整 CDS 前置/);
+  assert.match(automationPrompt, /清理失败或实质清理未知仍熔断正式写入/);
   assert.match(automationPrompt, /create-visual-test-to-kb/);
   assert.match(source, /visual-plan-production\.json/);
   assert.match(source, /production-visual-unlock\.json/);
   assert.match(source, /requiredCaseIdsByEnvironment/);
   assert.match(source, /buildEnvironmentGrep/);
   assert.match(automationPrompt, /grep 必须精确选中/);
-  assert.match(source, /initialVisualEnvironments = selected\.includes\('cds'\) \? \['cds'\] : selected/);
+  assert.match(source, /initialVisualEnvironments = selected\.includes\('cds'\) && cdsAddressBlockers\.length === 0 \? \['cds'\] : selected\.filter\(environment => environment !== 'cds'\)/);
   assert.ok(source.indexOf('evaluateProductionSafetyGate(') < source.indexOf("'visual-plan-production.json'"));
-  assert.ok(source.indexOf('cdsVisualGate.result.verdict') < source.indexOf('const productionVisualPlanResult'));
+  assert.ok(source.indexOf('productionSafetyGate = applyCdsVisualSafetyGate(') < source.indexOf('const productionVisualPlanResult'));
   assert.match(source, /summaryDocument\.notification\.status === 'delivery-failed'/);
   assert.match(source, /await deliverUnhandledFailure\(process\.argv\.slice\(2\), error\)/);
 });
@@ -1344,10 +1397,11 @@ test('环境模板账号与凭据注册表保持一致', () => {
   assert.equal(values.STABLE_SMOKE_NOTIFY_TARGET_USERNAME, 'inernoro');
 });
 
-test('48 小时合同先保留正式只读基线再用 CDS 解锁正式写入', () => {
+test('48 小时合同保留正式只读基线且routine独立、full保留CDS前置', () => {
   const contract = readFileSync('.claude/skills/stable-smoke/SKILL.md', 'utf8');
   assert.match(contract, /正式只读基线先行/);
-  assert.match(contract, /例行 CDS 核心安全集通过后，正式完整安全矩阵/);
+  assert.match(contract, /routine 正式完整安全矩阵独立执行/);
+  assert.match(contract, /full 专项保留完整 CDS 前置/);
   assert.match(contract, /工具分支尚未部署不得阻止检查当前线上功能/);
 
   const runner = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');

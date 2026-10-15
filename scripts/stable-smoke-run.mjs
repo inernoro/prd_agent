@@ -11,7 +11,7 @@ import {
   selectRequiredCaseIds,
   summarizeCoverage,
 } from './stable-smoke-results.mjs';
-import { renderVisualPlan } from './stable-smoke-visual-plan.mjs';
+import { renderVisualPlan, routineVisualSequences } from './stable-smoke-visual-plan.mjs';
 import { buildStableSmokeAuthHeaders } from './stable-smoke-signature.mjs';
 import { sanitizeStableSmokeArtifactTree } from '../e2e/utils/stableSmokeDiagnostics.mjs';
 import { persistRunExperience, readPools, updatePools, renderExperienceSummary } from './stable-smoke-memory.mjs';
@@ -52,7 +52,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
 选项：
   --preflight          只检查双环境地址、身份和 CDS 部署状态，不启动测试
   --cds-only           只运行 CDS 环境
-  --production-only    只运行正式环境只读健康检查；写入旅程必须先在同一轮完成 CDS 验证
+  --production-only    只运行正式环境只读健康检查；不因 routine 独立策略变为业务写入入口
   --dry-run            生成计划并检查凭据，不执行业务旅程、结果门禁、归档或通知
   --run-id <值>        指定本轮稳定冒烟标识
   --output-root <路径> 指定本地产物目录
@@ -63,7 +63,7 @@ export const runnerHelpText = `稳定冒烟本地运行器
   --profile <范围>     routine（默认）：正式为主/CDS五项核心；full：专项完整双环境回归
   --cds-checkout <路径> 在已有部署分支 checkout 中权威查询 CDS；例行检查不等待工具分支发布
   --cds-live-branch <名称> 例行CDS已有分支，默认main；只从项目分支账本读取canonical id和preview-url
-  --production-visual-manifest <路径> 指定 CDS 门禁通过后采集的正式环境视觉 manifest
+  --production-visual-manifest <路径> 指定正式环境视觉 manifest；full 须先通过 CDS 门禁
   --report-url <地址>  使用已归档的 HTTPS 验收报告地址；缺省时自动归档到 CDS 验收中心
   --force-unlock       仅在确认原进程已结束或锁损坏时清理遗留互斥锁
   --help               显示本说明
@@ -91,7 +91,7 @@ export function parseRunnerArgs(argv) {
     throw new Error('--cds-only 与 --production-only 不能同时使用');
   }
   if (flags.has('--capture-visual') && flags.has('--production-only')) {
-    throw new Error('--capture-visual 只允许先在 CDS 环境使用；正式环境视觉必须通过 CDS 门禁后单独取证');
+    throw new Error('--production-only 永远只读，不提供 --capture-visual 业务取证入口；请按 routine 或 full 的常规命令执行');
   }
   if (flags.has('--capture-visual') && values['--visual-manifest']) {
     throw new Error('--capture-visual 与 --visual-manifest 不能同时使用');
@@ -1351,13 +1351,18 @@ export function canReuseVisualPlan(plan, { runId, commit, environments, scope = 
     && JSON.stringify(actualEnvironments) === JSON.stringify(expectedEnvironments);
 }
 
-export function validateProductionVisualUnlock(record, { runId, commit }) {
+export function validateProductionVisualUnlock(record, { runId, commit, profile = 'full' }) {
   const reasons = [];
   if (record?.status !== 'unlocked') reasons.push('正式环境视觉门禁尚未解锁');
   if (String(record?.runId || '') !== String(runId || '')) reasons.push('正式环境视觉解锁记录不属于本轮运行');
   if (String(record?.commit || '') !== String(commit || '')) reasons.push('正式环境视觉解锁记录不属于本轮提交');
-  if (record?.cdsFunctionalGate !== 'pass') reasons.push('CDS 功能与清理门禁未通过');
-  if (record?.cdsVisualVerdict !== '通过') reasons.push('CDS 视觉门禁未通过');
+  if (profile === 'routine') {
+    if (record?.profile !== 'routine' || record?.policy !== 'independent-production') reasons.push('正式环境视觉记录不属于例行独立策略');
+    if (record?.cdsSafetyGate !== 'clear') reasons.push('CDS 实质安全风险尚未核销');
+  } else {
+    if (record?.cdsFunctionalGate !== 'pass') reasons.push('CDS 功能与清理门禁未通过');
+    if (record?.cdsVisualVerdict !== '通过') reasons.push('CDS 视觉门禁未通过');
+  }
   if (!Number.isFinite(Date.parse(String(record?.unlockedAt || '')))) reasons.push('正式环境视觉解锁时间无效');
   return { valid: reasons.length === 0, reasons };
 }
@@ -1419,10 +1424,7 @@ export function evaluateProductionSafetyGate(
     );
     return isCleanupHazard && (row.status === 'fail' || row.hadFailedAttempt === true || row.retryCount > 0);
   }).map((row) => [String(row.caseId || '').toUpperCase(), row])).values()];
-  // routine 的历史加测可失败，但不能代替五项核心结果；没有可解析结果仍熔断。
-  const routineEvidenceAvailable = profile === 'routine' && cdsExecution?.status === 'failed'
-    && Boolean(cdsExecution.resultPath) && requiredCaseIds.length > 0 && cdsRows.length > 0;
-  const processFailed = !cdsExecution || (!['executed', 'dry-run'].includes(cdsExecution.status) && !routineEvidenceAvailable);
+  const processFailed = !cdsExecution || !['executed', 'dry-run'].includes(cdsExecution.status);
   const passingCaseIds = new Set(cdsRows
     .filter((row) => row.status === 'pass')
     .map((row) => String(row.caseId || '').toUpperCase()));
@@ -1430,24 +1432,51 @@ export function evaluateProductionSafetyGate(
     .map(row=>String(row.caseId || '').toUpperCase()));
   const incompleteRequiredCaseIds = [...new Set(requiredCaseIds.map((caseId) => String(caseId).toUpperCase()))]
     .filter((caseId) => !passingCaseIds.has(caseId) || nonPassingCaseIds.has(caseId));
-  const restricted = cdsWasFiltered
-    || processFailed
-    || hazardousFailures.length > 0
-    || incompleteRequiredCaseIds.length > 0;
+  // 例行独立不等于忽略未知风险：只有明确未启动，或确有本轮业务结果，才可排除执行丢失。
+  // resultObserved 来自真实 reporter 行，不能由本地补充判据或手造 cleanupStatus 代替。
+  const routineRiskUnknown = !cdsExecution
+    || (cdsExecution.status !== 'dry-run'
+      && !(cdsExecution.status === 'blocked' && cdsExecution.executionStarted === false)
+      && !(cdsExecution.resultObserved === true && Boolean(cdsExecution.resultPath)));
+  const restricted = hazardousFailures.length > 0 || (profile === 'routine'
+    ? routineRiskUnknown
+    : cdsWasFiltered || processFailed || incompleteRequiredCaseIds.length > 0);
   return {
     restricted,
     mode: restricted ? 'read-only' : 'full',
     grep: restricted ? productionReadOnlyGrep : '',
     reasons: [
-      ...(cdsWasFiltered ? ['CDS 仅执行了筛选用例，未满足正式环境写入所需的全量验证'] : []),
-      ...(processFailed ? [`CDS ${profile === 'routine' ? '核心执行证据' : '全量测试'}未完成（${cdsExecution?.status || 'missing'}）`] : []),
-      ...(incompleteRequiredCaseIds.length > 0 ? [
+      ...(profile === 'routine' && routineRiskUnknown ? ['CDS 已启动或启动状态未知，缺少可核实的本轮结果，无法排除清理风险'] : []),
+      ...(profile === 'full' && cdsWasFiltered ? ['CDS 仅执行了筛选用例，未满足正式环境写入所需的全量验证'] : []),
+      ...(profile === 'full' && processFailed ? [`CDS 全量测试未完成（${cdsExecution?.status || 'missing'}）`] : []),
+      ...(profile === 'full' && incompleteRequiredCaseIds.length > 0 ? [
         `CDS 必测覆盖不完整：${incompleteRequiredCaseIds.length} 项没有通过证据（${incompleteRequiredCaseIds.slice(0, 5).join('、')}${incompleteRequiredCaseIds.length > 5 ? ' 等' : ''}）`,
       ] : []),
       ...hazardousFailures.map((row) => row.status === 'fail'
         ? `${row.caseId || '未编号用例'}：CDS 出现高危失败`
         : `${row.caseId || '未编号用例'}：CDS 清理类用例重试后通过，无法确认首次尝试未留下数据`),
     ],
+  };
+}
+
+export async function isolateCdsPreparation(profile, selected, prepare) {
+  if (!selected.includes('cds')) return { blocked: false, reasons: [] };
+  try {
+    await prepare();
+    return { blocked: false, reasons: [] };
+  } catch (error) {
+    if (profile !== 'routine' || !selected.includes('production')) throw error;
+    return { blocked: true, executionStarted: false, reasons: [error instanceof Error ? error.message : 'CDS 准备未完成'] };
+  }
+}
+
+export function applyCdsVisualSafetyGate(gate, profile, visualResult) {
+  if (profile === 'routine' || visualResult?.verdict === '通过') return gate;
+  return {
+    restricted: true,
+    mode: 'read-only',
+    grep: productionReadOnlyGrep,
+    reasons: [...gate.reasons, 'CDS 视觉门禁未通过，正式环境视觉计划不会生成'],
   };
 }
 
@@ -2006,23 +2035,24 @@ async function main() {
     }
 
     resolveAuthoritativeCdsAddresses();
-    if (selected.includes('cds')) requireAuthoritativeCdsAddress(cdsAddressBlockers);
-    if (selected.includes('cds')
-      && !options.has('--dry-run')
-      && cdsAddressBlockers.length === 0
-      && validateEnvironmentConfig('cds', values).length === 0) {
-      const existingBranch = profile === 'routine' ? await readCdsBranchStatusWithRetries(cdsCommand, { branchId: liveCdsBranchId }) : null;
-      const expectedCommit = existingBranch?.commitSha || values.STABLE_SMOKE_COMMIT;
-      const readiness = existingBranch
-        ? evaluateCdsReadiness(existingBranch, expectedCommit, runtimeExpectationForBranch(existingBranch, expectedCommit))
-        : await waitForCdsDeployment(expectedCommit);
-      if (!readiness.ready) throw new Error(`CDS 当前部署未就绪：${readiness.reasons.join('；')}`);
-      writeFileSync(resolve(runDir, 'cds-readiness.json'), `${JSON.stringify({
-        checkedAt: new Date().toISOString(),
-        expectedCommit,
-        ...readiness,
-      }, null, 2)}\n`, 'utf8');
-    }
+    const cdsPreparation = await isolateCdsPreparation(profile, selected, async () => {
+      requireAuthoritativeCdsAddress(cdsAddressBlockers);
+      if (!options.has('--dry-run')
+        && cdsAddressBlockers.length === 0
+        && validateEnvironmentConfig('cds', values).length === 0) {
+        const existingBranch = profile === 'routine' ? await readCdsBranchStatusWithRetries(cdsCommand, { branchId: liveCdsBranchId }) : null;
+        const expectedCommit = existingBranch?.commitSha || values.STABLE_SMOKE_COMMIT;
+        const readiness = existingBranch
+          ? evaluateCdsReadiness(existingBranch, expectedCommit, runtimeExpectationForBranch(existingBranch, expectedCommit))
+          : await waitForCdsDeployment(expectedCommit);
+        if (!readiness.ready) throw new Error(`CDS 当前部署未就绪：${readiness.reasons.join('；')}`);
+        writeFileSync(resolve(runDir, 'cds-readiness.json'), `${JSON.stringify({
+          checkedAt: new Date().toISOString(),
+          expectedCommit,
+          ...readiness,
+        }, null, 2)}\n`, 'utf8');
+      }
+    });
 
     const planPath = resolve(runDir, 'plan.json');
     const planMarkdownPath = resolve(runDir, 'plan.md');
@@ -2042,6 +2072,8 @@ async function main() {
     let gatewayPersistenceProbe = null;
     const cdsSelectedCaseIds = selectedCaseIdsForEnvironment(plan, 'cds', grep);
     if (selected.includes('cds')
+      && !cdsPreparation.blocked
+      && validateEnvironmentConfig('cds', values).length === 0
       && cdsSelectedCaseIds.includes('GW-009')
       && !options.has('--dry-run')) {
       gatewayPersistenceProbe = await runCdsGatewayPersistenceProbe({
@@ -2057,9 +2089,10 @@ async function main() {
       : profile === 'routine' ? 'routine' : 'full';
     const captureVisual = options.has('--capture-visual');
     let requestedVisualManifest = options.read('--visual-manifest');
+    let cdsVisualEvidenceMissing = false;
     const requestedProductionVisualManifest = options.read('--production-visual-manifest');
     const productionReadOnlyVisual = visualScope === 'production-read-only';
-    const initialVisualEnvironments = selected.includes('cds') ? ['cds'] : selected;
+    const initialVisualEnvironments = selected.includes('cds') && cdsAddressBlockers.length === 0 ? ['cds'] : selected.filter(environment => environment !== 'cds');
 
     const visualPlanPath = resolve(runDir, 'visual-plan.json');
     const visualPlanMarkdownPath = resolve(runDir, 'visual-plan.md');
@@ -2118,11 +2151,17 @@ async function main() {
       if (!existsSync(requestedVisualManifest)) writeFileSync(requestedVisualManifest, '[]\n', 'utf8');
     }
     if (!productionReadOnlyVisual && !requestedVisualManifest) {
-      throw new Error(
-        `完整稳定冒烟缺少本轮视觉取证清单。请先使用 runId ${runId} 执行 --dry-run 生成视觉计划，`
-        + '再按 visual-plan.json 运行 /验收 浏览器取证并通过 --visual-manifest 显式传入，'
-        + '或使用 --capture-visual 让真实业务旅程逐槽生成 manifest。',
-      );
+      if (profile === 'routine' && selected.includes('production')) {
+        requestedVisualManifest = resolve(runDir, 'cds-visual-not-run.json');
+        writeFileSync(requestedVisualManifest, '[]\n', 'utf8');
+        cdsVisualEvidenceMissing = true;
+      } else {
+        throw new Error(
+          `完整稳定冒烟缺少本轮视觉取证清单。请先使用 runId ${runId} 执行 --dry-run 生成视觉计划，`
+          + '再按 visual-plan.json 运行 /验收 浏览器取证并通过 --visual-manifest 显式传入，'
+          + '或使用 --capture-visual 让真实业务旅程逐槽生成 manifest。',
+        );
+      }
     }
     if (!captureVisual && requestedVisualManifest && !existsSync(resolve(requestedVisualManifest))) {
       throw new Error(`指定的视觉取证清单不存在：${resolve(requestedVisualManifest)}`);
@@ -2191,11 +2230,16 @@ async function main() {
     }
 
     for (const environment of selected) {
+      if (environment === 'cds' && cdsPreparation.blocked) {
+        executions.push({ environment, status: 'blocked', executionStarted: false, missing: cdsPreparation.reasons, resultPath: '', policy: 'full', gateReasons: cdsPreparation.reasons });
+        continue;
+      }
       if (environment === 'production' && selected.includes('cds')) {
         const cdsExecution = executions.find((execution) => execution.environment === 'cds');
         const cdsRows = cdsExecution?.resultPath
           ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
           : [];
+        if (cdsExecution) cdsExecution.resultObserved = cdsRows.length > 0;
         cdsRows.push(...supplementalRows);
         cdsRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
         if (selectedCdsCases.includes('COMMON-004') && !cdsRows.some((row) => row.caseId === 'COMMON-004')) {
@@ -2210,30 +2254,21 @@ async function main() {
           profile === 'routine' ? plan.cdsCoreCaseIds : plannedCaseIdsForEnvironment(plan, 'cds'),
           profile,
         );
-        cdsVisualGate = runVisualGate({
+        cdsVisualGate = initialVisualEnvironments.includes('cds') ? runVisualGate({
           manifestPath: resolve(requestedVisualManifest),
           planPath: visualPlanPath,
           prefix: 'cds-visual-gate',
           environments: ['cds'],
-        });
-        if (cdsVisualGate.result.verdict !== '通过') {
-          productionSafetyGate = {
-            restricted: true,
-            mode: 'read-only',
-            grep: productionReadOnlyGrep,
-            reasons: [
-              ...productionSafetyGate.reasons,
-              'CDS 视觉门禁未通过，正式环境视觉计划不会生成',
-            ],
-          };
-        }
+        }) : { result: { verdict: '未执行', reason: 'CDS 权威入口未取得，核心视觉不得核销' } };
+        productionSafetyGate = applyCdsVisualSafetyGate(productionSafetyGate, profile, cdsVisualGate.result);
 
-        if (!productionSafetyGate.restricted && cdsVisualGate.result.verdict === '通过') {
+        if (!productionSafetyGate.restricted) {
           const existingUnlock = readJson(productionVisualUnlockPath);
           const existingProductionPlan = readJson(productionVisualPlanPath);
           const reusableUnlock = validateProductionVisualUnlock(existingUnlock, {
             runId,
             commit: values.STABLE_SMOKE_COMMIT,
+            profile,
           }).valid && canReuseVisualPlan(existingProductionPlan, {
             runId,
             commit: values.STABLE_SMOKE_COMMIT,
@@ -2262,8 +2297,9 @@ async function main() {
               runId,
               commit: values.STABLE_SMOKE_COMMIT,
               unlockedAt,
-              cdsFunctionalGate: 'pass',
-              cdsVisualVerdict: '通过',
+              ...(profile === 'routine'
+                ? { profile, policy: 'independent-production', cdsSafetyGate: 'clear' }
+                : { cdsFunctionalGate: 'pass', cdsVisualVerdict: '通过' }),
               productionVisualPlanPath,
             }, null, 2)}\n`, 'utf8');
           }
@@ -2297,10 +2333,14 @@ async function main() {
       const errors = environment === 'production' && productionSafetyGate.restricted
         ? validateProductionReadOnlyConfig(values)
         : validateEnvironmentConfig(environment, values);
+      if (profile === 'routine' && errors.length === 0 && (environment === 'cds' || !productionSafetyGate.restricted)) {
+        errors.push(...await validateEnvironmentIdentities(environment, values));
+      }
       if (errors.length > 0) {
         executions.push({
           environment,
           status: 'blocked',
+          executionStarted: false,
           missing: errors,
           resultPath: '',
           policy: environment === 'production' ? productionSafetyGate.mode : 'full',
@@ -2369,24 +2409,27 @@ async function main() {
       const unlockValidation = validateProductionVisualUnlock(unlock, {
         runId,
         commit: values.STABLE_SMOKE_COMMIT,
+        profile,
       });
       if (!unlockValidation.valid) {
-        throw new Error(`正式环境视觉取证未通过 CDS 前置门禁：${unlockValidation.reasons.join('；')}`);
+        throw new Error(`正式环境视觉取证记录未通过本轮策略校验：${unlockValidation.reasons.join('；')}`);
       }
       const productionPlan = readJson(productionVisualPlanPath);
-      const combinedPlan = mergeVisualPlans(readJson(visualPlanPath), productionPlan);
+      const combinedPlan = initialVisualEnvironments.includes('cds')
+        ? mergeVisualPlans(readJson(visualPlanPath), productionPlan)
+        : productionPlan;
       visualPlanForGatePath = resolve(runDir, 'visual-plan-combined.json');
       visualPlanForReportPath = resolve(runDir, 'visual-plan-combined.md');
       writeFileSync(visualPlanForGatePath, `${JSON.stringify(combinedPlan, null, 2)}\n`, 'utf8');
       writeFileSync(visualPlanForReportPath, `${renderVisualPlan(combinedPlan)}\n`, 'utf8');
-      const cdsManifest = readJson(resolve(requestedVisualManifest));
+      const cdsManifest = initialVisualEnvironments.includes('cds') ? readJson(resolve(requestedVisualManifest)) : [];
       const productionManifest = readJson(resolve(requestedProductionVisualManifest || resolve(runDir, 'production-visual-evidence/manifest.json')));
       if (!Array.isArray(cdsManifest) || !Array.isArray(productionManifest)) {
         throw new Error('CDS 或正式环境视觉 manifest 不是有效数组');
       }
       visualManifestPath = resolve(runDir, 'visual-manifest-combined.json');
       writeFileSync(visualManifestPath, `${JSON.stringify([...cdsManifest, ...productionManifest], null, 2)}\n`, 'utf8');
-      visualGateEnvironments = ['cds', 'production'];
+      visualGateEnvironments = initialVisualEnvironments.includes('cds') ? ['cds', 'production'] : ['production'];
     }
     const finalVisualGate = runVisualGate({
       manifestPath: visualManifestPath,
@@ -2410,7 +2453,7 @@ async function main() {
         modules: visualResult.modules?.length || 0,
         gateExitCode: visualGateExitCode,
         manifestPath: visualManifestPath,
-        requestedManifestMissing: false,
+        requestedManifestMissing: cdsVisualEvidenceMissing,
       },
     };
     const summaryPath = resolve(runDir, 'summary.json');
@@ -2423,6 +2466,7 @@ async function main() {
       productionBaseline,
       executions,
       productionSafetyGate,
+      ...(cdsPreparation.blocked ? { cdsPreparation, cdsVisual: { status: 'blocked', planned: Object.values(routineVisualSequences.cds).reduce((sum, sequence) => sum + sequence.length, 0), reason: cdsPreparation.reasons.join('；') } } : {}),
       supplementalEvidenceRows: [
         ...supplementalRows,
         ...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe),
@@ -2488,6 +2532,10 @@ async function main() {
       '--output', supervisorPath,
     ]);
     if (compose.status !== 0) throw new Error('功能与视觉主管报告合并失败');
+    if (cdsPreparation.blocked) {
+      const cdsVisual = summaryDocument.cdsVisual;
+      writeFileSync(supervisorPath, `${readFileSync(supervisorPath, 'utf8')}\n\n## CDS 独立阻塞结果\n\nCDS 本轮准备未完成，业务计划 ${plannedCaseIdsForEnvironment(plan, 'cds').length} 项未执行，核心视觉计划 ${cdsVisual.planned} 项未执行。正式环境按自身结果独立记账，不能用其通过替代 CDS。整轮尚未完成。\n`, 'utf8');
+    }
     const experiencePreview = updatePools(readPools(), { runId, profile, commit: values.STABLE_SMOKE_COMMIT, rows, requiredCaseIdsByEnvironment: plan.requiredCaseIdsByEnvironment });
     writeFileSync(supervisorPath, `${readFileSync(supervisorPath, 'utf8')}\n${renderExperienceSummary(experiencePreview)}`, 'utf8');
 
