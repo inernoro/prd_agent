@@ -801,7 +801,7 @@ builder.Services.AddSingleton<IIdGenerator>(sp =>
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunEventStore>(sp =>
     new PrdAgent.Infrastructure.Services.RedisRunEventStore(redisConnectionString, defaultTtl: TimeSpan.FromHours(24), taskExecutions: sp.GetRequiredService<ITaskExecutionCoordinator>()));
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IRunQueue>(sp =>
-    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString));
+    new PrdAgent.Infrastructure.Services.RedisRunQueue(redisConnectionString, builder.Configuration));
 
 // 注册分布式限流服务（基于 Redis）
 builder.Services.AddSingleton<IRateLimitService>(sp =>
