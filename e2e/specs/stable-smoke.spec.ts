@@ -10,6 +10,7 @@ import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeB
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
+import { assertDefaultJpegPrimary, submitDefaultJpegThroughUi } from '../utils/stableSmokeJpegJourney.mjs';
 import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockPublicCommunityReads } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
@@ -7711,10 +7712,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIS-003][REG-image-input-001] JPEG 参考图真实生成及字节、MIME、扩展名一致性', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[VIS-003][REG-image-input-001] JPEG 参考图真实生成及字节、MIME、扩展名一致性', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
-    const token = await loginAndReadToken(page, request, '/visual-agent');
-    const { workspace } = await createVisualWorkspace(page, token, 'jpeg-reference');
+    const token = await loginAndReadToken(page, request, '/');
+    await enterVisualFromHome(page);
+    let workspace = { id: '' };
     let runId = '';
     try {
       // 只生成合成色块，不读取或复用用户图片；正式环境不注入错误声明。
@@ -7726,72 +7728,58 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         context.fillRect(0, 0, 256, 256);
         return canvas.toDataURL('image/jpeg');
       });
-      const digest = createHash('sha256').update(Buffer.from(jpeg.split(',')[1], 'base64')).digest('hex');
-      const upload = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-jpeg` },
-        data: {
-          data: requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production'
-            ? jpeg : jpeg.replace('data:image/jpeg;', 'data:image/png;'),
-          width: 256, height: 256, prompt: 'JPEG 格式回归合成参考图',
-        },
-      });
-      const { asset } = await readEnvelope<{ asset: { sha256: string; url: string } }>(upload);
-      expect(asset.sha256).toBe(digest);
+      const jpegBytes = Buffer.from(jpeg.split(',')[1], 'base64');
       const pools = await readEnvelope<ImageModelPool[]>(await page.request.get(
-        '/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) },
+        '/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) },
       ));
       const gateway = await loginGateway(request);
       const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
       const { items } = await readEnvelope<{ items: GatewayLogicalModel[] }>(await request.get(
         `${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers },
       ));
-      const requestedLogicalModel = process.env.STABLE_SMOKE_IMAGE_MODEL_ID?.trim();
-      const logical = items.find((item) => {
-        const primary = item.offerings.filter((offering) => offering.enabled)
-          .sort((left, right) => left.priority - right.priority)[0];
-        return item.enabled
-          && (!requestedLogicalModel || item.publicId === requestedLogicalModel)
-          && primary !== undefined
-          && ['openai', 'openai-compatible'].includes(resolveGatewayOfferingProtocol(primary, upstreamIndex))
-          && pools.some((pool) => pool.code === item.publicId
-            && pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
-      });
-      expect(
-        logical,
-        `JPEG 回归必须配置可用的 OpenAI 图生图主路，不能用其他协议成功代替${requestedLogicalModel ? `：${requestedLogicalModel}` : ''}`,
-      ).toBeTruthy();
-      const created = await readEnvelope<{ runId: string }>(await page.request.post(
-        `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
-          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-run` },
-          data: {
-            prompt: '保留 @img1 的蓝色主色，生成纯白背景上的一只蓝色陶瓷杯，不要文字',
-            userMessageContent: '参考 @img1 生成蓝色陶瓷杯',
-            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-jpeg-target`,
-            platformId: 'logical-model', modelId: logical!.publicId,
-            size: '1024x1024', responseFormat: 'url',
-            expectedImageRefCount: 1,
-            imageRefs: [{ refId: 1, assetSha256: asset.sha256, url: asset.url, label: 'JPEG 参考', role: 'target' }],
-            x: 0, y: 0, w: 1001, h: 1001,
-          },
+      const defaults = pools.filter(item => item.isDefault);
+      expect(defaults, '业务默认必须唯一，禁止首个OpenAI替代').toHaveLength(1);
+      const pool = defaults[0];
+      expect(pool.models.some(model => /^(Healthy|Degraded)$/.test(model.healthStatus || '')), '当前默认不可用或健康未知').toBe(true);
+      const logical = items.find(item => item.enabled && item.publicId === pool.code);
+      const primary = logical?.offerings.filter(item => item.enabled).sort((a, b) => a.priority - b.priority)[0];
+      assertDefaultJpegPrimary({ pool, logicalModelPublicId: logical?.publicId, primaryProtocol: primary ? resolveGatewayOfferingProtocol(primary, upstreamIndex) : undefined });
+      await createDefaultWorkspaceThroughUi(page, { runId: requiredEnv('STABLE_SMOKE_RUN_ID'), onCreated: created => { workspace = created; } });
+      await dismissBlockingTutorial(page);
+      const created = await submitDefaultJpegThroughUi(page, {
+        workspaceId: workspace.id, pool, jpegBytes, onCreated: id => { runId = id; },
+        onUploaded: async proof => { await testInfo.attach('jpeg-actual-upload', { body: JSON.stringify(proof), contentType: 'application/json' }); },
+        onSubmitted: async proof => { await testInfo.attach('jpeg-actual-ui-request', { body: JSON.stringify(proof), contentType: 'application/json' }); },
+        onMissingReferenceDeclaration: async proof => {
+          await testInfo.attach('jpeg-reference-declaration-missing', { body: JSON.stringify({ runId: proof.runId, actualImageRefCount: (proof.request.imageRefs as unknown[]).length, missingField: 'expectedImageRefCount', verdict: 'fail', proofBoundary: '真实JPEG引用完整但声明缺失；保留原合同失败并继续观察已提交产物，不补写请求或归因模型' }), contentType: 'application/json' });
+          expect.soft(proof.request.expectedImageRefCount, '页面必须显式声明一张参考图；缺字段保持失败，产物与路由另行取证').toBe(1);
         },
-      ));
+      });
       runId = created.runId;
       const completed = await waitForImageRun(page, token, runId);
       await assertImageArtifact(page, completed.detail);
-      expect(completed.detail.run.expectedImageRefCount).toBe(1);
+      const generated = page.locator(`[data-canvas-key="${created.targetKey}"]`).getByTestId('canvas-image');
+      await expect(generated, '完成产物必须在真人页面中可见').toBeVisible({ timeout: 30_000 });
+      await expect.poll(() => generated.evaluate(element => (element as HTMLImageElement).naturalWidth), { timeout: 30_000 }).toBeGreaterThan(0);
+      expect(completed.detail.run.logicalModelPublicId || completed.detail.run.modelId).toBe(pool.code);
+      expect.soft(completed.detail.run.expectedImageRefCount, '持久化数量声明缺失仍记失败，但继续核对已完成产物的真实网关路由').toBe(1);
+      expect(completed.detail.run.imageRefs).toHaveLength(1);
+      expect(completed.detail.run.imageRefs?.[0].assetSha256).toBe(created.reference.sha256);
+      const downloaded = await readGeneratedImageBytes(page, completed.detail);
+      expect(await decodeDownloadedImageDimensions(page, downloaded.bytes, downloaded.mime)).toEqual({ width: 1024, height: 1024 });
       const log = await waitForGatewayLog(request, `${runId}-0-0`);
-      expect(log.logicalModelPublicId).toBe(logical!.publicId);
+      expect(log.logicalModelPublicId).toBe(pool.code);
       expect(log.appCallerCode).toBe('visual-agent.image.img2img::generation');
       expect(['openai', 'openai-compatible']).toContain(log.protocol);
       expect(log.isFallback, '格式错误不能靠切换供应商掩盖').not.toBe(true);
       const wire = JSON.parse(log.requestBodyRedacted || '{}') as {
         content_type?: string; endpoint_path?: string;
-        files?: Array<{ mime_type?: string; file_extension?: string; sha256?: string }>;
+        files?: Array<{ field?: string; mime_type?: string; file_extension?: string; sha256?: string }>;
       };
       expect(wire.content_type).toBe('multipart/form-data');
       expect(wire.endpoint_path).toMatch(/\/images\/edits$/);
       expect(wire.files).toHaveLength(1);
-      expect(wire.files?.[0]).toMatchObject({ mime_type: 'image/jpeg', file_extension: '.jpg', sha256: digest });
+      expect(wire.files?.[0]).toMatchObject({ field: 'image[]', mime_type: 'image/jpeg', file_extension: '.jpg', sha256: created.reference.sha256 });
       expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
     } finally {
       if (runId) {
@@ -7808,11 +7796,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           }
         }
       }
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-delete` },
-        timeout: stableSmokeCleanupTimeoutMs,
-      });
-      await expectDeleteSucceeded(deleted, `删除参考图工作区 ${workspace.id} 失败`);
+      if (workspace.id) {
+        const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-delete` },
+          timeout: stableSmokeCleanupTimeoutMs,
+        });
+        await expectDeleteSucceeded(deleted, `删除参考图工作区 ${workspace.id} 失败`);
+        expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs })).status()).toBe(404);
+      }
       if (runId) expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
         headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
       })).status()).toBe(404);
