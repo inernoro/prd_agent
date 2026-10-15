@@ -61,6 +61,41 @@ test('REG-rec-transcript-body-001 选择器绑定当前组件实际正文与独�
   }
 });
 
+test('REG-rec-transcript-body-001 原REC四项旅程真实消费独立参考、逐行正文与刷新清理合同', () => {
+  const spec = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const title = "test('[REC-003][REC-007][REC-011][REC-012] 页面选择音频、显示阶段、真实转写、可选整理、回读与清理'";
+  assert.equal(spec.split(title).length - 1, 1, '保留原唯一旅程及四个caseId');
+  const journey = spec.split(title)[1].split("test('[REC-004]")[0];
+  assert.match(journey, /const speechReference = loadStableSmokeSpeechReference\(\)/);
+  assert.match(journey, /mimeType: speechReference\.mimeType,[\s\S]*buffer: speechReference\.audio/);
+  assert.doesNotMatch(journey, /speechFixture|speech\.m4a|getByText\(transcriptText/);
+  assert.match(journey, /assertSpeechMatchesReference\(transcriptText, speechReference\.reference\)/);
+  assert.match(journey, /const expectedLines = transcriptText\.split\('\\n'\)/);
+  assert.match(journey, /const originalRows = await readRecordingTranscriptRows\(page\)/);
+  assert.match(journey, /assertRecordingTranscriptEquals\(originalRows, expectedLines\)/);
+  const refresh = journey.split("await page.reload({ waitUntil: 'domcontentloaded' });")[1];
+  assert.ok(refresh, '必须真的刷新整个页面');
+  assert.match(refresh, /const persistedRows = await readRecordingTranscriptRows\(page\)/);
+  assert.match(refresh, /assertRecordingTranscriptEquals\(persistedRows, expectedLines\)/);
+  assert.match(refresh, /expect\(persistedRows\)\.toEqual\(originalRows\)/);
+  assert.match(journey, /expect\(new URL\(page\.url\(\)\)\.searchParams\.get\('entry'\)\)\.toBe\(entryId\)/);
+  for (const [assignment, assertion] of [
+    ['storeId = storeBody.data?.id', 'expect(storeResponse.ok()'],
+    ['entryId = uploadBody.data?.entry?.id', 'expect(uploadResponse.ok()'],
+    ['runId = transcribeBody.data?.runId', 'expect(transcribeResponse.ok()'],
+    ['restyleRunId = restyleBody.data?.runId', 'expect(restyleResponse.ok()'],
+  ]) {
+    assert.ok(journey.indexOf(assignment) >= 0 && journey.indexOf(assignment) < journey.indexOf(assertion), '断言失败前必须先登记本轮资源');
+  }
+  const cleanup = journey.split('} finally {')[1];
+  for (const resource of ['stores/${storeId}', 'entries/${entryId}', 'agent-runs/${runId}', 'agent-runs/${restyleRunId}']) {
+    assert.ok(cleanup.includes(resource), `清理必须回读：${resource}`);
+  }
+  assert.equal((cleanup.match(/\.toBe\(404\)/g) || []).length, 4, '空间、条目和两个任务均须404回读');
+  const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
+  assert.ok(workflow.includes("- 'e2e/specs/stable-smoke.spec.ts'"), '只改原旅程也须触发机械守卫');
+});
+
 test('REG-rec-asr-reference-001 独立源文绑定完整清晰短句WAV而非ASR输出', () => {
   const { reference, audio, signal } = loadStableSmokeSpeechReference();
   assert.equal(reference.sourceText, 'The white peach is on the table.');
