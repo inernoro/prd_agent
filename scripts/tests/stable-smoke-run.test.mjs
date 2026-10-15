@@ -183,7 +183,11 @@ test('报告风险分类永久回归必须接线并传播失败', () => {
     for (const status of [0, 1]) {
       const result = runReportRiskRegression(directory, (name, args) => {
         if (name === 'python3') assert.ok(args.includes('ReportRiskDecisionTests'));
-        else { assert.equal(name,'node'); assert.ok(args.includes('REG-stsmk-report-risk-001')); }
+        else {
+          assert.equal(name,'node');
+          assert.ok(args.includes('REG-stsmk-report-risk-001')||args.includes('REG-stsmk-account-scope-001'));
+          if(args.includes('REG-stsmk-account-scope-001'))assert.ok(args.includes('scripts/tests/stable-smoke-ui-contract.test.mjs'));
+        }
         return { status, stdout: '风险判据', stderr: '' };
       });
       assert.equal(result.rows[0].caseId, 'REG-stsmk-report-risk-001');
@@ -196,6 +200,19 @@ test('报告风险分类永久回归必须接线并传播失败', () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('REG-stsmk-account-scope-001 必须由例行报告风险父项执行并传播失败，不只留在本地测试', () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stsmk-account-scope-'));
+  try {
+    const calls=[];
+    const result=runReportRiskRegression(directory,(name,args)=>{
+      calls.push({name,args});
+      return {status:args.includes('REG-stsmk-account-scope-001')?1:0,stdout:'账号范围判据',stderr:''};
+    });
+    assert.ok(calls.some(call=>call.name==='node'&&call.args.includes('REG-stsmk-account-scope-001')&&call.args.includes('scripts/tests/stable-smoke-ui-contract.test.mjs')));
+    assert.equal(result.rows[0].status,'fail');
+  } finally { rmSync(directory,{recursive:true,force:true}); }
 });
 
 test('运行器帮助和预检参数不会误启动正式测试', () => {
