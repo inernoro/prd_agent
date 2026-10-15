@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture } from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockPublicCommunityReads } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
@@ -18,6 +18,30 @@ test('巡检主旅程接入语义登录与精确模型详情，且仅改被测�
 });
 
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
+
+test('REG-stsmk-account-scope-001 公开社区旁路在共享context及独立页面登录导航前均被阻断', async () => {
+  let handler;
+  const calls = [];
+  await blockPublicCommunityReads({ route: async (pattern, callback) => {
+    calls.push(pattern);
+    handler = callback;
+  } });
+  assert.deepEqual(calls, ['**/api/submissions/public**'], '只阻断非本轮公开内容，不接管全部业务请求');
+  let aborts = 0;
+  let continued = 0;
+  await handler({
+    abort: async reason => { assert.equal(reason, 'blockedbyclient'); aborts += 1; },
+    continue: async () => { continued += 1; },
+  });
+  assert.equal(aborts, 1);
+  assert.equal(continued, 0, '不得读取后再丢弃公开用户数据');
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const login = source.split('async function loginAndReadToken(')[1]?.split('\nasync function readStableAuthSnapshot')[0];
+  assert.ok(login.indexOf('await blockPublicCommunityReads(page)') >= 0);
+  assert.ok(login.indexOf('await blockPublicCommunityReads(page)') < login.indexOf('await issueTicket('), '独立手机context也必须先于登录导航阻断');
+  const setup = source.split('test.beforeEach(async ({ context }) => {')[1]?.split("test('[CORE-001]")[0];
+  assert.ok(setup?.includes('await blockPublicCommunityReads(context)'), '未登录首页检查同样不得加载公开用户内容');
+});
 
 test('REG-stsmk-account-scope-001 全局鉴权观测在两环境认证与导航前阻断，不能借配置绿关闭', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');

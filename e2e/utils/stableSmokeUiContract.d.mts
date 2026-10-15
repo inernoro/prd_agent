@@ -1,4 +1,4 @@
-import type { APIRequestContext, Locator, Page } from '@playwright/test';
+import type { APIRequestContext, BrowserContext, Locator, Page } from '@playwright/test';
 
 export interface MapLoginSnapshot {
   headingCount: number;
@@ -20,6 +20,7 @@ export interface GatewayLogicalModelAuditIdentity {
 }
 
 export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenticationMethods: string[] };
+export function blockPublicCommunityReads(surface: Page | BrowserContext): Promise<void>;
 export function blockUnscopedObservationFixture(test: { skip(condition: boolean, description: string): void }, environment: string, observation: 'authorization-health' | 'gateway-failure-health'): void;
 export function readGatewayNoCallLogProbe(request: APIRequestContext, options: {
   baseUrl: string; headers: Record<string, string>; runId: string; nonce?: string;

@@ -10,7 +10,7 @@ import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeB
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture } from '../utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockPublicCommunityReads } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -282,6 +282,7 @@ async function expectAnonymousShareAnswer(
 }
 
 async function loginAndReadToken(page: Page, request: APIRequestContext, returnUrl = '/') {
+  await blockPublicCommunityReads(page);
   const loginUrl = await issueTicket(request, returnUrl);
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForURL((url) => url.pathname !== '/synthetic-login', { timeout: 30_000 });
@@ -1841,6 +1842,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test.beforeEach(async ({ context }) => {
+    await blockPublicCommunityReads(context);
     if (process.env.STABLE_SMOKE_RUN) await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
   });
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
