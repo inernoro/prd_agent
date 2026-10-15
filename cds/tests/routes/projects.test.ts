@@ -1483,6 +1483,38 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
   });
 
   describe('POST /api/projects/:id/clone', () => {
+    it('preserves the image entrypoint of an explicit prebuilt Compose service', async () => {
+      shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^test -d /, () => ({ stdout: '', stderr: '', exitCode: 1 }));
+      const create = await request(server, 'POST', '/api/projects', {
+        name: 'Prebuilt Entrypoint', gitRepoUrl: 'https://github.com/example/prebuilt.git',
+      });
+      expect(create.status).toBe(201);
+      const pid = create.body.project.id;
+      const repoPath = path.join(tmpDir, 'repos', pid);
+      stateService.updateProject(pid, { repoPath });
+      shell.addResponsePattern(/git clone /, () => {
+        fs.mkdirSync(repoPath, { recursive: true });
+        fs.writeFileSync(path.join(repoPath, 'package.json'), JSON.stringify({
+          name: 'prebuilt', dependencies: { express: '^4.21.0' },
+        }));
+        fs.writeFileSync(path.join(repoPath, 'server.js'), 'require("express")();\n');
+        fs.writeFileSync(path.join(repoPath, 'cds-compose.yml'), [
+          'services:', '  app:', '    image: ghcr.io/example/prebuilt:sha-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          '    working_dir: /app', '    command: ""', '    ports: ["8080"]',
+          '    volumes: [".:/app"]', '    labels:', '      cds.prebuilt-image: "true"',
+        ].join('\n'));
+        return { stdout: 'cloned', stderr: '', exitCode: 0 };
+      });
+      const clone = await sseRequest(server, 'POST', `/api/projects/${pid}/clone`);
+      expect(clone.events.some(e => e.event === 'complete')).toBe(true);
+      const profiles = stateService.getBuildProfilesForProject(pid);
+      expect(profiles).toHaveLength(1);
+      expect(profiles[0].prebuiltImage).toBe(true);
+      expect(profiles[0].command ?? '').toBe('');
+      expect(profiles[0].dockerImage).toBe('ghcr.io/example/prebuilt:sha-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    });
+
     it('streams start → progress → complete on a happy-path clone', async () => {
       // Mock git clone to succeed and emit a couple of progress lines
       shell.addResponsePattern(/^mkdir -p /, () => ({ stdout: '', stderr: '', exitCode: 0 }));

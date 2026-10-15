@@ -33,8 +33,12 @@ function stable(value: unknown): unknown {
 function fingerprint(info: ContainerFacts): string {
   // Hash the complete returned execution/host configuration, including private environment
   // and mount driver options. Persist only the digest; Running remains lifecycle intent.
+  // Docker 29 may report the enabled OOM killer as false before start and null
+  // afterwards. These are the same default policy; true remains a policy change.
+  const hostConfig = { ...info.HostConfig } as typeof info.HostConfig & { OomKillDisable?: boolean | null };
+  if (hostConfig.OomKillDisable === null) hostConfig.OomKillDisable = false;
   return 'sha256:' + createHash('sha256').update(JSON.stringify([info.Id, info.Name, info.Image,
-    stable(info.Config), stable(info.HostConfig),
+    stable(info.Config), stable(hostConfig),
     stable([...info.Mounts].sort((a, b) => a.Destination.localeCompare(b.Destination)))])).digest('hex');
 }
 function validMount(mount: ContainerFacts['Mounts'][number]): boolean {

@@ -25,6 +25,26 @@ function fixture() {
 }
 const owner = { projectId: 'project', branchId: 'branch' };
 describe('P3 immutable owned container lifecycle', () => {
+  it.each([false, null])('keeps the same identity when Docker materializes the default OOM setting as %s', async initial => {
+    const f = fixture();
+    (f.current.HostConfig as any).OomKillDisable = initial;
+    const ref = await f.lifecycle.capture(owner, service, () => {});
+    (f.current.HostConfig as any).OomKillDisable = initial === false ? null : false;
+    const after = await f.lifecycle.capture(owner, service, () => {});
+    expect(after.fingerprint).toBe(ref.fingerprint);
+    await expect(f.lifecycle.stop(ref, () => {})).resolves.toBeUndefined();
+    expect(f.mutations).toEqual([`docker stop -t 10 ${id}`]);
+  });
+
+  it('still rejects a changed OOM policy', async () => {
+    const f = fixture();
+    (f.current.HostConfig as any).OomKillDisable = false;
+    const ref = await f.lifecycle.capture(owner, service, () => {});
+    (f.current.HostConfig as any).OomKillDisable = true;
+    await expect(f.lifecycle.stop(ref, () => {})).rejects.toThrow('container_drift');
+    expect(f.mutations).toEqual([]);
+  });
+
   it.each(['environment', 'command', 'resource-limit', 'network-mode'])('detects complete runtime configuration drift without storing its plaintext: %s', async variant => {
     const f = fixture(); Object.assign(f.current.Config, { Env: ['TOKEN=private-env-value'], Cmd: ['run', 'old'] });
     Object.assign(f.current.HostConfig, { Memory: 1024, NetworkMode: 'original-network' });

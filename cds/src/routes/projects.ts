@@ -1258,6 +1258,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     function inferRunnableComposeProfile(candidate: BuildProfile): BuildProfile {
       const hasCommand = Boolean(candidate.command?.trim());
       const hasSyntheticImage = candidate.dockerImage.startsWith('cds-build-');
+      // A prebuilt image deliberately uses its own ENTRYPOINT/CMD. Source
+      // discovery must not turn that empty command into an install/build job.
+      if (candidate.prebuiltImage && !hasSyntheticImage) return candidate;
       if (hasCommand && !hasSyntheticImage) return candidate;
 
       const sourceRoot = nodePath.resolve(composeRoot, candidate.workDir || '.');
