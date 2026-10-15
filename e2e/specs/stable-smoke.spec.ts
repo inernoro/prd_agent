@@ -10,6 +10,7 @@ import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeB
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi } from '../utils/stableSmokeDefaultJourney.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -2307,12 +2308,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.setTimeout(420_000);
 
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
-    const loginCard = page.getByTestId('login-card');
-    await expect(loginCard).toBeVisible();
+    const { target: loginCard } = await getMapLoginTarget(page);
     await captureStableSmokeVisualEvidence(page, testInfo, {
       slotId: 'CDS-VISUAL-IDENTITY-PROFILE-01',
       target: loginCard,
-      caption: '未认证状态真实打开登录页，品牌、账号输入、认证入口和恢复提示区域完整可见。',
+      caption: '未认证登录页的品牌、欢迎标题与当前认证入口可见；本图不证明认证成功。',
     });
 
     const adminToken = await loginAndReadToken(page, request, '/');
@@ -6216,19 +6216,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
     const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
     expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取图片逻辑模型').toBe(true);
-    const logical = logicalBody.data.items.find((item) => (
-      item.enabled
-      && item.offerings.some((offering) => offering.enabled)
-      && (/image|generation/i.test(item.modelType)
-        || (item.capabilities || []).some((capability) => /image|text2img|img2img/i.test(capability)))
-    ));
-    expect(logical, '模型网关必须至少存在一条已启用的图片逻辑模型与 Offering').toBeTruthy();
+    const logical = selectGatewayImageLogicalModel(logicalBody.data.items);
 
     await page.goto(`${gateway.baseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
-    const list = page.locator('.lg-logical-model-list');
-    await expect(list).toBeVisible({ timeout: 30_000 });
-    const modelRow = list.locator('.lg-logical-model-grid').filter({ hasText: logical!.publicId }).first();
-    await expect(modelRow).toBeVisible();
+    const { list, detail: modelBlock, routeDetails } = await openGatewayLogicalModelDetails(page, logical);
+    const routeDetail = routeDetails.first();
     await setGatewayConsoleTheme(page, 'dark');
     await captureStableSmokeVisualEvidence(page, testInfo, {
       slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-02',
@@ -6236,10 +6228,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       caption: `真实逻辑模型 ${logical!.publicId} 与其上游线路、近 30 天用量和状态同时可见。`,
     });
 
-    await modelRow.getByRole('button', { name: '展开', exact: true }).click();
-    const modelBlock = modelRow.locator('..');
-    const routeDetail = modelBlock.locator('.lg-logical-model-route-detail').first();
-    await expect(routeDetail).toBeVisible();
     await setGatewayConsoleTheme(page, 'light');
     await captureStableSmokeVisualEvidence(page, testInfo, {
       slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-03',
@@ -6248,6 +6236,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
 
     const editButton = routeDetail.getByRole('button', { name: '编辑', exact: true });
+    if (requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'cds') {
     await expect(editButton).toBeVisible();
     await editButton.click();
     const editForm = modelBlock.locator('form').filter({ hasText: '保存修改' });
@@ -6258,6 +6247,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       target: editForm,
       caption: '仅打开真实 Offering 编辑态，不提交变更；目标、协议、Endpoint、优先级和权重均可核对。',
     });
+    } else {
+      await expect(editButton, '正式巡检只读身份不得获得路由编辑操作').toHaveCount(0);
+    }
     await setGatewayConsoleTheme(page, 'light');
     await captureStableSmokeVisualEvidence(page, testInfo, {
       slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-05',

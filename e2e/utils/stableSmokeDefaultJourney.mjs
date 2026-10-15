@@ -8,10 +8,12 @@ export function assertDefaultPeachRequest({ pool, selectedLabel, request }) {
 }
 
 export async function createDefaultWorkspaceThroughUi(page, { runId, onCreated }) {
+  // 工作区标题后端最多40字符；本轮完整身份必须保留，不能等创建后才发现截断。
+  if (typeof runId !== 'string' || !runId.startsWith('stsmk-') || runId.length > 40) throw Error('runId必须为40字符以内的stsmk-巡检身份，创建前停止');
   if (new URL(page.url()).pathname !== '/visual-agent') throw Error('必须先从首页真实进入视觉创作');
   await page.getByRole('button', { name: '新建项目', exact: true }).click();
   const dialog=page.getByRole('dialog');
-  const title=`${runId}-白桃-${Date.now()}`;
+  const title=runId;
   await dialog.getByRole('textbox').fill(title);
   const responsePromise=page.waitForResponse(r=>r.request().method()==='POST'&&new URL(r.url()).pathname==='/api/visual-agent/image-master/workspaces');
   await dialog.getByRole('button',{name:'创建',exact:true}).click();

@@ -174,6 +174,9 @@ jobs:
               # 结果归并、视觉闸、通知分流，共 150 条断言）也从来没有任何 workflow 引用过。
               # 它们今天全绿，说明不是坏的——只是没人跑。连同各自的被测脚本一起登记。
               - 'scripts/tests/*.test.mjs'
+              - 'e2e/utils/stableSmoke*.mjs'
+              - 'e2e/utils/stableSmoke*.d.mts'
+              - 'e2e/specs/stable-smoke.spec.ts'
               - 'scripts/stable-smoke*.mjs'
               - 'scripts/compose-stable-smoke-supervisor-report.mjs'
               - 'scripts/prepare-stable-smoke-archive-report.mjs'

@@ -6,6 +6,15 @@ import { tmpdir } from 'node:os';
 import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 
+test('巡检主旅程接入语义登录与精确模型详情，且仅改被测文件也触发CI守卫',()=>{
+ const spec=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
+ for(const helper of ['getMapLoginTarget','selectGatewayImageLogicalModel','openGatewayLogicalModelDetails'])assert.ok((spec.match(new RegExp(`${helper}\\(`,'g'))||[]).length>=1,`${helper}没有真实调用者`);
+ assert.doesNotMatch(spec,/getByTestId\('login-card'\)/);
+ const workflow=readFileSync(new URL('../../.github/workflows/ci.yml',import.meta.url),'utf8');
+ assert.match(workflow,/'e2e\/utils\/stableSmoke\*\.mjs'/);
+ assert.match(workflow,/'e2e\/specs\/stable-smoke\.spec\.ts'/);
+});
+
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
 
 test('登录页不依赖已删除的 login-card；账号表单和仅SSO均可核验，残缺入口变红', async () => {
