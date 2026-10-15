@@ -989,6 +989,25 @@ class ReportRiskDecisionTests(unittest.TestCase):
         "reason": "真实浏览器旧脚本1次异常、新脚本0次，已确认巡检注入造成",
     }
 
+    def test_nonpass_without_structured_items_never_renders_green_zero_counts(self):
+        body = "## 3. 缺陷总表\n\n| 优先级/defectId | 哪里错 |\n|---|---|\n| P1 DEF-ASK | 回答失败 |\n\n## 覆盖缺口\n\n正式108项、核心8张未完成。"
+        for verdict in ("fail", "conditional"):
+            rendered = archive_report.build_interactive_html("核心功能复测", verdict, body, [])
+            for label in ("P0 定位项", "P1-P2 风险", "缺口"):
+                self.assertIn(f"<span>{label}</span><strong>未统计</strong>", rendered)
+                self.assertNotIn(f"<span>{label}</span><strong>0</strong>", rendered)
+            self.assertIn("未统计不等于没有风险或缺口", rendered)
+
+    def test_structured_risk_and_gap_counts_remain_exact(self):
+        body = "## 3. 缺陷清单\n\n| 严重级 | 编号 | 问题 |\n|---|---|---|\n| P2 | DEF-ASK | 回答失败 |\n\n## 覆盖缺口\n\n| 编号 | 未覆盖项 |\n|---|---|\n| G1 | 正式未执行 |"
+        rendered = archive_report.build_interactive_html("核心功能复测", "fail", body, [])
+        self.assertIn("<span>P1-P2 风险</span><strong>1</strong>", rendered)
+        self.assertIn("<span>缺口</span><strong>1</strong>", rendered)
+
+    def test_pass_report_can_keep_explicit_zero_summary(self):
+        rendered = archive_report.build_interactive_html("定向全部通过", "pass", "## 结论\n\n定向全部通过。", [])
+        self.assertIn("<span>P1-P2 风险</span><strong>0</strong>", rendered)
+
     def test_incomplete_conditional_is_not_presented_as_pass(self):
         rendered = archive_report.build_interactive_html(
             "定向修复", "conditional", "## 覆盖说明\n\n覆盖缺口：227个；补充flaky 1不计入缺口", []

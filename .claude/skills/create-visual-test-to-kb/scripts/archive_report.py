@@ -2471,6 +2471,8 @@ def build_interactive_html(
     row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
     row_risk_count = sum(1 for it in problem_items if it.get("severity") in {"P1", "P2"})
     row_gap_count = _coverage_gap_count(markdown_content)
+    # 未解析到结构化项不等于没有问题；非通过报告不能把未知统计渲染为绿色零。
+    unclassified_summary = verdict in {"fail", "conditional"} and not problem_items and not row_gap_count
     reviewer_summary = _reviewer_summary(markdown_content)
     business_summary = _business_decision_summary(markdown_content)
     report_time = _extract_report_time(markdown_content)
@@ -2570,9 +2572,9 @@ def build_interactive_html(
     else:
         summary_cards = [
             ("已采集截图", str(len(manifest)), "可审核不等于通过", "accent" if manifest else "gap", metric_target("evidence-gallery")),
-            ("P0 定位项", str(row_fail_count), "阻断证据", "fail" if row_fail_count else "pass", metric_target(defect_section_anchor or "reportBody")),
-            ("P1-P2 风险", str(row_risk_count), "风险定位", "risk" if row_risk_count else "pass", metric_target(defect_section_anchor or "reportBody")),
-            ("缺口", str(row_gap_count), "未覆盖与弱相关", "gap" if row_gap_count else "pass", metric_target(gap_section_anchor or "reportBody")),
+            ("P0 定位项", "未统计" if unclassified_summary else str(row_fail_count), "请核对正文" if unclassified_summary else "阻断证据", "gap" if unclassified_summary else "fail" if row_fail_count else "pass", metric_target(defect_section_anchor or "reportBody")),
+            ("P1-P2 风险", "未统计" if unclassified_summary else str(row_risk_count), "请核对正文" if unclassified_summary else "风险定位", "gap" if unclassified_summary else "risk" if row_risk_count else "pass", metric_target(defect_section_anchor or "reportBody")),
+            ("缺口", "未统计" if unclassified_summary else str(row_gap_count), "请核对正文" if unclassified_summary else "未覆盖与弱相关", "gap" if unclassified_summary or row_gap_count else "pass", metric_target(gap_section_anchor or "reportBody")),
             ("表格行", str(table_count), "原始审计数据", "", metric_target("reportBody")),
         ]
     summary_fragments = []
@@ -2784,7 +2786,7 @@ def build_interactive_html(
             cards_html = (
                 f'<div class="problem-card is-{fallback_class}">'
                 f'<strong><span>{fallback_badge}</span>请查看正文风险与缺口清单</strong>'
-                f'<p>报告 Verdict 为{html.escape(verdict_cn)}，但未抽取到结构化重点项。</p>'
+                f'<p>报告 Verdict 为{html.escape(verdict_cn)}，尚未取得结构化统计；未统计不等于没有风险或缺口，请核对正文。</p>'
                 f'{fallback_link}</div>'
             )
         if verdict == "conditional":
