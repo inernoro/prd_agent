@@ -4,6 +4,11 @@ function contract(condition, message, classification = 'test/ui-contract') {
   if (!condition) throw new Error(`[${classification}] ${message}`);
 }
 
+/** Public community content is outside this run even when its API is anonymous. */
+export async function blockPublicCommunityReads(surface) {
+  await surface.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
+}
+
 /** Both inspection identities must stop before reading unscoped global observations. */
 export function blockUnscopedObservationFixture(test, environment, observation) {
   const reasons = {
