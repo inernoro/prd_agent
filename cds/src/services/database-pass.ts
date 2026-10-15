@@ -124,7 +124,8 @@ export class DatabasePassService {
       const target=await this.boundTarget(pass),tcp=resourceTcpAccessConfig(),certs=this.certificates();
       this.audit(pass,'activation-approved',{allowlist:pass.allowlist,ttlMinutes:pass.ttlMinutes});
       const gateway=await openDatabasePassGateway({target,username:pass.username,bindIp:tcp.bindIp,port:pass.port!,allowlist:pass.allowlist,...certs,audit:(event,details)=>this.audit(pass,event,details)});
-      this.gateways.set(id,gateway);pass.port=gateway.port;pass.activatedAt=new Date().toISOString();pass.expiresAt=new Date(Date.now()+pass.ttlMinutes*60_000).toISOString();pass.status='active';
+      const activatedAt=Date.now();
+      this.gateways.set(id,gateway);pass.port=gateway.port;pass.activatedAt=new Date(activatedAt).toISOString();pass.expiresAt=new Date(activatedAt+pass.ttlMinutes*60_000).toISOString();pass.status='active';
       try{this.persist();this.audit(pass,'activated',{port:pass.port,expiresAt:pass.expiresAt});}
       catch(error){await this.reclaim(pass,'审计或持久化失败');throw error;}
       const timer=setTimeout(()=>{void this.revokeInternal(pass,'通行证到期').catch(()=>{});},Math.max(0,Date.parse(pass.expiresAt)-Date.now()));timer.unref();

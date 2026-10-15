@@ -39,7 +39,12 @@ import { createHash } from 'node:crypto';
  */
 function argsHashFor(args: Record<string, unknown> | undefined): string {
   if (!args || Object.keys(args).length === 0) return 'no-args';
-  const canonical = JSON.stringify(args, Object.keys(args).sort());
+  // 数组 replacer 是递归字段白名单，会把嵌套 write 的 action/filter 等字段丢掉。
+  // 对每层对象排序，数组保留顺序，确保批准绑定实际完整参数。
+  const canonical = JSON.stringify(args, (_key, value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]));
+  });
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 

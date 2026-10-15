@@ -79,13 +79,17 @@ export function createOperatorConsoleRouter(deps: {
       res.status(400).json({ ok: false, error: 'opId 必填' });
       return;
     }
-    if (opId === 'database.sql') {
+    if (opId === 'database.sql' || opId === 'database.mongo') {
       const branch = deps.stateService.getBranch(String(args?.branchId || ''));
-      if (!branch || !args?.projectId || branch.projectId !== args.projectId || !args?.resourceId || !args?.sql) {
-        res.status(400).json({ error: '必须提供匹配的项目、分支、数据库资源与 SQL。' });
+      if (!branch || !args?.projectId || branch.projectId !== args.projectId || !args?.resourceId || (opId === 'database.sql' ? !args?.sql : !args?.write)) {
+        res.status(400).json({ error: '必须提供匹配的项目、分支、数据库资源与具体 SQL 或 MongoDB 写入。' });
         return;
       }
-      if (typeof args.sql !== 'string' || args.sql.length > 100_000) {
+      if (opId === 'database.mongo' && (!args.write || typeof args.write !== 'object' || Array.isArray(args.write) || JSON.stringify(args.write).length > 100_000)) {
+        res.status(400).json({ error: 'MongoDB write 必须为 JSON object 且不能超过 100KB。' });
+        return;
+      }
+      if (opId === 'database.sql' && (typeof args.sql !== 'string' || args.sql.length > 100_000)) {
         res.status(400).json({ error: 'SQL 必须为文本且不能超过 100KB。' });
         return;
       }

@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.16.7
+  version: 0.16.8
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.7 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
+> **版本**：v0.16.8 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -92,6 +92,16 @@ $CLI db status <requestId>
 # 遇错即停；MySQL 的已提交修改和 DDL 不保证自动回滚，实际修改前确认范围与恢复方式。
 # JSON 隔离预览没有真实数据库；对当前主机的真实数据库工作台执行，不借用别的环境。
 
+# MongoDB：查询走只读通道；写入只提交固定动作 + JSON 的本次审批。
+$CLI db mongo-collections <branchId> <resourceId> --project <projectId> --database <database>
+$CLI db mongo-query <branchId> <resourceId> --project <projectId> --database <database> --input-file read.mongo
+$CLI db mongo-write <branchId> <resourceId> --project <projectId> --database <database> --input-file write.json
+# read.mongo: db.getCollection("items").find({}).limit(20)
+# write.json: {"action":"insertOne","collection":"items","document":{"_id":"qa_1","qty":1}}
+# action 限 insertOne/updateMany/deleteMany/createCollection/dropCollection；不接收任意脚本。
+# 仍用 db status <requestId> 等到 completed；pending 不代表已执行。
+# MongoDB 事务、bulkWrite、跨引擎移库当前不在 UI/CLI 能力内，不能假称支持。
+
 # Key 管理
 $CLI global-key list                     # 全局 bootstrap key
 $CLI global-key create --label "for claude onboarding"
@@ -124,6 +134,18 @@ $CLI report-folder list [--project <id>]
 ```
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
+
+## 数据库面板的可发现入口与验收边界
+
+更新时间：2026-10-15。登录目标 CDS → 项目列表 → 选择项目 → 顶部「数据库」→ 选择分支和资源 →「操作面板」。同一列表的「连接 / 通行证」进入临时原生连接，「备份 / 克隆」进入数据副本管理。共享资源必须核对分支与库名再写入；旧的分支详情 → 资源 → 数据入口继续可用。
+
+数据库验收按三轴建立覆盖矩阵：网页、项目 Agent CLI、原生连接；MySQL、PostgreSQL、MongoDB；读取、写入、批量、事务、数据复制与引擎特性。再覆盖身份/审批、运行/过期/失败状态、明暗主题与数据隔离。每格写已通过、失败、未支持、按设计拒绝或未执行及证据，不用一条 SELECT 代替整库通过。
+
+- UI 与 CLI 是数据库管理通道，Agent 写入需要本次具体请求审批。
+- 临时通行证是独立账号、指定库、IP 白名单和最多 30 分钟的只读通道；写入、跨库和到期续连必须拒绝。
+- 克隆保留源库，恢复可能覆盖目标，连接已有仅改配置；三者都不能直接称为「移动完成」。跨主机数据迁移要核对源/目标库名、集合范围、行数、索引和失败回滚。跨引擎转换不支持。
+- 同一连接内执行 SQL 事务；MySQL DDL 有隐式提交，不能承诺所有脚本自动回滚。MongoDB 事务还依赖 replica set，当前 UI/CLI 没有事务入口。
+- 当前网关只有内网地址时，明确报告局域网已验证、公网尚未验证；页面经 Cloudflare 看到的 IP 可能与原生工具的出口 IP 不同。
 
 ## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
 

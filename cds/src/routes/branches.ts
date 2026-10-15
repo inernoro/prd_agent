@@ -6900,6 +6900,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return text;
   }
 
+  function buildMongoStructuredWrite(input: Record<string, unknown>, fallbackDatabase: string) {
+    const action = String(input.action || '').trim();
+    let database = '';
+    let collection = '';
+    let script = '';
+      database = mongoDatabaseFromRequest(input.database, fallbackDatabase);
+      collection = mongoCollectionFromRequest(input.collection);
+      if (action === 'insertOne') {
+        const document = mongoJsonObject(input.document, 'document');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).insertOne(${mongoSafeJson(document)}))`;
+      } else if (action === 'updateMany') {
+        const filter = mongoJsonObject(input.filter, 'filter');
+        const update = mongoJsonObject(input.update, 'update');
+        if (Object.keys(update).length === 0) throw new Error('update 不能为空');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).updateMany(${mongoSafeJson(filter)}, ${mongoSafeJson(update)}))`;
+      } else if (action === 'deleteMany') {
+        const filter = mongoJsonObject(input.filter, 'filter');
+        if (Object.keys(filter).length === 0) throw new Error('deleteMany 必须提供非空 filter');
+        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).deleteMany(${mongoSafeJson(filter)}))`;
+      } else if (action === 'createCollection') {
+        script = `JSON.stringify(db.createCollection(${mongoSafeJson(collection)}))`;
+      } else if (action === 'dropCollection') {
+        script = `JSON.stringify({ dropped: db.getCollection(${mongoSafeJson(collection)}).drop() })`;
+      } else {
+        throw new Error('action 只允许 insertOne / updateMany / deleteMany / createCollection / dropCollection');
+      }
+    return { action, database, collection, script };
+  }
+
   // 把命令里的字符串/正则字面量内容抹成空白，只留「代码骨架」，供高危/写操作扫描使用。
   // 这样 filter/$set/备注/日志/正则示例里出现的 drop( / updateOne( 等子串（本是数据、mongosh 不会当代码执行）
   // 不再被误判（Bugbot Medium ×2）；而真正内嵌的方法调用（代码位置的 .drop() / updateMany()）仍保留可被检出。
@@ -8452,10 +8481,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const adminUser = env.POSTGRES_USER || 'postgres';
     const adminPassword = env.POSTGRES_PASSWORD || '';
     const result = await shell.exec(
-      [
+      `bash -o pipefail -c ${shq([
         `docker exec -e PGPASSWORD=${shq(adminPassword)} ${shq(service.containerName || '')} pg_dump -U ${shq(adminUser)} -d ${shq(sourceDatabase)} --no-owner --no-privileges`,
         `docker exec -i -e PGPASSWORD=${shq(branchDb.branchPassword)} ${shq(service.containerName || '')} psql -U ${shq(branchDb.branchUser)} -d ${shq(targetDatabase)} -v ON_ERROR_STOP=1`,
-      ].join(' | '),
+      ].join(' | '))}`,
       { timeout: 1_800_000 },
     );
     if (result.exitCode !== 0) {
@@ -9497,6 +9526,35 @@ export function createBranchRouter(deps: RouterDeps): Router {
     },
   });
 
+  operatorOpRegistry.register({
+    id: 'database.mongo',
+    name: '执行项目 MongoDB 结构化写入',
+    description: '项目 Agent 提交明确的数据库、collection、固定动作与 JSON；所有者批准本次请求后执行。',
+    danger: 'destructive',
+    confirmText: '确认执行 MongoDB 写入',
+    estimatedSeconds: 10,
+    run: async ({ actor, log }, args) => {
+      const branch = stateService.getBranch(String(args?.branchId || ''));
+      if (!branch || !args?.projectId || branch.projectId !== args.projectId) throw new Error('项目与分支不匹配，未执行 MongoDB 写入。');
+      const resource = (await getBranchResourceSnapshot(branch)).find((item) => item.id === args?.resourceId);
+      if (!resource || resource.source !== 'infra' || resource.kind !== 'database' || resourceRuntimeKey(resource.runtime) !== 'mongodb') throw new Error('MongoDB 资源不存在，未执行写入。');
+      const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+      const { action, database, collection, script } = buildMongoStructuredWrite(mongoJsonObject(args?.write, 'write'), mongoDatabaseForBranch(service, branch));
+      log('info', `在 ${resource.displayName} 执行已批准的 ${action}：${database}.${collection}`);
+      try {
+        const result = await runMongoJson(service, branch, script, database);
+        stateService.recordDestructiveOp({ type: 'purge-database', projectId: branch.projectId, summary: `已批准 MongoDB ${action}：${database}.${collection}`, triggeredBy: actor });
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'success', note: `已批准 MongoDB ${action}：${database}.${collection}` });
+        stateService.save();
+        return { summary: `${resource.displayName} ${action} 执行完成`, details: { database, collection, action, result } };
+      } catch (error) {
+        stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'failed', note: `已批准 MongoDB 写入失败：${(error as Error).message}` });
+        stateService.save();
+        throw error;
+      }
+    },
+  });
+
   router.get('/branches/:id/resources/:resourceId/data/tables', async (req, res) => {
     const ctx = await resolveSqlDataResourceForRequest(req, res);
     if (!ctx) return;
@@ -10053,32 +10111,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
-    const action = String(req.body?.action || '').trim();
-    let database = '';
-    let collection = '';
-    let script = '';
+    let action = '', database = '', collection = '', script = '';
     try {
-      database = mongoDatabaseFromRequest(req.body?.database, mongoDatabaseForBranch(ctx.service, ctx.branch));
-      collection = mongoCollectionFromRequest(req.body?.collection);
-      if (action === 'insertOne') {
-        const document = mongoJsonObject(req.body?.document, 'document');
-        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).insertOne(${mongoSafeJson(document)}))`;
-      } else if (action === 'updateMany') {
-        const filter = mongoJsonObject(req.body?.filter, 'filter');
-        const update = mongoJsonObject(req.body?.update, 'update');
-        if (Object.keys(update).length === 0) throw new Error('update 不能为空');
-        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).updateMany(${mongoSafeJson(filter)}, ${mongoSafeJson(update)}))`;
-      } else if (action === 'deleteMany') {
-        const filter = mongoJsonObject(req.body?.filter, 'filter');
-        if (Object.keys(filter).length === 0) throw new Error('deleteMany 必须提供非空 filter');
-        script = `JSON.stringify(db.getCollection(${mongoSafeJson(collection)}).deleteMany(${mongoSafeJson(filter)}))`;
-      } else if (action === 'createCollection') {
-        script = `JSON.stringify(db.createCollection(${mongoSafeJson(collection)}))`;
-      } else if (action === 'dropCollection') {
-        script = `JSON.stringify({ dropped: db.getCollection(${mongoSafeJson(collection)}).drop() })`;
-      } else {
-        throw new Error('action 只允许 insertOne / updateMany / deleteMany / createCollection / dropCollection');
-      }
+      ({ action, database, collection, script } = buildMongoStructuredWrite(req.body || {}, mongoDatabaseForBranch(ctx.service, ctx.branch)));
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
       return;
@@ -21970,6 +22005,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   ): InfraService {
     const keyProjectId = (req as unknown as { cdsProjectKey?: { projectId?: string } }).cdsProjectKey?.projectId;
     const projectId = String(explicitProjectId || keyProjectId || '').trim();
+    const mismatch = assertProjectAccess(req as any, projectId || 'default');
+    if (mismatch) throw Object.assign(new Error('迁移数据面不能跨越项目授权范围。'), { status: mismatch.status });
     const serviceId = String(explicitServiceId || '').trim();
     const candidates = stateService.getInfraServices()
       .filter((service) => (
@@ -22077,6 +22114,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     }
     try { return JSON.parse(text) as T; } catch { return text as unknown as T; }
   }
+
+  // 全局迁移任务/远端连接含跨项目能力，必须由所有者操作；peer 数据面沿用明确项目资源绑定。
+  router.use('/data-migrations', (req, res, next) => {
+    if (req.path === '/local-restore' && (req as any).cdsProjectKey) {
+      res.status(403).json({ error: 'migration_restore_approval_required', message: '项目 Agent 不能直接覆盖恢复数据库，请由系统所有者审查并执行迁移。' });
+      return;
+    }
+    if (['/local-dump', '/local-restore'].includes(req.path) || isHumanSystemOwner(req)) { next(); return; }
+    res.status(403).json({ error: 'migration_owner_required', message: '迁移管理仅系统所有者可用；Agent 请先通过数据库具体操作审批入口。' });
+  });
 
   // GET /api/data-migrations — list all migration tasks
   router.get('/data-migrations', (_req, res) => {
@@ -22577,7 +22624,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       { username: eff.username, password: eff.password, authDatabase: eff.authDatabase },
       {
         drop: true,
-        sourceDb: source.type !== 'cds' ? source.database : undefined,
+        sourceDb: source.database,
         targetDb: eff.database,
         collections: cols,
       },
@@ -22978,7 +23025,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       mongoInfra = resolvePeerLocalMongo(req, body.projectId, body.serviceId);
       eff = peerLocalMongoConnection(mongoInfra, body.database);
     } catch (e) {
-      res.status(409).json({ error: (e as Error).message });
+      res.status((e as { status?: number }).status || 409).json({ error: (e as Error).message });
       return;
     }
     let maintenanceJob: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
@@ -23060,7 +23107,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       mongoInfra = resolvePeerLocalMongo(req, explicitProjectId, explicitServiceId);
       eff = peerLocalMongoConnection(mongoInfra, targetDb);
     } catch (e) {
-      res.status(409).json({ error: (e as Error).message });
+      res.status((e as { status?: number }).status || 409).json({ error: (e as Error).message });
       return;
     }
     // HTTP 日志中间件已经挂了 data listener；下一行开始会跨 await。

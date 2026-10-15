@@ -47,7 +47,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.7"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.8"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -1010,12 +1010,12 @@ def cmd_db(args: argparse.Namespace) -> None:
     if args.db_action == "status":
         payload = _call("GET", f"/api/cds-system/operator/requests/{urllib.parse.quote(args.request_id, safe='')}")
         request = payload.get("request", {})
-        if request.get("opId") != "database.sql":
+        if request.get("opId") not in ("database.sql", "database.mongo"):
             die("该请求不是数据库操作", code=2)
         status = request.get("status")
         if status in ("failed", "rejected", "expired"):
             die(request.get("error") or f"数据库请求 {status}", extra={"request": request})
-        ok(request, note="SQL 已执行" if status == "completed" else "SQL 尚未执行完成", code=0 if status == "completed" else 3)
+        ok(request, note="数据库操作已执行" if status == "completed" else "数据库操作尚未执行完成", code=0 if status == "completed" else 3)
     project = args.project
     branch_id = urllib.parse.quote(args.branch, safe="")
     branch = _call("GET", f"/api/branches/{branch_id}").get("branch", {})
@@ -1027,6 +1027,32 @@ def cmd_db(args: argparse.Namespace) -> None:
     base += f"/{urllib.parse.quote(args.resource, safe='')}/data"
     if args.db_action == "tables":
         ok(_call("GET", base + "/tables", timeout=30))
+    if args.db_action == "mongo-collections":
+        ok(_call("GET", base + "/mongo/collections?" + urllib.parse.urlencode({"database": args.database}), timeout=30))
+    if args.db_action in ("mongo-query", "mongo-write"):
+        try:
+            content = pathlib.Path(args.input_file).read_text(encoding="utf-8")
+            if not content.strip() or len(content) > 100_000:
+                die("MongoDB 输入不能为空，且不能超过 100KB", code=2)
+            if args.db_action == "mongo-query":
+                ok(_call("POST", base + "/mongo/command", body={"database": args.database, "command": content}, timeout=45))
+            write = json.loads(content)
+            if not isinstance(write, dict):
+                die("MongoDB 写入文件必须为 JSON object", code=2)
+            if write.get("database") not in (None, args.database):
+                die("JSON 中的 database 与 --database 不一致，未提交", code=2)
+            write["database"] = args.database
+            if write.get("action") not in ("insertOne", "updateMany", "deleteMany", "createCollection", "dropCollection"):
+                die("仅支持 insertOne/updateMany/deleteMany/createCollection/dropCollection；不执行任意 mongosh 脚本", code=2)
+        except (OSError, UnicodeError, ValueError) as error:
+            die(f"无法读取 MongoDB UTF-8 文件：{error}", code=2)
+        payload = _call("POST", "/api/cds-system/operator/request", body={"opId": "database.mongo", "args": {
+            "projectId": project, "branchId": args.branch, "resourceId": args.resource, "write": write,
+        }})
+        request = payload.get("request", {})
+        if request.get("status") in ("rejected", "failed", "expired"):
+            die(request.get("error") or "MongoDB 请求未获批准", extra={"request": request})
+        ok(request, note="MongoDB 写入已提交审批，尚未执行；批准后用 db status 查询结果", code=3)
     try:
         sql = pathlib.Path(args.sql_file).read_text(encoding="utf-8") if args.sql_file else args.sql
     except (OSError, UnicodeError) as error:
@@ -9350,6 +9376,15 @@ def _build_parser() -> argparse.ArgumentParser:
             sql_input = command.add_mutually_exclusive_group(required=True)
             sql_input.add_argument("--sql-file", help="UTF-8 SQL 文件（推荐）")
             sql_input.add_argument("--sql", help="不含凭据的 SQL")
+        command.set_defaults(func=cmd_db)
+    for action in ("mongo-collections", "mongo-query", "mongo-write"):
+        command = db.add_parser(action)
+        command.add_argument("branch", help="CDS canonical branch id")
+        command.add_argument("resource", help="MongoDB 资源 ID")
+        command.add_argument("--project", required=True)
+        command.add_argument("--database", required=True, help="明确的目标 database")
+        if action != "mongo-collections":
+            command.add_argument("--input-file", required=True, help="UTF-8 文件：只读命令或结构化写入 JSON")
         command.set_defaults(func=cmd_db)
     db_status = db.add_parser("status", help="读取本次 SQL 审批与执行结果")
     db_status.add_argument("request_id")

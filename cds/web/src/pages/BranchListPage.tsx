@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
+  Database,
   AlertTriangle,
   ArrowLeft,
   Bot,
@@ -46,6 +47,7 @@ import {
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace, ConsoleAuthContext, useCanManageConsole, canUseConsolePreview, MEMBER_PREVIEW_MODE_NOTICE } from '@/components/layout/AppShell';
 import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
+import { DatabaseDirectoryDialog } from '@/components/branch/DatabaseDirectoryDialog';
 import { useNowTick } from '@/hooks/useNowTick';
 import { buildProjectGroups } from '@/lib/replicaGroups';
 import {
@@ -1928,6 +1930,7 @@ export function BranchListPage(): JSX.Element {
     detailTab: resourceDetailTabFromQuery(resourceOpenQueryParams.get('resourceTab')),
   });
   const resourceOpenQueryConsumedRef = useRef(false);
+  const [databaseDirectoryOpen, setDatabaseDirectoryOpen] = useState(() => new URLSearchParams(window.location.search).get('panel') === 'databases');
 
   const setAction = useCallback((key: string, next: BranchAction | null) => {
     actionRef.current = { ...actionRef.current };
@@ -2663,6 +2666,9 @@ export function BranchListPage(): JSX.Element {
     }
     return map;
   }, [state]);
+  const databaseDirectoryEntries = useMemo(() => branches.flatMap((branch) =>
+    (branchResourcesById.get(branch.id) || []).filter((resource) => resource.kind === 'database')
+      .map((resource) => ({ branchId: branch.id, branchName: branch.branch, resource }))), [branches, branchResourcesById]);
   const aiActivityByBranch = useMemo(() => {
     const map = new Map<string, ActivityEvent[]>();
     const aiEvents = activityEvents.filter((event) => event.source === 'ai');
@@ -4077,6 +4083,9 @@ export function BranchListPage(): JSX.Element {
           right={
             <>
               <PaletteHint />
+              <Button variant="outline" size="sm" onClick={() => setDatabaseDirectoryOpen(true)} title="数据库操作面板、连接通行证和备份">
+                <Database />数据库
+              </Button>
               <Button asChild variant="ghost" size="sm" title="项目列表">
                 <Link to="/project-list">
                   <ArrowLeft />
@@ -4511,6 +4520,11 @@ export function BranchListPage(): JSX.Element {
           onClose={() => setReleaseBranchId(null)}
           onToast={setToast}
         />
+        <DatabaseDirectoryDialog open={databaseDirectoryOpen} onOpenChange={setDatabaseDirectoryOpen} entries={databaseDirectoryEntries} loading={state.status !== 'ok'} onOpen={(entry, detailTab) => {
+          setDatabaseDirectoryOpen(false);
+          setDetailDrawerResourceFocus({ resourceId: entry.resource.id, detailTab, directWorkbench: detailTab === 'data' });
+          setDetailDrawerBranchId(entry.branchId);
+        }} />
         <BranchDetailDrawer
           open={!!detailDrawerBranchId}
           branchId={detailDrawerBranchId}

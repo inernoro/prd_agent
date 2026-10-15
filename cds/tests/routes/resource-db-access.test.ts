@@ -257,7 +257,7 @@ describe('resource database access', () => {
     const connection = {
       type: 'local', host: '', port: 0, projectId: 'project-b', serviceId: 'mongodb', database: 'app',
     };
-    const first = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection });
+    const first = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection }, { 'x-test-cookie-auth': '1' });
     expect(first.status).toBe(200);
     expect(harness.shell.commands.at(-1)).toContain('--port');
     expect(harness.shell.commands.at(-1)).toContain('27018');
@@ -266,7 +266,7 @@ describe('resource database access', () => {
 
     const ambiguous = await request(server!, 'POST', '/api/data-migrations/list-databases', {
       connection: { type: 'local', host: '', port: 0, database: 'app' },
-    });
+    }, { 'x-test-cookie-auth': '1' });
     expect(ambiguous.body.databases).toEqual([]);
     expect(ambiguous.body.error).toMatch(/不唯一/);
 
@@ -276,7 +276,7 @@ describe('resource database access', () => {
         MONGO_INITDB_ROOT_PASSWORD: 'project-b-new-canary',
       },
     }, 'project-b');
-    const second = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection });
+    const second = await request(server!, 'POST', '/api/data-migrations/list-databases', { connection }, { 'x-test-cookie-auth': '1' });
     expect(second.status).toBe(200);
     expect(harness.shell.commands.at(-1)).not.toContain('project-b-new-canary');
     expect(harness.shell.stdins.at(-1)).toBe('project-b-new-canary\n');
@@ -848,6 +848,46 @@ describe('resource database access', () => {
     expect(done!.body.request.status).toBe('completed');
     expect(done!.body.request.result.details.output).toContain('1 row affected');
     expect(harness.sqlExecutor).toHaveBeenCalledTimes(1);
+  });
+
+  it('项目 Agent 不能读取或创建全局迁移，所有者可读取', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    expect((await request(server!, 'GET', '/api/data-migrations', undefined, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', '/api/data-migrations', {}, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'GET', '/api/data-migrations/another/log', undefined, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', '/api/data-migrations/local-dump', { projectId: 'project-b', database: 'qa' }, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', '/api/data-migrations/local-restore?projectId=project-b', {}, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect(harness.shell.commands).toHaveLength(0);
+    expect((await request(server!, 'GET', '/api/data-migrations', undefined, { 'x-test-cookie-auth': '1' })).status).toBe(200);
+  });
+
+  it('MongoDB Agent 具体写入只在本次批准后执行，错误项目和自批不能越权', async () => {
+    const harness = makeHarness(); tmpDir = harness.tmpDir;
+    harness.stateService.addInfraService({ id: 'mongo-approval', projectId: 'prd-agent', name: 'Mongo approval', dockerImage: 'mongo:7', containerPort: 27017, hostPort: 27017, containerName: 'qa-mongo', status: 'running', dbName: 'qa', env: { MONGO_INITDB_ROOT_USERNAME: 'admin', MONGO_INITDB_ROOT_PASSWORD: 'pw', MONGO_INITDB_DATABASE: 'qa' }, volumes: [] });
+    harness.shell.addResponsePattern(/insertOne/, () => ({ stdout: '{"acknowledged":true,"insertedId":"qa1"}\n', stderr: '', exitCode: 0 }));
+    harness.app.use('/api', createOperatorConsoleRouter({ stateService: harness.stateService, shell: harness.shell, repoRoot: harness.tmpDir }));
+    await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
+    const body = { opId: 'database.mongo', args: { projectId: 'prd-agent', branchId: 'main-branch', resourceId: 'infra:mongo-approval', write: { database: 'qa', collection: 'items', action: 'insertOne', document: { _id: 'qa1', text: 'db.dropDatabase()' } } } };
+    const endpoint = '/api/cds-system/operator/request';
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-project-key': 'other' })).status).toBe(403);
+    expect((await request(server!, 'POST', endpoint, body, { 'x-test-ai-session': '1' })).status).toBe(403);
+    const before = harness.shell.commands.filter((item) => item.includes('insertOne')).length;
+    const pending = await request(server!, 'POST', endpoint, body, { 'x-test-project-key': '1' });
+    expect(pending.status).toBe(202);
+    expect(harness.shell.commands.filter((item) => item.includes('insertOne'))).toHaveLength(before);
+    const id = pending.body.request.id;
+    expect((await request(server!, 'POST', `/api/cds-system/operator/requests/${id}/approve`, { scope: 'once' }, { 'x-test-project-key': '1' })).status).toBe(403);
+    expect((await request(server!, 'POST', `/api/cds-system/operator/requests/${id}/approve`, { scope: 'once' }, { 'x-test-cookie-auth': '1' })).status).toBe(200);
+    let done;
+    for (let i = 0; i < 50; i++) {
+      done = await request(server!, 'GET', `/api/cds-system/operator/requests/${id}`, undefined, { 'x-test-cookie-auth': '1' });
+      if (['completed', 'failed'].includes(done.body.request.status)) break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(done!.body.request.status).toBe('completed');
+    expect(done!.body.request.result.details.result.acknowledged).toBe(true);
+    expect(harness.shell.commands.filter((item) => item.includes('insertOne'))).toHaveLength(before + 1);
   });
 
   it('runs MySQL DDL and CRUD against the branch-selected database', async () => {
