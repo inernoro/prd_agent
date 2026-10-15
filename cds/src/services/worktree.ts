@@ -6,7 +6,7 @@ import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
 import { fetchWithLockRetry } from './git-fetch-retry.js';
-import { worktreePathActivity, WorktreePathActivity } from './worktree-path-activity.js';
+import { readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity, worktreePathActivity, WorktreePathActivity } from './worktree-path-activity.js';
 
 // 同一控制进程/规范repoRoot共用；元数据清理未知时复用现有活动围栏，不放行后继写入。
 const repositoryMutations = new Map<string, Promise<void>>();
@@ -338,11 +338,32 @@ export class WorktreeService {
     // 已存在但不是本仓库登记的 worktree 时禁止删除，避免恢复流程误伤外部目录。
     if (targetExists) {
       const listed = await this.shell.exec('git -c core.quotePath=false worktree list --porcelain', { cwd: repoRoot });
-      const registered = listed.exitCode === 0 && listed.stdout.split('\n')
+      const registered = new Set(listed.exitCode === 0 ? listed.stdout.split('\n')
         .filter(line => line.startsWith('worktree '))
         .map(line => path.resolve(line.slice('worktree '.length).trim()))
-        .includes(path.resolve(targetDir));
-      if (!registered) {
+        : []);
+      let removedLegacyAlias = false;
+      if (!registered.has(path.resolve(targetDir))) {
+        try {
+          // FU-04 只产生 default/<slug> -> ../<slug>；不跟随未知链接目标核实归属。
+          const alias = await readWorktreeDirectoryIdentity(targetDir, false);
+          const parent = path.dirname(path.resolve(targetDir)), base = path.dirname(parent), slug = path.basename(targetDir);
+          const realBase = await fs.promises.realpath(base), flat = path.join(base, slug);
+          if (alias?.entry.link && path.basename(parent) === LEGACY_PROJECT_ID
+            && alias.entryPath === path.join(realBase, LEGACY_PROJECT_ID, slug)
+            && path.resolve(parent, alias.entry.link) === flat && registered.has(path.join(realBase, slug))) {
+            const current = await readWorktreeDirectoryIdentity(targetDir, false);
+            if (current && sameWorktreeDirectoryIdentity(alias, current)) {
+              let missing = false;
+              try { fs.lstatSync(flat); }
+              catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') missing = true; else throw error; }
+              // 同一进程内不在缺失确认与 unlink 之间让出；只移除别名，不删除/遍历其目标。
+              if (missing) { fs.unlinkSync(targetDir); removedLegacyAlias = true; }
+            }
+          }
+        } catch { /* 无法证明精确归属或安全移除时，保留原对象并按陌生目录拒绝。 */ }
+      }
+      if (!registered.has(path.resolve(targetDir)) && !removedLegacyAlias) {
         throw new DeploymentSourcePreparationError(
           'deployment-worktree-unavailable',
           '部署工作树不可用，且该目录不属于当前仓库的受管工作树，已拒绝自动清理',
