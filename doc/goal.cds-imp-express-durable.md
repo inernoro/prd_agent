@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.95；日期：2026-10-15；状态：active。
+版本：v1.98；日期：2026-10-15；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -76,16 +76,16 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation-and-isolated-runtime-recovery；现有两机，用户明确允许mycds测试，保护稳定IMP。
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:b566adae1d3b3d64b6f2e326892735f193b813da+precise-create-intent本地diff,IMP:60ef22be7351d10c73bfd8d6b201be4b3b82f899；origin/main=N/A不据旧引用发布；origin/test=N/A不合主干；ahead/behind=CDS发布分支0/0于b566；environment=mycds新B02 CID2daf30b367a92dc4642346858e163150dd0aca2a22758eed73fc66f218c6b1d5；database=B02全新独立库待准备,不复用/reset旧库；tenant=N/A平台部署；role=主进程实现,末尾独立验收；route=B02 loopback32769尚未启动CDS,无公共预览；auth=新自有密钥,loopback测试authdisabled不作权限通过；external_ids=CI38682271262,oldA01run_dr_05cc8759b3ae74151a4bca39,oldA02run_dr_3ef068957664ea0beb2e0304,B02daemon_e888326c-f61c-4e8a-9735-a8ad84af1afc`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:d4b051e88ff0b7e9567098d39fe5a913e5786c89+SSE本地修复,IMP:eb3bf52ca4c2b97202849e97fb99f1e0c35bc05a；origin/main=N/A不据旧引用发布；origin/test=N/A不合主干；ahead/behind=CDS发布分支0/0于d4b051e8；environment=mycds新B02 CID2daf30b367a92dc4642346858e163150dd0aca2a22758eed73fc66f218c6b1d5；database=B02八套新四库b02261015a01至a08已准备,不复用/reset旧库；tenant=N/A平台部署；role=主进程实现,末尾独立验收；route=B02 loopback32769已运行d4,视觉隧道49901,无公共预览；auth=新自有密钥,loopback测试authdisabled不作权限通过；external_ids=CI38684050579,oldA01run_dr_05cc8759b3ae74151a4bca39,oldA02run_dr_3ef068957664ea0beb2e0304,B02daemon_e888326c-f61c-4e8a-9735-a8ad84af1afc`
 - 写入所有权：`owner=/root仅两自有工作树,授权修复分支与八IMP refs,mycds自有B01封存/B02；other_tabs=原mdimp/canonical/他人A01只读,两末尾只读并写仓库外证据；handoff_checkpoint=B01已stopped/PID0,state与卷保留,A02未知未改released`
 - 范围账本：`goal-core=原49条完整极速与控制面治理；required-prerequisite=已核CI镜像安全传输,完整13角色隔离依赖与独立四库；environment-recovery=B01封存和全新B02,不改共享生产数据库；successor-or-non-goal=业务流程重写,生产XXL作业恢复,他人目标关闭`
 - 已确认范围 / 非目标：不缩小13角色分母,不改变业务CL合同,不修改稳定IMP。
-- 当前实现事实：CDS b566已推送并由精确CI38682271262实际B01验证373后端/134前端文件。Docker29缺失对象/动态网络统计修复、SSE副本投影和空图首败保留已运行；A01旧候选4CID/1网络自动released,刷新首败稳定。A02旧12container intent/4created receipt依原合同保守blocked,不猜剩余未创建。原B01停止封存,新B02独立daemon e888326c-f61c-4e8a-9735-a8ad84af1afc、volume/network/mount/4CPU6GiB/PID1024/swap0实际预算已创建,preload images0/containers0；仅加载镜像归档,不复制旧journal/数据库/卷。
-- 本批实现检查点：移除runService前过早容器intent,仅真正create前callback持久后标attempted；独立network intent未知门禁继续阻止旧worker恢复。原premature intent反例1红→绿,去网络未知门禁1红→绿,47局部及HTTP合计323绿/core tsc0。首全量691文件10371绿/3个旧HTTP夹具未触发真实callback失败,夹具按actual协议补齐,最终同源全量进行中。
-- 证据纪元：`target_sha=CDS:b566adae1d3b3d64b6f2e326892735f193b813da+本地precise-intent修复；tested_sha=本地固定diff,实际B01仅b566历史；deployed_sha=B01:b566已停止,B02:N/A未启动,canonical:39b6d44764ec47ab916ad4134b2e574542059eac只读；environment=B02新daemon/新state,旧B01封存；observed_at=2026-10-15T04:53:14Z`
-- 当前阻塞或环境限制：八支尚无完整13运行通过,49正式零闭环pass。旧A02未知创建结果仍保留,封存不能算自动恢复通过；B02仅用于干净运行验收,不继承B01运行/资源pass。新B02基础设施/八套新四库待准备。公网/并发/48小时/一周门槛未执行；官方perf容器数仅正式服务投影不等于Daemon全部候选/infra,验收单独使用实际Daemon计数。canonical由别的任务更新,禁止旧本分支覆盖其修复。
-- 涌现决定：不新增机制台账；同一run容器与网络外部动作分别记真实意图,未知维持failclosed；原48小时/公网/并发门槛不降低。
-- 下一动作与完成条件：最终全量与tsc→授权分支push及精确CI→B02运行最新制品,官方接口准备独立依赖/四库/八支→末尾准入→完整八分支实际镜像/SHA/进程/健康/黄闪电及各类等待→原49正式逐项。八次顺序部署不替代八并发31任务100连接和长期证据。
+- 当前实现事实：CDS d4b051e8已推送，CI38684050579成功；B02精确373后端/134前端文件、Git/self/web一致。真正create前写容器intent，未知网络独立阻断恢复；旧B01停止封存，A01自动回收与A02未知仍按历史保留。B02仅复用已核镜像/工具，独立daemon/state/卷/网络，实际4CPU/6GiB/PID2048/swap0。官方接口已准备项目a48e1a9f7796、八个精确SHA工作树、13角色极速配置，96个镜像本地镜像仓库摘要已核；独立MySQL/Redis/Rabbit/空XXL及八套新四库已完成，helper60ef实际HTTP同步8/8并保持13极速。
+- 本批实现检查点：premature intent反例1红→绿；去网络未知门禁1红→绿；最终同源692文件10374测试通过、6文件19跳过、174.81秒，core tsc0。先前3个HTTP夹具协议失败原件保留，按真正callback协议修正后323 HTTP绿。数据库是测试fixture准备，不冒充P5-05正式初始化生命周期。
+- 证据纪元：`target_sha=CDS:d4b051e88ff0b7e9567098d39fe5a913e5786c89,IMP八目标见固定分母；tested_sha=CDS:d4b051e8对应固定源码；deployed_sha=B02:d4b051e88ff0b7e9567098d39fe5a913e5786c89,B01:b566已停止,canonical:39b6d44764ec47ab916ad4134b2e574542059eac末尾04:44只读快照；environment=B02新daemon/新state,旧B01封存；observed_at=2026-10-15T05:15:00Z`
+- 当前阻塞或环境限制：A01 retry已实际13角色预构建运行，但独立2/4 worker注册地址不可达、实时SSE灰灯/旧失败残留，整体未通过；其余七支尚未部署，49正式零闭环pass。最终准入已完成；A01 first实际250.116秒failed，1024线程上限被触发，pids.events.max165，source77采样全0/0；新PID2048预算epoch待重跑。B02准备期memory.events.max已增长但无OOM/swap，部署前冻结计数并实测，不声称从未触顶。公网/八并发31任务100连接/48小时/一周门槛未执行；官方perf容器数不等于Daemon全部候选/infra。canonical由别的任务更新，禁止本分支覆盖其较新修复。
+- 涌现决定：不新增机制台账；真实外部动作分别记录意图,未知维持failclosed；原公网/并发/长期门槛不降低。
+- 下一动作与完成条件：SSE修复精确CI与B02更新、hosthelper optin容器DNS同步后A01完整13重跑与原生镜像/SHA/进程/健康/黄闪电/各类等待取证→其余七支→原49逐项。八次顺序部署不替代八并发31任务100连接和长期证据。
 - 终止/接替结论：active
 
 ## v1.25 实际路由与长日志反例恢复审计
@@ -695,3 +695,17 @@ v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc11
 2026-10-15 B01封存/B02重建：旧B01 CID7d150cd32d6ad058b2ea087148b23f8b0d9eb49b3922f286ee2401f0d5c457a5 已停止PID0, state hash9d97f600ddf9e9cdda5b1ecc20c177153058215cc4d06d5b3e12c0087da4e55a, volume/journal保留。独立旧epoch回执b101dd8557ae59dae7e40bc75b2db28ae28bac9b2fe51d6686c3ce6254903801。全镜像归档9,484,201,472 bytes/hash6280969194ca78bddc0e30cd600bceea481308a42a61ecf7362abaef6c786e3f仅含镜像,工具rootfs不含/owned与daemon卷。B02新身份与预算见Goal State,不将封存或换环境当作A02 unknown恢复通过。
 
 2026-10-15 precise-create-intent最终固定回归：692文件10374测试通过、6文件19测试跳过、174.81秒，core tsc0。HTTP夹具按实际onCandidateCreateIntent协议补齐，原3失败日志保留，不放宽生产判据；原网络unknown门禁移除真红已还原复绿。授权分支继续提交推送与精确CI，B02仍处镜像加载/环境准备，不作应用或正式49项通过。
+
+2026-10-15 B02实际部署首轮：末尾发现32个worker callback模板缺值，未把13express配置当运行就绪。官方带project+targetSHA前置的32次override明确空XXL_JOB_EXECUTOR_ADDRESS，使用原生autoIP，仍启用XXL/Admin/token；8支effective envError0，末尾核角色/runID/DB/Rabbit/Redis均B02独立，实际注册IP和Admin带token心跳留待启动后验证。A01 full13 run dr_33d6273fd8123a515d99fc5d 已于05:22:06.339Z启动，精确CDS d4及应用a32e；当前阶段是启动/就绪，实际source gate0/0，不提前判黄闪电通过。
+
+独立源码尾任务固定d4的6项create-intent组件判据6/6；旧b566 premature反例及删networkunknown门禁各按原期待真红。真实State JSON/Engine、受控Container/network协议，非Daemon/HTTP/运行验收，T4写失败/取消与物理空网络尚未覆盖。receipt-v2.json SHA256 9854b4af9318287b3ac5ac33dc29bc72945d66298c2755a29687889ac5f66919，经主回读一致。49正式pass不变。
+
+2026-10-15 B02 A01首轮资源失败：run dr_33d6273fd8123a515d99fc5d，250.116秒failed/error；12真实createIntents与12created回执，candidate后续released，原失败保留待末尾独立回读。1024 PID预算被真实触发，pids.events.max165（memory OOM0/swap0/准备期memory.max50158未增），导致最后vendor前端之前network inspect无法spawn，不把其归为镜像未极速。77次源码gate均active0/queued0。05:26:59仅自有B02 docker update PID2048，CPU4/6GiB/swap0不变；此前失败/图像独立保留，新epoch重跑，不继承旧预算资源pass。host当时MemAvailable7.18GB/load1.70，未改他人容器/稳定IMP。fixture库不重置，重跑包含应用启动后已有schema影响，不能冒充全冷库。
+
+2026-10-15 A01 retry-pid2048：dr_a3c44403a4c13639a2fd1846，244.627秒running，75源码gate采样全0/0；制品2.768s/容量0.138s/pull0.064s/启动wall29.862s/就绪wall210.335s/switch0.591s。独立13CID/CI immutable config/revision/版本env全部匹配A32，9Java+4Nginx、Maven/Node构建0、9HTTP探针200；原PID/内存计数无增量。仍不通过：双网卡使generation/common自动注册172.19候选网、Admin项目网不可达，另两项172.18可达；同容器项目接口反证4/4 tokenbeat200。Admin→四短CID的DNS均唯一解析172.18并tokenbeat4/4；这仅证明方案可行，不冒充Spring修复已运行。
+
+实时UI缺口同源复现：GET actualall/current13healthy，SSE缺deployRuntime及清空errorMessage，客户端实际reducer保持灰火箭/旧失败；整页reload才黄Zap。末尾真实UI与独立Router→原reducer/badge双红均保留。主新增updated/status两HTTP反例2红、去error清空2红；修复流投影复用GET SSOT并显式空错误，快照不改列表权威。helper opt-in container-dns使用Spring应用级HOSTNAME占位，保持显式非空回调、Admin/token/XXL及极速模式，HTTP反例1红→16绿，实际修订/回归/新部署待完成。A01按官方POSTstop于05:39保存测试运行与库供后续，不操作稳定IMP。
+
+2026-10-15 修复固定检查点：IMP eb3bf52ca4c2b97202849e97fb99f1e0c35bc05a仅本地提交，container-dns显式opt-in与已有非空回调保留，五相关文件61测试通过；精确Git scripts归档到B02 /owned/host-tools/eb3bf52，实际配置同步进行中。CDS SSE runtime同GET摘要、错误空串恢复后3文件36绿/core tsc0，去错误清空独立2红已还原；最终全量正在跑。旧d4代码原17控制绿/2红与首个路径误用导致的旧测试执行严格区分，不伪称旧测试是真红。
+
+补取原八推送CI GitHub provider事实（首次网络EOF失败，后逐项有界重读成功，原文件保留）：8/8 success且SHA与固定分母逐字匹配，每支9 jobs。workflow created→updated观察242–285秒，job created→started最大8秒（含依赖/调度，不冒称纯runner排队），Java统一reactor job执行174–230秒。原Oct11推送历史，不伪称Oct15新push；CI生产和B02暖本地镜像拉取分开，不冒充公网冷拉取/当前Master已通过。

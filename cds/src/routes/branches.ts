@@ -4981,6 +4981,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }));
     const branchForStream = (branch: BranchEntry): BranchEntry => branchForHumanView(req, {
       ...branch,
+      // Incremental list merges must receive the same actual-runtime truth as
+      // GET /branches. Otherwise a successful deployment retains its old gray
+      // badge, and omitted undefined errors retain a previous failure.
+      deployRuntime: summarizeBranchDeployRuntime(branch, stateService.getEffectiveProfilesForBranch(branch)),
+      errorMessage: branch.errorMessage ?? '',
       // Build output belongs to run/log channels, including incremental patches.
       services: servicesForStream(branch.services || {}),
     });

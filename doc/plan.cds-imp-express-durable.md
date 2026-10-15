@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.95；日期：2026-10-15；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.98；日期：2026-10-15；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -8,9 +8,9 @@
 
 ## 当前检查点（2026-10-15）
 
-B01 b566精确运行核验已完成；A01旧4候选/1网络自动回收,失败刷新稳定。A02原12创建意图仅4容器身份回执,依原未知结果合同仍阻断,未手改journal。旧B01已停止封存,卷/数据库/失败证据保留,不计released。使用同一mycds全新B02独立daemon/state/网络/卷/CID2daf30b3...；实际4CPU/6GiB/PID1024/swap0,新state未复制旧部署。新环境仅复用已核CI镜像与工具,新独立数据库待准备,稳定IMP及canonical未改。
+B01已停止封存，A01旧候选自动回收、A02原12意图仅4身份回执保持未知，未手改journal。B02实际4CPU/6GiB/PID1024/swap0，独立daemon/state/网络/卷，稳定IMP与canonical本任务未写。CDS d4b051e8由成功CI38684050579精确部署，373/134文件与Git/self/web一致。
 
-本批修复过早的container create intent：从外层runService前移至真正docker create前的已有callback,未知网络仍独立阻断旧worker恢复。1个premature反例红→绿,去网络未知门禁1红→绿,47局部+HTTP合计323绿/core tsc0；最终全量等待。本次前一批b566完整692文件10372测试绿与本批当前局部严格分开。八支13角色完整运行尚未通过,独立49/49证据映射但正式闭环pass0。下一步精确CI更新B02、官方准备新依赖/四库、末尾新准入后实际八支部署。原B01失败与未知守卫不因换环境抹除。
+本批真实create意图/未知网络守卫已完成红绿，最终692文件10374测试绿、19跳过/core tsc0。官方接口准备8精确目标分支与13角色，96镜像摘要已核；四项独立依赖、8套全新四库、helper60ef实际HTTP同步8/8完成，13极速模式保留。末尾正做最终准入，下一步A01完整13部署。八支完整运行尚未通过；49条已映射、正式闭环pass0，不能因准备完成或换环境抹除旧失败。
 
 ## 冻结门槛
 
@@ -792,3 +792,17 @@ v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc11
 最终固定源码串行回归：692文件10372测试通过，6文件19测试跳过，339.75秒；core tsc0，git diff --check与Goal State审计通过。已有1个obsolete snapshot未修改。进入已授权修复分支提交/推送，等待精确CI并仅更新B01；此结果是本地回归，不继承为八分支运行或49条正式通过。
 
 2026-10-15 precise-create-intent最终固定回归：692文件10374测试通过、6文件19测试跳过、174.81秒，core tsc0。HTTP夹具按实际onCandidateCreateIntent协议补齐，原3失败日志保留，不放宽生产判据；原网络unknown门禁移除真红已还原复绿。授权分支继续提交推送与精确CI，B02仍处镜像加载/环境准备，不作应用或正式49项通过。
+
+2026-10-15 B02实际部署首轮：末尾发现32个worker callback模板缺值，未把13express配置当运行就绪。官方带project+targetSHA前置的32次override明确空XXL_JOB_EXECUTOR_ADDRESS，使用原生autoIP，仍启用XXL/Admin/token；8支effective envError0，末尾核角色/runID/DB/Rabbit/Redis均B02独立，实际注册IP和Admin带token心跳留待启动后验证。A01 full13 run dr_33d6273fd8123a515d99fc5d 已于05:22:06.339Z启动，精确CDS d4及应用a32e；当前阶段是启动/就绪，实际source gate0/0，不提前判黄闪电通过。
+
+独立源码尾任务固定d4的6项create-intent组件判据6/6；旧b566 premature反例及删networkunknown门禁各按原期待真红。真实State JSON/Engine、受控Container/network协议，非Daemon/HTTP/运行验收，T4写失败/取消与物理空网络尚未覆盖。receipt-v2.json SHA256 9854b4af9318287b3ac5ac33dc29bc72945d66298c2755a29687889ac5f66919，经主回读一致。49正式pass不变。
+
+2026-10-15 B02 A01首轮资源失败：run dr_33d6273fd8123a515d99fc5d，250.116秒failed/error；12真实createIntents与12created回执，candidate后续released，原失败保留待末尾独立回读。1024 PID预算被真实触发，pids.events.max165（memory OOM0/swap0/准备期memory.max50158未增），导致最后vendor前端之前network inspect无法spawn，不把其归为镜像未极速。77次源码gate均active0/queued0。05:26:59仅自有B02 docker update PID2048，CPU4/6GiB/swap0不变；此前失败/图像独立保留，新epoch重跑，不继承旧预算资源pass。host当时MemAvailable7.18GB/load1.70，未改他人容器/稳定IMP。fixture库不重置，重跑包含应用启动后已有schema影响，不能冒充全冷库。
+
+2026-10-15 A01 retry-pid2048：dr_a3c44403a4c13639a2fd1846，244.627秒running，75源码gate采样全0/0；制品2.768s/容量0.138s/pull0.064s/启动wall29.862s/就绪wall210.335s/switch0.591s。独立13CID/CI immutable config/revision/版本env全部匹配A32，9Java+4Nginx、Maven/Node构建0、9HTTP探针200；原PID/内存计数无增量。仍不通过：双网卡使generation/common自动注册172.19候选网、Admin项目网不可达，另两项172.18可达；同容器项目接口反证4/4 tokenbeat200。Admin→四短CID的DNS均唯一解析172.18并tokenbeat4/4；这仅证明方案可行，不冒充Spring修复已运行。
+
+实时UI缺口同源复现：GET actualall/current13healthy，SSE缺deployRuntime及清空errorMessage，客户端实际reducer保持灰火箭/旧失败；整页reload才黄Zap。末尾真实UI与独立Router→原reducer/badge双红均保留。主新增updated/status两HTTP反例2红、去error清空2红；修复流投影复用GET SSOT并显式空错误，快照不改列表权威。helper opt-in container-dns使用Spring应用级HOSTNAME占位，保持显式非空回调、Admin/token/XXL及极速模式，HTTP反例1红→16绿，实际修订/回归/新部署待完成。A01按官方POSTstop于05:39保存测试运行与库供后续，不操作稳定IMP。
+
+2026-10-15 修复固定检查点：IMP eb3bf52ca4c2b97202849e97fb99f1e0c35bc05a仅本地提交，container-dns显式opt-in与已有非空回调保留，五相关文件61测试通过；精确Git scripts归档到B02 /owned/host-tools/eb3bf52，实际配置同步进行中。CDS SSE runtime同GET摘要、错误空串恢复后3文件36绿/core tsc0，去错误清空独立2红已还原；最终全量正在跑。旧d4代码原17控制绿/2红与首个路径误用导致的旧测试执行严格区分，不伪称旧测试是真红。
+
+补取原八推送CI GitHub provider事实（首次网络EOF失败，后逐项有界重读成功，原文件保留）：8/8 success且SHA与固定分母逐字匹配，每支9 jobs。workflow created→updated观察242–285秒，job created→started最大8秒（含依赖/调度，不冒称纯runner排队），Java统一reactor job执行174–230秒。原Oct11推送历史，不伪称Oct15新push；CI生产和B02暖本地镜像拉取分开，不冒充公网冷拉取/当前Master已通过。

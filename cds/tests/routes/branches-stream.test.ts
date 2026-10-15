@@ -25,6 +25,8 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { branchEvents, nowIso } from '../../src/services/branch-events.js';
+import { reduceBranchListState } from '../../web/src/lib/branch-list-state.js';
+import { branchRuntimeBadge } from '../../web/src/lib/deploy-runtime-badge.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -200,6 +202,38 @@ describe('GET /api/branches/stream', () => {
       return true;
     });
     expect(branch.services.api.errorMessage).toBe('previous start failed');
+  });
+
+  it.each(['branch.updated', 'branch.status'] as const)('updates actual express runtime and clears the prior failure through %s without reloading', async type => {
+    const branch = stateService.getBranch('existing')!;
+    branch.status = 'error'; branch.errorMessage = 'original failed deployment';
+    const target = 'a'.repeat(40);
+    branch.githubCommitSha = target;
+    for (const id of ['api', 'worker']) stateService.addBuildProfile({ id, projectId: 'default', name: id,
+      dockerImage: 'owned/prebuilt:sha-' + target, command: '', workDir: '.', containerPort: 8080,
+      activeDeployMode: 'express', deployModes: { express: { label: 'Express', prebuilt: true, dockerImage: 'owned/prebuilt:sha-' + target } } });
+    let client: any = { branches: [{ ...branch, deployRuntime: { kind: 'source', activeProfiles: 2,
+      prebuilt: true, actualPrebuiltCoverage: 'unknown' } }], lastKnownGoodBranches: [] };
+    await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
+      if (ev.event === 'snapshot') {
+        branch.status = 'running'; branch.errorMessage = undefined;
+        branch.services = Object.fromEntries(['api', 'worker'].map((id, i) => [id, { profileId: id,
+          containerName: 'owned-' + id, hostPort: 10001 + i, status: 'running', deployedMode: 'express',
+          deployedImage: 'sha256:' + 'b'.repeat(64), deployedPrebuilt: true, deployedCommitSha: target }]));
+        if (type === 'branch.updated') branchEvents.emitEvent({ type, payload: { branchId: branch.id, projectId: 'default', patch: {}, ts: nowIso() } });
+        else branchEvents.emitEvent({ type, payload: { branchId: branch.id, projectId: 'default', status: 'running', ts: nowIso() } });
+        return;
+      }
+      expect(ev.event).toBe(type);
+      client = reduceBranchListState(client, { type: 'sseBranchUpsert', branch: ev.data.branch, projectId: 'default' }).state;
+      const visible = client.branches[0];
+      expect(visible.deployRuntime.actualPrebuiltCoverage).toBe('all');
+      expect(visible.deployRuntime.actualVersionStatus).toBe('current');
+      expect(branchRuntimeBadge(visible)?.lightning).toBe('yellow');
+      expect(visible.errorMessage).toBe('');
+      expect(branch.errorMessage).toBeUndefined();
+      return true;
+    });
   });
 
   it('emits an initial snapshot event containing all branches', async () => {
