@@ -9,6 +9,7 @@ import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
+import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi } from '../utils/stableSmokeDefaultJourney.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -7102,10 +7103,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     // 生产生图 HTTP 契约允许最长 600 秒。测试总时限额外保留页面验证、审计查询与清理余量，
     // 避免上游仍在合法执行时先由 Playwright 误杀，再把取消/删除冲突误报成模型故障。
     test.setTimeout(720_000);
-    const token = await loginAndReadToken(page, request, '/visual-agent');
-    const { workspace } = await createVisualWorkspace(page, token, 'single-image');
-    const generationPrompt = '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字';
-    const squareTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-target`;
+    const token = await loginAndReadToken(page, request, '/');
+    await enterVisualFromHome(page);
+    let workspace = { id: '' };
+    const generationPrompt = '白桃';
+    let squareTargetKey = '';
     const wideTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-wide-boundary-target`;
     let runId = '';
     let boundaryRunId = '';
@@ -7116,28 +7118,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
       const pool = pools.find((item) => item.isDefault);
       expect(pool, 'MAP 未配置业务默认，禁止用第一个可用模型替代').toBeTruthy();
+      expect(pools.filter(item=>item.isDefault), '业务默认只能有一个').toHaveLength(1);
       expect(pool!.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')), '默认型号不可用').toBe(true);
-
+      await createDefaultWorkspaceThroughUi(page, { runId: requiredEnv('STABLE_SMOKE_RUN_ID'), onCreated: created => { workspace=created; } });
+      await dismissBlockingTutorial(page);
       const generationStartedAt = Date.now();
-      const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-run` },
-        data: {
-          prompt: generationPrompt,
-          userMessageContent: '生成一枚纯白背景上的蓝色陶瓷杯',
-          targetKey: squareTargetKey,
-          platformId: 'logical-model',
-          modelId: pool!.code,
-          size: '1024x1024',
-          responseFormat: 'url',
-          expectedImageRefCount: 0,
-          x: 0,
-          y: 0,
-          w: 1001,
-          h: 1001,
-        },
+      const created = await submitDefaultPeachThroughUi(page, {
+        workspaceId: workspace.id, pool: pool!, onCreated: createdRunId => { runId=createdRunId; },
       });
-      const created = await readEnvelope<{ runId: string }>(create);
       runId = created.runId;
+      squareTargetKey = created.targetKey;
+      await testInfo.attach('default-white-peach-actual-request',{body:JSON.stringify({runId,selectedLabel:created.selectedLabel,...created.request,submittedAt:new Date(generationStartedAt).toISOString()}),contentType:'application/json'});
 
       const boundaryCreate = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-wide-boundary-run` },
@@ -7179,12 +7170,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         message: '刷新发生在活跃任务期间，画板必须至少恢复一个真实进度容器',
         timeout: 5_000,
       }).toBeGreaterThanOrEqual(1);
-      const queue = page.getByLabel('生成队列');
+      // 并发与进度合同由本轮两个任务及真实画框证明，不要求当前产品不存在的队列控件。
+      const queue = page.locator('[data-tour-id="visual-editor-canvas"]');
       await expect(queue).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-06',
         target: queue,
-        caption: '两个真实任务已经提交，队列明确显示运行与排队数量。',
+        caption: '本轮白桃与横图两个真实任务均恢复在画布，独立任务身份和运行中进度可回读；不冒称存在队列控件。',
       });
       const progress = progressItems.first();
       await expect(progress, '真实生图开始后页面必须恢复生成中占位').toBeVisible({ timeout: 15_000 });
@@ -7258,7 +7250,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-retry-run` },
         data: {
           prompt: generationPrompt,
-          userMessageContent: '生成一枚纯白背景上的蓝色陶瓷杯',
+          userMessageContent: '白桃',
           targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-single-retry-target`,
           platformId: 'logical-model',
           modelId: pool!.code,
@@ -7412,7 +7404,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ));
       expect(anchorDownloads.length, '下载必须通过带 download 属性的同源链接触发').toBeGreaterThan(0);
       const savedName = anchorDownloads.at(-1)!.download;
-      expect(savedName, '存盘文件名必须带提示词主体').toContain('蓝色陶瓷杯');
+      expect(savedName, '存盘文件名必须带提示词主体').toContain('白桃');
       expect(savedName.toLowerCase().endsWith(expectedExtension), `存盘扩展名必须与实际 MIME 一致：${savedName} / ${downloadedMime}`).toBe(true);
       if (download.suggestedFilename() !== 'download') {
         expect(download.suggestedFilename()).toBe(savedName);
@@ -7439,6 +7431,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           }
         }
       }
+      if (workspace.id) {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-delete` },
         timeout: stableSmokeCleanupTimeoutMs,
@@ -7471,6 +7464,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           timeout: 20_000,
           intervals: [500, 1_000, 2_000],
         }).not.toBe(200);
+      }
       }
     }
   });
