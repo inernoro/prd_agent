@@ -4170,7 +4170,7 @@ function ResourceConsole({
                     }}
                   />
                 ) : null}
-                {detailTab === 'data' ? <ResourceDataPanel resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
+                {detailTab === 'data' ? <ResourceDataPanel key={`${selectedResource.branchId}:${selectedResource.id}:${selectedResource.runtime}`} resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
                 {detailTab === 'backups' ? (
                   <ResourceBackupsPanel
                     resource={selectedResource}

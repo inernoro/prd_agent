@@ -887,6 +887,7 @@ describe('resource database access', () => {
     }
     expect(done!.body.request.status).toBe('completed');
     expect(done!.body.request.result.details.result.acknowledged).toBe(true);
+    expect(done!.body.request.approvedBy).toBe('owner');
     expect(harness.shell.commands.filter((item) => item.includes('insertOne'))).toHaveLength(before + 1);
   });
 

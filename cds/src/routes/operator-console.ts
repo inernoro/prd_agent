@@ -101,8 +101,9 @@ export function createOperatorConsoleRouter(deps: {
       if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
     }
     const actor =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'ai';
     const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
@@ -118,8 +119,9 @@ export function createOperatorConsoleRouter(deps: {
   router.post('/cds-system/operator/requests/:id/approve', requireHuman, (req, res) => {
     const scope = (req.body ?? {}).scope === 'session' ? 'session' : 'once';
     const approver =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'admin';
     const updated = operatorApprovalService.approve({ requestId: req.params.id, scope, approver });
@@ -132,8 +134,9 @@ export function createOperatorConsoleRouter(deps: {
 
   router.post('/cds-system/operator/requests/:id/reject', requireHuman, (req, res) => {
     const approver =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'admin';
     const updated = operatorApprovalService.reject({ requestId: req.params.id, approver });
@@ -176,8 +179,9 @@ export function createOperatorConsoleRouter(deps: {
       args?: Record<string, unknown>;
     };
     const actor =
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.githubLogin ||
-      (req as { cdsUser?: { githubLogin?: string; login?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.githubLogin ||
+      (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser?.login ||
+      (req as { cdsUser?: { username?: string } }).cdsUser?.username ||
       resolveActorFromRequest(req) ||
       'unknown';
 
