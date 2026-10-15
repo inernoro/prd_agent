@@ -425,6 +425,95 @@ public class ReportAgentMonthlyController : ControllerBase
         return Ok(ApiResponse<object>.Ok(await _interactions.BuildViewSummaryAsync(report!.Id, report.UserId)));
     }
 
+    #region Comments / Likes（与周报共用 ReportInteractionService，访问判定与「能否查看这份月报」一致）
+
+    private ObjectResult InteractionFailure(ReportInteractionError error)
+        => StatusCode(error.StatusCode, ApiResponse<object>.Fail(error.Code, error.Message));
+
+    [HttpGet("{id}/comments")]
+    public async Task<IActionResult> ListComments(string id, [FromQuery] int? sectionIndex)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        return Ok(ApiResponse<object>.Ok(new { items = await _interactions.ListCommentsAsync(id, sectionIndex) }));
+    }
+
+    /// <summary>评论（章节序号 0-3 对应四章；支持回复、划词锚点、图片）</summary>
+    [HttpPost("{id}/comments")]
+    public async Task<IActionResult> CreateComment(string id, [FromBody] CreateCommentRequest req)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        if (req.SectionIndex < 0 || req.SectionIndex >= MonthlyReportChapters.Titles.Length)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "评论的章节不存在"));
+
+        var (comment, failure) = await _interactions.CreateCommentAsync(
+            id, MonthlyReportChapters.TitleOf(req.SectionIndex), GetUserId(), GetUsername(), req);
+        if (failure != null) return InteractionFailure(failure);
+        return Ok(ApiResponse<object>.Ok(new { comment }));
+    }
+
+    [HttpPost("{id}/comments/images")]
+    [RequestSizeLimit(ReportInteractionService.MaxCommentImageBytes)]
+    public async Task<IActionResult> UploadCommentImage(string id, [FromForm] IFormFile file, CancellationToken ct)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        var (data, failure) = await _interactions.UploadCommentImageAsync(GetUserId(), file, ct);
+        if (failure != null) return InteractionFailure(failure);
+        return Ok(ApiResponse<object>.Ok(data!));
+    }
+
+    [HttpPut("{id}/comments/{commentId}")]
+    public async Task<IActionResult> UpdateComment(string id, string commentId, [FromBody] UpdateCommentRequest req)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        var (comment, failure) = await _interactions.UpdateCommentAsync(id, commentId, GetUserId(), HasViewAll, req.Content);
+        if (failure != null) return InteractionFailure(failure);
+        return Ok(ApiResponse<object>.Ok(new { comment }));
+    }
+
+    [HttpDelete("{id}/comments/{commentId}")]
+    public async Task<IActionResult> DeleteComment(string id, string commentId)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        var failure = await _interactions.DeleteCommentAsync(id, commentId, GetUserId(), HasViewAll);
+        if (failure != null) return InteractionFailure(failure);
+        return Ok(ApiResponse<object>.Ok(new { }));
+    }
+
+    [HttpGet("{id}/likes")]
+    public async Task<IActionResult> ListLikes(string id)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        return Ok(ApiResponse<object>.Ok(await _interactions.BuildLikeSummaryAsync(id, GetUserId())));
+    }
+
+    [HttpPost("{id}/likes")]
+    public async Task<IActionResult> Like(string id)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        var userId = GetUserId();
+        await _interactions.LikeAsync(id, userId, GetUsername());
+        return Ok(ApiResponse<object>.Ok(await _interactions.BuildLikeSummaryAsync(id, userId)));
+    }
+
+    [HttpDelete("{id}/likes")]
+    public async Task<IActionResult> Unlike(string id)
+    {
+        var (_, _, error) = await LoadVisibleAsync(id);
+        if (error != null) return error;
+        var userId = GetUserId();
+        await _interactions.UnlikeAsync(id, userId);
+        return Ok(ApiResponse<object>.Ok(await _interactions.BuildLikeSummaryAsync(id, userId)));
+    }
+
+    #endregion
+
     /// <summary>
     /// 可关联的周报：我在该团队的周报（最近 60 份），按周四归属分组——
     /// current = 归属本月，adjacent = 归属相邻月，other = 其余；linkable=false 的是草稿等不可关联项。

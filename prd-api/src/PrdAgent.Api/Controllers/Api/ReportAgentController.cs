@@ -8,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
+using PrdAgent.Core.Services.ReportAgent;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
@@ -27,8 +28,6 @@ public class ReportAgentController : ControllerBase
 {
     private const string AppKey = "report-agent";
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
-    /// <summary>单条评论最多携带的图片数</summary>
-    private const int MaxCommentImages = 9;
     private const int MaxDailyLogCustomTagCount = 20;
     private const int MaxDailyLogCustomTagLength = 16;
     private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
@@ -103,6 +102,8 @@ public class ReportAgentController : ControllerBase
     private readonly DailyLogPolishService _polishService;
     private readonly ISharePasswordService _sharePwd;
     private readonly IShortLinkService _shortLinks;
+    private readonly ReportInteractionService _interactions;
+    private readonly ReportViewerResolver _viewers;
 
     public ReportAgentController(
         MongoDbContext db,
@@ -116,7 +117,9 @@ public class ReportAgentController : ControllerBase
         ReportWebhookService webhookService,
         DailyLogPolishService polishService,
         ISharePasswordService sharePwd,
-        IShortLinkService shortLinks)
+        IShortLinkService shortLinks,
+        ReportInteractionService interactions,
+        ReportViewerResolver viewers)
     {
         _db = db;
         _assetStorage = assetStorage;
@@ -130,6 +133,8 @@ public class ReportAgentController : ControllerBase
         _polishService = polishService;
         _sharePwd = sharePwd;
         _shortLinks = shortLinks;
+        _interactions = interactions;
+        _viewers = viewers;
     }
 
     #region Helpers
@@ -149,140 +154,15 @@ public class ReportAgentController : ControllerBase
            ?? User.FindFirst(ClaimTypes.Name)?.Value;
 
     private static string ResolveUserDisplayName(User? user, string? claimName, string userId)
+        => ReportInteractionService.ResolveUserDisplayName(user, claimName, userId);
+
+    /// <summary>周报互动权限：唯一判定源 ReportAccessPolicy.CanInteractWithWeekly（遵守团队「仅负责人可查看」）。</summary>
+    private async Task<bool> CanInteractWithReportAsync(WeeklyReport report, string userId)
     {
-        var displayName = user?.DisplayName?.Trim();
-        if (!string.IsNullOrWhiteSpace(displayName))
-            return displayName;
-
-        var username = user?.Username?.Trim();
-        if (!string.IsNullOrWhiteSpace(username))
-            return username;
-
-        var nameFromClaim = claimName?.Trim();
-        if (!string.IsNullOrWhiteSpace(nameFromClaim))
-            return nameFromClaim;
-
-        // 评论必须实名展示：兜底至少展示 userId，不再显示“匿名”
-        return userId;
-    }
-
-    private async Task<bool> CanAccessReportAsync(WeeklyReport report, string userId)
-    {
-        if (report.UserId == userId) return true;
-        if (await IsTeamMember(report.TeamId, userId)) return true;
-        return HasPermission(AdminPermissionCatalog.ReportAgentViewAll);
-    }
-
-    private async Task<object> BuildReportLikeSummaryPayloadAsync(string reportId, string currentUserId)
-    {
-        var likes = await _db.ReportLikes
-            .Find(x => x.ReportId == reportId)
-            .SortByDescending(x => x.CreatedAt)
-            .ToListAsync();
-
-        var authorIds = likes
-            .Select(x => x.UserId)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct()
-            .ToList();
-
-        Dictionary<string, User> userMap = new(StringComparer.Ordinal);
-        if (authorIds.Count > 0)
-        {
-            var users = await _db.Users.Find(u => authorIds.Contains(u.UserId)).ToListAsync();
-            userMap = users.ToDictionary(u => u.UserId, u => u);
-        }
-
-        foreach (var like in likes)
-        {
-            userMap.TryGetValue(like.UserId, out var user);
-            if (string.IsNullOrWhiteSpace(like.UserName))
-            {
-                like.UserName = ResolveUserDisplayName(user, null, like.UserId);
-            }
-            if (string.IsNullOrWhiteSpace(like.AvatarFileName) && !string.IsNullOrWhiteSpace(user?.AvatarFileName))
-            {
-                like.AvatarFileName = user!.AvatarFileName;
-            }
-        }
-
-        return new
-        {
-            likedByMe = likes.Any(x => x.UserId == currentUserId),
-            count = likes.Count,
-            users = likes.Select(x => new
-            {
-                userId = x.UserId,
-                userName = !string.IsNullOrWhiteSpace(x.UserName) ? x.UserName : x.UserId,
-                avatarFileName = x.AvatarFileName,
-                likedAt = x.CreatedAt
-            }).ToList()
-        };
-    }
-
-    private async Task<object> BuildReportViewSummaryPayloadAsync(string reportId, string reportOwnerUserId)
-    {
-        var events = await _db.ReportViewEvents
-            .Find(x => x.ReportId == reportId)
-            .SortByDescending(x => x.ViewedAt)
-            .ToListAsync();
-
-        var viewerIds = events
-            .Select(x => x.UserId)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct()
-            .ToList();
-
-        Dictionary<string, User> userMap = new(StringComparer.Ordinal);
-        if (viewerIds.Count > 0)
-        {
-            var users = await _db.Users.Find(u => viewerIds.Contains(u.UserId)).ToListAsync();
-            userMap = users.ToDictionary(u => u.UserId, u => u);
-        }
-
-        foreach (var viewEvent in events)
-        {
-            userMap.TryGetValue(viewEvent.UserId, out var user);
-            if (string.IsNullOrWhiteSpace(viewEvent.UserName))
-            {
-                viewEvent.UserName = ResolveUserDisplayName(user, null, viewEvent.UserId);
-            }
-            if (string.IsNullOrWhiteSpace(viewEvent.AvatarFileName) && !string.IsNullOrWhiteSpace(user?.AvatarFileName))
-            {
-                viewEvent.AvatarFileName = user!.AvatarFileName;
-            }
-        }
-
-        var groupedByUser = events
-            .GroupBy(x => x.UserId)
-            .Select(g =>
-            {
-                var latest = g.OrderByDescending(x => x.ViewedAt).First();
-                var userId = latest.UserId;
-                var displayName = !string.IsNullOrWhiteSpace(latest.UserName) ? latest.UserName : userId;
-                var isFrequent = g.Count() > 5;
-                var isOwner = !string.IsNullOrWhiteSpace(reportOwnerUserId) && userId == reportOwnerUserId;
-                return new
-                {
-                    userId,
-                    userName = displayName,
-                    avatarFileName = latest.AvatarFileName,
-                    viewCount = g.Count(),
-                    lastViewedAt = latest.ViewedAt,
-                    isFrequent,
-                    isOwner
-                };
-            })
-            .OrderBy(x => x.isOwner)
-            .ThenByDescending(x => x.lastViewedAt)
-            .ToList();
-
-        return new
-        {
-            count = groupedByUser.Count,
-            totalViewCount = events.Count,
-            users = groupedByUser
-        };
+        var viewer = await _viewers.ResolveAsync(report.TeamId, report.UserId, userId,
+            HasPermission(AdminPermissionCatalog.ReportAgentViewAll));
+        var team = await _db.ReportTeams.Find(t => t.Id == report.TeamId).FirstOrDefaultAsync();
+        return ReportAccessPolicy.CanInteractWithWeekly(viewer, team?.ReportVisibility);
     }
 
     private bool HasPermission(string perm)
@@ -3722,99 +3602,35 @@ public class ReportAgentController : ControllerBase
     #region Comments
 
     /// <summary>
+    /// 加载周报并校验互动权限（评论 / 点赞 / 浏览共用）。
+    /// 判定走 ReportAccessPolicy.CanInteractWithWeekly：团队设为「仅负责人可查看」时，普通成员不能读写别人周报的互动。
+    /// </summary>
+    private async Task<(WeeklyReport? Report, IActionResult? Error)> LoadWeeklyForInteractionAsync(string id, string deniedMessage)
+    {
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        if (report == null)
+            return (null, NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在")));
+
+        if (!await CanInteractWithReportAsync(report, GetUserId()))
+            return (null, StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", deniedMessage)));
+
+        return (report, null);
+    }
+
+    private ObjectResult InteractionFailure(ReportInteractionError error)
+        => StatusCode(error.StatusCode, ApiResponse<object>.Fail(error.Code, error.Message));
+
+    /// <summary>
     /// 获取周报评论列表
     /// </summary>
     [HttpGet("reports/{id}/comments")]
     public async Task<IActionResult> ListComments(string id, [FromQuery] int? sectionIndex)
     {
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+        var (_, error) = await LoadWeeklyForInteractionAsync(id, "无权查看该周报的评论");
+        if (error != null) return error;
 
-        // 验证访问权限：本人 + 团队成员 + 负责人 + 管理员
-        var userId = GetUserId();
-        if (report.UserId != userId &&
-            !await IsTeamMember(report.TeamId, userId) &&
-            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报的评论"));
-
-        var filter = Builders<ReportComment>.Filter.Eq(c => c.ReportId, id);
-        if (sectionIndex.HasValue)
-            filter &= Builders<ReportComment>.Filter.Eq(c => c.SectionIndex, sectionIndex.Value);
-
-        var comments = await _db.ReportComments
-            .Find(filter)
-            .SortBy(c => c.CreatedAt)
-            .ToListAsync();
-
-        var pendingResolved = comments
-            .Where(c => string.IsNullOrWhiteSpace(c.AuthorDisplayName) || c.AuthorDisplayName.Trim() == "匿名")
-            .ToList();
-
-        if (pendingResolved.Count > 0)
-        {
-            var authorIds = pendingResolved
-                .Select(c => c.AuthorUserId)
-                .Where(uid => !string.IsNullOrWhiteSpace(uid))
-                .Distinct()
-                .ToList();
-
-            if (authorIds.Count > 0)
-            {
-                var users = await _db.Users
-                    .Find(u => authorIds.Contains(u.UserId))
-                    .ToListAsync();
-
-                var userMap = users.ToDictionary(u => u.UserId, u => u);
-                foreach (var comment in pendingResolved)
-                {
-                    userMap.TryGetValue(comment.AuthorUserId, out var authorUser);
-                    comment.AuthorDisplayName = ResolveUserDisplayName(authorUser, null, comment.AuthorUserId);
-                }
-            }
-        }
-
-        await PopulateCommentAttachmentsAsync(comments);
-
+        var comments = await _interactions.ListCommentsAsync(id, sectionIndex);
         return Ok(ApiResponse<object>.Ok(new { items = comments }));
-    }
-
-    /// <summary>
-    /// 按 AttachmentIds 批量解析附件详情，填充到评论的 Attachments（仅接口返回，不落库）。
-    /// 附件已被清理时静默跳过该图，评论文字仍正常展示。
-    /// </summary>
-    private async Task PopulateCommentAttachmentsAsync(List<ReportComment> comments)
-    {
-        var allIds = comments
-            .Where(c => c.AttachmentIds is { Count: > 0 })
-            .SelectMany(c => c.AttachmentIds!)
-            .Distinct()
-            .ToList();
-        if (allIds.Count == 0) return;
-
-        var attachments = await _db.Attachments
-            .Find(a => allIds.Contains(a.AttachmentId))
-            .ToListAsync();
-        var map = attachments.ToDictionary(a => a.AttachmentId, a => a);
-
-        foreach (var comment in comments)
-        {
-            if (comment.AttachmentIds is not { Count: > 0 }) continue;
-            comment.Attachments = comment.AttachmentIds
-                .Where(map.ContainsKey)
-                .Select(aid =>
-                {
-                    var a = map[aid];
-                    return new ReportCommentAttachmentInfo
-                    {
-                        AttachmentId = a.AttachmentId,
-                        Url = a.Url,
-                        FileName = a.FileName,
-                        MimeType = a.MimeType
-                    };
-                })
-                .ToList();
-        }
     }
 
     /// <summary>
@@ -3823,80 +3639,16 @@ public class ReportAgentController : ControllerBase
     [HttpPost("reports/{id}/comments")]
     public async Task<IActionResult> CreateComment(string id, [FromBody] CreateCommentRequest req)
     {
-        var userId = GetUserId();
-        var username = GetUsername();
-        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
-        var authorDisplayName = ResolveUserDisplayName(currentUser, username, userId);
-
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
-
-        // 验证访问权限
-        if (report.UserId != userId &&
-            !await IsTeamMember(report.TeamId, userId) &&
-            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权评论该周报"));
-
-        // 图片附件：去重清洗 + 数量上限 + 归属校验（只能引用自己上传的图片附件）
-        var attachmentIds = (req.AttachmentIds ?? new List<string>())
-            .Where(a => !string.IsNullOrWhiteSpace(a))
-            .Select(a => a.Trim())
-            .Distinct()
-            .ToList();
-
-        if (string.IsNullOrWhiteSpace(req.Content) && attachmentIds.Count == 0)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "评论内容不能为空"));
-
-        if (attachmentIds.Count > MaxCommentImages)
-            return BadRequest(ApiResponse<object>.Fail("TOO_MANY_IMAGES", $"每条评论最多 {MaxCommentImages} 张图片"));
-
-        if (attachmentIds.Count > 0)
-        {
-            var ownedAttachments = await _db.Attachments
-                .Find(a => attachmentIds.Contains(a.AttachmentId))
-                .ToListAsync();
-            if (ownedAttachments.Count != attachmentIds.Count ||
-                ownedAttachments.Any(a => a.UploaderId != userId || a.Type != AttachmentType.Image))
-                return BadRequest(ApiResponse<object>.Fail("INVALID_ATTACHMENT", "存在无效的评论图片附件"));
-        }
+        var (report, error) = await LoadWeeklyForInteractionAsync(id, "无权评论该周报");
+        if (error != null) return error;
 
         // 获取段落标题快照
-        var sectionTitle = req.SectionIndex >= 0 && req.SectionIndex < report.Sections.Count
+        var sectionTitle = req.SectionIndex >= 0 && req.SectionIndex < report!.Sections.Count
             ? report.Sections[req.SectionIndex].TemplateSection?.Title ?? ""
             : "";
 
-        // 如果是回复，验证父评论存在
-        if (!string.IsNullOrEmpty(req.ParentCommentId))
-        {
-            var parent = await _db.ReportComments.Find(c => c.Id == req.ParentCommentId && c.ReportId == id).AnyAsync();
-            if (!parent)
-                return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "父评论不存在"));
-        }
-
-        // 划词锚点仅顶级评论生效；裁剪长度防止超长选区/上下文膨胀存储
-        var isReply = !string.IsNullOrEmpty(req.ParentCommentId);
-        var selectedText = isReply ? null : Truncate(req.SelectedText, 500);
-
-        var comment = new ReportComment
-        {
-            ReportId = id,
-            SectionIndex = req.SectionIndex,
-            SectionTitleSnapshot = sectionTitle,
-            ParentCommentId = string.IsNullOrEmpty(req.ParentCommentId) ? null : req.ParentCommentId,
-            AuthorUserId = userId,
-            AuthorDisplayName = authorDisplayName,
-            Content = (req.Content ?? string.Empty).Trim(),
-            AttachmentIds = attachmentIds.Count > 0 ? attachmentIds : null,
-            SelectedText = selectedText,
-            ContextBefore = selectedText == null ? null : Truncate(req.ContextBefore, 100),
-            ContextAfter = selectedText == null ? null : Truncate(req.ContextAfter, 100),
-            StartOffset = selectedText == null ? null : req.StartOffset,
-            EndOffset = selectedText == null ? null : req.EndOffset
-        };
-
-        await _db.ReportComments.InsertOneAsync(comment);
-        await PopulateCommentAttachmentsAsync(new List<ReportComment> { comment });
+        var (comment, failure) = await _interactions.CreateCommentAsync(id, sectionTitle, GetUserId(), GetUsername(), req);
+        if (failure != null) return InteractionFailure(failure);
         return Ok(ApiResponse<object>.Ok(new { comment }));
     }
 
@@ -3904,63 +3656,15 @@ public class ReportAgentController : ControllerBase
     /// 上传评论图片（有权查看该周报即可上传，评论者通常是审阅人/团队成员，不限周报作者与状态）
     /// </summary>
     [HttpPost("reports/{id}/comments/images")]
-    [RequestSizeLimit(MaxRichTextImageBytes)]
+    [RequestSizeLimit(ReportInteractionService.MaxCommentImageBytes)]
     public async Task<IActionResult> UploadCommentImage(string id, [FromForm] IFormFile file, CancellationToken ct)
     {
-        var userId = GetUserId();
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync(ct);
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+        var (_, error) = await LoadWeeklyForInteractionAsync(id, "无权评论该周报");
+        if (error != null) return error;
 
-        if (report.UserId != userId &&
-            !await IsTeamMember(report.TeamId, userId) &&
-            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权评论该周报"));
-
-        if (file == null || file.Length == 0)
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "请选择图片文件"));
-
-        if (file.Length > MaxRichTextImageBytes)
-            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "图片大小不能超过 5MB"));
-
-        var mimeType = file.ContentType?.Trim().ToLowerInvariant() ?? "application/octet-stream";
-        if (!AllowedRichTextImageMimeTypes.Contains(mimeType))
-            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的图片类型: {mimeType}"));
-
-        byte[] bytes;
-        await using (var ms = new MemoryStream())
-        {
-            await file.CopyToAsync(ms, ct);
-            bytes = ms.ToArray();
-        }
-
-        var stored = await _assetStorage.SaveAsync(
-            bytes,
-            mimeType,
-            ct,
-            domain: AppDomainPaths.DomainPrdAgent,
-            type: AppDomainPaths.TypeImg);
-        var attachment = new Attachment
-        {
-            UploaderId = userId,
-            FileName = file.FileName,
-            MimeType = mimeType,
-            Size = file.Length,
-            Url = stored.Url,
-            StorageKey = stored.Key,
-            Type = AttachmentType.Image,
-            UploadedAt = DateTime.UtcNow
-        };
-        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
-
-        return Ok(ApiResponse<object>.Ok(new
-        {
-            attachmentId = attachment.AttachmentId,
-            url = attachment.Url,
-            fileName = attachment.FileName,
-            mimeType = attachment.MimeType,
-            size = attachment.Size
-        }));
+        var (data, failure) = await _interactions.UploadCommentImageAsync(GetUserId(), file, ct);
+        if (failure != null) return InteractionFailure(failure);
+        return Ok(ApiResponse<object>.Ok(data!));
     }
 
     /// <summary>
@@ -3969,28 +3673,9 @@ public class ReportAgentController : ControllerBase
     [HttpPut("reports/{reportId}/comments/{commentId}")]
     public async Task<IActionResult> UpdateComment(string reportId, string commentId, [FromBody] UpdateCommentRequest req)
     {
-        var userId = GetUserId();
-        var comment = await _db.ReportComments.Find(c => c.Id == commentId && c.ReportId == reportId).FirstOrDefaultAsync();
-        if (comment == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "评论不存在"));
-
-        if (comment.AuthorUserId != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能编辑自己的评论"));
-
-        if (string.IsNullOrWhiteSpace(req.Content))
-            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "评论内容不能为空"));
-
-        var trimmed = req.Content.Trim();
-        if (trimmed == comment.Content)
-            return Ok(ApiResponse<object>.Ok(new { comment }));
-
-        var update = Builders<ReportComment>.Update
-            .Set(c => c.Content, trimmed)
-            .Set(c => c.UpdatedAt, DateTime.UtcNow);
-        await _db.ReportComments.UpdateOneAsync(c => c.Id == commentId, update);
-
-        comment.Content = trimmed;
-        comment.UpdatedAt = DateTime.UtcNow;
+        var (comment, failure) = await _interactions.UpdateCommentAsync(
+            reportId, commentId, GetUserId(), HasPermission(AdminPermissionCatalog.ReportAgentViewAll), req.Content);
+        if (failure != null) return InteractionFailure(failure);
         return Ok(ApiResponse<object>.Ok(new { comment }));
     }
 
@@ -4000,18 +3685,9 @@ public class ReportAgentController : ControllerBase
     [HttpDelete("reports/{reportId}/comments/{commentId}")]
     public async Task<IActionResult> DeleteComment(string reportId, string commentId)
     {
-        var userId = GetUserId();
-        var comment = await _db.ReportComments.Find(c => c.Id == commentId && c.ReportId == reportId).FirstOrDefaultAsync();
-        if (comment == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "评论不存在"));
-
-        if (comment.AuthorUserId != userId && !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能删除自己的评论"));
-
-        // 删除评论及其所有回复
-        await _db.ReportComments.DeleteManyAsync(
-            c => c.Id == commentId || c.ParentCommentId == commentId);
-
+        var failure = await _interactions.DeleteCommentAsync(
+            reportId, commentId, GetUserId(), HasPermission(AdminPermissionCatalog.ReportAgentViewAll));
+        if (failure != null) return InteractionFailure(failure);
         return Ok(ApiResponse<object>.Ok(new { }));
     }
 
@@ -4025,16 +3701,9 @@ public class ReportAgentController : ControllerBase
     [HttpGet("reports/{id}/likes")]
     public async Task<IActionResult> ListReportLikes(string id)
     {
-        var userId = GetUserId();
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
-
-        if (!await CanAccessReportAsync(report, userId))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报的点赞"));
-
-        var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
-        return Ok(ApiResponse<object>.Ok(payload));
+        var (_, error) = await LoadWeeklyForInteractionAsync(id, "无权查看该周报的点赞");
+        if (error != null) return error;
+        return Ok(ApiResponse<object>.Ok(await _interactions.BuildLikeSummaryAsync(id, GetUserId())));
     }
 
     /// <summary>
@@ -4043,36 +3712,11 @@ public class ReportAgentController : ControllerBase
     [HttpPost("reports/{id}/likes")]
     public async Task<IActionResult> LikeReport(string id)
     {
+        var (_, error) = await LoadWeeklyForInteractionAsync(id, "无权点赞该周报");
+        if (error != null) return error;
         var userId = GetUserId();
-        var username = GetUsername();
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
-
-        if (!await CanAccessReportAsync(report, userId))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权点赞该周报"));
-
-        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
-        var userDisplayName = ResolveUserDisplayName(currentUser, username, userId);
-        var like = new ReportLike
-        {
-            ReportId = id,
-            UserId = userId,
-            UserName = userDisplayName,
-            AvatarFileName = currentUser?.AvatarFileName
-        };
-
-        try
-        {
-            await _db.ReportLikes.InsertOneAsync(like);
-        }
-        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-        {
-            // 幂等：重复点赞不报错
-        }
-
-        var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
-        return Ok(ApiResponse<object>.Ok(payload));
+        await _interactions.LikeAsync(id, userId, GetUsername());
+        return Ok(ApiResponse<object>.Ok(await _interactions.BuildLikeSummaryAsync(id, userId)));
     }
 
     /// <summary>
@@ -4081,18 +3725,11 @@ public class ReportAgentController : ControllerBase
     [HttpDelete("reports/{id}/likes")]
     public async Task<IActionResult> UnlikeReport(string id)
     {
+        var (_, error) = await LoadWeeklyForInteractionAsync(id, "无权取消点赞该周报");
+        if (error != null) return error;
         var userId = GetUserId();
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
-
-        if (!await CanAccessReportAsync(report, userId))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权取消点赞该周报"));
-
-        await _db.ReportLikes.DeleteOneAsync(x => x.ReportId == id && x.UserId == userId);
-
-        var payload = await BuildReportLikeSummaryPayloadAsync(id, userId);
-        return Ok(ApiResponse<object>.Ok(payload));
+        await _interactions.UnlikeAsync(id, userId);
+        return Ok(ApiResponse<object>.Ok(await _interactions.BuildLikeSummaryAsync(id, userId)));
     }
 
     #endregion
@@ -4105,28 +3742,10 @@ public class ReportAgentController : ControllerBase
     [HttpPost("reports/{id}/views")]
     public async Task<IActionResult> RecordReportView(string id)
     {
-        var userId = GetUserId();
-        var username = GetUsername();
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
-
-        if (!await CanAccessReportAsync(report, userId))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报"));
-
-        var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync();
-        var userDisplayName = ResolveUserDisplayName(currentUser, username, userId);
-        var viewEvent = new ReportViewEvent
-        {
-            ReportId = id,
-            UserId = userId,
-            UserName = userDisplayName,
-            AvatarFileName = currentUser?.AvatarFileName,
-            ViewedAt = DateTime.UtcNow
-        };
-
-        await _db.ReportViewEvents.InsertOneAsync(viewEvent);
-        return Ok(ApiResponse<object>.Ok(new { viewedAt = viewEvent.ViewedAt }));
+        var (_, error) = await LoadWeeklyForInteractionAsync(id, "无权查看该周报");
+        if (error != null) return error;
+        var viewedAt = await _interactions.RecordViewAsync(id, GetUserId(), GetUsername());
+        return Ok(ApiResponse<object>.Ok(new { viewedAt }));
     }
 
     /// <summary>
@@ -4135,16 +3754,9 @@ public class ReportAgentController : ControllerBase
     [HttpGet("reports/{id}/views-summary")]
     public async Task<IActionResult> GetReportViewsSummary(string id)
     {
-        var userId = GetUserId();
-        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
-        if (report == null)
-            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
-
-        if (!await CanAccessReportAsync(report, userId))
-            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权查看该周报浏览记录"));
-
-        var payload = await BuildReportViewSummaryPayloadAsync(id, report.UserId);
-        return Ok(ApiResponse<object>.Ok(payload));
+        var (report, error) = await LoadWeeklyForInteractionAsync(id, "无权查看该周报浏览记录");
+        if (error != null) return error;
+        return Ok(ApiResponse<object>.Ok(await _interactions.BuildViewSummaryAsync(id, report!.UserId)));
     }
 
     #endregion

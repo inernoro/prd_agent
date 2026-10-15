@@ -1,6 +1,19 @@
 import { apiRequest } from './apiClient';
+import { uploadReportImageForm } from './reportAgent';
 import { api } from '@/services/api';
-import type { ReportViewSummary } from '@/services/contracts/reportAgent';
+import type {
+  CreateCommentContract,
+  DeleteCommentContract,
+  LikeReportContract,
+  ListCommentsContract,
+  ListReportLikesContract,
+  ReportComment,
+  ReportLikeSummary,
+  ReportViewSummary,
+  UnlikeReportContract,
+  UpdateCommentContract,
+  UploadReportCommentImageContract,
+} from '@/services/contracts/reportAgent';
 import type {
   MonthlyReport,
   MonthlyReportDetail,
@@ -68,3 +81,42 @@ export async function listMonthlyWeeklyCandidatesReal(input: { teamId: string; y
     method: 'GET',
   });
 }
+
+// ========== 互动（与周报同一套契约，入参里的 reportId 即月报 Id） ==========
+
+export const listMonthlyCommentsReal: ListCommentsContract = async (input) => {
+  const q = input.sectionIndex != null ? `?sectionIndex=${input.sectionIndex}` : '';
+  return await apiRequest<{ items: ReportComment[] }>(`${routes.comments(enc(input.reportId))}${q}`, { method: 'GET' });
+};
+
+export const createMonthlyCommentReal: CreateCommentContract = async (input) => {
+  const { reportId, ...body } = input;
+  return await apiRequest<{ comment: ReportComment }>(routes.comments(enc(reportId)), { method: 'POST', body });
+};
+
+export const updateMonthlyCommentReal: UpdateCommentContract = async (input) => {
+  return await apiRequest<{ comment: ReportComment }>(routes.comment(enc(input.reportId), enc(input.commentId)), {
+    method: 'PUT',
+    body: { content: input.content },
+  });
+};
+
+export const deleteMonthlyCommentReal: DeleteCommentContract = async (input) => {
+  return await apiRequest<object>(routes.comment(enc(input.reportId), enc(input.commentId)), { method: 'DELETE' });
+};
+
+export const uploadMonthlyCommentImageReal: UploadReportCommentImageContract = async (input) => {
+  return await uploadReportImageForm(routes.commentImages(enc(input.reportId)), input.file);
+};
+
+export const listMonthlyLikesReal: ListReportLikesContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(routes.likes(enc(input.reportId)), { method: 'GET' });
+};
+
+export const likeMonthlyReportReal: LikeReportContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(routes.likes(enc(input.reportId)), { method: 'POST' });
+};
+
+export const unlikeMonthlyReportReal: UnlikeReportContract = async (input) => {
+  return await apiRequest<ReportLikeSummary>(routes.likes(enc(input.reportId)), { method: 'DELETE' });
+};

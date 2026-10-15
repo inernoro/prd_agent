@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, AlertCircle, Pencil, Eye } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { useSmartBack } from '@/hooks/useSmartBack';
+import { toast } from '@/lib/toast';
+import { useAuthStore } from '@/stores/authStore';
 import { getMonthlyReport, getMonthlyReportViewsSummary, recordMonthlyReportView } from '@/services';
-import type { ReportViewSummary } from '@/services/contracts/reportAgent';
+import type { ReportComment, ReportViewSummary } from '@/services/contracts/reportAgent';
 import type { MonthlyReportDetail } from '@/services/contracts/reportAgentMonthly';
 import { RichTextMarkdownContent } from '../components/RichTextMarkdownContent';
+import { RightRailPanel } from '../components/RightRailPanel';
+import { ReportSelectionCommentLayer } from '../components/ReportSelectionCommentLayer';
+import { ReportSectionComments, type ReportReplyTarget } from '../components/ReportSectionComments';
+import type { ReportCommentAnchor } from '../components/reportCommentAnchor';
+import { useDataTheme } from '../hooks/useDataTheme';
+import { getReportInteractionApi } from '../reportInteractionApi';
 import { formatYearMonth, getMonthlyStatusMeta } from './monthlyMeta';
 import { MonthlyChapterShell } from './MonthlyChapterShell';
 import { WeeklyLinkChips } from './WeeklyLinkChips';
@@ -27,6 +35,20 @@ export default function MonthlyReportDetailPage() {
   const [detail, setDetail] = useState<MonthlyReportDetail | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
+  const [comments, setComments] = useState<ReportComment[]>([]);
+  const [replyTo, setReplyTo] = useState<ReportReplyTarget | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [flashCommentId, setFlashCommentId] = useState<string | null>(null);
+  const flashTimerRef = useRef<number | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isLight = useDataTheme() === 'light';
+  const currentUserId = useAuthStore((s) => s.user?.userId);
+  const interactionApi = getReportInteractionApi('monthly');
+
+  const loadComments = useCallback(async () => {
+    const res = await interactionApi.listComments({ reportId });
+    if (res.success && res.data) setComments(res.data.items);
+  }, [reportId, interactionApi]);
 
   const loadViews = useCallback(async () => {
     const res = await getMonthlyReportViewsSummary({ id: reportId });
@@ -43,11 +65,77 @@ export default function MonthlyReportDetailPage() {
       if (res.success && res.data) setDetail(res.data);
       else setLoadError(res.error?.message || '月报加载失败');
       void loadViews();
+      void loadComments();
     })();
     return () => {
       alive = false;
     };
-  }, [reportId, loadViews]);
+  }, [reportId, loadViews, loadComments]);
+
+  const commentsBySection = useMemo(() => {
+    const map: Record<number, ReportComment[]> = {};
+    for (const c of comments) (map[c.sectionIndex] ??= []).push(c);
+    return map;
+  }, [comments]);
+
+  const handleCreateComment = async (content: string, attachmentIds: string[]) => {
+    if (!replyTo || (!content && attachmentIds.length === 0)) return;
+    setSubmitting(true);
+    const anchor = !replyTo.parentId ? replyTo.anchor : undefined;
+    const res = await interactionApi.createComment({
+      reportId,
+      sectionIndex: replyTo.sectionIndex,
+      content,
+      parentCommentId: replyTo.parentId,
+      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+      selectedText: anchor?.selectedText,
+      contextBefore: anchor?.contextBefore,
+      contextAfter: anchor?.contextAfter,
+      startOffset: anchor?.startOffset,
+      endOffset: anchor?.endOffset,
+    });
+    setSubmitting(false);
+    if (res.success) {
+      setReplyTo(null);
+      await loadComments();
+    } else {
+      toast.error(res.error?.message || '评论失败');
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    const res = await interactionApi.deleteComment({ reportId, commentId });
+    if (res.success) await loadComments();
+    else toast.error(res.error?.message || '删除失败');
+  };
+
+  const handleUpdateComment = async (commentId: string, content: string): Promise<boolean> => {
+    const trimmed = content.trim();
+    if (!trimmed) {
+      toast.error('评论内容不能为空');
+      return false;
+    }
+    const res = await interactionApi.updateComment({ reportId, commentId, content: trimmed });
+    if (res.success) {
+      await loadComments();
+      return true;
+    }
+    toast.error(res.error?.message || '修改失败');
+    return false;
+  };
+
+  const handleSelectionComment = useCallback((sectionIndex: number, anchor: ReportCommentAnchor) => {
+    setReplyTo({ sectionIndex, anchor });
+  }, []);
+
+  const handleActivateThread = useCallback((comment: ReportComment) => {
+    setFlashCommentId(comment.id);
+    if (flashTimerRef.current != null) window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => setFlashCommentId(null), 2400);
+    requestAnimationFrame(() => {
+      document.getElementById(`report-comment-${comment.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, []);
 
   if (loadError) {
     return (
@@ -63,6 +151,8 @@ export default function MonthlyReportDetailPage() {
   const report = detail.report;
   const titles = detail.chapterTitles;
   const statusMeta = getMonthlyStatusMeta(report.status);
+  /** 草稿只有作者可见，评论与点赞在提交后开放 */
+  const interactive = report.status !== 'draft';
 
   return (
     <div className="lg:h-full min-h-0 flex flex-col gap-4" data-testid="monthly-report-detail">
@@ -99,74 +189,112 @@ export default function MonthlyReportDetailPage() {
 
       <div className="lg:flex-1 min-h-0 flex flex-col lg:flex-row gap-4">
         <div className="flex-1 min-w-0 min-h-0 lg:overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-          <div className="flex flex-col gap-4 pb-8">
-            <MonthlyChapterShell index={0} title={titles[0]}>
-              <WeeklyLinkChips links={detail.linkedWeeklies} />
-              {report.achievementsText?.trim()
-                ? <RichTextMarkdownContent content={report.achievementsText} />
-                : detail.linkedWeeklies.length === 0 && <EmptyText />}
-            </MonthlyChapterShell>
-
-            <MonthlyChapterShell index={1} title={titles[1]}>
-              {report.problemsText?.trim() ? <RichTextMarkdownContent content={report.problemsText} /> : <EmptyText />}
-            </MonthlyChapterShell>
-
-            <MonthlyChapterShell index={2} title={titles[2]}>
-              {report.partners.length === 0 ? (
-                <EmptyText />
-              ) : (
-                <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }} data-testid="monthly-partners">
-                  {report.partners.map((p) => (
-                    <div
-                      key={p.userId}
-                      className="rounded-xl p-3 flex flex-col gap-2"
-                      style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
-                    >
-                      <div className="flex items-center gap-2">
-                        <UserAvatar
-                          src={resolveAvatarUrl({ username: p.userName, avatarFileName: p.avatarFileName })}
-                          className="w-8 h-8 rounded-full object-cover"
-                        />
-                        <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {p.userName || p.userId}
-                        </span>
-                      </div>
-                      <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-                        {p.reason || '（没有写理由）'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </MonthlyChapterShell>
-
-            <MonthlyChapterShell index={3} title={titles[3]}>
-              {report.suggestionsText?.trim() ? <RichTextMarkdownContent content={report.suggestionsText} /> : <EmptyText />}
-            </MonthlyChapterShell>
+          {/* relative：划词评论层（下划线 / 角标 / 评论按钮）的定位坐标系 */}
+          <div ref={contentRef} className="relative flex flex-col gap-4 pb-8">
+            {titles.map((title, idx) => (
+              <MonthlyChapterShell key={idx} index={idx} title={title}>
+                {/* data-report-section：划词评论的章节锚定根 */}
+                <div data-report-section={idx}>{renderChapter(idx)}</div>
+                {interactive && (
+                  <ReportSectionComments
+                    reportId={report.id}
+                    kind="monthly"
+                    sectionIndex={idx}
+                    sectionTitle={title}
+                    sectionComments={commentsBySection[idx] ?? []}
+                    currentUserId={currentUserId}
+                    isLight={isLight}
+                    accentBorder="var(--status-going-border)"
+                    flashCommentId={flashCommentId}
+                    replyTo={replyTo}
+                    submitting={submitting}
+                    indent={false}
+                    onOpenInput={(sectionIndex, parentId) => setReplyTo({ sectionIndex, parentId })}
+                    onCancel={() => setReplyTo(null)}
+                    onSubmit={handleCreateComment}
+                    onDelete={handleDeleteComment}
+                    onEdit={handleUpdateComment}
+                  />
+                )}
+              </MonthlyChapterShell>
+            ))}
+            {interactive && (
+              <ReportSelectionCommentLayer
+                containerRef={contentRef}
+                comments={comments}
+                isLight={isLight}
+                reflowKey={`${report.id}:${report.updatedAt}`}
+                onCreateFromSelection={handleSelectionComment}
+                onActivateThread={handleActivateThread}
+              />
+            )}
           </div>
         </div>
 
-        <aside className="lg:w-[280px] shrink-0 flex flex-col gap-3">
-          <div
-            className="rounded-2xl p-4"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border-primary)' }}
-            data-testid="monthly-views"
-          >
-            <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
-              <Eye size={13} /> {viewSummary.count} 人看过
+        {interactive ? (
+          <RightRailPanel
+            reportId={report.id}
+            kind="monthly"
+            viewSummary={viewSummary}
+            versionHistory={report.versionHistory}
+            fallbackTimestamps={{ submittedAt: report.submittedAt ?? undefined }}
+          />
+        ) : (
+          <aside className="lg:w-[280px] shrink-0">
+            <div
+              className="rounded-2xl p-4 text-[12px] leading-relaxed"
+              style={{ background: 'var(--bg-card)', border: '1px solid var(--border-primary)', color: 'var(--text-muted)' }}
+            >
+              这还是一份草稿，只有你自己看得到。提交后负责人可以查看，团队成员能否查看取决于团队的月报可见性设置；评论与点赞在提交后开放。
             </div>
-            <div className="mt-2 flex flex-col gap-1.5">
-              {viewSummary.users.slice(0, 12).map((u) => (
-                <div key={u.userId} className="flex items-center gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-                  <UserAvatar src={resolveAvatarUrl({ username: u.userName, avatarFileName: u.avatarFileName })} className="w-5 h-5 rounded-full object-cover" />
-                  <span className="truncate flex-1">{u.userName}{u.isOwner ? '（作者）' : ''}</span>
-                  <span style={{ color: 'var(--text-muted)' }}>{new Date(u.lastViewedAt).toLocaleDateString('zh-CN')}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </aside>
+          </aside>
+        )}
       </div>
     </div>
   );
+
+  function renderChapter(idx: number) {
+    switch (idx) {
+      case 0:
+        return (
+          <div className="flex flex-col gap-3">
+            <WeeklyLinkChips links={detail!.linkedWeeklies} />
+            {report.achievementsText?.trim()
+              ? <RichTextMarkdownContent content={report.achievementsText} />
+              : detail!.linkedWeeklies.length === 0 && <EmptyText />}
+          </div>
+        );
+      case 1:
+        return report.problemsText?.trim() ? <RichTextMarkdownContent content={report.problemsText} /> : <EmptyText />;
+      case 2:
+        return report.partners.length === 0 ? (
+          <EmptyText />
+        ) : (
+          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))' }} data-testid="monthly-partners">
+            {report.partners.map((p) => (
+              <div
+                key={p.userId}
+                className="rounded-xl p-3 flex flex-col gap-2"
+                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}
+              >
+                <div className="flex items-center gap-2">
+                  <UserAvatar
+                    src={resolveAvatarUrl({ username: p.userName, avatarFileName: p.avatarFileName })}
+                    className="w-8 h-8 rounded-full object-cover"
+                  />
+                  <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                    {p.userName || p.userId}
+                  </span>
+                </div>
+                <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                  {p.reason || '（没有写理由）'}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      default:
+        return report.suggestionsText?.trim() ? <RichTextMarkdownContent content={report.suggestionsText} /> : <EmptyText />;
+    }
+  }
 }

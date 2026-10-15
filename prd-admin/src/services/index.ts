@@ -839,6 +839,14 @@ import {
   recordMonthlyReportViewReal,
   getMonthlyReportViewsSummaryReal,
   listMonthlyWeeklyCandidatesReal,
+  listMonthlyCommentsReal,
+  createMonthlyCommentReal,
+  updateMonthlyCommentReal,
+  deleteMonthlyCommentReal,
+  uploadMonthlyCommentImageReal,
+  listMonthlyLikesReal,
+  likeMonthlyReportReal,
+  unlikeMonthlyReportReal,
 } from '@/services/real/reportAgentMonthly';
 export type {
   CreateTeamWeekShareInput,
@@ -1279,6 +1287,14 @@ export const submitMonthlyReport = withAuth(submitMonthlyReportReal);
 export const recordMonthlyReportView = withAuth(recordMonthlyReportViewReal);
 export const getMonthlyReportViewsSummary = withAuth(getMonthlyReportViewsSummaryReal);
 export const listMonthlyWeeklyCandidates = withAuth(listMonthlyWeeklyCandidatesReal);
+export const listMonthlyComments: ListCommentsContract = withAuth(listMonthlyCommentsReal);
+export const createMonthlyComment: CreateCommentContract = withAuth(createMonthlyCommentReal);
+export const updateMonthlyComment: UpdateCommentContract = withAuth(updateMonthlyCommentReal);
+export const deleteMonthlyComment: DeleteCommentContract = withAuth(deleteMonthlyCommentReal);
+export const uploadMonthlyCommentImage: UploadReportCommentImageContract = withAuth(uploadMonthlyCommentImageReal);
+export const listMonthlyLikes: ListReportLikesContract = withAuth(listMonthlyLikesReal);
+export const likeMonthlyReport: LikeReportContract = withAuth(likeMonthlyReportReal);
+export const unlikeMonthlyReport: UnlikeReportContract = withAuth(unlikeMonthlyReportReal);
 export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
 export const markVacation: MarkVacationContract = withAuth(markVacationReal);
 export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);
