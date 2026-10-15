@@ -11,7 +11,7 @@ import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvid
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
 import { assertDefaultJpegPrimary, submitDefaultJpegThroughUi } from '../utils/stableSmokeJpegJourney.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockUnscopedBackgroundReads, blockRetiredAsrPoolAudit } from '../utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockUnscopedBackgroundReads, blockRetiredAsrPoolAudit, installGatewayLogReadScope } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -6635,13 +6635,33 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       // 作为通过条件，否则会把正确的健康策略误报成产品缺陷。
       const gatewayFailurePage = await page.context().newPage();
       try {
+        const requestId = failedRequestId;
+        await installGatewayLogReadScope(gatewayFailurePage, {
+          baseUrl: gateway.baseUrl, requestId, verifiedLog: failedLog,
+        });
         await gatewayFailurePage.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
         await seedGatewayConsoleSession(gatewayFailurePage, request, gateway);
+        const scopedListResponsePromise = gatewayFailurePage.waitForResponse(response => {
+          const url = new URL(response.url());
+          const ids = url.searchParams.getAll('requestId');
+          return response.request().method() === 'GET' && url.pathname === '/gw/logs'
+            && ids.length === 1 && ids[0] === requestId;
+        });
         await gatewayFailurePage.goto(
           `${gateway.baseUrl}/logs?requestId=${encodeURIComponent(failedRequestId)}`,
           { waitUntil: 'domcontentloaded' },
         );
-        const requestEvidence = gatewayFailurePage.getByText(failedRequestId, { exact: true }).first();
+        const scopedListResponse = await scopedListResponsePromise;
+        const scopedListBody = await scopedListResponse.json() as ApiEnvelope<{ items: GatewayLogItem[] }>;
+        expect(scopedListResponse.ok(), '真实网关页面精确列表请求必须成功').toBe(true);
+        expect(scopedListBody.success).toBe(true);
+        expect(Array.isArray(scopedListBody.data.items)).toBe(true);
+        expect(scopedListBody.data.items.every(item => item.requestId === requestId), '失败取证列表只能含本轮精确requestId').toBe(true);
+        expect(scopedListBody.data.items.some(item => item.id === failedLog.id), '失败取证真实列表必须包含先前精确API确认的日志').toBe(true);
+        await expect.poll(() => new URL(gatewayFailurePage.url()).searchParams.get('transaction')).toBe(failedLog.id);
+        const matchingDialog = gatewayFailurePage.getByRole('dialog', { name: '请求详情', exact: true });
+        await expect(matchingDialog).toBeVisible();
+        const requestEvidence = matchingDialog.locator('[aria-label="前后请求导航"]').getByText(failedRequestId, { exact: true });
         await expect(requestEvidence, '全路失败的 requestId 必须能在网关调用日志中打开').toBeVisible({ timeout: 30_000 });
         await gatewayFailurePage.goto(`${gateway.baseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
         const failedModelRow = gatewayFailurePage
@@ -7394,15 +7414,35 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const gatewaySession = await loginGateway(request);
       const gatewayAuditPage = await page.context().newPage();
       try {
+        const requestId = `${runId}-0-0`;
+        await installGatewayLogReadScope(gatewayAuditPage, {
+          baseUrl: gatewaySession.baseUrl, requestId, verifiedLog: gatewayLog,
+        });
         await gatewayAuditPage.goto(`${gatewaySession.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
         await seedGatewayConsoleSession(gatewayAuditPage, request, gatewaySession);
-        const requestId = `${runId}-0-0`;
+        const scopedListResponsePromise = gatewayAuditPage.waitForResponse(response => {
+          const url = new URL(response.url());
+          const ids = url.searchParams.getAll('requestId');
+          return response.request().method() === 'GET' && url.pathname === '/gw/logs'
+            && ids.length === 1 && ids[0] === requestId;
+        });
         await gatewayAuditPage.goto(
           `${gatewaySession.baseUrl}/logs?requestId=${encodeURIComponent(requestId)}`,
           { waitUntil: 'domcontentloaded' },
         );
+        const scopedListResponse = await scopedListResponsePromise;
+        const scopedListBody = await scopedListResponse.json() as ApiEnvelope<{ items: GatewayLogItem[] }>;
+        expect(scopedListResponse.ok(), '真实网关页面精确列表请求必须成功').toBe(true);
+        expect(scopedListBody.success).toBe(true);
+        expect(Array.isArray(scopedListBody.data.items)).toBe(true);
+        expect(scopedListBody.data.items.every(item => item.requestId === requestId), '页面列表只能含本轮精确requestId').toBe(true);
+        expect(scopedListBody.data.items.some(item => item.id === gatewayLog.id), '真实列表必须包含先前精确API确认的日志，不能强塞详情URL代替筛选').toBe(true);
+        await expect.poll(() => new URL(gatewayAuditPage.url()).searchParams.get('transaction')).toBe(gatewayLog.id);
         await setGatewayConsoleTheme(gatewayAuditPage, 'light');
-        const matchingLog = gatewayAuditPage.getByText(requestId, { exact: true }).first();
+        // 请求ID列默认隐藏；只核真实列表触发的详情底栏，不猜短ID或强行填transaction。
+        const matchingDialog = gatewayAuditPage.getByRole('dialog', { name: '请求详情', exact: true });
+        await expect(matchingDialog).toBeVisible();
+        const matchingLog = matchingDialog.locator('[aria-label="前后请求导航"]').getByText(requestId, { exact: true });
         await expect(matchingLog, '网关日志页必须能按真实 requestId 找到本次图片调用').toBeVisible({ timeout: 30_000 });
         await captureStableSmokeVisualEvidence(gatewayAuditPage, testInfo, {
           slotId: 'CDS-VISUAL-IMAGE-MODEL-ROUTING-09',

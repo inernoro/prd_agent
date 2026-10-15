@@ -22,6 +22,9 @@ export interface GatewayLogicalModelAuditIdentity {
 export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenticationMethods: string[] };
 export function blockPublicCommunityReads(surface: Page | BrowserContext): Promise<void>;
 export function blockUnscopedBackgroundReads(surface: Page | BrowserContext): Promise<void>;
+export function installGatewayLogReadScope(surface: Page | BrowserContext, options: {
+  baseUrl: string; requestId: string; verifiedLog: { id: string; requestId: string };
+}): Promise<{ requestId: string; logId: string }>;
 export function blockUnscopedObservationFixture(test: { skip(condition: boolean, description: string): void }, environment: string, observation: 'authorization-health' | 'gateway-failure-health' | 'dashboard-notifications'): void;
 export function blockRetiredAsrPoolAudit(test: { skip(condition: boolean, description: string): void }, environment: string): void;
 export function readGatewayNoCallLogProbe(request: APIRequestContext, options: {
