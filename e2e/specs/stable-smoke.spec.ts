@@ -10,7 +10,7 @@ import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeB
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockPublicCommunityReads } from '../utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockUnscopedBackgroundReads } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -282,7 +282,7 @@ async function expectAnonymousShareAnswer(
 }
 
 async function loginAndReadToken(page: Page, request: APIRequestContext, returnUrl = '/') {
-  await blockPublicCommunityReads(page);
+  await blockUnscopedBackgroundReads(page);
   const loginUrl = await issueTicket(request, returnUrl);
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForURL((url) => url.pathname !== '/synthetic-login', { timeout: 30_000 });
@@ -1842,7 +1842,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test.beforeEach(async ({ context }) => {
-    await blockPublicCommunityReads(context);
+    await blockUnscopedBackgroundReads(context);
     if (process.env.STABLE_SMOKE_RUN) await context.addInitScript(blockStableSmokeServiceWorkerRegistration);
   });
   test('[CORE-001] 首页与入口静态资源可用', async ({ page }) => {
@@ -1915,6 +1915,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[REG-user-error-001] 首页告警不泄漏上游技术细节', async ({ page, request }) => {
+    blockUnscopedObservationFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'dashboard-notifications');
     await loginAndReadToken(page, request, '/');
     const notificationsLoaded = page.waitForResponse(
       (response) => new URL(response.url()).pathname === '/api/dashboard/notifications',
@@ -6275,6 +6276,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[GW-001][GW-003][GW-004][VIS-GW-001] 模型路由控制台展示真实逻辑模型与 Offering', async ({ page, request }, testInfo) => {
     test.setTimeout(180_000);
+    await blockUnscopedBackgroundReads(page);
     const gateway = await loginGateway(request);
     await page.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
     await setGatewayConsoleTheme(page, 'light');

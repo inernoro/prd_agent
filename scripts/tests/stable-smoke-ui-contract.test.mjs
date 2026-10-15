@@ -7,6 +7,44 @@ import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLo
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
+import * as uiContract from '../../e2e/utils/stableSmokeUiContract.mjs';
+
+test('REG-stsmk-account-scope-001 后台团队用量与历史通知必须在网络前真实阻断', async () => {
+  assert.equal(typeof uiContract.blockUnscopedBackgroundReads, 'function', '缺少后台越界读取保护');
+  const routes = [];
+  await uiContract.blockUnscopedBackgroundReads({ route: async (pattern, handler) => routes.push({ pattern, handler }) });
+  for (const path of ['/gw/logical-models/usage?days=30', '/api/dashboard/notifications', '/api/dashboard/notifications?includeHandled=true']) {
+    const url = new URL(path, 'https://inspection.invalid');
+    const route = routes.find(entry => typeof entry.pattern === 'function' && entry.pattern(url));
+    assert.ok(route, `真实越界后台读取未被保护：${path}`);
+    let aborted = 0;
+    await route.handler({
+      abort: async reason => { assert.equal(reason, 'blockedbyclient'); aborted += 1; },
+      fulfill: () => assert.fail('禁止伪造成功响应'),
+      continue: () => assert.fail('禁止先读取历史数据再丢弃'),
+    });
+    assert.equal(aborted, 1);
+  }
+  for (const path of ['/gw/logical-models', '/gw/logical-models/owned-id', '/gw/logical-models/usage-other', '/api/dashboard/notifications/events', '/api/document-store/stores/owned-id']) {
+    assert.equal(routes.some(entry => typeof entry.pattern === 'function' && entry.pattern(new URL(path, 'https://inspection.invalid'))), false,
+      `不得吞掉原静态目录、事件或本轮业务读取：${path}`);
+  }
+});
+
+test('REG-stsmk-account-scope-001 后台保护接入共享context、独立登录及网关首个导航前', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const setup = source.split('test.beforeEach(async ({ context }) => {')[1]?.split("test('[CORE-001]")[0];
+  assert.ok(setup?.includes('await blockUnscopedBackgroundReads(context)'), '共享context初始化未接线');
+  const login = source.split('async function loginAndReadToken(')[1]?.split('\nasync function readStableAuthSnapshot')[0];
+  assert.ok(login?.indexOf('await blockUnscopedBackgroundReads(page)') >= 0);
+  assert.ok(login.indexOf('await blockUnscopedBackgroundReads(page)') < login.indexOf('await issueTicket('), '独立手机登录前未保护');
+  const console = source.split("test('[GW-001][GW-003][GW-004][VIS-GW-001]")[1]?.split("\n  test('")[0];
+  assert.ok(console?.indexOf('await blockUnscopedBackgroundReads(page)') >= 0);
+  assert.ok(console.indexOf('await blockUnscopedBackgroundReads(page)') < console.indexOf('await page.goto('), '网关真实导航前未保护');
+  for (const original of ['selectGatewayImageLogicalModel(', 'openGatewayLogicalModelDetails(', 'routeDetails']) {
+    assert.ok(console.includes(original), `原静态目录/Offering判据必须保留：${original}`);
+  }
+});
 
 test('巡检主旅程接入语义登录与精确模型详情，且仅改被测文件也触发CI守卫',()=>{
  const spec=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
@@ -37,10 +75,10 @@ test('REG-stsmk-account-scope-001 公开社区旁路在共享context及独立页
   assert.equal(continued, 0, '不得读取后再丢弃公开用户数据');
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
   const login = source.split('async function loginAndReadToken(')[1]?.split('\nasync function readStableAuthSnapshot')[0];
-  assert.ok(login.indexOf('await blockPublicCommunityReads(page)') >= 0);
-  assert.ok(login.indexOf('await blockPublicCommunityReads(page)') < login.indexOf('await issueTicket('), '独立手机context也必须先于登录导航阻断');
+  assert.ok(login.indexOf('await blockUnscopedBackgroundReads(page)') >= 0);
+  assert.ok(login.indexOf('await blockUnscopedBackgroundReads(page)') < login.indexOf('await issueTicket('), '独立手机context也必须先于登录导航阻断');
   const setup = source.split('test.beforeEach(async ({ context }) => {')[1]?.split("test('[CORE-001]")[0];
-  assert.ok(setup?.includes('await blockPublicCommunityReads(context)'), '未登录首页检查同样不得加载公开用户内容');
+  assert.ok(setup?.includes('await blockUnscopedBackgroundReads(context)'), '未登录首页检查同样不得加载公开用户内容');
 });
 
 test('REG-stsmk-account-scope-001 全局鉴权观测在两环境认证与导航前阻断，不能借配置绿关闭', () => {
@@ -48,6 +86,7 @@ test('REG-stsmk-account-scope-001 全局鉴权观测在两环境认证与导航�
   const sections = [
     ['[REG-auth-diagnosis-001][REG-auth-health-entry-001] 授权健康中心从桌面搜索与移动抽屉均可进入并回读', 'authorization-health', 'loginAndReadToken('],
     ['[REG-auth-synthetic-001] 网关鉴权失败聚合观测须限定巡检范围', 'gateway-failure-health', 'loginGateway('],
+    ['[REG-user-error-001] 首页告警不泄漏上游技术细节', 'dashboard-notifications', 'loginAndReadToken('],
   ];
   for (const [title, kind, authCall] of sections) {
     const body = source.split(`test('${title}'`)[1]?.split("\n  test('")[0];
@@ -69,9 +108,15 @@ test('REG-stsmk-account-scope-001 两环境全局观测前置停跑且具体原�
   const configTitle = source.match(/test\('([^']+网关配置与路由可由专用身份审计)'/)?.[1];
   const observationTitle = source.match(/test\('([^']+网关鉴权失败聚合观测须限定巡检范围)'/)?.[1];
   const authorizationTitle = source.match(/test\('([^']+授权健康中心从桌面搜索与移动抽屉均可进入并回读)'/)?.[1];
-  assert.ok(configTitle && observationTitle && authorizationTitle);
+  const notificationTitle = source.match(/test\('([^']+首页告警不泄漏上游技术细节)'/)?.[1];
+  assert.ok(configTitle && observationTitle && authorizationTitle && notificationTitle);
+  const observations = [
+    { kind: 'authorization-health', title: authorizationTitle, caseIds: ['REG-AUTH-DIAGNOSIS-001', 'REG-AUTH-HEALTH-ENTRY-001'] },
+    { kind: 'gateway-failure-health', title: observationTitle, caseIds: ['REG-AUTH-SYNTHETIC-001'] },
+    { kind: 'dashboard-notifications', title: notificationTitle, caseIds: ['REG-USER-ERROR-001'] },
+  ];
   for (const environment of ['cds', 'production']) {
-    for (const observation of ['authorization-health', 'gateway-failure-health']) {
+    for (const observation of observations) {
       let network = 0;
       const annotations = [];
       assert.throws(() => {
@@ -79,7 +124,7 @@ test('REG-stsmk-account-scope-001 两环境全局观测前置停跑且具体原�
           assert.equal(condition, true);
           annotations.push({ type: 'skip', description });
           throw Error('not-run-before-network');
-        } }, environment, observation);
+        } }, environment, observation.kind);
         network += 1;
       }, /not-run-before-network/);
       assert.equal(network, 0);
@@ -87,10 +132,9 @@ test('REG-stsmk-account-scope-001 两环境全局观测前置停跑且具体原�
       assert.match(annotations[0].description, /本轮/);
       const rows = collectPlaywrightCases({ suites: [{ specs: [
         { title: configTitle, tests: [{ results: [{ status: 'passed' }] }] },
-        { title: observation === 'authorization-health' ? authorizationTitle : observationTitle, tests: [{ results: [{ status: 'skipped', annotations }] }] },
+        { title: observation.title, tests: [{ results: [{ status: 'skipped', annotations }] }] },
       ] }] }, environment);
-      for (const caseId of observation === 'authorization-health'
-        ? ['REG-AUTH-DIAGNOSIS-001', 'REG-AUTH-HEALTH-ENTRY-001'] : ['REG-AUTH-SYNTHETIC-001']) {
+      for (const caseId of observation.caseIds) {
         const original = rows.filter(row => row.caseId === caseId);
         assert.equal(original.length, 1, '配置旅程不能借位为聚合观测打勾');
         assert.equal(original[0].status, 'not-run');
