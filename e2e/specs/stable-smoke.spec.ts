@@ -10,7 +10,7 @@ import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeB
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
 import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername } from '../utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -7351,7 +7351,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { message: '画布图片必须完成浏览器解码', timeout: 30_000 },
       ).toBeGreaterThan(0);
       await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
-      const quickEdit = page.getByRole('textbox', { name: '快捷编辑描述', exact: true });
+      const quickEdit = getQuickEditInput(page);
       await expect(quickEdit).toHaveCount(0);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-10',

@@ -11,6 +11,12 @@ export function assertScopedSyntheticUsername(username, runId) {
   '临时账号不属于本轮 stsmk- 资源范围；停止账号创建和权限修改，需预置独立隔离身份', 'test/resource-scope');
 }
 
+export function getQuickEditInput(page) {
+  return page.getByRole('textbox', {name:'快捷编辑描述',exact:true})
+    .or(page.getByPlaceholder('Describe your edit here', {exact:true}))
+    .and(page.locator(':visible'));
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

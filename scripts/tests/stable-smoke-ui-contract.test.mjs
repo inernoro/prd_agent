@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername } from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 
@@ -17,6 +17,16 @@ test('巡检主旅程接入语义登录与精确模型详情，且仅改被测�
 });
 
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
+
+test('REG-visual-policy-001 快捷编辑同时识别已部署英文placeholder和当前中文aria，不取第一个冒充唯一', async () => {
+  for (const layout of ['deployed','current','missing','duplicate']) {
+    const locator = count => ({or: other=>locator(count+other.value),and:()=>locator(count),count:async()=>count,value:count});
+    const page={getByRole:(role,options)=>{assert.equal(role,'textbox');assert.deepEqual(options,{name:'快捷编辑描述',exact:true});return locator(['current','duplicate'].includes(layout)?1:0);},getByPlaceholder:(text,options)=>{assert.equal(text,'Describe your edit here');assert.deepEqual(options,{exact:true});return locator(['deployed','duplicate'].includes(layout)?1:0);},locator:selector=>{assert.equal(selector,':visible');return {};}};
+    assert.equal(await getQuickEditInput(page).count(),layout==='missing'?0:layout==='duplicate'?2:1);
+  }
+  const source=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
+  assert.match(source,/const quickEdit = getQuickEditInput\(page\)/);
+});
 
 test('REG-stsmk-account-scope-001 下划线替代与其它轮次账号在写入前变红', () => {
   for (const username of ['stsmk_avatar_abc', 'stsmk_noauth_abc', 'stsmk-other-avatar', 'real-user']) {
