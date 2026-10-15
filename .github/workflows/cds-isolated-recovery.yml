@@ -45,6 +45,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  default-parallel-cleanup:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install the actual source and Web test dependencies
+        run: |
+          pnpm -C cds install --frozen-lockfile
+          pnpm -C cds/web install --frozen-lockfile
+      - name: Original default parallel suite and unchanged test deadlines
+        shell: bash
+        run: |
+          node -e 'const fs=require("node:fs"),os=require("node:os");fs.writeFileSync("default-parallel-platform.json",JSON.stringify({head:process.env.GITHUB_SHA,node:process.version,platform:process.platform,arch:process.arch,availableParallelism:os.availableParallelism(),workersOverride:process.env.VITEST_MAX_THREADS||null}))'
+          pnpm -C cds test 2>&1 | tee default-parallel-cleanup.log
+      - name: Preserve complete default parallel result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cds-default-parallel-${{ matrix.os }}-${{ github.sha }}
+          path: |
+            default-parallel-cleanup.log
+            default-parallel-platform.json
+          if-no-files-found: error
+          retention-days: 14
+
   cpu-fairness-stop:
     runs-on: ubuntu-latest
     timeout-minutes: 10

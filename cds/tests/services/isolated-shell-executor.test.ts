@@ -1,5 +1,6 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, access, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -22,7 +23,7 @@ const observation = { executionLane: 'observation' as const, timeout: 5000 };
 const executors: IsolatedShellExecutor[] = [];
 const dirs: string[] = [];
 function executor(config?: ConstructorParameters<typeof IsolatedShellExecutor>[1]): IsolatedShellExecutor {
-  const e = new IsolatedShellExecutor(new ShellExecutor(), config);
+  const e = traceExecutor(new IsolatedShellExecutor(new ShellExecutor(), config), 'isolated-shell');
   executors.push(e);
   return e;
 }
@@ -179,7 +180,7 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect(e.getStats().factoryPid).not.toBe(process.pid);
   });
 
-  it('预热后常规查询和超时替换均不从 Master 创建新进程', async () => {
+  it('预热后常规查询和超时清理均不从Master创建新进程，确认后复用健康actor', async () => {
     const e = executor({ concurrency: 1 });
     await e.start();
     const initialActor = e.getStats().actors[0].pid;
@@ -187,7 +188,7 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect((await e.exec('echo first', observation)).stdout.trim()).toBe('first');
     await expect(e.exec('sleep 30', { ...observation, timeout: 100 })).rejects.toMatchObject({ code: 'deadline' });
     expect((await e.exec('echo after-replacement', observation)).stdout.trim()).toBe('after-replacement');
-    expect(e.getStats().actors[0].pid).not.toBe(initialActor);
+    expect(e.getStats().actors[0].pid).toBe(initialActor);
     expect(childProcess.spawn).not.toHaveBeenCalled();
   });
 
@@ -351,6 +352,44 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect((await e.exec('echo next', observation)).stdout.trim()).toBe('next');
   });
 
+  it('流式消费后合并确认字节，保持原帧与窗口上限而减少跨进程回执', async () => {
+    const e = executor({ concurrency: 1 }); await e.start();
+    const channel = (e as unknown as { factory: childProcess.ChildProcess }).factory;
+    const sent = vi.spyOn(channel, 'send'); let frames = 0, bytes = 0;
+    const result = await e.exec(`${quote(process.execPath)} -e ${quote("process.stdout.write('x'.repeat(1024*1024))")}`, {
+      ...observation, captureOutput: false, onData: chunk => { frames++; bytes += Buffer.byteLength(chunk); },
+    });
+    const acks = sent.mock.calls.map(call => call[0] as any).filter(message => message.type === 'ack');
+    expect(bytes).toBe(1024 * 1024); expect(result.stdout).toBe(''); expect(result.exitCode).toBe(0);
+    expect(frames).toBeGreaterThanOrEqual(128);
+    expect(acks.length).toBeLessThanOrEqual(Math.ceil(frames / 2));
+    expect(acks.every(message => message.bytes >= 32 * 1024)).toBe(true);
+  });
+
+  it.runIf(process.platform === 'darwin')('macOS取消时actor归属读取失败，由监督确认后拒绝旧任务而不挂管道', async () => {
+    const dir = await directory(), actorFile = path.join(dir, 'actor.pid'), childFile = path.join(dir, 'query-child.pid');
+    await writeFile(path.join(dir, 'ps'), `#!/bin/sh\nif [ "$PPID" = "$(cat ${quote(actorFile)})" ]; then\n printf 'owned group read unavailable' >&2; exit 1\nfi\nexec /bin/ps "$@"\n`, { mode: 0o700 });
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${dir}:${previousPath || ''}`;
+    const e = executor({ concurrency: 1 });
+    try {
+      await e.start(); const initial = e.getStats(); const actor = initial.actors[0].pid;
+      await writeFile(actorFile, String(actor));
+      const abort = new AbortController();
+      const outcome = e.exec(`sleep 30 & echo $! > ${quote(childFile)}; wait`, { ...observation, signal: abort.signal })
+        .then(() => ({ code: 'unexpected-success' }), error => error);
+      let child: number | undefined;
+      await waitFor(async () => !!(child = await readReadyFixturePid(childFile)));
+      abort.abort(); expect(await outcome).toMatchObject({ code: 'cancelled' });
+      const stopped = await new ShellExecutor().exec(`ps -o pid=,stat= -p ${actor},${child}`);
+      expect(stopped.stdout.split('\n').map(line => line.trim()).filter(Boolean)
+        .every(line => line.split(/\s+/)[1]?.startsWith('Z'))).toBe(true);
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH; else process.env.PATH = previousPath;
+      await e.close();
+    }
+  });
+
   it('工厂进程异常退出会回收所属查询，不重新执行或回退主线程', async () => {
     let factory: childProcess.ChildProcess;
     const e = executor({ processFactory: owner => {
@@ -395,7 +434,9 @@ describe('IsolatedShellExecutor 真实进程', () => {
     const channel = (e as unknown as { factory: childProcess.ChildProcess }).factory;
     expect(channel.pid).toBe(initial.supervisorPid);
     let paused = 0; let pauseError: unknown;
+    const ownedPids = new Set<number>([initial.factoryPid!, ...initial.actors.map(actor => actor.pid)]);
     const listener = (message: any): void => {
+      if (['factory-started', 'actor'].includes(message.type) && Number.isSafeInteger(message.pid) && message.pid > 1) ownedPids.add(message.pid);
       if (message.type === 'factory-started' && message.pid !== initial.factoryPid && !paused) {
         paused = message.pid; try { process.kill(paused, 'SIGSTOP'); } catch (error) { pauseError = error; }
       }
@@ -413,6 +454,10 @@ describe('IsolatedShellExecutor 真实进程', () => {
       const oldState = await new ShellExecutor().exec(`ps -o stat= -p ${paused}`);
       expect(oldState.stdout.trim()).toMatch(/^(Z.*)?$/);
       expect((await e.exec('echo recovered-after-boot-timeout', observation)).stdout.trim()).toBe('recovered-after-boot-timeout');
+      await e.close();
+      const stopped = await new ShellExecutor().exec(`ps -o pid=,stat= -p ${[...ownedPids].join(',')}`);
+      expect(stopped.stdout.split('\n').map(line => line.trim()).filter(Boolean)
+        .every(line => line.split(/\s+/)[1]?.startsWith('Z'))).toBe(true);
     } finally { channel.off('message', listener); }
   }, 12_000);
 

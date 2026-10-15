@@ -5,13 +5,20 @@ import { getHeapStatistics } from 'node:v8';
 function startObservationProcess(): void {
   // 模块巡检可以直接导入；没有私有 IPC 的进程不承接命令。
   if (!process.send || !process.connected || !/^cds-observation-[a-f0-9]{32}$/.test(process.argv[1] || '')) return;
-  let active: { id: number; child?: ChildProcess; outstanding: number; lowWater: number } | undefined;
+  interface Job { id: number; child?: ChildProcess; outstanding: number; lowWater: number; cancelled: boolean }
+  let active: Job | undefined;
   const send = (message: unknown): void => { if (process.connected) process.send!(message as object); };
   const terminate = (): void => {
     try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); }
   };
   process.on('disconnect', terminate);
   process.on('message', (message: any) => {
+    if (message.type === 'cancel' && active && active.id === message.id) {
+      active.cancelled = true;
+      // Shell退出后由同一清理回执确认全部后代；不能并发清理而误杀彼此的检查进程。
+      active.child?.kill('SIGKILL');
+      return;
+    }
     if (message.type === 'ack' && active && active.id === message.id) {
       active.outstanding = Math.max(0, active.outstanding - message.bytes);
       if (active.outstanding < active.lowWater) { active.child?.stdout?.resume(); active.child?.stderr?.resume(); }
@@ -19,7 +26,7 @@ function startObservationProcess(): void {
     }
     if (message.type !== 'exec' || active) return;
     const { id, command, options } = message;
-    const job: { id: number; child?: ChildProcess; outstanding: number; lowWater: number } = { id, outstanding: 0, lowWater: options.captureOutput === false ? 64 * 1024 : 256 * 1024 };
+    const job: Job = { id, outstanding: 0, lowWater: options.captureOutput === false ? 64 * 1024 : 256 * 1024, cancelled: false };
     active = job;
     void executeShellCommand(command, {
       cwd: options.cwd, stdin: options.stdin, captureOutput: options.captureOutput,
@@ -40,9 +47,15 @@ function startObservationProcess(): void {
 
       } } : {}),
     }, {
-      env: options.env, cancelled: () => false, processGroup: process.pid,
+      env: options.env, cancelled: () => job.cancelled, processGroup: process.pid,
       onSpawn: child => { job.child = child; },
-    }).then(result => { active = undefined; send({ type: 'result', id, result, metrics: metrics() }); }, () => terminate());
+    }).then(result => {
+      active = undefined;
+      send(job.cancelled ? { type: 'cancelled', id } : { type: 'result', id, result, metrics: metrics() });
+    }, (error: { code?: string }) => {
+      if (!job.cancelled || error.code !== 'cancelled') { terminate(); return; }
+      active = undefined; send({ type: 'cancelled', id });
+    }).catch(terminate);
   });
   const metrics = (): object => ({ pid: process.pid, rss: process.memoryUsage().rss, heapLimit: getHeapStatistics().heap_size_limit });
   send({ type: 'ready', pid: process.pid, metrics: metrics() });

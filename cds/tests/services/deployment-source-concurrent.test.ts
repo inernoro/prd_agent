@@ -23,8 +23,8 @@ describe('实际不同服务并行准备独立源码', () => {
       git(['clone', repo, current], root);
       const shell = new ShellExecutor();
       const first = new WorktreeService(shell), second = new WorktreeService(shell);
-      const results = await Promise.allSettled([first.prepareDeploymentSource('main', current, shaA),
-        second.prepareDeploymentSource('main', current, shaB)]);
+      const results = await Promise.allSettled([first.prepareDeploymentSource(current, 'main', current, shaA),
+        second.prepareDeploymentSource(current, 'main', current, shaB)]);
       console.info(JSON.stringify({ concurrentResults: results.map(r => r.status === 'fulfilled'
         ? { status: r.status, target: r.value.afterFull } : { status: r.status, reason: r.reason?.message }) }));
       expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);

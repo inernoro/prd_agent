@@ -306,3 +306,55 @@ def test_auth_inspect_strict_rejects_different_workspace_and_environment_keys(wo
 def test_declared_origin_does_not_send_embedded_credentials():
     assert cdscli._safe_repository_url("https://user:secret@github.com/acme/demo.git?token=secret#x") == "https://github.com/acme/demo.git"
     assert cdscli._safe_repository_url("git@github.com:acme/demo.git") == "git@github.com:acme/demo.git"
+
+
+@pytest.mark.parametrize("change", [{"name": "Second"}, {"slug": "second"}, {"repository": "https://github.com/example/second"}])
+def test_explicit_different_creation_target_is_not_silently_reused(workspace, monkeypatch, change):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo"], check=True)
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_keep",
+                                   project_name="Demo", project_slug="demo")
+    calls = []
+    def request(method, path, body=None, **kwargs):
+        calls.append((method, path))
+        if path == "/api/bootstrap-access-requests":
+            assert body["requestedProject"]["name"] == change.get("name", "Demo")
+            return 201, {"requestId": "r", "pollToken": "poll"}, {}
+        if path.endswith("/r"):
+            return 200, {"status": "rejected", "rejectReason": "fixture"}, {}
+        raise AssertionError("新目标不能复用原项目")
+    monkeypatch.setattr(cdscli, "_request", request)
+    args = ["connect", "--host", "cds.example", "--new-project", "--create-project", change.get("name", "Demo")]
+    if change.get("slug"): args += ["--slug", change["slug"]]
+    if change.get("repository"): args += ["--git-url", change["repository"]]
+    code, output = run_command(args)
+    assert code == 2 and "fixture" in output
+    assert json.loads((workspace / ".cds/credentials.json").read_text())["projectKey"] == "cdsp_keep"
+    assert "cdsp_keep" not in output
+
+
+def test_legacy_context_name_is_learned_without_new_approval(workspace, monkeypatch):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo"], check=True)
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_keep")
+    def request(method, path, **kwargs):
+        assert method == "GET" and path == "/api/projects/p"
+        return 200, {"id": "p", "name": "Demo", "slug": "demo"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    code, output = run_command(["connect", "--host", "cds.example", "--new-project", "--create-project", "Demo"])
+    assert code == 0, output
+    assert json.loads((workspace / ".cds/connection.json").read_text())["projectName"] == "Demo"
+
+
+def test_display_rename_keeps_original_creation_command_reusable(workspace, monkeypatch):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo"], check=True)
+    cdscli._save_local_credentials(host="https://cds.example", project_id="p", project_key="cdsp_keep", project_name="Demo", project_slug="demo")
+    def request(method, path, **kwargs):
+        assert method == "GET" and path == "/api/projects/p"
+        return 200, {"id": "p", "name": "Renamed", "slug": "renamed"}, {}
+    monkeypatch.setattr(cdscli, "_request", request)
+    args = ["connect", "--host", "cds.example", "--new-project", "--create-project", "Demo", "--slug", "Demo"]
+    for _ in range(2):
+        code, output = run_command(args)
+        assert code == 0, output
+    context = json.loads((workspace / ".cds/connection.json").read_text())
+    assert context["projectName"] == "Renamed" and context["creationName"] == "Demo"
+    assert context["creationSlug"] == "demo"

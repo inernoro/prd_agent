@@ -13455,7 +13455,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha);
+        : await worktreeService.prepareDeploymentSource(
+          stateService.getProjectRepoRoot(entry.projectId, config.repoRoot),
+          entry.branch,
+          entry.worktreePath,
+          requestCommitSha,
+        );
       const deploymentSourceEntry = 'sourcePath' in pullResult
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
@@ -14818,7 +14823,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha);
+        : await worktreeService.prepareDeploymentSource(
+          stateService.getProjectRepoRoot(entry.projectId, config.repoRoot),
+          entry.branch,
+          entry.worktreePath,
+          profileRequestCommitSha,
+        );
       const deploymentSourceEntry = 'sourcePath' in pullResult
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
@@ -24291,7 +24301,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               currentSha: currentFullSha,
               targetSha: targetFullSha,
               targetBranch: branch,
-              hint: '新版 cdscli 可传 --transition-intent、--expected-from-sha 和 --reason；普通重启不要切分支。',
+              hint: '发布先合入当前完整提交并验证；明确回滚才传 --transition-intent rollback、--expected-from-sha 和 --reason。普通重启不要切分支。',
             },
           });
           return;

@@ -228,12 +228,15 @@ describe('human project grants through the production server', () => {
     const principalId = humanPrincipalId(memberId);
     const userKey = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
     const projectKey = (await credentialCall('POST', '/api/identity/project-credentials', userKey, { projectId: 'project-a' })).body.plaintext;
+    const previousFlushTimeout = process.env.CDS_GRANT_FLUSH_TIMEOUT_MS;
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     const pending = new Promise<void>(resolve => { finish = resolve; });
     vi.spyOn(state, 'flush').mockImplementationOnce(() => pending);
     try {
       expect((await grant(['project-b'])).status).toBe(500);
+      // 20ms只注入本次失败；恢复成功阶段复原生产预算，仍保留原waitFor/用例期限。
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', previousFlushTimeout);
       await flushAllJsonStateStores();
       fs.copyFileSync(path.join(dir, 'state.json'), path.join(dir, 'interrupted-grant.json'));
       for (const failedStep of ['save', 'flush'] as const) {
@@ -309,11 +312,13 @@ describe('human project grants through the production server', () => {
     const principalId = humanPrincipalId(memberId);
     const key = (await call('POST', '/api/identity/user-credentials', owner, { principalId })).body.plaintext;
     if (status === 'active') await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'disabled' });
+    const previousFlushTimeout = process.env.CDS_GRANT_FLUSH_TIMEOUT_MS;
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     vi.spyOn(state, 'flush').mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }));
     try {
       expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status })).status).toBe(500);
+      vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', previousFlushTimeout);
       await flushAllJsonStateStores();
       const restartPath = path.join(dir, `interrupted-${status}.json`);
       fs.copyFileSync(path.join(dir, 'state.json'), restartPath);

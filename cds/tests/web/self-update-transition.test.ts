@@ -54,7 +54,7 @@ describe('buildForceSyncBody', () => {
  * body 照样"看起来对"，而线上照样被拒。
  */
 describe('前端组的 body 能过后端闸门', () => {
-  it('非快进切换 + 完整声明 → 放行', () => {
+  it('普通非继承发布被拒；相同声明在人工强制通道仍可使用', () => {
     const body = buildForceSyncBody({
       headSha: HEAD, targetBranch: 'claude/x', intent: 'release', reason: '从 CDS 系统设置强制发布到 claude/x',
     });
@@ -66,8 +66,9 @@ describe('前端组的 body 能过后端闸门', () => {
       expectedFromSha: body.expectedFromSha,
       reason: body.transitionReason,
     });
-    expect(decision.allowed).toBe(true);
-    expect(decision).toMatchObject({ mode: 'release' });
+    expect(decision).toMatchObject({ allowed: false, code: 'release_requires_inherited_revision' });
+    expect(resolveForceSyncTransition({ currentSha: HEAD, targetSha: TARGET, targetContainsCurrent: false,
+      intent: body.transitionIntent, reason: body.transitionReason })).toMatchObject({ mode: 'release' });
   });
 
   it('回滚同样放行', () => {
@@ -133,7 +134,8 @@ describe('默认原因与校验', () => {
         currentSha: HEAD, targetSha: TARGET, targetContainsCurrent: false,
         intent, expectedFromSha: HEAD, reason,
       });
-      expect(decision.allowed, `${intent}: ${reason}`).toBe(true);
+      expect(decision, `${intent}: ${reason}`).toMatchObject(intent === 'rollback'
+        ? { allowed: true } : { allowed: false, code: 'release_requires_inherited_revision' });
     }
   });
 

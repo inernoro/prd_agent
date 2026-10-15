@@ -123,23 +123,25 @@ describe('普通操作独立执行真实进程', () => {
     await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('执行中取消等待真实后代进程清理，替换槽再核资格才启动下一任务', async () => {
+  it('执行中取消等待真实后代清理，复用健康槽仍重核资格才启动下一任务', async () => {
     const e = pool(); await e.start(); const original = e.getStats().actors[0].pid;
     const dir = await directory(); const pidFile = path.join(dir, 'child.pid'); const ac = new AbortController();
     const cancelled = expect(e.exec(`sleep 30 & echo $! > ${quote(pidFile)}; wait`, { signal: ac.signal })).rejects.toMatchObject({ code: 'cancelled' });
     await waitFor(async () => { try { return !!(await readFile(pidFile, 'utf8')).trim(); } catch { return false; } });
     const pid = Number((await readFile(pidFile, 'utf8')).trim()); ac.abort(); await cancelled;
-    const check = vi.fn(() => expect(e.getStats().actors.some(a => a.pid !== original && a.heapLimit)).toBe(true));
+    const beforeNext = await new ShellExecutor().exec(`ps -o stat= -p ${pid}`);
+    expect(beforeNext.stdout.trim()).toMatch(/^(Z.*)?$/);
+    const check = vi.fn(() => expect(e.getStats().actors.some(a => a.pid === original && a.heapLimit)).toBe(true));
     expect((await e.exec('echo after-cleanup', { beforeStart: check })).stdout.trim()).toBe('after-cleanup');
     const state = await new ShellExecutor().exec(`ps -o stat= -p ${pid}`);
     expect(state.stdout.trim()).toMatch(/^(Z.*)?$/); expect(check).toHaveBeenCalledTimes(1);
   });
 
-  it('默认预算是有限操作预算，预热后截止替换也不会从Master创建命令', async () => {
+  it('默认操作预算仍有限，截止确认清理后复用槽且不从Master创建命令', async () => {
     const e = pool({ defaultTimeoutMs: 100 }); await e.start(); const original = e.getStats().actors[0].pid;
     vi.mocked(childProcess.spawn).mockClear(); vi.mocked(childProcess.exec).mockClear();
     await expect(e.exec('sleep 30')).rejects.toMatchObject({ code: 'deadline', name: 'OperationExecutionError' });
-    await waitFor(() => e.getStats().actors.some(a => a.pid !== original && !!a.heapLimit));
+    expect(e.getStats().actors.some(a => a.pid === original && !!a.heapLimit)).toBe(true);
     expect((await e.exec('echo after-deadline', { timeout: 3000 })).stdout.trim()).toBe('after-deadline');
     expect(childProcess.exec).not.toHaveBeenCalled(); expect(childProcess.spawn).not.toHaveBeenCalled();
   });

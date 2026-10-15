@@ -61,6 +61,11 @@ function startObservationExecutorProcess(): void {
         slot.job = undefined;
         pump();
       }
+      if (message.type === 'cancelled') {
+        send({ type: 'cancelled', id: slot.job.id });
+        slot.job = undefined;
+        pump();
+      }
     });
     child.on('error', fatal);
     child.on('exit', () => {
@@ -110,7 +115,7 @@ function startObservationExecutorProcess(): void {
       const slot = [...slots.values()].find(s => s.job?.id === message.id);
       if (slot && !slot.started) {
         slot.job = undefined; send({ type: 'cancelled', id: message.id }); pump();
-      } else if (slot) kill(slot);
+      } else if (slot) slot.child.send({ type: 'cancel', id: message.id }, error => { if (error) fatal(); });
     }
   });
   process.on('disconnect', () => {

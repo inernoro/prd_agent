@@ -162,7 +162,7 @@ describe('self-update production transition guard', () => {
     })).toMatchObject({ allowed: false, code: 'transition_reason_required' });
   });
 
-  it('allows an intentional non-fast-forward release with current-SHA lock', () => {
+  it('blocks a non-inherited release even with a current-SHA lock and audit reason', () => {
     expect(evaluateSelfUpdateTransition({
       currentSha,
       targetSha,
@@ -170,11 +170,13 @@ describe('self-update production transition guard', () => {
       intent: 'release',
       expectedFromSha: 'dfbb677fc',
       reason: '把已验证的共享控制面修复纳入新的发布基线',
-    })).toEqual({
-      allowed: true,
-      mode: 'release',
-      reason: '把已验证的共享控制面修复纳入新的发布基线',
-    });
+    })).toMatchObject({ allowed: false, code: 'release_requires_inherited_revision' });
+  });
+
+  it('retains an explicit rollback with the actual revision lock and reason', () => {
+    expect(evaluateSelfUpdateTransition({ currentSha, targetSha, targetContainsCurrent: false,
+      intent: 'rollback', expectedFromSha: currentSha, reason: '人工确认回滚到已知稳定版本' }))
+      .toMatchObject({ allowed: true, mode: 'rollback' });
   });
 
   it('rejects control characters in audit reasons', () => {

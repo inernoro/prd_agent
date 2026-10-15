@@ -43,6 +43,7 @@ interface Job {
   cleanup: boolean;
   bytes: number;
   dataTail: Promise<void>;
+  ackBytes: number;
   deadline: number;
   timer?: ReturnType<typeof setTimeout>;
   signal?: AbortSignal;
@@ -189,7 +190,7 @@ export class IsolatedShellExecutor implements IShellExecutor {
     const timeout = continuous ? Infinity : options.timeout && Number.isFinite(options.timeout) && options.timeout > 0 ? options.timeout : this.defaultTimeoutMs;
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
-      const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, onAssigned: options.onAssigned, cleanup, bytes, dataTail: Promise.resolve(), active: false,
+      const job: Job = { id, command, options: wireOptions, onData: options.onData, beforeStart: options.beforeStart, onAssigned: options.onAssigned, cleanup, bytes, dataTail: Promise.resolve(), ackBytes: 0, active: false,
         deadline: performance.now() + timeout, timer: continuous ? undefined : setTimeout(() => this.cancel(id, 'deadline'), Math.min(timeout, 2_147_483_647)), signal: options.signal, resolve, reject };
       if (job.signal) { job.abort = () => this.cancel(id, 'cancelled'); job.signal.addEventListener('abort', job.abort, { once: true }); }
       this.jobs.set(id, job); this.queue.push(job); this.bytes += bytes; if (cleanup) this.cleanupBytes += bytes;
@@ -272,7 +273,13 @@ export class IsolatedShellExecutor implements IShellExecutor {
     } else if (message.type === 'data') {
       job.dataTail = job.dataTail.then(async () => {
         if (!job.failure) await job.onData?.(message.chunk, message.channel);
-        this.send({ type: 'ack', id: job.id, bytes: message.bytes });
+        // 仅确认已消费的字节；32KiB低于原64KiB低水位，不增加帧、窗口或全文缓存。
+        // 小尾部可随任务终态释放，持续流累积到阈值再还信用，避免每8KiB往返三层IPC。
+        job.ackBytes += message.bytes;
+        if (job.ackBytes >= 32 * 1024) {
+          this.send({ type: 'ack', id: job.id, bytes: job.ackBytes });
+          job.ackBytes = 0;
+        }
       }).catch(() => { this.cancel(job.id, 'callback'); });
     } else if (message.type === 'result') {
       const actor = [...this.actors.values()].find(actor => actor.pid === message.pid);

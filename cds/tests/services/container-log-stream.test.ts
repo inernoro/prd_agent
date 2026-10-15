@@ -1,3 +1,4 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -40,7 +41,7 @@ if(name==='fixture-fast') {
 } else { process.stdout.write('中文初始\\n');process.stderr.write('诊断输出\\n');let i=0;setInterval(()=>process.stdout.write('日志-'+i+++'\\n'),50);setTimeout(()=>process.exit(0),60000); }
 `, { mode: 0o700 });
   process.env.PATH = `${dir}:${originalPath || ''}`;
-  const streams = new ObservationStreamExecutor(2); pools.push(streams); await streams.start();
+  const streams = traceExecutor(new ObservationStreamExecutor(2), 'container-logs'); pools.push(streams); await streams.start();
   const hub = new ContainerLogStreamHub(streams); hubs.push(hub);
   const config = { repoRoot: dir, worktreeBase: dir, masterPort: 9900, workerPort: 5500, dockerNetwork: 'fixture',
     sharedEnv: {}, portStart: 10001, rootDomains: ['example.test'], previewDomain: 'example.test', jwt: { secret: 'fixture-secret', issuer: 'fixture' } } as CdsConfig;
