@@ -74,17 +74,20 @@ function fixture(role: 'api' | 'worker' = 'api', withNetwork = false, operationI
   } } as unknown as IShellExecutor;
   const profile = { id: 'api', projectId: 'project', role, name: 'API', containerPort: 8080, workDir: '.', dockerImage: image,
     prebuiltImage: true, prebuiltCommitPolicy: 'exact', preparedCommitSha: sha, preparedArtifactId: image } as BuildProfile;
-  let ready = true; let oldReady = true; let createFails = false; let wait: (() => Promise<boolean>) | undefined;
+  let ready = true; let oldReady = true; let createFails = false; let networkFailsBeforeCreate = false; let networkUnknown = false; let wait: (() => Promise<boolean>) | undefined;
   const containers = { runService: async (graph: BranchEntry, p: BuildProfile, service: any, _output: any, _env: any, context: any) => {
     expect(graph).not.toBe(entry); expect(context.candidateRunId).toBe(operationId);
     if (withNetwork) {
       await context.onCandidateNetworkIntent();
+      if (networkUnknown) throw new Error('network-create-outcome-unknown');
       network = { Id: '9'.repeat(64), Name: state.getDeploymentRun(runId)!.candidate!.networkName, Driver: 'bridge', Scope: 'local',
         Internal: false, Attachable: false, Ingress: false, EnableIPv6: false, Options: {}, IPAM: { Driver: 'default', Config: [] },
         Containers: {}, Labels: { 'cds.managed': 'true', 'cds.type': 'candidate-network', 'cds.instance': 'instance',
           'cds.project.id': 'project', 'cds.branch.id': 'branch', 'cds.deployment.operation': operationId } };
       networkExists = true; await context.onCandidateNetworkPrepared(network.Name);
+      if (networkFailsBeforeCreate) throw new Error('network-prepare-before-container-create');
     }
+    await context.onCandidateCreateIntent();
     events.push('create-candidate'); if (createFails) throw new Error('create-unknown');
     add(service.containerName, service.hostPort, true);
     Object.assign(service, { deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: image, deployedMode: 'express' });
@@ -94,9 +97,31 @@ function fixture(role: 'api' | 'worker' = 'api', withNetwork = false, operationI
   const service = new CandidateDeploymentService(state, containers as any, new OwnedContainerLifecycle(shell, 'instance'), withNetwork ? new OwnedCandidateNetworkLifecycle(shell, 'instance') : undefined);
   return { service, options, containers, old, events, objects, shell,
     getNetwork: () => network, networkExists: () => networkExists, setReady: (value: boolean) => { ready = value; },
-    setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
+    setOldReady: (value: boolean) => { oldReady = value; }, failCreate: () => { createFails = true; }, failNetworkBeforeCreate: () => { networkFailsBeforeCreate = true; }, failUnknownNetwork: () => { networkUnknown = true; }, setWait: (value: () => Promise<boolean>) => { wait = value; } };
 }
 describe('P3 actual deployment candidate orchestration', () => {
+  it('does not record a container creation intent or strand a stopped worker when network preparation fails before create', async () => {
+    const f = fixture('worker', true); f.failNetworkBeforeCreate();
+    await expect(f.service.deploy(f.options)).rejects.toThrow('network-prepare-before-container-create');
+    expect(state.getDeploymentRun(runId)!.candidate!.createIntents || []).toEqual([]);
+    expect(state.getDeploymentRun(runId)!.candidate!.createdContainers || {}).toEqual({});
+    expect(f.events).not.toContain('create-candidate');
+    expect(f.old.State.Running).toBe(true);
+    expect(f.networkExists()).toBe(false);
+  });
+
+  it('keeps a stopped original worker and the reservation when only a network create intent was acknowledged', async () => {
+    const f = fixture('worker', true); f.failUnknownNetwork();
+    await expect(f.service.deploy(f.options)).rejects.toThrow('network-create-outcome-unknown');
+    const candidate = state.getDeploymentRun(runId)!.candidate!;
+    expect(candidate.createIntents || []).toEqual([]);
+    expect(candidate.networkCreation).toEqual({ intent: true });
+    expect(candidate.phase).toBe('reconciling');
+    expect(f.events).not.toContain('create-candidate');
+    expect(f.events).not.toContain('docker start ' + f.old.Id);
+    expect(f.old.State.Running).toBe(false);
+  });
+
   it('measures actual candidate admission/start/readiness/route ACK/recycle boundaries in its own run', async () => {
     state.getDeploymentRun(runId)!.operationId = 'op_timing';
     const f = fixture('api', true, 'op_timing'); f.options.profiles[0].startupSignal = 'ready';

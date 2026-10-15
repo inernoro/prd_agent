@@ -158,8 +158,6 @@ export class CandidateDeploymentService {
           const current = () => { active(); signal.throwIfAborted(); };
           current(); const service = graph.services[profile.id]; service.status = 'starting';
           const output = (chunk: string) => options.onOutput?.(profile.id, chunk);
-          await journal.recordCreateIntent(runId, profile.id, current); current();
-          attempted.add(profile.id);
           await measureDeploymentStage(options.timing, 'startup', 'prebuilt-start', profile.id, () => this.containers.runService(graph, profile, service, output, customEnv, {
             ...options.context, operationId: frozen.operationId, candidateRunId: frozen.operationId,
             assertCurrent: current, signal,
@@ -170,7 +168,10 @@ export class CandidateDeploymentService {
                 await journal.recordNetwork(runId, reference, current); current(); capturedNetwork = reference;
               },
             } : {}),
-            onCandidateCreateIntent: () => journal.recordCreateIntent(runId, profile.id, current),
+            onCandidateCreateIntent: async () => {
+              await journal.recordCreateIntent(runId, profile.id, current); current();
+              attempted.add(profile.id);
+            },
             onCandidateCreated: async id => {
               const reference = await this.lifecycle.capture({ ...owner, candidateOperationId: frozen.operationId }, service, current, signal);
               current();
@@ -232,6 +233,11 @@ export class CandidateDeploymentService {
           // Even a failed CLI may have delivered create to the Daemon: no absent-name assumption permits worker restore.
           recoveryStage = 'daemon-create';
           if ([...attempted].some(id => !captured.has(id))) throw new Error('candidate_create_unconfirmed: reconciliation required');
+          const networkCreation = this.state.getDeploymentRun(runId)?.candidate?.networkCreation;
+          if (networkCreation?.intent && (!capturedNetwork || networkCreation.identity?.id !== capturedNetwork.id ||
+            networkCreation.identity?.fingerprint !== capturedNetwork.fingerprint)) {
+            throw new Error('candidate_network_unconfirmed: reconciliation required');
+          }
           const recoverySignal = AbortSignal.timeout(30_000);
           recoveryStage = 'candidate-remove';
           if (!switched) for (const reference of captured.values()) await this.lifecycle.remove(reference, servingFence, recoverySignal);

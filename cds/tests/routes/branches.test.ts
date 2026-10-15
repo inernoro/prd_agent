@@ -1092,6 +1092,7 @@ describe('Branch Routes', () => {
             'cds.type': 'candidate-network', 'cds.instance': computeCdsInstanceId(config.repoRoot), 'cds.project.id': 'proj-a',
             'cds.branch.id': 'b1', 'cds.deployment.operation': context!.candidateRunId! } };
         await context!.onCandidateNetworkPrepared!(networkFacts.Name);
+        await context!.onCandidateCreateIntent!();
         events.push('create'); add(service, context!.candidateRunId);
         Object.assign(service, { deployedPrebuilt: true, deployedCommitSha: sha, deployedImage: image,
           deployedArtifactRef: profile.preparedArtifactRef, deployedMode: 'express' });
