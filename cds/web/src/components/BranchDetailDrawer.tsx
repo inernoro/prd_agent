@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { databaseFailure, type DatabaseFailure } from '@/lib/databaseFailure';
+import { DatabaseExecutionNotice } from '@/components/branch/DatabaseExecutionNotice';
 import { DatabasePassPanel } from '@/components/branch/DatabasePassPanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
@@ -4922,6 +4924,7 @@ function resultModeLabel(mode: WorkbenchResultMode): string {
 }
 
 function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; configuredDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
@@ -4936,7 +4939,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
   const [writeForm, setWriteForm] = useState<{ action: 'insertOne' | 'updateMany' | 'deleteMany'; collection: string; document: string; filter: string; update: string; confirm: string }>({
     action: 'updateMany', collection: '', document: '{\n  \n}', filter: '{\n  \n}', update: '{\n  "$set": {}\n}', confirm: '',
   });
-  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
+  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string; failure?: DatabaseFailure }>({ status: 'idle' });
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -4963,7 +4966,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
         return nextDatabase;
       });
     } catch (err) {
-      setDatabasesState({ status: 'error', databases: [], message: err instanceof ApiError ? err.message : String(err) });
+      setDatabasesState({ status: 'error', databases: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4981,7 +4984,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setSelectedCollection(nextCollection);
       setCommand(defaultMongoCommand(nextCollection));
     } catch (err) {
-      setCollectionsState({ status: 'error', collections: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCollectionsState({ status: 'error', collections: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4994,7 +4997,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setResultMode('table');
       setSelectedDocumentIndex(0);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -5030,7 +5033,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setSelectedDocumentIndex(0);
       if (res.kind === 'output') void loadCollections(selectedDatabase, res.collection || selectedCollection);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
       setResultMode('output');
     }
   }
@@ -5061,7 +5064,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       void loadDocuments(selectedDatabase, coll);
       void loadCollections(selectedDatabase, coll);
     } catch (err) {
-      setWriteState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setWriteState({ status: 'error', failure: databaseFailure(err, 'mongo') });
     }
   }
 
@@ -5164,8 +5167,8 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
-            <section className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-background/30">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_auto_minmax(0,1fr)]">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">只读</span></div>
@@ -5210,6 +5213,9 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
               </div>
             </section>
 
+            <div className="shrink-0" data-testid="mongo-write-feedback">
+              {writeState.status === 'error' ? <DatabaseExecutionNotice failure={writeState.failure || { summary: writeState.message || '写入未完成。', recovery: '请修正填写内容后重试。' }} showDiagnostics={canManageConsole} /> : null}
+            </div>
             <MongoDocumentsView
               state={commandState}
               collection={selectedCollection}
@@ -5297,9 +5303,7 @@ function MongoStructuredWritePanel({
             执行写入
           </Button>
         </div>
-        {state.status === 'error' ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[0.6875rem] text-destructive">{state.message}</div>
-        ) : state.status === 'ok' ? (
+        {state.status === 'ok' ? (
           <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[0.6875rem] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
         ) : null}
       </div>
@@ -5708,7 +5712,7 @@ function quoteSqlTableName(resource: BranchResource, table: DbTableSummary): str
   return `\`${table.name.replace(/`/g, '``')}\``;
 }
 
-type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
+type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string; failure?: DatabaseFailure; batchWrite?: boolean };
 
 /**
  * 只读语句头。**必须与后端 src/services/sql-statement-policy.ts 的 READ_STATEMENT_HEADS
@@ -5807,7 +5811,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
         setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
       }
     } catch (err) {
-      setTablesState({ status: 'error', tables: [], message: err instanceof ApiError ? err.message : String(err) });
+      setTablesState({ status: 'error', tables: [], message: databaseFailure(err, 'sql').summary });
     }
   }, [basePath, resource]);
 
@@ -5821,7 +5825,8 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       setActiveResult(0);
       setResultMode(preview.columns.length > 0 ? 'table' : 'output');
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure });
       setResultMode('output');
     }
   }, [basePath]);
@@ -5887,7 +5892,8 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       if (!readOnly) void loadTables(false);
     } catch (err) {
       const partialResult = err instanceof ApiError ? (err.body as { partialResult?: DbQueryResult })?.partialResult : undefined;
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err), result: partialResult });
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure, batchWrite: !sqlReadOnly, result: partialResult });
       setResultMode('output');
       if (!sqlReadOnly) void loadTables(false);
     }
@@ -6005,7 +6011,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                     onClick={() => { setActiveResult(-1); setResultMode('output'); }}>执行记录</button>
                 </div>
               ) : null}
-              {resultState.status === 'error' ? <div role="alert" className="shrink-0 border-b border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{resultState.message} 执行已停止；此前已提交的修改可能仍然生效。</div> : null}
+              {resultState.status === 'error' && resultState.failure ? <DatabaseExecutionNotice failure={resultState.failure} batchWrite={resultState.batchWrite} showDiagnostics={canManageConsole} /> : null}
               <div className="grid min-h-0 flex-1">
                 <DbResultTable
                   state={resultState.result?.resultSets?.[activeResult] ? { status: 'ok', result: resultState.result.resultSets[activeResult] } : resultState}
