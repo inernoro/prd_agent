@@ -66,7 +66,9 @@ export function buildLiteraryModelOptions(pools: LiteraryAgentModelPool[]): Lite
     const previous = bestActualModels.get(identity);
     const rank = availabilityRank.get(model.poolId)!;
     const previousRank = previous && availabilityRank.get(previous.poolId)!;
-    if (!previous || rank < previousRank! || (rank === previousRank && model.poolId < previous.poolId)) {
+    const winsTie = previous && (model.isDefault !== previous.isDefault
+      ? model.isDefault : model.poolId < previous.poolId);
+    if (!previous || rank < previousRank! || (rank === previousRank && winsTie)) {
       bestActualModels.set(identity, model);
     }
   }

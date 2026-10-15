@@ -84,6 +84,19 @@ describe('buildLiteraryModelOptions', () => {
     expect(selectLiteraryModelOption(options, '')?.modelName).toBe('gpt-image-2');
   });
 
+  it.each(['Healthy', 'Degraded', 'Unavailable'])('同级 %s 去重保留较晚 Id 的显式默认，不依赖目录顺序', (healthStatus) => {
+    const earlier = pool({
+      id: 'a', code: 'earlier-public', isDefault: false,
+      models: [{ ...pool().models[0], healthStatus, isRecoveryProbeAvailable: true }],
+    });
+    const explicitDefault = pool({ ...earlier, id: 'z', code: 'default-public', isDefault: true });
+    for (const candidates of [[earlier, explicitDefault], [explicitDefault, earlier]]) {
+      const options = buildLiteraryModelOptions(candidates);
+      expect(options).toHaveLength(1);
+      expect.soft(selectLiteraryModelOption(options, '')?.modelName).toBe(explicitDefault.code);
+    }
+  });
+
   it('用户显式偏好不被系统默认覆盖', () => {
     const options = buildLiteraryModelOptions([
       pool({ id: 'sunburst', code: 'gpt-image-2.5-sunburst', isDefault: false, models: [{ modelId: 'gpt-image-2.5-sunburst', actualModelId: 'gpt-image-2.5-sunburst', platformId: 'logical-model', actualPlatformId: 'openai', priority: 1, healthStatus: 'Healthy' }] }),
