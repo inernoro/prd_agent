@@ -17,6 +17,7 @@ import type {
 import type {
   MonthlyReport,
   MonthlyReportDetail,
+  MonthlyTeamOverview,
   MonthlyWeeklyCandidate,
   UpdateMonthlyReportInput,
 } from '@/services/contracts/reportAgentMonthly';
@@ -80,6 +81,15 @@ export async function listMonthlyWeeklyCandidatesReal(input: { teamId: string; y
   return await apiRequest<{ items: MonthlyWeeklyCandidate[] }>(`${routes.weeklyCandidates()}?${qs.toString()}`, {
     method: 'GET',
   });
+}
+
+export async function getMonthlyTeamOverviewReal(input: { teamId: string; year: number; month: number }) {
+  const qs = new URLSearchParams({
+    teamId: input.teamId,
+    year: String(input.year),
+    month: String(input.month),
+  });
+  return await apiRequest<MonthlyTeamOverview>(`${routes.teamOverview()}?${qs.toString()}`, { method: 'GET' });
 }
 
 // ========== 互动（与周报同一套契约，入参里的 reportId 即月报 Id） ==========

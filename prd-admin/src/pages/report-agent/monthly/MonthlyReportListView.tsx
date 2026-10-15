@@ -9,6 +9,7 @@ import { createMonthlyReport, listMonthlyReports } from '@/services';
 import { useReportAgentStore } from '@/stores/reportAgentStore';
 import type { MonthlyReport } from '@/services/contracts/reportAgentMonthly';
 import { currentYearMonth, formatYearMonth, getMonthlyStatusMeta, recentMonths } from './monthlyMeta';
+import { MonthlyTeamOverview } from './MonthlyTeamOverview';
 
 /** 写完 / 打开一份月报：草稿进编辑页，已提交进详情页（详情页有评论与点赞） */
 export function monthlyReportPath(report: Pick<MonthlyReport, 'id' | 'status'>, viewerIsOwner: boolean) {
@@ -17,12 +18,19 @@ export function monthlyReportPath(report: Pick<MonthlyReport, 'id' | 'status'>, 
     : `/report-agent/monthly/${report.id}`;
 }
 
+type ViewMode = 'mine' | 'team';
+
 export function MonthlyReportListView() {
   const navigate = useNavigate();
   const teams = useReportAgentStore((s) => s.teams);
   const myTeams = useMemo(() => teams.filter((t) => !!t.myRole), [teams]);
+  const managedTeams = useMemo(
+    () => myTeams.filter((t) => t.myRole === 'leader' || t.myRole === 'deputy'),
+    [myTeams]
+  );
 
   const months = useMemo(() => recentMonths(12), []);
+  const [mode, setMode] = useState<ViewMode>('mine');
   const [teamId, setTeamId] = useState<string>('');
   const [ym, setYm] = useState(currentYearMonth);
   const [items, setItems] = useState<MonthlyReport[] | null>(null);
@@ -31,6 +39,13 @@ export function MonthlyReportListView() {
   useEffect(() => {
     if (!teamId && myTeams.length > 0) setTeamId(myTeams[0].id);
   }, [myTeams, teamId]);
+
+  // 切到「团队月报」时，团队选择只能落在自己负责的团队上
+  useEffect(() => {
+    if (mode === 'team' && managedTeams.length > 0 && !managedTeams.some((t) => t.id === teamId)) {
+      setTeamId(managedTeams[0].id);
+    }
+  }, [mode, managedTeams, teamId]);
 
   const load = useCallback(async () => {
     const res = await listMonthlyReports({ scope: 'my' });
@@ -89,6 +104,25 @@ export function MonthlyReportListView() {
           <span className="text-[14px] font-semibold shrink-0 whitespace-nowrap" style={{ color: 'var(--text-primary)' }}>
             月报
           </span>
+          {managedTeams.length > 0 && (
+            <div className="flex items-center rounded-lg p-0.5 shrink-0" style={{ background: 'var(--bg-secondary)' }}>
+              {(['mine', 'team'] as ViewMode[]).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className="px-2.5 py-1 text-[12px] rounded-md whitespace-nowrap"
+                  style={{
+                    background: mode === m ? 'var(--bg-elevated)' : 'transparent',
+                    color: mode === m ? 'var(--text-primary)' : 'var(--text-muted)',
+                    fontWeight: mode === m ? 600 : 400,
+                  }}
+                  onClick={() => setMode(m)}
+                >
+                  {m === 'mine' ? '我的月报' : '团队月报'}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="flex-1" />
           {myTeams.length > 1 && (
             <select
@@ -98,7 +132,7 @@ export function MonthlyReportListView() {
               onChange={(e) => setTeamId(e.target.value)}
               aria-label="选择团队"
             >
-              {myTeams.map((t) => (
+              {(mode === 'team' ? managedTeams : myTeams).map((t) => (
                 <option key={t.id} value={t.id}>{t.name}</option>
               ))}
             </select>
@@ -117,14 +151,22 @@ export function MonthlyReportListView() {
               <option key={`${m.year}-${m.month}`} value={`${m.year}-${m.month}`}>{formatYearMonth(m.year, m.month)}</option>
             ))}
           </select>
-          <Button variant="primary" size="sm" onClick={handlePrimary} disabled={creating || myTeams.length === 0}>
-            {creating ? <MapSpinner size={13} /> : existing ? <ArrowRight size={13} /> : <FilePlus2 size={13} />}
-            <span className="whitespace-nowrap">{primaryLabel}</span>
-          </Button>
+          {mode === 'mine' && (
+            <Button variant="primary" size="sm" onClick={handlePrimary} disabled={creating || myTeams.length === 0}>
+              {creating ? <MapSpinner size={13} /> : existing ? <ArrowRight size={13} /> : <FilePlus2 size={13} />}
+              <span className="whitespace-nowrap">{primaryLabel}</span>
+            </Button>
+          )}
         </div>
       </GlassCard>
 
-      {items === null ? (
+      {mode === 'team' ? (
+        <MonthlyTeamOverview
+          teamId={managedTeams.some((t) => t.id === teamId) ? teamId : managedTeams[0]?.id ?? ''}
+          year={ym.year}
+          month={ym.month}
+        />
+      ) : items === null ? (
         <MapSectionLoader text="正在加载月报…" />
       ) : items.length === 0 ? (
         <GlassCard variant="subtle" className="flex-1 min-h-0 flex flex-col items-center justify-center gap-3 px-6 py-10 text-center">

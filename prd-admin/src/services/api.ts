@@ -741,6 +741,7 @@ export const api = {
       views: (id: string) => `/api/report-agent/monthly-reports/${id}/views`,
       viewsSummary: (id: string) => `/api/report-agent/monthly-reports/${id}/views-summary`,
       weeklyCandidates: () => '/api/report-agent/monthly-reports/weekly-candidates',
+      teamOverview: () => '/api/report-agent/monthly-reports/team-overview',
       comments: (id: string) => `/api/report-agent/monthly-reports/${id}/comments`,
       comment: (id: string, commentId: string) => `/api/report-agent/monthly-reports/${id}/comments/${commentId}`,
       commentImages: (id: string) => `/api/report-agent/monthly-reports/${id}/comments/images`,

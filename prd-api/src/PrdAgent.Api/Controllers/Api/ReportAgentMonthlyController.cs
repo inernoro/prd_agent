@@ -28,17 +28,20 @@ public class ReportAgentMonthlyController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly ReportInteractionService _interactions;
     private readonly ReportViewerResolver _viewers;
+    private readonly ReportNotificationService _notifications;
     private readonly ILogger<ReportAgentMonthlyController> _logger;
 
     public ReportAgentMonthlyController(
         MongoDbContext db,
         ReportInteractionService interactions,
         ReportViewerResolver viewers,
+        ReportNotificationService notifications,
         ILogger<ReportAgentMonthlyController> logger)
     {
         _db = db;
         _interactions = interactions;
         _viewers = viewers;
+        _notifications = notifications;
         _logger = logger;
     }
 
@@ -136,6 +139,30 @@ public class ReportAgentMonthlyController : ControllerBase
             submitIssues = viewer.IsOwner ? BuildSubmitIssues(report) : null,
             chapterTitles = MonthlyReportChapters.Titles
         };
+    }
+
+    private async Task<List<string>> GetTeamLeaderIdsAsync(string teamId)
+    {
+        var team = await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync();
+        var ids = await _db.ReportTeamMembers
+            .Find(m => m.TeamId == teamId && (m.Role == ReportTeamRole.Leader || m.Role == ReportTeamRole.Deputy))
+            .Project(m => m.UserId)
+            .ToListAsync();
+        if (!string.IsNullOrEmpty(team?.LeaderUserId)) ids.Add(team.LeaderUserId);
+        return ids.Distinct().ToList();
+    }
+
+    /// <summary>通知是附带动作：发送失败只记日志，不让主流程（提交 / 评论）失败。</summary>
+    private async Task NotifySafelyAsync(string what, string reportId, Func<Task> send)
+    {
+        try
+        {
+            await send();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "月报通知发送失败（{What}），reportId={ReportId}；主流程已成功，不受影响", what, reportId);
+        }
     }
 
     #endregion
@@ -393,6 +420,8 @@ public class ReportAgentMonthlyController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "月报状态已变化，请刷新后重试"));
 
         var saved = await _db.MonthlyReports.Find(r => r.Id == id).FirstOrDefaultAsync();
+        await NotifySafelyAsync("提交通知负责人", id, async () =>
+            await _notifications.NotifyMonthlyReportSubmittedAsync(saved!, await GetTeamLeaderIdsAsync(saved!.TeamId)));
         return Ok(ApiResponse<object>.Ok(await BuildDetailPayloadAsync(saved!, new ReportViewer(true, null, HasViewAll))));
     }
 
@@ -425,6 +454,70 @@ public class ReportAgentMonthlyController : ControllerBase
         return Ok(ApiResponse<object>.Ok(await _interactions.BuildViewSummaryAsync(report!.Id, report.UserId)));
     }
 
+    /// <summary>
+    /// 团队月报概览（负责人 / 副负责人 / 「查看全部」）：本月每位成员交了没有。
+    /// 草稿只显示状态、不给 reportId——草稿只有作者本人可见。
+    /// </summary>
+    [HttpGet("team-overview")]
+    public async Task<IActionResult> TeamOverview([FromQuery] string teamId, [FromQuery] int year, [FromQuery] int month)
+    {
+        var userId = GetUserId();
+        if (string.IsNullOrWhiteSpace(teamId) || month < 1 || month > 12)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "需要指定团队与年月"));
+
+        var team = await _db.ReportTeams.Find(t => t.Id == teamId).FirstOrDefaultAsync();
+        if (team == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "团队不存在"));
+
+        var role = await _viewers.GetTeamRoleAsync(teamId, userId);
+        var viewer = new ReportViewer(false, role, HasViewAll);
+        if (!viewer.IsLeaderOrDeputy && !viewer.HasViewAll && team.LeaderUserId != userId)
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只有团队负责人可以查看团队月报概览"));
+
+        var members = await _db.ReportTeamMembers.Find(m => m.TeamId == teamId).ToListAsync();
+        var reports = await _db.MonthlyReports
+            .Find(r => r.TeamId == teamId && r.Year == year && r.Month == month)
+            .ToListAsync();
+        var byUser = reports.ToDictionary(r => r.UserId, r => r);
+
+        var items = members
+            .Select(m =>
+            {
+                byUser.TryGetValue(m.UserId, out var r);
+                var status = r?.Status ?? "not-started";
+                var visible = r != null && r.Status != MonthlyReportStatus.Draft;
+                return new
+                {
+                    userId = m.UserId,
+                    userName = m.UserName ?? r?.UserName ?? m.UserId,
+                    avatarFileName = m.AvatarFileName ?? r?.AvatarFileName,
+                    role = m.Role,
+                    isExcused = m.IsExcused,
+                    status,
+                    reportId = visible ? r!.Id : null,
+                    submittedAt = visible ? r!.SubmittedAt : null,
+                    weeklyLinkCount = visible ? r!.WeeklyLinks.Count : 0,
+                };
+            })
+            // 已提交的排前面，其次草稿，最后未开始；同组按名字
+            .OrderBy(x => x.status == MonthlyReportStatus.Viewed || x.status == MonthlyReportStatus.Submitted ? 0
+                : x.status == MonthlyReportStatus.Draft ? 1 : 2)
+            .ThenBy(x => x.userName)
+            .ToList();
+
+        var counted = items.Where(x => !x.isExcused).ToList();
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            teamId,
+            teamName = team.Name,
+            year,
+            month,
+            memberCount = counted.Count,
+            submittedCount = counted.Count(x => x.reportId != null),
+            items,
+        }));
+    }
+
     #region Comments / Likes（与周报共用 ReportInteractionService，访问判定与「能否查看这份月报」一致）
 
     private ObjectResult InteractionFailure(ReportInteractionError error)
@@ -442,14 +535,17 @@ public class ReportAgentMonthlyController : ControllerBase
     [HttpPost("{id}/comments")]
     public async Task<IActionResult> CreateComment(string id, [FromBody] CreateCommentRequest req)
     {
-        var (_, _, error) = await LoadVisibleAsync(id);
+        var (report, _, error) = await LoadVisibleAsync(id);
         if (error != null) return error;
         if (req.SectionIndex < 0 || req.SectionIndex >= MonthlyReportChapters.Titles.Length)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "评论的章节不存在"));
 
-        var (comment, failure) = await _interactions.CreateCommentAsync(
-            id, MonthlyReportChapters.TitleOf(req.SectionIndex), GetUserId(), GetUsername(), req);
+        var chapterTitle = MonthlyReportChapters.TitleOf(req.SectionIndex);
+        var (comment, failure) = await _interactions.CreateCommentAsync(id, chapterTitle, GetUserId(), GetUsername(), req);
         if (failure != null) return InteractionFailure(failure);
+
+        await NotifySafelyAsync("评论通知作者", id, () =>
+            _notifications.NotifyMonthlyReportCommentedAsync(report!, comment!.AuthorUserId, comment.AuthorDisplayName, comment.Id, chapterTitle));
         return Ok(ApiResponse<object>.Ok(new { comment }));
     }
 

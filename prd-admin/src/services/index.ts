@@ -839,6 +839,7 @@ import {
   recordMonthlyReportViewReal,
   getMonthlyReportViewsSummaryReal,
   listMonthlyWeeklyCandidatesReal,
+  getMonthlyTeamOverviewReal,
   listMonthlyCommentsReal,
   createMonthlyCommentReal,
   updateMonthlyCommentReal,
@@ -1287,6 +1288,7 @@ export const submitMonthlyReport = withAuth(submitMonthlyReportReal);
 export const recordMonthlyReportView = withAuth(recordMonthlyReportViewReal);
 export const getMonthlyReportViewsSummary = withAuth(getMonthlyReportViewsSummaryReal);
 export const listMonthlyWeeklyCandidates = withAuth(listMonthlyWeeklyCandidatesReal);
+export const getMonthlyTeamOverview = withAuth(getMonthlyTeamOverviewReal);
 export const listMonthlyComments: ListCommentsContract = withAuth(listMonthlyCommentsReal);
 export const createMonthlyComment: CreateCommentContract = withAuth(createMonthlyCommentReal);
 export const updateMonthlyComment: UpdateCommentContract = withAuth(updateMonthlyCommentReal);

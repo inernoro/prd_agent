@@ -5,3 +5,5 @@
 | fix | prd-api | 周报的评论、点赞、浏览接口改为遵守团队「仅负责人可查看」设置，普通成员不再能读到别人周报下的评论与点赞名单 |
 | refactor | prd-api | 周报评论 / 点赞 / 浏览逻辑收敛到 ReportInteractionService，周报与月报共用 |
 | refactor | prd-admin | 章节评论区抽为 ReportSectionComments，点赞与评论组件按报告种类走 reportInteractionApi 注册表 |
+| feat | prd-admin | 「月报」标签页为负责人新增「团队月报」视图：本月谁已提交、谁还在写，已提交的可直接点进去查看 |
+| feat | prd-api | 新增团队月报概览接口；成员提交月报通知负责人、月报收到评论通知作者，通知来源为「月报」并直达那份月报 |

@@ -80,3 +80,27 @@ export interface UpdateMonthlyReportInput {
   partners: { userId: string; reason: string }[];
   suggestionsText: string;
 }
+
+export interface MonthlyTeamOverviewItem {
+  userId: string;
+  userName: string;
+  avatarFileName?: string | null;
+  role: string;
+  isExcused: boolean;
+  /** not-started / draft / submitted / viewed */
+  status: string;
+  /** 草稿与未开始为 null（草稿只有作者可见） */
+  reportId: string | null;
+  submittedAt: string | null;
+  weeklyLinkCount: number;
+}
+
+export interface MonthlyTeamOverview {
+  teamId: string;
+  teamName: string;
+  year: number;
+  month: number;
+  memberCount: number;
+  submittedCount: number;
+  items: MonthlyTeamOverviewItem[];
+}
