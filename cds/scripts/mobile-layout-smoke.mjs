@@ -16,6 +16,8 @@
  * 长度与数量把布局撑成什么样」——那仍然要靠真实实例模式或视觉验收。
  */
 import { createRequire } from 'node:module';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { startViteDevServer } from './lib/vite-dev-server.mjs';
 import { resolveFixture, isEventStream, FIXTURE_PROJECT_ID } from './fixtures/mobile-layout-fixtures.mjs';
@@ -441,6 +443,10 @@ async function main() {
   // 沙箱/CI 里 Playwright 自带的浏览器版本未必与镜像预装的一致，允许显式指定。
   const executablePath = process.env.CDS_CHROMIUM_PATH || undefined;
   const only = process.env.CDS_SMOKE_ONLY || '';
+  // 生产代理注入的徽标不经过 Vite；单独运行真实 IIFE/CSS，不能拿宿主页布局代替。
+  if (OFFLINE && !only) execFileSync(process.execPath,
+    ['--import', 'tsx', fileURLToPath(new URL('./widget-mobile-status-fixture.ts', import.meta.url))],
+    { cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'inherit' });
   let devServer = null;
   if (OFFLINE) {
     devServer = await startViteDevServer();
