@@ -47,7 +47,26 @@ export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreat
   const proof={runId:body.data.runId,targetKey:request.targetKey,selectedLabel,placement:{x:request.x,y:request.y,w:request.w,h:request.h},request:{prompt:request.prompt,size:request.size,modelId:request.modelId,platformId:request.platformId,expectedImageRefCount:request.expectedImageRefCount,imageRefCount:(request.imageRefs||[]).length}};
   if(onSubmitted)await onSubmitted(proof);
   assertDefaultPeachRequest({pool,selectedLabel,request});
+  // The real UI may omit optional request coordinates. The actual desktop frame
+  // keeps unscaled world coordinates as inline left/top/width/height; read that
+  // exact created target rather than substituting a guessed API origin.
+  if (!['x','y','w','h'].every(key => Number.isFinite(proof.placement[key]))) {
+    proof.placement = await readCanvasPlacementThroughUi(page, request.targetKey);
+  }
   return proof;
+}
+
+export async function readCanvasPlacementThroughUi(page, targetKey) {
+  if (!/^[a-z0-9_.-]+$/i.test(targetKey || '')) throw Error('[test/canvas-fixture] 本轮画框身份无效');
+  const frame = page.locator(`[data-canvas-key="${targetKey}"]`);
+  await frame.waitFor({state:'visible',timeout:15_000});
+  if (await frame.count() !== 1) throw Error('[test/canvas-fixture] 本轮主画框不唯一');
+  const placement = await frame.evaluate(element => ({
+    x:parseFloat(element.style.left),y:parseFloat(element.style.top),
+    w:parseFloat(element.style.width),h:parseFloat(element.style.height),
+  }));
+  secondaryImagePlacement(placement); // Reuse the same finite/positive predicate.
+  return placement;
 }
 
 export function secondaryImagePlacement(primary) {

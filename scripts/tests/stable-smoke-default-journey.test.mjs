@@ -1,8 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {assertDefaultPeachRequest,createDefaultWorkspaceThroughUi,selectSupportedDefaultSizes,submitDefaultPeachThroughUi,secondaryImagePlacement} from '../../e2e/utils/stableSmokeDefaultJourney.mjs';
+import {assertDefaultPeachRequest,createDefaultWorkspaceThroughUi,selectSupportedDefaultSizes,submitDefaultPeachThroughUi,secondaryImagePlacement,readCanvasPlacementThroughUi} from '../../e2e/utils/stableSmokeDefaultJourney.mjs';
 const proof={pool:{isDefault:true,code:'configured-public-id',name:'具体配置型号'},selectedLabel:'具体配置型号',request:{prompt:'白桃',size:'1024x1024',modelId:'configured-public-id',platformId:'logical-model',expectedImageRefCount:0,targetKey:'owned-canvas'}};
+test('REG-visual-progress-002 请求未携带可选坐标时读取真实画框内联世界坐标，不猜原点', async()=>{
+ const element={style:{left:'820px',top:'430px',width:'1024px',height:'1024px'}};
+ const page={locator:selector=>{assert.equal(selector,'[data-canvas-key="owned-canvas"]');return {waitFor:async()=>{},count:async()=>1,evaluate:async fn=>fn(element)};}};
+ assert.deepEqual(await readCanvasPlacementThroughUi(page,'owned-canvas'),{x:820,y:430,w:1024,h:1024});
+ element.style.width='';await assert.rejects(()=>readCanvasPlacementThroughUi(page,'owned-canvas'),/canvas-fixture/);
+ const source=readFileSync(new URL('../../e2e/utils/stableSmokeDefaultJourney.mjs',import.meta.url),'utf8');
+ assert.match(source,/proof\.placement = await readCanvasPlacementThroughUi\(page, request\.targetKey\)/);
+});
 test('REG-visual-progress-002 并发图片按真实主图位置错开，不以固定1100遮住主图', () => {
  const primary={x:820,y:430,w:1024,h:1024};
  const next=secondaryImagePlacement(primary);
