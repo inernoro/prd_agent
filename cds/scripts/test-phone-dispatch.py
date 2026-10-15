@@ -95,4 +95,38 @@ class DispatchTests(unittest.TestCase):
         for i in range(100): self.submit('drill-' + str(i))
         self.guard.flush(30); self.assertEqual(len(self.calls), 1)
 
+class PriorityTests(DispatchTests):
+    def urgent(self, identifier, now, root=None):
+        return self.guard.submit(self.channel, {'title': identifier, 'body': 'test'}, identifier, now, urgent_key=root or identifier)
+    def test_urgent_after_normal_budget_immediate_then_bounded(self):
+        self.submit('normal1'); self.guard.flush(30)
+        self.submit('normal2', 31); self.guard.flush(90)
+        self.urgent('urgent1', 91); self.guard.flush(91)
+        self.assertEqual(len(self.calls), 3)
+        self.urgent('urgent2', 92); self.guard.flush(92)
+        self.assertEqual(len(self.calls), 3)
+        self.guard.flush(151); self.assertEqual(self.calls[-1]['title'], 'urgent2')
+    def test_urgent_storm_hundred_one_batch_no_random_identity_escape(self):
+        for i in range(100): self.urgent(str(i), 0)
+        self.guard.flush(0); self.assertEqual(len(self.calls), 1)
+        self.urgent('random-new-id', 60, '0'); self.guard.flush(60)
+        self.assertEqual(len(self.calls), 1)
+        restarted = m.PhoneDispatch(json.loads(json.dumps(self.state)), lambda: None, lambda c, msg: self.calls.append(msg) or True)
+        restarted.flush(60); self.assertEqual(len(self.calls), 1)
+        restarted.flush(90); self.assertEqual(len(self.calls), 2)
+    def test_relay_urgent_does_not_wait_thirty_seconds(self):
+        state = {'channels': [self.channel], 'inbox': {'a': {'id': 'a', 'channelId': 'phone', 'receivedAt': 0,
+            'message': {'title': '生产故障'}, 'event': {'urgency': 'urgent', 'kind': 'business-down', 'targetId': 'service', 'projectId': 'business'}}}}
+        relay.process(state, 0, lambda: None, dispatcher=self.guard)
+        self.guard.flush(0); self.assertEqual(len(self.calls), 1)
+        relay.process(state, 1, lambda: None, dispatcher=self.guard)
+        self.assertTrue(state['receipts']['a']['ok'])
+    def test_severe_new_keys_have_five_per_rolling_window_limit(self):
+        self.guard.persist = lambda: None
+        for i in range(1200): self.submit('old-' + str(i))
+        for t in range(0, 300, 5):
+            self.urgent('new-' + str(t), t); self.guard.flush(t)
+        self.assertEqual(len(self.calls), 5)
+        self.assertIn('new-0', self.calls[0]['body'])
+
 if __name__ == '__main__': unittest.main()

@@ -145,7 +145,8 @@ def notify(config, state, transition, now, dispatcher=None):
             payload['icon'] = icon
     if dispatcher is not None:
         message = {k: v for k, v in payload.items() if k != 'device_key'}
-        accepted = dispatcher.submit({'bark': bark}, message, 'platform:' + event['id'] + ':' + transition, now)
+        urgent_key = ('platform:' + identity.get('subject', {}).get('id', 'primary') + ':' + event.get('reason', 'unknown')) if transition != 'recovered' else None
+        accepted = dispatcher.submit({'bark': bark}, message, 'platform:' + event['id'] + ':' + transition, now, urgent_key=urgent_key)
         if accepted is None:
             return 'queued'
         state['deliveries'] = [{'at': iso(now), 'incidentId': event['id'], 'transition': transition, 'accepted': accepted}, *state.get('deliveries', [])][:200]
