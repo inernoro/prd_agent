@@ -16,7 +16,7 @@ import { runningCommitSha } from '../../src/services/running-version.js';
  *      falls back to resolveProjectForAutoBuild instead of 'default'.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -29,7 +29,6 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
 import { createExecutorRouter } from '../../src/executor/routes.js';
-import { deploymentPhaseBudget, setDeploymentPhaseMemoryProvider } from '../../src/services/deployment-phase-budget.js';
 import type { CdsConfig, BranchEntry } from '../../src/types.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
@@ -345,58 +344,6 @@ describe('Executor /exec/deploy', () => {
       expect(stateService.getBranch(f.entry.id)).toEqual(afterNewer);
       expect(mock.commands.slice(commands).some(cmd => /docker (run|create|rm|stop)|git |mkdir /.test(cmd))).toBe(false);
     } finally { release(); await pending; }
-  });
-
-  it.each(['waiting', 'superseded', 'expired'])('远端HTTP部署仅为原代次有效真实队列发送有界回执：%s', async (change) => {
-    const f = artifactFixture(), operationId = 'master-original-operation', operationGeneration = 17;
-    const originalInterval = globalThis.setInterval;
-    let reportWait: (() => void) | undefined;
-    const interval = vi.spyOn(globalThis, 'setInterval').mockImplementation(((callback: (...args: any[]) => void, delay?: number, ...args: any[]) => {
-      if (delay === 10_000) reportWait = () => callback(...args);
-      return originalInterval(callback, delay, ...args);
-    }) as typeof setInterval);
-    const originalNow = Date.now.bind(Date); let offset = 0;
-    const clock = vi.spyOn(Date, 'now').mockImplementation(() => originalNow() + offset);
-    const originalExec = mock.exec.bind(mock);
-    let releaseCreate!: () => void, markCreate!: () => void, createPaused = false;
-    const createGate = new Promise<void>(resolve => { releaseCreate = resolve; });
-    const created = new Promise<void>(resolve => { markCreate = resolve; });
-    mock.exec = async (command, options) => {
-      if (change === 'waiting' && !createPaused && /^(?:docker create|docker run -d) /.test(command) && command.includes('--label cds.type=app')) {
-        createPaused = true; markCreate(); await createGate;
-      }
-      return originalExec(command, options);
-    };
-    setDeploymentPhaseMemoryProvider(() => 0);
-    const pending = postSse(server, '/exec/deploy', { ...f.payload, operationId, operationGeneration, deploymentRunId: 'master-run', executorId: 'remote-1' });
-    try {
-      await vi.waitFor(() => expect(deploymentPhaseBudget.waitingOperation(operationId, operationGeneration)).toMatchObject({ phase: 'start' }), { timeout: 3000 });
-      const wait = deploymentPhaseBudget.waitingOperation(operationId, operationGeneration)!;
-      expect(deploymentPhaseBudget.waitingOperation(operationId, operationGeneration + 1)).toBeUndefined();
-      expect(reportWait).toBeDefined();
-      if (change === 'superseded') await postJson(server, '/exec/stop', { branchId: f.entry.id });
-      offset = (change === 'expired' ? 21 : 16) * 60_000;
-      reportWait!(); offset += 10_000; reportWait!();
-      if (change === 'waiting') {
-        setDeploymentPhaseMemoryProvider(() => 1_000_000); deploymentPhaseBudget.pump();
-        await created;
-        expect(deploymentPhaseBudget.waitingOperation(operationId, operationGeneration)).toBeUndefined();
-        reportWait!(); releaseCreate();
-      } else { deploymentPhaseBudget.pump(); setDeploymentPhaseMemoryProvider(() => 1_000_000); }
-      const result = await pending;
-      const receipts = result.events.filter(event => event.event === 'phase-wait');
-      if (change === 'waiting') {
-        expect(receipts).toHaveLength(3);
-        expect(receipts[0].data).toEqual({ runId: 'master-run', executorId: 'remote-1', projectId: 'default', branchId: f.entry.id,
-          operationId, operationGeneration, wait });
-        expect(receipts[1].data).toEqual(receipts[0].data);
-        expect(receipts[2].data.wait).toBeNull();
-        expect(wait.deadlineAt - wait.enqueuedAt).toBe(20 * 60_000);
-      } else expect(receipts).toEqual([]);
-    } finally {
-      releaseCreate(); setDeploymentPhaseMemoryProvider(() => 1_000_000); deploymentPhaseBudget.pump();
-      await pending; setDeploymentPhaseMemoryProvider(null); interval.mockRestore(); clock.mockRestore(); mock.exec = originalExec;
-    }
   });
 
   it.each([undefined, 'bbbbbbb'])('未确认目标%s的拒绝不取消已经有效的产物核验', async (invalidTarget) => {

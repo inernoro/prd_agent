@@ -10,7 +10,7 @@ import type { StateService } from './state.js';
 import type { BranchOperationCoordinator, BranchOperationLease } from './branch-operation-coordinator.js';
 import { cancelsBranchDeployments } from './branch-operation-coordinator.js';
 import { captureDeploymentIntent, readDeploymentIntent, type DeploymentExecutionInput } from './deployment-intent.js';
-import { DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS, type DeploymentPhase } from './deployment-phase-budget.js';
+import { isLocallyOwned } from './executor-ownership.js';
 
 /**
  * 部署 run 的终态。导出是为了让「这条 run 还在跑吗」只有一个判据——
@@ -63,18 +63,6 @@ export interface DeploymentRunEventsAfter {
   truncated: boolean;
 }
 
-interface RemoteExecutionWait {
-  executorId: string;
-  operationId: string;
-  operationGeneration: number;
-  projectId: string;
-  branchId: string;
-  phase: DeploymentPhase;
-  enqueuedAt: number;
-  deadlineAt: number;
-  receivedAt: number;
-}
-
 export class DeploymentRunService {
   private readonly now: () => Date;
   private readonly idFactory: () => string;
@@ -82,7 +70,6 @@ export class DeploymentRunService {
   private readonly isExecutionWaiting: NonNullable<DeploymentRunServiceOptions['isExecutionWaiting']>;
   private readonly acceptanceWrites = new Map<string, Promise<void>>();
   private readonly boundCoordinators = new Set<BranchOperationCoordinator>();
-  private readonly remoteExecutionWaits = new Map<string, RemoteExecutionWait>();
 
   constructor(
     private readonly stateService: StateService,
@@ -137,49 +124,16 @@ export class DeploymentRunService {
     return this.stateService.getDeploymentRunForOperation(operationId, generation);
   }
 
-  /** 只接纳原执行器流的真实阶段等待；此内存回执不更新run心跳或延长原等待截止。 */
-  observeRemoteExecutionWait(executorId: string, value: unknown): boolean {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const receipt = value as Record<string, unknown>;
-    const run = typeof receipt.runId === 'string' ? this.get(receipt.runId) : undefined;
-    if (!run || TERMINAL_STATUSES.has(run.status) || !executorId || run.executorId !== executorId
-      || receipt.executorId !== executorId || receipt.projectId !== run.projectId || receipt.branchId !== run.branchId
-      || receipt.operationId !== run.operationId || receipt.operationGeneration !== run.operationGeneration
-      || !this.hasCurrentExecution(run)) return false;
-    if (receipt.wait === null) { this.remoteExecutionWaits.delete(run.id); return true; }
-    if (!receipt.wait || typeof receipt.wait !== 'object') return false;
-    const wait = receipt.wait as Record<string, unknown>;
-    const { phase, enqueuedAt, deadlineAt } = wait;
-    const at = this.now().getTime();
-    if (!(['pull', 'start', 'ready', 'cleanup', 'terminal'] as unknown[]).includes(phase)
-      || typeof enqueuedAt !== 'number' || !Number.isFinite(enqueuedAt) || enqueuedAt > at
-      || typeof deadlineAt !== 'number' || !Number.isFinite(deadlineAt) || deadlineAt <= at
-      || deadlineAt - enqueuedAt !== DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) return false;
-    const previous = this.remoteExecutionWaits.get(run.id);
-    // 同一实际等待重复上报只能刷新可见性。结束/换阶段由执行器先明确清除，不接受移动起点续命。
-    if (previous && (previous.phase !== phase || previous.enqueuedAt !== enqueuedAt || previous.deadlineAt !== deadlineAt)) return false;
-    this.remoteExecutionWaits.set(run.id, { executorId, projectId: run.projectId, branchId: run.branchId,
-      operationId: run.operationId!, operationGeneration: run.operationGeneration!, phase: phase as DeploymentPhase,
-      enqueuedAt, deadlineAt, receivedAt: at });
-    return true;
-  }
-
-  private hasCurrentExecution(run: DeploymentRun): boolean {
-    return !!run.operationId && run.operationGeneration !== undefined && [...this.boundCoordinators].some(coordinator =>
+  /** 只有本节点归属和原操作作用域均明确时，才可豁免等待或撤销实际执行资格。 */
+  private hasLocalExecution(run: DeploymentRun): boolean {
+    const branch = this.stateService.getBranch(run.branchId);
+    return !!branch && (branch.projectId || 'default') === run.projectId
+      && isLocallyOwned(run.executorId) && isLocallyOwned(branch.executorId)
+      && !!run.operationId && run.operationGeneration !== undefined && [...this.boundCoordinators].some(coordinator =>
       coordinator.getActiveOperations(run.branchId).some(active => active.operationId === run.operationId
         && active.generation === run.operationGeneration && !active.cancelled
-        && (active.request.projectId || 'default') === run.projectId && (active.request.profileId || undefined) === run.profileId));
-  }
-
-  private isRemoteExecutionWaiting(run: DeploymentRun, at: Date): boolean {
-    const wait = this.remoteExecutionWaits.get(run.id);
-    if (!wait) return false;
-    const valid = wait.executorId === run.executorId && wait.operationId === run.operationId
-      && wait.operationGeneration === run.operationGeneration && wait.projectId === run.projectId && wait.branchId === run.branchId
-      && at.getTime() >= wait.receivedAt && at.getTime() - wait.receivedAt <= 30_000
-      && at.getTime() < wait.deadlineAt && this.hasCurrentExecution(run);
-    if (!valid) this.remoteExecutionWaits.delete(run.id);
-    return valid;
+        && active.request.branchId === run.branchId && (active.request.projectId || 'default') === run.projectId
+        && (active.request.profileId || undefined) === run.profileId));
   }
 
   async waitForAcceptance(id: string): Promise<void> {
@@ -306,7 +260,7 @@ export class DeploymentRunService {
       if (input.operationId !== undefined) run.operationId = input.operationId;
       if (input.executorId !== undefined) run.executorId = input.executorId;
       if (input.failure !== undefined) run.failure = input.failure;
-      if (TERMINAL_STATUSES.has(nextStatus)) { run.finishedAt = at; this.remoteExecutionWaits.delete(run.id); }
+      if (TERMINAL_STATUSES.has(nextStatus)) run.finishedAt = at;
       this.appendEvent(run, {
         at,
         phase: input.phase,
@@ -403,7 +357,8 @@ export class DeploymentRunService {
       if (TERMINAL_STATUSES.has(run.status)) continue;
       const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
       if (!Number.isFinite(heartbeat) || now.getTime() - heartbeat < staleAfterMs) continue;
-      if (this.isExecutionWaiting(run, now) || this.isRemoteExecutionWaiting(run, now)) continue;
+      const localExecution = this.hasLocalExecution(run);
+      if (localExecution && this.isExecutionWaiting(run, now)) continue;
       reconciled.push(this.fail(run.id, {
         code: 'cds.run.interrupted',
         owner: 'cds',
@@ -413,7 +368,7 @@ export class DeploymentRunService {
         evidenceRefs: [],
         suggestedAction: '确认执行器与容器状态后重新部署',
       }));
-      if (run.operationId && run.operationGeneration !== undefined) {
+      if (localExecution && run.operationId && run.operationGeneration !== undefined) {
         for (const coordinator of this.boundCoordinators) coordinator.revokeInterrupted({
           operationId: run.operationId, generation: run.operationGeneration,
           branchId: run.branchId, projectId: run.projectId, profileId: run.profileId,
