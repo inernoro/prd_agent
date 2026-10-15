@@ -16,6 +16,36 @@ export async function blockUnscopedBackgroundReads(surface) {
     || url.pathname === '/api/dashboard/notifications', route => route.abort('blockedbyclient'));
 }
 
+/** Real log UI may read only an exact current request and its API-verified detail. */
+export async function installGatewayLogReadScope(surface, { baseUrl, requestId, verifiedLog }) {
+  let gateway;
+  try { gateway = new URL(baseUrl); } catch { contract(false, '日志UI缺少有效网关入口', 'test/resource-scope'); }
+  contract(gateway.protocol === 'https:' && !gateway.username && !gateway.password,
+    '日志UI必须使用无凭据的HTTPS网关入口', 'test/resource-scope');
+  contract(typeof requestId === 'string' && /^[a-f0-9]{32}-\d+-\d+$/i.test(requestId),
+    '日志UI必须绑定本轮真实图片任务requestId，空探针不能代替调用', 'test/resource-scope');
+  contract(verifiedLog?.requestId === requestId && typeof verifiedLog.id === 'string'
+    && /^[a-z0-9_-]{1,128}$/i.test(verifiedLog.id)
+    && !['meta', 'summary', 'timeseries', 'sessions'].includes(verifiedLog.id),
+    '日志UI详情必须来自同一requestId已精确回读的真实日志', 'test/resource-scope');
+  const detailPath = `/gw/logs/${encodeURIComponent(verifiedLog.id)}`;
+  await surface.route(url => /^\/gw\/logs(?:\/|$)/.test(url.pathname), async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const ids = url.searchParams.getAll('requestId');
+    const exactList = url.pathname === '/gw/logs' && ids.length === 1 && ids[0] === requestId;
+    const verifiedDetail = url.pathname === detailPath && url.search === '';
+    if (request.method() === 'GET' && url.origin === gateway.origin && (exactList || verifiedDetail)) {
+      await route.continue();
+    } else {
+      // meta has no requestId contract; summaries and sessions are not needed here.
+      // Abort before network, never fetch historical data or synthesize success.
+      await route.abort('blockedbyclient');
+    }
+  });
+  return { requestId, logId: verifiedLog.id };
+}
+
 /** Retired pool cardinality cannot prove the active ASR logical route. */
 export function blockRetiredAsrPoolAudit(test, environment) {
   contract(['cds', 'production'].includes(environment), 'ASR验收必须绑定已登记环境', 'test/api-contract');
