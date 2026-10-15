@@ -118,6 +118,7 @@ import { ResourceUsageSampler, getObservedRunningContainerNames, forgetConfirmed
 import { serviceRuntimeRefs } from './services/service-runtime.js';
 import { stopServiceForCooling } from './services/scheduler-service-stop.js';
 import { restoreDeploymentMemoryReservations } from './services/deployment-phase-budget.js';
+import { isRemoteExecutorOwned } from './services/executor-ownership.js';
 import { httpLogStoreFromEnv } from './services/http-log-store.js';
 import { serverEventLogStoreFromEnv } from './services/server-event-log-store.js';
 import { OffHostAuditLogSink, offHostAuditConfigFromEnv } from './services/offhost-audit-log.js';
@@ -2090,7 +2091,6 @@ async function initStateService(): Promise<void> {
 }
 
 await initStateService();
-restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch));
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2582,6 +2582,18 @@ const containerService = new ContainerService(shell, config, {
   // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
 }, activeServerEventLogStore, startupStreams, userLogHub);
+
+// 对外受理部署前恢复并核对历史预约；只读 Docker 实况，未知结果保留，绝不停止或删除容器。
+const localMemoryBranches = stateService.getAllBranches().filter(branch =>
+  config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
+restoreDeploymentMemoryReservations(localMemoryBranches, branch => stateService.getEffectiveProfilesForBranch(branch));
+const memoryRecovery = await containerService.reconcileDeploymentMemoryReservations(localMemoryBranches, {
+  // 旧CLI结束不等于daemon创建结束；无不可变CID时不能凭一次缺席释放未知创建责任。
+  creationSettled: (_owner, runtime) => Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
+});
+if (memoryRecovery.released.length || memoryRecovery.retained.length) console.log(
+  `  [deployment-memory] 已核实释放 ${memoryRecovery.released.length} 项历史预约，保留 ${memoryRecovery.retained.length} 项待确认预约`,
+);
 
 // 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
 // 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。

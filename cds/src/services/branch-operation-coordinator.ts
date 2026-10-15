@@ -611,6 +611,25 @@ export class BranchOperationCoordinator {
     return this.finishAndDrain(lease, status, error, Infinity);
   }
 
+  /** 运行收割只撤销已失败的确切执行身份，保留后继待办给既有派发器领取。 */
+  revokeInterrupted(identity: {
+    operationId: string; generation: number; branchId: string; projectId: string; profileId?: string;
+  }): boolean {
+    const entry = this.findActiveEntryByOperation(identity.operationId);
+    const active = entry?.active;
+    if (!entry || !active || active.generation !== identity.generation
+      || active.branchId !== identity.branchId
+      || (active.request.projectId || 'default') !== identity.projectId
+      || (active.request.profileId || undefined) !== identity.profileId) return false;
+    active.cancelled = true;
+    active.cancelReason = 'deployment run heartbeat expired';
+    this.active.delete(entry.key);
+    this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
+      reason: active.cancelReason,
+    });
+    return true;
+  }
+
   private finishAndDrain(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error: string | undefined, limit: number): PendingWebhookDeploy[] {
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;

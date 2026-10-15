@@ -122,7 +122,7 @@ describe('系统journal独立读取与真实收尾', () => {
   it('stop取消正在历史读取的真实父子进程，完成后不启动迟到监听', async () => {
     const f = await fixture('hang'); const rows: any[] = [];
     const monitor = new SystemLogMonitor(new ShellExecutor(), { record: row => rows.push(row) }, ['fixture.service'], f.streams); monitors.push(monitor);
-    void monitor.start(); await until(async () => { try { await access(f.childFile); return true; } catch { return false; } });
+    void monitor.start(); await until(async () => { try { return Number((await readFile(f.childFile, 'utf8')).trim()) > 1; } catch { return false; } });
     const pid = Number((await readFile(f.childFile, 'utf8')).trim());
     const stopping = monitor.stop(); expect(stopping).toBeInstanceOf(Promise); await stopping;
     expect(f.streams.getStats().admitted).toBe(0);

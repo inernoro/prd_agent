@@ -90,7 +90,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
   router.post('/deploy', async (req, res) => {
-    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, actor, trigger, commitSha, artifactCommitSha } = req.body as {
+    const { branchId, branchName, projectId, profiles: profilesRaw, env: envOverrides, requestId, operationId, operationGeneration,
+      deploymentRunId, executorId, actor, trigger, commitSha, artifactCommitSha } = req.body as {
       branchId: string;
       branchName: string;
       commitSha?: string;
@@ -105,6 +106,9 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       env?: Record<string, string>;
       requestId?: string | null;
       operationId?: string | null;
+      operationGeneration?: number;
+      deploymentRunId?: string | null;
+      executorId?: string;
       actor?: string | null;
       trigger?: string | null;
     };
@@ -114,6 +118,9 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     }
     if (artifactCommitSha !== undefined && (typeof artifactCommitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(artifactCommitSha))) {
       res.status(400).json({ error: '产物目标必须是完整 Git SHA' }); return;
+    }
+    if (operationGeneration !== undefined && (!Number.isSafeInteger(operationGeneration) || operationGeneration < 1)) {
+      res.status(400).json({ error: '部署操作代次无效' }); return;
     }
     // 缺省 profiles 视为空清单（Bugbot Low「Executor deploy missing profiles guard」）：旧 master 或手工
     // 调用可能省略 profiles 字段,profilesData.map / .length 直接 throw → 把一次合法的「空清单 teardown」
@@ -136,6 +143,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     let admission: ArtifactAdmission | undefined;
     let executionStarted = false;
     let currentEntry = stateService.getBranch(branchId);
+    let waitReporter: NodeJS.Timeout | undefined;
     let expectedProject = currentEntry?.projectId, expectedBranch = currentEntry?.branch;
     const target = artifactCommitSha ?? commitSha;
     const assertCurrent = () => {
@@ -196,6 +204,23 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         trigger: allowedTriggers.includes(trigger as BranchOperationTrigger) ? trigger as BranchOperationTrigger : 'manual',
         actor, requestId, commitSha: typeof target === 'string' && /^[0-9a-f]{7,40}$/i.test(target) ? target : null,
         commitPinned: typeof target === 'string', source: 'executor.deploy' });
+      if (operationId && operationGeneration !== undefined && deploymentRunId && executorId) {
+        let previous: ReturnType<typeof deploymentPhaseBudget.waitingOperation>;
+        const reportWait = () => {
+          try {
+            assertCurrent();
+            const wait = deploymentPhaseBudget.waitingOperation(operationId, operationGeneration);
+            const identity = { runId: deploymentRunId, executorId, projectId: actualProjectId, branchId, operationId, operationGeneration };
+            // 换阶段或离开队列先清除原等待。重复上报保持原enqueuedAt/deadlineAt，不能续截止。
+            if (previous && (!wait || previous.phase !== wait.phase || previous.enqueuedAt !== wait.enqueuedAt)) {
+              sendEvent('phase-wait', { ...identity, wait: null });
+            }
+            if (wait) sendEvent('phase-wait', { ...identity, wait });
+            previous = wait;
+          } catch { /* 本地准备资格已失效，不再为旧远端流发送等待回执 */ }
+        };
+        waitReporter = setInterval(reportWait, 10_000); waitReporter.unref();
+      }
       // 全角色核验先于工作树、旧容器清理和分支状态修改；local标记也不是身份凭据。
       if (requiresArtifactAdmission) {
         sendEvent('step', { step: 'artifact-preflight', status: 'running', title: '正在核验全部必需镜像及本地产物' });
@@ -406,6 +431,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
             }, mergedEnv, {
               requestId: requestId || null,
               operationId: operationId || null,
+              operationGeneration,
               assertCurrent,
               artifactCommitSha: admission?.targetCommitSha,
               sourceCheckout: artifactOnly ? undefined : { path: pullResult.sourcePath, commitSha: pullResult.afterFull },
@@ -502,6 +528,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         ...(failedEntry ? { services: failedEntry.services } : {}),
       });
     } finally {
+      if (waitReporter) clearInterval(waitReporter);
       preparation?.release();
       res.end();
     }

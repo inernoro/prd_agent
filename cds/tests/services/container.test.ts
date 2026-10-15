@@ -91,8 +91,11 @@ describe('ContainerService', () => {
 
     it('启动容量等待期间不申请源码编译槽，容量恢复后才创建运行容器', async () => {
       setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
-      for (const name of ['owned-warm-a', 'owned-warm-b', 'owned-warm-c'])
-        deploymentPhaseBudget.reserveKnownMemory(name, 512, { projectId: name });
+      for (const name of ['owned-warm-a', 'owned-warm-b', 'owned-warm-c']) {
+        const release = await deploymentPhaseBudget.acquire('start', { projectId: name },
+          { memoryMB: 512, reservationKey: name });
+        release();
+      }
       const runtime = makeService(); const acquireCompile = vi.fn(async () => {});
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

@@ -69,6 +69,7 @@ import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createGithubWebhookRouter, getWebhookNoiseStats } from './routes/github-webhook.js';
 import { buildGateStatus } from './services/build-gate.js';
+import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { getEventLoopLag } from './services/event-loop-lag.js';
 import { getWorkloadCgroupStatus } from './services/workload-cgroup.js';
 import { collectControlPlanePressure } from './services/control-plane-pressure.js';
@@ -1839,7 +1840,10 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     ),
   );
-  const deploymentRunService = new DeploymentRunService(deps.stateService);
+  const deploymentRunService = new DeploymentRunService(deps.stateService, {
+    isExecutionWaiting: (run, now) => Boolean(run.operationId && run.operationGeneration !== undefined
+      && (deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt || 0) > now.getTime()),
+  });
   if (deps.branchOperationCoordinator && deps.config.mode !== 'executor') {
     const restored = deploymentRunService.restoreQueued(deps.branchOperationCoordinator);
     if (restored.length) console.warn(`[deployment-run] 已恢复 ${restored.length} 个尚未执行的排队意图`);
