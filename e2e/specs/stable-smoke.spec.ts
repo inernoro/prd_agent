@@ -17,6 +17,7 @@ import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalMo
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
+  redactStableSmokeDiagnosticText,
   readStableSmokeInfrastructureCircuit,
   sanitizeStableSmokeArtifactTree,
   sanitizeStableSmokeTestInfo,
@@ -600,14 +601,21 @@ async function cleanupShortVideoFixture(
   runId: string,
   storeId: string,
   uploadedEntryId: string,
+  testInfo: TestInfo,
 ) {
   const errors: string[] = [];
+  const receipt: Record<string, unknown> = {
+    inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), runId, storeId, uploadedEntryId,
+    cancelStatus: null, runDeleteStatus: null, storeDeleteStatus: null,
+    storeReadbackStatus: null, entryReadbackStatus: null, runReadbackStatus: null,
+  };
   if (runId) {
     try {
       const cancel = await retryTransientTransport('请求取消短视频任务', () => page.request.post(
         `/api/short-video-materials/runs/${runId}/cancel`,
         { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
       ));
+      receipt.cancelStatus = cancel.status();
       if (![200, 202, 404].includes(cancel.status()))
         errors.push(`取消短视频任务返回 ${cancel.status()}`);
     } catch (error) {
@@ -622,6 +630,7 @@ async function cleanupShortVideoFixture(
           `/api/short-video-materials/runs/${runId}`,
           { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
         ));
+        receipt.runDeleteStatus = response.status();
         if ([200, 404].includes(response.status())) {
           deleted = true;
           break;
@@ -645,10 +654,20 @@ async function cleanupShortVideoFixture(
         `/api/document-store/stores/${storeId}`,
         { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
       ));
+      receipt.storeDeleteStatus = response.status();
       if (![200, 204, 404].includes(response.status()))
         errors.push(`删除短视频测试知识库返回 ${response.status()}`);
     } catch (error) {
       errors.push(`删除短视频测试知识库失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+    try {
+      const response = await page.request.get(`/api/document-store/stores/${storeId}`, {
+        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+      });
+      receipt.storeReadbackStatus = response.status();
+      if (response.status() !== 404) errors.push(`知识库清理后仍返回 ${response.status()}`);
+    } catch (error) {
+      errors.push(`核对短视频测试知识库残留失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -657,6 +676,7 @@ async function cleanupShortVideoFixture(
       const response = await page.request.get(`/api/document-store/entries/${uploadedEntryId}`, {
         headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
       });
+      receipt.entryReadbackStatus = response.status();
       if (response.status() !== 404) errors.push(`上传条目清理后仍返回 ${response.status()}`);
     } catch (error) {
       errors.push(`核对上传条目残留失败：${error instanceof Error ? error.message : String(error)}`);
@@ -667,12 +687,16 @@ async function cleanupShortVideoFixture(
       const response = await page.request.get(`/api/short-video-materials/runs/${runId}`, {
         headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
       });
+      receipt.runReadbackStatus = response.status();
       if (response.status() !== 404) errors.push(`短视频任务清理后仍返回 ${response.status()}`);
     } catch (error) {
       errors.push(`核对短视频任务残留失败：${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
+  await testInfo.attach('short-video-cleanup-receipt', {
+    body: redactStableSmokeDiagnosticText(JSON.stringify({ ...receipt, capturedAt: new Date().toISOString(), errors })), contentType: 'application/json',
+  });
   if (errors.length > 0) throw new Error(`短视频测试清理未闭环：${errors.join('；')}`);
 }
 
@@ -4254,7 +4278,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
     } finally {
       try {
-        await cleanupShortVideoFixture(page, token, runId, storeId, uploadedEntryId);
+        await cleanupShortVideoFixture(page, token, runId, storeId, uploadedEntryId, testInfo);
       } finally {
         await context.close();
       }
@@ -4342,7 +4366,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
     } finally {
       try {
-        await cleanupShortVideoFixture(page, token, runId, storeId, uploadedEntryId);
+        await cleanupShortVideoFixture(page, token, runId, storeId, uploadedEntryId, testInfo);
       } finally {
         await mobileContext.close();
       }
@@ -7205,10 +7229,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.setTimeout(180_000);
     const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
     const page = await context.newPage();
-    const token = await loginAndReadToken(page, request, '/visual-agent');
-    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-mobile-layout');
+    const token = await loginAndReadToken(page, request, '/');
+    let workspace = { id: '' };
     try {
-      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await enterVisualFromHome(page, { touch: true });
+      await createDefaultWorkspaceThroughUi(page, {
+        runId: requiredEnv('STABLE_SMOKE_RUN_ID'), onCreated: created => { workspace = created; },
+      });
       await dismissBlockingTutorial(page);
       expect(await page.evaluate(() => navigator.maxTouchPoints), '移动端证据必须来自真实触控上下文').toBeGreaterThan(0);
       const reference = solidPngDataUrl(35, 90, 190, 128);
@@ -7261,12 +7288,20 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(1);
     } finally {
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
-        timeout: stableSmokeCleanupTimeoutMs,
-      });
-      await expectDeleteSucceeded(deleted, `删除移动端参考图工作区 ${workspace.id} 失败`);
-      await context.close();
+      try {
+        if (workspace.id) {
+          const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+            headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
+            timeout: stableSmokeCleanupTimeoutMs,
+          });
+          await expectDeleteSucceeded(deleted, `删除移动端参考图工作区 ${workspace.id} 失败`);
+          expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, {
+            headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+          })).status()).toBe(404);
+        }
+      } finally {
+        await context.close();
+      }
     }
   });
 
@@ -7930,6 +7965,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(wire.files).toHaveLength(1);
       expect(wire.files?.[0]).toMatchObject({ field: 'image[]', mime_type: 'image/jpeg', file_extension: '.jpg', sha256: created.reference.sha256 });
       expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
+    } catch (error) {
+      await testInfo.attach('jpeg-original-hard-failure', {
+        body: redactStableSmokeDiagnosticText(JSON.stringify({
+          name: error instanceof Error ? error.name : 'NonError',
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          runId, workspaceId: workspace.id,
+        })),
+        contentType: 'application/json',
+      });
+      throw error;
     } finally {
       if (runId) {
         const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
@@ -7951,7 +7997,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           timeout: stableSmokeCleanupTimeoutMs,
         });
         await expectDeleteSucceeded(deleted, `删除参考图工作区 ${workspace.id} 失败`);
-        expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs })).status()).toBe(404);
+        expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs })).status()).toBe(404);
       }
       if (runId) expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
         headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
