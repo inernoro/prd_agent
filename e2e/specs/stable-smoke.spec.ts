@@ -2936,7 +2936,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[COMMON-001] 专用前缀资源可创建、回读并清理', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request);
-    const title = `stsmk-${Date.now()}-common`;
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-common-r${test.info().retry}`;
     let workspaceId = '';
     try {
       const created = await page.request.post('/api/transcript-agent/workspaces', {
@@ -2968,7 +2968,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[FILE-001][FILE-002][FILE-006][FILE-007][FILE-009][FILE-010] 文件格式、下载、重复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/transcript-agent');
-    const runKey = `stsmk-${Date.now()}`;
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-files-r${test.info().retry}`;
     let storeId = '';
     const createdEntryIds: string[] = [];
     const createdFileUrls: string[] = [];
@@ -3068,7 +3068,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   test('[FILE-004] CDS 损坏文档只返回可恢复提示且不留条目', { tag: '@cleanup' }, async ({ page, request }) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动上传损坏文档');
     const token = await loginAndReadToken(page, request, '/transcript-agent');
-    const runKey = `stsmk-${Date.now()}-corrupt`;
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-corrupt-r${test.info().retry}`;
     let storeId = '';
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
@@ -3094,7 +3094,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[FILE-005][REG-file-001] 空文件在解析前被拒绝且不留条目', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/transcript-agent');
-    const runKey = `stsmk-${Date.now()}-empty`;
+    const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-empty-r${test.info().retry}`;
     let storeId = '';
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
@@ -3461,7 +3461,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[LIT-001] 文学作品可新建、保存、刷新回读并清理', { tag: '@cleanup' }, async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/literary-agent');
-    const title = `stsmk-${Date.now()}-文学作品`;
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学作品-r${test.info().retry}`;
     const article = '稳定冒烟文学创作基准正文。';
     let workspaceId = '';
     try {
@@ -3954,7 +3954,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expectedLength - prefix.length - suffix.length,
     );
     const article = `${prefix}${middle}${suffix}`;
-    const title = `stsmk-${Date.now()}-文学长文边界`;
+    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学长文边界-r${test.info().retry}`;
     let workspaceId = '';
     expect(article.length).toBe(expectedLength);
 
