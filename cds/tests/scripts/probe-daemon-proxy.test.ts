@@ -25,6 +25,44 @@ async function fixture() {
       await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); } };
 }
 
+describe('bounded exact probe removal diagnostics', () => {
+  it('observes the exact created CID without waiting for the observer or changing the removal reply', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-removal-observer-'));
+    const backendPath = path.join(root, 'daemon.sock'), proxyPath = path.join(root, 'proxy.sock');
+    const id = 'a'.repeat(64), sockets = new Set<net.Socket>(), calls: string[] = [], samples: unknown[] = [];
+    let release!: () => void, sampled!: () => void, removalReceived!: () => void;
+    const received = new Promise<void>(resolve => { removalReceived = resolve; });
+    const sample = new Promise<void>(resolve => { sampled = resolve; });
+    const backend = http.createServer((request, response) => {
+      calls.push(`${request.method} ${request.url}`);
+      if (request.method === 'POST') {
+        request.resume(); request.once('end', () => { response.writeHead(201); response.end(JSON.stringify({ Id: id })); });
+      } else { release = () => { response.writeHead(204); response.end(); }; removalReceived(); }
+    });
+    backend.on('connection', socket => { sockets.add(socket); socket.once('close', () => sockets.delete(socket)); });
+    await new Promise<void>(resolve => backend.listen(backendPath, resolve));
+    const proxy = await createProbeDaemonProxy(proxyPath, backendPath, 'daemon-created', async (...args) => {
+      samples.push(args); sampled(); return new Promise<void>(() => {});
+    }); proxy.arm();
+    const client = http.request({ socketPath: proxyPath, method: 'POST', path: '/containers/create?name=owned-removal-fixture' });
+    client.on('error', () => {});
+    try {
+      client.end(JSON.stringify({ Image: 'owned', Cmd: ['true'], Entrypoint: [],
+        Labels: { 'cds.agent.probe': 'runtime-validation' }, HostConfig: {} }));
+      await proxy.caught; client.destroy();
+      const removed = new Promise<number>((resolve, reject) => {
+        const request = http.request({ socketPath: proxyPath, method: 'DELETE', path: `/containers/${id}?force=1` }, response => {
+          response.resume(); response.once('end', () => resolve(response.statusCode!));
+        }); request.once('error', reject); request.end();
+      });
+      await Promise.all([sample, received]); expect(samples).toEqual([[id, 0, 'removal']]);
+      release(); expect(await removed).toBe(204);
+      expect(calls).toEqual(['POST /containers/create?name=owned-removal-fixture', `DELETE /containers/${id}?force=1`]);
+    } finally { client.destroy(); await proxy.close(); for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); }
+  }, 5000);
+});
+
 async function attach(socketPath: string) {
   const socket = net.createConnection({ path: socketPath, allowHalfOpen: true });
   let wire = '', sentEof = false;

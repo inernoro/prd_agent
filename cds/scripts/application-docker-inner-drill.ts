@@ -69,7 +69,7 @@ export function creationStackSummary(text: string) { return daemonStackSummary(t
 type PendingCreateTarget = { containerName: string; operationId: string; instanceId: string; imageReference: string; forwardedAt: string };
 export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock',
   cancelBoundary: 'client-disconnect' | 'daemon-created' = 'client-disconnect',
-  pendingWait?: (containerId: string, elapsedMs: number) => Promise<void>,
+  pendingWait?: (containerId: string, elapsedMs: number, phase?: 'removal') => Promise<void>,
   pendingCreate?: (target: PendingCreateTarget, elapsedMs: number) => Promise<void>) {
   const timeline: any[] = []; const sockets = new Set<net.Socket>(); const requests = new Set<http.ClientRequest>();
   const requestTimeline: any[] = []; let requestSequence = 0, traceEnabled = false, traceOverflow = 0;
@@ -87,12 +87,13 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
     const active = traceEnabled && Boolean(identity.kind);
     return (phase: string, fields: Record<string, unknown> = {}) => {
       if (!active) return;
-      if (requestTimeline.length >= 1024) { traceOverflow++; return; }
+      if (requestTimeline.length >= 1024) { traceOverflow++; requestTimeline.splice(256, 1); }
       requestTimeline.push({ requestId, at: new Date().toISOString(), kind: identity.kind,
         method: request.method, containerId: identity.containerId, phase, ...fields });
     };
   };
   const traffic = new Map<string, { kind: string; method: string; requests: number; replies: Record<string, number>; transportErrors: number }>();
+  let capturedContainerId: string | undefined, removalObserved = false;
   let armed = false; let caughtResolve!: () => void; let settledResolve!: () => void;
   const caught = new Promise<void>(resolve => { caughtResolve = resolve; });
   const settled = new Promise<void>(resolve => { settledResolve = resolve; });
@@ -295,7 +296,9 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         else {
           let text = ''; backend.on('data', chunk => { text += chunk; });
           backend.on('end', () => {
-            try { const view = JSON.parse(text); record('backend-create-replied', { status: backend.statusCode, containerId: view.Id ?? null });
+            try { const view = JSON.parse(text);
+              if (backend.statusCode === 201 && /^[a-f0-9]{64}$/.test(view.Id || '')) capturedContainerId = view.Id;
+              record('backend-create-replied', { status: backend.statusCode, containerId: view.Id ?? null });
               if (cancelBoundary === 'daemon-created' && backend.statusCode === 201 && typeof view.Id === 'string' && /^[a-f0-9]{64}$/.test(view.Id)) caughtResolve(); }
             catch { record('backend-create-invalid-reply', { status: backend.statusCode }); }
             settledResolve();
@@ -303,6 +306,20 @@ export async function createProbeDaemonProxy(socketPath: string, daemonSocketPat
         }
       });
       requests.add(upstream); upstream.once('close', () => requests.delete(upstream));
+      // Observe only the first removal of the exact daemon-confirmed injected probe.
+      // Reads never delay forwarding, repeat a removal, or change its deadline.
+      const removalTarget = classify(request.url, request.method);
+      if (pendingWait && !removalObserved && capturedContainerId && removalTarget.kind === 'container-remove'
+        && removalTarget.containerId === capturedContainerId) {
+        removalObserved = true; const id = capturedContainerId;
+        const timers = [0, 3000].map(elapsedMs => setTimeout(() => {
+          if (!upstream.destroyed) void Promise.resolve().then(() => pendingWait(id, elapsedMs, 'removal'))
+            .catch(() => record('removal-diagnostic-failed', { elapsedMs }));
+        }, elapsedMs));
+        const clear = () => { for (const timer of timers) clearTimeout(timer); };
+        upstream.once('response', clear); upstream.once('close', clear); upstream.once('error', clear);
+      }
+
       if (!delayed) { response.once('close', () => upstream.destroy()); response.once('error', () => upstream.destroy()); }
       upstream.once('timeout', () => { observe('transport-timeout'); upstream.destroy(new Error('owned proxy timeout')); });
       upstream.once('error', () => { observe('transport-error'); row.transportErrors++; if (delayed) { record('backend-create-transport-error'); settledResolve(); }
@@ -696,6 +713,8 @@ async function main(): Promise<void> {
     report.ownedDockerVersions = { client: dockerVersions.Client?.Version, clientApi: dockerVersions.Client?.ApiVersion,
       server: dockerVersions.Server?.Version, serverApi: dockerVersions.Server?.ApiVersion };
     report.pendingWaitDiagnostics = [];
+    report.pendingRemovalDiagnostics = [];
+    report.pendingRemovalDiagnosticOverflow = 0;
     report.pendingWaitDiagnosticOverflow = 0;
     report.pendingCreateDiagnostics = [];
     report.pendingCreateDiagnosticOverflow = 0;
@@ -725,11 +744,15 @@ async function main(): Promise<void> {
     };
     const diagnosticTasks = new Set<Promise<void>>();
     probeProxy = await createProbeDaemonProxy(path.join(root, 'probe-daemon-proxy.sock'), '/var/run/owned.sock', cancelBoundary,
-      async (containerId, scheduledAfterHeaderMs) => {
-        if (report.pendingWaitDiagnostics.length >= 16) { report.pendingWaitDiagnosticOverflow++; return; }
-        const record: any = { containerId, scheduledAfterHeaderMs, at: new Date().toISOString(), readOnly: true,
+      async (containerId, scheduledAfterHeaderMs, phase) => {
+        const entries = phase === 'removal' ? report.pendingRemovalDiagnostics : report.pendingWaitDiagnostics;
+        if (entries.length >= (phase === 'removal' ? 2 : 16)) {
+          if (phase === 'removal') report.pendingRemovalDiagnosticOverflow++; else report.pendingWaitDiagnosticOverflow++;
+          return;
+        }
+        const record: any = { containerId, ...(phase === 'removal' ? { scheduledAfterForwardMs: scheduledAfterHeaderMs } : { scheduledAfterHeaderMs }), phase: phase || 'wait', at: new Date().toISOString(), readOnly: true,
           source: 'private-owned-daemon-unix-socket', status: 'pending' };
-        report.pendingWaitDiagnostics.push(record);
+        entries.push(record);
         const task = (async () => {
           const results = await Promise.allSettled([
             daemonRead(`/containers/${containerId}/json`, 256 * 1024),

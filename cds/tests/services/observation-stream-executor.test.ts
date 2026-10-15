@@ -1,3 +1,4 @@
+import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -19,7 +20,7 @@ const dirs: string[] = [];
 const originalPath = process.env.PATH;
 const command = (program: string): string => ['exec', process.execPath, '-e', program].map((x, i) => i ? shellQuoteArg(x) : x).join(' ');
 async function streams(count = 1): Promise<ObservationStreamExecutor> {
-  const pool = new ObservationStreamExecutor(count); pools.push(pool); await pool.start(); return pool;
+  const pool = traceExecutor(new ObservationStreamExecutor(count), 'startup-stream'); pools.push(pool); await pool.start(); return pool;
 }
 async function directory(): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), 'cds-startup-stream-')); dirs.push(dir); return dir;
