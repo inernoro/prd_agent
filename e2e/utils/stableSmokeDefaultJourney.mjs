@@ -4,8 +4,12 @@ export function assertDefaultPeachRequest({ pool, selectedLabel, request }) {
   const prompts = ['白桃', 'Generate an image based on the following description:\n白桃'];
   if (!prompts.includes(request?.prompt) || request?.size !== '1024x1024') throw Error('真人默认主例必须为白桃1024方图');
   if (request.modelId !== pool.code || request.platformId !== 'logical-model') throw Error('界面选择与真实发送模型不一致');
-  if (request.expectedImageRefCount !== 0 || (request.imageRefs?.length || 0) !== 0) throw Error('无参考主例不得静默带入引用');
   if (!request.targetKey) throw Error('真实请求缺少画布任务身份');
+  if (request.expectedImageRefCount !== 0 || (request.imageRefs?.length || 0) !== 0) {
+    const error = Error('无参考主例不得静默带入引用');
+    error.code = 'IMAGE_REFERENCE_DECLARATION';
+    throw error;
+  }
 }
 
 export async function createDefaultWorkspaceThroughUi(page, { runId, onCreated }) {
@@ -25,7 +29,7 @@ export async function createDefaultWorkspaceThroughUi(page, { runId, onCreated }
   return body.data.workspace;
 }
 
-export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreated,beforeSubmit,onSubmitted}) {
+export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreated,beforeSubmit,onSubmitted,onMissingReferenceDeclaration}) {
   const model=page.getByRole('button',{name:'模型偏好',exact:true});
   await model.filter({hasText:pool.name}).waitFor({state:'visible',timeout:30000});
   const selectedLabel=(await model.innerText()).trim();
@@ -46,7 +50,15 @@ export async function submitDefaultPeachThroughUi(page,{workspaceId,pool,onCreat
   const request=response.request().postDataJSON();
   const proof={runId:body.data.runId,targetKey:request.targetKey,selectedLabel,placement:{x:request.x,y:request.y,w:request.w,h:request.h},request:{prompt:request.prompt,size:request.size,modelId:request.modelId,platformId:request.platformId,expectedImageRefCount:request.expectedImageRefCount,imageRefCount:(request.imageRefs||[]).length}};
   if(onSubmitted)await onSubmitted(proof);
-  assertDefaultPeachRequest({pool,selectedLabel,request});
+  try {
+    assertDefaultPeachRequest({pool,selectedLabel,request});
+  } catch (error) {
+    // 旧页面漏声明仍须由调用方原断言记红，但已提交的零引用任务应继续取证，
+    // 不能因执行器提前取消而把“尚未检查产物”误报成模型生成失败。
+    if (error.code !== 'IMAGE_REFERENCE_DECLARATION' || request.expectedImageRefCount !== undefined
+      || (request.imageRefs?.length || 0) !== 0 || typeof onMissingReferenceDeclaration !== 'function') throw error;
+    await onMissingReferenceDeclaration(proof);
+  }
   // The real UI may omit optional request coordinates. The actual desktop frame
   // keeps unscaled world coordinates as inline left/top/width/height; read that
   // exact created target rather than substituting a guessed API origin.

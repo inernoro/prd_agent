@@ -79,3 +79,30 @@ test('REG-visual-policy-001 请求断言失败前也记录任务身份和脱敏�
  await assert.rejects(()=>submitDefaultPeachThroughUi(page,{workspaceId:'owned-id',pool:proof.pool,onCreated:id=>events.push(id),onSubmitted:async observed=>{events.push('recorded');assert.equal(observed.runId,'owned-run');assert.equal(observed.request.size,'512x512');assert.equal(observed.request.imageRefCount,0);}}),/白桃1024/);
  assert.deepEqual(events,['clicked','owned-run','recorded']);
 });
+
+function missingDeclarationUi(patch={}) {
+ const actual={...proof.request,x:1,y:2,w:1024,h:1024,expectedImageRefCount:undefined,...patch};
+ const input={count:async()=>1,fill:async()=>{}};
+ const model={filter:()=>({waitFor:async()=>{}}),innerText:async()=>proof.pool.name};
+ const page={getByRole:(_role,{name})=>name==='模型偏好'?model:name==='投稿已开启（点击关闭）'?{count:async()=>0}:name==='尺寸比例'?{innerText:async()=> '1K · 1:1'}:{click:async()=>{}},locator:()=>input,
+  waitForResponse:async()=>({ok:()=>true,json:async()=>({success:true,data:{runId:'owned-run'}}),request:()=>({postDataJSON:()=>actual})})};
+ return {page,actual};
+}
+test('REG-visual-policy-001 缺声明原严格判据仍红，软断言消费者可继续观察真实零引用任务',async()=>{
+ const {page,actual}=missingDeclarationUi();const errors=[];
+ assert.throws(()=>assertDefaultPeachRequest({...proof,request:actual}),/无参考主例/);
+ await assert.rejects(()=>submitDefaultPeachThroughUi(page,{workspaceId:'owned-id',pool:proof.pool,onCreated:()=>{}}),/无参考主例/);
+ const observed=await submitDefaultPeachThroughUi(page,{workspaceId:'owned-id',pool:proof.pool,onCreated:()=>{},onMissingReferenceDeclaration:async p=>{
+  try{assert.equal(p.request.expectedImageRefCount,0);}catch(error){errors.push(error);}
+ }});
+ assert.equal(errors.length,1,'缺字段必须保留红色判据，不能改成默认0');assert.equal(observed.runId,'owned-run');
+ const source=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
+ assert.match(source,/onMissingReferenceDeclaration:[\s\S]*?expect\.soft\(proof\.request\.expectedImageRefCount,[\s\S]*?\)\.toBe\(0\)/);
+});
+test('REG-visual-policy-001 非缺失声明、非空引用和其他请求漂移不能进入继续取证分支',async()=>{
+ for(const patch of [{expectedImageRefCount:1},{expectedImageRefCount:null},{imageRefs:[{refId:1}]},{size:'512x512'},{modelId:'other'},{targetKey:''}]){
+  const {page}=missingDeclarationUi(patch);let callbacks=0;
+  await assert.rejects(()=>submitDefaultPeachThroughUi(page,{workspaceId:'owned-id',pool:proof.pool,onCreated:()=>{},onMissingReferenceDeclaration:async()=>{callbacks++;}}));
+  assert.equal(callbacks,0,'不能靠观察回调跳过真实输入或模型合同');
+ }
+});

@@ -7201,6 +7201,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         workspaceId: workspace.id, pool: pool!, onCreated: createdRunId => { runId=createdRunId; },
         beforeSubmit: async input => { await captureDefaultJourneyEvidence(page, testInfo, '01-default-white-peach-input', '默认白桃：真实页面输入白桃，无参考图，界面保持本环境后端具体默认与1K方图；尚未提交，不证明生图成功。', input); },
         onSubmitted: async proof => { await testInfo.attach('default-white-peach-actual-request', { body: JSON.stringify({ ...proof, submittedAt: new Date(generationStartedAt).toISOString() }), contentType: 'application/json' }); },
+        onMissingReferenceDeclaration: async proof => {
+          await testInfo.attach('default-reference-declaration-missing', { body: JSON.stringify({ runId: proof.runId, actualImageRefCount: proof.request.imageRefCount, missingField: 'expectedImageRefCount', verdict: 'fail', proofBoundary: '保留显式声明合同失败；继续观察已提交任务，不把取消后的无产物归因模型' }), contentType: 'application/json' });
+          expect.soft(proof.request.expectedImageRefCount, '页面必须显式声明零参考图；缺字段保持原合同失败，产物另行取证').toBe(0);
+        },
       });
       runId = created.runId;
       squareTargetKey = created.targetKey;
