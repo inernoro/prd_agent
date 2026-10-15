@@ -19,7 +19,7 @@ public sealed class AdminPushNotificationService
     private static readonly Regex PlaceholderRegex = new(@"\{\{\s*([a-zA-Z0-9_]+)\s*\}\}", RegexOptions.Compiled);
     private static readonly HashSet<string> SupportedMethods = new(StringComparer.OrdinalIgnoreCase) { "GET", "POST" };
     private static readonly HashSet<string> SupportedBarkLevels = new(StringComparer.OrdinalIgnoreCase) { "active", "timeSensitive", "passive", "critical" };
-    private const int MaxRecipientAttemptsPerWindow = 2;
+    private const int MaxRecipientAttemptsPerWindow = 7;
     private static readonly TimeSpan RecipientWindow = TimeSpan.FromMinutes(5);
     private const int MaxCandidateNotificationsPerRecipient = 1000;
     private const string DefaultBarkServerUrl = "https://api.day.app";
@@ -415,11 +415,11 @@ public sealed class AdminPushNotificationService
         var owned = new BsonDocument { { "_id", userId }, { "owner", owner } };
         try
         {
-            if (now - state["lastAttemptAt"].ToUniversalTime() < RecipientWindow && state["attempts"].AsInt32 > 0)
+            var budget = ReadBudget(state, now);
+            if (budget.Attempts.Count > 0)
                 throw new InvalidOperationException("近期已发送通知，通道测试请在 5 分钟后重试");
-            var reserved = await states.UpdateOneAsync(owned, new BsonDocument("$set", new BsonDocument {
-                { "lastAttemptAt", now }, { "attempts", 1 }, { "sources", new BsonArray() }
-            }), cancellationToken: ct);
+            budget.Attempts.Add(new BsonDocument { { "at", now }, { "urgent", false } });
+            var reserved = await states.UpdateOneAsync(owned, new BsonDocument("$set", BudgetFields(budget)), cancellationToken: ct);
             if (reserved.MatchedCount != 1) throw new InvalidOperationException("通知状态已变化，请稍后再测试");
             notification.Id = Guid.NewGuid().ToString("N");
             var receipt = new AdminPushDeliveryLog { UserId = userId, NotificationId = notification.Id,
@@ -469,14 +469,8 @@ public sealed class AdminPushNotificationService
         var owned = new BsonDocument { { "_id", userId }, { "owner", owner } };
         try
         {
-            var started = state["lastAttemptAt"].ToUniversalTime();
-            var attempts = state["attempts"].AsInt32;
-            var sentSources = state["sources"].AsBsonArray.Select(x => x.AsString).ToHashSet();
-            if (now - started >= RecipientWindow)
-            {
-                started = now; attempts = 0; sentSources.Clear();
-            }
-            if (attempts >= MaxRecipientAttemptsPerWindow) return;
+            var budget = ReadBudget(state, now);
+            if (budget.Attempts.Count >= MaxRecipientAttemptsPerWindow) return;
             var filter = Builders<AdminNotification>.Filter.Eq(x => x.Status, "open")
                 & (Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, null)
                    | Builders<AdminNotification>.Filter.Eq(x => x.TargetUserId, userId))
@@ -497,19 +491,26 @@ public sealed class AdminPushNotificationService
                     }), new BsonDocument("$limit", 1), new BsonDocument("$project", new BsonDocument("_id", 1))
                 } }, { "as", "_pushReceipt" }
             });
-            using var candidateCursor = await _db.AdminNotifications.Aggregate().Match(filter).SortBy(x => x.CreatedAt)
+            using var candidateCursor = await _db.AdminNotifications.Aggregate().Match(filter).SortBy(x => x.Level).ThenBy(x => x.CreatedAt)
                 .AppendStage<AdminNotification>(terminalReceipt)
                 .Match(new BsonDocument("_pushReceipt.0", new BsonDocument("$exists", false)))
                 .Project<AdminNotification>(new BsonDocument("_pushReceipt", 0)).ToCursorAsync(ct);
             var candidates = new List<AdminNotification>();
-            while (candidates.Count < MaxCandidateNotificationsPerRecipient && await candidateCursor.MoveNextAsync(ct))
+            while (await candidateCursor.MoveNextAsync(ct))
             {
                 foreach (var candidate in candidateCursor.Current)
                 {
                     if (!subscriptions.Any(subscription => MatchesTopic(subscription.TopicKey, candidate))) continue;
-                    candidates.Add(candidate);
-                    if (candidates.Count == MaxCandidateNotificationsPerRecipient) break;
+                    if (candidates.Count < MaxCandidateNotificationsPerRecipient) candidates.Add(candidate);
+                    else if (IsFreshUrgent(candidate, budget))
+                    {
+                        var replace = candidates.FindLastIndex(n => !IsFreshUrgent(n, budget));
+                        if (replace >= 0) candidates[replace] = candidate;
+                    }
+                    // Level 排序先扫描 error；普通积压无需全部加载。
+                    if (candidate.Level != "error" && candidates.Count >= MaxCandidateNotificationsPerRecipient) break;
                 }
+                if (candidates.Count >= MaxCandidateNotificationsPerRecipient && candidateCursor.Current.LastOrDefault()?.Level != "error") break;
             }
             var ids = candidates.Select(x => x.Id).ToList();
             var logs = await _db.AdminPushDeliveryLogs.Find(x => x.UserId == userId
@@ -535,18 +536,23 @@ public sealed class AdminPushNotificationService
                 }
             }
             if (routes.Count == 0) return;
-            // 普通流量每个窗口一份摘要；第二个名额供新错误来源升级，不将来源等同于根因。
-            var eligible = attempts == 0 ? routes : routes.Where(r => r.Notice.Level == "error"
-                && !sentSources.Contains(r.Notice.Source ?? "system")).ToList();
-            if (eligible.Count == 0) return;
-            var selected = eligible.OrderByDescending(r => r.Notice.Level == "error")
+            var urgentAttempts = budget.Attempts.Where(a => a["urgent"].AsBoolean).ToList();
+            var urgentReady = urgentAttempts.Count < 5 && (urgentAttempts.Count == 0
+                || now - urgentAttempts.Last()["at"].ToUniversalTime() >= TimeSpan.FromMinutes(1));
+            var freshUrgent = routes.Where(r => IsFreshUrgent(r.Notice, budget)).ToList();
+            var useUrgent = urgentReady && freshUrgent.Count > 0;
+            var normalReady = budget.Attempts.Count - urgentAttempts.Count < 2
+                && (budget.Attempts.Count == 0 || now - budget.Attempts.Last()["at"].ToUniversalTime() >= TimeSpan.FromMinutes(1));
+            if (!useUrgent && !normalReady) return;
+            var selected = (useUrgent ? freshUrgent : routes).OrderByDescending(r => r.Notice.Level == "error")
                 .ThenBy(r => r.Notice.CreatedAt).First();
-            var batch = routes.Where(r => r.Key == selected.Key).DistinctBy(r => r.Notice.Id).ToList();
-            if (now - batch.Min(r => r.Notice.CreatedAt) < _aggregationDelay) return;
+            var batch = routes.Where(r => r.Key == selected.Key).DistinctBy(r => r.Notice.Id)
+                .OrderByDescending(r => IsFreshUrgent(r.Notice, budget)).ToList();
+            if (!useUrgent && now - batch.Min(r => r.Notice.CreatedAt) < _aggregationDelay) return;
             var notices = batch.Select(r => r.Notice).ToList();
             var notification = notices.Count == 1 ? notices[0] : new AdminNotification
             {
-                Title = $"有 {notices.Count} 项新消息需要查看",
+                Title = useUrgent ? $"新增严重故障，共 {notices.Count} 项消息" : $"有 {notices.Count} 项新消息需要查看",
                 Message = $"共 {notices.Count} 项：" + string.Join("；", notices.Select(n => n.Title ?? "业务消息").Distinct()
                     .Take(2).Select(title => TrimForLog(title, 40)))
                     + "。已合并提醒，数量不等于事故数；请到消息中心逐项查看影响与处理入口。",
@@ -560,12 +566,15 @@ public sealed class AdminPushNotificationService
                 DeliveryState = "reserved", CreatedAt = now,
             };
             // 先持久化额度与批次，再执行有外部副作用的网络调用。
-            sentSources.UnionWith(notices.Select(n => n.Source ?? "system"));
-            var reserved = await states.UpdateOneAsync(owned, new BsonDocument("$set", new BsonDocument {
-                { "leaseUntil", _clock.GetUtcNow().UtcDateTime.AddMinutes(2) },
-                { "lastAttemptAt", now }, { "attempts", attempts + 1 },
-                { "sources", new BsonArray(sentSources) }
-            }), cancellationToken: ct);
+            budget.Attempts.Add(new BsonDocument { { "at", now }, { "urgent", useUrgent } });
+            foreach (var notice in notices.Where(n => n.Level == "error"))
+            {
+                var key = IncidentKey(notice);
+                if (!budget.Incidents.Contains(key)) budget.Incidents[key] = now;
+            }
+            var fields = BudgetFields(budget);
+            fields["leaseUntil"] = _clock.GetUtcNow().UtcDateTime.AddMinutes(2);
+            var reserved = await states.UpdateOneAsync(owned, new BsonDocument("$set", fields), cancellationToken: ct);
             if (reserved.MatchedCount != 1) return;
             await _db.AdminPushDeliveryLogs.InsertOneAsync(reservation, cancellationToken: ct);
             await DeliverAsync(userId, selected.Route, notification, saveLog: true, ct, reservation);
@@ -576,6 +585,32 @@ public sealed class AdminPushNotificationService
                 cancellationToken: CancellationToken.None);
         }
     }
+
+    private sealed record DispatchBudget(List<BsonDocument> Attempts, BsonDocument Incidents);
+
+    private static DispatchBudget ReadBudget(BsonDocument state, DateTime now)
+    {
+        var history = state.TryGetValue("attemptHistory", out var raw)
+            ? raw.AsBsonArray.Select(a => a.AsBsonDocument).ToList()
+            : Enumerable.Range(0, state.GetValue("attempts", 0).AsInt32).Select(_ => new BsonDocument {
+                { "at", state.GetValue("lastAttemptAt", new BsonDateTime(DateTime.UnixEpoch)) }, { "urgent", false }
+            }).ToList(); // 存量额度保守迁移，不在上线时清零。
+        var recent = history.Where(a => now - a["at"].ToUniversalTime() < RecipientWindow).ToList();
+        var incidents = new BsonDocument(state.GetValue("urgentIncidents", new BsonDocument()).AsBsonDocument
+            .Where(e => now - e.Value.ToUniversalTime() < TimeSpan.FromMinutes(30)));
+        return new DispatchBudget(recent, incidents);
+    }
+
+    private static BsonDocument BudgetFields(DispatchBudget budget) => new() {
+        { "attemptHistory", new BsonArray(budget.Attempts) }, { "urgentIncidents", budget.Incidents }
+    };
+
+    private static string IncidentKey(AdminNotification notice) => Convert.ToHexString(SHA256.HashData(
+        Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { notice.Source,
+            !string.IsNullOrWhiteSpace(notice.Key) ? notice.Key : notice.ActionUrl ?? notice.Source }))));
+
+    private static bool IsFreshUrgent(AdminNotification notice, DispatchBudget budget) =>
+        notice.Level == "error" && !budget.Incidents.Contains(IncidentKey(notice));
 
     private async Task<bool> HasSuccessfulDeliveryAsync(AdminPushSubscription subscription, string notificationId, CancellationToken ct)
     {

@@ -60,6 +60,9 @@ public sealed class AdminPushNotificationServiceTests
     {
         await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
         var http = new RecordingHttpClientFactory();
+        var clock = new PushTestClock();
+        var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
+            NullLogger<AdminPushNotificationService>.Instance, clock);
         await SeedChannelAsync(testDb.Context);
         await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
             UserId = "u1", TopicKey = "api-request-alert", Enabled = true, ChannelType = "url",
@@ -71,20 +74,21 @@ public sealed class AdminPushNotificationServiceTests
                 Id = $"sequence-{i}", Title = "检查报告", Message = "需要查看", Source = "stable-smoke", Level = "error",
                 TargetUserId = "u1", CreatedAt = DateTime.UtcNow.AddMinutes(-1),
             });
-            await CreateService(testDb.Context, http).DispatchPendingAsync(default);
+            await service.DispatchPendingAsync(default);
         }
         Assert.Single(http.Requests);
+        clock.Advance(TimeSpan.FromSeconds(60));
         await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
             Id = "independent", Title = "新的接口故障", Source = "api-request-alert", Level = "error",
             TargetUserId = "u1", CreatedAt = DateTime.UtcNow.AddMinutes(-1),
         });
-        await CreateService(testDb.Context, http).DispatchPendingAsync(default);
+        await service.DispatchPendingAsync(default);
         Assert.Equal(2, http.Requests.Count);
         var receipts = await testDb.Context.AdminPushDeliveryLogs.Find(_ => true).ToListAsync();
         Assert.Contains("independent", receipts.SelectMany(x => x.CoveredNotificationIds));
         Assert.Equal(101, receipts.SelectMany(x => x.CoveredNotificationIds).Distinct().Count());
         await ExpireRecipientWindowAsync(testDb.Context);
-        await CreateService(testDb.Context, http).DispatchPendingAsync(default);
+        await service.DispatchPendingAsync(default);
         Assert.Equal(2, http.Requests.Count);
     }
 
@@ -170,54 +174,77 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
-    public async Task IndependentErrors_RespectHardRecipientLimit_AndRemainPendingForNextDigest()
+    public async Task NewUrgentFault_BypassesExhaustedNormalBudget_ButSameSourceIndependentKeysAreBounded()
     {
         await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
         await SeedChannelAsync(testDb.Context);
-        var http = new RecordingHttpClientFactory();
-        foreach (var source in new[] { "stable-smoke", "platform-key-integrity", "llm-gateway-quota" })
-        {
-            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
-                Id = source, Source = source, TargetUserId = "u1", Level = "error", Title = "独立问题",
-                CreatedAt = DateTime.UtcNow.AddMinutes(-1),
-            });
-            await CreateService(testDb.Context, http).DispatchPendingAsync(default);
-        }
+        var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
+        AdminPushNotificationService Service() => new(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
+            NullLogger<AdminPushNotificationService>.Instance, clock);
+        async Task Add(string key, string level) => await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Key = key, Source = "stable-smoke", TargetUserId = "u1", Level = level, Title = key,
+            CreatedAt = clock.GetUtcNow().UtcDateTime.AddSeconds(-20),
+        });
+        await Add("normal1", "warning"); await Service().DispatchPendingAsync(default);
+        clock.Advance(TimeSpan.FromSeconds(60));
+        await Add("normal2", "warning"); await Service().DispatchPendingAsync(default);
         Assert.Equal(2, http.Requests.Count);
-        Assert.Equal(3, await testDb.Context.AdminNotifications.CountDocumentsAsync(n => n.Status == "open"));
-        await ExpireRecipientWindowAsync(testDb.Context);
-        await CreateService(testDb.Context, http).DispatchPendingAsync(default);
+        await Add("severe1", "error"); await Service().DispatchPendingAsync(default);
+        Assert.Equal(3, http.Requests.Count); // 严重故障不等普通五分钟窗口。
+        await Add("severe2", "error"); await Service().DispatchPendingAsync(default);
         Assert.Equal(3, http.Requests.Count);
-        Assert.True(await testDb.Context.AdminPushDeliveryLogs.Find(l => l.NotificationId == "llm-gateway-quota" && l.Success).AnyAsync());
+        clock.Advance(TimeSpan.FromSeconds(60)); await Service().DispatchPendingAsync(default);
+        Assert.Equal(4, http.Requests.Count); // 同来源另一根因不被来源级去重吞掉。
+        await Add("severe1", "error");
+        clock.Advance(TimeSpan.FromSeconds(60)); await Service().DispatchPendingAsync(default);
+        Assert.Equal(4, http.Requests.Count); // 随机通知编号、服务重建不能让同根因重新插队。
     }
 
     [Fact]
-    public async Task RecipientLimit_DoesNotResetAtEarlierWindowBoundary()
+    public async Task UrgentStorm_UsesFiveBatchesPerWindow_AndRetainsEveryPendingIncident()
     {
         await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
         await SeedChannelAsync(testDb.Context);
-        var clock = new PushTestClock();
-        var http = new RecordingHttpClientFactory();
-        var config = new ConfigurationBuilder().AddConfiguration(TestConfiguration)
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["AdminPush:AggregationSeconds"] = "0" }).Build();
-        var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), config,
+        var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
+        var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
             NullLogger<AdminPushNotificationService>.Instance, clock);
-        async Task AddError(string source) => await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
-            Source = source, TargetUserId = "u1", Level = "error", Title = source,
-            CreatedAt = clock.GetUtcNow().UtcDateTime.AddSeconds(-1),
+        for (var i = 0; i < 60; i++)
+        {
+            await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+                Key = "root-" + i, Source = "stable-smoke", TargetUserId = "u1", Level = "error", Title = "独立故障 " + i,
+                CreatedAt = clock.GetUtcNow().UtcDateTime,
+            });
+            await service.DispatchPendingAsync(default);
+            clock.Advance(TimeSpan.FromSeconds(5));
+        }
+        Assert.Equal(5, http.Requests.Count);
+        Assert.Equal(60, await testDb.Context.AdminNotifications.CountDocumentsAsync(n => n.Status == "open"));
+        await service.DispatchPendingAsync(default);
+        Assert.Equal(6, http.Requests.Count);
+        var receipts = await testDb.Context.AdminPushDeliveryLogs.Find(_ => true).ToListAsync();
+        Assert.Equal(60, receipts.SelectMany(r => r.CoveredNotificationIds).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task OrdinaryBacklogBeyondPage_CannotHideImmediateUrgentFault()
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await SeedChannelAsync(testDb.Context);
+        var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
+        var service = new AdminPushNotificationService(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
+            NullLogger<AdminPushNotificationService>.Instance, clock);
+        await testDb.Context.AdminNotifications.InsertManyAsync(Enumerable.Range(0, 1100).Select(i => new AdminNotification {
+            Key = "ordinary-" + i, Source = "stable-smoke", TargetUserId = "u1", Level = "warning", Title = "普通变化",
+            CreatedAt = clock.GetUtcNow().UtcDateTime,
+        }));
+        await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Id = "urgent-new", Key = "root-new", Source = "stable-smoke", TargetUserId = "u1", Level = "error", Title = "严重独立故障",
+            CreatedAt = clock.GetUtcNow().UtcDateTime,
         });
-        await AddError("first-error");
         await service.DispatchPendingAsync(default);
-        clock.Advance(TimeSpan.FromMinutes(4));
-        await AddError("second-error");
-        await service.DispatchPendingAsync(default);
-        clock.Advance(TimeSpan.FromMinutes(1));
-        await AddError("third-error");
-        await service.DispatchPendingAsync(default);
-        Assert.Equal(2, http.Requests.Count);
-        clock.Advance(TimeSpan.FromMinutes(4));
-        await service.DispatchPendingAsync(default);
-        Assert.Equal(3, http.Requests.Count);
+        Assert.Single(http.Requests);
+        var receipt = await testDb.Context.AdminPushDeliveryLogs.Find(_ => true).SingleAsync();
+        Assert.Contains("urgent-new", receipt.CoveredNotificationIds);
     }
 
     [Fact]
@@ -254,7 +281,7 @@ public sealed class AdminPushNotificationServiceTests
     private static Task ExpireRecipientWindowAsync(MongoDbContext db) => db.Database
         .GetCollection<MongoDB.Bson.BsonDocument>("admin_push_dispatch_state")
         .UpdateManyAsync(FilterDefinition<MongoDB.Bson.BsonDocument>.Empty,
-            new MongoDB.Bson.BsonDocument("$set", new MongoDB.Bson.BsonDocument("lastAttemptAt", DateTime.UtcNow.AddMinutes(-6))));
+            new MongoDB.Bson.BsonDocument("$set", new MongoDB.Bson.BsonDocument { { "lastAttemptAt", DateTime.UtcNow.AddMinutes(-6) }, { "attemptHistory", new MongoDB.Bson.BsonArray() } }));
 
     private sealed class ThrowingHttpClientFactory : IHttpClientFactory
     {
