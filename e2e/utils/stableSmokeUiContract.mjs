@@ -1,0 +1,108 @@
+function contract(condition, message) {
+  if (!condition) throw new Error(`[test/ui-contract] ${message}`);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+async function uniqueVisible(locator, description, timeout) {
+  await locator.waitFor({ state: 'visible', timeout });
+  contract(await locator.count() === 1, `${description}必须唯一且可见`);
+  return locator;
+}
+
+/** Structural login evidence only: this does not assert a successful login or issue a credential. */
+export function validateMapLoginSnapshot(snapshot) {
+  contract(snapshot?.headingCount === 1 && snapshot?.hasBrand === true, '登录页须展示唯一的欢迎标题与 MAP 品牌');
+  const hasPasswordForm = snapshot.usernameCount + snapshot.passwordCount + snapshot.submitCount > 0;
+  const completePasswordForm = snapshot.usernameCount === 1 && snapshot.passwordCount === 1 && snapshot.submitCount === 1;
+  contract(!hasPasswordForm || completePasswordForm, '账号、密码与进入控制台须组成同一个完整表单');
+  contract(completePasswordForm || snapshot.ssoCount > 0, '登录页没有可用的账号表单或 SSO 入口');
+  return { authenticationMethods: [completePasswordForm ? 'password' : null, snapshot.ssoCount > 0 ? 'sso' : null].filter(Boolean) };
+}
+
+export async function getMapLoginTarget(page, { timeout = 20_000 } = {}) {
+  contract(new URL(page.url()).pathname === '/login', '须在真实登录页检查登录入口');
+  const heading = page.getByRole('heading', { name: '欢迎回来', exact: true }).and(page.locator(':visible'));
+  await uniqueVisible(heading, '登录欢迎标题', timeout);
+  // Both deployed and current LoginPage render GlassCard without a test id. The nearest
+  // ancestor containing authentication controls is the card, not a screenshot-wide body fallback.
+  const target = heading.locator('xpath=ancestor::div[.//input[@autocomplete="username"] or .//a][1]');
+  await uniqueVisible(target, '登录卡片', timeout);
+  const snapshot = await target.evaluate((element) => {
+    const visible = (node) => {
+      const box = node.getBoundingClientRect();
+      const style = getComputedStyle(node);
+      return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const nodes = (selector) => [...element.querySelectorAll(selector)].filter(visible);
+    return {
+      headingCount: nodes('h1').filter((node) => node.textContent.trim() === '欢迎回来').length,
+      hasBrand: element.textContent.includes('MAP Admin'),
+      usernameCount: nodes('input[autocomplete="username"]').length,
+      passwordCount: nodes('input[autocomplete="current-password"]').length,
+      submitCount: nodes('button').filter((node) => node.textContent.trim() === '进入控制台').length,
+      // LoginPage intentionally uses href="#" plus an onClick bridge; aria-disabled=false
+      // is its configured-entry contract, not the presence of an externally navigable href.
+      ssoCount: nodes('a[href][aria-disabled="false"]').filter((node) => /SSO|米多星球|登录/i.test(`${node.textContent} ${node.title}`)).length,
+    };
+  });
+  return { target, ...validateMapLoginSnapshot(snapshot) };
+}
+
+/** Audit a real API identity; this is not a substitute for the visual journey's configured default. */
+export function selectGatewayImageLogicalModel(items) {
+  contract(Array.isArray(items), '逻辑模型响应缺少列表');
+  const candidates = items.filter((item) => item?.enabled === true
+    && typeof item.id === 'string' && item.id.trim() && typeof item.publicId === 'string' && item.publicId.trim()
+    && Array.isArray(item.offerings) && item.offerings.some((offering) => offering?.enabled === true)
+    && (/image|generation/i.test(item.modelType || '')
+      || (Array.isArray(item.capabilities) && item.capabilities.some((value) => /image|text2img|img2img/i.test(value)))));
+  contract(candidates.length > 0, '未找到已启用且含已启用 Offering 的图片逻辑模型');
+  const selected = candidates.find((item) => item.isDefaultForType === true) || candidates[0];
+  contract(items.filter((item) => item.publicId === selected.publicId).length === 1, '逻辑模型 publicId 重复，无法绑定唯一真实配置');
+  return selected;
+}
+
+/** Opens read-only UI detail via real controls; never edits routes, enables providers, or submits a form. */
+export async function openGatewayLogicalModelDetails(page, logical, { timeout = 30_000 } = {}) {
+  contract(new URL(page.url()).pathname.endsWith('/logical-models'), '须从模型清单页面打开路由详情');
+  contract(typeof logical?.publicId === 'string' && logical.publicId.trim(), '须提供真实 API 的 publicId');
+  const publicId = logical.publicId;
+  const list = page.locator('.lg-logical-model-list').and(page.locator(':visible'));
+  await uniqueVisible(list, '逻辑模型清单', timeout);
+  const search = list.getByRole('searchbox', { name: '搜索模型名称或公开标识', exact: true });
+  const searchCount = await search.count();
+  contract(searchCount <= 1, '模型清单搜索入口重复');
+  const layout = searchCount === 1 ? 'collection-pane' : 'inline';
+  if (layout === 'collection-pane') {
+    await search.fill(publicId); // Search resets pagination, including models beyond the first ten.
+    const filter = list.getByRole('combobox', { name: '清单状态筛选', exact: true });
+    if (await filter.count() === 1) await filter.selectOption('');
+  }
+  const identity = layout === 'collection-pane'
+    ? page.locator('code').filter({ hasText: new RegExp(`^${escapeRegExp(publicId)}$`) })
+    : page.getByText(new RegExp(`^${escapeRegExp(publicId)}\\s+·`));
+  const row = list.locator('.lg-logical-model-grid:not(.lg-logical-model-heading)').filter({ has: identity });
+  await uniqueVisible(row, `真实模型 ${publicId} 的清单行`, timeout);
+  const open = row.getByRole('button', { name: layout === 'collection-pane' ? '查看' : '展开', exact: true });
+  if (await open.count() === 1) await open.click();
+  const collapse = row.getByRole('button', { name: '收起', exact: true });
+  await uniqueVisible(collapse, `模型 ${publicId} 的展开状态`, timeout);
+  contract(await collapse.getAttribute('aria-expanded') === 'true', '模型详情未处于实际展开状态');
+  const detail = layout === 'collection-pane'
+    ? page.getByRole('complementary', { name: '清单详情', exact: true }) : row.locator('..');
+  await uniqueVisible(detail, `模型 ${publicId} 的详情`, timeout);
+  if (layout === 'collection-pane') {
+    const detailIdentity = detail.locator('header code').filter({ hasText: new RegExp(`^${escapeRegExp(publicId)}$`) });
+    await uniqueVisible(detailIdentity, '详情模型标识', timeout);
+    const routesTab = detail.getByRole('button', { name: '上游线路', exact: true });
+    await uniqueVisible(routesTab, '上游线路页签', timeout);
+    contract(await routesTab.getAttribute('aria-pressed') === 'true', '路由详情未展示上游线路页签');
+  }
+  const routeDetails = detail.locator('.lg-logical-model-route-detail');
+  await routeDetails.first().waitFor({ state: 'visible', timeout });
+  contract(await routeDetails.count() > 0, '模型已展开但没有真实 Offering 明细');
+  return { list, row, detail, routeDetails, layout, publicId };
+}

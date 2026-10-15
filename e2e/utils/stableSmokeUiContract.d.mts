@@ -1,0 +1,32 @@
+import type { Locator, Page } from '@playwright/test';
+
+export interface MapLoginSnapshot {
+  headingCount: number;
+  hasBrand: boolean;
+  usernameCount: number;
+  passwordCount: number;
+  submitCount: number;
+  ssoCount: number;
+}
+
+export interface GatewayLogicalModelAuditIdentity {
+  id: string;
+  publicId: string;
+  enabled: boolean;
+  modelType?: string;
+  capabilities?: string[];
+  isDefaultForType?: boolean;
+  offerings: Array<{ enabled: boolean }>;
+}
+
+export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenticationMethods: string[] };
+export function getMapLoginTarget(page: Page, options?: { timeout?: number }): Promise<{ target: Locator; authenticationMethods: string[] }>;
+export function selectGatewayImageLogicalModel<T extends GatewayLogicalModelAuditIdentity>(items: T[]): T;
+export function openGatewayLogicalModelDetails(page: Page, logical: { publicId: string }, options?: { timeout?: number }): Promise<{
+  list: Locator;
+  row: Locator;
+  detail: Locator;
+  routeDetails: Locator;
+  layout: 'inline' | 'collection-pane';
+  publicId: string;
+}>;
