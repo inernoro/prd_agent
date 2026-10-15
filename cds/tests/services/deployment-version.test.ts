@@ -133,6 +133,17 @@ describe('DeploymentVersionService', () => {
     expect(isImmutableImageReference('repo/web:latest')).toBe(false);
   });
 
+  it('版本重放冻结原完整buildScope，旧版本缺范围不能借当前配置补证明', () => {
+    const service = new DeploymentVersionService(stateService);
+    const original = profile({ buildScope: ['src/**', 'Dockerfile'] });
+    const version = service.create({ projectId: 'p1', branchId: 'b1', commitSha: 'b'.repeat(40), configHash: 'd'.repeat(64),
+      profiles: [original], branch, createdByRunId: 'owned-scope-proof' });
+    original.buildScope!.push('not-part-of-frozen-input');
+    expect(service.materializeProfiles(version, [profile({ buildScope: ['src/one-file'] })])[0].buildScope).toEqual(['src/**', 'Dockerfile']);
+    const historical = structuredClone(version); delete historical.profiles[0].buildScope;
+    expect(service.materializeProfiles(historical, [profile({ buildScope: ['src/one-file'] })])[0].buildScope).toBeUndefined();
+  });
+
   it('survives a state service restart with the same immutable snapshot', async () => {
     const service = new DeploymentVersionService(stateService);
     branch.services.web = {
