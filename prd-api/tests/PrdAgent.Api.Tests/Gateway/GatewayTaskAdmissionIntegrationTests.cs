@@ -362,16 +362,22 @@ public sealed class GatewayTaskAdmissionIntegrationTests
     }
 
     [Theory]
-    [InlineData("/v1/messages")]
-    [InlineData("/v1/responses")]
-    [InlineData("/v1/chat/completions")]
-    public async Task HeaderlessSdkSidecarUsesFrozenCallerModelAndBothFiniteBudgets(string path)
+    [InlineData("/v1/messages", "Authorization")]
+    [InlineData("/v1/messages", "x-api-key")]
+    [InlineData("/v1/responses", "Authorization")]
+    [InlineData("/v1/chat/completions", "Authorization")]
+    public async Task HeaderlessSdkSidecarUsesFrozenCallerModelAndBothFiniteBudgets(string path, string credentialHeader)
     {
         await using var database = await TestDatabase.CreateAsync();
         var permit = await database.PermitAsync(maxCalls: 3);
         var (grant, key) = await database.SidecarAsync(permit);
         await using var host = await Server(database);
         using var request = SdkRequest(path, key);
+        if (credentialHeader == "x-api-key")
+        {
+            request.Headers.Authorization = null;
+            request.Headers.Add(credentialHeader, key);
+        }
         var response = await host.GetTestClient().SendAsync(request);
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         var sent = database.Requests.Single();
@@ -416,13 +422,39 @@ public sealed class GatewayTaskAdmissionIntegrationTests
         database.PaidCalls.ShouldBe(0);
     }
 
-    [Fact]
-    public async Task PrefixShapedUnknownSidecarKeyNeverAuthenticates()
+    [Theory]
+    [InlineData("Authorization")]
+    [InlineData("x-api-key")]
+    public async Task PrefixShapedUnknownSidecarKeyNeverAuthenticates(string credentialHeader)
     {
         await using var database = await TestDatabase.CreateAsync(); await using var host = await Server(database);
         using var request = SdkRequest("/v1/messages", "gwrg_unknown_prefix_is_not_proof");
+        if (credentialHeader == "x-api-key")
+        {
+            request.Headers.Authorization = null;
+            request.Headers.Add(credentialHeader, "gwrg_unknown_prefix_is_not_proof");
+        }
         (await host.GetTestClient().SendAsync(request)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         database.PaidCalls.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData("/v1/chat/completions", false)]
+    [InlineData("/v1/messages", true)]
+    public async Task AnthropicCredentialCannotExpandRoutesOrOverrideExplicitGatewayKey(string path, bool explicitInvalidKey)
+    {
+        await using var database = await TestDatabase.CreateAsync();
+        var permit = await database.PermitAsync(maxCalls: 3);
+        var (grant, key) = await database.SidecarAsync(permit);
+        await using var host = await Server(database);
+        using var request = SdkRequest(path, key);
+        request.Headers.Authorization = null;
+        request.Headers.Add("x-api-key", key);
+        if (explicitInvalidKey) request.Headers.Add("X-Gateway-Key", "invalid-explicit-key");
+        (await host.GetTestClient().SendAsync(request)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        database.PaidCalls.ShouldBe(0);
+        (await database.Permits.Find(x => x.Id == permit.Id).SingleAsync()).CallCount.ShouldBe(0);
+        (await database.Grants.Find(x => x.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(0);
     }
 
     [Fact]

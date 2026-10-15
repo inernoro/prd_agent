@@ -1754,8 +1754,12 @@ public static class GatewayHttpEndpoints
         var provided = context.Request.Headers["X-Gateway-Key"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(provided)) return provided.Trim();
         var auth = context.Request.Headers.Authorization.FirstOrDefault();
-        return !string.IsNullOrWhiteSpace(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            ? auth["Bearer ".Length..].Trim()
+        if (!string.IsNullOrWhiteSpace(auth) && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            return auth["Bearer ".Length..].Trim();
+        // 官方 Anthropic SDK 通过标准头携带同一网关凭据；仍由下游核验密钥和有限父任务。
+        var path = GatewayTaskRoutePolicy.Normalize(context.Request.Path.Value ?? string.Empty);
+        return path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
+            ? context.Request.Headers["x-api-key"].FirstOrDefault()?.Trim()
             : null;
     }
 
