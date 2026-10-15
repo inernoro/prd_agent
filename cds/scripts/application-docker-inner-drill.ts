@@ -66,6 +66,43 @@ function daemonStackSummary(text: string, phase: 'creation' | 'removal') {
 }
 export function removalStackSummary(text: string) { return daemonStackSummary(text, 'removal'); }
 export function creationStackSummary(text: string) { return daemonStackSummary(text, 'creation'); }
+/** A missing private wire reply is not proof that the accepted daemon request did not execute. */
+export function resolveRecoveredProbeIdentity(request: Record<string, any>, timeline: Array<Record<string, any>>,
+  daemonEvents: Array<Record<string, any>>, recoveryEvents: Array<Record<string, any>>) {
+  assert.match(request.operationId, /^[a-f0-9]{32}$/); assert.match(request.instanceId, /^[a-f0-9]{12}$/);
+  assert.ok(typeof request.name === 'string' && request.name.length > 0);
+  assert.ok(typeof request.image === 'string' && request.image.length > 0);
+  const owned = daemonEvents.filter(event => event.type === 'container' && event.probeOperationId === request.operationId
+    && event.instanceId === request.instanceId && event.probeKind === 'runtime-validation');
+  const creates = owned.filter(event => event.action === 'create');
+  const ids = [...new Set(creates.map(event => event.id))];
+  assert.equal(ids.length, 1, 'expected one native runtime probe identity');
+  const containerId = ids[0]; assert.match(containerId, /^[a-f0-9]{64}$/);
+  assert.ok(creates.every(event => event.name === request.name && event.image === request.image));
+  const createdAt = creates[0].timeNano / 1e6;
+  assert.ok(Number.isFinite(createdAt) && createdAt >= Date.parse(request.at));
+  assert.ok(owned.some(event => event.action === 'destroy' && event.id === containerId
+    && event.name === request.name && event.image === request.image
+    && Number.isFinite(event.timeNano) && event.timeNano / 1e6 >= createdAt));
+  const replies = timeline.filter(event => event.phase === 'backend-create-replied');
+  assert.ok(replies.length <= 1, 'ambiguous backend creation reply');
+  if (replies.length) {
+    assert.equal(replies[0].status, 201); assert.equal(replies[0].containerId, containerId);
+  } else {
+    assert.ok(timeline.some(event => event.phase === 'backend-create-transport-error'), 'missing observed transport failure');
+  }
+  const recovered = recoveryEvents.filter(event => event.operationId === request.operationId
+    && event.containerName === request.name && event.details?.instanceId === request.instanceId);
+  const loaded = recovered.findIndex(event => event.action === 'agent.probe.recovery.loaded');
+  assert.ok(loaded >= 0);
+  const confirmed = recovered.findIndex((event, index) => index > loaded && event.action === 'agent.probe.cleanup.confirmed'
+    && event.details.containerId === containerId);
+  assert.ok(confirmed > loaded);
+  if (!replies.length) assert.ok(recovered.some((event, index) => index > loaded && index < confirmed
+    && event.action === 'agent.probe.creation.acknowledged' && event.details.receipt === 'owned-inspect'
+    && event.details.containerId === containerId));
+  return { containerId, source: replies.length ? 'backend-201' as const : 'native-and-owned-recovery' as const };
+}
 type PendingCreateTarget = { containerName: string; operationId: string; instanceId: string; imageReference: string; forwardedAt: string };
 export async function createProbeDaemonProxy(socketPath: string, daemonSocketPath = '/var/run/owned.sock',
   cancelBoundary: 'client-disconnect' | 'daemon-created' = 'client-disconnect',
@@ -986,21 +1023,21 @@ async function main(): Promise<void> {
           throw error;
         }
         await probeProxy!.settle();
-        const reply = probeProxy!.timeline.find(event => event.phase === 'backend-create-replied');
-        assert.equal(reply?.status, 201); assert.match(reply!.containerId, /^[a-f0-9]{64}$/);
-        const rows = await auditNamespace('after-original-failed-stop-and-application-owned-recovery');
-        assert.equal(rows.some(row => row.id === reply!.containerId || row.matchesDefaultRuntimeValidation), false);
         const allEvents = await context.readProbeEvents();
+        const daemonEvents = await eventSnapshot('application-recovered-failed-probe-before-owned-harness-cleanup');
+        const identity = resolveRecoveredProbeIdentity(originalRequest, probeProxy!.timeline, daemonEvents, allEvents);
+        report.failureRecovery.probeIdentity = identity;
+        const rows = await auditNamespace('after-original-failed-stop-and-application-owned-recovery');
+        assert.equal(rows.some(row => row.id === identity.containerId || row.matchesDefaultRuntimeValidation), false);
         const recovered = allEvents.filter(event => event.operationId === originalRequest.operationId);
         assert.ok(recovered.some(event => event.action === 'agent.probe.recovery.loaded'));
-        assert.ok(recovered.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.containerId === reply!.containerId));
+        assert.ok(recovered.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.containerId === identity.containerId));
         const loadedAt = recovered.findIndex(event => event.action === 'agent.probe.recovery.loaded');
         const removal = recovered.slice(loadedAt).find(event => event.action === 'agent.probe.cleanup.step.assigned' && event.details.cleanupStep === 'remove');
         assert.ok(removal?.details.cleanupExecutorAssignment);
         assert.ok(recoveryTree.some(row => row.pid === removal.details.cleanupExecutorAssignment.actorPid));
         assert.ok(recoveryTree.some(row => row.pid === removal.details.cleanupExecutorAssignment.factoryPid));
-        const daemonEvents = await eventSnapshot('application-recovered-failed-probe-before-owned-harness-cleanup');
-        for (const action of ['create', 'destroy']) assert.ok(daemonEvents.some(event => event.id === reply!.containerId
+        for (const action of ['create', 'destroy']) assert.ok(daemonEvents.some(event => event.id === identity.containerId
           && event.action === action && event.probeOperationId === originalRequest.operationId && event.instanceId === originalRequest.instanceId));
         assert.ok(allEvents.some(event => event.action === 'agent.probe.cleanup.confirmed' && event.details.probeKind === 'storage-validation'));
         report.failureRecovery.events = recovered; report.failureRecovery.normalCapabilityEvents = allEvents.filter(event => event.action === 'agent.probe.cleanup.confirmed');

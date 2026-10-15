@@ -6,7 +6,7 @@ import net from 'node:net';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { describe, expect, it, vi } from 'vitest';
-import { createProbeDaemonProxy, numericProbeExitCode, removalStackSummary, creationStackSummary } from '../../scripts/application-docker-inner-drill.js';
+import { createProbeDaemonProxy, numericProbeExitCode, removalStackSummary, creationStackSummary, resolveRecoveredProbeIdentity } from '../../scripts/application-docker-inner-drill.js';
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cds-proxy-wire-'));
@@ -24,6 +24,45 @@ async function fixture() {
     close: async () => { await proxy.close(); for (const socket of sockets) socket.destroy();
       await new Promise<void>(resolve => backend.close(() => resolve())); await fs.rm(root, { recursive: true, force: true }); } };
 }
+
+describe('unknown creation recovery identity evidence', () => {
+  const evidence = () => {
+    const request = { at: '1970-01-01T00:00:01.000Z', operationId: 'a'.repeat(32), instanceId: 'b'.repeat(12), name: 'owned-probe', image: 'owned-image' };
+    const id = 'c'.repeat(64);
+    const owner = { type: 'container', probeKind: 'runtime-validation', probeOperationId: request.operationId,
+      instanceId: request.instanceId, name: request.name, image: request.image, id };
+    const daemon = [{ ...owner, action: 'create', timeNano: 2e9 }, { ...owner, action: 'destroy', timeNano: 3e9 }];
+    const event = (action: string) => ({ action, operationId: request.operationId, containerName: request.name,
+      details: { instanceId: request.instanceId, containerId: id, receipt: 'owned-inspect' } });
+    return { request, id, daemon, timeline: [{ phase: 'backend-create-transport-error' }], recovery: [
+      event('agent.probe.recovery.loaded'), event('agent.probe.creation.acknowledged'), event('agent.probe.cleanup.confirmed')] };
+  };
+  it('proves a lost wire receipt using native exact identity and original application recovery', () => {
+    const e = evidence();
+    expect(resolveRecoveredProbeIdentity(e.request, e.timeline, e.daemon, e.recovery)).toEqual({ containerId: e.id, source: 'native-and-owned-recovery' });
+  });
+  it('keeps a present201 strict and rejects a different returned CID', () => {
+    const e = evidence(), reply = { phase: 'backend-create-replied', status: 201, containerId: e.id };
+    expect(resolveRecoveredProbeIdentity(e.request, [reply], e.daemon, e.recovery).source).toBe('backend-201');
+    expect(() => resolveRecoveredProbeIdentity(e.request, [{ ...reply, containerId: 'd'.repeat(64) }], e.daemon, e.recovery)).toThrow();
+    expect(() => resolveRecoveredProbeIdentity(e.request, [{ ...reply, status: 500 }], e.daemon, e.recovery)).toThrow();
+  });
+  it.each(['operation', 'instance', 'name', 'image', 'ambiguous', 'no-destroy', 'no-loaded', 'no-ack', 'no-confirmed', 'no-transport'])(
+    'cannot substitute incomplete or foreign facts: %s', fault => {
+      const e = evidence();
+      if (fault === 'operation') e.daemon[0].probeOperationId = 'd'.repeat(32);
+      if (fault === 'instance') e.daemon[0].instanceId = 'd'.repeat(12);
+      if (fault === 'name') e.daemon[0].name = 'foreign';
+      if (fault === 'image') e.daemon[0].image = 'foreign';
+      if (fault === 'ambiguous') e.daemon.push({ ...e.daemon[0], id: 'd'.repeat(64) });
+      if (fault === 'no-destroy') e.daemon.pop();
+      if (fault === 'no-loaded') e.recovery.shift();
+      if (fault === 'no-ack') e.recovery.splice(1, 1);
+      if (fault === 'no-confirmed') e.recovery.pop();
+      if (fault === 'no-transport') e.timeline = [];
+      expect(() => resolveRecoveredProbeIdentity(e.request, e.timeline, e.daemon, e.recovery)).toThrow();
+    });
+});
 
 describe('bounded exact probe removal diagnostics', () => {
   it('observes the exact created CID without waiting for the observer or changing the removal reply', async () => {

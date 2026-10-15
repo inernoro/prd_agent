@@ -26,6 +26,7 @@ const combinedProductionHead = '5d7f3d71311b0805e9b8f081d333d96d180096fc';
 const widgetStreamQualifiedHead = 'e90d801c80f9932e0a827c040bb8b8babd8c8200';
 const widgetTerminalFixHead = '6691622edd78a372f9d8ee5892246bf8f481def2';
 const frozenIntegrationHead = '4c156073c89644c202203ce989dd0d97c60f2be8';
+const diagnosticInstrumentationHead = '63299420f0a060be0e18aa81bcc7591f25ca27fa';
 const previewActivityHead = 'd4d4c82f7c0346d5de09d4d4aa11c6d2878be9f9';
 const previewActivitySources = ['cds/src/forwarder-main.ts', 'cds/src/forwarder/diagnostic-routes.ts', 'cds/src/forwarder/preview-activity.ts', 'cds/src/forwarder/proxy-handler.ts', 'cds/src/index.ts', 'cds/src/services/probe-marker.ts', 'cds/src/services/scheduler.ts', 'cds/src/services/self-check.ts'];
 const combinedProductionSources = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/artifact-admission.ts', 'cds/src/services/container.ts', 'cds/src/services/deployment-version.ts', 'cds/src/services/prebuilt-reuse.ts', 'cds/src/services/worktree.ts', 'cds/src/types.ts', 'cds/src/widget-script.ts'];
@@ -37,7 +38,7 @@ const cpuStageSourceChanges = ["cds/src/executor/routes.ts", "cds/src/routes/bra
 const memoryStageSourceChanges = ["cds/src/index.ts", "cds/src/infra/state-store/mongo-split-store.ts", "cds/src/services/container.ts", "cds/src/services/orphan-container-reaper.ts", "cds/src/services/resource-usage-sampler.ts", "cds/src/services/scheduler-service-stop.ts", "cds/src/services/scheduler.ts", "cds/src/services/service-replacement.ts", "cds/src/services/service-runtime.ts"];
 
 export function assertCurrentSourceQualification(expectedPreviousSources: readonly string[], report: Record<string, any>, native = true): void {
-  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead, widgetStreamQualifiedHead, widgetTerminalFixHead, previewActivityHead, frozenIntegrationHead], { stdio: 'pipe', timeout: 120000 });
+  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead, widgetStreamQualifiedHead, widgetTerminalFixHead, previewActivityHead, frozenIntegrationHead, diagnosticInstrumentationHead], { stdio: 'pipe', timeout: 120000 });
   const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
     { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
   report.previousQualifiedHead = previousQualifiedHead;
@@ -98,9 +99,15 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
     .split('\n\n')[0].split('\n').filter(line => line.startsWith('parent ')).map(line => line.slice(7)).sort();
   assert.deepEqual(report.finalIntegrationParents, [widgetTerminalFixHead, previewActivityHead].sort());
   report.frozenIntegrationHead = frozenIntegrationHead;
-  report.diagnosticFollowupSources = changedSince(frozenIntegrationHead, report.head);
+  report.diagnosticFollowupSources = changedSince(frozenIntegrationHead, diagnosticInstrumentationHead);
   assert.deepEqual(report.diagnosticFollowupSources, []);
+  report.diagnosticInstrumentationHead = diagnosticInstrumentationHead;
+  report.diagnosticInstrumentationParents = execFileSync('/usr/bin/git', ['cat-file', '-p', diagnosticInstrumentationHead], { encoding: 'utf8' })
+    .split('\n\n')[0].split('\n').filter(line => line.startsWith('parent ')).map(line => line.slice(7));
+  assert.deepEqual(report.diagnosticInstrumentationParents, [frozenIntegrationHead]);
+  report.receiptEvidenceSources = changedSince(diagnosticInstrumentationHead, report.head);
+  assert.deepEqual(report.receiptEvidenceSources, []);
   report.currentParents = execFileSync('/usr/bin/git', ['cat-file', '-p', report.head], { encoding: 'utf8' })
     .split('\n\n')[0].split('\n').filter(line => line.startsWith('parent ')).map(line => line.slice(7));
-  assert.deepEqual(report.currentParents, [frozenIntegrationHead]);
+  assert.deepEqual(report.currentParents, [diagnosticInstrumentationHead]);
 }
