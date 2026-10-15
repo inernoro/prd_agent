@@ -3,12 +3,14 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { admittedArtifactProfile, inspectDeploymentArtifacts, verifyArtifactAdmission } from '../../src/services/artifact-admission.js';
 import { proveFallbackImage } from '../../src/services/prebuilt-reuse.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { BuildProfile } from '../../src/types.js';
 import { branchVersionFacts } from '../../src/services/running-version.js';
+import { ContainerService } from '../../src/services/container.js';
+import type { BranchEntry, CdsConfig, ServiceState } from '../../src/types.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 const target = 'b'.repeat(40);
@@ -93,6 +95,35 @@ describe('增量 CI 与完整产物准入的复用契约', () => {
       Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': actualRevision } } }]), stderr: '', exitCode: 0 }));
     return { shell, profile };
   }
+
+  it.each([actualRevision, target])('本地裸仓库digest保持原样，实际revision=%s及运行环境仍以OCI事实为准', async revision => {
+    const { shell, profile } = reusable();
+    const local = { ...profile, dockerImage: fixedImage, localArtifact: true };
+    shell.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: contentId, RepoDigests: [fixedImage],
+      Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': revision } } }]), stderr: '', exitCode: 0 }));
+    shell.addResponsePattern(/.*/, () => ({ stdout: 'd'.repeat(64), stderr: '', exitCode: 0 }));
+    const runtime: ServiceState = { profileId: 'api', containerName: `owned-digest-${revision[0]}`, hostPort: 10001, status: 'running' };
+    const entry: BranchEntry = { id: 'owned-digest', projectId: 'owned', branch: 'owned', worktreePath: '/tmp/owned-artifact-fixture',
+      githubCommitSha: target, ciTargetSha: target, status: 'running', createdAt: new Date().toISOString(), services: { api: runtime } };
+    const service = new ContainerService(shell, { repoRoot: entry.worktreePath, worktreeBase: entry.worktreePath,
+      dockerNetwork: 'owned-network', sharedEnv: {}, jwt: { secret: 'synthetic-only', issuer: 'owned' } } as CdsConfig);
+    const alive = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    const ready = vi.spyOn(service as any, 'waitForReadiness').mockResolvedValue(true);
+    const original = (service as any).writeEnvFile.bind(service); let environment: Record<string, string> | undefined;
+    const envFile = vi.spyOn(service as any, 'writeEnvFile').mockImplementation((env: Record<string, string>) => {
+      environment = { ...env }; return original(env);
+    });
+    try {
+      await service.runService(entry, local, runtime, undefined, undefined, { artifactCommitSha: target,
+        isComponentUnchangedSince: async (from, to, scope) => {
+          expect([from, to, scope]).toEqual([actualRevision, target, profile.buildScope]); return true;
+        } });
+      expect(runtime.deployedImage).toBe(fixedImage);
+      expect(environment?.CDS_COMMIT_SHA).toBe(revision);
+      expect(shell.commands.find(command => /^docker (run|create) /.test(command))).toContain(`'${fixedImage}'`);
+      expect(shell.commands.some(command => command.startsWith('docker pull') || /git |docker (exec|commit)/.test(command))).toBe(false);
+    } finally { alive.mockRestore(); ready.mockRestore(); envFile.mockRestore(); }
+  });
 
   it.each(['unauthorized: authentication required', 'TLS handshake timeout', 'Cannot connect to Docker daemon'])
   ('主目标%s不是明确缺失，不尝试回退', async stderr => {

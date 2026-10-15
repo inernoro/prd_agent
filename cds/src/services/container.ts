@@ -1499,7 +1499,9 @@ export class ContainerService {
           isComponentUnchangedSince: context.isComponentUnchangedSince });
       if (admitted.state !== 'ready') throw new Error('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本');
       // 已有仓库内容摘要保留其可跨执行器取回的引用；可变本地标签才收敛为本机固定ID。
+      const originalImage = profile.dockerImage;
       profile = admittedArtifactProfile({ ...profile, localArtifact: false }, admitted);
+      if (originalImage === admitted.artifacts[0].image) profile.dockerImage = originalImage;
       localArtifactCommitSha = admitted.artifacts[0].revision;
     }
     const profileAliases = computeProfileAliases(

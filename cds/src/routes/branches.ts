@@ -96,7 +96,7 @@ import type { ContainerService } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
-import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance } from '../types.js';
+import type { BranchEntry, CdsConfig, ExecOptions, IShellExecutor, OperationLog, OperationLogContainerSnapshot, OperationLogEvent, BuildProfile, BuildProfileOverride, ReadinessProbe, RoutingRule, ServiceState, InfraService, InfraVolume, DataMigration, MongoConnectionConfig, CdsPeer, ExecutorNode, ActiveSelfUpdate, SelfUpdateTimingBreakdown, Project, ProjectActivityLog, ResourceExternalAccessPolicy, ContainerLogArchiveEntry, EnvSource, EnvKeyProvenance, DeploymentVersion } from '../types.js';
 import { discoverComposeFiles, parseComposeFile, parseComposeString, resolveCommandTemplate, resolveEnvTemplates, toComposeYaml, parseCdsCompose, toCdsCompose } from '../services/compose-parser.js';
 import type { ComposeServiceDef } from '../services/compose-parser.js';
 import { computeRequiredInfra } from '../services/deploy-infra-resolver.js';
@@ -13198,6 +13198,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       operationId: branchOperationLease?.operationId,
       commitSha: entry.githubCommitSha,
     });
+    const materializeAdmittedReusableVersion = (version: DeploymentVersion): BuildProfile[] | undefined => {
+      const materialized = deploymentVersionService!.materializeProfiles(version, currentProfiles);
+      try {
+        // 同B的fallback可正常前移；旧快照只有仍匹配本轮已核验内容才可自动替代。
+        for (const profile of materialized) admittedArtifactProfile(profile, deploymentInput.artifactAdmission);
+      } catch { return undefined; }
+      return materialized;
+    };
     if (!selectedDeploymentVersion && requestCommitSha && deploymentVersionService && deploymentConfigHash) {
       const reusable = deploymentVersionService.findReusable({
         projectId: entry.projectId || 'default',
@@ -13205,9 +13213,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         commitSha: requestCommitSha,
         configHash: deploymentConfigHash,
       });
-      if (reusable) {
+      const reusableProfiles = reusable && materializeAdmittedReusableVersion(reusable);
+      if (reusable && reusableProfiles) {
         selectedDeploymentVersion = reusable;
-        profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
+        profiles = reusableProfiles;
         if (deploymentRun) deploymentRunService?.attachVersion(deploymentRun.id, reusable.id, deploymentConfigHash);
       }
     }
@@ -13657,9 +13666,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           commitSha: deployedCommitSha,
           configHash: deploymentConfigHash,
         });
-        if (reusable) {
+        const reusableProfiles = reusable && materializeAdmittedReusableVersion(reusable);
+        if (reusable && reusableProfiles) {
           selectedDeploymentVersion = reusable;
-          profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
+          profiles = reusableProfiles;
           logEvent({
             step: 'version-reuse',
             status: 'done',
