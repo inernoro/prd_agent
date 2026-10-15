@@ -106,3 +106,23 @@ test('REG-visual-policy-001 非缺失声明、非空引用和其他请求漂移�
   assert.equal(callbacks,0,'不能靠观察回调跳过真实输入或模型合同');
  }
 });
+
+test('REG-visual-policy-001 页面失败先观察已接收主任务再清理，既不加调用也不吞原红项',()=>{
+ const source=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
+ const body=source.split("test('[CORE-004][GW-005][GW-008]")[1].split("test('[VIS-008]")[0];
+ const observe=body.slice(body.indexOf('// 页面状态判据失败仍保留原红项'),body.indexOf('// 失败也保留真实页面'));
+ const verify=text=>{
+  assert.match(text,/waitForImageRun\(page, token, runId, 600_000\)/);
+  assert.match(text,/assertImageArtifact\(page, observed\.detail\)/);
+  assert.match(text,/readGeneratedImageBytes\(page, observed\.detail\)/);
+  assert.match(text,/decodeDownloadedImageDimensions/);
+  assert.match(text,/width: 1024, height: 1024/);
+  assert.match(text,/waitForGatewayLog\(request, `\$\{runId\}-0-0`/);
+  assert.match(text,/default-submitted-task-observation-incomplete/);
+  assert.doesNotMatch(text,/request\.(post|put)|\/cancel|create.*run/i);
+ };
+ verify(observe);
+ assert.throws(()=>verify(observe.replace('await waitForImageRun(page, token, runId, 600_000)','undefined')));
+ assert.throws(()=>verify(observe.replace('width: 1024, height: 1024','width: 1, height: 1')));
+ assert.match(body,/\/\/ 失败也保留真实页面[\s\S]*throw error;[\s\S]*finally[\s\S]*\/cancel/);
+});

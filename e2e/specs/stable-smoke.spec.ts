@@ -7510,6 +7510,30 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await page.waitForTimeout(500);
       await testInfo.attach('single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
     } catch (error) {
+      // 页面状态判据失败仍保留原红项，但不能先取消已接收任务再推断生图能力。
+      // 只观察本轮已创建的主任务，不重试提交、不创建额外模型调用。
+      if (runId) {
+        try {
+          const observed = await waitForImageRun(page, token, runId, 600_000);
+          await assertImageArtifact(page, observed.detail);
+          const output = await readGeneratedImageBytes(page, observed.detail);
+          const dimensions = await decodeDownloadedImageDimensions(page, output.bytes, output.mime);
+          expect(dimensions).toEqual({ width: 1024, height: 1024 });
+          const call = await waitForGatewayLog(request, `${runId}-0-0`, 30_000);
+          await testInfo.attach('default-submitted-task-observation', {
+            body: JSON.stringify({ runId, requestId: `${runId}-0-0`, status: observed.detail.run.status, persistedModel: observed.detail.run.logicalModelPublicId || observed.detail.run.modelId, size: observed.detail.run.size, artifact: { mime: output.mime, bytes: output.bytes.length, sha256: createHash('sha256').update(output.bytes).digest('hex'), dimensions }, gateway: { logicalModelPublicId: call.logicalModelPublicId, provider: call.provider, model: call.model, offeringId: call.offeringId, status: call.status, statusCode: call.statusCode, isFallback: call.isFallback }, boundary: '仅证明已提交主任务产物与路由观察；原页面或声明失败仍红，不证明完整旅程通过' }),
+            contentType: 'application/json',
+          });
+          await page.reload({ waitUntil: 'domcontentloaded' });
+          await dismissBlockingTutorial(page);
+          const outputImage = page.locator(`[data-canvas-key="${squareTargetKey}"]`).getByTestId('canvas-image');
+          await expect(outputImage).toBeVisible({ timeout: 30_000 });
+          await outputImage.evaluate(element => (element as HTMLImageElement).decode());
+          await captureDefaultJourneyEvidence(page, testInfo, '03-default-white-peach-observed-output', '本轮已提交白桃任务完成，图片已下载、解码且为1024方图；仅为补充产物证据，原页面状态或请求声明失败保持红项。', outputImage);
+        } catch (observationError) {
+          await testInfo.attach('default-submitted-task-observation-incomplete', { body: JSON.stringify({ runId, requestId: `${runId}-0-0`, status: '监控未完成', reason: observationError instanceof Error ? observationError.message : String(observationError), boundary: '未取得完整产物证据，不把取消或HTTP成功等同于模型成功' }), contentType: 'application/json' });
+        }
+      }
       // 失败也保留真实页面；取证故障不得阻止随后的资源清理。
       try { await captureDefaultJourneyEvidence(page, testInfo, '02-default-white-peach-failure', '默认白桃：真实点击后的页面失败或未完成，保留原始现象；本图不证明成功产物，详细失败理由由原case与请求状态给出。', page.locator('[data-tour-id="visual-editor-root"]'), true); } catch { /* 原测试失败保留，继续清理 */ }
       throw error;
