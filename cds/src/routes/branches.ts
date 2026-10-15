@@ -5,7 +5,7 @@ import { internalPendingReplayAuth } from '../services/internal-pending-replay-a
 import { serveContainerLogStream } from '../services/container-log-stream-response.js';
 import { projectResourceNamespace } from '../services/preview-slug.js';
 import http from 'node:http';
-import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
+import { componentInputComparator } from '../services/prebuilt-reuse.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { resolvePreviewDispatch, type PreviewProjectFacts } from '../services/preview-dispatch.js';
 import https from 'node:https';
@@ -23,7 +23,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktree-path-activity.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
-import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { admittedArtifactProfile, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
@@ -1764,6 +1764,8 @@ function buildPrebuiltReuseInputs(
   shell: IShellExecutor,
   entry: BranchEntry,
   profileId: string,
+  repoRoot: string,
+  assertCurrent: () => void,
 ): {
   ledgerImages: string[];
   isComponentUnchangedSince: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
@@ -1774,27 +1776,8 @@ function buildPrebuiltReuseInputs(
     .map((v) => (v.profiles || []).find((p) => p.profileId === profileId)?.artifactImage)
     .filter((im): im is string => !!im);
 
-  const isComponentUnchangedSince = async (
-    fromSha: string,
-    toSha: string,
-    scopePaths: readonly string[],
-  ): Promise<boolean> => {
-    // scopePaths 是 CI 的 path-filter 口径（buildScope），**不是**运行时挂载目录：
-    // compose 里服务常写 `.:/repo`，workDir 因此是 `.`，比整仓等于永远「变了」，
-    // 复用一次都不会发生（Codex PR #1275 三轮 P1）。规整与拒绝规则见
-    // prebuilt-reuse.normalizeBuildScope，这里只做最后一道防线式的复核。
-    const paths = normalizeBuildScope(scopePaths as string[]);
-    if (!paths || !entry.worktreePath) return false;
-    // 两端都必须是完整 sha：只有 CI 打在镜像 tag 上的 commit 才是可信比较基准。
-    if (!/^[0-9a-f]{40}$/.test(fromSha) || !/^[0-9a-f]{40}$/.test(toSha)) return false;
-    if (fromSha === toSha) return false;
-    // --quiet: 有差异退出码 1，无差异 0，出错 128。只有明确的 0 才算「没变」。
-    const pathArgs = paths.map((p) => shellQuote(p)).join(' ');
-    const r = await shell.exec(
-      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} ${toSha} -- ${pathArgs}`,
-    ).catch(() => null);
-    return !!r && r.exitCode === 0;
-  };
+  const isComponentUnchangedSince = componentInputComparator(shell,
+    stateService.getProjectRepoRoot(entry.projectId, repoRoot), assertCurrent);
 
   return { ledgerImages, isComponentUnchangedSince };
 }
@@ -3049,9 +3032,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profiles = input.profiles.filter(profile => !profileId || profile.id === profileId)
       .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(input, entry)));
     const target = input.artifactAdmission!.targetCommitSha;
+    const compare = componentInputComparator(shell, stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), assertCurrent);
     // 当前单服务入口执行于本机；整分支按其实际派发执行器核验，不借Master架构冒充。
     const executor = profileId ? null : resolveDeployTarget(entry, explicitTarget);
-    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertCurrent), executorId: 'local' };
+    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertCurrent,
+      { isComponentUnchangedSince: compare }), executorId: 'local' };
     assertCurrent();
     const response = await fetch(`http://${executor.host}:${executor.port}/exec/artifact-preflight`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Executor-Token': config.executorToken || '' },
@@ -3077,13 +3062,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
         reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
     }
-    if (result.state === 'ready') for (const profile of profiles) {
-      if (!profile.prebuiltImage || profile.managedBuild || profile.localArtifact) continue;
-      const artifact = result.artifacts.find(item => item.profileIds?.includes(profile.id) && item.requestedImage === profile.dockerImage);
-      if (!artifact || artifact.revision !== target || !/^.+@sha256:[0-9a-f]{64}$/.test(artifact.image) || !artifact.platform?.startsWith('linux/')) {
-        return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
-          reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
-      }
+    if (result.state === 'ready' && !await verifyArtifactAdmission(profiles, target, result, compare, assertCurrent)) {
+      return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+        reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
     }
     return { ...result, executorId: executor.id };
   }
@@ -14019,7 +14000,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 }
               },
               // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
-              ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
+              ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id, config.repoRoot,
+                () => assertBranchOperationCurrent(branchOperationLease, 'artifact comparison')),
               // 方案甲：记下的提交落后于刚 pull 到的代码时，先试最新提交的 CI 镜像。
               // 显式点名提交（webhook 锚定 / 用户指定）与不可变版本不走这条，按点名的来。
               latestCommitSha: !requestCommitSha && !(pullResult as { skipped?: boolean }).skipped
@@ -15084,7 +15066,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
             }
           },
           // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
-          ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
+          ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id, config.repoRoot,
+            () => assertBranchOperationCurrent(branchOperationLease, 'artifact comparison')),
           // 方案甲（同整分支部署）：没点名提交时，先试刚 pull 到的提交的 CI 镜像。
           latestCommitSha: profileRequestCommitSha ? undefined : fallbackPulledSha,
           onLatestCommitImage: (sha) => {
