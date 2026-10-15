@@ -207,6 +207,7 @@ describe('GET /api/branches/stream', () => {
   it.each(['branch.updated', 'branch.status'] as const)('updates actual express runtime and clears the prior failure through %s without reloading', async type => {
     const branch = stateService.getBranch('existing')!;
     branch.status = 'error'; branch.errorMessage = 'original failed deployment';
+    branch.ciImageStatus = 'failed'; branch.ciImageError = 'original CI failure';
     const target = 'a'.repeat(40);
     branch.githubCommitSha = target;
     for (const id of ['api', 'worker']) stateService.addBuildProfile({ id, projectId: 'default', name: id,
@@ -217,6 +218,7 @@ describe('GET /api/branches/stream', () => {
     await collectSseEvents(server, '/api/branches/stream?project=default', ev => {
       if (ev.event === 'snapshot') {
         branch.status = 'running'; branch.errorMessage = undefined;
+        branch.ciImageStatus = 'ready'; branch.ciImageError = undefined;
         branch.services = Object.fromEntries(['api', 'worker'].map((id, i) => [id, { profileId: id,
           containerName: 'owned-' + id, hostPort: 10001 + i, status: 'running', deployedMode: 'express',
           deployedImage: 'sha256:' + 'b'.repeat(64), deployedPrebuilt: true, deployedCommitSha: target }]));
@@ -231,6 +233,7 @@ describe('GET /api/branches/stream', () => {
       expect(visible.deployRuntime.actualVersionStatus).toBe('current');
       expect(branchRuntimeBadge(visible)?.lightning).toBe('yellow');
       expect(visible.errorMessage).toBe('');
+      expect(visible.ciImageError).toBe('');
       expect(branch.errorMessage).toBeUndefined();
       return true;
     });

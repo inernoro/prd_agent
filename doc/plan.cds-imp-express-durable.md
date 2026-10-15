@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合实施计划
 
-版本：v1.98；日期：2026-10-15；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
+版本：v1.99；日期：2026-10-15；状态：active。用户已批准实施与TDD驱动、创建原生目标、两份计划以及独立逐条视觉验收。目标 ID：CDS-IMP-EXPRESS-DURABLE-20261010。
 
 本文件与另一仓库同路径内容一致，结构化任务源为 `doc/plan.cds-imp-express-durable.json`。主进程写实施状态，独立验收任务只写仓库外验收账本；只有同一条目的精确SHA证据及独立结论成立才可验收通过。代码完成不等于验收通过。
 
@@ -806,3 +806,5 @@ v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc11
 2026-10-15 修复固定检查点：IMP eb3bf52ca4c2b97202849e97fb99f1e0c35bc05a仅本地提交，container-dns显式opt-in与已有非空回调保留，五相关文件61测试通过；精确Git scripts归档到B02 /owned/host-tools/eb3bf52，实际配置同步进行中。CDS SSE runtime同GET摘要、错误空串恢复后3文件36绿/core tsc0，去错误清空独立2红已还原；最终全量正在跑。旧d4代码原17控制绿/2红与首个路径误用导致的旧测试执行严格区分，不伪称旧测试是真红。
 
 补取原八推送CI GitHub provider事实（首次网络EOF失败，后逐项有界重读成功，原文件保留）：8/8 success且SHA与固定分母逐字匹配，每支9 jobs。workflow created→updated观察242–285秒，job created→started最大8秒（含依赖/调度，不冒称纯runner排队），Java统一reactor job执行174–230秒。原Oct11推送历史，不伪称Oct15新push；CI生产和B02暖本地镜像拉取分开，不冒充公网冷拉取/当前Master已通过。
+
+2026-10-15 独立5227原样复验4/5：真实SSE runtime all/yellow及errorMessage已闭合，原断言还发现ciImageError undefined被省略后在实际reducer残留；不夸为已观察到React仍显示旧CI文案。主新增原CI失败→ready清空反例2红，补显式ciImageError空串后相关3文件36绿/core tsc0。原全量运行期间出现此新源变更，主按精确cwd+stdout归属终止原本地vitest PID48471，旧日志不作为固定源码全量证据；准备固定新修订后重跑。IMP eb3实际八支32worker配置/角色/run/SHA/四库/Admin/token均经独立SSOT+API复核，104express配置保留；真实Spring展开、实时黄灯、8支运行仍待新epoch。

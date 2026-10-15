@@ -136,7 +136,7 @@ Agent 接入不是第四套部署系统。它只是操作 CDS 的安全入口，
 
 运行记录分别保存实际执行镜像ID（`deployedImage`）、可跨执行器拉取的仓库引用（`deployedArtifactRef`）、实际预构建属性及提交号。DeploymentVersion保存仓库引用；本机bare ID不能当成另一宿主的拉取地址。
 
-分支卡黄闪电只表示实际服务全部已证实运行预构建产物，蓝闪电表示部分，并列出源码或未知例外。实际分母含未回收的额外/孤儿服务，缺少实际戳、非运行状态和矛盾模式均不能继承配置判通过；停止分支仅展示配置意图。`actualPrebuiltCoverage` 与配置 `prebuiltCoverage` 分开。 实时 branch.updated/branch.status 与流重连/背压恢复快照复用 GET 列表同一实际运行摘要；已清除的分支错误显式发送空串，不能因 JSON 省略 undefined 而在客户端合并后保留旧失败。快照仍仅为增量信号，不改 GET 列表权威；自动回归见 `cds/tests/routes/branches-stream.test.ts`。
+分支卡黄闪电只表示实际服务全部已证实运行预构建产物，蓝闪电表示部分，并列出源码或未知例外。实际分母含未回收的额外/孤儿服务，缺少实际戳、非运行状态和矛盾模式均不能继承配置判通过；停止分支仅展示配置意图。`actualPrebuiltCoverage` 与配置 `prebuiltCoverage` 分开。 实时 branch.updated/branch.status 与流重连/背压恢复快照复用 GET 列表同一实际运行摘要；已清除的分支错误及 CI 错误显式发送空串，不能因 JSON 省略 undefined 而在客户端合并后保留旧失败。快照仍仅为增量信号，不改 GET 列表权威；自动回归见 `cds/tests/routes/branches-stream.test.ts`。
 
 版本状态独立计算：全部极速仍可能显示“版本待更新”。以本轮冻结的 `targetCommitSha` 对比每个运行服务的 `deployedCommitSha`，`actualVersionStatus=current` 才表示目标版本一致；缺完整身份为unknown。最新仓库HEAD与本轮冻结目标是否一致还须在验收前单独核对。旧数据不能补猜版本。线上验收须同时确认实际极速覆盖、目标版本、健康与真实入口。
 

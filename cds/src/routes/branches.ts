@@ -4986,6 +4986,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // badge, and omitted undefined errors retain a previous failure.
       deployRuntime: summarizeBranchDeployRuntime(branch, stateService.getEffectiveProfilesForBranch(branch)),
       errorMessage: branch.errorMessage ?? '',
+      ciImageError: branch.ciImageError ?? '',
       // Build output belongs to run/log channels, including incremental patches.
       services: servicesForStream(branch.services || {}),
     });

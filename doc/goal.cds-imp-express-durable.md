@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.98；日期：2026-10-15；状态：active。
+版本：v1.99；日期：2026-10-15；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -76,7 +76,7 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
 - 当前阶段：implementation-and-isolated-runtime-recovery；现有两机，用户明确允许mycds测试，保护稳定IMP。
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:d4b051e88ff0b7e9567098d39fe5a913e5786c89+SSE本地修复,IMP:eb3bf52ca4c2b97202849e97fb99f1e0c35bc05a；origin/main=N/A不据旧引用发布；origin/test=N/A不合主干；ahead/behind=CDS发布分支0/0于d4b051e8；environment=mycds新B02 CID2daf30b367a92dc4642346858e163150dd0aca2a22758eed73fc66f218c6b1d5；database=B02八套新四库b02261015a01至a08已准备,不复用/reset旧库；tenant=N/A平台部署；role=主进程实现,末尾独立验收；route=B02 loopback32769已运行d4,视觉隧道49901,无公共预览；auth=新自有密钥,loopback测试authdisabled不作权限通过；external_ids=CI38684050579,oldA01run_dr_05cc8759b3ae74151a4bca39,oldA02run_dr_3ef068957664ea0beb2e0304,B02daemon_e888326c-f61c-4e8a-9735-a8ad84af1afc`
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:5227d54da6069565417834c3542977461a1a5abf+本地ciImageError清空修复,IMP:eb3bf52ca4c2b97202849e97fb99f1e0c35bc05a；origin/main=N/A不据旧引用发布；origin/test=N/A不合主干；ahead/behind=CDS发布分支当前本地5227及后续清空修复未推送；environment=mycds新B02 CID2daf30b367a92dc4642346858e163150dd0aca2a22758eed73fc66f218c6b1d5；database=B02八套新四库b02261015a01至a08已准备,不复用/reset旧库；tenant=N/A平台部署；role=主进程实现,末尾独立验收；route=B02 loopback32769已运行d4,视觉隧道49901,无公共预览；auth=新自有密钥,loopback测试authdisabled不作权限通过；external_ids=CI38684050579,oldA01run_dr_05cc8759b3ae74151a4bca39,oldA02run_dr_3ef068957664ea0beb2e0304,B02daemon_e888326c-f61c-4e8a-9735-a8ad84af1afc`
 - 写入所有权：`owner=/root仅两自有工作树,授权修复分支与八IMP refs,mycds自有B01封存/B02；other_tabs=原mdimp/canonical/他人A01只读,两末尾只读并写仓库外证据；handoff_checkpoint=B01已stopped/PID0,state与卷保留,A02未知未改released`
 - 范围账本：`goal-core=原49条完整极速与控制面治理；required-prerequisite=已核CI镜像安全传输,完整13角色隔离依赖与独立四库；environment-recovery=B01封存和全新B02,不改共享生产数据库；successor-or-non-goal=业务流程重写,生产XXL作业恢复,他人目标关闭`
 - 已确认范围 / 非目标：不缩小13角色分母,不改变业务CL合同,不修改稳定IMP。
@@ -709,3 +709,5 @@ v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc11
 2026-10-15 修复固定检查点：IMP eb3bf52ca4c2b97202849e97fb99f1e0c35bc05a仅本地提交，container-dns显式opt-in与已有非空回调保留，五相关文件61测试通过；精确Git scripts归档到B02 /owned/host-tools/eb3bf52，实际配置同步进行中。CDS SSE runtime同GET摘要、错误空串恢复后3文件36绿/core tsc0，去错误清空独立2红已还原；最终全量正在跑。旧d4代码原17控制绿/2红与首个路径误用导致的旧测试执行严格区分，不伪称旧测试是真红。
 
 补取原八推送CI GitHub provider事实（首次网络EOF失败，后逐项有界重读成功，原文件保留）：8/8 success且SHA与固定分母逐字匹配，每支9 jobs。workflow created→updated观察242–285秒，job created→started最大8秒（含依赖/调度，不冒称纯runner排队），Java统一reactor job执行174–230秒。原Oct11推送历史，不伪称Oct15新push；CI生产和B02暖本地镜像拉取分开，不冒充公网冷拉取/当前Master已通过。
+
+2026-10-15 独立5227原样复验4/5：真实SSE runtime all/yellow及errorMessage已闭合，原断言还发现ciImageError undefined被省略后在实际reducer残留；不夸为已观察到React仍显示旧CI文案。主新增原CI失败→ready清空反例2红，补显式ciImageError空串后相关3文件36绿/core tsc0。原全量运行期间出现此新源变更，主按精确cwd+stdout归属终止原本地vitest PID48471，旧日志不作为固定源码全量证据；准备固定新修订后重跑。IMP eb3实际八支32worker配置/角色/run/SHA/四库/Admin/token均经独立SSOT+API复核，104express配置保留；真实Spring展开、实时黄灯、8支运行仍待新epoch。
