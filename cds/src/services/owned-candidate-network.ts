@@ -9,7 +9,12 @@ export interface OwnedCandidateNetworkReference {
 }
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 const plain = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-const absent = (result: ExecResult) => result.exitCode !== 0 && /no such network|network.*not found/i.test(result.stdout + result.stderr);
+function absent(result: ExecResult, identity: string): boolean {
+  if (result.exitCode !== 1 || !['', '\n', '\r\n'].includes(result.stdout)) return false;
+  const diagnostic = result.stderr.replace(/\r?\n$/, '');
+  return diagnostic === `Error response from daemon: network ${identity} not found` ||
+    diagnostic === `Error: No such network: ${identity}`;
+}
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);
   if (plain(value)) return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, val]) => [key, stable(val)]));
@@ -27,9 +32,12 @@ function parse(result: ExecResult): Record<string, any> {
   }
   return facts;
 }
-function fingerprint(facts: Record<string, any>): string {
+function fingerprint(facts: Record<string, any>, legacyRuntimeStatus = false): string {
   // Endpoint membership is checked separately after retiring instances. Never persist IPAM/options plaintext.
-  const { Containers: _containers, Created: _created, ...configuration } = facts;
+  const { Containers: _containers, Created: _created, Status: runtimeStatus, ...configuration } = facts;
+  // Docker 29 exposes changing IPAM allocation counters under Status. They are
+  // runtime membership, not configuration; actual endpoints remain a separate gate.
+  if (legacyRuntimeStatus && runtimeStatus !== undefined) configuration.Status = runtimeStatus;
   return 'sha256:' + createHash('sha256').update(JSON.stringify(stable(configuration))).digest('hex');
 }
 
@@ -59,9 +67,9 @@ export class OwnedCandidateNetworkLifecycle {
     }
     assertCurrent(); signal?.throwIfAborted();
     const before = await this.inspect(reference.id, signal);
-    assertCurrent(); signal?.throwIfAborted(); if (absent(before)) return;
+    assertCurrent(); signal?.throwIfAborted(); if (absent(before, reference.id)) return;
     const facts = parse(before);
-    if (facts.Id !== reference.id || facts.Name !== reference.name || fingerprint(facts) !== reference.fingerprint) {
+    if (facts.Id !== reference.id || facts.Name !== reference.name || (fingerprint(facts) !== reference.fingerprint && fingerprint(facts, true) !== reference.fingerprint)) {
       throw new Error('candidate_network_drift: captured configuration changed');
     }
     if (Object.keys(facts.Containers).length) throw new Error('candidate_network_occupied: actual endpoints remain');
@@ -71,7 +79,7 @@ export class OwnedCandidateNetworkLifecycle {
     if (removed.exitCode !== 0) throw new Error('candidate_network_remove: Daemon operation failed');
     const after = await this.inspect(reference.id, signal);
     assertCurrent(); signal?.throwIfAborted();
-    if (!absent(after)) throw new Error('candidate_network_remove_unconfirmed: captured ID absence unconfirmed');
+    if (!absent(after, reference.id)) throw new Error('candidate_network_remove_unconfirmed: captured ID absence unconfirmed');
   }
 
   private inspect(identity: string, signal?: AbortSignal): Promise<ExecResult> {

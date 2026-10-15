@@ -2977,6 +2977,19 @@ describe('Branch Routes', () => {
       expect((slowEvent?.details?.timings as Record<string, number>)?.total).toBeGreaterThanOrEqual(0);
     });
 
+    it('live reads preserve a failed first deployment with an empty published service graph', async () => {
+      stateService.addBranch({ id: 'first-failed', projectId: 'default', branch: 'main',
+        worktreePath: path.join(tmpDir, 'worktrees', 'first-failed'), status: 'error', services: {},
+        errorMessage: 'candidate_network_identity: rejected', createdAt: new Date().toISOString() });
+      mock.addResponsePattern(/docker ps --format/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      for (const url of ['/api/branches?project=default&live=true', '/api/branches/first-failed/resources?live=true']) {
+        const res = await request(server, 'GET', url);
+        expect(res.status).toBe(200);
+        expect(stateService.getBranch('first-failed')!.status).toBe('error');
+        expect(stateService.getBranch('first-failed')!.errorMessage).toBe('candidate_network_identity: rejected');
+      }
+    });
+
     it('live=true explicitly reconciles branch state with Docker', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({

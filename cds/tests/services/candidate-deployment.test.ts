@@ -49,7 +49,7 @@ function fixture(role: 'api' | 'worker' = 'api', withNetwork = false, operationI
   const shell = { exec: async (command: string) => {
     const identity = command.split(' ').at(-1)!.replaceAll("'", '');
     if (command.startsWith('docker network inspect')) return networkExists ? { exitCode: 0, stdout: JSON.stringify(network), stderr: '' }
-      : { exitCode: 1, stdout: '', stderr: 'network not found' };
+      : { exitCode: 1, stdout: '', stderr: `Error response from daemon: network ${identity} not found\n` };
     if (command.startsWith('docker network rm')) {
       events.push(command); networkExists = false; return { exitCode: 0, stdout: network.Id, stderr: '' };
     }

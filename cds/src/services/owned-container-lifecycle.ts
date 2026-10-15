@@ -19,11 +19,14 @@ interface ContainerFacts {
 }
 const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 function absent(result: ExecResult, identity: string): boolean {
-  if (result.exitCode !== 1 || result.stdout !== '') return false;
+  // Docker 29 emits a blank formatter line and lowercase diagnostics. Accept
+  // only that framing variation, preserving an exact case-sensitive identity.
+  if (result.exitCode !== 1 || !['', '\n', '\r\n'].includes(result.stdout)) return false;
   const diagnostic = result.stderr.replace(/\r?\n$/, '');
   return ['No such object: ', 'Error: No such object: ', 'Error response from daemon: No such object: ',
     'No such container: ', 'Error: No such container: ', 'Error response from daemon: No such container: ']
-    .some(prefix => diagnostic === prefix + identity);
+    .some(prefix => diagnostic.slice(0, prefix.length).toLowerCase() === prefix.toLowerCase()
+      && diagnostic.slice(prefix.length) === identity);
 }
 function stable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stable);

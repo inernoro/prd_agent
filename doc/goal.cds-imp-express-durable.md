@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v1.92；日期：2026-10-12；状态：active。
+版本：v1.94；日期：2026-10-15；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -683,3 +683,11 @@ v1.91 原宿主会话失败续接：IMP合同v1.3先提交aa2341371，产品b66b
 ## v1.92 固定失败资源独立复验
 
 v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc1180e0679c137ee62e7a0c199f084d7f1a217e30336f75789fb46d0de9b565。分列chain20/20、newOS4/4、ACK11/11、settlement5/5、negative3/3、normal跨仓10/10、terminal2/2（重叠不求和）；controls原11/12异Profile空begin201探索保留，后继create409/零追加2/2另列，不改期待、不称产品红绿。原ff0/2是一缺失败入口根。固定当前374 Git＋372新派生JS；旧ff374与IMP0078406源明确历史复核。主跨历史递归4746hashrefs及374/374/406精确Git零当前错误；历史067在途log1元数据差异、旧主key收据三个可变WT源路径已推进到b66，逐条0078 Git摘要匹配后归类历史坐标变化，原v1校验失败保留，不称整个深历史图全零差异。主v2回执SHA256 210cb9e0bdaad4a585a0ba6cbaf5f959ddecefd3c02b3d81b6dbc237c251bdfa。F21指针突变/F23完整预算本批未重跑只历史，正式49/visual仍not-executed/N/A。末尾已启动下一固定CDS51fee＋IMPb66宿主会话独立复验，当前未继承该批通过；主b66本地254脚本含82host、跨仓2链证据保持。生产初始化独立授权/配置宿主化、未知Daemon创建、八完整分支/黄闪电/公网/48h与周未完成；无push/PR/shared写/selfupdate，目标active。
+
+## 2026-10-15 B01 第二次实际失败恢复检查点
+
+当前仅隔离B01运行f7842340be4ec872c7e3806c9a537cd42754b17c。A02 run dr_3ef068957664ea0beb2e0304 实际133.605秒失败：4/13候选API已预构建启动，后续网络身份校验受Docker29动态IPAM Status影响；源码槽采样0不等于整部署通过。独立末尾观察刷新又清除A01/A02空服务失败，定位SSE snapshot直接修改canonical对象。补修网络稳定配置指纹（保留端点为空门禁与旧完整指纹兼容）、SSE副本投影/空图失败保留、Docker29精确missing-object诊断解析，红绿与全量待绑定新提交；尚未八分支通过，49正式条目均不继承通过。下一步：全量检查→授权分支push及精确CI→仅B01更新→自动恢复旧候选→重新完整八分支→末尾逐项视觉验收。旧残留负载单列，稳定IMP未改动。
+
+2026-10-15补充独立审查：旧网络absence匹配曾将非零退出+NoSuch片段误作删除；实际Docker29探测exit1/stdout单换行/stderr精确完整ID，新增5条124/130/错ID/混合输出反例红转绿，收紧前后探测。SSE另加running service残留error仅投影清除且canonical不变正控。当前4文件112相关测试绿；此前并行全量在测试编辑交叠中采到5个预期红，另2个bug-reports socket hangup/ECONNRESET，不能作最终全量。最终固定源码串行全量与core tsc进行中，原失败日志保留。
+
+最终固定源码串行回归：692文件10372测试通过，6文件19测试跳过，339.75秒；core tsc0，git diff --check与Goal State审计通过。已有1个obsolete snapshot未修改。进入已授权修复分支提交/推送，等待精确CI并仅更新B01；此结果是本地回归，不继承为八分支运行或49条正式通过。

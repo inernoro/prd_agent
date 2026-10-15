@@ -25,6 +25,31 @@ function fixture() {
 }
 const owner = { projectId: 'project', branchId: 'branch' };
 describe('P3 immutable owned container lifecycle', () => {
+  it.each(['', '\n', '\r\n'])('recognizes Docker 29 absence of the exact immutable ID with blank formatter output %j', async stdout => {
+    const f = fixture(); const reference = await f.lifecycle.capture(owner, service, () => {});
+    f.exec.mockResolvedValueOnce({ exitCode: 1, stdout, stderr: `error: no such object: ${id}\n` });
+    await expect(f.lifecycle.remove(reference, () => {})).resolves.toBeUndefined();
+    expect(f.mutations).toEqual([]);
+  });
+  it.each(['wrong-id', 'extra-output', 'extra-diagnostic', 'success-exit', 'blank-lines'])('refuses ambiguous Docker absence: %s', async variant => {
+    const f = fixture(); const reference = await f.lifecycle.capture(owner, service, () => {});
+    const result = { exitCode: 1, stdout: '\n', stderr: `error: no such object: ${id}\n` };
+    if (variant === 'wrong-id') result.stderr = `error: no such object: ${'c'.repeat(64)}\n`;
+    if (variant === 'extra-output') result.stdout = '[]\n';
+    if (variant === 'extra-diagnostic') result.stderr += 'permission denied\n';
+    if (variant === 'success-exit') result.exitCode = 0;
+    if (variant === 'blank-lines') result.stdout = '\n\n';
+    f.exec.mockResolvedValueOnce(result);
+    await expect(f.lifecycle.remove(reference, () => {})).rejects.toThrow('container_inspect');
+    expect(f.mutations).toEqual([]);
+  });
+  it('keeps the missing container name case-sensitive even when the Docker diagnostic prefix changes case', async () => {
+    const f = fixture();
+    f.exec.mockResolvedValueOnce({ exitCode: 1, stdout: '\n', stderr: 'error: no such object: mixed\n' });
+    await expect(f.lifecycle.confirmAbsent('MiXeD', () => {})).rejects.toThrow('container_absence_unconfirmed');
+    expect(f.mutations).toEqual([]);
+  });
+
   it.each([false, null])('keeps the same identity when Docker materializes the default OOM setting as %s', async initial => {
     const f = fixture();
     (f.current.HostConfig as any).OomKillDisable = initial;

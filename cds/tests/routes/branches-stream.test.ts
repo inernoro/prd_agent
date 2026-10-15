@@ -167,6 +167,41 @@ describe('GET /api/branches/stream', () => {
     branchEvents.removeAllListeners('any');
   });
 
+  it('preserves failed first deployment and summary across SSE reconnects', async () => {
+    const branch = stateService.getBranch('existing')!;
+    branch.status = 'error'; branch.errorMessage = 'candidate_network_identity: rejected';
+    for (let connection = 0; connection < 2; connection++) {
+      await collectSseEvents(server, '/api/branches/stream', ev => {
+        if (ev.event !== 'snapshot') return false;
+        const visible = ev.data.branches.find((item: any) => item.id === branch.id);
+        expect(visible.status).toBe('error');
+        expect(visible.errorMessage).toBe('candidate_network_identity: rejected');
+        return true;
+      });
+      expect(stateService.getBranch('existing')!.status).toBe('error');
+      expect(branch.errorMessage).toBe('candidate_network_identity: rejected');
+    }
+  });
+
+  it('does not mutate canonical branch state while projecting an SSE snapshot', async () => {
+    const branch = stateService.getBranch('existing')!;
+    expect(branch.status).toBe('running');
+    await collectSseEvents(server, '/api/branches/stream', ev => ev.event === 'snapshot');
+    expect(branch.status).toBe('running');
+  });
+
+  it('clears stale service errors only in the SSE projection, preserving canonical nested services', async () => {
+    const branch = stateService.getBranch('existing')!;
+    branch.services.api = { profileId: 'api', containerName: 'owned-api', hostPort: 10001,
+      status: 'running', errorMessage: 'previous start failed' };
+    await collectSseEvents(server, '/api/branches/stream', ev => {
+      if (ev.event !== 'snapshot') return false;
+      expect(ev.data.branches[0].services.api.errorMessage).toBeUndefined();
+      return true;
+    });
+    expect(branch.services.api.errorMessage).toBe('previous start failed');
+  });
+
   it('emits an initial snapshot event containing all branches', async () => {
     const seen: any[] = [];
     await collectSseEvents(server, '/api/branches/stream', (ev) => {

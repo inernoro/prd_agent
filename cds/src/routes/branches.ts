@@ -1387,6 +1387,9 @@ export function clearRunningServiceErrorMessages(entry: Pick<BranchEntry, 'servi
 }
 
 function reconcileBranchStatus(entry: BranchEntry): void {
+  // A failed first candidate has no published services. Passive or live reads
+  // cannot turn its durable deployment failure into a never-deployed branch.
+  if (entry.status === 'error' && !Object.keys(entry.services || {}).length) return;
   clearRunningServiceErrorMessages(entry);
   const statuses = Object.values(entry.services || {}).map((service) => service.status);
   const previousStatus = entry.status;
@@ -4988,8 +4991,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const snapshot = stateService.getAllBranches().filter(b =>
         projectAllowed(b.projectId || 'default') &&
         (!projectFilter || (b.projectId || 'default') === projectFilter) && (!branchFilter || b.id === branchFilter));
-      for (const branch of snapshot) reconcileBranchStatus(branch);
-      return { branches: snapshot.map(branchForStream), projectId: projectFilter || undefined,
+      const projected = snapshot.map(branch => {
+        const copy = { ...branch, services: Object.fromEntries(Object.entries(branch.services || {}).map(([id, service]) => [id, { ...service }])) };
+        reconcileBranchStatus(copy);
+        return copy;
+      });
+      return { branches: projected.map(branchForStream), projectId: projectFilter || undefined,
         branchId: branchFilter, resyncRequired, ts: nowIso() };
     };
     // 每条新连接都把（范围内的）全部分支脱敏并序列化一遍；预览页挂件不带 project，
