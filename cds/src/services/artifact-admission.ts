@@ -1,5 +1,9 @@
 import type { BuildProfile, IShellExecutor } from '../types.js';
 import { shellQuoteArg } from './secure-database-cli.js';
+import {
+  imageRepositoryOf, normalizeBuildScope, normalizeFallbackImages, normalizeImageRevision, proveFallbackImage,
+  type ProveFallbackImageInput,
+} from './prebuilt-reuse.js';
 
 export type ArtifactWaitReason = 'target-unresolved' | 'image-unresolved' | 'missing' | 'access-denied'
   | 'verification-unavailable' | 'revision-mismatch' | 'platform-mismatch';
@@ -10,6 +14,13 @@ export interface VerifiedDeploymentArtifact {
   image: string;
   revision: string;
   platform: string;
+  selectedImage?: string;
+  proof?: { kind: 'exact-target' } | { kind: 'component-unchanged'; buildScope: string[] };
+}
+
+export interface ArtifactInspectionOptions {
+  inspectLocalArtifacts?: boolean;
+  isComponentUnchangedSince?: ProveFallbackImageInput['isComponentUnchangedSince'];
 }
 
 /** 私有输入的一部分；公开事件只发等待原因，不发 registry 输出或认证细节。 */
@@ -49,7 +60,7 @@ function pullFailureReason(stdout: string, stderr: string, image: string): Artif
 export async function inspectDeploymentArtifacts(
   shell: IShellExecutor, profiles: readonly BuildProfile[], targetCommitSha: string,
   assertCurrent: () => void = () => {},
-  options: { inspectLocalArtifacts?: boolean } = {},
+  options: ArtifactInspectionOptions = {},
 ): Promise<ArtifactAdmission> {
   const target = targetCommitSha.toLowerCase();
   const checkedAt = new Date().toISOString();
@@ -58,12 +69,9 @@ export async function inspectDeploymentArtifacts(
     state: 'waiting', targetCommitSha: target, checkedAt, reason, profileIds, artifacts: [],
   });
   if (!/^[0-9a-f]{40}$/.test(target)) return waiting('target-unresolved');
-  const images = new Map<string, { profileIds: string[]; needsPull: boolean }>();
   for (const profile of required) {
     const image = profile.dockerImage?.trim();
     if (!image || image.includes('${')) return waiting('image-unresolved', [profile.id]);
-    const item = images.get(image) || { profileIds: [], needsPull: false };
-    item.profileIds.push(profile.id); item.needsPull ||= !profile.localArtifact; images.set(image, item);
   }
   if (!required.length) return { state: 'ready', targetCommitSha: target, checkedAt, artifacts: [] };
   const exec = async (command: string, timeout = 30_000) => {
@@ -80,31 +88,102 @@ export async function inspectDeploymentArtifacts(
   const system = info?.OSType;
   if (!arch || typeof system !== 'string' || !system) return waiting('verification-unavailable');
   const artifacts: VerifiedDeploymentArtifact[] = [];
-  for (const [image, { profileIds, needsPull }] of images) {
-    assertCurrent();
-    const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
-    if (!pull) { assertCurrent(); return waiting('verification-unavailable', profileIds); }
-    if (pull.exitCode) return waiting(pullFailureReason(pull.stdout, pull.stderr, image), profileIds);
-    const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
-    if (!inspection || inspection.exitCode) { assertCurrent(); return waiting('verification-unavailable', profileIds); }
-    const parsed = readJson(inspection.stdout);
-    const metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
-    const revision = metadata?.Config?.Labels?.['org.opencontainers.image.revision'];
-    if (typeof revision !== 'string' || revision.toLowerCase() !== target) return waiting('revision-mismatch', profileIds);
-    const imageArch = platformArchitecture(metadata?.Architecture);
-    if (!imageArch || metadata?.Os !== system || imageArch !== arch) return waiting('platform-mismatch', profileIds);
-    // 核验本地内容ID，并保存OCI固定digest用于运行及版本台账；不保存可变tag。
-    const immutable = metadata?.Id;
-    if (typeof immutable !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(immutable)) return waiting('verification-unavailable', profileIds);
-    // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
-    const digest = /^.+@sha256:[0-9a-f]{64}$/.test(image) ? image
-      : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
-      ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)) : undefined;
-    if (!digest) return waiting('verification-unavailable', profileIds);
-    artifacts.push({ profileIds, requestedImage: image, image: digest, revision: target, platform: `${system}/${arch}` });
+  type Inspection = { reason: ArtifactWaitReason } | { image: string; revision: string; platform: string };
+  const inspections = new Map<string, Promise<Inspection>>();
+  const inspect = (image: string, needsPull: boolean, exactTarget = false): Promise<Inspection> => {
+    const key = JSON.stringify([image, needsPull, exactTarget]);
+    const cached = inspections.get(key); if (cached) return cached;
+    const promise = (async (): Promise<Inspection> => {
+      const pull = needsPull ? await exec(`docker pull ${shellQuoteArg(image)}`, 90_000).catch(() => undefined) : { exitCode: 0, stdout: '', stderr: '' };
+      if (!pull) { assertCurrent(); return { reason: 'verification-unavailable' }; }
+      if (pull.exitCode) return { reason: pullFailureReason(pull.stdout, pull.stderr, image) };
+      const inspection = await exec(`docker image inspect ${shellQuoteArg(image)}`).catch(() => undefined);
+      if (!inspection || inspection.exitCode) { assertCurrent(); return { reason: 'verification-unavailable' }; }
+      const parsed = readJson(inspection.stdout);
+      const metadata = Array.isArray(parsed) && parsed.length === 1 ? parsed[0] : undefined;
+      const revision = normalizeImageRevision(metadata?.Config?.Labels?.['org.opencontainers.image.revision']);
+      if (!revision || exactTarget && revision !== target) return { reason: 'revision-mismatch' };
+      const imageArch = platformArchitecture(metadata?.Architecture);
+      if (!imageArch || metadata?.Os !== system || imageArch !== arch) return { reason: 'platform-mismatch' };
+      // 核验本地内容ID，并保存OCI固定digest用于运行及版本台账；不保存可变tag。
+      const immutable = metadata?.Id;
+      if (typeof immutable !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(immutable)) return { reason: 'verification-unavailable' };
+      // 已按固定仓库digest查询并核验内容，保留可跨执行器取回的引用。
+      const digest = /^.+@sha256:[0-9a-f]{64}$/.test(image) ? `${imageRepositoryOf(image)}@${image.split('@')[1]}`
+        : !needsPull ? immutable : Array.isArray(metadata.RepoDigests)
+        ? metadata.RepoDigests.find((value: unknown) => typeof value === 'string' && /^.+@sha256:[0-9a-f]{64}$/.test(value)
+          && imageRepositoryOf(value) === imageRepositoryOf(image)) : undefined;
+      if (!digest) return { reason: 'verification-unavailable' };
+      return { image: digest, revision, platform: `${system}/${arch}` };
+    })();
+    inspections.set(key, promise); return promise;
+  };
+  for (const profile of required) {
+    const primary = profile.dockerImage.trim(), scope = normalizeBuildScope(profile.buildScope);
+    const candidates = [primary, ...normalizeFallbackImages(profile.fallbackImage).filter(image => image !== primary
+      && !image.includes('${') && imageRepositoryOf(image) === imageRepositoryOf(primary))];
+    let allowFallback = false, lastReason: ArtifactWaitReason = 'missing';
+    let item: VerifiedDeploymentArtifact | undefined;
+    for (let index = 0; index < candidates.length; index++) {
+      if (index && !allowFallback) break;
+      const selectedImage = candidates[index];
+      const result = await inspect(selectedImage, index > 0 || !profile.localArtifact,
+        !index && !profile.localArtifact && !primary.includes('@sha256:')); assertCurrent();
+      if ('reason' in result) {
+        if (result.reason !== 'missing') return waiting(result.reason, [profile.id]);
+        if (!index) allowFallback = true;
+        continue;
+      }
+      // 错标的sha目标不是“缺产物”；已固定的历史内容才可再次证明等价。
+      if (!index && result.revision !== target && !profile.localArtifact && !primary.includes('@sha256:')) {
+        return waiting('revision-mismatch', [profile.id]);
+      }
+      const proof = await proveFallbackImage({ revision: result.revision, targetSha: target,
+        buildScope: scope, isComponentUnchangedSince: options.isComponentUnchangedSince });
+      assertCurrent();
+      if (!proof.accepted) { lastReason = 'revision-mismatch'; continue; }
+      item = { profileIds: [profile.id], requestedImage: primary, selectedImage, image: result.image,
+        revision: result.revision, platform: result.platform,
+        proof: proof.reason === 'exact-target' ? { kind: 'exact-target' } : { kind: 'component-unchanged', buildScope: scope! } };
+      break;
+    }
+    if (!item) return waiting(lastReason, [profile.id]);
+    const existing = artifacts.find(artifact => JSON.stringify({ ...artifact, profileIds: [] }) === JSON.stringify({ ...item, profileIds: [] }));
+    if (existing) existing.profileIds.push(profile.id); else artifacts.push(item);
   }
   assertCurrent();
   return { state: 'ready', targetCommitSha: target, checkedAt, artifacts };
+}
+
+/** Master独立证明远端回执的组件等价；布尔声明和远端传来的scope均不是信任根。 */
+export async function verifyArtifactAdmission(profiles: readonly BuildProfile[], target: string, admission: ArtifactAdmission,
+  compare: ArtifactInspectionOptions['isComponentUnchangedSince'], assertCurrent: () => void): Promise<boolean> {
+  if (admission.state !== 'ready' || admission.targetCommitSha !== target || !Array.isArray(admission.artifacts)) return false;
+  const required = profiles.filter(profile => profile.prebuiltImage && !profile.managedBuild && !profile.localArtifact);
+  const roles = new Set(required.map(profile => profile.id));
+  if (admission.artifacts.some(item => !Array.isArray(item?.profileIds) || !item.profileIds.length
+    || new Set(item.profileIds).size !== item.profileIds.length || item.profileIds.some(role => !roles.has(role)))) return false;
+  for (const profile of required) {
+    const matches = admission.artifacts.filter(item => item.profileIds.includes(profile.id));
+    if (matches.length !== 1) return false;
+    const artifact = matches[0], selected = artifact.selectedImage || artifact.requestedImage;
+    if (artifact.requestedImage !== profile.dockerImage || !normalizeImageRevision(artifact.revision)
+      || !/^.+@sha256:[0-9a-f]{64}$/.test(artifact.image) || !/^linux\/(amd64|arm64|386|arm|ppc64le|s390x)$/.test(artifact.platform)
+      || ![profile.dockerImage, ...normalizeFallbackImages(profile.fallbackImage)].includes(selected)
+      || imageRepositoryOf(artifact.image) !== imageRepositoryOf(selected)
+      || imageRepositoryOf(selected) !== imageRepositoryOf(profile.dockerImage)) return false;
+    if (artifact.revision === target) {
+      if (artifact.proof && artifact.proof.kind !== 'exact-target') return false;
+      continue;
+    }
+    if (selected === profile.dockerImage && !profile.dockerImage.includes('@sha256:')) return false;
+    const scope = normalizeBuildScope(profile.buildScope);
+    if (!scope || artifact.proof?.kind !== 'component-unchanged'
+      || JSON.stringify([...scope].sort()) !== JSON.stringify([...(normalizeBuildScope(artifact.proof.buildScope) || [])].sort())) return false;
+    const proof = await proveFallbackImage({ revision: artifact.revision, targetSha: target, buildScope: scope, isComponentUnchangedSince: compare });
+    assertCurrent(); if (!proof.accepted) return false;
+  }
+  assertCurrent(); return true;
 }
 
 function verifiedRuntimeImage(artifact: VerifiedDeploymentArtifact): string {
