@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset } from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, openGatewayLogicalModelDetails, selectGatewayImageLogicalModel, validateMapLoginSnapshot, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe } from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
@@ -18,6 +18,73 @@ test('巡检主旅程接入语义登录与精确模型详情，且仅改被测�
 });
 
 const passwordSnapshot = { headingCount: 1, hasBrand: true, usernameCount: 1, passwordCount: 1, submitCount: 1, ssoCount: 0 };
+
+test('REG-stsmk-account-scope-001 网关配置先确认上下文且不得无筛选读取日志', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const audit = source.split("test('[GW-001][GW-002][GW-003][GW-004][REG-llmgw-auth-001]")[1]?.split("\n  test('")[0];
+  assert.ok(audit);
+  assert.equal(/\/gw\/logs\?limit=/.test(source), false, 'limit不被服务端识别，旧查询会读取租户或团队日志');
+  assert.deepEqual([...source.matchAll(/\/gw\/logs([^`'"]*)/g)].map(match => match[1]), [
+    '?requestId=${encodeURIComponent(requestId)}&pageSize=10', '/${matched!.id}',
+  ], '实际调用只允许按捕获的requestId查询及其已匹配日志详情，配置审计须走独立空探针');
+  const contextRead = audit.indexOf('const context = await request.get(');
+  const contextChecked = audit.indexOf('expect(contextBody.success).toBe(true)');
+  const parallel = audit.indexOf('await Promise.all(');
+  assert.ok(contextRead >= 0 && contextRead < contextChecked && contextChecked < parallel, '必须先回读上下文再发并行配置请求');
+  assert.match(audit, /readGatewayNoCallLogProbe\(request, \{ baseUrl, headers, runId: requiredEnv\('STABLE_SMOKE_RUN_ID'\) \}\)/);
+  assert.match(audit, /testInfo\.attach\('gateway-log-no-call-probe'/);
+  assert.doesNotMatch(audit, /waitForGatewayLog\(|request\.get\([^\n]*\/gw\/logs/);
+});
+
+test('REG-stsmk-account-scope-001 日志空探针仅发本轮唯一精确查询且不充当模型调用', async () => {
+  const calls = [];
+  const options = { baseUrl: 'https://fixture.test/', headers: {}, runId: 'stsmk-this-run' };
+  const request = { get: async (url, init) => {
+    calls.push({ url, init });
+    return { ok: () => true, json: async () => ({ success: true, data: { items: [], total: 0, pageSize: 1 } }) };
+  } };
+  const first = await readGatewayNoCallLogProbe(request, options);
+  const second = await readGatewayNoCallLogProbe(request, options);
+  assert.notEqual(first.requestId, second.requestId, '每次空查询必须有独立随机命名空间');
+  for (const [index, proof] of [first, second].entries()) {
+    const url = new URL(calls[index].url);
+    assert.equal(url.origin, options.baseUrl.slice(0, -1));
+    assert.equal(url.pathname, '/gw/logs');
+    assert.deepEqual([...url.searchParams], [['requestId', proof.requestId], ['pageSize', '1']]);
+    assert.match(proof.requestId, /^stsmk-this-run:no-call-audit:[a-f0-9-]{36}$/);
+    assert.equal(proof.modelCalls, 0);
+    assert.deepEqual(proof.items, []);
+    assert.match(proof.proofBoundary, /不证明任何真实模型调用/);
+  }
+  assert.equal(calls.length, 2);
+});
+
+test('REG-stsmk-account-scope-001 日志空探针拒绝无范围输入且错误响应绝不回退裸列表', async () => {
+  let calls = 0;
+  const options = { baseUrl: 'https://fixture.test', headers: {}, runId: 'stsmk-this-run', nonce: '00000000-0000-4000-8000-000000000001' };
+  const request = { get: async () => { calls += 1; throw Error('非法范围不得发送请求'); } };
+  for (const runId of ['', undefined, 'real-user', 'stsmk_', 'stsmk-', 'stsmk-run?userId=other', 'stsmk-run\n', 'stsmk-run/other']) {
+    await assert.rejects(() => readGatewayNoCallLogProbe(request, { ...options, runId }), /test\/resource-scope/);
+  }
+  for (const nonce of ['', 'other', '00000000-0000-4000-8000-000000000001&userId=other']) {
+    await assert.rejects(() => readGatewayNoCallLogProbe(request, { ...options, nonce }), /test\/resource-scope/);
+  }
+  assert.equal(calls, 0);
+  for (const data of [undefined, { records: [], total: 0, pageSize: 1 }, { items: {}, total: 0, pageSize: 1 }, { items: [{ requestId: 'unexpected' }], total: 1, pageSize: 1 }, { items: [], total: 1, pageSize: 1 }, { items: [], total: 0, pageSize: 50 }]) {
+    calls = 0;
+    await assert.rejects(() => readGatewayNoCallLogProbe({ get: async () => {
+      calls += 1;
+      return { ok: () => true, json: async () => ({ success: true, data }) };
+    } }, options), /test\/(?:resource-scope|api-contract)/);
+    assert.equal(calls, 1, '坏响应只能停止，不能重发无范围请求');
+  }
+  calls = 0;
+  await assert.rejects(() => readGatewayNoCallLogProbe({ get: async () => {
+    calls += 1;
+    return { ok: () => false, json: async () => { throw Error('鉴权失败后不读取正文'); } };
+  } }, options), /test\/api-contract/);
+  assert.equal(calls, 1);
+});
 
 test('REG-stsmk-account-scope-001 正式危险夹具在任何写入前阻断，CDS原夹具不被误放行到正式', () => {
   for (const caseId of ['LIT-004', 'MVIS-010']) {

@@ -1,5 +1,28 @@
+import { randomUUID } from 'node:crypto';
+
 function contract(condition, message, classification = 'test/ui-contract') {
   if (!condition) throw new Error(`[${classification}] ${message}`);
+}
+
+/** Exact empty lookup only; this probe must never count as a real model call. */
+export async function readGatewayNoCallLogProbe(request, { baseUrl, headers, runId, nonce = randomUUID() }) {
+  contract(typeof runId === 'string' && /^stsmk-[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(runId),
+    '日志空探针必须绑定本轮有效 stsmk- 标识，禁止无范围读取', 'test/resource-scope');
+  contract(typeof nonce === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(nonce),
+    '日志空探针必须使用独立随机标识', 'test/resource-scope');
+  const requestId = `${runId}:no-call-audit:${nonce}`;
+  const query = new URLSearchParams({ requestId, pageSize: '1' });
+  const response = await request.get(`${baseUrl.replace(/\/+$/, '')}/gw/logs?${query}`, { headers });
+  contract(response.ok(), '日志端点鉴权或精确空查询不可用', 'test/api-contract');
+  const body = await response.json();
+  contract(body?.success === true && Array.isArray(body.data?.items),
+    '日志空查询必须返回真实 items 列表契约', 'test/api-contract');
+  contract(body.data.items.length === 0 && body.data.total === 0 && body.data.pageSize === 1,
+    '日志空查询返回了意外记录或未遵守精确查询契约，停止且不得回退裸列表', 'test/resource-scope');
+  return {
+    requestId, items: [], total: 0, pageSize: 1, modelCalls: 0,
+    proofBoundary: '仅日志端点鉴权与精确空查询，不证明任何真实模型调用',
+  };
 }
 
 // Usernames currently reject hyphens in the application. Do not silently replace

@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 
 export interface MapLoginSnapshot {
   headingCount: number;
@@ -20,6 +20,9 @@ export interface GatewayLogicalModelAuditIdentity {
 }
 
 export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenticationMethods: string[] };
+export function readGatewayNoCallLogProbe(request: APIRequestContext, options: {
+  baseUrl: string; headers: Record<string, string>; runId: string; nonce?: string;
+}): Promise<{ requestId: string; items: never[]; total: number; pageSize: number; modelCalls: number; proofBoundary: string }>;
 export function assertScopedSyntheticUsername(username: string, runId: string): void;
 export function blockUnsafeProductionFixture(test: { skip(condition: boolean, description: string): void }, environment: string, caseId: 'LIT-004' | 'MVIS-010'): void;
 export function validateReadOnlyAvatarAsset(snapshot: {
