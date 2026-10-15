@@ -17,6 +17,10 @@ export function IdentityRecoveryPanel({ onToast }: { onToast: (s: string) => voi
   const [error, setError] = useState(''); const [busy, setBusy] = useState('');
   const [choices, setChoices] = useState<Record<string, { userId?: string; projectId?: string }>>({});
   const [claim, setClaim] = useState(''); const [claimUser, setClaimUser] = useState('');
+  const [legacySearch, setLegacySearch] = useState('');
+  const query = legacySearch.trim().toLocaleLowerCase();
+  const visibleLegacy = data?.unclaimed.filter(k => !query || [k.projectName, k.projectId, k.label, k.id]
+    .some(value => value?.toLocaleLowerCase().includes(query))) || [];
   const load = useCallback(async (signal?: AbortSignal) => {
     try { const value = await apiRequest<Data>('/api/identity/connections', { signal }); setData(value); setError(''); }
     catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : String(e)); }
@@ -68,7 +72,12 @@ export function IdentityRecoveryPanel({ onToast }: { onToast: (s: string) => voi
       })}</div>
     </Section>
     {data && data.unclaimed.length > 0 ? <Section title="历史匿名凭据归属" description="仅由管理员核对确切凭据与账号，不按显示名推断、不批量认领。原密钥无需复制或更换，归属后跟随原账号和项目权限。">
-      <div className="space-y-2">{data.unclaimed.map(k => {
+      <label className="mb-3 block space-y-1 text-sm">定位待核对的凭据
+        <input aria-label="筛选历史凭据" className={inputCls} placeholder="搜索项目、凭据名称或编号" value={legacySearch} onChange={e => setLegacySearch(e.target.value)} />
+      </label>
+      <p className="mb-3 text-xs text-muted-foreground">显示 {visibleLegacy.length} / {data.unclaimed.length} 张待归属凭据；筛选不会改变权限。</p>
+      {visibleLegacy.length === 0 ? <p className="py-3 text-sm text-muted-foreground">没有匹配的待归属凭据，请调整搜索内容。</p> : null}
+      <div className="space-y-2">{visibleLegacy.map(k => {
         const key = `${k.projectId}/${k.id}`; return <div key={key} className="rounded-md border border-border bg-card p-3">
           <div className="flex flex-wrap items-center gap-2 text-sm"><b>{k.projectName}</b><span>{k.label || '历史凭据'}</span><code className="text-xs text-muted-foreground">{k.id}</code>
             <Button size="sm" variant="outline" disabled={Boolean(busy)} onClick={() => { setClaim(key); setClaimUser(''); }}>核对归属</Button></div>
