@@ -8,6 +8,7 @@ import {
   looksLikeDeck,
   parseExplicitPages,
   parseSlideProgress,
+  resolveOutlineTargetPages,
   resolveNaturalPatchSlideIndex,
   recoverPatchParentRun,
   resolveRecoveredDeckState,
@@ -58,6 +59,19 @@ describe('estimatePages', () => {
     expect(parseExplicitPages('做一份两页控制台演示')).toBe(2);
     expect(parseExplicitPages('输出十二页技术方案')).toBe(12);
     expect(estimatePages('严格生成 2 页高级产品发布会 PPT，' + '内容很长'.repeat(500))).toBe(2);
+  });
+
+  it('不把章节号、文档内页码或 P 开头的单词当成页数', () => {
+    expect(parseExplicitPages('### 6.1 PR 的大小与标题')).toBeNull();
+    expect(parseExplicitPages('请参考本文档第 20 页')).toBeNull();
+    expect(parseExplicitPages('1 prompt 示例')).toBeNull();
+  });
+
+  it('只从用户需求识别显式页数，附件和知识内容只参与长度估算', () => {
+    const reference = '附件共 2 页\n### 6.1 PR 的大小与标题\n' + '资料'.repeat(8000);
+    expect(resolveOutlineTargetPages('请把附件整理成演示稿', reference)).toBe(20);
+    expect(resolveOutlineTargetPages('请生成 20 页演示稿', '附件共 2 页')).toBe(20);
+    expect(resolveOutlineTargetPages('请生成 20p 演示稿', '附件共 2 页')).toBe(20);
   });
 });
 

@@ -401,11 +401,18 @@ export function parseChineseSmallNumber(raw: string): number | null {
 }
 
 export function parseExplicitPages(content: string): number | null {
-  const match = content.match(/(?:严格|共|生成|做|制作|输出|约|大约|总共)?\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:页|p)/i);
-  if (!match) return null;
-  const raw = match[1];
-  const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
-  return parsed && parsed > 0 ? Math.max(1, Math.min(30, parsed)) : null;
+  const matches = content.matchAll(/(?:严格|共|生成|做|制作|输出|约|大约|总共)?\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:页|p(?![a-z0-9_]))/gi);
+  for (const match of matches) {
+    const raw = match[1];
+    const rawOffset = (match.index ?? 0) + match[0].lastIndexOf(raw);
+    const prefix = content.slice(0, rawOffset);
+    // “第 20 页”是对文档内页码的引用，“6.1 PR”是章节号；
+    // 它们都不是用户要求的演示稿页数。P 单位也不得吞掉 PR/prompt 这类单词前缀。
+    if (/(?:第|\d\s*\.)\s*$/u.test(prefix)) continue;
+    const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
+    if (parsed && parsed > 0) return Math.max(1, Math.min(30, parsed));
+  }
+  return null;
 }
 
 export function resolveNaturalPatchSlideIndex(instruction: string): number | null {
@@ -430,12 +437,25 @@ export function resolveNaturalPatchSlideIndex(instruction: string): number | nul
 // extraChars 是「手里没有正文、但知道它有多长」的那部分：从 sessionStorage 恢复的
 // 知识条目只存了身份与篇幅，正文是空的。不把篇幅补回来，一篇长文档刷新之后会被估成
 // 最低的 4 页，而服务端是严格按客户端给的页数执行的。
-export function estimatePages(content: string, extraChars = 0): number {
-  const explicit = parseExplicitPages(content);
-  if (explicit) return explicit;
+function estimatePagesByLength(content: string, extraChars = 0): number {
   const len = content.trim().length + Math.max(0, extraChars);
   if (len === 0) return 8;
   return Math.max(4, Math.min(20, Math.round(len / 700)));
+}
+
+export function estimatePages(content: string, extraChars = 0): number {
+  return parseExplicitPages(content) ?? estimatePagesByLength(content, extraChars);
+}
+
+/**
+ * 大纲请求的页数权威计算：只有用户需求可以声明页数；
+ * 附件与知识内容只参与篇幅估算，不得把资料里的章节号、页码或“共20页”当成指令。
+ * extraChars 用于补回从 sessionStorage 恢复、已剥离正文的知识条目篇幅。
+ */
+export function resolveOutlineTargetPages(userRequest: string, referenceContent: string, extraChars = 0): number {
+  const explicit = parseExplicitPages(userRequest);
+  if (explicit) return explicit;
+  return estimatePagesByLength([userRequest, referenceContent].filter(Boolean).join('\n\n'), extraChars);
 }
 
 function genId(): string {
@@ -2340,7 +2360,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         0,
       );
       const targetPages = targetPagesOverride
-        ?? estimatePages(userText + attachmentText + kbContext, restoredKbChars);
+        ?? resolveOutlineTargetPages(userText, attachmentText + kbContext, restoredKbChars);
 
       const assistantMsg = pushMsg({
         role: 'assistant',

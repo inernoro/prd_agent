@@ -43,6 +43,8 @@ describe('刷新之后知识条目的篇幅还在', () => {
     expect(page, '剥掉正文却没留下篇幅，刷新后长文档会被估成最低页数')
       .toContain('contentChars: ref.content ? ref.content.length : (ref.contentChars ?? 0)');
     expect(page, '估算处没有把恢复条目的篇幅补回来')
-      .toContain('estimatePages(userText + attachmentText + kbContext, restoredKbChars)');
+      .toContain('resolveOutlineTargetPages(userText, attachmentText + kbContext, restoredKbChars)');
+    expect(page, '最终请求必须使用分域后计算的页数')
+      .toContain('targetPages,');
   });
 });
