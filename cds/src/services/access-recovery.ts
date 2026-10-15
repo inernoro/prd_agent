@@ -33,6 +33,7 @@ export function inspectAccessRecovery(state: StateService, projectId: string, pl
     ? state.getUserCredentials().find(c => matches(c.hash, hash))
     : state.getProject(projectId)?.agentKeys?.find(c => matches(c.hash, hash));
   if (!credential) return undefined;
+  if ('projectIds' in credential && credential.projectIds && !credential.projectIds.includes(projectId)) return undefined;
   const principalId = credential.principalId;
   if (kind === 'user' && !principalId) return { state: 'credential-unusable', kind };
   if (principalId) {

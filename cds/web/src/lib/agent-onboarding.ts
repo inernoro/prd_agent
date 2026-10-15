@@ -329,6 +329,7 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     projectPermissionCheck,
     '如果认证或目标项目检查失败，先判断是无凭据、凭据已失效，还是当前凭据只属于另一个项目，不要把三种情况混为一谈。',
     '',
+    '如果是在恢复已有应用、用户身份和整个连接目录都已丢失：让 Agent 在原仓库执行 connect --host '+cdsOrigin+' --recover，自动读取 origin，由管理员核对原账号与原项目；不要改成新建副本，不让新人填写 ID 或复制密钥。',
     '三、仅在缺少权限时申请授权',
     authorizationRequest,
     authorizationFollowUp,
