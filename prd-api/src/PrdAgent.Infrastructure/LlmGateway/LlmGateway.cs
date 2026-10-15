@@ -56,6 +56,7 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
     private const string MaxTokensField = "max_tokens";
     private const string MaxCompletionTokensField = "max_completion_tokens";
+    private static readonly TimeSpan TerminalUsageDrainTimeout = TimeSpan.FromMilliseconds(500);
 
     public LlmGateway(
         IModelResolver modelResolver,
@@ -1032,10 +1033,13 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 6.1 手工迭代 SSE 读取器，把 MoveNextAsync 的传输层异常（上游中途断连、读超时等）
             //     转成日志 MarkError + Fail chunk；否则异常冒泡出 StreamAsync，日志保持 running，
             //     Watchdog 5 分钟后兜底成 "TIMEOUT"，真实原因丢失。
-            await using var eventEnum = sseReader.ReadEventsAsync(ct).GetAsyncEnumerator(ct);
+            using var streamReadCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            await using var eventEnum = sseReader.ReadEventsAsync(streamReadCts.Token)
+                .GetAsyncEnumerator(streamReadCts.Token);
             bool streamAborted = false;
             string? streamAbortMsg = null;
             int? streamAbortCode = null;
+            bool terminalUsageDrainStarted = false;
 
             while (true)
             {
@@ -1058,6 +1062,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                 if (readException != null)
                 {
+                    // OpenAI 的流式 usage 是 finish_reason 之后的独立末帧。终止帧已经完整时，
+                    // 只给这条可选末帧一个很短的读取窗口；窗口耗尽仍按成功收口，不能把
+                    // “上游不发 [DONE] / 不关闭连接”重新变成长时间挂起。调用方主动取消则
+                    // 仍走下面的真实中断语义，不能被内部 drain 超时吞掉。
+                    if (terminalUsageDrainStarted
+                        && !ct.IsCancellationRequested
+                        && readException is OperationCanceledException
+                        && streamReadCts.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
                     var (readMsg, readCode) = ClassifyTransportException(readException, ct.IsCancellationRequested);
                     _logger.LogWarning(readException,
                         "[LlmGateway] 流式读取中断 status={Code} model={Model} firstByteAt={FirstByteAt}",
@@ -1095,6 +1111,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 }
                 if (chunk == null)
                 {
+                    continue;
+                }
+
+                // finish_reason 之后只接受标准 usage 末帧。正文、工具调用等终止后增量不再
+                // 进入业务流，避免为补账改变既有输出或背压语义。
+                if (terminalUsageDrainStarted)
+                {
+                    if (chunk.TokenUsage != null)
+                    {
+                        tokenUsage = chunk.TokenUsage;
+                        break;
+                    }
                     continue;
                 }
 
@@ -1175,12 +1203,18 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     tokenUsage = chunk.TokenUsage;
                 }
 
-                // 部分 OpenAI 兼容上游会发送带 finish_reason 的终止帧，但既不发送
-                // data: [DONE]，也不主动关闭连接。终止语义已经完整时必须立即收口，
-                // 否则调用方会一直等到 HttpClient 超时，并丢失已经收到的正文。
+                // OpenAI 标准流会在 finish_reason 之后再发一条 choices=[] 的 usage 末帧；
+                // 部分兼容上游则既不发 usage/[DONE]，也不关闭连接。已有 usage 时直接收口，
+                // 否则进入有界 drain：拿到 usage/[DONE]/EOF 就结束，超时也按成功收口。
                 if (!string.IsNullOrEmpty(finishReason))
                 {
-                    break;
+                    if (tokenUsage != null)
+                    {
+                        break;
+                    }
+
+                    terminalUsageDrainStarted = true;
+                    streamReadCts.CancelAfter(TerminalUsageDrainTimeout);
                 }
             }
 

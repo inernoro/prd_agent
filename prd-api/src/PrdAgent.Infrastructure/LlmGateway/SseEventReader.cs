@@ -19,9 +19,10 @@ public class SseEventReader
     public async IAsyncEnumerable<string> ReadEventsAsync(
         [EnumeratorCancellation] CancellationToken ct = default)
     {
-        while (!_reader.EndOfStream)
+        while (true)
         {
             var line = await _reader.ReadLineAsync(ct);
+            if (line is null) yield break;
             if (string.IsNullOrEmpty(line)) continue;
 
             // 注释行跳过
