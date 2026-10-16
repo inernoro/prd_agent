@@ -595,6 +595,97 @@ type ShortVideoVisualRun = {
   [key: string]: unknown;
 };
 
+async function cleanupRecordingIdempotencyFixture(
+  page: Page,
+  token: string,
+  storeId: string,
+  sessionId: string,
+  entryId: string,
+  testInfo: TestInfo,
+) {
+  const errors: string[] = [];
+  const receipt: Record<string, unknown> = {
+    inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), storeId, sessionId, entryId,
+    sessionBeforeDeleteStatus: null, sessionStatus: null, archiveStatus: null,
+    cancelStatus: null, storeDeleteStatus: null,
+    storeReadbackStatus: null, sessionReadbackStatus: null, entryReadbackStatus: null,
+    physicalRetentionBoundary: 'API不可访问不等于物理零行；成功归档已await清分片，Completed协调行按既有Worker到期回收，非Mongo TTL',
+    modelCallBoundary: 'complete可能触发既有默认ASR；本清理无额外模型动作，不能把原旅程标为零模型',
+  };
+  let cleanupEntryId = entryId;
+  if (sessionId) {
+    try {
+      const response = await retryTransientTransport('核对本轮录音归档状态', () => page.request.get(
+        `/api/document-store/recording-uploads/${encodeURIComponent(sessionId)}`,
+        { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+      ));
+      receipt.sessionBeforeDeleteStatus = response.status();
+      if (response.status() !== 200) throw Error(`清理前录音会话返回 ${response.status()}`);
+      const body = await response.json();
+      if (body?.success !== true || body.data?.sessionId !== sessionId) throw Error('清理前录音会话身份或响应不匹配');
+      const session = body.data;
+      receipt.sessionStatus = session.status;
+      receipt.archiveStatus = session.archiveStatus;
+      if (entryId && session.entryId !== entryId) errors.push('完成会话的条目身份与首次完成结果不一致');
+      if (!cleanupEntryId && typeof session.entryId === 'string') {
+        cleanupEntryId = session.entryId;
+        receipt.entryId = cleanupEntryId;
+        receipt.entryIdSource = '本轮精确会话回读';
+      }
+      if (session.status === 'completed') {
+        // Completed不能DELETE取消；父库删除后的404只证明业务不可访问。
+        if (session.archiveStatus !== 'completed') errors.push('录音仍待归档，可能保留活分片，不能将API404当物理清理成功');
+      } else if (session.status === 'uploading' && !cleanupEntryId) {
+        const cancelled = await retryTransientTransport('取消本轮未完成录音上传', () => page.request.delete(
+          `/api/document-store/recording-uploads/${encodeURIComponent(sessionId)}`,
+          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+        ));
+        receipt.cancelStatus = cancelled.status();
+        if (![200, 204].includes(cancelled.status())) errors.push(`取消未完成录音返回 ${cancelled.status()}`);
+      } else {
+        errors.push('录音尚未确认Completed，不能将仍在完成或状态未知的会话判为清理成功');
+      }
+    } catch (error) {
+      errors.push(`核对或取消本轮录音失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  if (storeId) {
+    try {
+      const deleted = await retryTransientTransport('删除本轮录音幂等知识库', () => page.request.delete(
+        `/api/document-store/stores/${encodeURIComponent(storeId)}`,
+        { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
+      ));
+      receipt.storeDeleteStatus = deleted.status();
+      if (![200, 204].includes(deleted.status())) errors.push(`删除录音知识库返回 ${deleted.status()}`);
+    } catch (error) {
+      errors.push(`删除录音知识库失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  for (const [kind, id, path] of [
+    ['store', storeId, `/api/document-store/stores/${encodeURIComponent(storeId)}`],
+    ['session', sessionId, `/api/document-store/recording-uploads/${encodeURIComponent(sessionId)}`],
+    ['entry', cleanupEntryId, `/api/document-store/entries/${encodeURIComponent(cleanupEntryId)}`],
+  ]) {
+    if (!id) continue;
+    try {
+      const response = await retryTransientTransport(`核对本轮录音${kind}删除`, () => page.request.get(path, {
+        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+      }));
+      const status = response.status();
+      receipt[`${kind}ReadbackStatus`] = status;
+      if (status !== 404) errors.push(`${kind}删除后仍返回 ${status}`);
+    } catch (error) {
+      errors.push(`${kind}删除回读失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  const safeErrors = errors.map(message => redactStableSmokeDiagnosticText(message));
+  receipt.errors = safeErrors;
+  await testInfo.attach('recording-idempotency-cleanup-receipt', {
+    body: JSON.stringify(receipt), contentType: 'application/json',
+  });
+  if (errors.length) throw Error(`录音幂等测试清理未闭环：${safeErrors.join('；')}`);
+}
+
 async function cleanupShortVideoFixture(
   page: Page,
   token: string,
@@ -5655,11 +5746,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[REC-010] 录音分片重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[REC-010] 录音分片重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     let storeId = '';
     let sessionId = '';
+    let entryId = '';
     try {
       const createStore = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -5670,11 +5762,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         },
       });
       storeId = (await readEnvelope<{ id: string }>(createStore)).id;
+      await testInfo.attach('recording-idempotency-store-created', {
+        body: JSON.stringify({ storeId }), contentType: 'application/json',
+      });
       const started = await page.request.post(`/api/document-store/stores/${storeId}/recording-uploads`, {
         headers: authHeaders(token),
         data: { fileName: `${requiredEnv('STABLE_SMOKE_RUN_ID')}.m4a`, mimeType: 'audio/mp4' },
       });
       sessionId = (await readEnvelope<{ sessionId: string }>(started)).sessionId;
+      await testInfo.attach('recording-idempotency-session-created', {
+        body: JSON.stringify({ storeId, sessionId }), contentType: 'application/json',
+      });
 
       const midpoint = Math.ceil(speechFixture.length / 2);
       const chunks = [speechFixture.subarray(0, midpoint), speechFixture.subarray(midpoint)];
@@ -5703,24 +5801,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: authHeaders(token),
       });
       const first = await readEnvelope<{ entry: { id: string }; sessionId: string }>(firstComplete);
+      entryId = first.entry.id;
+      await testInfo.attach('recording-idempotency-entry-created', {
+        body: JSON.stringify({ storeId, sessionId, entryId }), contentType: 'application/json',
+      });
       const secondComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
         headers: authHeaders(token),
       });
       const second = await readEnvelope<{ entry: { id: string }; reused: boolean }>(secondComplete);
       expect(second.entry.id).toBe(first.entry.id);
       expect(second.reused).toBe(true);
+    } catch (error) {
+      await testInfo.attach('recording-idempotency-primary-failure', {
+        body: redactStableSmokeDiagnosticText(error instanceof Error ? error.message : String(error)),
+        contentType: 'text/plain',
+      });
+      throw error;
     } finally {
-      if (sessionId) {
-        await page.request.delete(`/api/document-store/recording-uploads/${sessionId}`, {
-          headers: authHeaders(token),
-        }).catch(() => undefined);
-      }
-      if (storeId) {
-        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
-          headers: authHeaders(token),
-        });
-        expect([200, 204]).toContain(deleted.status());
-      }
+      await cleanupRecordingIdempotencyFixture(page, token, storeId, sessionId, entryId, testInfo);
     }
   });
 
