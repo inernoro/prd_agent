@@ -62,6 +62,8 @@ export function buildWidgetScript(
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
     #cds-widget{--cds-safe-top:env(safe-area-inset-top,0px);--cds-safe-right:env(safe-area-inset-right,0px);--cds-safe-bottom:env(safe-area-inset-bottom,0px);--cds-safe-left:env(safe-area-inset-left,0px);position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
+    /* 无安全候选时保留状态显示与键盘入口，但让业务页面接收真实指针。 */
+    #cds-widget[data-cds-placement="blocked"],#cds-widget[data-cds-placement="blocked"] *{pointer-events:none!important}
     #cds-widget .cds-badge{position:relative;display:inline-flex;flex-direction:column;align-items:stretch;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1;overflow:hidden;transition:background .22s ease,border-color .22s ease,box-shadow .22s ease}
     #cds-widget .cds-badge:active{cursor:grabbing}
     #cds-widget .cds-badge::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:0}
@@ -574,7 +576,7 @@ export function buildWidgetScript(
 
   function avoidSemanticOverlays(){
     if(!root.isConnected)return;
-    if(!isMobileViewport()||expanded){root.removeAttribute('data-cds-placement');return;}
+    if(expanded){root.removeAttribute('data-cds-placement');return;}
     if(dragState)return;
     var obstacles=[],seen=[];
     function add(el){
@@ -625,6 +627,12 @@ export function buildWidgetScript(
   });
   avoidanceObserver.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['style','class','hidden','role','aria-live']});
   document.addEventListener('scroll',scheduleWidgetAvoidance,true);
+  // 抽屉位移动画结束时没有新的 DOM mutation，必须按最终几何再次避让。
+  function onBusinessMotionEnd(event){
+    if(!root.contains(event.target))scheduleWidgetAvoidance();
+  }
+  document.addEventListener('transitionend',onBusinessMotionEnd,true);
+  document.addEventListener('animationend',onBusinessMotionEnd,true);
   if(window.visualViewport){
     window.visualViewport.addEventListener('resize',scheduleWidgetAvoidance);
     window.visualViewport.addEventListener('scroll',scheduleWidgetAvoidance);
@@ -908,6 +916,8 @@ export function buildWidgetScript(
       avoidanceObserver.disconnect();
       if(avoidanceFrame)cancelAnimationFrame(avoidanceFrame);
       document.removeEventListener('scroll',scheduleWidgetAvoidance,true);
+      document.removeEventListener('transitionend',onBusinessMotionEnd,true);
+      document.removeEventListener('animationend',onBusinessMotionEnd,true);
       if(window.visualViewport){window.visualViewport.removeEventListener('resize',scheduleWidgetAvoidance);window.visualViewport.removeEventListener('scroll',scheduleWidgetAvoidance);}
       root.remove();return;
     }
