@@ -1,4 +1,4 @@
-import { deploymentHostMemoryBudgetMB, deploymentHostPidBudget, setDeploymentPhaseHostUsage } from './deployment-phase-budget.js';
+import { deploymentHostMemoryBudgetMB, deploymentHostPidBudget, setDeploymentPhaseHostUsage, setDeploymentPhaseResidentUsage } from './deployment-phase-budget.js';
 import type { StateService } from './state.js';
 import type { BranchEntry } from '../types.js';
 import { summarizeBuildActivity, type BuildActivitySummary } from './build-activity-tracker.js';
@@ -228,6 +228,7 @@ export class ResourceUsageSampler {
         }
       }
       const sampleNames = (deploymentHostMemoryBudgetMB() !== null || deploymentHostPidBudget() !== null) && actualRunningNames ? actualRunningNames : runningNames;
+      const residentSampleStartedAt = Date.now();
       const statsByContainer = sampleNames.size
         ? await this.containerService.getServiceStats([...sampleNames])
         : new Map<string, ContainerStatLite>();
@@ -240,6 +241,10 @@ export class ResourceUsageSampler {
           setDeploymentPhaseHostUsage(all.reduce((sum, stat) => sum + stat.memUsedBytes / 1048576, 0), nowMs, this.intervalMs * 2, pids);
         }
       }
+      // 身份来自 docker stats；不以服务状态或同名容器替代不可变 CID。
+      setDeploymentPhaseResidentUsage(new Map([...statsByContainer].flatMap(([name, stat]) =>
+        actualRunningNames?.has(name) && stat.id && Number.isFinite(stat.memUsedBytes) && stat.memUsedBytes >= 0
+          ? [[name, { containerId: stat.id, usedMB: stat.memUsedBytes / 1048576 }] as const] : [])), residentSampleStartedAt, nowMs);
       // 同一帧同时供两处用：项目汇总（下面）与按容器的历史序列。
       // 这是全宿主唯一的常驻采集点，抽屉不开也在攒，所以「关掉抽屉丢历史」不再成立。
       for (const [containerName, stat] of statsByContainer) {

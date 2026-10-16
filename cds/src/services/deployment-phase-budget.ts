@@ -6,7 +6,7 @@ import { ProjectAdmissionOrder } from './project-admission-order.js';
 import { buildLoadPressure, type BuildLoadPressure } from './build-gate.js';
 import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
-let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
+let memorySample = { mb: os.freemem() / 1048576, at: Date.now(), fromMemAvailable: false };
 let memoryRead: Promise<void> | undefined;
 let daemonMemory: { usedMB: number; pids?: number; at: number; maxAgeMs: number } | undefined;
 export function setDeploymentPhaseHostUsage(usedMB: number, at: number, maxAgeMs: number, pids?: number): void {
@@ -32,11 +32,12 @@ export function deploymentHostMemoryBudgetMB(): number | null {
 }
 function sampleHostMemoryMB(): number {
   if (process.platform === 'linux' && !memoryRead) {
+    const sampledAt = Date.now();
     memoryRead = readFile('/proc/meminfo', 'utf8').then(text => {
       const value = /(?:^|\n)MemAvailable:\s+(\d+) kB/.exec(text);
       if (!value) throw new Error('memory sample unavailable');
-      memorySample = { mb: Number(value[1]) / 1024, at: Date.now() };
-    }).catch(() => { memorySample = { mb: os.freemem() / 1048576, at: Date.now() }; })
+      memorySample = { mb: Number(value[1]) / 1024, at: sampledAt, fromMemAvailable: true };
+    }).catch(() => { memorySample = { mb: os.freemem() / 1048576, at: Date.now(), fromMemAvailable: false }; })
       .finally(() => { memoryRead = undefined; });
   }
   const physical = process.platform !== 'linux' ? os.freemem() / 1048576 : Date.now() - memorySample.at > 5000 ? 0 : memorySample.mb;
@@ -45,6 +46,31 @@ function sampleHostMemoryMB(): number {
   if (!budget || !daemonMemory || Date.now() - daemonMemory.at > daemonMemory.maxAgeMs) return 0;
   return Math.max(0, Math.min(physical, budget - daemonMemory.usedMB));
 }
+export interface ResidentMemorySample { containerId: string; usedMB: number }
+export interface ResidentMemorySnapshot {
+  sampledAt: number;
+  completedAt: number;
+  samples: ReadonlyMap<string, ResidentMemorySample>;
+}
+let residentMemory: ResidentMemorySnapshot | undefined;
+/** 只保存已有 Docker 只读采样；不释放预约，不启动额外盘点。 */
+export function setDeploymentPhaseResidentUsage(samples: ReadonlyMap<string, ResidentMemorySample>, sampledAt: number, completedAt: number): void {
+  residentMemory = { samples: new Map(samples), sampledAt, completedAt };
+}
+function accountedResidentMemory(): ResidentMemorySnapshot | null {
+  const now = Date.now();
+  // 必须是同宿主 Linux 真实余量，且物理采样晚于容器采样；自定义 provider 不混用口径。
+  if (!memorySample.fromMemAvailable || process.platform !== 'linux' || memoryProvider !== sampleHostMemoryMB || !residentMemory
+    || !Number.isFinite(residentMemory.sampledAt) || !Number.isFinite(residentMemory.completedAt)
+    || residentMemory.completedAt < residentMemory.sampledAt || residentMemory.completedAt > now
+    || now - residentMemory.sampledAt < 0 || now - residentMemory.sampledAt > 5000
+    || memorySample.at > now || memorySample.at < residentMemory.completedAt || now - memorySample.at > 5000) return null;
+  const budget = deploymentHostMemoryBudgetMB();
+  if (budget !== null && (!budget || !daemonMemory || daemonMemory.at < residentMemory.completedAt
+    || daemonMemory.at > now || now - daemonMemory.at > daemonMemory.maxAgeMs)) return null;
+  return residentMemory;
+}
+
 let memoryProvider = sampleHostMemoryMB;
 export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null): void {
   memoryProvider = provider || sampleHostMemoryMB;
@@ -67,18 +93,20 @@ export class DeploymentPhaseBudget {
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
   private readonly projectOrders = new Map<DeploymentPhase, ProjectAdmissionOrder>();
   private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner;
-    startup?: { check?: () => void }; recovered?: boolean }>();
+    startup?: { check?: () => void }; recovered?: boolean; servingContainerId?: string }>();
   private timer?: NodeJS.Timeout;
   private readonly limits: Record<DeploymentPhase, number>;
   constructor(private readonly availableMemoryMB: () => number = () => memoryProvider(),
     limits: Partial<Record<DeploymentPhase, number>> = {},
     private readonly headroomMB = 1024, private readonly availablePids = sampleHostAvailablePids,
-    private readonly hostLoad: () => BuildLoadPressure = buildLoadPressure) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
+    private readonly hostLoad: () => BuildLoadPressure = buildLoadPressure,
+    private readonly residentUsage: () => ResidentMemorySnapshot | null = accountedResidentMemory) { this.limits = { pull: 3, start: 3, ready: 3, cleanup: 1, terminal: 1, ...limits }; }
 
   snapshot() {
     return Object.fromEntries((['pull', 'start', 'ready', 'cleanup', 'terminal'] as const).map(phase => [phase, {
       limit: this.limits[phase], active: [...(this.active.get(phase) || [])].map(request => ({ ...request.owner, memoryMB: request.memoryMB })),
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
+        ...(phase === 'start' ? { memoryAdmission: this.memoryDecision(request.memoryMB, request.reservationKey) } : {}),
         reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom'
           : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom'
           : phase === 'start' && !this.cpuAllows(request) ? 'cpu-startup-capacity' : 'phase-capacity' })),
@@ -86,10 +114,29 @@ export class DeploymentPhaseBudget {
   }
 
   releaseMemory(key: string): void { this.memoryReservations.delete(key); this.pump(); }
-  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64, recovered = false): void {
-    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner, recovered });
+  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64, recovered = false, servingContainerId?: string): void {
+    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner, recovered, servingContainerId });
   }
-  memorySnapshot() { return [...this.memoryReservations].map(([key, { memoryMB, pids, owner }]) => ({ key, memoryMB, pids, owner })); }
+  memorySnapshot() {
+    const observed = this.residentUsage();
+    return [...this.memoryReservations].map(([key, reservation]) => {
+      const { memoryMB, pids, owner } = reservation;
+      const accountedResidentMB = this.residentCredit(key, observed);
+      return { key, memoryMB, pids, owner, accountedResidentMB, chargedMemoryMB: memoryMB - accountedResidentMB };
+    });
+  }
+  private residentCredit(key: string, observed: ResidentMemorySnapshot | null): number {
+    const reservation = this.memoryReservations.get(key);
+    // 只有冷恢复的已发布旧版本可抵扣。候选容器、当前启动和未知身份仍全额预留。
+    if (!reservation?.recovered || reservation.startup || !reservation.servingContainerId
+      || !/^[a-f0-9]{64}$/.test(reservation.servingContainerId) || !observed
+      || Date.now() - observed.sampledAt < 0 || Date.now() - observed.sampledAt > 5000) return 0;
+    const sample = observed.samples.get(key);
+    if (!sample || !/^(?:[a-f0-9]{12}|[a-f0-9]{64})$/.test(sample.containerId)
+      || !reservation.servingContainerId.startsWith(sample.containerId)
+      || !Number.isFinite(sample.usedMB) || sample.usedMB < 0) return 0;
+    return Math.min(reservation.memoryMB, sample.usedMB);
+  }
 
   /** 在异步停止/失败收尾之前捕获预约身份，确认后也不能清掉同名称的新预约。 */
   captureMemoryRelease(key: string, owner?: DeploymentPhaseOwner): () => boolean {
@@ -134,10 +181,23 @@ export class DeploymentPhaseBudget {
     return { released, retained };
   }
   private memoryAllows(memoryMB: number, key?: string): boolean {
+    return this.memoryDecision(memoryMB, key).allowed;
+  }
+  private memoryDecision(memoryMB: number, key?: string) {
     const available = this.availableMemoryMB();
-    const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
-      + [...(this.active.get('start') || [])].filter(request => !request.reservationKey).reduce((sum, request) => sum + request.memoryMB, 0);
-    return Number.isFinite(available) && available >= this.headroomMB + reserved + memoryMB;
+    const observed = this.residentUsage();
+    let grossReservedMB = 0, accountedResidentMB = 0;
+    for (const [name, reservation] of this.memoryReservations) if (name !== key) {
+      grossReservedMB += reservation.memoryMB;
+      accountedResidentMB += this.residentCredit(name, observed);
+    }
+    grossReservedMB += [...(this.active.get('start') || [])].filter(request => !request.reservationKey)
+      .reduce((sum, request) => sum + request.memoryMB, 0);
+    const chargedReservedMB = grossReservedMB - accountedResidentMB;
+    const requiredMB = this.headroomMB + chargedReservedMB + memoryMB;
+    return { availableMB: Number.isFinite(available) ? available : null, grossReservedMB, accountedResidentMB,
+      chargedReservedMB, requestedMB: memoryMB, headroomMB: this.headroomMB, requiredMB,
+      allowed: Number.isFinite(available) && available >= requiredMB };
   }
   private pidsAllow(request: Request): boolean {
     const reserved = [...this.memoryReservations].reduce((sum, [key, value]) => sum + (key === request.reservationKey ? 0 : value.pids), 0)
@@ -228,7 +288,10 @@ export function restoreDeploymentMemoryReservations(branches: readonly BranchEnt
       const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
       if (incomplete) deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, hints.get(service.profileId) || 512,
-        { projectId: branch.projectId, branchId: branch.id, profileId: service.profileId }, 64, true);
+        { projectId: branch.projectId, branchId: branch.id, profileId: service.profileId }, 64, true,
+        service.status === 'error' && service.servingRuntime?.containerName === runtime.containerName
+          && service.servingRuntime.containerId === runtime.containerId
+          && service.pendingRuntime?.containerName !== runtime.containerName ? runtime.containerId : undefined);
     }
   }
 }
