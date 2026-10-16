@@ -9,10 +9,27 @@ export async function blockPublicCommunityReads(surface) {
   await surface.route('**/api/submissions/public**', route => route.abort('blockedbyclient'));
 }
 
+/** Compare the source-proven console mount; never rewrite the browser's request. */
+export function gatewayApiPolicyPath(pathname) {
+  return pathname.replace(/^\/llmgw(?=\/gw(?:\/|$))/, '');
+}
+
+/** API login stays at the configured root; production's public UI is mounted separately. */
+export function resolveGatewayUiBaseUrl(baseUrl, environment) {
+  contract(['cds', 'production'].includes(environment), '控制台入口须绑定已登记环境');
+  let api;
+  try { api = new URL(baseUrl); } catch { contract(false, '控制台缺少有效API入口'); }
+  contract(api.protocol === 'https:' && !api.username && !api.password
+    && api.pathname === '/' && !api.search && !api.hash,
+  '网关API必须使用已配置的无凭据HTTPS根入口，不能猜测其他挂载');
+  // exec_dep.sh public surface + llmgw/web runtimeBase are guarded by the same test.
+  return environment === 'production' ? `${api.origin}/llmgw` : api.origin;
+}
+
 /** Block real out-of-run background reads, without replacing them with fake success. */
 export async function blockUnscopedBackgroundReads(surface) {
   await blockPublicCommunityReads(surface);
-  await surface.route(url => url.pathname === '/gw/logical-models/usage'
+  await surface.route(url => gatewayApiPolicyPath(url.pathname) === '/gw/logical-models/usage'
     || url.pathname === '/api/dashboard/notifications', route => route.abort('blockedbyclient'));
 }
 
@@ -29,12 +46,13 @@ export async function installGatewayLogReadScope(surface, { baseUrl, requestId, 
     && !['meta', 'summary', 'timeseries', 'sessions'].includes(verifiedLog.id),
     '日志UI详情必须来自同一requestId已精确回读的真实日志', 'test/resource-scope');
   const detailPath = `/gw/logs/${encodeURIComponent(verifiedLog.id)}`;
-  await surface.route(url => /^\/gw\/logs(?:\/|$)/.test(url.pathname), async route => {
+  await surface.route(url => /^\/gw\/logs(?:\/|$)/.test(gatewayApiPolicyPath(url.pathname)), async route => {
     const request = route.request();
     const url = new URL(request.url());
+    const policyPath = gatewayApiPolicyPath(url.pathname);
     const ids = url.searchParams.getAll('requestId');
-    const exactList = url.pathname === '/gw/logs' && ids.length === 1 && ids[0] === requestId;
-    const verifiedDetail = url.pathname === detailPath && url.search === '';
+    const exactList = policyPath === '/gw/logs' && ids.length === 1 && ids[0] === requestId;
+    const verifiedDetail = policyPath === detailPath && url.search === '';
     if (request.method() === 'GET' && url.origin === gateway.origin && (exactList || verifiedDetail)) {
       await route.continue();
     } else {

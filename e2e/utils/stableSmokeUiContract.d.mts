@@ -21,6 +21,8 @@ export interface GatewayLogicalModelAuditIdentity {
 
 export function validateMapLoginSnapshot(snapshot: MapLoginSnapshot): { authenticationMethods: string[] };
 export function blockPublicCommunityReads(surface: Page | BrowserContext): Promise<void>;
+export function gatewayApiPolicyPath(pathname: string): string;
+export function resolveGatewayUiBaseUrl(baseUrl: string, environment: string): string;
 export function blockUnscopedBackgroundReads(surface: Page | BrowserContext): Promise<void>;
 export function installGatewayLogReadScope(surface: Page | BrowserContext, options: {
   baseUrl: string; requestId: string; verifiedLog: { id: string; requestId: string };
