@@ -26046,7 +26046,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       warnings.push({ level: 'warning', code: 'load-high', message: `主机负载偏高（loadPercent ${loadPercent}%），临近过载。` });
     }
     if (runningContainers > cores * 2) {
-      warnings.push({ level: 'warning', code: 'too-many-containers', message: `运行容器 ${runningContainers} 个，超过核数 2 倍（${cores * 2}）：CPU 严重争抢，构建变慢。` });
+      warnings.push({ level: 'warning', code: 'too-many-containers', message: `已登记执行器报告的运行容器较多（${runningContainers} 个），请结合各节点的 CPU 负载、内存和项目资源用量检查容量。` });
     }
     // 2026-09-08 宿主过载复盘：master 自己有没有被饿、构建准入有没有被负载收紧，
     // 与 /healthz pressure 同口径（判据常量同源）。
