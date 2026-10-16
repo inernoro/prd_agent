@@ -9,14 +9,14 @@ import { buildWidgetScript } from '../src/widget-script.js';
 
 declare global {
   interface Window {
-    widgetFixture: { calls: string[]; unknown: string[]; status: string; emit: (status: string) => void };
+    widgetFixture: { metrics?: { styleReads: number; selectorQueries: number }; calls: string[]; unknown: string[]; status: string; emit: (status: string) => void };
   }
 }
 
 const output = process.env.CDS_WIDGET_FIXTURE_OUTPUT || mkdtempSync(path.join(tmpdir(), 'cds-widget-mobile-'));
 mkdirSync(output, { recursive: true });
 const browser = await chromium.launch({ headless: true, executablePath: process.env.CDS_CHROMIUM_PATH || undefined });
-const results: { name: string; status: string; detail?: string; geometry?: Record<string, unknown> }[] = [];
+const results: { name: string; status: string; detail?: string; metrics?: { styleReads: number; selectorQueries: number }; geometry?: Record<string, unknown> }[] = [];
 const externalRequests: string[] = [];
 const pageErrors: string[] = [];
 const script = buildWidgetScript('fixture-branch', 'fixture/desktop-and-mobile-drawer-actions', 'a'.repeat(40))
@@ -110,7 +110,7 @@ async function check(name: string, run: (page: Page) => Promise<void>, viewport?
     assert.equal(measured.visible, true, '保留可见徽标');
     assert.equal(measured.hitTestable, measured.placement !== 'blocked', '只有安全落位的徽标接收指针');
     if (measured.placement === 'clear') assert.equal(measured.safe, true, '避让成功必须以落位后的真实安全区为准');
-    results.push({ name, status: 'PASS', geometry: measured });
+    results.push({ name, status: 'PASS', geometry: measured, metrics: await page.evaluate(() => window.widgetFixture.metrics) });
   } catch (error) {
     results.push({ name, status: 'FAIL', detail: String(error), geometry: await geometry(page) });
   } finally {
@@ -280,6 +280,66 @@ try {
     assert.equal((await geometry(page)).placement, 'clear');
     await page.locator('#cds-widget button[data-action="toggle"]').click();
     await page.getByRole('button', { name: '关闭 CDS 诊断面板', exact: true }).click();
+    await settle(page);
+  }, { width: 1440, height: 900 });
+  await check('desktop-interior-slot', async page => {
+    await page.evaluate(() => {
+      for (const style of ['top:0;left:0;right:0;height:80px', 'bottom:0;left:0;right:0;height:80px', 'left:0;top:80px;bottom:80px;width:160px', 'right:0;top:80px;bottom:80px;width:160px']) {
+        const control = document.createElement('button'); control.textContent = '边缘工具栏';
+        control.style.cssText = `position:fixed;${style}`; document.body.append(control);
+      }
+    });
+    await settle(page);
+    const placed = await geometry(page);
+    assert.equal(placed.placement, 'clear', '四边占满但内部有空间时不应禁用工具');
+    assert.ok(placed.x >= 160 && placed.x + placed.width <= 1280 && placed.y >= 80 && placed.y + placed.height <= 820);
+    await page.locator('#cds-widget button[data-action="toggle"]').click();
+    await page.getByRole('button', { name: '关闭 CDS 诊断面板', exact: true }).click();
+    await settle(page);
+  }, { width: 1440, height: 900 });
+  await check('desktop-scroll-visible-index', async page => {
+    await page.evaluate(() => {
+      const list = document.createElement('section');
+      list.style.cssText = 'margin-top:1000px';
+      for (let i = 0; i < 2000; i++) {
+        const row = document.createElement('div'); row.style.height = '60px';
+        const button = document.createElement('button'); button.textContent = `列表操作 ${i}`;
+        button.style.cssText = 'margin-left:1000px;width:300px;height:40px';
+        button.onclick = () => { button.dataset.clicked = 'yes'; }; row.append(button); list.append(row);
+      }
+      document.body.append(list);
+    });
+    await settle(page);
+    await settle(page);
+    await page.evaluate(() => {
+      const metrics = window.widgetFixture.metrics = { styleReads: 0, selectorQueries: 0 };
+      const style = window.getComputedStyle.bind(window);
+      window.getComputedStyle = (el, pseudo) => { metrics.styleReads++; return style(el, pseudo); };
+      const query = document.querySelectorAll.bind(document);
+      document.querySelectorAll = ((selector: string) => { metrics.selectorQueries++; return query(selector); }) as typeof document.querySelectorAll;
+    });
+    for (const top of [600, 900, 1200, 1500, 1800]) {
+      await page.evaluate(top => window.scrollTo(0, top), top);
+      await settle(page);
+      await settle(page);
+    }
+    const metrics = await page.evaluate(() => window.widgetFixture.metrics!);
+    assert.equal(metrics.selectorQueries, 0, '纯滚动不应重新枚举全页控件');
+    assert.ok(metrics.styleReads < 1000, `5 次滚动只读取可见集合及其祖先样式，实测 ${metrics.styleReads}`);
+    await page.evaluate(() => { window.widgetFixture.metrics = { ...window.widgetFixture.metrics! }; });
+    const target = page.getByRole('button', { name: '列表操作 20', exact: true });
+    await target.click({ timeout: 1500 });
+    assert.equal(await target.getAttribute('data-clicked'), 'yes', '新进入视口的控件仍可正常点击');
+    // 变更可选择性属性仍应使索引失效，避免缓存永久漏掉新业务控件。
+    await page.evaluate(() => {
+      const el = document.createElement('div'); el.id = 'new-role-control';
+      el.style.cssText = 'position:fixed;inset:0'; document.body.append(el);
+    });
+    await settle(page);
+    await page.locator('#new-role-control').evaluate(el => el.setAttribute('role', 'button'));
+    await settle(page);
+    assert.equal((await geometry(page)).placement, 'blocked');
+    await page.locator('#new-role-control').evaluate(el => el.remove());
     await settle(page);
   }, { width: 1440, height: 900 });
 } finally {

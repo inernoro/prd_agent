@@ -558,12 +558,42 @@ export function buildWidgetScript(
   var widgetWasDragged=false;
   var avoidanceFrame=null;
 
-  function visibleObstacle(el){
+  var obstacleSelector='[role="status"],[role="alert"],[aria-live="polite"],[aria-live="assertive"],button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,[role="heading"][aria-level="1"]';
+  var obstacleTargetsDirty=true;
+  var visibleObstacleTargets=new Set();
+  // 浏览器维护视口交集；滚动时只遍历当前可见控件，不重扫整个后台表格。
+  var obstacleVisibilityObserver=typeof IntersectionObserver==='function'?new IntersectionObserver(function(entries){
+    var changed=false;
+    entries.forEach(function(entry){
+      if(entry.isIntersecting){
+        if(!visibleObstacleTargets.has(entry.target)){visibleObstacleTargets.add(entry.target);changed=true;}
+      }else if(visibleObstacleTargets.delete(entry.target)){changed=true;}
+    });
+    if(changed)scheduleWidgetAvoidance();
+  }):null;
+
+  function refreshObstacleTargets(){
+    if(!obstacleTargetsDirty)return;
+    obstacleTargetsDirty=false;
+    if(obstacleVisibilityObserver)obstacleVisibilityObserver.disconnect();
+    visibleObstacleTargets.clear();
+    document.querySelectorAll(obstacleSelector).forEach(function(el){
+      if(root.contains(el))return;
+      var r=el.getBoundingClientRect();
+      // 首轮同步建立索引，不等待 observer 首次回调；旧浏览器回退为原完整集合。
+      if(!obstacleVisibilityObserver||(r.right>0&&r.bottom>0&&r.left<window.innerWidth&&r.top<window.innerHeight))visibleObstacleTargets.add(el);
+      if(obstacleVisibilityObserver)obstacleVisibilityObserver.observe(el);
+    });
+  }
+
+  function visibleObstacle(el,styles){
     if(root.contains(el))return null;
     var r=el.getBoundingClientRect();
     var rect={left:Math.max(0,r.left),top:Math.max(0,r.top),right:Math.min(window.innerWidth,r.right),bottom:Math.min(window.innerHeight,r.bottom)};
+    if(rect.right<=rect.left||rect.bottom<=rect.top)return null;
     for(var node=el;node;node=node.parentElement){
-      var style=window.getComputedStyle(node);
+      var style=styles.get(node);
+      if(!style){style=window.getComputedStyle(node);styles.set(node,style);}
       if(style.display==='none'||style.visibility==='hidden'||style.contentVisibility==='hidden'||Number(style.opacity)===0)return null;
       if(node!==el){
         var clip=node.getBoundingClientRect();
@@ -578,21 +608,24 @@ export function buildWidgetScript(
     if(!root.isConnected)return;
     if(expanded){root.removeAttribute('data-cds-placement');return;}
     if(dragState)return;
-    var obstacles=[],seen=[];
+    refreshObstacleTargets();
+    var obstacles=[],seen=[],styles=new WeakMap();
     function add(el){
       if(seen.indexOf(el)!==-1)return;
       seen.push(el);
-      var rect=visibleObstacle(el);
+      var rect=visibleObstacle(el,styles);
       if(rect)obstacles.push(rect);
     }
-    document.querySelectorAll('[role="status"],[role="alert"],[aria-live="polite"],[aria-live="assertive"]').forEach(function(el){
-      if(!visibleObstacle(el))return;
-      for(var node=el;node;node=node.parentElement){
-        var position=window.getComputedStyle(node).position;
-        if(position==='fixed'||position==='sticky'){add(node);break;}
+    visibleObstacleTargets.forEach(function(el){
+      if(el.matches('[role="status"],[role="alert"],[aria-live="polite"],[aria-live="assertive"]')){
+        if(!visibleObstacle(el,styles))return;
+        for(var node=el;node;node=node.parentElement){
+          var position=window.getComputedStyle(node).position;
+          if(position==='fixed'||position==='sticky'){add(node);break;}
+        }
       }
+      if(el.matches('button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,[role="heading"][aria-level="1"]'))add(el);
     });
-    document.querySelectorAll('button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,[role="heading"][aria-level="1"]').forEach(add);
     var view=window.visualViewport,style=window.getComputedStyle(root),r=root.getBoundingClientRect();
     function inset(side){return Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-'+side))||0)+12;}
     var left=(view?view.offsetLeft:0)+inset('left'),top=(view?view.offsetTop:0)+inset('top');
@@ -601,6 +634,8 @@ export function buildWidgetScript(
     var maxX=right-r.width,maxY=bottom-r.height,midX=(left+maxX)/2,midY=(top+maxY)/2;
     // 有限候选：保留安全原位，其次同高两边、四角和四边中点，不猜某个应用的导航高度。
     var candidates=[[r.left,r.top],[left,r.top],[maxX,r.top],[left,top],[maxX,top],[left,maxY],[maxX,maxY],[left,midY],[maxX,midY],[midX,top],[midX,maxY]];
+    // 边缘被导航/工具栏占满时继续尝试内部九宫格，不能把边缘无解误报成全页无解。
+    for(var gx=1;gx<=3;gx++)for(var gy=1;gy<=3;gy++)candidates.push([left+(maxX-left)*gx/4,top+(maxY-top)*gy/4]);
     root.setAttribute('data-cds-placement','blocked');
     for(var i=0;i<candidates.length;i++){
       var x=candidates[i][0],y=candidates[i][1];
@@ -623,9 +658,15 @@ export function buildWidgetScript(
     avoidanceFrame=requestAnimationFrame(function(){avoidanceFrame=null;avoidSemanticOverlays();});
   }
   var avoidanceObserver=new MutationObserver(function(records){
-    if(records.some(function(record){return !root.contains(record.target);}))scheduleWidgetAvoidance();
+    var changed=false;
+    records.forEach(function(record){
+      if(root.contains(record.target))return;
+      changed=true;
+      if(record.type==='childList'||['role','aria-live','aria-level','href','type'].indexOf(record.attributeName)!==-1)obstacleTargetsDirty=true;
+    });
+    if(changed)scheduleWidgetAvoidance();
   });
-  avoidanceObserver.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['style','class','hidden','role','aria-live']});
+  avoidanceObserver.observe(document.body,{subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:['style','class','hidden','role','aria-live','aria-level','href','type']});
   document.addEventListener('scroll',scheduleWidgetAvoidance,true);
   // 抽屉位移动画结束时没有新的 DOM mutation，必须按最终几何再次避让。
   function onBusinessMotionEnd(event){
@@ -914,6 +955,7 @@ export function buildWidgetScript(
     var action=btn.getAttribute('data-action');
     if(action==='dismiss'){
       avoidanceObserver.disconnect();
+      if(obstacleVisibilityObserver)obstacleVisibilityObserver.disconnect();
       if(avoidanceFrame)cancelAnimationFrame(avoidanceFrame);
       document.removeEventListener('scroll',scheduleWidgetAvoidance,true);
       document.removeEventListener('transitionend',onBusinessMotionEnd,true);
