@@ -62,6 +62,13 @@ test('两个不同轮次同因失败才增加频次；成功和未执行不算�
   assert.equal(absent.hotspots.find(f => f.featureId === 'F19').recentFailureRuns, 2);
   assert.equal(absent.runs.at(-1).results.find(r => r.featureId === 'F19' && r.environment === 'production').status, 'not-run');
 });
+test('REG-stsmk-report-risk-001 三池保留交付等非用例历史事件，但不据此核销功能或增加事故', () => {
+  const event = { key: 'delivery:original-run', kind: 'delivery', time: '2026-10-13T08:00:00Z', reportId: 'immutable-report', outcome: 'delivered' };
+  const state = updatePools({ events: [event] }, { ...input, rows: [] }, contract);
+  assert.deepEqual(state.events, [event]);
+  assert.ok(state.hotspots.every(h => h.recentFailureRuns === 0 && !h.recent));
+  assert.ok(state.runs[0].results.every(r => r.status === 'not-run'));
+});
 test('没有verify-open的链接不进入三池，CDS通过不填正式通过', () => {
   const state = updatePools({}, { ...input, rows: [{ environment: 'cds', caseId: 'VIS-002', status: 'pass' }], archive: { reportUrl: 'https://example.test/reports?report=1' } }, contract);
   assert.equal(state.events[0].reportUrl, '');
