@@ -8,7 +8,7 @@
  *   - /__forwarder/routes      :回环 only,dump 当前路由表
  *   - /__forwarder/stats       :回环 only,dump 滑动窗口统计
  *
- * 回环判定**只看** req.socket.remoteAddress;不信任 X-Forwarded-For(因为
+ * 回环判定看 req.socket.remoteAddress 与内部 Host;不信任 X-Forwarded-For(因为
  * forwarder 自己处理的就是 X-Forwarded-For,被外网穿透即等于自洞穿)。
  */
 
@@ -17,6 +17,7 @@ import type { Request } from 'express';
 import type { ProxyHandler } from './proxy-handler.js';
 import type { RouteWatcher } from './route-watcher.js';
 import type { RouteResolverFn } from './index.js';
+import { isPrivateForwarderDiagnostic } from './preview-activity.js';
 import {
   parseHttpLogLayer,
   parseHttpRequestKindValue,
@@ -32,14 +33,6 @@ export interface DiagnosticRouterOptions {
   isLoopback?: (req: Request) => boolean;
   /** 启动时间戳(ms,默认 Date.now()),用于 uptime 计算 */
   startedAt?: number;
-}
-
-const LOOPBACK_RE = /^(127\.|::1$|::ffff:127\.)/;
-
-function defaultIsLoopback(req: Request): boolean {
-  const ip = (req.socket?.remoteAddress ?? '').toString();
-  if (!ip) return false;
-  return LOOPBACK_RE.test(ip);
 }
 
 function stringQuery(value: unknown): string | undefined {
@@ -67,7 +60,8 @@ function parseActiveFilter(query: Request['query']): HttpActiveRequestFilter {
 export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
   const r = Router();
   const startedAt = opts.startedAt ?? Date.now();
-  const isLoopback = opts.isLoopback ?? defaultIsLoopback;
+  const isLoopback = opts.isLoopback ?? isPrivateForwarderDiagnostic;
+  opts.watcher.onChange(routes => opts.proxy.reconcilePreviewActivityRoutes(routes));
 
   // healthz:任何 IP 可访问
   r.get('/__forwarder/healthz', (_req, res) => {
@@ -121,6 +115,7 @@ export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
       last60sRps: stats.last60sRps,
       errorCount: stats.errorCount,
       error503Count: stats.error503Count,
+      previewActivity: stats.previewActivity,
     });
   });
 
