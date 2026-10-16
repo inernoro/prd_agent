@@ -223,3 +223,14 @@ Healthy → Degraded 排。补的时候两条一起做。
 - 共享的模型清单与尺寸联动：`prd-admin/src/lib/visualModelSizes.ts`、`prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts`
 - 编辑器里那份未切走的等价实现：`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx`
 - 背景生成的 run 轮询与挑池：`prd-admin/src/lib/backdropStudio.ts`
+
+### 恢复前接受编辑，再被快照覆盖（2026-10-15）
+
+真实巡检发现画板还在恢复时，矩形已经显示，随后又消失。此前只有图片上传受到保护，
+文字、形状、生成器和提交没有遵守同一就绪条件。本次收口为：当前工作区快照成功应用
+之后才允许持久化编辑或提交；失败、切换与陈旧响应不能借用旧资格。拒绝提交不能清空
+描述或草图，恢复完成后原入口立即可用，不加等待队列、不自动生成。
+
+代码级回归执行真实恢复、放置、提交和保存回调，不能替代公网保存、刷新和触控证据。
+正式环境没有因本 PR 自动发布。已启动任务的跨页生命周期、移动端 CDS 浮层遮挡以及
+历史已丢失编辑的恢复不在本包范围，须分别保留其原有跟踪与验收结论。
