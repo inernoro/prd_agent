@@ -60,7 +60,12 @@ export class PreviewActivityCollector {
     const previous = branch.markers.find(item => item.fingerprint === fingerprint);
     if (previous) previous.at = Math.max(previous.at, at);
     else if (branch.markers.length < MAX_MARKERS_PER_BRANCH) branch.markers.push({ fingerprint, at });
-    else branch.markerOverflowAt = at;
+    else {
+      // 原 master 只排除一个本代指纹；最近两个不同指纹已保住最大非探针时间。
+      // 原容量八项保留最近观察，不能因公开 marker 更换制造全局覆盖丢失。
+      const oldest = branch.markers.reduce((left, right) => right.at < left.at ? right : left);
+      if (at >= oldest.at) branch.markers[branch.markers.indexOf(oldest)] = { fingerprint, at };
+    }
   }
 
   /** 只由可信路由表更新调用；读取失败、未知路由或时间到期都不是退出证明。 */

@@ -144,18 +144,75 @@ describe('forwarder活动收据的有限资格与恢复', () => {
     expect(isTrustedProbeFingerprint(createHash('sha256').update('a'.repeat(48)).digest('hex'))).toBe(false);
   });
 
-  it('分支或指纹容量超过硬界限明确unknown，而不是悄悄称覆盖完整', () => {
+  it('分支容量超过硬界限明确unknown，而不是悄悄称覆盖完整', () => {
     const at = 1_790_000_000_000;
     const collector = new PreviewActivityCollector(() => at);
     for (let i = 0; i < 1025; i++) collector.record(`branch-${i}`, {});
     expect(collector.snapshot().branches).toHaveLength(1024);
     expect(resolvePreviewActivity(collector.snapshot(), at, at - 1, isTrustedProbeFingerprint).unknown).toBe(true);
-    const markers = new PreviewActivityCollector(() => at);
-    for (let i = 0; i < 9; i++) markers.record('file', { [PROBE_MARKER_HEADER]: i.toString(16).padStart(48, '0') });
-    expect(markers.snapshot().branches[0].markers).toHaveLength(8);
-    expect(resolvePreviewActivity(markers.snapshot(), at, at - 1, isTrustedProbeFingerprint).unknown).toBe(true);
-    expect(resolvePreviewActivity(markers.snapshot(), at, at - 1, isTrustedProbeFingerprint, true).unknown).toBe(true);
-    expect(resolvePreviewActivity(markers.snapshot(), at, at + 1, isTrustedProbeFingerprint, true))
+  });
+
+  it('九个不同marker保留最近八个，排除当前真probe后仍得到原始最新用户时间', () => {
+    let at = 1_790_000_000_000;
+    const startedAt = at, collector = new PreviewActivityCollector(() => at);
+    const tokens = Array.from({ length: 9 }, (_, index) => index.toString(16).padStart(48, '0'));
+    const fingerprint = (token: string) => createHash('sha256').update(token).digest('hex');
+    for (const token of tokens) { at++; collector.record('file', { [PROBE_MARKER_HEADER]: token }); }
+    expect(collector.snapshot().branches[0].markers.map(item => item.fingerprint).sort())
+      .toEqual(tokens.slice(1).map(fingerprint).sort());
+    const userAt = at;
+    at += 1000; collector.record('file', probeRequestHeaders());
+    const snapshot = collector.snapshot();
+    expect(snapshot.branches[0].markers).toHaveLength(8);
+    expect(snapshot.branches[0].markerOverflowAt).toBeUndefined();
+    expect(resolvePreviewActivity(snapshot, at, startedAt, isTrustedProbeFingerprint))
+      .toEqual({ observations: [{ branchId: 'file', at: userAt }], unknown: false });
+  });
+
+  it('摘要保留重复marker的最大时间，迟到旧观察和同时间新指纹不丢最新非探针观察', () => {
+    let at = 1_790_000_000_000;
+    const startedAt = at, collector = new PreviewActivityCollector(() => at);
+    const token = (index: number) => index.toString(16).padStart(48, '0');
+    for (let index = 0; index < 9; index++) { at++; collector.record('file', { [PROBE_MARKER_HEADER]: token(index) }); }
+    at += 100; collector.record('file', { [PROBE_MARKER_HEADER]: token(8) });
+    const latest = at;
+    at = startedAt + 1; collector.record('file', { [PROBE_MARKER_HEADER]: token(8) });
+    collector.record('file', { [PROBE_MARKER_HEADER]: token(0) });
+    at = latest; collector.record('file', { [PROBE_MARKER_HEADER]: token(9) });
+    at += 1000;
+    expect(collector.snapshot().branches[0].markers).toHaveLength(8);
+    expect(resolvePreviewActivity(collector.snapshot(), at, startedAt, isTrustedProbeFingerprint))
+      .toEqual({ observations: [{ branchId: 'file', at: latest }], unknown: false });
+  });
+
+  it('九代探针在独立forwarder中有界更换，原历史宽限结束后仍可按旧用户时间降温', async () => {
+    const f = fixture(); let observedAt = f.now() - 9000;
+    const collector = new PreviewActivityCollector(() => observedAt);
+    for (let index = 0; index < 8; index++) {
+      observedAt = f.now() - 9000 + index * 1000;
+      collector.record('file', { [PROBE_MARKER_HEADER]: index.toString(16).padStart(48, '0') });
+    }
+    observedAt = f.now(); collector.record('file', probeRequestHeaders());
+    f.scheduler.setPreviewActivitySource(async () => collector.snapshot(), isTrustedProbeFingerprint, f.now() - 500);
+    const original = f.state.getBranch('file')!.lastAccessedAt;
+    await f.scheduler.tick();
+    expect(f.cooled).toEqual([]);
+    expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('unknown');
+    f.advance(60_001); observedAt = f.now(); collector.record('file', probeRequestHeaders());
+    await f.scheduler.tick();
+    expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('ready');
+    expect(f.cooled).toEqual(['file']);
+    expect(f.state.getBranch('file')!.lastAccessedAt).toBe(original);
+  });
+
+  it('旧收据的markerOverflowAt仍是未知，不能用新摘要假装补回历史证据', () => {
+    const at = 1_790_000_000_000;
+    const collector = new PreviewActivityCollector(() => at);
+    collector.record('file', probeRequestHeaders());
+    const legacy = collector.snapshot(); legacy.branches[0].markerOverflowAt = at;
+    expect(resolvePreviewActivity(legacy, at, at - 1, isTrustedProbeFingerprint).unknown).toBe(true);
+    expect(resolvePreviewActivity(legacy, at, at - 1, isTrustedProbeFingerprint, true).unknown).toBe(true);
+    expect(resolvePreviewActivity(legacy, at, at + 1, isTrustedProbeFingerprint, true))
       .toEqual({ observations: [], unknown: false });
   });
 
