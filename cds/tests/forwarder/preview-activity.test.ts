@@ -131,6 +131,35 @@ describe('真实forwarder访问到master调度时钟', () => {
     expect(f.cooled).toEqual(['quiet']);
   });
 
+  it('九个公开marker经真实HTTP收据不阻断其他分支调度，真probe仍不续用户时间', async () => {
+    const f = await fixture();
+    const markers = Array.from({ length: 10 }, (_, index) => index.toString(16).padStart(48, '0'))
+      .filter(marker => marker !== f.marker).slice(0, 9);
+    for (const marker of markers) {
+      expect((await f.access('/api/version', { [PROBE_MARKER_HEADER]: marker, 'x-cds-poll': 'true' })).status).toBe(200);
+    }
+    const branch = () => f.proxy.getStats().previewActivity.branches.find(item => item.branchId === 'file')!;
+    const observedAt = () => Math.max(branch().userAt ?? 0, ...branch().markers.map(item => item.at));
+    const originalUserAt = observedAt();
+    await f.scheduler.tick();
+    expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('ready');
+    expect(f.cooled).toEqual(['quiet']);
+    expect(Date.parse(f.state.getBranch('file')!.lastAccessedAt!)).toBe(originalUserAt);
+    expect(branch().markers).toHaveLength(8);
+    expect(branch().markerOverflowAt).toBeUndefined();
+
+    await f.access('/api/document-store/stores');
+    await f.access('/api/version', { [PROBE_MARKER_HEADER]: markers[8] });
+    const latestUserAt = observedAt();
+    await f.access('/api/version', f.headers);
+    await f.scheduler.tick();
+    expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('ready');
+    expect(f.cooled).toEqual(['quiet']);
+    expect(Date.parse(f.state.getBranch('file')!.lastAccessedAt!)).toBe(latestUserAt);
+    expect(f.arrivals.every(headers => headers[PROBE_MARKER_HEADER] === undefined)).toBe(true);
+    expect(JSON.stringify(f.proxy.getStats()).includes(f.marker)).toBe(false);
+  });
+
   it.each(['a'.repeat(48), '不是合法探针令牌'])('伪造或畸形probe令牌仍按真实用户访问记账：%#', async marker => {
     const f = await fixture();
     await f.access('/api/document-store/stores', { [PROBE_MARKER_HEADER]: marker.replace(/[^\x20-\x7e]/g, 'x') });

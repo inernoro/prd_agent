@@ -279,7 +279,8 @@ export class SchedulerService {
     const lastPersist = this.lastPersistedTouch.get(slug) || 0;
     if (now - lastPersist >= TOUCH_PERSIST_THROTTLE_MS) {
       this.lastPersistedTouch.set(slug, now);
-      this.stateService.save();
+      // 访问只修改该分支时间戳；既有其他脏范围仍由 backing store 合并保留。
+      this.stateService.save([{ kind: 'branches', id: slug }]);
     }
   }
 
