@@ -939,6 +939,39 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     }));
   });
 
+  it('treats character-length wording as one measured unit without weakening source binding', () => {
+    const source = '命名规则：使用小写字母和连字符，不使用下划线、中文或特殊字符，描述简洁不超过 50 个字符。';
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>分支命名 feature、bugfix、hotfix / 类型前缀 + 简短描述 ≤50 字符。</p></body></html>',
+      source,
+    )).not.toThrow();
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>分支命名采用类型前缀与简短描述，最多 50 字。</p></body></html>',
+      source,
+    )).not.toThrow();
+
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>摘要限制为 50 字。</p></body></html>',
+      '仓库最多保留 50 个文件。',
+    )).toThrowError(/unsupported measured claim/);
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>分支名称上限：60 字。</p></body></html>',
+      '分支名称上限：50 字符。',
+    )).toThrowError(/unsupported measured claim/);
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>提交说明须控制在 50 字。</p></body></html>',
+      '分支名称上限：50 字符。',
+    )).toThrowError(/unresolved source context/);
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>提交说明上限：50 字。</p></body></html>',
+      '分支名称上限：50 字符，提交说明上限：70 字符。',
+    )).toThrowError(/unresolved source context/);
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>提交说明上限：50 字。</p></body></html>',
+      '仓库最多保留 50 个文件，提交说明上限：70 字符。',
+    )).toThrowError(/unsupported measured claim/);
+  });
+
   it.each(['3项', '3项项目', '3个项目', '12人'])(
     'still rejects a real unsupported measured claim after Chinese noun boundary handling: %s',
     (claim) => {

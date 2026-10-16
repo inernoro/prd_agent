@@ -587,46 +587,70 @@ function measuredClaimContexts(text: string): MeasuredClaimContext[] {
     /(?<![\d:：])(?:[01]?\d|2[0-3])[:：][0-5]\d(?!\d|[:：]\d)/g,
     (clock) => clock.replace(/\d/g, ' '),
   );
-  for (const segment of quantityText.split(/[\r\n。！？!?；;，,：:]+/)) {
-    const segmentClaims: Array<MeasuredClaimContext & { offset: number; patternOrder: number }> = [];
+  for (const sentence of quantityText.split(/[\r\n。！？!?；;]+/)) {
     const patterns = [
       // 「1 个月」「2 个小时」是时长，与 MAP 的 HostedSiteRevisionRules 同口径，不当成「1 个（计数）」。
       { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
       { regex: /([￥¥$])\s*(\d+(?:[.,]\d+)*)/gi, numberIndex: 2, unitIndex: 1 },
+      // 字符长度是一个完整量纲。「50 个字符」「50 字符」「50 字」必须最长匹配为同一事实，
+      // 不能让通用量词先截成「50 个」或把「字符」前缀截成「50 字」。
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(?:个\s*)?(字符|字(?!节|段|体|数|符))(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
       // 中文没有通用的正则词界；量词同时可能是名词词首。没有这组窄边界时，
       // `12.16项目代号` 会被读成数量 `12.16项`。这里只排除确定的复合词，
       // `3项`、`3项项目`、`3个项目` 等真实数量仍会进入事实核对。
-      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条(?!款|例|目)|次(?!数|要)|篇(?!章)|字(?!段|体|数)|人|位(?!置)|家|项(?!目|链)|例(?!如|会)|份(?!额)|种(?!类|植)|类(?!型|目|似)|层(?!级|次)|步(?!骤|行)|章(?!节)|节(?!点|目|奏|日)|页(?!面|码))(?![A-Za-z])(?!\s*(?:月|小时))/gi, numberIndex: 1, unitIndex: 2 },
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个(?!\s*(?:字符|字(?!节|段|体|数|符)))|条(?!款|例|目)|次(?!数|要)|篇(?!章)|人|位(?!置)|家|项(?!目|链)|例(?!如|会)|份(?!额)|种(?!类|植)|类(?!型|目|似)|层(?!级|次)|步(?!骤|行)|章(?!节)|节(?!点|目|奏|日)|页(?!面|码))(?![A-Za-z])(?!\s*(?:月|小时))/gi, numberIndex: 1, unitIndex: 2 },
     ];
-    for (const [patternOrder, pattern] of patterns.entries()) {
-      for (const match of segment.matchAll(pattern.regex)) {
-        const rawNumber = match[pattern.numberIndex];
-        const parsed = Number(rawNumber.replaceAll(',', ''));
-        const number = Number.isFinite(parsed) ? String(parsed) : rawNumber;
-        const rawUnit = match[pattern.unitIndex];
-        const requiresContext = isCountUnit(rawUnit);
-        const entityKeys = extractClaimEntityKeys(segment, rawUnit);
-        const unit = normalizeClaimUnit(rawUnit, entityKeys);
-        segmentClaims.push({
-          token: `${number}|${unit}`,
-          context: normalizeClaimContext(segment),
-          requiresContext,
-          isStructural: requiresContext && isStructuralCount(segment),
-          entityKeys,
-          offset: match.index ?? 0,
-          patternOrder,
-        });
+    const sentenceClaims: Array<{
+      number: string;
+      rawUnit: string;
+      segment: string;
+      segmentOrder: number;
+      offset: number;
+      patternOrder: number;
+    }> = [];
+    for (const [segmentOrder, segment] of sentence.split(/[，,：:]+/).entries()) {
+      for (const [patternOrder, pattern] of patterns.entries()) {
+        for (const match of segment.matchAll(pattern.regex)) {
+          const rawNumber = match[pattern.numberIndex];
+          const parsed = Number(rawNumber.replaceAll(',', ''));
+          const number = Number.isFinite(parsed) ? String(parsed) : rawNumber;
+          const rawUnit = match[pattern.unitIndex];
+          sentenceClaims.push({
+            number,
+            rawUnit,
+            segment,
+            segmentOrder,
+            offset: match.index ?? 0,
+            patternOrder,
+          });
+        }
       }
     }
-    segmentClaims.sort((left, right) => left.offset - right.offset || left.patternOrder - right.patternOrder);
-    for (const { offset: _offset, patternOrder: _patternOrder, ...claim } of segmentClaims) claims.push(claim);
+    sentenceClaims.sort((left, right) => left.segmentOrder - right.segmentOrder
+      || left.offset - right.offset || left.patternOrder - right.patternOrder);
+    for (const claim of sentenceClaims) {
+      const isCharacterLength = claim.rawUnit === '字符' || claim.rawUnit === '字';
+      const requiresContext = isCountUnit(claim.rawUnit);
+      // 字符上限经常写在「对象：规则，长度」的同一句多个分句中。只有整句唯一的数量声明
+      // 才借用同句对象；一旦同句有另一个数量，仍按原分句绑定，避免跨对象串联。
+      const context = isCharacterLength && sentenceClaims.length === 1 ? sentence : claim.segment;
+      const entityKeys = extractClaimEntityKeys(context, claim.rawUnit);
+      const unit = normalizeClaimUnit(claim.rawUnit, entityKeys);
+      claims.push({
+        token: `${claim.number}|${unit}`,
+        context: normalizeClaimContext(context),
+        requiresContext,
+        isStructural: requiresContext && isStructuralCount(claim.segment),
+        entityKeys,
+      });
+    }
   }
   return claims;
 }
 
 const CONTROLLED_MEASURED_CLAIM_UNITS = new Set([
   '%', '分钟', '小时', '天', '周', '月', '年', '万字', 'KB', 'MB', 'GB', 'CNY', 'USD',
-  '个', '条', '次', '字', '项', '例', '份', '种', '类', '层', '步',
+  '个', '条', '次', '字', '项', '例', '份', '种', '类', '层', '步', 'CHARACTER',
   'PERSON', 'ARTICLE', 'ORGANIZATION', 'SECTION', 'PAGE', 'PROJECT', 'CUSTOMER', 'USER',
   'CONSUMER', 'READER', 'EMPLOYEE', 'CASE', 'MODULE', 'CATEGORY', 'OPERATION', 'COLUMN',
 ]);
@@ -639,7 +663,7 @@ function controlledMeasuredClaimToken(value: unknown): string | undefined {
 
 function normalizeClaimContext(value: string): string {
   return value.replace(
-    /\d+(?:[.,]\d+)*|%|％|￥|¥|\$|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB|个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页|大约|约|只需|总共|预计|可达|达到|需要|耗时|时长|total|approximately|about|around/gi,
+    /\d+(?:[.,]\d+)*|%|％|￥|¥|\$|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB|个|条|次|篇|字符|字|人|位|家|项|例|份|种|类|层|步|章|节|页|大约|约|只需|总共|预计|可达|达到|需要|耗时|时长|total|approximately|about|around/gi,
     '',
   );
 }
@@ -689,6 +713,7 @@ function normalizeClaimUnit(value: string, entityKeys: Set<string>): string {
   if (value === '％') return '%';
   if (value === '￥' || value === '¥' || value === '元' || value === '人民币') return 'CNY';
   if (value === '$' || value === '美元') return 'USD';
+  if (value === '字符' || value === '字') return 'CHARACTER';
   if (value === '人' || value === '位' || (value === '个' && ['CUSTOMER', 'USER', 'CONSUMER', 'READER', 'EMPLOYEE'].some((key) => entityKeys.has(key)))) return 'PERSON';
   if (value === '篇' || (value === '个' && entityKeys.has('ARTICLE'))) return 'ARTICLE';
   if (value === '家' || (value === '个' && entityKeys.has('ORGANIZATION'))) return 'ORGANIZATION';
@@ -699,7 +724,7 @@ function normalizeClaimUnit(value: string, entityKeys: Set<string>): string {
 }
 
 function isCountUnit(unit: string): boolean {
-  return new Set(['个', '条', '次', '篇', '字', '人', '位', '家', '项', '例', '份', '种', '类', '层', '步', '章', '节', '页']).has(unit);
+  return new Set(['个', '条', '次', '篇', '字符', '字', '人', '位', '家', '项', '例', '份', '种', '类', '层', '步', '章', '节', '页']).has(unit);
 }
 
 function isStructuralCount(segment: string): boolean {
