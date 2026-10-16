@@ -1,0 +1,51 @@
+{
+  "date": "2026-10-15",
+  "scope": "专用普通账号与同一个授权案例，桌面 CLI 和既有管理员页面；L0专项验收",
+  "functionalCommit": "234841913ccf8eeaf27f3bc08a60b49f2a976ba9",
+  "cliVersion": "0.16.12",
+  "ci": {
+    "url": "https://github.com/inernoro/prd_agent/actions/runs/38734893506",
+    "cdsTestsPassed": 10005,
+    "cdsTestsSkipped": 11,
+    "conclusion": "success"
+  },
+  "assertions": {
+    "at": "2026-10-15T12:43:45.824487+00:00",
+    "projectId": "8dbfa9eb0ea6",
+    "accountRestoredSameCommand": true,
+    "wholeProjectGrantRestoredSameCommand": true,
+    "combinedLossRecoveredSameProject": true,
+    "noAnonymousOrBootstrapRequest": true,
+    "noIssuanceWhileBlocked": true,
+    "onlyOneIssuanceAfterCombinedRestore": true,
+    "originalRevokedKeyStillDenied": true,
+    "twoFreshProcessesReuseWithoutApproval": true,
+    "credentials0600AndGitIgnored": true,
+    "noSecretsInEvidence": true,
+    "initialProjectKeyCount": 6,
+    "finalProjectKeyCount": 7,
+    "projectRequestCountUnchanged": 4,
+    "passed": true
+  },
+  "recording": {
+    "seconds": 35.6,
+    "frames": 12,
+    "segments": 11,
+    "sha256": "761dda290013cad73e25437b80e4a11d4d3a415efb759568451c07209b5866ce",
+    "kind": "真实浏览器采样实录；按实操顺序保留状态、压缩等待并适当停帧，没有界面重绘或虚构操作，无音轨；字幕解释与CLI/API佐证相互对应",
+    "functionalCommit": "234841913ccf8eeaf27f3bc08a60b49f2a976ba9"
+  },
+  "project": {
+    "id": "8dbfa9eb0ea6",
+    "github": "https://github.com/inernoro/cds-onboarding-receipt-lab",
+    "cds": "https://cds.miduo.org/branches/8dbfa9eb0ea6",
+    "relationship": "独立案例仓库，仅测授权；CDS平台和教程位于prd_agent，未新建案例项目或部署案例应用"
+  },
+  "boundaries": [
+    "首次账号开通、整份连接与用户身份同时丢失未覆盖",
+    "历史匿名凭据不按显示名自动认领账号",
+    "独立机器主体按原管理入口恢复，本次实录只演练绑定普通账号",
+    "移动触控、不兼容数据迁移和多服务协调回滚未覆盖"
+  ],
+  "noNewcomerSteps": true
+}

@@ -6205,6 +6205,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
           : data.targetId,
         targetId: data.targetId,
+        urgency: data.urgency,
         kind: classifyAlert(type, data.source),
         businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         projectId: data.projectId,

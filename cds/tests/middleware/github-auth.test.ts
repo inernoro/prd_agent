@@ -30,6 +30,23 @@ function apiReq(headers: Record<string, string> = {}): Request {
 }
 
 describe('github auth middleware — agent key coexistence', () => {
+  it('shares method-scoped recovery routes without opening approval or project operations', async () => {
+    const authService = { validateSession: vi.fn(async () => null) } as any;
+    const resolveAgentKey = vi.fn(() => null);
+    const mw = createGithubAuthMiddleware({ authService, resolveAgentKey,
+      isPublicRequest: req => req.method === 'GET' && req.path === '/api/projects/p/access-status' });
+    for (const [method, path, allowed] of [
+      ['GET', '/api/projects/p/access-status', true],
+      ['POST', '/api/projects/p/access-status', false],
+      ['GET', '/api/projects/p', false],
+      ['POST', '/api/access-requests/r/approve', false],
+    ] as const) {
+      const next = vi.fn(); const res = mockRes();
+      await mw({ ...apiReq(), method, path } as Request, res, next);
+      expect(next.mock.calls.length).toBe(allowed ? 1 : 0);
+      expect(res.statusCode).toBe(allowed ? 0 : 401);
+    }
+  });
   it('accepts a valid agent key when there is no session', async () => {
     const authService = { validateSession: vi.fn(async () => null) } as any;
     const resolveAgentKey = vi.fn(() => ({ id: 'projkey:k1' }));

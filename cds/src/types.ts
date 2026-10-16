@@ -2376,6 +2376,8 @@ export interface CdsState {
    * 标记 rejected。与 pendingImports 平级放顶层,审批盒一次列出所有项目的待批申请。
    */
   accessRequests?: AccessRequest[];
+  /** 批准式设备接入/全失联恢复；凭据交付信封由发起方票据加密。 */
+  identityConnections?: IdentityConnection[];
   /**
    * FU-04 — worktree directory layout version.
    *
@@ -4239,6 +4241,9 @@ export interface Project {
 export interface AgentKey {
   /** Random 8-hex id, used for revocation by keyId. */
   id: string;
+  /** 明确人工核对的历史凭据归属审计，不按名称推断。 */
+  claimedAt?: string;
+  claimedBy?: string;
   /** Human-readable label, e.g. "签发于 2026-04-18 10:32" or user-supplied. */
   label: string;
   /** sha256 hex of the plaintext key (`cdsp_<slug>_<base64url suffix>`). */
@@ -4285,6 +4290,26 @@ export interface AgentKey {
  * 批准时把全权项目 AgentKey 的**明文**临时挂在 issuedKeyPlaintext 上,发起方凭
  * pollToken 轮询取走一次;取走后明文清空、deliveredAt 落时间戳(一次性交付)。
  */
+export interface IdentityConnection {
+  id: string;
+  repository: string;
+  projectHint?: string;
+  agentName: string;
+  pollTokenHash: string;
+  status: 'pending' | 'approved' | 'delivered' | 'rejected';
+  createdAt: string;
+  expiresAt: string;
+  projectId?: string;
+  userId?: string;
+  principalId?: string;
+  decidedBy?: string;
+  decidedAt?: string;
+  userCredentialId?: string;
+  projectCredentialId?: string;
+  /** AES-GCM；只有持有pollToken的发起方请求时才能解封。 */
+  envelope?: { iv: string; tag: string; ciphertext: string };
+}
+
 export interface AccessRequest {
   /** Random 12-hex id. */
   id: string;
@@ -4401,6 +4426,8 @@ export interface UserCredential {
   /** `uc_` + 12 hex */
   id: string;
   principalId: string;
+  /** 设备交接只恢复当前项目；缺省保留旧用户凭据行为。 */
+  projectIds?: string[];
   /** sha256(明文 `cdsu_<suffix>`) */
   hash: string;
   label?: string;

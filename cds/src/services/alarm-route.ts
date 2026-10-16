@@ -138,6 +138,8 @@ export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | '
 
 /** 一条要发出去的事。已经过分类，协议层只认它，不认 uptime 的原始事件。 */
 export interface AlarmEvent {
+  /** 服务端根据已确认的生产可用性故障判定；不读取标题或推送音效。 */
+  urgency?: 'urgent' | 'normal';
   businessName?: string;
   correlationKey?: string;
   recoveryConfirmed?: boolean;

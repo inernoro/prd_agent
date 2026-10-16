@@ -119,13 +119,15 @@ export function createGithubAuthMiddleware(deps: {
   cookieSecure?: boolean;
   /** 由前置专用能力门禁验证；不授予用户/机器身份或通用内部权限。 */
   isPendingReplay?: (req: Request) => boolean;
+  /** 与其他认证模式共用的接入白名单；路由仍核对原凭据或一次性轮询票据。 */
+  isPublicRequest?: (req: Request) => boolean;
 }) {
   const { authService, resolveAgentKey, isPendingReplay, cookieSecure = false } = deps;
 
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
     // render assets before the user is authenticated.
-    if (isPublicPath(req.path)) {
+    if (isPublicPath(req.path) || deps.isPublicRequest?.(req)) {
       next();
       return;
     }
