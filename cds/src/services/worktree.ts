@@ -47,6 +47,8 @@ export class DeploymentSourcePreparationError extends Error {
   }
 }
 
+const deploymentWorktreeRecoveries = new Map<string, Promise<Awaited<ReturnType<IShellExecutor['exec']>>>>();
+
 /**
  * WorktreeService — thin wrapper around `git worktree` for building
  * isolated checkouts of a single repository.
@@ -321,6 +323,34 @@ export class WorktreeService {
   ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
     const usable = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
     if (usable.exitCode === 0 && /^[0-9a-f]{7,40}$/i.test(usable.stdout.trim())) return usable;
+    // 仅合并同一实际冷路径的恢复；外层活动租约继续保护回收与独立源码准备。
+    let current = path.resolve(targetDir), key: string;
+    const missing: string[] = [];
+    for (;;) {
+      try { key = path.join(await fs.promises.realpath(current), ...missing); break; }
+      catch (error) {
+        const parent = path.dirname(current);
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === current) {
+          throw new DeploymentSourcePreparationError('deployment-worktree-unavailable', '部署工作树不可访问，请检查目录权限后重试');
+        }
+        missing.unshift(path.basename(current)); current = parent;
+      }
+    }
+    const pending = deploymentWorktreeRecoveries.get(key);
+    if (pending) return pending;
+    const recovery = this.recoverDeploymentWorktree(repoRoot, branch, targetDir);
+    deploymentWorktreeRecoveries.set(key, recovery);
+    try { return await recovery; }
+    finally { if (deploymentWorktreeRecoveries.get(key) === recovery) deploymentWorktreeRecoveries.delete(key); }
+  }
+
+  private async recoverDeploymentWorktree(
+    repoRoot: string,
+    branch: string,
+    targetDir: string,
+  ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+    const usable = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
+    if (usable.exitCode === 0 && /^[0-9a-f]{7,40}$/i.test(usable.stdout.trim())) return usable;
 
     let targetExists = true;
     try {
@@ -363,20 +393,20 @@ export class WorktreeService {
           }
         } catch { /* 无法证明精确归属或安全移除时，保留原对象并按陌生目录拒绝。 */ }
       }
-      if (!registered.has(path.resolve(targetDir)) && !removedLegacyAlias) {
+      if (!removedLegacyAlias) {
         throw new DeploymentSourcePreparationError(
           'deployment-worktree-unavailable',
-          '部署工作树不可用，且该目录不属于当前仓库的受管工作树，已拒绝自动清理',
+          '部署工作树已存在但不可用，已保留原目录，请检查并修复后重试',
         );
       }
     }
 
     try {
       await this.createManagedWorktree(repoRoot, branch, targetDir);
-    } catch (error) {
+    } catch {
       throw new DeploymentSourcePreparationError(
         'deployment-worktree-recovery-failed',
-        `部署工作树恢复失败: ${(error as Error).message}`,
+        '部署工作树暂时无法恢复，请检查仓库访问与存储状态后重试',
       );
     }
 

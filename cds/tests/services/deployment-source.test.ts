@@ -42,8 +42,9 @@ describe('真实Git部署源码隔离', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('LRU回收分支工作树后从仓库根重建并继续准备部署源码', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-source-cold-'));
+  it.each(['missing-worktree', 'missing-git', 'corrupt-git'] as const)(
+    'LRU冷恢复仅重建缺失工作树并保留现存登记目录：%s', async scenario => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cds-source-cold-')));
     const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
@@ -63,11 +64,25 @@ describe('真实Git部署源码隔离', () => {
       const sha = git(['rev-parse', 'HEAD'], repo);
       const current = path.join(root, 'worktrees', 'main');
       const shell = new ShellExecutor();
-      const service = new WorktreeService({ exec: (command, options) => shell.exec(command, {
+      const commands: string[] = [];
+      const service = new WorktreeService({ exec: (command, options) => { commands.push(command); return shell.exec(command, {
         ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
-      }) });
+      }); } });
       await service.create(repo, 'main', current);
 
+      if (scenario !== 'missing-worktree') {
+        const marker = path.join(current, 'marker.txt'); fs.writeFileSync(marker, '必须保留的挂载源码');
+        fs.unlinkSync(path.join(current, '.git'));
+        if (scenario === 'corrupt-git') fs.writeFileSync(path.join(current, '.git'), '损坏的登记文件');
+        expect(git(['worktree', 'list', '--porcelain'], repo)).toContain(`worktree ${fs.realpathSync(current)}\n`);
+        commands.length = 0;
+        const failure = await service.prepareDeploymentSource(repo, 'main', current, sha).then(() => undefined, error => error);
+        expect(fs.readFileSync(marker, 'utf8')).toBe('必须保留的挂载源码');
+        expect(failure).toMatchObject({ code: 'deployment-worktree-unavailable' });
+        expect(failure.message).not.toContain(current);
+        expect(commands.some(command => /^(rm -rf|git worktree (add|prune))/.test(command))).toBe(false);
+        return;
+      }
       // 模拟 LRU 冷停：目录已被回收，Git 仍可能保留陈旧登记。
       fs.rmSync(current, { recursive: true, force: true });
       const prepared = await service.prepareDeploymentSource(repo, 'main', current, sha);
