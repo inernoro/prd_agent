@@ -24065,6 +24065,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         });
         await waitForRestartSafeBranchOperationsForRoute('api.self-restart', drainTimeoutMs);
       }
+      await flushSelfUpdateStateBeforeRestart({
+        trigger: 'manual',
+        branch,
+        fromSha: fullSha.slice(0, 8),
+        toSha: fullSha.slice(0, 8),
+        actor,
+        requireDrain: drainTimeoutMs > 0,
+        source: 'api.self-restart',
+        onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
+      });
       stateService.recordSelfUpdate({
         ts: new Date().toISOString(),
         branch,
@@ -24075,16 +24085,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         durationMs: Date.now() - startedAt,
         actor,
         updateMode: 'restart-only',
-      });
-      await flushSelfUpdateStateBeforeRestart({
-        trigger: 'manual',
-        branch,
-        fromSha: fullSha.slice(0, 8),
-        toSha: fullSha.slice(0, 8),
-        actor,
-        requireDrain: drainTimeoutMs > 0,
-        source: 'api.self-restart',
-        onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
       });
       commitSelfRestartState(true);
       sendSSE(res, 'step', {
@@ -24122,6 +24122,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
+    if (resolveRestartDrainTimeoutFromRequest(req.body) > 0) {
+      res.status(409).json({ error: 'protected_self_update_unavailable',
+        message: '受保护的平台更新尚未具备换盘前准入屏障及回滚验证，本次已在修改代码或产物前拒绝；请由平台维护者准备独立发布事务。' });
+      return;
+    }
     // 预览实例（CDS 托管 CDS）不支持自更新：它由父 CDS 按分支部署，更新 = push 新 commit。
     if (isPreviewInstance()) {
       res.status(403).json({
@@ -25035,6 +25040,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // Streams SSE so the operator watching the UI gets real-time progress.
   // ─────────────────────────────────────────────────────────────────────
   router.post('/self-force-sync', async (req, res) => {
+    if (resolveRestartDrainTimeoutFromRequest(req.body) > 0) {
+      res.status(409).json({ error: 'protected_self_update_unavailable',
+        message: '受保护的平台同步尚未具备换盘前准入屏障及回滚验证，本次已在修改代码或产物前拒绝；请由平台维护者准备独立发布事务。' });
+      return;
+    }
     // 预览实例不支持自更新（同 /self-update）。
     if (isPreviewInstance()) {
       res.status(403).json({

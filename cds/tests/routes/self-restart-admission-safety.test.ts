@@ -22,6 +22,7 @@ vi.mock('node:child_process', async original => ({ ...await original<typeof impo
 describe('显式排空的真实重启路由', () => {
   let dir: string, state: StateService, coordinator: BranchOperationCoordinator, shell: MockShellExecutor;
   let handler: (req: any, res: any) => Promise<void>;
+  let updateHandlers: Array<(req: any, res: any) => Promise<void>>;
   beforeEach(() => {
     vi.useFakeTimers(); vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     vi.stubEnv('CDS_SELFUPDATE_DRAIN_TIMEOUT_MS', '1');
@@ -38,6 +39,8 @@ describe('显式排空的真实重启路由', () => {
     const router = createBranchRouter({ stateService: state, config, shell, branchOperationCoordinator: coordinator,
       worktreeService: new WorktreeService(shell, dir), containerService: new ContainerService(shell, config) });
     handler = router.stack.find(layer => layer.route?.path === '/self-restart')!.route.stack[0].handle;
+    updateHandlers = ['/self-update', '/self-force-sync'].map(route =>
+      router.stack.find(layer => layer.route?.path === route)!.route.stack[0].handle);
   });
   afterEach(async () => {
     vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllEnvs();
@@ -66,7 +69,24 @@ describe('显式排空的真实重启路由', () => {
     expect(spawn).not.toHaveBeenCalled(); expect(process.exit).not.toHaveBeenCalled();
     expect(interrupt).not.toHaveBeenCalled();
     expect(isSelfUpdateDraining(Date.now())).toBe(false); expect(getRestartWait()).toBeNull();
-    expect(state.getSelfUpdateHistory(1)[0]?.status).not.toBe('success');
+    expect(state.getSelfUpdateHistory(20)).toHaveLength(1);
+    expect(state.getSelfUpdateHistory(20).every(record => record.status === 'failed')).toBe(true);
+  });
+  it.each([{ drain: true }, { drainTimeoutMs: 1 }])('受保护更新 %j 在任何 Git、产物或状态变更前拒绝', async body => {
+    const dist = path.join(dir, 'cds', 'dist', 'index.js');
+    fs.mkdirSync(path.dirname(dist), { recursive: true }); fs.writeFileSync(dist, 'original-runtime');
+    for (const update of updateHandlers) {
+      const res: any = Object.assign(new EventEmitter(), { locals: {}, writeHead: vi.fn(), write: vi.fn(), end: vi.fn() });
+      res.status = vi.fn(() => res); res.json = vi.fn(() => res);
+      await update({ body, headers: {}, socket: {}, method: 'POST' }, res);
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ error: 'protected_self_update_unavailable' }));
+      expect(shell.commands).toEqual([]);
+      expect(fs.readFileSync(dist, 'utf8')).toBe('original-runtime');
+      expect(state.getSelfUpdateHistory(20)).toEqual([]);
+      expect(state.getActiveSelfUpdate()).toBeFalsy();
+      expect(spawn).not.toHaveBeenCalled(); expect(process.exit).not.toHaveBeenCalled();
+    }
   });
   it('已确认排空且落盘成功才安排原版本重启', async () => {
     const text = await run();
