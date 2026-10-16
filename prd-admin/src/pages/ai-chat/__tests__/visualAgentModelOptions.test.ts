@@ -134,3 +134,26 @@ describe('【关键】交接包里的模型 id 归一之后必须能在目录里
     expect(normalizeVisualModelOptionId(null)).toBe('');
   });
 });
+
+describe('恢复试探目录契约', () => {
+  it.each([
+    { healthStatus: 'Healthy', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Degraded', isRecoveryProbeAvailable: false, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: false, enabled: false },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: true, enabled: true },
+    { healthStatus: 'Unavailable', isRecoveryProbeAvailable: undefined, enabled: false },
+  ])('健康为 $healthStatus、恢复资格为 $isRecoveryProbeAvailable 时按权威快照开放入口', ({ enabled, ...state }) => {
+    const entry = pool({});
+    entry.models = entry.models.map((member) => ({
+      ...member,
+      ...state,
+      healthStatus: state.healthStatus as typeof member.healthStatus,
+    }));
+
+    const [option] = buildVisualAgentModelOptions([entry]);
+
+    expect(option.enabled).toBe(enabled);
+    expect(option.modelName).toBe(entry.code);
+    if (state.isRecoveryProbeAvailable) expect(option.subtitle).toContain('恢复试探');
+  });
+});

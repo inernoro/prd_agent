@@ -89,6 +89,7 @@ public sealed class VisualLogicalModelCatalogTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ApiKeyCrypto:Secret"] = "visual-model-catalog-test-only-2026",
+            ["LlmGateway:ModelCatalogGateRecheckSeconds"] = "0",
         }).Build();
         async Task Insert<T>(string collection, T value)
         {
@@ -177,23 +178,59 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
             Assert.Equal("Unavailable", halfOpenMember.HealthStatus);
             Assert.Equal(0, halfOpenMember.HealthScore);
+            Assert.True(halfOpenMember.IsRecoveryProbeAvailable);
             var afterCatalogRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
             Assert.Null(afterCatalogRead.HalfOpenLeaseUntil);
+            // 人工恢复即使尚在冷却期，也应开放入口；只读目录仍不认领租约。
+            await offerings.UpdateOneAsync(x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                    .Set(x => x.ManualRecoveryAt, DateTime.UtcNow));
+            await Insert("llmgw_models", new LLMModel
+            {
+                Id = "blocked-upstream", ModelName = "future-unapproved-probe-1699", PlatformId = "provider", Enabled = true,
+            });
+            await gateway.Database.GetCollection<BsonDocument>("llmgw_models").UpdateOneAsync(
+                new BsonDocument("_id", "image2-upstream"), Builders<BsonDocument>.Update.Set("AllowedOutsideCatalog", true));
+            await gateway.Database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName).InsertManyAsync(
+                GatewayCatalogMigrations.RequiredIds.Select(id => new BsonDocument
+                {
+                    ["_id"] = id, [GatewayCatalogMigrations.CompletedAtField] = DateTime.UtcNow,
+                }));
+            Assert.True(await GatewayCatalogGate.EnforcesAsync(config, gateway.Database, default));
+            foreach (var (id, target, priority) in new[] { ("missing-probe", "missing-target", -2), ("blocked-probe", "blocked-upstream", -1) })
+                await Insert("llmgw_model_offerings", new GatewayModelOffering
+                {
+                    Id = id, LogicalModelId = "image2", TargetId = target, Protocol = "openai", Priority = priority,
+                    HealthStatus = ModelHealthStatus.Unavailable, LastFailedAt = DateTime.UtcNow.AddHours(-1),
+                });
+            var manualCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.True(Assert.Single(manualCatalog[0].Models).IsRecoveryProbeAvailable);
+            Assert.Equal("gpt-image-2", Assert.Single(manualCatalog[0].Models).ActualModelId);
+            Assert.Null((await offerings.Find(x => x.Id == "image2-offering").SingleAsync()).HalfOpenLeaseUntil);
             var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
             Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
+            Assert.Equal("image2-offering", recoveryAttempt.OfferingId);
+            Assert.All(await offerings.Find(x => x.Id == "missing-probe" || x.Id == "blocked-probe").ToListAsync(),
+                offering => Assert.Null(offering.HalfOpenLeaseUntil));
             var afterRecoveryAttempt = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
             Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
+            var leasedCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.False(Assert.Single(leasedCatalog[0].Models).IsRecoveryProbeAvailable);
 
             await offerings
                 .UpdateManyAsync(
                     FilterDefinition<GatewayModelOffering>.Empty,
                     Builders<GatewayModelOffering>.Update
                         .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
-                        .Set(x => x.LastFailedAt, DateTime.UtcNow));
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                        .Unset(x => x.ManualRecoveryAt));
             var unavailableCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
             Assert.Equal(new[] { "image2", "image1" }, unavailableCatalog.Select(x => x.Code));
             Assert.All(unavailableCatalog, item =>
                 Assert.Equal("Unavailable", Assert.Single(item.Models).HealthStatus));
+            Assert.All(unavailableCatalog, item =>
+                Assert.False(Assert.Single(item.Models).IsRecoveryProbeAvailable));
             Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
 
             await gateway.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models")
