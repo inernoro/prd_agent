@@ -6,7 +6,7 @@ import { ProjectAdmissionOrder } from './project-admission-order.js';
 import { buildLoadPressure, type BuildLoadPressure } from './build-gate.js';
 import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
-let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
+let memorySample = { mb: os.freemem() / 1048576, at: Date.now(), source: 'os-freemem' as 'os-freemem' | 'linux-memavailable' };
 let memoryRead: Promise<void> | undefined;
 let daemonMemory: { usedMB: number; pids?: number; at: number; maxAgeMs: number } | undefined;
 export function setDeploymentPhaseHostUsage(usedMB: number, at: number, maxAgeMs: number, pids?: number): void {
@@ -35,11 +35,12 @@ function sampleHostMemoryMB(): number {
     memoryRead = readFile('/proc/meminfo', 'utf8').then(text => {
       const value = /(?:^|\n)MemAvailable:\s+(\d+) kB/.exec(text);
       if (!value) throw new Error('memory sample unavailable');
-      memorySample = { mb: Number(value[1]) / 1024, at: Date.now() };
-    }).catch(() => { memorySample = { mb: os.freemem() / 1048576, at: Date.now() }; })
+      memorySample = { mb: Number(value[1]) / 1024, at: Date.now(), source: 'linux-memavailable' };
+    }).catch(() => { memorySample = { mb: os.freemem() / 1048576, at: Date.now(), source: 'os-freemem' }; })
       .finally(() => { memoryRead = undefined; });
   }
-  const physical = process.platform !== 'linux' ? os.freemem() / 1048576 : Date.now() - memorySample.at > 5000 ? 0 : memorySample.mb;
+  if (process.platform !== 'linux') memorySample = { mb: os.freemem() / 1048576, at: Date.now(), source: 'os-freemem' };
+  const physical = process.platform === 'linux' && Date.now() - memorySample.at > 5000 ? 0 : memorySample.mb;
   const budget = deploymentHostMemoryBudgetMB();
   if (budget === null) return physical;
   if (!budget || !daemonMemory || Date.now() - daemonMemory.at > daemonMemory.maxAgeMs) return 0;
@@ -48,6 +49,32 @@ function sampleHostMemoryMB(): number {
 let memoryProvider = sampleHostMemoryMB;
 export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null): void {
   memoryProvider = provider || sampleHostMemoryMB;
+}
+
+/** 复用门禁的实际采样；不读取凭据、不触发 Docker 盘点、不修改预约或预算。 */
+export function deploymentHostMemoryEvidence() {
+  const effective = memoryProvider();
+  const now = Date.now();
+  const linux = process.platform === 'linux';
+  const budgetMB = deploymentHostMemoryBudgetMB();
+  const sampleAgeMs = linux ? now - memorySample.at : 0;
+  const daemonAgeMs = daemonMemory ? now - daemonMemory.at : null;
+  return {
+    sampledAt: new Date(linux ? memorySample.at : now).toISOString(),
+    source: linux ? memorySample.source : 'os-freemem',
+    physicalAvailableMB: memorySample.mb,
+    sampleAgeMs, sampleMaxAgeMs: linux ? 5000 : null,
+    sampleFresh: !linux || sampleAgeMs <= 5000,
+    sampleReadPending: Boolean(memoryRead),
+    configuredBudgetMB: budgetMB,
+    budgetState: budgetMB === null ? 'unconfigured' : budgetMB === 0 ? 'invalid' : 'configured',
+    daemonUsedMB: daemonMemory?.usedMB ?? null,
+    daemonSampleAgeMs: daemonAgeMs,
+    daemonSampleMaxAgeMs: daemonMemory?.maxAgeMs ?? null,
+    daemonSampleFresh: Boolean(daemonMemory && daemonAgeMs! <= daemonMemory.maxAgeMs),
+    effectiveAvailableMB: Number.isFinite(effective) ? effective : null,
+    providerOverride: memoryProvider !== sampleHostMemoryMB,
+  };
 }
 
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
@@ -97,7 +124,8 @@ export class DeploymentPhaseBudget {
     return Object.fromEntries((['pull', 'start', 'ready', 'cleanup', 'terminal'] as const).map(phase => [phase, {
       limit: this.limits[phase], active: [...(this.active.get(phase) || [])].map(request => ({ ...request.owner, memoryMB: request.memoryMB })),
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
-        reason: this.waitReason(phase, request) })),
+        reason: this.waitReason(phase, request),
+        ...(phase === 'start' ? { memoryAdmission: this.memoryDecision(request.memoryMB, request.reservationKey) } : {}) })),
     }]));
   }
 
@@ -149,12 +177,17 @@ export class DeploymentPhaseBudget {
     }
     return { released, retained };
   }
-  private memoryAllows(memoryMB: number, key?: string): boolean {
+  private memoryDecision(memoryMB: number, key?: string) {
     const available = this.availableMemoryMB();
     const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
       + [...(this.active.get('start') || [])].filter(request => !request.reservationKey).reduce((sum, request) => sum + request.memoryMB, 0);
-    return Number.isFinite(available) && available >= this.headroomMB + reserved + memoryMB;
+    const required = this.headroomMB + reserved + memoryMB;
+    return { availableMemoryMB: Number.isFinite(available) ? available : null,
+      headroomMB: this.headroomMB, reservedMemoryMB: reserved, requestedMemoryMB: memoryMB,
+      requiredMemoryMB: required, deficitMemoryMB: Number.isFinite(available) ? Math.max(0, required - available) : null,
+      allowed: Number.isFinite(available) && available >= required };
   }
+  private memoryAllows(memoryMB: number, key?: string): boolean { return this.memoryDecision(memoryMB, key).allowed; }
   private pidsAllow(request: Request): boolean {
     const reserved = [...this.memoryReservations].reduce((sum, [key, value]) => sum + (key === request.reservationKey ? 0 : value.pids), 0)
       + [...(this.active.get('start') || [])].filter(item => !item.reservationKey).reduce((sum, item) => sum + item.pids, 0);

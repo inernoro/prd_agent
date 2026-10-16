@@ -63,6 +63,36 @@ describe('产物复核失败证据', () => {
 });
 
 describe('阶段等待超时证据与容量门禁', () => {
+  it('只读准入快照解释实际缺口，不释放预约或改变队列', async () => {
+    const budget = new DeploymentPhaseBudget(() => 2000);
+    budget.reserveKnownMemory('other-runtime', 768, { projectId: 'other-project' });
+    const abort = new AbortController();
+    const pending = budget.acquire('start', { projectId: 'owned' }, { memoryMB: 512, signal: abort.signal }).catch(() => undefined);
+    const before = budget.memorySnapshot();
+    try {
+      expect(budget.snapshot().start.queued[0].memoryAdmission).toEqual({
+        availableMemoryMB: 2000, headroomMB: 1024, reservedMemoryMB: 768,
+        requestedMemoryMB: 512, requiredMemoryMB: 2304, deficitMemoryMB: 304, allowed: false,
+      });
+      expect(budget.memorySnapshot()).toEqual(before);
+      expect(budget.snapshot().start.active).toEqual([]);
+      expect(JSON.stringify(budget.snapshot().start.queued[0].memoryAdmission)).not.toContain('other-project');
+    } finally { abort.abort(); await pending; }
+  });
+  it('准入证据排除自己的预约，保留其他真实启动占位', async () => {
+    let available = 10000;
+    const budget = new DeploymentPhaseBudget(() => available, { start: 1 });
+    budget.reserveKnownMemory('own', 512, {});
+    const release = await budget.acquire('start', {}, { memoryMB: 256 });
+    available = 1500;
+    const abort = new AbortController();
+    const pending = budget.acquire('start', {}, { reservationKey: 'own', memoryMB: 512, signal: abort.signal }).catch(() => undefined);
+    try {
+      expect(budget.snapshot().start.queued[0].memoryAdmission).toMatchObject({
+        reservedMemoryMB: 256, requiredMemoryMB: 1792, deficitMemoryMB: 292, allowed: false,
+      });
+    } finally { abort.abort(); await pending; release(); }
+  });
   it.each(['memory-headroom', 'pid-headroom', 'cpu-startup-capacity', 'phase-capacity'] as const)
   ('保留 %s 根因，不清理其他任务预约或放大限额', async reason => {
     vi.useFakeTimers();
