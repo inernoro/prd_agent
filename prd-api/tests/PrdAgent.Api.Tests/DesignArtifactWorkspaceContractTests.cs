@@ -1052,6 +1052,50 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(expected?.ToJsonString(), actual?.ToJsonString());
     }
 
+    [Fact]
+    public void PresentationManualEditProposal_IsFrozenSeparatelyFromTheTrustedMultiFileParent()
+    {
+        var run = BuildRun();
+        var proposal = "<!doctype html><html><head><link rel=\"stylesheet\" href=\"assets/deck.css\"></head><body>"
+            + new string('a', 166_629)
+            + "</body></html>";
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 20,
+            SourceContent = "完整来源",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("完整来源")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+            ParentRunId = "parent-ppt",
+            ParentPackageHash = new string('a', 64),
+            ManualEditHtml = proposal,
+            ManualEditHtmlHash = Hash(Encoding.UTF8.GetBytes(proposal)),
+        };
+        var currentFiles = new[]
+        {
+            BuildFile("current/index.html", "<!doctype html><html><body>父版本</body></html>", "text/html"),
+            BuildFile("current/assets/deck.css", "body{color:#123}", "text/css"),
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null, currentFiles);
+        Assert.NotEmpty(DesignArtifactWorkspaceContract.ValidateInputPackageSize(
+            package,
+            DesignArtifactWorkspaceBroker.MaxInputBytes));
+
+        var proposalFile = Assert.Single(package.Files, file => file.Path == "proposal/manual-edit.html");
+        Assert.Equal(proposal, Encoding.UTF8.GetString(Convert.FromBase64String(proposalFile.ContentBase64)));
+        Assert.Contains(package.Files, file => file.Path == "current/index.html");
+        Assert.Contains(package.Files, file => file.Path == "current/assets/deck.css");
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+        var manual = task.RootElement.GetProperty("presentationContract").GetProperty("manualEditProposal");
+        Assert.Equal("user-authored-untrusted-proposal", manual.GetProperty("authority").GetString());
+        Assert.Equal("proposal/manual-edit.html", manual.GetProperty("path").GetString());
+        Assert.Equal(run.PresentationInput.ManualEditHtmlHash, manual.GetProperty("contentHash").GetString());
+    }
+
     [Theory]
     [InlineData("在主标题下方新增一行短句“只出现一次的验收标记”", "只出现一次的验收标记")]
     [InlineData("请添加文案「唯一发布标记」到页面底部", "唯一发布标记")]

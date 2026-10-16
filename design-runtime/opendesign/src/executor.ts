@@ -461,7 +461,11 @@ export class DesignTaskExecutor {
         ? budget.finalizationDeadline - budget.minimumQualityPassMs
         : budget.finalizationDeadline;
       const hasReferenceImages = prepared.inputFiles.some((file) => file.path.startsWith('reference/'));
-      const platformRules = buildPlatformRules({ knowledgeFiles, editingExistingPage });
+      const platformRules = buildPlatformRules({
+        knowledgeFiles,
+        editingExistingPage,
+        presentation: designContext.presentation,
+      });
       const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
         platformRules,
         direction: designDirection,
@@ -545,7 +549,12 @@ export class DesignTaskExecutor {
         const reviewDeadline = Date.now() + allottedReviewMs;
         const review = await client.odJson('/api/runs', {
           method: 'POST',
-          body: buildRunBody(buildReviewMessage({ reviewPass, editingExistingPage, reviewAddendum })),
+          body: buildRunBody(buildReviewMessage({
+            reviewPass,
+            editingExistingPage,
+            reviewAddendum,
+            presentation: designContext.presentation,
+          })),
           signal: signalForDeadline(reviewDeadline, signal),
           acceptedStatuses: [200, 202],
         });
@@ -689,7 +698,13 @@ export class DesignTaskExecutor {
           try {
             const repair = await client.odJson('/api/runs', {
               method: 'POST',
-              body: buildRunBody(buildRepairMessage({ repairReason, preserveMeasuredFacts, knowledgeFiles, editingExistingPage })),
+              body: buildRunBody(buildRepairMessage({
+                repairReason,
+                preserveMeasuredFacts,
+                knowledgeFiles,
+                editingExistingPage,
+                presentation: designContext.presentation,
+              })),
               signal: signalForDeadline(repairDeadline, signal),
               acceptedStatuses: [200, 202],
             });

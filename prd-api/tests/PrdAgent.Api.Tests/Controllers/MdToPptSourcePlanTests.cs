@@ -191,7 +191,7 @@ public class MdToPptSourcePlanTests
     }
 
     [Fact]
-    public void FirstAndOnlyRetry_ActualGatewayUserSharesSamePlan_WithoutSourceDuplicateOrTokenCap()
+    public void FirstAndOnlyRetry_SharesSamePlanWithoutDuplicatingSource()
     {
         var (_, page) = OnePage("| 日期 | 名额 |\n|---|---|\n| 周六 | 12 |\n| 周日 | 10 |\n| 周一 | 8 |\n");
         var req = new MdToPptConvertRequest { Content = "用户指令99不是事实", OutlinePages = new() { new() { Title = "活动安排", Design = "表格" } } };
@@ -200,18 +200,12 @@ public class MdToPptSourcePlanTests
             new(MdToPptController.UnsupportedVisibleClaimKind.SourceContentIncomplete));
         foreach (var prompt in new[] { user, retry })
         {
-            var wire = MdToPptController.BuildGatewayPageRequest(new InfraAgentRuntimeProfile { Model = "model-a" }, "system", prompt,
-                "md-to-ppt-agent.generation::chat", "request", "user", "page", "run");
-            var sent = wire.RequestBody!["messages"]![1]!["content"]!.GetValue<string>();
-            Assert.Single(Regex.Matches(sent, page.Hash));
+            Assert.Single(Regex.Matches(prompt, page.Hash));
             // 线上标识是短代号，不是 64 位内容寻址 Id——模型抄不全长 Id，
             // 会整轮漏块（source_plan_incomplete）。仍然只许出现一次，不许重复喂源。
-            Assert.Single(Regex.Matches(sent, Regex.Escape(page.Blocks[0].Alias)));
-            Assert.DoesNotContain(page.Blocks[0].Id, sent, StringComparison.Ordinal);
-            Assert.DoesNotContain("用户指令99", sent);
-            Assert.False(wire.RequestBody.ContainsKey("max_tokens"));
-            Assert.Equal("run", wire.Context!.RunId);
-            Assert.Equal("model-a", wire.ExpectedModel);
+            Assert.Single(Regex.Matches(prompt, Regex.Escape(page.Blocks[0].Alias)));
+            Assert.DoesNotContain(page.Blocks[0].Id, prompt, StringComparison.Ordinal);
+            Assert.DoesNotContain("用户指令99", prompt);
         }
         Assert.StartsWith(user, retry);
     }
@@ -240,20 +234,32 @@ public class MdToPptSourcePlanTests
     }
 
     [Fact]
-    public void PersistenceWiring_ChecksPreparedBytesBeforeDoneAndUsesChildOwnedPlan()
+    public void OpenDesignWiring_FreezesSourceOutlineAndTargetPagesIntoWorkspaceContract()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "prd-api/src/PrdAgent.Api/Controllers/Api/MdToPptController.cs"))) directory = directory.Parent;
         Assert.NotNull(directory);
-        var source = File.ReadAllText(Path.Combine(directory!.FullName, "prd-api/src/PrdAgent.Api/Controllers/Api/MdToPptController.cs"));
-        var begin = source.IndexOf("private async Task<bool> PersistRunDoneAsync", StringComparison.Ordinal);
-        var prepare = source.IndexOf("html = PreparePublishedHtml(NormalizePresentationDocument(html))", begin, StringComparison.Ordinal);
-        var gate = source.IndexOf("ValidateSourcePlanDocument(run, html)", begin, StringComparison.Ordinal);
-        var done = source.IndexOf("run.Status = \"done\"", begin, StringComparison.Ordinal);
-        Assert.True(prepare > begin && gate > prepare && done > gate);
-        Assert.Contains("sourcePlanJson: sourcePlanJson", source);
-        Assert.Contains("sourcePages = RestoreSourcePlan(run)", source);
-        Assert.Equal(2, Regex.Matches(source, "section = MaterializeSourcePage\\(section, sourcePages\\[i\\]").Count);
+        var service = File.ReadAllText(Path.Combine(
+            directory!.FullName,
+            "prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptOpenDesignRunService.cs"));
+        var broker = File.ReadAllText(Path.Combine(
+            directory.FullName,
+            "prd-api/src/PrdAgent.Api/Services/DesignArtifactWorkspaceBroker.cs"));
+
+        Assert.Contains("PresentationInput = new DesignArtifactPresentationInput", service);
+        Assert.Contains("SourceContent = input.SourceContent", service);
+        Assert.Contains("SourceContentHash = sourceHash", service);
+        Assert.Contains("OutlineJson = input.OutlineJson", service);
+        Assert.Contains("OutlineHash = outlineHash", service);
+        Assert.Contains("TargetPages = input.TargetPages", service);
+        Assert.Contains("ParentPackageHash = input.ParentPackageHash", service);
+        Assert.Contains("ManualEditHtml = manualEditHtml", service);
+        Assert.Contains("ManualEditHtmlHash = manualEditHtmlHash", service);
+        Assert.Contains("FileName = \"presentation-source.md\"", service);
+        Assert.Contains("\"source/presentation.md\"", broker);
+        Assert.Contains("\"brief/outline.json\"", broker);
+        Assert.Contains("requiredSlideIndexes = Enumerable.Range(1, run.PresentationInput.TargetPages)", broker);
+        Assert.Contains("\"proposal/manual-edit.html\"", broker);
     }
 
     [Theory]

@@ -242,17 +242,27 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                     BytesMismatchCode,
                     "发布意图与权威完成态不一致");
 
-            var site = await _sites.CreateFromHtmlIdempotentAsync(
-                claimed.UserId,
-                htmlBytes,
-                "index.html",
-                claimed.PublishIntentTitle,
-                claimed.PublishIntentDescription,
-                null,
-                claimed.PublishIntentTags,
-                "md-to-ppt",
-                claimed.PublishIntentId!,
-                CancellationToken.None);
+            var openDesignRun = await _db.DesignArtifactRuns.Find(item =>
+                    item.DeploymentSlug == DeploymentScope.Current
+                    && item.Id == claimed.Id
+                    && item.UserId == claimed.UserId
+                    && item.ArtifactType == DesignArtifactTypes.HtmlPpt
+                    && item.Runtime == DesignArtifactRuntimes.OpenDesign
+                    && item.Status == RunStatuses.Done)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            var site = openDesignRun == null
+                ? await _sites.CreateFromHtmlIdempotentAsync(
+                    claimed.UserId,
+                    htmlBytes,
+                    "index.html",
+                    claimed.PublishIntentTitle,
+                    claimed.PublishIntentDescription,
+                    null,
+                    claimed.PublishIntentTags,
+                    "md-to-ppt",
+                    claimed.PublishIntentId!,
+                    CancellationToken.None)
+                : await LoadOpenDesignSiteAsync(openDesignRun, claimed.UserId);
 
             if (claimed.PublishIntentTeamIds.Count > 0)
             {
@@ -266,18 +276,22 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
 
             var entry = await _sites.GetRevisionEntryHtmlAsync(site.Id, claimed.UserId, CancellationToken.None);
             var actualHash = Hash(Encoding.UTF8.GetBytes(entry.Html));
-            if (!FixedHashEquals(actualHash, claimed.PublishIntentHtmlHash)
-                || !FixedHashEquals(actualHash, claimed.HtmlHash))
+            if (openDesignRun == null
+                && (!FixedHashEquals(actualHash, claimed.PublishIntentHtmlHash)
+                    || !FixedHashEquals(actualHash, claimed.HtmlHash)))
                 throw new HtmlPptPublishPendingException(BytesMismatchCode, "最终托管字节与发布意图不一致");
 
-            var revision = await _revisions.EnsureGeneratedSnapshotAsync(
-                site.Id,
-                claimed.UserId,
-                entry,
-                DesignArtifactRuntimes.HtmlPptPipeline,
-                claimed.Id,
-                claimed.KnowledgeReferences.Select(item => item.EntryId).ToArray(),
-                CancellationToken.None);
+            var revision = openDesignRun == null
+                ? await _revisions.EnsureGeneratedSnapshotAsync(
+                    site.Id,
+                    claimed.UserId,
+                    entry,
+                    DesignArtifactRuntimes.HtmlPptPipeline,
+                    claimed.Id,
+                    claimed.KnowledgeReferences.Select(item => item.EntryId).ToArray(),
+                    CancellationToken.None)
+                : await LoadOpenDesignRevisionAsync(openDesignRun, claimed.UserId, site.Id, entry.Html);
+            var receiptHash = openDesignRun == null ? actualHash : sourceHash;
             var pointerWrite = await _db.HostedSites.UpdateOneAsync(
                 item => item.Id == site.Id
                         && item.OwnerUserId == claimed.UserId
@@ -297,7 +311,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                 Builders<MdToPptRun>.Update
                     .Set(item => item.PublishedSiteId, site.Id)
                     .Set(item => item.PublishedVersionId, revision.Id)
-                    .Set(item => item.PublishedHtmlHash, actualHash)
+                    .Set(item => item.PublishedHtmlHash, receiptHash)
                     .Set(item => item.ArtifactContractSynchronizedAt, null)
                     .Set(item => item.UpdatedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
@@ -306,9 +320,10 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
 
             claimed.PublishedSiteId = site.Id;
             claimed.PublishedVersionId = revision.Id;
-            claimed.PublishedHtmlHash = actualHash;
+            claimed.PublishedHtmlHash = receiptHash;
             claimed.ArtifactContractSynchronizedAt = null;
-            await _artifacts.BindPublishedAsync(claimed, site.Id, revision.Id, CancellationToken.None);
+            if (openDesignRun == null)
+                await _artifacts.BindPublishedAsync(claimed, site.Id, revision.Id, CancellationToken.None);
 
             var completedAt = DateTime.UtcNow;
             var completed = await _db.MdToPptRuns.UpdateOneAsync(
@@ -327,13 +342,54 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                 cancellationToken: CancellationToken.None);
             if (completed.ModifiedCount != 1)
                 throw new HtmlPptPublishPendingException(PendingCode, "发布结果已保留，完成标记等待恢复");
-            return new HtmlPptPublishResult(site, revision, actualHash);
+            return new HtmlPptPublishResult(site, revision, receiptHash);
         }
         catch (Exception ex)
         {
             await ScheduleRetryAsync(claimed, owner, StableFailureCode(ex));
             throw;
         }
+    }
+
+    private async Task<HostedSite> LoadOpenDesignSiteAsync(DesignArtifactRun run, string userId)
+    {
+        if (string.IsNullOrWhiteSpace(run.ArtifactSiteId)
+            || string.IsNullOrWhiteSpace(run.ArtifactRevisionId)
+            || string.IsNullOrWhiteSpace(run.WorkspaceResultSha256)
+            || !string.Equals(run.ArtifactSiteId, run.ProducedArtifactSiteId, StringComparison.Ordinal)
+            || !string.Equals(run.ArtifactRevisionId, run.ProducedArtifactRevisionId, StringComparison.Ordinal))
+            throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿的完整产物仍在恢复");
+
+        var site = await _db.HostedSites.Find(item => item.Id == run.ArtifactSiteId
+                                                       && item.OwnerUserId == userId
+                                                       && item.SourceType == "design-agent"
+                                                       && item.SourceRef == run.Id)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (site == null || site.Files.Count <= 1)
+            throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿的完整产物仍在恢复");
+        return site;
+    }
+
+    private async Task<HostedSiteRevision> LoadOpenDesignRevisionAsync(
+        DesignArtifactRun run,
+        string userId,
+        string siteId,
+        string hostedEntryHtml)
+    {
+        var revision = await _db.HostedSiteRevisions.Find(item =>
+                    item.Id == run.ArtifactRevisionId
+                    && item.SiteId == siteId
+                    && item.CreatedByUserId == userId
+                    && item.SourceRunId == run.Id
+                    && item.Runtime == DesignArtifactRuntimes.OpenDesign
+                    && item.Status == HostedSiteRevisionStatuses.Published)
+                .FirstOrDefaultAsync(CancellationToken.None);
+        if (revision == null
+            || revision.VerifiedFiles.Count <= 1
+            || !string.Equals(revision.Html, hostedEntryHtml, StringComparison.Ordinal)
+            || !VerifiedEntryMatches(revision))
+            throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿的完整版本仍在恢复");
+        return revision;
     }
 
     /// <summary>
@@ -360,9 +416,20 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                                                                   && item.CreatedByUserId == run.UserId
                                                                   && item.Status == HostedSiteRevisionStatuses.Published)
             .FirstOrDefaultAsync(ct);
-        var actualHash = revision == null
-            ? null
-            : Hash(Encoding.UTF8.GetBytes(revision.Html ?? string.Empty));
+        var openDesignReceipt = site != null
+                                && revision != null
+                                && string.Equals(site.SourceType, "design-agent", StringComparison.Ordinal)
+                                && string.Equals(site.SourceRef, run.Id, StringComparison.Ordinal)
+                                && string.Equals(revision.SourceRunId, run.Id, StringComparison.Ordinal)
+                                && string.Equals(revision.Runtime, DesignArtifactRuntimes.OpenDesign, StringComparison.Ordinal)
+                                && site.Files.Count > 1
+                                && revision.VerifiedFiles.Count > 1
+                                && VerifiedEntryMatches(revision);
+        var actualHash = openDesignReceipt
+            ? run.PublishedHtmlHash
+            : revision == null
+                ? null
+                : Hash(Encoding.UTF8.GetBytes(revision.Html ?? string.Empty));
         if (site == null
             || revision == null
             || revision.PublishedContentVersion == null
@@ -371,6 +438,21 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
             || !FixedHashEquals(actualHash, run.HtmlHash))
             throw new HtmlPptPublishPendingException(PendingCode, "发布完成记录正在恢复");
         return new HtmlPptPublishResult(site, revision, actualHash!);
+    }
+
+    private static bool VerifiedEntryMatches(HostedSiteRevision revision)
+    {
+        var entry = revision.VerifiedFiles.SingleOrDefault(item =>
+            string.Equals(item.Path, "index.html", StringComparison.Ordinal));
+        if (entry == null) return false;
+        return string.Equals(
+            Hash(entry.Content),
+            entry.Sha256,
+            StringComparison.OrdinalIgnoreCase)
+            && string.Equals(
+                Encoding.UTF8.GetString(entry.Content),
+                revision.Html,
+                StringComparison.Ordinal);
     }
 
     private async Task ScheduleRetryAsync(MdToPptRun run, string owner, string failureCode)

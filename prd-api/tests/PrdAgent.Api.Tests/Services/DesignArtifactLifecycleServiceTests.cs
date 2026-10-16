@@ -2039,6 +2039,19 @@ public sealed class DesignArtifactLifecycleServiceTests
                 DesignSystemId = "minimal",
                 Fingerprint = "brand1234567",
             },
+            PresentationInput = new DesignArtifactPresentationInput
+            {
+                TargetPages = 20,
+                SourceContent = "冻结来源",
+                SourceContentHash = new string('a', 64),
+                OutlineJson = "{\"outline\":[]}",
+                OutlineHash = new string('b', 64),
+                Theme = "storytelling",
+                ParentRunId = "parent-presentation",
+                ParentPackageHash = new string('c', 64),
+                ManualEditHtml = "<!doctype html><html><body>冻结手动草稿</body></html>",
+                ManualEditHtmlHash = new string('d', 64),
+            },
         };
         await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
         var capability = new DesignArtifactProviderCapability(
@@ -2092,6 +2105,8 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(source.Instruction, restarted.Instruction);
         Assert.Equal(source.DesignBrief.Fingerprint, restarted.DesignBrief?.Fingerprint);
         Assert.Equal(source.BrandPackage.Fingerprint, restarted.BrandPackage?.Fingerprint);
+        Assert.Equal(source.PresentationInput.ManualEditHtml, restarted.PresentationInput?.ManualEditHtml);
+        Assert.Equal(source.PresentationInput.ManualEditHtmlHash, restarted.PresentationInput?.ManualEditHtmlHash);
         queue.Verify(item => item.EnqueueAsync(RunKinds.DesignArtifact, firstId!, CancellationToken.None), Times.Once);
     }
 

@@ -84,7 +84,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     public string Runtime => DesignArtifactRuntimes.OpenDesign;
 
     public bool Supports(string artifactType, string operation) =>
-        artifactType == DesignArtifactTypes.WebPage
+        artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
         && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
 
     // ───────────────────────── 能力探针 ─────────────────────────
@@ -473,9 +473,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["apiKey"] = workspace.ModelToken,
                 ["model"] = workspace.Model,
                 ["sourceSystem"] = "map",
-                ["appCallerCode"] = run.Operation == DesignArtifactOperations.Edit
-                    ? AppCallerRegistry.Admin.WebHosting.EditHtml
-                    : AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ["appCallerCode"] = DesignArtifactGatewayGrantService.CallerFor(run),
                 ["userId"] = run.UserId,
                 ["runId"] = run.Id,
             },

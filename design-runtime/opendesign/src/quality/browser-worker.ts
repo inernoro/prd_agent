@@ -82,8 +82,9 @@ async function measurePage(
   width: number,
   height: number,
   screenshotPath: string,
+  slideIndex?: number,
 ): Promise<BrowserViewportMeasurement> {
-  const raw = await page.evaluate(({ viewport, width, height, ruleVersion }) => {
+  const raw = await page.evaluate(({ viewport, width, height, ruleVersion, slideIndex }) => {
     const visible = (element: Element): boolean => {
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -122,7 +123,7 @@ async function measurePage(
         const rect = element.getBoundingClientRect();
         return rect.left < -1 || rect.right > width + 1;
       });
-      issues.push(issue('horizontal_overflow', { documentWidth, viewportWidth: width }, 'documentWidth <= viewportWidth + 1', offender));
+      issues.push(issue('horizontal_overflow', { documentWidth, viewportWidth: width, ...(slideIndex ? { slideIndex } : {}) }, 'documentWidth <= viewportWidth + 1', offender));
     }
     const clipped = (element: Element): boolean => {
       const rect = element.getBoundingClientRect();
@@ -250,10 +251,58 @@ async function measurePage(
         }, `contrast ratio >= ${minimum}`, element));
       }
     }
+    if (viewport === 'mobile' && slideIndex) {
+      const presentationText = [...document.querySelectorAll('h1, h2, h3, p, li, a, button, th, td')]
+        .filter(visible)
+        .filter((element) => (element.textContent || '').trim().length > 0)
+        .slice(0, 120);
+      for (const element of presentationText) {
+        const style = getComputedStyle(element);
+        const fontSize = Number.parseFloat(style.fontSize);
+        const htmlElement = element as HTMLElement;
+        const scale = htmlElement.offsetHeight > 0
+          ? Math.min(1, element.getBoundingClientRect().height / htmlElement.offsetHeight)
+          : 1;
+        const effectiveFontSize = Math.round(fontSize * scale * 10) / 10;
+        if (effectiveFontSize < 12) {
+          issues.push(issue('presentation_text_too_small', {
+            slideIndex,
+            effectiveFontSize,
+            minimumFontSize: 12,
+          }, 'computed mobile text size after transforms is at least 12px', element));
+          break;
+        }
+      }
+      const fixedOverlays = [...document.querySelectorAll('body *')].filter((element) => {
+        if (!visible(element)) return false;
+        const position = getComputedStyle(element).position;
+        return position === 'fixed' || position === 'sticky';
+      });
+      outer: for (const overlay of fixedOverlays) {
+        const overlayRect = overlay.getBoundingClientRect();
+        for (const element of presentationText) {
+          if (overlay.contains(element) || element.contains(overlay)) continue;
+          const rect = element.getBoundingClientRect();
+          const overlapWidth = Math.max(0, Math.min(rect.right, overlayRect.right) - Math.max(rect.left, overlayRect.left));
+          const overlapHeight = Math.max(0, Math.min(rect.bottom, overlayRect.bottom) - Math.max(rect.top, overlayRect.top));
+          const overlapRatio = rect.width * rect.height > 0
+            ? (overlapWidth * overlapHeight) / (rect.width * rect.height)
+            : 0;
+          if (overlapRatio > 0.2) {
+            issues.push(issue('presentation_fixed_overlay_obscures_content', {
+              slideIndex,
+              overlapRatio: Math.round(overlapRatio * 100) / 100,
+            }, 'fixed presentation controls do not obscure readable slide content', overlay));
+            break outer;
+          }
+        }
+      }
+    }
     return {
       viewport,
       width,
       height,
+      ...(slideIndex ? { slideIndex } : {}),
       documentWidth,
       h1Count: [...document.querySelectorAll('h1')].filter(visible).length,
       visibleHeadingCount: [...document.querySelectorAll('h1, h2, h3')].filter(visible).length,
@@ -262,7 +311,7 @@ async function measurePage(
       issues,
       screenshotPath: '',
     };
-  }, { viewport, width, height, ruleVersion: BROWSER_QUALITY_RULE_VERSION });
+  }, { viewport, width, height, ruleVersion: BROWSER_QUALITY_RULE_VERSION, slideIndex });
   await page.screenshot({ path: screenshotPath, fullPage: false, type: 'png' });
   return { ...raw, screenshotPath } as BrowserViewportMeasurement;
 }
@@ -278,6 +327,13 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
   });
   try {
     const measurements: BrowserViewportMeasurement[] = [];
+    const taskPath = path.join(job.workspaceDir, 'brief', 'task.json');
+    const task = fs.existsSync(taskPath)
+      ? JSON.parse(fs.readFileSync(taskPath, 'utf8')) as { presentationContract?: { targetPages?: number } }
+      : {};
+    const targetPages = Number.isSafeInteger(task.presentationContract?.targetPages)
+      ? Number(task.presentationContract?.targetPages)
+      : 0;
     for (const viewport of BROWSER_QUALITY_VIEWPORTS) {
       const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, deviceScaleFactor: 1 });
       await context.route('**/*', async (route) => {
@@ -287,10 +343,72 @@ export async function runBrowserWorker(job: BrowserQualityWorkerJob): Promise<Br
       });
       const page = await context.newPage();
       await page.goto(origin, { waitUntil: 'networkidle', timeout: 15_000 });
-      const relativeScreenshot = `assets/quality/attempt-${job.repairAttempt}-${viewport.name}.png`;
-      const screenshotPath = path.join(job.evidenceDir, path.basename(relativeScreenshot));
-      const measurement = await measurePage(page, viewport.name, viewport.width, viewport.height, screenshotPath);
-      measurements.push({ ...measurement, screenshotPath: relativeScreenshot });
+      const revealSlides = targetPages > 0 ? await page.locator('.reveal .slides > section').count() : 0;
+      const pageCount = targetPages > 0
+        ? (revealSlides > 0 ? revealSlides : await page.locator('[data-slide-index]').count())
+        : 0;
+      if (targetPages > 0 && pageCount !== targetPages) {
+        const relativeScreenshot = `assets/quality/attempt-${job.repairAttempt}-${viewport.name}-page-count.png`;
+        await page.screenshot({
+          path: path.join(job.evidenceDir, path.basename(relativeScreenshot)),
+          fullPage: false,
+          type: 'png',
+        });
+        measurements.push({
+          viewport: viewport.name,
+          width: viewport.width,
+          height: viewport.height,
+          documentWidth: viewport.width,
+          h1Count: 0,
+          visibleHeadingCount: 0,
+          visibleCtaCount: 0,
+          visibleLandmarkCount: 0,
+          issues: [{
+            issueCode: 'presentation_page_count_mismatch',
+            severity: 'hard',
+            ruleVersion: BROWSER_QUALITY_RULE_VERSION,
+            viewport: viewport.name,
+            actual: { actualPages: pageCount, targetPages },
+            target: 'actual slide count equals frozen targetPages',
+          }],
+          screenshotPath: relativeScreenshot,
+        });
+      }
+      const iterations = targetPages > 0 ? Math.min(targetPages, pageCount) : 1;
+      for (let index = 0; index < iterations; index += 1) {
+        let canNavigate = true;
+        if (targetPages > 0) {
+          canNavigate = await page.evaluate((slide) => {
+            const reveal = (globalThis as unknown as { Reveal?: { slide?: (index: number) => void; getIndices?: () => { h?: number } } }).Reveal;
+            if (!reveal?.slide || !reveal.getIndices) return false;
+            reveal.slide(slide);
+            return reveal.getIndices().h === slide;
+          }, index);
+          await page.waitForTimeout(40);
+        }
+        const suffix = targetPages > 0 ? `-slide-${index + 1}` : '';
+        const relativeScreenshot = `assets/quality/attempt-${job.repairAttempt}-${viewport.name}${suffix}.png`;
+        const screenshotPath = path.join(job.evidenceDir, path.basename(relativeScreenshot));
+        const measurement = await measurePage(
+          page,
+          viewport.name,
+          viewport.width,
+          viewport.height,
+          screenshotPath,
+          targetPages > 0 ? index + 1 : undefined,
+        );
+        if (targetPages > 0 && !canNavigate) {
+          measurement.issues.push({
+            issueCode: 'presentation_navigation_unusable',
+            severity: 'hard',
+            ruleVersion: BROWSER_QUALITY_RULE_VERSION,
+            viewport: viewport.name,
+            actual: { slideIndex: index + 1, canNavigate: false },
+            target: 'every frozen slide is reachable through the presentation controller',
+          });
+        }
+        measurements.push({ ...measurement, screenshotPath: relativeScreenshot });
+      }
       await context.close();
     }
     return { browserVersion: browser.version(), measurements };

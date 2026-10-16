@@ -236,9 +236,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 || string.IsNullOrWhiteSpace(gatewayKey))
                 throw new InvalidOperationException("设计模型服务暂时不可用，请稍后重试");
 
-            var caller = run.Operation == DesignArtifactOperations.Edit
-                ? AppCallerRegistry.Admin.WebHosting.EditHtml
-                : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+            var caller = DesignArtifactGatewayGrantService.CallerFor(run);
             using var upstream = new HttpRequestMessage(
                 HttpMethod.Post,
                 // 两条都走 gw-native 面：这里送的 pin 是 MAP 冻结的快照（运行时自带的那份在

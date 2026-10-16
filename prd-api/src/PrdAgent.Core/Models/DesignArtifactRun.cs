@@ -18,6 +18,26 @@ public sealed class DesignArtifactLlmRequestPolicy
 }
 
 /// <summary>
+/// HTML PPT 任务开始时冻结的内容合同。正文与确认大纲由 MAP 确定性写入，OpenDesign 只负责
+/// 设计、实现与质量修复；重连和重启不得重新解析浏览器里的临时状态。
+/// </summary>
+public sealed class DesignArtifactPresentationInput
+{
+    public int Version { get; set; } = 1;
+    public int TargetPages { get; set; }
+    public string SourceContent { get; set; } = string.Empty;
+    public string SourceContentHash { get; set; } = string.Empty;
+    public string OutlineJson { get; set; } = string.Empty;
+    public string OutlineHash { get; set; } = string.Empty;
+    public string Theme { get; set; } = string.Empty;
+    public string? ParentRunId { get; set; }
+    public string? ParentPackageHash { get; set; }
+    /// <summary>用户在隔离编辑器里形成的非可信 HTML 提案；只能作为 OpenDesign edit 输入，不能直接发布。</summary>
+    public string? ManualEditHtml { get; set; }
+    public string? ManualEditHtmlHash { get; set; }
+}
+
+/// <summary>
 /// 隔离浏览器质量证据的有界摘要。逐视口测量与截图保存在受信产物包，Run 只保存可聚合指标和引用，
 /// 不复制 HTML、模型正文或隐式推理。
 /// </summary>
@@ -159,6 +179,10 @@ public class DesignArtifactRun
     public string? UserSuppliedContentHash { get; set; }
 
     public string? Title { get; set; }
+
+    /// <summary>HTML PPT 专用冻结输入；网页任务和历史任务保持 null。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactPresentationInput? PresentationInput { get; set; }
 
     public string? TargetSiteId { get; set; }
 

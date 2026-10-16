@@ -365,6 +365,7 @@ function validateDesignTaskContract(
   parseDesignDirection(task.designDirection);
   const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
   const hasKnowledge = files.some((file) => file.path.startsWith('knowledge/'));
+  const manualProposalFile = files.find((file) => file.path === 'proposal/manual-edit.html');
   const responseContract = task.responseContract;
   const input = task.input;
   const inputContract = input && typeof input === 'object' && !Array.isArray(input)
@@ -425,5 +426,25 @@ function validateDesignTaskContract(
       'workspace_package_invalid',
       'brief/task.json operation does not match the presence of current/index.html',
     );
+  }
+  const presentation = task.presentationContract;
+  const presentationContract = presentation && typeof presentation === 'object' && !Array.isArray(presentation)
+    ? presentation as Record<string, unknown>
+    : undefined;
+  const manualProposal = presentationContract?.manualEditProposal;
+  const manualProposalContract = manualProposal && typeof manualProposal === 'object' && !Array.isArray(manualProposal)
+    ? manualProposal as Record<string, unknown>
+    : undefined;
+  if (manualProposalFile || manualProposal !== undefined) {
+    if (!hasCurrentPage
+      || !manualProposalFile
+      || manualProposalContract?.authority !== 'user-authored-untrusted-proposal'
+      || manualProposalContract.path !== manualProposalFile.path
+      || manualProposalContract.contentHash !== manualProposalFile.sha256) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_package_invalid',
+        'manual edit proposal must be an integrity-bound untrusted input for an edit operation',
+      );
+    }
   }
 }

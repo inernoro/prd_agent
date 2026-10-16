@@ -111,6 +111,39 @@ public sealed class DesignArtifactBrowserQualityTests
         Assert.Contains("截图引用无效", error.Message);
     }
 
+    [Fact]
+    public void ParseBrowserQualitySummary_PresentationRequiresEverySlideAtBothViewports()
+    {
+        var json = """
+        {
+          "schemaVersion":"map-browser-quality-evidence-v1",
+          "ruleVersion":"browser-hard-gate-v1",
+          "heuristicVersion":"browser-aesthetic-heuristic-v1",
+          "firstPassPassed":true,
+          "repairAttempts":0,
+          "repairSucceeded":false,
+          "finalHardPassed":true,
+          "finalScore":92,
+          "attempts":[{"viewports":[
+            {"viewport":"desktop","slideIndex":1},{"viewport":"desktop","slideIndex":2},
+            {"viewport":"mobile","slideIndex":1},{"viewport":"mobile","slideIndex":2}
+          ],"evidenceRefs":[
+            "assets/quality/attempt-0-desktop-slide-1.png","assets/quality/attempt-0-desktop-slide-2.png",
+            "assets/quality/attempt-0-mobile-slide-1.png","assets/quality/attempt-0-mobile-slide-2.png"
+          ]}]
+        }
+        """;
+
+        var summary = HostedSiteEditRunWorker.ParseBrowserQualitySummary(
+            PresentationPackage(json, 2),
+            expectedPresentationPages: 2);
+
+        Assert.NotNull(summary);
+        Assert.Throws<InvalidOperationException>(() => HostedSiteEditRunWorker.ParseBrowserQualitySummary(
+            PresentationPackage(json, 2).Where(file => !file.Path.EndsWith("mobile-slide-2.png", StringComparison.Ordinal)).ToList(),
+            expectedPresentationPages: 2));
+    }
+
     private static DesignWorkspaceFile File(string json)
     {
         var bytes = Encoding.UTF8.GetBytes(json);
@@ -131,6 +164,23 @@ public sealed class DesignArtifactBrowserQualityTests
             var bytes = new byte[] { 137, 80, 78, 71 };
             files.Add(new DesignWorkspaceFile(
                 $"assets/quality/attempt-{attempt}-{viewport}.png",
+                Convert.ToBase64String(bytes),
+                Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
+                bytes.Length,
+                "image/png"));
+        }
+        return files;
+    }
+
+    private static IReadOnlyList<DesignWorkspaceFile> PresentationPackage(string json, int pages)
+    {
+        var files = new List<DesignWorkspaceFile> { File(json) };
+        foreach (var viewport in new[] { "desktop", "mobile" })
+        for (var page = 1; page <= pages; page++)
+        {
+            var bytes = new byte[] { 137, 80, 78, 71 };
+            files.Add(new DesignWorkspaceFile(
+                $"assets/quality/attempt-0-{viewport}-slide-{page}.png",
                 Convert.ToBase64String(bytes),
                 Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant(),
                 bytes.Length,

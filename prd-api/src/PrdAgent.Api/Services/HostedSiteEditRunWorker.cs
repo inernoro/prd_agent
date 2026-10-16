@@ -145,29 +145,45 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             HostedSiteEditableEntry? editable = null;
             HostedSiteRevision? parent = null;
+            string? presentationHtml = null;
             if (run.Operation == DesignArtifactOperations.Edit)
             {
-                if (string.IsNullOrWhiteSpace(run.TargetSiteId))
-                    throw new InvalidOperationException("页面修改任务缺少目标站点");
-                editable = await sites.GetEditableEntryHtmlAsync(run.TargetSiteId, run.UserId, CancellationToken.None);
-                if (!await RenewLeaseAsync(
-                        db,
-                        run.Id,
-                        leaseOwner,
-                        DateTime.UtcNow,
-                        LeaseDuration,
-                        CancellationToken.None))
-                    throw new DesignArtifactRunLeaseLostException(run.Id);
-                parent = await revisions.EnsureCurrentSnapshotAsync(
-                    run.TargetSiteId,
-                    run.UserId,
-                    editable,
-                    executionCts.Token);
-                executionCts.Token.ThrowIfCancellationRequested();
+                if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                {
+                    var parentRunId = run.PresentationInput?.ParentRunId;
+                    if (string.IsNullOrWhiteSpace(parentRunId))
+                        throw new InvalidOperationException("演示稿修改任务缺少冻结来源版本");
+                    var presentationParent = await db.MdToPptRuns.Find(item => item.Id == parentRunId
+                            && item.UserId == run.UserId
+                            && item.Status == "done")
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                        ?? throw new InvalidOperationException("演示稿来源版本不存在或无权访问");
+                    presentationHtml = presentationParent.Html;
+                }
+                else
+                {
+                    if (string.IsNullOrWhiteSpace(run.TargetSiteId))
+                        throw new InvalidOperationException("页面修改任务缺少目标站点");
+                    editable = await sites.GetEditableEntryHtmlAsync(run.TargetSiteId, run.UserId, CancellationToken.None);
+                    if (!await RenewLeaseAsync(
+                            db,
+                            run.Id,
+                            leaseOwner,
+                            DateTime.UtcNow,
+                            LeaseDuration,
+                            CancellationToken.None))
+                        throw new DesignArtifactRunLeaseLostException(run.Id);
+                    parent = await revisions.EnsureCurrentSnapshotAsync(
+                        run.TargetSiteId,
+                        run.UserId,
+                        editable,
+                        executionCts.Token);
+                    executionCts.Token.ThrowIfCancellationRequested();
+                }
             }
 
             var knowledgeChars = run.KnowledgeReferences.Sum(x => x.Content.Length);
-            var executorInputHtml = NormalizeExecutorInput(run, editable?.Html);
+            var executorInputHtml = NormalizeExecutorInput(run, presentationHtml ?? editable?.Html);
             if ((executorInputHtml?.Length ?? 0) + knowledgeChars > MaxModelInputChars)
                 throw new InvalidOperationException("页面与知识正文过长，首版最多支持约 24 万字符，请减少引用或精简内容");
 
@@ -283,12 +299,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
             executionCts.Token.ThrowIfCancellationRequested();
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
-            var qualityEvidence = BuildQualityEvidence(run, editable);
-            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
-                html,
-                qualityEvidence,
-                allowScriptedControls: verifiedFiles != null);
-            var browserQuality = ParseBrowserQualitySummary(verifiedFiles);
+            if (run.ArtifactType == DesignArtifactTypes.WebPage)
+            {
+                var qualityEvidence = BuildQualityEvidence(run, editable);
+                HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                    html,
+                    qualityEvidence,
+                    allowScriptedControls: verifiedFiles != null);
+            }
+            var browserQuality = ParseBrowserQualitySummary(
+                verifiedFiles,
+                run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                    ? run.PresentationInput?.TargetPages
+                    : null);
             if (run.Runtime == DesignArtifactRuntimes.OpenDesign
                 && run.ContractVersion == DesignArtifactContractVersions.Current
                 && browserQuality == null)
@@ -319,6 +342,48 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     verifiedFiles,
                     new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
                     CancellationToken.None);
+            }
+
+            if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+            {
+                var presentationArtifact = await PersistArtifactWithLeaseAsync(
+                    db,
+                    run,
+                    leaseOwner,
+                    html,
+                    parent: null,
+                    editable: null,
+                    sites,
+                    revisions,
+                    DateTime.UtcNow,
+                    LeaseDuration,
+                    executionCts.Token,
+                    verifiedFiles,
+                    _logger,
+                    persistEditAsNewSite: true);
+                run.ArtifactSiteId = presentationArtifact.SiteId;
+                run.ArtifactRevisionId = presentationArtifact.RevisionId;
+                if (!await RecordProducedArtifactAsync(
+                        db,
+                        run.Id,
+                        leaseOwner,
+                        presentationArtifact.SiteId,
+                        presentationArtifact.RevisionId,
+                        CancellationToken.None))
+                {
+                    throw new DesignArtifactRunLeaseLostException(run.Id);
+                }
+                await CompletePresentationAsync(
+                    db,
+                    run,
+                    leaseOwner,
+                    publicLifecycle,
+                    projection,
+                    meta,
+                    html,
+                    presentationArtifact,
+                    CancellationToken.None);
+                return;
             }
 
             executionCts.Token.ThrowIfCancellationRequested();
@@ -513,6 +578,97 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 editable == null ? string.Empty : HostedSiteRevisionRules.ExtractVisibleText(editable.Html),
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
+    private async Task CompletePresentationAsync(
+        MongoDbContext db,
+        DesignArtifactRun run,
+        string leaseOwner,
+        IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
+        RunProjection projection,
+        RunMeta meta,
+        string html,
+        PersistedDesignArtifact artifact,
+        CancellationToken ct)
+    {
+        var completedAt = DateTime.UtcNow;
+        var htmlHash = ComputeHtmlHash(html);
+        var update = Builders<MdToPptRun>.Update
+            .Set(item => item.Status, "done")
+            .Set(item => item.Runtime, DesignArtifactRuntimes.OpenDesign)
+            .Set(item => item.Provider, DesignArtifactRuntimes.OpenDesign)
+            .Set(item => item.Html, html)
+            .Set(item => item.HtmlHash, htmlHash)
+            .Set(item => item.Model, run.ResolvedModel)
+            .Set(item => item.Platform, run.ResolvedPlatform)
+            .Set(item => item.ResolvedModels,
+                string.IsNullOrWhiteSpace(run.ResolvedModel) ? new List<string>() : new List<string> { run.ResolvedModel })
+            .Set(item => item.ResolvedPlatforms,
+                string.IsNullOrWhiteSpace(run.ResolvedPlatform) ? new List<string>() : new List<string> { run.ResolvedPlatform })
+            .Set(item => item.Total, run.PresentationInput?.TargetPages ?? 0)
+            .Set(item => item.Degraded, 0)
+            .Set(item => item.PublishedSiteId, artifact.SiteId)
+            .Set(item => item.PublishedVersionId, artifact.RevisionId)
+            .Set(item => item.Error, null)
+            .Set(item => item.ErrorCode, null)
+            .Set(item => item.ArtifactContractSynchronizedAt, completedAt)
+            .Set(item => item.UpdatedAt, completedAt);
+        var compatibilityWrite = await db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == run.Id && item.UserId == run.UserId && item.Status == "running",
+            update,
+            cancellationToken: ct);
+        if (compatibilityWrite.ModifiedCount != 1)
+            throw new InvalidOperationException("演示稿兼容记录未能进入完成态，请稍后重试");
+        run.ArtifactSiteId = artifact.SiteId;
+        run.ArtifactRevisionId = artifact.RevisionId;
+
+        try
+        {
+            await publicLifecycle.CompleteAsync(
+                run.Id,
+                new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                ct);
+            await publicLifecycle.BindPublishedAsync(
+                run.Id,
+                artifact.SiteId,
+                artifact.RevisionId,
+                ct);
+        }
+        catch (Exception ex)
+        {
+            // 兼容记录已经保存真实产物；公共账本仍停留在 committing，恢复器可按同一 manifest
+            // 幂等完成。这里不能把已经生成的演示稿反写成失败或重新付费。
+            _logger.LogWarning(ex, "OpenDesign 演示稿公共生命周期待恢复 runId={RunId}", run.Id);
+            throw new DesignArtifactRunLeaseLostException(run.Id);
+        }
+
+        meta.Status = RunStatuses.Done;
+        meta.EndedAt = completedAt;
+        await projection.WriteAsync(() => _events.SetRunAsync(
+            RunKinds.DesignArtifact,
+            meta,
+            RunTtl,
+            ct: CancellationToken.None));
+        await projection.WriteAsync(() => _events.AppendEventAsync(
+            RunKinds.DesignArtifact,
+            run.Id,
+            "done",
+            new
+            {
+                runId = run.Id,
+                siteId = artifact.SiteId,
+                siteUrl = artifact.SiteUrl,
+                revisionId = artifact.RevisionId,
+                total = run.PresentationInput?.TargetPages ?? 0,
+                degraded = 0,
+                htmlHash,
+            },
+            RunTtl,
+            CancellationToken.None));
+    }
+
+    internal static string ComputeHtmlHash(string html) =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(html)))
+            .ToLowerInvariant();
+
     /// <summary>
     /// 知识与上传文件可能本身就是 HTML（日报、导出的网页）：「主干落地 &lt;b&gt;31&lt;/b&gt; 次」里数字和量词
     /// 被标签隔开，拿原文比对，页面上的「31 次」就成了「来源里没有的数字」而被拒收。
@@ -702,6 +858,18 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
         if (cancelled == null) return;
 
+        if (cancelled.ArtifactType == DesignArtifactTypes.HtmlPpt)
+        {
+            await db.MdToPptRuns.UpdateOneAsync(
+                item => item.Id == cancelled.Id && item.UserId == cancelled.UserId && item.Status == "running",
+                Builders<MdToPptRun>.Update
+                    .Set(item => item.Status, "error")
+                    .Set(item => item.Error, message)
+                    .Set(item => item.ErrorCode, "design_artifact_cancelled")
+                    .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
+
         var projection = new RunProjection(_logger, runId);
         var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
             CreatedByUserId = cancelled.UserId, CreatedAt = cancelled.CreatedAt };
@@ -778,6 +946,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             update,
             cancellationToken: CancellationToken.None);
         if (write.ModifiedCount == 0) return;
+
+        if (current!.ArtifactType == DesignArtifactTypes.HtmlPpt)
+        {
+            await db.MdToPptRuns.UpdateOneAsync(
+                item => item.Id == current.Id && item.UserId == current.UserId && item.Status == "running",
+                Builders<MdToPptRun>.Update
+                    .Set(item => item.Status, "error")
+                    .Set(item => item.Error, message)
+                    .Set(item => item.ErrorCode, errorCode)
+                    .Set(item => item.Model, current.ResolvedModel)
+                    .Set(item => item.Platform, current.ResolvedPlatform)
+                    .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: CancellationToken.None);
+        }
 
         var projection = new RunProjection(_logger, runId);
         var meta = new RunMeta { RunId = runId, Kind = RunKinds.DesignArtifact,
@@ -1002,12 +1184,18 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         TimeSpan leaseDuration,
         CancellationToken ct,
         IReadOnlyList<DesignWorkspaceFile>? verifiedFiles = null,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        bool persistEditAsNewSite = false)
     {
         if (!await BeginCommitAsync(db, run.Id, leaseOwner, now, leaseDuration, CancellationToken.None))
             throw new DesignArtifactRunLeaseLostException(run.Id);
+        var hostedFiles = verifiedFiles == null
+            ? null
+            : run.Operation == DesignArtifactOperations.Edit && !persistEditAsNewSite
+                ? BuildVerifiedHostedSiteFiles(verifiedFiles, html)
+                : PrepareVerifiedHostedSiteFiles(sites, verifiedFiles, html);
 
-        if (run.Operation == DesignArtifactOperations.Edit)
+        if (run.Operation == DesignArtifactOperations.Edit && !persistEditAsNewSite)
         {
             if (string.IsNullOrWhiteSpace(run.TargetSiteId) || parent == null || editable == null)
                 throw new InvalidOperationException("页面修改任务缺少待保存的版本上下文");
@@ -1030,7 +1218,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         run.TargetSiteId,
                         run.UserId,
                         html,
-                        BuildVerifiedHostedSiteFiles(verifiedFiles, html),
+                        hostedFiles!,
                         run.Instruction,
                         run.Runtime,
                         run.Id,
@@ -1074,7 +1262,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             {
                 site = await sites.CreateFromVerifiedFilesAsync(
                     run.UserId,
-                    BuildVerifiedHostedSiteFiles(verifiedFiles, html),
+                    hostedFiles!,
                     run.Title,
                     "由知识驱动设计生成",
                     "design-agent",
@@ -1120,7 +1308,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     site.Id,
                     run.UserId,
                     current,
-                    BuildVerifiedHostedSiteFiles(verifiedFiles, html),
+                    hostedFiles!,
                     run.Runtime,
                     run.Id,
                     run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
@@ -1231,6 +1419,22 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         return hostedFiles;
     }
 
+    internal static IReadOnlyList<HostedSiteVerifiedFile> PrepareVerifiedHostedSiteFiles(
+        IHostedSiteService sites,
+        IReadOnlyList<DesignWorkspaceFile> files,
+        string hardenedHtml)
+    {
+        var verified = BuildVerifiedHostedSiteFiles(files, hardenedHtml).ToArray();
+        var entryIndex = Array.FindIndex(verified, file => file.Path == "index.html");
+        var prepared = sites.PrepareHtmlForHosting(verified[entryIndex].Content, "index.html");
+        verified[entryIndex] = new HostedSiteVerifiedFile(
+            "index.html",
+            prepared,
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(prepared)).ToLowerInvariant(),
+            "text/html");
+        return verified;
+    }
+
     internal static string HardenExecutorOutput(
         string rawHtml,
         IReadOnlyList<DesignWorkspaceFile>? verifiedFiles)
@@ -1262,7 +1466,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     }
 
     internal static DesignArtifactBrowserQualitySummary? ParseBrowserQualitySummary(
-        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles)
+        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles,
+        int? expectedPresentationPages = null)
     {
         const string evidencePath = "assets/visual-quality-report.json";
         var file = verifiedFiles?.SingleOrDefault(item => item.Path == evidencePath);
@@ -1304,16 +1509,32 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var expectedViewports = new[] { "desktop", "mobile" };
             foreach (var attempt in attempts.EnumerateArray())
             {
-                var attemptViewports = attempt.GetProperty("viewports").EnumerateArray()
+                var viewportEntries = attempt.GetProperty("viewports").EnumerateArray().ToArray();
+                var attemptViewports = viewportEntries
                     .Select(viewport => viewport.GetProperty("viewport").GetString())
-                    .OrderBy(viewport => viewport, StringComparer.Ordinal)
                     .ToArray();
-                if (!attemptViewports.SequenceEqual(expectedViewports, StringComparer.Ordinal))
+                if (expectedPresentationPages is > 0)
+                {
+                    foreach (var viewportName in expectedViewports)
+                    {
+                        var slides = viewportEntries
+                            .Where(viewport => viewport.GetProperty("viewport").GetString() == viewportName)
+                            .Select(viewport => viewport.GetProperty("slideIndex").GetInt32())
+                            .OrderBy(value => value)
+                            .ToArray();
+                        if (!slides.SequenceEqual(Enumerable.Range(1, expectedPresentationPages.Value)))
+                            throw new InvalidOperationException("浏览器质量证据没有逐页覆盖桌面与移动视口，请重新生成");
+                    }
+                }
+                else if (!attemptViewports.OrderBy(viewport => viewport, StringComparer.Ordinal)
+                             .SequenceEqual(expectedViewports, StringComparer.Ordinal))
+                {
                     throw new InvalidOperationException("浏览器质量证据缺少桌面或移动视口，请重新生成");
+                }
                 var refs = attempt.GetProperty("evidenceRefs").EnumerateArray()
                     .Select(item => item.GetString())
                     .ToArray();
-                if (refs.Length != 2 || refs.Any(reference => reference is null))
+                if (refs.Length != viewportEntries.Length || refs.Any(reference => reference is null))
                     throw new InvalidOperationException("浏览器质量证据截图引用不完整，请重新生成");
                 foreach (var reference in refs.Select(reference => reference!))
                 {

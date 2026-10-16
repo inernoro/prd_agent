@@ -399,6 +399,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IWebPageDesignArtifactLifecycle
     PrdAgent.Api.Services.WebPageDesignArtifactLifecycleAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptDesignArtifactAdapter,
     PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptOpenDesignRunService,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptOpenDesignRunService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactRecoveryWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptPublishCoordinator,
     PrdAgent.Api.Services.MdToPpt.HtmlPptPublishCoordinator>();

@@ -150,7 +150,6 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
     try {
       const resolvedKnowledge = await resolveMdToPptKnowledgeReferences(options.knowledgeReferences ?? []);
       if (!resolvedKnowledge.success) {
-        await cancelMdToPptPrewarm();
         options.onError?.(resolvedKnowledge.error.message);
         return;
       }
@@ -249,46 +248,10 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
   return () => abortController.abort();
 }
 
-// ============ CDS 连接状态（仅作为兼容路径提示）============
-
-/**
- * 当前是否存在可用的 active CDS 连接。openai-compatible 模型配置优先走 LLM Gateway
- * 直出；只有 CDS Agent 兼容路径才需要这个状态。
- */
-export async function getMdToPptConnectionStatus(): Promise<boolean> {
-  try {
-    const res = await apiRequest<{ connected: boolean }>('/api/md-to-ppt/connection-status');
-    return res.success && res.data?.connected === true;
-  } catch {
-    return false;
-  }
-}
-
-// ============ Prewarm（大纲确认期间预热运行环境）============
-
-/**
- * 预创建并启动运行环境（幂等、失败静默）。
- * Gateway 直出配置后端会直接跳过，CDS 兼容配置会把会话启动开销藏进用户阅读大纲的时间里。
- */
-export function prewarmMdToPpt(runtimeProfileId?: string | null): void {
-  void apiRequest('/api/md-to-ppt/prewarm', {
-    method: 'POST',
-    body: { runtimeProfileId: runtimeProfileId ?? undefined },
-  }).catch(() => {
-    /* 预热只是优化，失败不打扰用户 */
-  });
-}
-
-export async function cancelMdToPptPrewarm(): Promise<void> {
-  await apiRequest('/api/md-to-ppt/prewarm/cancel', { method: 'POST' }).catch(() => undefined);
-}
-
 export async function handleMdToPptRejectedResponse(
   response: Response,
   onError?: (message: string) => void,
-  cancelPrewarm: () => Promise<void> = cancelMdToPptPrewarm,
 ): Promise<void> {
-  await cancelPrewarm();
   let message = `请求未被接受（${response.status}）`;
   try {
     const payload = await response.json() as {
@@ -306,56 +269,9 @@ export async function handleMdToPptRejectedResponse(
   onError?.(message);
 }
 
-// ============ 模型运行配置（用户随时切换，2026-06-11 诉求 7） ============
-
-export interface MdToPptProfileItem {
-  id: string;
-  name: string;
-  model: string;
-  runtime: string;
-  protocol?: string;
-  isDefault: boolean;
-  isEffectiveDefault: boolean;
-  owned: boolean;
-}
-
-/** 当前用户可用的模型运行配置（与「基础设施 → 配置」同一数据源） */
-export async function getMdToPptProfiles(): Promise<MdToPptProfileItem[]> {
-  const res = await apiRequest<MdToPptProfileItem[]>('/api/md-to-ppt/profiles');
-  return res.success && Array.isArray(res.data) ? res.data : [];
-}
-
-export interface MdToPptPoolModelItem {
-  id: string;
-  name: string;
-  model: string;
-  platform: string;
-  isMain: boolean;
-  ready: boolean;
-  /** 凭据预检：false = 物化必失败（平台 key 缺失/解密失败），弹层置灰 */
-  available?: boolean;
-  unavailableReason?: string | null;
-}
-
-/** 模型池候选（弹层「从模型池直选」）：选中即物化为运行配置，后端按 protocol 选择运行路径 */
-export async function getMdToPptPoolModels(): Promise<MdToPptPoolModelItem[]> {
-  const res = await apiRequest<MdToPptPoolModelItem[]>('/api/md-to-ppt/pool-models');
-  return res.success && Array.isArray(res.data) ? res.data : [];
-}
-
-/** 把池内模型一键物化为运行配置（幂等，复用平台 baseUrl/key），返回可立即选中的配置项 */
-export async function createMdToPptProfileFromPool(modelId: string): Promise<MdToPptProfileItem | null> {
-  const res = await apiRequest<MdToPptProfileItem>('/api/md-to-ppt/profiles/from-pool', {
-    method: 'POST',
-    body: { modelId },
-  });
-  return res.success && res.data ? res.data : null;
-}
-
 // ============ Types ============
 
-// 生成引擎优先走 LLM Gateway 直出，CDS Agent 只作为兼容路径。
-// 类型保留用于历史 run 记录展示（旧 run 的 engine 字段可能是 'map'）。
+// 历史 run 的 engine 字段可能是 'map'，读取类型保持兼容；新成品统一走 OpenDesign。
 export type MdToPptEngine = 'map' | 'agent';
 
 export interface MdToPptConvertRequest {
@@ -374,6 +290,8 @@ export interface MdToPptConvertRequest {
 export interface MdToPptPatchRequest {
   parentRunId: string;
   currentHtml: string;
+  /** 隔离编辑器产生的非可信草稿；服务端只会把它冻结为 OpenDesign 修改提案。 */
+  manualEditHtml?: string;
   slideRequest: string;
   slideIndex?: number;
   /** 风格主题：换风格走 patch 由 AI 按该风格重绘（不是前端 CSS 换皮） */
@@ -395,14 +313,6 @@ export interface MdToPptPublishResult {
   siteUrl: string;
   html: string;
   contentHash: string;
-}
-
-export interface MdToPptLocalEditResult {
-  runId: string;
-  parentRunId?: string | null;
-  html: string;
-  contentHash: string;
-  unchanged: boolean;
 }
 
 /** 诊断事件 payload（agent 路径专有） */
@@ -435,6 +345,8 @@ async function readSseStream(
     onDiag?: (data: MdToPptDiagEvent) => void;
     onThinking?: (text: string) => void;
     onDelta?: (text: string) => void;
+    onPhase?: (data: { phaseCode: string; progress: number; message: string }) => void;
+    onPreview?: (data: { html: string; revision: number }) => void;
     onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
     onPage?: (data: { index: number; total: number; html: string; done: number }) => void;
     onDone?: (data: Record<string, unknown>) => void;
@@ -481,6 +393,17 @@ async function readSseStream(
             handlers.onDiag?.(data as MdToPptDiagEvent);
           } else if (currentEvent === 'thinking') {
             handlers.onThinking?.((data.text as string) ?? '');
+          } else if (currentEvent === 'phase') {
+            handlers.onPhase?.({
+              phaseCode: (data.phaseCode as string) ?? '',
+              progress: (data.progress as number) ?? 0,
+              message: (data.message as string) ?? '',
+            });
+          } else if (currentEvent === 'preview') {
+            handlers.onPreview?.({
+              html: (data.html as string) ?? '',
+              revision: (data.revision as number) ?? 0,
+            });
           } else if (currentEvent === 'frame') {
             handlers.onFrame?.({ head: (data.head as string) ?? '', suffix: (data.suffix as string) ?? undefined, total: (data.total as number) ?? 0, anchored: data.anchored === true });
           } else if (currentEvent === 'page') {
@@ -521,8 +444,6 @@ export interface MdToPptConvertSseOptions {
   outlinePages?: OutlineSlide[];
   /** PPT 一句话主题（逐页模式给页面生成器的全局语境） */
   summary?: string;
-  /** 模型运行配置 ID（用户在 PPT 页切换的模型；缺省走后端默认链） */
-  runtimeProfileId?: string;
   sourceSurface?: 'html-ppt' | 'knowledge-base';
   parentOutlineRunId?: string;
   knowledgeReferences?: Array<{
@@ -541,8 +462,10 @@ export interface MdToPptConvertSseOptions {
   /** 推理模型思考过程增量（先想后写的模型，等待期展示思考内容） */
   onThinking?: (text: string) => void;
   onDelta?: (text: string) => void;
+  onPhase?: (data: { phaseCode: string; progress: number; message: string }) => void;
+  onPreview?: (data: { html: string; revision: number }) => void;
   /** degraded：退化为裸要点/范本兜底的页数；total：总页数（>0 时说明本次未全程走 Agent 设计） */
-  onDone?: (result: { html: string; degraded?: number; total?: number }) => void;
+  onDone?: (result: { html: string; degraded?: number; total?: number; siteUrl?: string; siteId?: string; revisionId?: string }) => void;
   onError?: (message: string) => void;
 }
 
@@ -557,7 +480,6 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
     try {
       const resolvedKnowledge = await resolveMdToPptKnowledgeReferences(options.knowledgeReferences ?? []);
       if (!resolvedKnowledge.success) {
-        await cancelMdToPptPrewarm();
         options.onError?.(resolvedKnowledge.error.message);
         return;
       }
@@ -592,7 +514,6 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
           templateId: options.templateId,
           outlinePages: options.outlinePages,
           summary: options.summary,
-          runtimeProfileId: options.runtimeProfileId,
           sourceSurface: options.sourceSurface,
           parentOutlineRunId: options.parentOutlineRunId,
           knowledgeReferences: resolvedKnowledge.data.items.map(({ entryId, storeId, contentHash }) => ({
@@ -622,6 +543,8 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         onDiag: options.onDiag,
         onThinking: options.onThinking,
         onDelta: options.onDelta,
+        onPhase: options.onPhase,
+        onPreview: options.onPreview,
         onFrame: options.onFrame,
         onPage: options.onPage,
         onDone: (data) => {
@@ -630,6 +553,9 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
             html: (data.html as string) ?? '',
             degraded: typeof data.degraded === 'number' ? data.degraded : undefined,
             total: typeof data.total === 'number' ? data.total : undefined,
+            siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : undefined,
+            siteId: typeof data.siteId === 'string' ? data.siteId : undefined,
+            revisionId: typeof data.revisionId === 'string' ? data.revisionId : undefined,
           });
         },
         onError: (msg) => {
@@ -639,7 +565,6 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
       });
       // stream ended without done/error — unblock the UI
       if (!resolved && !abortController.signal.aborted) {
-        await cancelMdToPptPrewarm();
         options.onError?.('连接意外断开，请重试');
       }
     } catch (e) {
@@ -651,7 +576,6 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
   })();
 
   return () => {
-    void cancelMdToPptPrewarm();
     abortController.abort();
   };
 }
@@ -661,14 +585,13 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
 export interface MdToPptPatchSseOptions {
   parentRunId: string;
   currentHtml: string;
+  manualEditHtml?: string;
   slideRequest: string;
   slideIndex?: number;
   /** 风格主题（patch 沿用当前风格 / 换风格重绘时传新值） */
   theme?: string;
   /** 自定义模板 ID（优先于 theme 生效） */
   templateId?: string;
-  /** 模型运行配置 ID（用户在 PPT 页切换的模型） */
-  runtimeProfileId?: string;
   onStart?: () => void;
   onRun?: (runId: string) => void;
   onModel?: (info: { model: string; platform: string }) => void;
@@ -676,7 +599,9 @@ export interface MdToPptPatchSseOptions {
   /** 推理模型思考过程增量 */
   onThinking?: (text: string) => void;
   onDelta?: (text: string) => void;
-  onDone?: (result: { html: string }) => void;
+  onPhase?: (data: { phaseCode: string; progress: number; message: string }) => void;
+  onPreview?: (data: { html: string; revision: number }) => void;
+  onDone?: (result: { html: string; siteUrl?: string; siteId?: string; revisionId?: string }) => void;
   onError?: (message: string) => void;
 }
 
@@ -695,11 +620,11 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
         body: JSON.stringify({
           parentRunId: options.parentRunId,
           currentHtml: options.currentHtml,
+          manualEditHtml: options.manualEditHtml,
           slideRequest: options.slideRequest,
           slideIndex: options.slideIndex,
           theme: options.theme,
           templateId: options.templateId,
-          runtimeProfileId: options.runtimeProfileId,
         }),
         signal: abortController.signal,
       });
@@ -717,9 +642,16 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
         onDiag: options.onDiag,
         onThinking: options.onThinking,
         onDelta: options.onDelta,
+        onPhase: options.onPhase,
+        onPreview: options.onPreview,
         onDone: (data) => {
           resolved = true;
-          options.onDone?.({ html: (data.html as string) ?? '' });
+          options.onDone?.({
+            html: (data.html as string) ?? '',
+            siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : undefined,
+            siteId: typeof data.siteId === 'string' ? data.siteId : undefined,
+            revisionId: typeof data.revisionId === 'string' ? data.revisionId : undefined,
+          });
         },
         onError: (msg) => {
           resolved = true;
@@ -772,24 +704,6 @@ export async function publishMdToPpt(req: MdToPptPublishRequest): Promise<{
   };
 }
 
-/** 把浏览器内直接编辑保存为新的权威运行版本，随后才能继续精修或发布。 */
-export async function persistMdToPptLocalEdit(
-  parentRunId: string,
-  htmlContent: string
-): Promise<{ success: true; data: MdToPptLocalEditResult } | { success: false; error: string }> {
-  const res = await apiRequest<MdToPptLocalEditResult>(
-    `/api/md-to-ppt/runs/${encodeURIComponent(parentRunId)}/local-edit`,
-    {
-      method: 'POST',
-      body: { htmlContent },
-    }
-  );
-  if (!res.success || !res.data) {
-    return { success: false, error: res.error?.message ?? '编辑版本保存失败' };
-  }
-  return { success: true, data: res.data };
-}
-
 // ============ Runs（server-authority：刷新可重连/查看历史）============
 
 export interface MdToPptRunDetail {
@@ -806,6 +720,9 @@ export interface MdToPptRunDetail {
   html: string;
   htmlHash?: string | null;
   publishedHtmlHash?: string | null;
+  publishedSiteId?: string | null;
+  publishedVersionId?: string | null;
+  siteUrl?: string | null;
   /** op=outline 时填充：刷新恢复用的大纲结果 JSON（与 outlineDraft 同形） */
   outlineJson?: string | null;
   inputAuthority?: 'user-supplied' | 'mixed-user-and-server-knowledge';

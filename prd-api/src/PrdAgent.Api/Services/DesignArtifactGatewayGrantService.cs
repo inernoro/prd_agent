@@ -67,9 +67,7 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
             throw new InvalidOperationException("当前设计任务没有冻结可用的逻辑模型，无法启动 OpenDesign 任务");
 
         var policy = selection.Policy;
-        var caller = run.Operation == DesignArtifactOperations.Edit
-            ? AppCallerRegistry.Admin.WebHosting.EditHtml
-            : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+        var caller = CallerFor(run);
         var keyBytes = RandomNumberGenerator.GetBytes(32);
         var plainKey = "gwrg_" + Convert.ToBase64String(keyBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
@@ -124,9 +122,7 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
                 cancellationToken: ct);
         }
 
-        var caller = run.Operation == DesignArtifactOperations.Edit
-            ? AppCallerRegistry.Admin.WebHosting.EditHtml
-            : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+        var caller = CallerFor(run);
         var latest = await _gateway.LlmRequestLogs
             .Find(item => item.ServiceKeyId == grantId
                           && item.RunId == run.Id
@@ -145,6 +141,17 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
     public Task RevokeAsync(string grantId, CancellationToken ct) =>
         _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .DeleteOneAsync(x => x.Id == grantId, ct);
+
+    internal static string CallerFor(DesignArtifactRun run)
+    {
+        if (run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+            return run.Operation == DesignArtifactOperations.Edit
+                ? AppCallerRegistry.MdToPptAgent.Generation.Patch
+                : AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate;
+        return run.Operation == DesignArtifactOperations.Edit
+            ? AppCallerRegistry.Admin.WebHosting.EditHtml
+            : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+    }
 
     private static string NormalizeEnvironment(string value) => value.Trim().ToLowerInvariant() switch
     {

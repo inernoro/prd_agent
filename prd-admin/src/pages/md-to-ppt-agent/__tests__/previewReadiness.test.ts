@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 const source = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
 // 执行实际注入脚本，而不是复刻一个“等价”的测试实现。
 const factory = source.slice(source.indexOf('function prepareIframeHtml('), source.indexOf('// 新版本在服务端生成阶段固化字体'));
-const prepare = new Function('FONT_LINKS', ts.transpile(factory) + ';return prepareIframeHtml;')('') as (html: string, opts: { documentId: string; editor?: boolean }) => string;
+const prepare = new Function('FONT_LINKS', ts.transpile(factory) + ';return prepareIframeHtml;')('') as (html: string, opts: { documentId: string; editor?: boolean; assetBaseUrl?: string }) => string;
 const html = prepare('<html><head></head><body></body></html>', { documentId: 'current-document' });
 const control = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]).find(s => s.includes('function slides()'))!;
 
@@ -66,17 +66,41 @@ describe('PPT 文档导航就绪合同', () => {
     expect(prepare('<html><head></head><body></body></html>', { documentId: 'edited-document', editor: true })).toBe(editable);
   });
 
+  it('多文件成品进入隔离编辑时保留父站点资源基址，序列化时不会把基址写回草稿', () => {
+    const editable = prepare(
+      '<html><head><link rel="stylesheet" href="assets/deck.css"></head><body></body></html>',
+      { documentId: 'multi-file-draft', editor: true, assetBaseUrl: 'https://preview.example/decks/revision-1/' },
+    );
+    expect(editable).toContain('<base href="https://preview.example/decks/revision-1/" data-map-inject>');
+    expect(editable).toContain('href="assets/deck.css"');
+    expect(editable).toContain('querySelectorAll("[data-map-inject],#__map_editor_toolbar__")');
+  });
+
   it('父层按当前文档身份解锁，替换后旧 ready 无效；按钮和处理器共用门禁，隔离保持', () => {
     expect(source).toContain('const previewReady = readyPreviewId === previewDocument.id');
     expect(source).toContain('if (d.documentId !== previewDocument.id) return;');
     expect(source).toContain('key={previewDocument.id}');
-    expect(source).toContain('srcDoc={previewDocument.html}');
-    expect(source).toContain('}, [generatedHtml, editMode])');
+    expect(source).toContain('? { src: previewDocument.url }');
+    expect(source).toContain(': { srcDoc: previewDocument.html }');
+    expect(source).toContain("type: 'map-ppt-init'");
+    expect(source).toContain('documentId: previewDocument.id');
+    expect(source).toContain('const useEditableDraft = editMode');
+    expect(source).toContain('assetBaseUrl: artifactSiteUrl');
+    expect(source).toContain("url: useEditableDraft ? '' : artifactSiteUrl");
+    expect(source).toContain('}, [generatedHtml, artifactSiteUrl, editMode])');
     expect(source.match(/disabled=\{!previewReady\}/g)).toHaveLength(2);
     expect(source).toContain('if (!previewReady) return;');
     expect(source).toContain('if (e.source !== iframeRef.current?.contentWindow) return;');
     const primaryFrame = source.slice(source.indexOf('key={previewDocument.id}'), source.indexOf('title="PPT 预览"'));
     expect(primaryFrame).toContain('sandbox="allow-scripts"');
     expect(primaryFrame).not.toContain('allow-same-origin');
+  });
+
+  it('手动草稿只通过 patch 冻结并质量检查，失败时不清除草稿或改写原版本', () => {
+    expect(source).toContain('manualEditHtml,');
+    expect(source).toContain('if (manualEditHtml) return;');
+    expect(source).toContain("toast.error('保存编辑失败', '当前草稿和原版本都已保留，可检查后再次保存。')");
+    expect(source).not.toContain('persistMdToPptLocalEdit(');
+    expect(source).toContain("{editMode ? (dirtyEdits ? '保存并检查' : '退出编辑') : '编辑内容'}");
   });
 });

@@ -4624,7 +4624,7 @@ public class HostedSiteService : IHostedSiteService
     // v4：一律邀请式 —— 任何情况都不自动劫持键盘，必须用户点角落「开启」才生效（会话内记住）
     // v5：幻灯片判定后主动聚焦页面主体，避免新窗口/iframe 预览必须先点内容区才接收快捷键。
     // v6：所有托管 HTML 都在加载后尝试聚焦内部文档；幻灯片判断只决定是否启用翻页兼容 UI。
-    private const int SlideNavVersion = 6;
+    private const int SlideNavVersion = 7;
 
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
@@ -4778,6 +4778,7 @@ public class HostedSiteService : IHostedSiteService
   if (window.__mapSlideNavCompat) return;
   window.__mapSlideNavCompat = true;
   var SNAP_AXIS = null, scroller = null, driver = null;
+  var bridgeDocumentId = null, revealBridgeBound = false;
   var navOn = false, decided = false, pill = null;
   // 记住用户对「本 deck」的选择（on/off）。用 sessionStorage（随标签页关闭清空，符合 no-localStorage 约定）
   var KEY = 'mapSlideNav:' + (location.pathname || '');
@@ -4828,6 +4829,65 @@ public class HostedSiteService : IHostedSiteService
     } catch(e){}
     return null;
   }
+  function bridgeSlides(){
+    return document.querySelectorAll('.reveal .slides > section, .swiper-slide, section.slide, [data-slide], .step, .slidev-page');
+  }
+  function bridgePosition(){
+    var nodes = bridgeSlides(), total = nodes.length || 1, current = 0;
+    try {
+      if (window.Reveal && typeof window.Reveal.getIndices === 'function') current = window.Reveal.getIndices().h || 0;
+      else {
+        var active = document.querySelector('.swiper-slide-active, .reveal .slides > section.present, section.slide.active, [data-slide].active, .step.active, .slidev-page.active');
+        if (active) current = Array.prototype.indexOf.call(nodes, active);
+      }
+    } catch(e){}
+    return { cur: Math.max(0, current) + 1, total: Math.max(1, total) };
+  }
+  function bridgePost(type){
+    if (!bridgeDocumentId || window.parent === window) return;
+    var payload = { type:type, documentId:bridgeDocumentId };
+    if (type === 'map-ppt-slide') {
+      var position = bridgePosition(); payload.cur = position.cur; payload.total = position.total;
+    }
+    try { window.parent.postMessage(payload, '*'); } catch(e){}
+  }
+  function bridgeGoto(index){
+    var target = Math.max(0, Math.floor(index));
+    try {
+      if (window.Reveal && typeof window.Reveal.slide === 'function') { window.Reveal.slide(target); return true; }
+      var sw = document.querySelector('.swiper, .swiper-container');
+      if (sw && sw.swiper && typeof sw.swiper.slideTo === 'function') { sw.swiper.slideTo(target); return true; }
+      if (scroller) {
+        if ((SNAP_AXIS||'y') === 'x') scroller.scrollTo({ left:target*scroller.clientWidth, behavior:'smooth' });
+        else scroller.scrollTo({ top:target*scroller.clientHeight, behavior:'smooth' });
+        return true;
+      }
+    } catch(e){}
+    return false;
+  }
+  function bindBridge(){
+    if (revealBridgeBound || !window.Reveal || typeof window.Reveal.on !== 'function') return;
+    revealBridgeBound = true;
+    try { window.Reveal.on('slidechanged', function(){ bridgePost('map-ppt-slide'); }); } catch(e){}
+  }
+  window.addEventListener('message', function(event){
+    if (event.source !== window.parent || !event.data || typeof event.data !== 'object') return;
+    var data = event.data;
+    if (data.type === 'map-ppt-init') {
+      if (typeof data.documentId !== 'string' || data.documentId.length < 1 || data.documentId.length > 128) return;
+      bridgeDocumentId = data.documentId; driver = resolveDriver(); bindBridge();
+      bridgePost('map-ppt-ready'); bridgePost('map-ppt-slide'); return;
+    }
+    if (!bridgeDocumentId) return;
+    if (data.type === 'map-ppt-nav' && (data.dir === 'next' || data.dir === 'prev')) {
+      if (!driver) driver = resolveDriver();
+      if (driver) data.dir === 'next' ? driver.next() : driver.prev();
+      setTimeout(function(){ bridgePost('map-ppt-slide'); }, 80);
+    } else if (data.type === 'map-ppt-goto' && typeof data.h === 'number' && isFinite(data.h)) {
+      bridgeGoto(data.h); setTimeout(function(){ bridgePost('map-ppt-slide'); }, 80);
+    }
+  }, false);
+  window.addEventListener('hashchange', function(){ bridgePost('map-ppt-slide'); });
   // 低可信信号：仅靠 .slide 类元素 ≥2（最易误判，故只用于「邀请」不自动劫持）
   function looseSlides(){
     return document.querySelectorAll('.swiper-slide, .reveal .slides > section, section.slide, .slide, [data-slide], .step, .slidev-page').length >= 2;

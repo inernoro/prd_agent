@@ -21,7 +21,11 @@ export type BrowserQualityIssueCode =
   | 'broken_fragment_target'
   | 'mobile_navigation_unusable'
   | 'table_unreadable'
-  | 'key_text_contrast_low';
+  | 'key_text_contrast_low'
+  | 'presentation_page_count_mismatch'
+  | 'presentation_navigation_unusable'
+  | 'presentation_text_too_small'
+  | 'presentation_fixed_overlay_obscures_content';
 
 export interface BrowserElementSummary {
   tag: string;
@@ -44,6 +48,7 @@ export interface BrowserViewportMeasurement {
   viewport: BrowserQualityViewportName;
   width: number;
   height: number;
+  slideIndex?: number;
   documentWidth: number;
   h1Count: number;
   visibleHeadingCount: number;
@@ -171,6 +176,8 @@ const BROWSER_MEASUREMENT_KEYS = new Set([
   'documentWidth', 'viewportWidth', 'present', 'visible', 'left', 'right', 'href',
   'linkCount', 'visibleLinkCount', 'hasVisibleToggle', 'tableWidth', 'scrollable',
   'minCellWidth', 'ratio', 'minimum', 'fontSize', 'fontWeight',
+  'slideIndex', 'actualPages', 'targetPages', 'canNavigate',
+  'effectiveFontSize', 'minimumFontSize', 'overlapRatio',
 ]);
 
 function boundedActual(actual: BrowserQualityIssue['actual']): BrowserQualityFailureIssue['actual'] {

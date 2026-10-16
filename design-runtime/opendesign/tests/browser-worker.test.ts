@@ -21,6 +21,15 @@ function workspace(html: string): { workspaceDir: string; evidenceDir: string } 
   return { workspaceDir, evidenceDir };
 }
 
+function presentationWorkspace(html: string, targetPages: number): { workspaceDir: string; evidenceDir: string } {
+  const result = workspace(html);
+  fs.mkdirSync(path.join(result.workspaceDir, 'brief'));
+  fs.writeFileSync(path.join(result.workspaceDir, 'brief', 'task.json'), JSON.stringify({
+    presentationContract: { targetPages },
+  }));
+  return result;
+}
+
 describe('isolated Chromium quality measurements', () => {
   it('detects every deterministic hard-gate category from a fixed broken sample', async () => {
     const sample = workspace(`<!doctype html><html><head><style>
@@ -78,5 +87,40 @@ describe('isolated Chromium quality measurements', () => {
     expect(codes).toContain('main_content_clipped');
     expect(codes).toContain('primary_cta_clipped');
     expect(codes).toContain('empty_link');
+  }, 30_000);
+
+  it('checks every presentation slide and rejects transform-shrunk mobile text', async () => {
+    const sample = presentationWorkspace(`<!doctype html><html><head><style>
+      body{margin:0;color:#111;background:#fff}.reveal .slides>section{display:none}.reveal .slides>section.active{display:block}
+      @media(max-width:500px){.scaled{transform:scale(.4);transform-origin:top left}}
+    </style></head><body><main><div class="reveal"><div class="slides">
+      <section class="active"><h1>Readable first slide</h1></section>
+      <section><p class="scaled">This text is visually smaller than twelve pixels</p></section>
+    </div></div></main><script>
+      const slides=[...document.querySelectorAll('.slides>section')];
+      window.Reveal={slide(i){slides.forEach((s,n)=>s.classList.toggle('active',n===i));this.i=i},getIndices(){return {h:this.i||0}}};
+    </script></body></html>`, 2);
+
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+    const mobileSecond = result.measurements.find((measurement) => measurement.viewport === 'mobile' && measurement.slideIndex === 2)!;
+    expect(result.measurements.filter((measurement) => measurement.viewport === 'mobile')).toHaveLength(2);
+    expect(mobileSecond.issues.map((issue) => issue.issueCode)).toContain('presentation_text_too_small');
+  }, 30_000);
+
+  it('allows vertically scrollable mobile slides but rejects a fixed control covering their text', async () => {
+    const sample = presentationWorkspace(`<!doctype html><html><head><style>
+      body{margin:0;color:#111;background:#fff}.reveal .slides>section{display:none}.reveal .slides>section.active{display:block}
+      .long{min-height:1200px}.cover{position:fixed;left:0;right:0;top:0;height:90px;background:#fff}
+    </style></head><body><main><div class="reveal"><div class="slides"><section class="active">
+      <h1>Long readable slide</h1><p class="long">All content remains reachable by natural vertical scrolling.</p>
+      <nav class="cover"><button type="button">Next slide</button></nav>
+    </section></div></div></main><script>
+      window.Reveal={slide(i){this.i=i},getIndices(){return {h:this.i||0}}};
+    </script></body></html>`, 1);
+
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+    const mobile = result.measurements.find((measurement) => measurement.viewport === 'mobile' && measurement.slideIndex === 1)!;
+    expect(mobile.issues.map((issue) => issue.issueCode)).toContain('presentation_fixed_overlay_obscures_content');
+    expect(mobile.issues.map((issue) => issue.issueCode)).not.toContain('main_content_clipped');
   }, 30_000);
 });

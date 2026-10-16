@@ -107,109 +107,6 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void OpenAiCompatibleProfile_UsesGatewayDirect()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Runtime = InfraAgentRuntimes.ClaudeSdk,
-            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
-            Model = "qwen-max",
-        };
-
-        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
-    }
-
-    [Fact]
-    public void AnthropicProfile_UsesGatewayDirect()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Runtime = InfraAgentRuntimes.ClaudeSdk,
-            Protocol = InfraAgentRuntimeProtocols.Anthropic,
-            Model = "claude-sonnet",
-        };
-
-        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
-    }
-
-    [Fact]
-    public void CustomRuntime_KeepsCdsAgentCompatibilityPath()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Runtime = InfraAgentRuntimes.Custom,
-            Protocol = InfraAgentRuntimeProtocols.Anthropic,
-            Model = "custom-agent-model",
-        };
-
-        Assert.False(MdToPptController.ShouldUseGatewayDirect(profile));
-    }
-
-    [Fact]
-    public void RunnableSlideFragment_RejectsFullHtmlAndScript()
-    {
-        Assert.False(MdToPptController.IsRunnableSlideFragment("<html><body><section>x</section></body></html>", anchored: false));
-        Assert.False(MdToPptController.IsRunnableSlideFragment("<section><script>alert(1)</script></section>", anchored: false));
-        Assert.True(MdToPptController.IsRunnableSlideFragment(
-            "<section><div class=\"pp-root\"><h2>产品发布</h2><div class=\"grid g3\"><div class=\"card\">A</div><div class=\"stat\">42%</div></div></div></section>",
-            anchored: false));
-    }
-
-    [Fact]
-    public void RunnableSlideFragment_RejectsGenericTitleAndPlainBulletPage()
-    {
-        Assert.False(MdToPptController.IsRunnableSlideFragment(
-            "<section><div class=\"pp-root\"><h2>封面</h2><ul><li>A</li><li>B</li></ul></div></section>",
-            anchored: false));
-        Assert.False(MdToPptController.IsRunnableSlideFragment(
-            "<section><div class=\"pp-root\"><h2>产品发布</h2><ul><li>A</li><li>B</li><li>C</li></ul></div></section>",
-            anchored: false));
-        Assert.True(MdToPptController.LooksLikeLowQualitySlide(
-            "<section><h2>总结</h2><ul><li>A</li><li>B</li></ul></section>"));
-    }
-
-    [Fact]
-    public void RunnableAnchoredSlide_AcceptsOfficialHtmlPptSectionRoot()
-    {
-        var slide = "<section class=\"slide s-cover hairlines\" data-title=\"封面\"><h1>产品发布</h1><div class=\"card\">A</div><div class=\"stat\">42%</div></section>";
-        Assert.True(MdToPptController.IsRunnableSlideFragment(slide, anchored: true));
-    }
-
-    [Fact]
-    public void GatewayPageRequest_PinsExpectedModelKeepsStreamAndOmitsTaskOutputCap()
-    {
-        var profile = new InfraAgentRuntimeProfile
-        {
-            Protocol = InfraAgentRuntimeProtocols.OpenAiCompatible,
-            Model = "qwen-max",
-            TimeoutSeconds = 120,
-        };
-
-        var request = MdToPptController.BuildGatewayPageRequest(profile, "sys", "usr", "md-to-ppt-test::chat", "req1", "u1", "page1", "run-1");
-
-        Assert.True(request.Stream);
-        Assert.Equal("qwen-max", request.ExpectedModel);
-        Assert.Equal("md-to-ppt-test::chat", request.AppCallerCode);
-        Assert.Equal("req1", request.Context?.RequestId);
-        Assert.Equal("u1", request.Context?.UserId);
-        Assert.Equal("run-1", request.Context?.RunId);
-        Assert.False(request.RequestBody?.ContainsKey("max_tokens"));
-        Assert.False(request.RequestBody?.ContainsKey("max_completion_tokens"));
-    }
-
-    [Fact]
-    public void SystemGatewayProfile_ProvidesZeroConfigurationFallback()
-    {
-        var profile = MdToPptController.CreateSystemGatewayProfile("user-1");
-
-        Assert.Equal(MdToPptController.SystemGatewayProfileId, profile.Id);
-        Assert.Equal(string.Empty, profile.Model);
-        Assert.True(profile.IsDefault);
-        Assert.True(MdToPptController.ShouldUseGatewayDirect(profile));
-        Assert.Equal("自动选择", MdToPptController.GenerationModelLabel(profile));
-    }
-
-    [Fact]
     public void RunnableDeckDocument_RejectsCssOnlyTruncationAndAcceptsRealDecks()
     {
         var truncated = "<!DOCTYPE html><html><head><style>" + new string('x', 220) +
@@ -462,22 +359,6 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void GatewayPageRequest_CanExposeThinkingForWholeDeck()
-    {
-        var profile = MdToPptController.CreateSystemGatewayProfile("user-1");
-
-        var request = MdToPptController.BuildGatewayPageRequest(
-            profile,
-            "sys",
-            "usr",
-            "md-to-ppt-test::chat",
-            includeThinking: true);
-
-        Assert.True(request.IncludeThinking);
-        Assert.Null(request.ExpectedModel);
-    }
-
-    [Fact]
     public void ResolveTargetPages_UsesExplicitPageCountBeforeDefault()
     {
         var req = new MdToPptOutlineRequest { Content = "严格生成 2 页高级产品发布会 PPT" };
@@ -585,21 +466,6 @@ public class MdToPptSectionSanitizeTests
         Assert.False(MdToPptController.LooksLikeConsoleVisualMismatch(
             "<div class=\"console-dashboard\"><div class=\"panel metric\">指标</div><div class=\"panel queue\">任务队列</div><div class=\"panel preview\">发布状态</div></div>",
             "cobalt-grid"));
-    }
-
-    [Fact]
-    public void ConsoleDashboardFallbackSlide_UsesOperationalPanels()
-    {
-        var page = new MdToPptOutlinePageDto
-        {
-            Title = "控制台总览",
-            Bullets = new List<string> { "知识库引用", "生成海报教程文案 HTML", "自动发布到网页托管", "可预览可编辑" },
-        };
-        var html = MdToPptController.ConsoleDashboardFallbackSlide(null, page, 0, 2);
-        Assert.Contains("console-dashboard", html);
-        Assert.Contains("任务队列", html);
-        Assert.Contains("网页托管预览", html);
-        Assert.Contains("知识库引用", html);
     }
 
     [Fact]

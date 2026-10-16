@@ -437,7 +437,9 @@ public sealed class DesignArtifactsController : ControllerBase
         }
 
         var capability = await _providers.FindAsync(userId, DesignArtifactRuntimes.OpenDesign, CancellationToken.None);
-        if (capability == null || !capability.Enabled || !capability.Operations.Contains(source.Operation, StringComparer.Ordinal))
+        if (capability == null || !capability.Enabled
+            || !capability.ArtifactTypes.Contains(source.ArtifactType, StringComparer.Ordinal)
+            || !capability.Operations.Contains(source.Operation, StringComparer.Ordinal))
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
                 capability?.Reason ?? "设计服务尚未恢复，冻结输入已保留，请稍后再重开"));
@@ -445,32 +447,69 @@ public sealed class DesignArtifactsController : ControllerBase
         string? currentHtml = null;
         if (source.Operation == DesignArtifactOperations.Edit)
         {
-            if (string.IsNullOrWhiteSpace(source.TargetSiteId))
-                return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_INPUT_MISSING", "原修改任务缺少目标站点，无法重开"));
-            try
+            if (source.ArtifactType == DesignArtifactTypes.HtmlPpt)
             {
-                currentHtml = (await _sites.GetEditableEntryHtmlAsync(
-                    source.TargetSiteId,
-                    userId,
-                    CancellationToken.None)).Html;
+                var parentRunId = source.PresentationInput?.ParentRunId;
+                var parent = string.IsNullOrWhiteSpace(parentRunId)
+                    ? null
+                    : await _db.MdToPptRuns.Find(item => item.Id == parentRunId
+                            && item.UserId == userId
+                            && item.Status == "done")
+                        .FirstOrDefaultAsync(CancellationToken.None);
+                var parentArtifact = string.IsNullOrWhiteSpace(parentRunId)
+                    ? null
+                    : await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                            && item.Id == parentRunId
+                            && item.UserId == userId
+                            && item.ArtifactType == DesignArtifactTypes.HtmlPpt
+                            && item.Status == RunStatuses.Done)
+                        .FirstOrDefaultAsync(CancellationToken.None);
+                if (parent == null || parentArtifact == null
+                    || string.IsNullOrWhiteSpace(source.PresentationInput?.ParentPackageHash)
+                    || !string.Equals(
+                        parentArtifact.WorkspaceResultSha256,
+                        source.PresentationInput.ParentPackageHash,
+                        StringComparison.OrdinalIgnoreCase))
+                    return Conflict(ApiResponse<object>.Fail(
+                        "DESIGN_ARTIFACT_RESTART_INPUT_CHANGED",
+                        "原演示稿已不可用或发生变化，不能冒充上次冻结输入重开"));
+                currentHtml = parent.Html;
             }
-            catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+            else
             {
-                return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_INPUT_MISSING", "原页面已不可用，无法按冻结要求重开"));
+                if (string.IsNullOrWhiteSpace(source.TargetSiteId))
+                    return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_INPUT_MISSING", "原修改任务缺少目标站点，无法重开"));
+                try
+                {
+                    currentHtml = (await _sites.GetEditableEntryHtmlAsync(
+                        source.TargetSiteId,
+                        userId,
+                        CancellationToken.None)).Html;
+                }
+                catch (Exception ex) when (ex is KeyNotFoundException or InvalidOperationException)
+                {
+                    return Conflict(ApiResponse<object>.Fail("DESIGN_ARTIFACT_RESTART_INPUT_MISSING", "原页面已不可用，无法按冻结要求重开"));
+                }
+                var currentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                        DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(currentHtml))))
+                    .ToLowerInvariant();
+                if (string.IsNullOrWhiteSpace(source.VersionBoundary?.BaseContentHash)
+                    || !string.Equals(source.VersionBoundary.BaseContentHash, currentHash, StringComparison.Ordinal))
+                    return Conflict(ApiResponse<object>.Fail(
+                        "DESIGN_ARTIFACT_RESTART_INPUT_CHANGED",
+                        "原页面已发生变化，不能冒充上次冻结输入重开；请从当前页面重新发起修改"));
             }
-            var currentHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
-                    DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(currentHtml))))
-                .ToLowerInvariant();
-            if (string.IsNullOrWhiteSpace(source.VersionBoundary?.BaseContentHash)
-                || !string.Equals(source.VersionBoundary.BaseContentHash, currentHash, StringComparison.Ordinal))
-                return Conflict(ApiResponse<object>.Fail(
-                    "DESIGN_ARTIFACT_RESTART_INPUT_CHANGED",
-                    "原页面已发生变化，不能冒充上次冻结输入重开；请从当前页面重新发起修改"));
         }
 
         var now = DateTime.UtcNow;
         var restarted = CloneForRestart(source, capability, deterministicId, keyHash, now);
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(restarted, capability, currentHtml);
+        if (source.ArtifactType == DesignArtifactTypes.HtmlPpt)
+        {
+            await _db.MdToPptRuns.InsertOneAsync(
+                BuildRestartedPresentationCompatibilityRun(source, restarted, now),
+                cancellationToken: CancellationToken.None);
+        }
         try
         {
             await _db.DesignArtifactRuns.InsertOneAsync(restarted, cancellationToken: CancellationToken.None);
@@ -538,8 +577,10 @@ public sealed class DesignArtifactsController : ControllerBase
         var generationRun = await _db.DesignArtifactRuns
             .Find(run => run.Id == runId
                          && run.UserId == userId
-                         && run.ArtifactType == DesignArtifactTypes.WebPage
-                         && run.Operation == DesignArtifactOperations.Generate)
+                         && (run.ArtifactType == DesignArtifactTypes.WebPage
+                             || run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                         && (run.Operation == DesignArtifactOperations.Generate
+                             || run.Operation == DesignArtifactOperations.Edit))
             .FirstOrDefaultAsync(CancellationToken.None);
         if (generationRun == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
@@ -1157,6 +1198,7 @@ public sealed class DesignArtifactsController : ControllerBase
         DesignBrief = source.DesignBrief,
         BrandPackage = source.BrandPackage,
         DesignContextProvenance = source.DesignContextProvenance,
+        PresentationInput = source.PresentationInput,
         UploadedSources = source.UploadedSources,
         ReferenceImages = source.ReferenceImages,
         Progress = 2,
@@ -1169,6 +1211,43 @@ public sealed class DesignArtifactsController : ControllerBase
         CreatedAt = now,
         UpdatedAt = now,
     };
+
+    private static MdToPptRun BuildRestartedPresentationCompatibilityRun(
+        DesignArtifactRun source,
+        DesignArtifactRun restarted,
+        DateTime now)
+    {
+        var presentation = source.PresentationInput
+                           ?? throw new InvalidOperationException("原演示稿任务缺少冻结输入，无法重开");
+        var preview = presentation.SourceContent.Trim();
+        return new MdToPptRun
+        {
+            Id = restarted.Id,
+            UserId = restarted.UserId,
+            Status = "running",
+            Engine = "agent",
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Provider = DesignArtifactRuntimes.OpenDesign,
+            ArtifactContractVersion = DesignArtifactContractVersions.Current,
+            Theme = presentation.Theme,
+            Op = restarted.Operation == DesignArtifactOperations.Edit ? "patch" : "convert",
+            ParentRunId = presentation.ParentRunId,
+            ParentHtmlHash = presentation.ParentPackageHash,
+            InputAuthority = restarted.InputAuthority,
+            UserSuppliedContentHash = restarted.UserSuppliedContentHash,
+            Title = restarted.Title,
+            ContentPreview = preview.Length > 200 ? preview[..200] : preview,
+            SourcePlanVersion = 1,
+            SourcePlanPageCount = presentation.TargetPages,
+            SourcePlanJson = presentation.OutlineJson,
+            SourcePlanHash = presentation.OutlineHash,
+            Total = presentation.TargetPages,
+            SourceSurface = restarted.SourceSurface,
+            KnowledgeReferences = restarted.KnowledgeReferences.ToList(),
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+    }
 
     private async Task ProjectCancellationBestEffortAsync(DesignArtifactRun run)
     {
