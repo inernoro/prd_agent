@@ -19,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("dashboard", AdminPermissionCatalog.Access)]
 public sealed class NotificationsController : ControllerBase
 {
+    private const string LegacyPersonalDataTransferKeyPattern = @"^data-transfer(?:-accepted|-rejected)?:[0-9a-f]{32}$";
     private readonly MongoDbContext _db;
     private readonly AdminPushNotificationService _pushService;
     private readonly AdminNotificationEventService _eventService;
@@ -351,13 +352,22 @@ public sealed class NotificationsController : ControllerBase
         var sourceIsAdmin = builder.Regex(x => x.Source,
             new BsonRegularExpression($@"^\s*(?:{adminSources})\s*$", "i"));
 
-        // 历史空分区按同一来源目录推导；显式个人分区不被来源覆盖。
-        return explicitAdmin | (absentOrBlank & sourceIsAdmin);
+        // 既有数据分享使用这三个结构化事件Key；不能把所有定向system消息都放行。
+        var personalDataTransfer = builder.Regex(x => x.Source, new BsonRegularExpression(@"^\s*system\s*$", "i"))
+                                   & builder.Regex(x => x.Key, new BsonRegularExpression(LegacyPersonalDataTransferKeyPattern))
+                                   & builder.Regex(x => x.TargetUserId, new BsonRegularExpression(@"\S"));
+        // 显式分区仍优先；只有历史空分区的已知个人业务不采用管理来源默认。
+        return explicitAdmin | (absentOrBlank & sourceIsAdmin & builder.Not(personalDataTransfer));
     }
 
     private static object ToNotificationDto(AdminNotification n)
     {
-        var section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section);
+        var legacyPersonalDataTransfer = string.IsNullOrWhiteSpace(n.Section)
+                                         && AdminNotificationSourceCatalog.NormalizeSource(n.Source) == "system"
+                                         && !string.IsNullOrWhiteSpace(n.TargetUserId)
+                                         && Regex.IsMatch(n.Key ?? string.Empty, LegacyPersonalDataTransferKeyPattern, RegexOptions.CultureInvariant);
+        var section = AdminNotificationSourceCatalog.ResolveSection(n.Source,
+            legacyPersonalDataTransfer ? AdminNotificationSections.Personal : n.Section);
         var presentation = ToUserReadablePresentation(n);
         return new
         {

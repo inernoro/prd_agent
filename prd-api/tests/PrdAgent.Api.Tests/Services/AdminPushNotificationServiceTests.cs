@@ -975,6 +975,91 @@ public sealed class AdminPushNotificationServiceTests
         Assert.Equal("AI 服务额度不足", stored.Title);
     }
 
+    [Theory]
+    [InlineData("data-transfer", "null")]
+    [InlineData("data-transfer", "missing")]
+    [InlineData("data-transfer", " ")]
+    [InlineData("data-transfer-accepted", "null")]
+    [InlineData("data-transfer-accepted", "missing")]
+    [InlineData("data-transfer-accepted", " ")]
+    [InlineData("data-transfer-rejected", "null")]
+    [InlineData("data-transfer-rejected", "missing")]
+    [InlineData("data-transfer-rejected", " ")]
+    public async Task NotificationsController_List_ShouldPreserveTargetedLegacyDataTransfersBeforeLimit(string prefix, string sectionState)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyDataTransferAsync(testDb, prefix, sectionState);
+        await InsertPersonalControlsAsync(testDb);
+        var controller = CreateNotificationsController(testDb.Context, "u1");
+        var items = ReadNotificationItems(await controller.List(ct: CancellationToken.None));
+
+        Assert.Equal(new[] { "explicit-personal", "mine", "personal-global", "transfer" },
+            items.Select(x => x.GetProperty("id").GetString()).OrderBy(x => x).ToArray());
+        var transfer = Assert.Single(items, x => x.GetProperty("id").GetString() == "transfer");
+        Assert.Equal("personal", transfer.GetProperty("section").GetString());
+        Assert.Equal("个人通知", transfer.GetProperty("sectionLabel").GetString());
+        Assert.Equal("本人数据分享", transfer.GetProperty("title").GetString());
+        var stored = await testDb.Context.AdminNotifications.Find(x => x.Id == "transfer").SingleAsync();
+        Assert.Equal("system", stored.Source);
+        Assert.Equal("u1", stored.TargetUserId);
+        Assert.True(string.IsNullOrWhiteSpace(stored.Section));
+        Assert.Equal("open", stored.Status);
+    }
+
+    [Theory]
+    [InlineData("data-transfer", false)]
+    [InlineData("data-transfer", true)]
+    [InlineData("data-transfer-accepted", false)]
+    [InlineData("data-transfer-accepted", true)]
+    [InlineData("data-transfer-rejected", false)]
+    [InlineData("data-transfer-rejected", true)]
+    public async Task NotificationsController_Handle_ShouldPreserveTargetedLegacyDataTransfers(string prefix, bool handleAll)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyDataTransferAsync(testDb, prefix, "null");
+        var controller = CreateNotificationsController(testDb.Context, "u1");
+        Assert.IsType<OkObjectResult>(handleAll
+            ? await controller.HandleAll(CancellationToken.None)
+            : await controller.Handle("transfer", CancellationToken.None));
+        var records = await testDb.Context.AdminNotifications.Find(_ => true).ToListAsync();
+        Assert.Equal("handled", records.Single(x => x.Id == "transfer").Status);
+        foreach (var id in new[] { "transfer-other", "transfer-global", "transfer-admin", "transfer-quota" })
+        {
+            var record = records.Single(x => x.Id == id);
+            Assert.Equal("open", record.Status);
+            Assert.Null(record.HandledAt);
+            Assert.IsType<NotFoundObjectResult>(await controller.Handle(id, CancellationToken.None));
+        }
+        Assert.All(records.Where(x => x.Id.StartsWith("system-admin-", StringComparison.Ordinal)),
+            x => Assert.Equal("open", x.Status));
+    }
+
+    private static async Task InsertLegacyDataTransferAsync(AdminPushTestDatabase db, string prefix, string sectionState)
+    {
+        const string transferId = "1234567890abcdef1234567890abcdef";
+        var document = new AdminNotification
+        {
+            Id = "transfer", Key = $"{prefix}:{transferId}", Source = "system", TargetUserId = "u1",
+            Title = "本人数据分享", ActionUrl = $"/data-transfers?id={transferId}",
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+        }.ToBsonDocument();
+        var sectionField = BsonClassMap.LookupClassMap(typeof(AdminNotification))
+            .GetMemberMap(nameof(AdminNotification.Section)).ElementName;
+        if (sectionState == "missing") document.Remove(sectionField);
+        else document[sectionField] = sectionState == "null" ? BsonNull.Value : new BsonString(sectionState);
+        await db.Context.Database.GetCollection<BsonDocument>("admin_notifications").InsertOneAsync(document);
+        await db.Context.AdminNotifications.InsertManyAsync(new[]
+        {
+            new AdminNotification { Id = "transfer-other", Key = $"{prefix}:2234567890abcdef1234567890abcdef", Source = "system", TargetUserId = "u2" },
+            new AdminNotification { Id = "transfer-global", Key = $"{prefix}:3234567890abcdef1234567890abcdef", Source = "system" },
+            new AdminNotification { Id = "transfer-admin", Key = $"{prefix}:4234567890abcdef1234567890abcdef", Source = "system", TargetUserId = "u1", Section = AdminNotificationSections.Admin },
+            new AdminNotification { Id = "transfer-quota", Key = $"{prefix}:5234567890abcdef1234567890abcdef", Source = "llm-gateway-quota", TargetUserId = "u1" },
+        }.Concat(Enumerable.Range(0, 201).Select(index => new AdminNotification
+        {
+            Id = $"system-admin-{index}", Key = $"system-admin:{index}", Source = "system", TargetUserId = "u1",
+        })));
+    }
+
     private static async Task InsertLegacyQuotaAsync(AdminPushTestDatabase db, string sectionState)
     {
         var document = new AdminNotification
