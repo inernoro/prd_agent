@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import test from 'node:test';
@@ -28,6 +28,7 @@ import {
   enforceExecutionVerdict,
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
+  ensurePlaywrightDependencies,
   isolateCdsPreparation,
   applyCdsVisualSafetyGate,
   initializeProductionSafetyGate,
@@ -56,6 +57,7 @@ import {
   runReportViewRegression,
   runReportRiskRegression,
   runCdsGatewayPersistenceProbe,
+  shouldBuildCommonClosureEvidence,
   waitForCdsPublicEntryStability,
   buildReportVerificationArgs,
   selectCoverageCaseIds,
@@ -67,6 +69,39 @@ import {
   validateSelectedEnvironmentConfig,
   visualGateExecutionMatchesResult,
 } from '../stable-smoke-run.mjs';
+
+test('CDS 准备未启动时不伪造 COMMON-004 清理失败阻断正式写入', () => {
+  const notStarted = { environment: 'cds', status: 'blocked', executionStarted: false };
+  assert.equal(shouldBuildCommonClosureEvidence(notStarted), false);
+  assert.equal(shouldBuildCommonClosureEvidence({ environment: 'cds', status: 'executed' }), true);
+  assert.equal(shouldBuildCommonClosureEvidence({ environment: 'cds', status: 'blocked', executionStarted: true }), true);
+
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.equal((source.match(/shouldBuildCommonClosureEvidence\(/g) || []).length, 3);
+});
+
+test('隔离 worktree 缺少 E2E 依赖时先按锁文件恢复再启动 Playwright', () => {
+  const calls = [];
+  const restored = ensurePlaywrightDependencies((name, args, options) => {
+    calls.push([name, args, options]);
+    return { status: 0 };
+  }, () => false);
+  assert.equal(restored.status, 0);
+  assert.equal(restored.installed, true);
+  assert.deepEqual(calls[0][0], 'pnpm');
+  assert.deepEqual(calls[0][1], ['--dir', 'e2e', 'install', '--frozen-lockfile']);
+
+  const readyCalls = [];
+  const ready = ensurePlaywrightDependencies((...args) => {
+    readyCalls.push(args);
+    return { status: 0 };
+  }, () => true);
+  assert.deepEqual(ready, { status: 0, installed: false });
+  assert.equal(readyCalls.length, 0);
+
+  const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
+  assert.match(source, /function runPlaywright[\s\S]*ensurePlaywrightDependencies\(\)/);
+});
 
 test('例行直接读取已有CDS分支身份，不依赖工具分支发布且不猜域名', () => {
   const command = (program, args) => {
@@ -1343,6 +1378,34 @@ test('未捕获异常会持久化失败摘要并进入失败交付路径', async
     assert.deepEqual({ ...summary, notification: expected.notification }, expected);
     assert.equal(summary.notification.status, 'skipped');
     assert.equal(summary.verdict, 'fail');
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('REG-stsmk-failure-summary-preserve-001 收尾异常保留已完成矩阵与视觉证据摘要', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'stable-smoke-fatal-preserve-'));
+  try {
+    const runDir = resolve(directory, 'fatal-preserve-test');
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(resolve(runDir, 'summary.json'), JSON.stringify({
+      runId: 'fatal-preserve-test',
+      verdict: 'fail',
+      coverage: { total: 180, passed: 62, failed: 44 },
+      visual: { screenshots: 20, floor: 37 },
+      executions: [{ environment: 'production', status: 'executed' }],
+    }));
+    const result = await deliverUnhandledFailure([
+      '--run-id', 'fatal-preserve-test',
+      '--output-root', directory,
+      '--dry-run',
+    ], new Error('三池回填失败'));
+    const summary = JSON.parse(readFileSync(result.summaryPath, 'utf8'));
+    assert.deepEqual(summary.coverage, { total: 180, passed: 62, failed: 44 });
+    assert.deepEqual(summary.visual, { screenshots: 20, floor: 37 });
+    assert.equal(summary.executions[0].status, 'executed');
+    assert.equal(summary.phase, 'runner-exception');
+    assert.equal(summary.failure.reason, '三池回填失败');
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

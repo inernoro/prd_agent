@@ -123,7 +123,7 @@ export function updatePools(previous, { runId, profile = 'routine', commit = '',
   const windowEnd = shanghaiDay(completedAt);
   const windowStart = shanghaiDay(new Date(Date.parse(completedAt) - 13 * 86400000).toISOString());
   const hotspots = contract.features.map(feature => {
-    const recent = events.filter(event => event.featureIds.includes(feature.id)
+    const recent = events.filter(event => Array.isArray(event.featureIds) && event.featureIds.includes(feature.id)
       && shanghaiDay(event.time) <= windowEnd && shanghaiDay(event.time) >= windowStart
       && ['fail', 'flaky', 'blocked'].includes(event.status));
     return { featureId: feature.id, title: feature.title, permanent: true, method: feature.method, history: feature.history, window: { start: windowStart, end: windowEnd, timezone: 'Asia/Shanghai' }, recentFailureRuns: [...new Set(recent.filter(event => event.status !== 'blocked').map(event => `${event.environment}:${event.runId}`))].length, sustainedBlocked: recent.some(event => event.status === 'blocked'), recent: recent.length > 0, latest: run.results.filter(result => result.featureId === feature.id) };

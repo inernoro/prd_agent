@@ -34,6 +34,24 @@ test('同轮重复回填不增加事故频次，修复后不抹掉首次失败',
   assert.ok(green.events.some(e => e.status === 'flaky'));
   assert.equal(green.defects[0].status, 'open');
 });
+test('REG-stsmk-memory-legacy-event-001 历史事件缺少功能映射时仍能原子回填本轮', () => {
+  const previous = {
+    revision: 3,
+    events: [{
+      key: 'legacy:production:CORE-001:pass',
+      runId: 'legacy-run',
+      environment: 'production',
+      caseId: 'CORE-001',
+      status: 'pass',
+      time: '2026-10-01T00:00:00.000Z',
+    }],
+  };
+  const state = updatePools(previous, input, contract);
+  assert.equal(state.revision, 4);
+  assert.equal(state.events.length, 2);
+  assert.equal(state.events.find(event => event.runId === 'legacy-run').caseId, 'CORE-001');
+  assert.equal(state.hotspots.length, 31);
+});
 test('两个不同轮次同因失败才增加频次；成功和未执行不算改善或新事故', () => {
   const first = updatePools({}, input, contract);
   const second = updatePools(first, { ...input, runId: 'stsmk-memory-002' }, contract);

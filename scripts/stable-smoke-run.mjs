@@ -926,6 +926,19 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
 }
 
+export function ensurePlaywrightDependencies(commandRunner = command, dependencyExists = existsSync) {
+  const playwrightPath = resolve(repoRoot, 'e2e/node_modules/.bin/playwright');
+  if (dependencyExists(playwrightPath)) return { status: 0, installed: false };
+  const result = commandRunner('pnpm', [
+    '--dir', 'e2e', 'install', '--frozen-lockfile',
+  ], {
+    env: { ...process.env },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  return { status: result.status ?? 1, installed: true };
+}
+
 function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', visualCapture = null, artifactStem = environment) {
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const resultPath = resolve(runDir, `${artifactStem}-results.json`);
@@ -933,6 +946,16 @@ function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', v
   const testResultPath = resolve(runDir, `${artifactStem}-test-results`);
   // 同一 runId 恢复执行时不得保留旧版 HTML/trace，其中可能包含未脱敏网络头。
   rmSync(htmlPath, { recursive: true, force: true });
+  const dependencyResult = ensurePlaywrightDependencies();
+  if (dependencyResult.status !== 0) {
+    return {
+      status: dependencyResult.status,
+      resultPath,
+      htmlPath,
+      testResultPath,
+      sanitization: { scanned: 0, changed: 0 },
+    };
+  }
   const env = {
     ...process.env,
     ...values,
@@ -1069,6 +1092,11 @@ export function buildCommonClosureEvidenceRow(rows) {
     hadFailedAttempt: !passed,
     attemptErrors: passed ? [] : reasons,
   };
+}
+
+export function shouldBuildCommonClosureEvidence(cdsExecution) {
+  return Boolean(cdsExecution)
+    && !(cdsExecution.status === 'blocked' && cdsExecution.executionStarted === false);
 }
 
 export function runCdsVersionEvidence(runDir, commandRunner = command) {
@@ -1746,7 +1774,7 @@ export async function deliverUnhandledFailure(argv, error) {
     mkdirSync(runDir, { recursive: true });
   }
   const productionBaseline = readJson(resolve(runDir, 'production-baseline.json'));
-  const summaryDocument = buildUnhandledFailureSummary({
+  const failureSummary = buildUnhandledFailureSummary({
     runId,
     selected,
     reason,
@@ -1754,6 +1782,10 @@ export async function deliverUnhandledFailure(argv, error) {
     productionBaseline,
   });
   const summaryPath = resolve(runDir, 'summary.json');
+  const existingSummary = readJson(summaryPath);
+  const summaryDocument = existingSummary?.runId === runId
+    ? { ...existingSummary, ...failureSummary }
+    : failureSummary;
   if (argv.includes('--dry-run')) {
     summaryDocument.notification = { status: 'skipped', reason: 'dry-run 不发送通知' };
   } else {
@@ -1765,7 +1797,20 @@ export async function deliverUnhandledFailure(argv, error) {
   writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
   process.stdout.write(`${JSON.stringify({ runId, runDir, verdict: 'fail', notification: summaryDocument.notification })}\n`);
   if (!argv.includes('--dry-run')) {
-    summaryDocument.experience = persistRunExperience({ runId, rows: productionBaseline?.rows || [], archive: summaryDocument.archive, notification: summaryDocument.notification }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
+    const plan = readJson(resolve(runDir, 'plan.json'));
+    const recoveredRows = selected.flatMap((environment) => {
+      const result = readJson(resolve(runDir, `${environment}-results.json`));
+      return result ? collectPlaywrightCases(result, environment) : [];
+    });
+    summaryDocument.experience = persistRunExperience({
+      runId,
+      profile: plan?.profile || 'routine',
+      commit: plan?.commit || '',
+      rows: recoveredRows.length > 0 ? recoveredRows : productionBaseline?.rows || [],
+      requiredCaseIdsByEnvironment: plan?.requiredCaseIdsByEnvironment,
+      archive: summaryDocument.archive,
+      notification: summaryDocument.notification,
+    }, outputRoot === defaultOutputRoot ? {} : { path: resolve(outputRoot, 'pools.json') });
     writeFileSync(summaryPath, `${JSON.stringify(summaryDocument, null, 2)}\n`, 'utf8');
   }
   process.stderr.write(`稳定冒烟异常终止，失败摘要已保存：${reason}\n`);
@@ -2245,7 +2290,9 @@ async function main() {
         if (cdsExecution) cdsExecution.resultObserved = cdsRows.length > 0;
         cdsRows.push(...supplementalRows);
         cdsRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
-        if (selectedCdsCases.includes('COMMON-004') && !cdsRows.some((row) => row.caseId === 'COMMON-004')) {
+        if (selectedCdsCases.includes('COMMON-004')
+          && shouldBuildCommonClosureEvidence(cdsExecution)
+          && !cdsRows.some((row) => row.caseId === 'COMMON-004')) {
           const commonClosure = buildCommonClosureEvidenceRow(cdsRows);
           cdsRows.push(commonClosure);
           supplementalRows.push(commonClosure);
@@ -2388,7 +2435,10 @@ async function main() {
     });
     environmentRows.push(...supplementalRows);
     environmentRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
-    if (selectedCdsCases.includes('COMMON-004') && !environmentRows.some((row) => row.caseId === 'COMMON-004')) {
+    const cdsExecutionForClosure = executions.find((execution) => execution.environment === 'cds');
+    if (selectedCdsCases.includes('COMMON-004')
+      && shouldBuildCommonClosureEvidence(cdsExecutionForClosure)
+      && !environmentRows.some((row) => row.caseId === 'COMMON-004')) {
       const commonClosure = buildCommonClosureEvidenceRow(environmentRows.filter((row) => row.environment === 'cds'));
       environmentRows.push(commonClosure);
       supplementalRows.push(commonClosure);
