@@ -13458,6 +13458,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           entry.branch,
           entry.worktreePath,
           requestCommitSha,
+          { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id },
         );
       const deploymentSourceEntry = 'sourcePath' in pullResult
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
@@ -14836,6 +14837,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           entry.branch,
           entry.worktreePath,
           profileRequestCommitSha,
+          { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id },
         );
       const deploymentSourceEntry = 'sourcePath' in pullResult
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
