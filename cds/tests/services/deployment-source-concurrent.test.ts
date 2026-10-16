@@ -23,25 +23,32 @@ describe('实际不同服务并行准备独立源码', () => {
       const shaB = git(['rev-parse', 'HEAD'], repo), current = path.join(root, 'current');
       git(['clone', repo, current], root);
       const shell = new ShellExecutor();
-      const target = scenario === 'cold' ? path.join(root, 'worktrees', 'main') : current;
+      const worktreeBase = path.join(root, 'worktrees');
+      const target = scenario === 'cold' ? WorktreeService.worktreePathFor(worktreeBase, 'default', 'main') : current;
+      const recovery = { kind: 'managed-missing' as const, worktreeBase, projectId: 'default', branchId: 'main' };
       let missingReads = 0, resume = () => {};
+      const initialMissing: boolean[] = [];
       const bothMissing = new Promise<void>(resolve => { resume = resolve; });
       const actual: IShellExecutor = { exec: async (command, options) => {
         const result = await shell.exec(command, options);
-        // 两实例都真实观察到同一缺失目标，再继续原恢复路径，不模拟 Git 的结果。
-        if (scenario === 'cold' && command === 'git rev-parse HEAD' && options?.cwd === target && missingReads < 2) {
-          if (++missingReads === 2) resume(); await bothMissing;
+        // 三个请求都真实观察到同一缺失目标，避免无能力请求迟到时实际已是合法暖目录。
+        if (scenario === 'cold' && command === 'git rev-parse HEAD' && options?.cwd === target && missingReads < 3) {
+          initialMissing.push(result.exitCode !== 0);
+          if (++missingReads === 3) resume(); await bothMissing;
         }
         return result;
       } };
       const first = new WorktreeService(actual), second = new WorktreeService(actual);
       if (scenario === 'cold') { await first.create(current, 'main', target); fs.rmSync(target, { recursive: true, force: true }); }
       const secondSha = scenario === 'cold' ? shaA : shaB;
-      const results = await Promise.allSettled([first.prepareDeploymentSource(current, 'main', target, shaA),
-        second.prepareDeploymentSource(current, 'main', target, secondSha)]);
+      const results = await Promise.allSettled([first.prepareDeploymentSource(current, 'main', target, shaA, recovery),
+        second.prepareDeploymentSource(current, 'main', target, secondSha, recovery),
+        ...(scenario === 'cold' ? [first.prepareDeploymentSource(current, 'main', target, shaA)] : [])]);
       console.info(JSON.stringify({ concurrentResults: results.map(r => r.status === 'fulfilled'
         ? { status: r.status, target: r.value.afterFull } : { status: r.status, reason: r.reason?.message }) }));
-      expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      expect(results.slice(0, 2).map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
+      if (scenario === 'cold') expect(initialMissing).toEqual([true, true, true]);
+      if (scenario === 'cold') expect(results[2]).toMatchObject({ status: 'rejected', reason: { code: 'deployment-worktree-unavailable' } });
       if (results[0].status !== 'fulfilled' || results[1].status !== 'fulfilled') throw new Error('Parallel owned preparation failed');
       const a = results[0].value, b = results[1].value;
       expect(a.afterFull).toBe(shaA); expect(b.afterFull).toBe(secondSha); expect(a.sourcePath).not.toBe(b.sourcePath);

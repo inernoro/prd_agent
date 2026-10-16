@@ -417,6 +417,57 @@ describe('Executor /exec/deploy', () => {
     expect(stateService.getBranch('remote-source')?.services.api.sourceCommitSha).toBe(shaA);
   });
 
+  it.each(['managed-missing', 'managed-missing-git', 'managed-corrupt-git', 'external-missing', 'external-warm'] as const)(
+    '真实执行器入口仅恢复获准的托管缺失目录并保留原对象：%s', async scenario => {
+      const root = fs.realpathSync(tmpDir);
+      const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const remote = path.join(root, 'cold-remote.git'); fs.mkdirSync(remote); git(['init', '--bare'], remote);
+      const repo = path.join(root, 'cold-repo'); git(['clone', remote, repo], root); git(['switch', '-c', 'main'], repo);
+      git(['config', 'user.name', 'source-test'], repo); git(['config', 'user.email', 'source-test@example.invalid'], repo);
+      fs.writeFileSync(path.join(repo, 'version.txt'), 'A'); git(['add', '.'], repo); git(['commit', '-m', '版本A'], repo);
+      const shaA = git(['rev-parse', 'HEAD'], repo);
+      fs.writeFileSync(path.join(repo, 'version.txt'), 'B'); git(['commit', '-am', '版本B'], repo); git(['push', '-u', 'origin', 'main'], repo);
+      const shaB = git(['rev-parse', 'HEAD'], repo), branchId = 'cold-owned';
+      config.repoRoot = repo;
+      config.worktreeBase = scenario === 'managed-missing-git' ? path.join(repo, '.cds-worktrees') : path.join(root, 'worktrees');
+      const current = scenario.startsWith('managed-') ? WorktreeService.worktreePathFor(config.worktreeBase, 'default', branchId)
+        : path.join(root, 'external', branchId);
+      git(['worktree', 'add', '--detach', current, shaB], repo);
+      const marker = path.join(current, 'marker.txt'); fs.writeFileSync(marker, '必须保留的原目录');
+      if (scenario.endsWith('missing')) fs.rmSync(current, { recursive: true, force: true });
+      else if (scenario !== 'external-warm') {
+        fs.unlinkSync(path.join(current, '.git'));
+        if (scenario === 'managed-corrupt-git') fs.writeFileSync(path.join(current, '.git'), '损坏的登记文件');
+      }
+      stateService.addBranch({ id: branchId, projectId: 'default', branch: 'main', worktreePath: current,
+        status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      const shell = new ShellExecutor(), original = mock.exec.bind(mock), actualCommands: string[] = [], mounts: string[] = [];
+      mock.exec = async (command, options) => {
+        if (/^(git |test -d |rm -rf |mkdir -p )/.test(command)) {
+          actualCommands.push(command);
+          return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
+        }
+        if (/^docker (run|create) /.test(command)) {
+          const source = command.match(/-v '([^']+)':'\/app'/)?.[1];
+          if (source) mounts.push(fs.readFileSync(path.join(source, 'version.txt'), 'utf8'));
+        }
+        return original(command, options);
+      };
+      const result = await postSse(server, '/exec/deploy', { branchId, branchName: 'main', projectId: 'default', commitSha: shaA,
+        profiles: [{ id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 5000 }] });
+      const succeeds = scenario === 'managed-missing' || scenario === 'external-warm';
+      if (!scenario.endsWith('missing')) {
+        expect(fs.readFileSync(marker, 'utf8')).toBe('必须保留的原目录');
+        expect(fs.readFileSync(path.join(current, 'version.txt'), 'utf8')).toBe('B');
+      }
+      if (scenario === 'external-missing') expect(fs.existsSync(current)).toBe(false);
+      expect(result.events.some(event => event.event === 'error' || event.data?.status === 'error')).toBe(!succeeds);
+      expect(mounts).toEqual(succeeds ? ['A'] : []);
+      if (succeeds) expect(stateService.getBranch(branchId)?.services.api.sourceCommitSha).toBe(shaA);
+      else expect(actualCommands.some(command => /^(rm -rf|git worktree (add|prune))/.test(command))).toBe(false);
+    },
+  );
+
   it('stamps the master-supplied projectId on the new entry + scopes worktree dir by it', async () => {
     // Pre-create the project locally so resolveProjectForAutoBuild has
     // something to match if needed (but the explicit body.projectId
