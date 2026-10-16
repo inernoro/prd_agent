@@ -236,8 +236,9 @@ test('报告风险分类永久回归必须接线并传播失败', () => {
         if (name === 'python3') assert.ok(args.includes('ReportRiskDecisionTests'));
         else {
           assert.equal(name,'node');
-          assert.ok(args.includes('REG-stsmk-report-risk-001')||args.includes('REG-stsmk-account-scope-001'));
+          assert.ok(args.includes('REG-stsmk-report-risk-001')||args.includes('REG-stsmk-account-scope-001')||args.includes('REG-stsmk-cleanup-circuit-001'));
           if(args.includes('REG-stsmk-account-scope-001'))assert.ok(args.includes('scripts/tests/stable-smoke-ui-contract.test.mjs'));
+          if(args.includes('REG-stsmk-cleanup-circuit-001'))assert.ok(args.includes('scripts/tests/stable-smoke-cleanup-safety.test.mjs'));
         }
         return { status, stdout: '风险判据', stderr: '' };
       });

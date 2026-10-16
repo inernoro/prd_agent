@@ -18,6 +18,7 @@ export function collectPlaywrightCases(report, environment) {
         const finalResult = results.at(-1);
         const rawStatus = finalResult?.status || 'not-run';
         const priorResults = results.slice(0, -1);
+        const priorFailure = priorResults.findLast(item => !['passed', 'skipped'].includes(item?.status));
         const attemptErrors = results
           .map((item) => item?.error?.message || '')
           .filter(Boolean);
@@ -30,6 +31,8 @@ export function collectPlaywrightCases(report, environment) {
             .map((match) => `HTTP ${match[1]} ${match[2]}`)))];
         const status = rawStatus === 'passed'
           ? 'pass'
+          : rawStatus === 'skipped' && priorFailure
+            ? 'fail'
           : rawStatus === 'skipped' || rawStatus === 'not-run'
             ? 'not-run'
             : 'fail';
@@ -46,7 +49,7 @@ export function collectPlaywrightCases(report, environment) {
             tags: Array.isArray(spec.tags) ? [...spec.tags] : [],
             status,
             durationMs: results.reduce((sum, item) => sum + (item.duration || 0), 0),
-            error: finalResult?.error?.message || skipReason,
+            error: finalResult?.error?.message || (status === 'fail' ? priorFailure?.error?.message : '') || skipReason,
             ...(skipReason ? { skipReason } : {}),
             retryCount: Math.max(0, results.length - 1),
             hadFailedAttempt: priorResults.some((item) => !['passed', 'skipped'].includes(item?.status)),

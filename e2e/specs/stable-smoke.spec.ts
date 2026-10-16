@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
+import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker } from '../utils/stableSmokeCleanupSafety.mjs';
 import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan } from '../utils/stableSmokeRecording.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
@@ -1837,9 +1838,14 @@ async function deleteStableHostedSite(page: Page, token: string, siteId: string)
 }
 
 test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
-  test.beforeEach(async ({ request }) => {
+  test.beforeEach(async ({ request }, testInfo) => {
     if (!process.env.STABLE_SMOKE_RUN) return;
     const outputDirectory = requiredEnv('STABLE_SMOKE_TEST_OUTPUT');
+    const cleanupBlocker = readCleanupBlocker({ outputDirectory, environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT') });
+    if (cleanupBlocker && !isCleanupReadOnlyJourney(testInfo.title)) {
+      test.skip(true, cleanupBlocker.reason);
+      return;
+    }
     const infrastructureCircuit = readStableSmokeInfrastructureCircuit(outputDirectory);
     if (!infrastructureCircuit) return;
     const now = Date.now();
@@ -1857,7 +1863,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test.afterEach(async ({ request }, testInfo) => {
     const infrastructureTimeout = testInfo.errors.some(stableSmokeDiagnosticIndicatesInfrastructureTimeout);
-    sanitizeStableSmokeTestInfo(testInfo);
+    try {
+      if (process.env.STABLE_SMOKE_RUN) {
+        const failure = cleanupFailureFromAttachments(testInfo.attachments, requiredEnv('STABLE_SMOKE_RUN_ID'));
+        if (failure) writeCleanupBlocker(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), {
+          environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), ...failure,
+        });
+      }
+    } finally {
+      sanitizeStableSmokeTestInfo(testInfo);
+    }
     if (!process.env.STABLE_SMOKE_RUN || !infrastructureTimeout) return;
     const recovered = await probeStableSmokeReadiness(request);
     if (!recovered) {

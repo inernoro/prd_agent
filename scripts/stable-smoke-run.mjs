@@ -1016,9 +1016,11 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
     'scripts/tests/stable-smoke-memory.test.mjs']);
   const accountScope = commandRunner('node', ['--test', '--test-name-pattern', 'REG-stsmk-account-scope-001',
     'scripts/tests/stable-smoke-ui-contract.test.mjs']);
-  const passed = result.status === 0 && facts.status === 0 && accountScope.status === 0;
+  const cleanupCircuit = commandRunner('node', ['--test', '--test-name-pattern', 'REG-stsmk-cleanup-circuit-001',
+    'scripts/tests/stable-smoke-cleanup-safety.test.mjs']);
+  const passed = result.status === 0 && facts.status === 0 && accountScope.status === 0 && cleanupCircuit.status === 0;
   const artifactPath = resolve(runDir, 'report-risk-regression.log');
-  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}\n${facts.stdout || ''}\n${facts.stderr || ''}\n${accountScope.stdout || ''}\n${accountScope.stderr || ''}`, 'utf8');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}\n${facts.stdout || ''}\n${facts.stderr || ''}\n${accountScope.stdout || ''}\n${accountScope.stderr || ''}\n${cleanupCircuit.stdout || ''}\n${cleanupCircuit.stderr || ''}`, 'utf8');
   return {
     execution: { environment: 'cds-report-risk-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
     rows: [{ caseId: 'REG-stsmk-report-risk-001', environment: 'cds', title: '报告首屏结论与风险分类不得误导', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '报告风险呈现回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['报告风险呈现回归失败'] }],
