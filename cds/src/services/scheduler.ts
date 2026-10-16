@@ -32,7 +32,7 @@ import { serviceRuntimeRefs } from './service-runtime.js';
 export interface SchedulerSnapshot {
   enabled: boolean;
   config: SchedulerConfig;
-  hot: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean }>;
+  hot: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean; activityObservation?: 'unavailable' | 'active' | 'quiet' }>;
   cold: Array<{ slug: string; lastAccessedAt: string | undefined }>;
   capacityUsage: { current: number; max: number };
 }
@@ -64,6 +64,30 @@ export class SchedulerService {
   private coolFn: CoolFn | null = null;
   private runtimePresence?: () => ReadonlySet<string> | null;
   private operationProtection?: (slug: string) => boolean;
+  private activityProvider?: (slug: string) => { at: number; active: boolean } | null;
+
+  setActivityProvider(provider: (slug: string) => { at: number; active: boolean } | null): void { this.activityProvider = provider; }
+
+  refreshActivity(): void {
+    if (!this.activityProvider) return;
+    for (const branch of this.stateService.getAllBranches()) this.activityProtected(branch);
+  }
+
+  private activityObservation(slug: string): 'unavailable' | 'active' | 'quiet' | undefined {
+    if (!this.activityProvider) return undefined;
+    const activity = this.activityProvider(slug);
+    return !activity ? 'unavailable' : activity.active ? 'active' : 'quiet';
+  }
+
+  private activityProtected(branch: BranchEntry): boolean {
+    if (!this.activityProvider) return false;
+    const activity = this.activityProvider(branch.id);
+    if (!activity) return true;
+    if (activity.at > (Date.parse(branch.lastAccessedAt || '') || 0)) {
+      this.touch(branch.id, activity.at);
+    }
+    return activity.active;
+  }
   private readonly cooling = new Set<string>();
   /** slug → epoch ms of last persisted touch, used to throttle save() */
   private lastPersistedTouch = new Map<string, number>();
@@ -182,13 +206,16 @@ export class SchedulerService {
    *
    * No-op when scheduler is disabled.
    */
-  touch(slug: string): void {
+  touch(slug: string, observedAt = this.clock.now()): void {
     if (!this.isEnabled()) return;
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
 
     const now = this.clock.now();
-    branch.lastAccessedAt = new Date(now).toISOString();
+    if (!Number.isFinite(observedAt) || observedAt < 0 || observedAt > now) return;
+    const previous = Date.parse(branch.lastAccessedAt || '') || 0;
+    if (observedAt < previous) return;
+    branch.lastAccessedAt = new Date(observedAt).toISOString();
 
     const lastPersist = this.lastPersistedTouch.get(slug) || 0;
     if (now - lastPersist >= TOUCH_PERSIST_THROTTLE_MS) {
@@ -222,7 +249,7 @@ export class SchedulerService {
     if (!this.isEnabled()) return;
     const branch = this.stateService.getBranch(slug);
     if (!branch) return;
-    if (this.isPinned(branch)) return;
+    if (this.isPinned(branch) || this.activityProtected(branch)) return;
     if ((branch.heatState === 'cold' && !this.hasResidentRuntime(branch)) || this.cooling.has(slug)) return;
 
     this.cooling.add(slug);
@@ -266,6 +293,12 @@ export class SchedulerService {
       return;
     }
 
+    // 数据面观测缺失时不得用陈旧 LRU 驱逐，也不能据此超额唤醒。
+    if (this.activityProvider && this.config.maxHotBranches > 0
+      && this.getHotBranches().filter(b => b.id !== slug).length >= this.config.maxHotBranches
+      && !this.selectLruVictim(slug)) {
+      throw new Error('热容量已满，当前分支受保护或访问观测尚未就绪。请等待容量释放后重试。');
+    }
     // Evict LRU if the new branch would push us over capacity.
     await this.evictLruIfOverCapacity(slug);
 
@@ -335,7 +368,7 @@ export class SchedulerService {
    * Returns null if there's nothing to evict.
    */
   selectLruVictim(excludeSlug?: string): BranchEntry | null {
-    const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b));
+    const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b) && !this.activityProtected(b));
     if (hotBranches.length === 0) return null;
 
     return hotBranches.reduce<BranchEntry | null>((oldest, b) => {
@@ -384,7 +417,7 @@ export class SchedulerService {
     // 1. Idle-based cooling
     const hotBranches = this.getHotBranches();
     for (const branch of hotBranches) {
-      if (this.isPinned(branch)) continue;
+      if (this.isPinned(branch) || this.activityProtected(branch)) continue;
       const lastAccess = branch.lastAccessedAt ? Date.parse(branch.lastAccessedAt) : 0;
       if (lastAccess <= 0) continue; // never accessed; don't cool yet
       if (now - lastAccess > idleTTLMs) {
@@ -439,6 +472,7 @@ export class SchedulerService {
         slug: b.id,
         lastAccessedAt: b.lastAccessedAt,
         pinned: this.isPinned(b),
+        ...(this.activityProvider ? { activityObservation: this.activityObservation(b.id) } : {}),
       }));
     const cold = all
       .filter(b => (b.heatState === 'cold' || b.heatState === 'cooling') && !this.hasResidentRuntime(b))

@@ -29,6 +29,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { ForwarderActivityWriter } from './services/forwarder-activity.js';
 import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute, stickyEntryMemberFor } from './forwarder/route-resolver.js';
 import { ReplicaHealthRegistry } from './forwarder/replica-health.js';
@@ -59,6 +60,9 @@ const ROUTES_JSON_DEFAULT = path.resolve(
 );
 const ROUTES_JSON = process.env.CDS_FORWARDER_ROUTES_JSON ?? ROUTES_JSON_DEFAULT;
 const RELOAD_DEBOUNCE_MS = 200;
+const activity = new ForwarderActivityWriter(`${ROUTES_JSON}.activity.json`);
+const activityTimer = setInterval(() => { void activity.flush().catch(() => {}); }, 1000);
+activityTimer.unref();
 
 const startedAt = Date.now();
 let routes: RouteRecord[] = [];
@@ -367,6 +371,9 @@ const server = http.createServer((req, res) => {
     res.setHeader('X-CDS-Replica', route.replicaMemberId);
     res.setHeader('X-CDS-Replica-Group', route.replicaGroup);
   }
+  const finishActivity = activity.begin(route?.branchId, req.headers, req.url || '/');
+  res.once('close', finishActivity);
+  res.once('finish', finishActivity);
   void proxy.handle(req, res, route);
 });
 
@@ -382,11 +389,14 @@ server.on('upgrade', (req, socket, head) => {
   // WS-first 亲和（Codex 第二十一轮 P2）：首次接触就是 WebSocket 升级的客户端
   // 也要拿到组作用域 cookie，否则每次重连重新掷签、可在不兼容版本间横跳
   const wsStickyCookies = collectReplicaStickyCookies(routes, route, sticky);
+  const finishActivity = activity.begin(route?.branchId, req.headers, req.url || '/');
+  socket.once('close', finishActivity);
   void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route, wsStickyCookies);
 });
 
 function shutdown(signal: string): void {
   console.log(`[forwarder] received ${signal}, draining...`);
+  clearInterval(activityTimer);
   server.close(() => {
     proxy.destroy();
     const done = () => process.exit(0);

@@ -100,6 +100,7 @@ import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
+import { ForwarderActivityReader } from './services/forwarder-activity.js';
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 import { PreviewCanaryService, type PreviewCanaryTarget } from './services/preview-canary.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
@@ -2878,6 +2879,20 @@ let shutdownInProgress = false;
   }
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
+let forwarderActivityTimer: NodeJS.Timeout | undefined;
+let startForwarderActivity = () => {};
+if (process.env.CDS_USE_FORWARDER === '1' && config.mode !== 'executor' && !isPreviewInstance()) {
+  const routePath = process.env.CDS_FORWARDER_ROUTES_JSON || path.join(config.repoRoot, 'cds', '.cds', 'forwarder-routes.json');
+  const activityReader = new ForwarderActivityReader(`${routePath}.activity.json`);
+  schedulerService.setActivityProvider(slug => activityReader.activity(slug));
+  startForwarderActivity = () => {
+    if (forwarderActivityTimer) return;
+    const refresh = async () => { await activityReader.refresh(); schedulerService.refreshActivity(); };
+    void refresh();
+    forwarderActivityTimer = setInterval(() => { void refresh(); }, 1000);
+    forwarderActivityTimer.unref();
+  };
+}
 schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
 schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
   .some(operation => operation.request.kind !== 'scheduler-cooling'));
@@ -4622,6 +4637,7 @@ janitorService.setRemoveFn(async (slug: string) => {
       console.log('[preview-instance] 跳过后台服务：docker-events / janitor / scheduler / auto-lifecycle / infra-watchdog');
       return;
     }
+    startForwarderActivity();
     dockerEventMonitor.start();
     void systemLogMonitor.start();
     if (schedulerService.isEnabled()) {
@@ -4702,6 +4718,8 @@ janitorService.setRemoveFn(async (slug: string) => {
     infraFlapWatchdog.stop();
     void infraLifecycleWatcher.stop().catch(() => console.warn('[observation] 基础设施事件清理未确认。'));
     forwarderRoutePublisher?.stop();
+    clearInterval(forwarderActivityTimer);
+    forwarderActivityTimer = undefined;
     previewCanaryService?.stop();
   }
 
@@ -4759,6 +4777,8 @@ async function shutdown(signal: string): Promise<void> {
   schedulerService.stop();
   janitorService.stop();
   forwarderRoutePublisher?.stop();
+  clearInterval(forwarderActivityTimer);
+  forwarderActivityTimer = undefined;
   previewCanaryService?.stop();
   // 2026-05-14 Cursor Bugbot Medium 修复：shutdown() 直接逐个 stop，
   // 漏了 autoLifecycleService.stop()（stopBackgroundServices 里有，但

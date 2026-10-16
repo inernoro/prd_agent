@@ -76,6 +76,40 @@ describe('SchedulerService', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  describe('forwarder activity admission', () => {
+    it('refreshes LRU from original request time and selects the actually idle branch', () => {
+      stateService.addBranch(makeBranch('busy', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 10000).toISOString() }));
+      stateService.addBranch(makeBranch('idle', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 5000).toISOString() }));
+      scheduler.setActivityProvider(id => ({ at: id === 'busy' ? clock.now() - 1000 : 0, active: false }));
+      expect(scheduler.selectLruVictim()?.id).toBe('idle');
+      expect(stateService.getBranch('busy')?.lastAccessedAt).toBe(new Date(clock.now() - 1000).toISOString());
+    });
+
+    it('does not cool an active stream or treat missing observation as idle', async () => {
+      for (const id of ['stream', 'unknown']) stateService.addBranch(makeBranch(id, 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 86400000).toISOString() }));
+      scheduler.setActivityProvider(id => id === 'stream' ? { at: clock.now() - 3600000, active: true } : null);
+      await scheduler.tick(); await scheduler.markCold('unknown');
+      expect(cooled).toEqual([]); expect(scheduler.selectLruVictim()).toBeNull();
+      expect(scheduler.getSnapshot().hot.map(b => b.activityObservation)).toEqual(['active', 'unavailable']);
+    });
+
+    it('rejects an over-capacity wake when telemetry cannot justify any eviction', async () => {
+      setup({ maxHotBranches: 1 });
+      stateService.addBranch(makeBranch('resident', 'running', { heatState: 'hot' }));
+      stateService.addBranch(makeBranch('new', 'idle', { heatState: 'cold' }));
+      scheduler.setActivityProvider(() => null);
+      await expect(scheduler.wake('new')).rejects.toThrow('热容量已满');
+      expect(woken).toEqual([]); expect(cooled).toEqual([]);
+    });
+
+    it('never rolls back newer master traffic with an older forwarder observation', () => {
+      stateService.addBranch(makeBranch('app', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now()).toISOString() }));
+      scheduler.touch('app', clock.now() - 1000);
+      scheduler.touch('app', clock.now() + 1000);
+      expect(stateService.getBranch('app')?.lastAccessedAt).toBe(new Date(clock.now()).toISOString());
+    });
+  });
+
   // ── touch ──
 
   describe('touch', () => {
