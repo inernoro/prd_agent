@@ -6,6 +6,7 @@ import { BranchOperationCoordinator, BranchOperationSupersededError, type Branch
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { DeploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import { StateService } from '../../src/services/state.js';
+import { drainInFlightDeploys } from '../../src/services/deploy-drain.js';
 
 describe('部署心跳过期后的精确租约回收', () => {
   let directory: string;
@@ -190,6 +191,33 @@ describe('部署心跳过期后的精确租约回收', () => {
     } finally { controller.abort(); await waiting; now.mockRestore(); }
   });
 
+  it('真实16分钟start等待同时约束收割与排空，原排空预算内不能当作无在途', async () => {
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock.getTime());
+    const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
+    runs = new DeploymentRunService(state, { now: () => new Date(clock), isExecutionWaiting: (run, at) =>
+      Boolean(run.operationId && run.operationGeneration !== undefined
+        && (budget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt || 0) > at.getTime()) });
+    runs.bindOperationCoordinator(coordinator);
+    const old = await trackedDeployment(), heartbeat = old.run.heartbeatAt;
+    const waiting = budget.acquire('start', { projectId: 'p1', branchId: 'b1', profileId: 'api',
+      operationId: old.lease.operationId, operationGeneration: old.lease.generation }, {
+      check: () => old.lease.assertCurrent('排空阶段资格'), signal: controller.signal,
+    }).catch(() => undefined);
+    try {
+      clock = new Date(clock.getTime() + 16 * 60_000);
+      expect(budget.waitingOperation(old.lease.operationId, old.lease.generation)?.deadlineAt).toBeGreaterThan(clock.getTime());
+      expect(runs.reconcileInterrupted()).toEqual([]);
+      const out = await drainInFlightDeploys({ listRuns: () => runs.list(), now: () => clock.getTime(),
+        isExecutionWaiting: (id, at) => runs.hasQualifiedExecutionWait?.(id, new Date(at)) ?? false,
+        sleep: async ms => { clock = new Date(clock.getTime() + ms); }, timeoutMs: 1000 });
+      expect(out).toMatchObject({ drained: false, skipped: false, remaining: [old.run.id], waitedMs: 1000 });
+      expect(old.run.heartbeatAt).toBe(heartbeat); expect(old.lease.isCurrent()).toBe(true);
+      coordinator.completeAll(old.lease, 'completed');
+      expect(runs.hasQualifiedExecutionWait(old.run.id, clock)).toBe(false);
+      budget.pump(); await waiting;
+    } finally { controller.abort(); await waiting; now.mockRestore(); }
+  });
+
   it('旧预算中没有资格check的队列不能生成等待事实或阻止收割', async () => {
     const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
     runs = new DeploymentRunService(state, { now: () => new Date(clock), isExecutionWaiting: run =>
@@ -219,6 +247,7 @@ describe('部署心跳过期后的精确租约回收', () => {
     const server = fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
     const routes = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
     expect(server).toContain('deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt');
+    expect(routes).toContain('deploymentRunService?.hasQualifiedExecutionWait(runId, new Date(nowMs))');
     const leasedLaunches = (routes.match(/await runServiceWithPortRetry\(\{[\s\S]*?\n\s*\}\);/g) || [])
       .filter(call => call.includes('assertBranchOperationCurrent(branchOperationLease'));
     expect(leasedLaunches).toHaveLength(2);

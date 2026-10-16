@@ -2470,6 +2470,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
       }),
       now: () => Date.now(),
+      isExecutionWaiting: (runId, nowMs) => deploymentRunService?.hasQualifiedExecutionWait(runId, new Date(nowMs)) ?? false,
       sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
       timeoutMs,
       onWait: (pending, waitedMs) => {
@@ -2522,7 +2523,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     actor?: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
-  }): Promise<void> {
+  }): Promise<BoundedFlushResult> {
     // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
     // 排空放在最前，避免等待期间新落的状态又没被 flush 到）。
     await drainDeploysBeforeSelfUpdateRestart({
@@ -2561,6 +2562,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         },
       });
     }
+    return result;
   }
 
   function scheduleDetachedCdsRestart(input: {
@@ -2568,6 +2570,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
     delayMs?: number;
     exitOnFailure?: boolean;
+    preserveQueued?: boolean;
   }): void {
     const launch = () => {
       const cdsDir = path.join(config.repoRoot, 'cds');
@@ -2616,6 +2619,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
 
       let spawned = false;
+      let hasChildPid = false;
       try {
         const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
           cwd: cdsDir,
@@ -2629,6 +2633,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
         });
         child.unref();
+        hasChildPid = Number.isSafeInteger(child.pid) && (child.pid ?? 0) > 0;
         spawned = true;
       } catch (spawnErr) {
         safely('pre-spawn-log', () => {
@@ -2671,6 +2676,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         branchOperationCoordinator?.interruptAll(
           `CDS restart requested by ${input.source}`,
           input.source,
+          { normalShutdown: input.preserveQueued === true && hasChildPid },
         );
       });
     };
@@ -24018,7 +24024,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         updateMode: 'restart-only',
       });
       commitSelfRestartState(true);
-      await flushSelfUpdateStateBeforeRestart({
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'manual',
         branch,
         fromSha: fullSha.slice(0, 8),
@@ -24044,6 +24050,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-restart',
         delayMs: 500,
         exitOnFailure: true,
+        preserveQueued: restartFlush === 'flushed',
       });
     } catch (err) {
       stateService.clearSelfUpdateActive();
@@ -24837,7 +24844,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // Mongo-backed state is write-behind. This path exits the process about
       // one second after sending the restart event. A stuck Mongo write must
       // not keep the old daemon alive after dist/ has already been swapped.
-      await flushSelfUpdateStateBeforeRestart({
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'manual',
         branch: branch || '',
         fromSha,
@@ -24877,6 +24884,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-update',
         delayMs: 500,
         exitOnFailure: true,
+        preserveQueued: restartFlush === 'flushed',
       });
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
@@ -25773,7 +25781,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // Same durability requirement as /api/self-update: this code path
       // intentionally exits the daemon. Bound this flush so a stuck write-behind
       // queue cannot leave old code running after dist/ has already been swapped.
-      await flushSelfUpdateStateBeforeRestart({
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'force-sync',
         branch: branch || target || '',
         fromSha,
@@ -25809,6 +25817,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       scheduleDetachedCdsRestart({
         branchLabel: target,
         source: 'api.self-force-sync',
+        preserveQueued: restartFlush === 'flushed',
       });
     } catch (err) {
       const catchDiagnosis = diagnoseSelfUpdateFailure({ stage: 'unknown', raw: (err as Error).message });
