@@ -8,6 +8,7 @@ import { servingRuntime } from './service-runtime.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { hasWidgetCspHeader, hasWidgetCspMeta } from './widget-injection-policy.js';
 import { profileHostsPreviewInstance } from './preview-instance.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
@@ -2610,7 +2611,8 @@ ${shouldAutoRefresh ? `;(function(){
       // ── Widget injection: only for HTML 200 responses with branch context ──
       const contentType = proxyRes.headers['content-type'] || '';
       const statusCode = proxyRes.statusCode || 200;
-      const isHtml = contentType.includes('text/html') && branchCtx && statusCode >= 200 && statusCode < 300;
+      const isHtml = contentType.includes('text/html') && branchCtx && statusCode >= 200 && statusCode < 300
+        && !hasWidgetCspHeader(proxyRes.headers);
 
       if (isHtml) {
         // Buffer the HTML response, decompress if needed, inject widget before </body>
@@ -2657,7 +2659,7 @@ ${shouldAutoRefresh ? `;(function(){
           const hostedCds = this.stateService.getBuildProfiles()
             .filter((p) => p.projectId === entry?.projectId)
             .some((p) => profileHostsPreviewInstance(p, this.stateService.getCustomEnv(entry?.projectId)));
-          const widget = buildWidgetScript(
+          const widget = hasWidgetCspMeta(body) ? '' : buildWidgetScript(
             branchCtx.branchId,
             branchCtx.branchName,
             badgeSha,

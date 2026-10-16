@@ -25,6 +25,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { hasWidgetCspHeader, hasWidgetCspMeta } from '../services/widget-injection-policy.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
 import {
@@ -541,7 +542,8 @@ export class ProxyHandler {
             !!route.branchId &&
             !!route.branchName &&
             contentType.includes('text/html') &&
-            status >= 200 && status < 300;
+            status >= 200 && status < 300 &&
+            !hasWidgetCspHeader(upstreamRes.headers);
 
           if (shouldInjectWidget) {
             this.injectWidgetAndSend(upstreamRes, res, route, finish, logHttp, respHeaders, suppressPreviewBody);
@@ -917,7 +919,7 @@ export class ProxyHandler {
           bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
           bodyBytes: Buffer.byteLength(body, 'utf8'),
         };
-        const widget = buildWidgetScript(route.branchId ?? '', route.branchName ?? '');
+        const widget = hasWidgetCspMeta(body) ? '' : buildWidgetScript(route.branchId ?? '', route.branchName ?? '');
         const idx = body.lastIndexOf('</body>');
         if (idx !== -1) {
           body = body.slice(0, idx) + widget + body.slice(idx);
