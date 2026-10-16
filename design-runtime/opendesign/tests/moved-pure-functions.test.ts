@@ -675,6 +675,47 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     })).toThrow(/integrity-bound untrusted input/);
   });
 
+  it('treats an explicit null manual edit proposal as absent for a generate package', () => {
+    const pkg = buildPackage([], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 1, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          manualEditProposal: null,
+        },
+      },
+    });
+    const transfer = normalizeWorkspaceTransfer({
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input', resultCommitUrl: 'https://map.example.test/result',
+      transferToken: 'secret', inputSha256: pkg.sha256, baseRevision: pkg.baseRevision,
+      maxInputBytes: 1_048_576, maxOutputBytes: 1_048_576, allowedOutputPaths: ['index.html', 'manifest.json'],
+    });
+
+    expect(parseWorkspacePackage(pkg.serialized, transfer).runId).toBe('map-run-1');
+
+    const nonNullProposal = buildPackage([], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 1, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          manualEditProposal: {
+            authority: 'user-authored-untrusted-proposal',
+            path: 'proposal/manual-edit.html',
+            contentHash: 'c'.repeat(64),
+          },
+        },
+      },
+    });
+    expect(() => parseWorkspacePackage(nonNullProposal.serialized, {
+      ...transfer,
+      inputSha256: nonNullProposal.sha256,
+      baseRevision: nonNullProposal.baseRevision,
+    })).toThrow(/integrity-bound untrusted input/);
+  });
+
   it('injects a restrictive CSP and rejects dynamic or indirect network surfaces', () => {
     const safe = hardenSelfContainedHtml('<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Safe</title></head><body><a href="#details">Details</a><section id="details">Body</section><a class="link" href="./guide.platform.quickstart.md">Guide</a><style>body{color:red}</style></body></html>');
     expect(safe).toContain('http-equiv="Content-Security-Policy"');

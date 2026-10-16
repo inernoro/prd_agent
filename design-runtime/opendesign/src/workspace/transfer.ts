@@ -435,7 +435,9 @@ function validateDesignTaskContract(
   const manualProposalContract = manualProposal && typeof manualProposal === 'object' && !Array.isArray(manualProposal)
     ? manualProposal as Record<string, unknown>
     : undefined;
-  if (manualProposalFile || manualProposal !== undefined) {
+  // Older MAP packages serialized an absent proposal as JSON null. Treat null and omission as
+  // the same absence, while keeping every non-null proposal integrity-bound to an edit package.
+  if (manualProposalFile || (manualProposal !== undefined && manualProposal !== null)) {
     if (!hasCurrentPage
       || !manualProposalFile
       || manualProposalContract?.authority !== 'user-authored-untrusted-proposal'

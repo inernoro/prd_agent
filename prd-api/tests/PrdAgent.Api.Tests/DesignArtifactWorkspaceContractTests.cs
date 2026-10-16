@@ -1096,6 +1096,31 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(run.PresentationInput.ManualEditHtmlHash, manual.GetProperty("contentHash").GetString());
     }
 
+    [Fact]
+    public void PresentationGeneratePackage_OmitsAbsentManualEditProposal()
+    {
+        var run = BuildRun();
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.Operation = DesignArtifactOperations.Generate;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 20,
+            SourceContent = "完整来源",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("完整来源")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+
+        Assert.False(task.RootElement.GetProperty("presentationContract")
+            .TryGetProperty("manualEditProposal", out _));
+        Assert.DoesNotContain(package.Files, file => file.Path == "proposal/manual-edit.html");
+    }
+
     [Theory]
     [InlineData("在主标题下方新增一行短句“只出现一次的验收标记”", "只出现一次的验收标记")]
     [InlineData("请添加文案「唯一发布标记」到页面底部", "唯一发布标记")]

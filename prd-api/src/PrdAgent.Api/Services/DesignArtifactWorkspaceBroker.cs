@@ -1186,7 +1186,7 @@ public static class DesignArtifactWorkspaceContract
         if (run.PresentationInput != null)
         {
             var completeTask = System.Text.Json.Nodes.JsonNode.Parse(task)!;
-            completeTask["presentationContract"] = JsonSerializer.SerializeToNode(new
+            var presentationContract = JsonSerializer.SerializeToNode(new
             {
                 schemaVersion = "map-html-ppt-contract-v1",
                 run.PresentationInput.Version,
@@ -1215,7 +1215,13 @@ public static class DesignArtifactWorkspaceContract
                     unsupportedFactsAllowed = false,
                     examplesAreNonBinding = true,
                 },
-            }, JsonOptions);
+            }, JsonOptions)!.AsObject();
+            // null means that this generate run has no manual edit proposal. Omit the member so
+            // every runtime sees the same absence semantics; older packages that serialized an
+            // explicit null remain accepted by the runtime compatibility check.
+            if (string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtmlHash))
+                presentationContract.Remove("manualEditProposal");
+            completeTask["presentationContract"] = presentationContract;
             task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
         }
         if (originalFiles != null)
