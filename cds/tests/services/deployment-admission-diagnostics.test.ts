@@ -39,9 +39,9 @@ describe('产物复核失败证据', () => {
   ] as const)('%s 保留拒绝原因、操作身份，不运行容器或公开原始输出', async (stage, reason) => {
     const f = fixture(stage);
     await expect(f.service.runService(f.entry, profile, f.runtime, undefined, undefined,
-      { artifactCommitSha: target, operationId: 'owned-operation', requestId: 'owned-request' })).rejects.toBeInstanceOf(ArtifactAdmissionError);
+      { artifactCommitSha: target, operationId: 'owned-operation', requestId: 'owned-request', actor: 'owned-operator', trigger: 'manual' })).rejects.toBeInstanceOf(ArtifactAdmissionError);
     expect(f.records).toContainEqual(expect.objectContaining({ action: 'deployment.artifact.rejected',
-      operationId: 'owned-operation', requestId: 'owned-request', profileId: 'web',
+      operationId: 'owned-operation', requestId: 'owned-request', profileId: 'web', operationActor: 'owned-operator', operationTrigger: 'manual',
       details: { artifactAdmission: { reason, stage, targetCommitSha: target, checkedAt: expect.any(String) } } }));
     expect(JSON.stringify(f.records)).not.toContain(f.secret);
     expect(f.shell.commands.some(command => /^docker (run|create|pull|commit) /.test(command))).toBe(false);
@@ -52,6 +52,13 @@ describe('产物复核失败证据', () => {
     const result = await inspectDeploymentArtifacts(f.shell, [{ ...profile, localArtifact: false }], target);
     expect(result).toMatchObject({ state: 'waiting', reason: 'access-denied', stage: 'pull', artifacts: [] });
     expect(JSON.stringify(result)).not.toContain(f.secret);
+  });
+  it('未知发起人和入口保持空值，不由操作编号猜测身份', async () => {
+    const f = fixture('daemon');
+    await expect(f.service.runService(f.entry, profile, f.runtime, undefined, undefined,
+      { artifactCommitSha: target, operationId: 'opaque-operation' })).rejects.toBeInstanceOf(ArtifactAdmissionError);
+    expect(f.records).toContainEqual(expect.objectContaining({ action: 'deployment.artifact.rejected',
+      operationId: 'opaque-operation', operationActor: null, operationTrigger: null }));
   });
 });
 
@@ -83,15 +90,17 @@ describe('阶段等待超时证据与容量门禁', () => {
     release?.();
   });
   it('就绪阶段超时记录可检索事件，保留原始错误与未确认回收的预约', async () => {
-    const f = fixture('daemon');
+    const f = fixture('pull');
     const error = new DeploymentPhaseTimeoutError({ phase: 'ready', reason: 'phase-capacity', waitedMs: 1200001, active: 3,
       limit: 3, requestedMemoryMB: 0, reservedMemoryMB: 512, availableMemoryMB: null, requestedPids: 0, reservedPids: 64, availablePids: null });
-    const owner = { projectId: 'owned', branchId: 'owned', profileId: 'web', operationId: 'owned-operation' };
-    (f.service as any).runtimePhaseOwners.set('owned-web', { owner });
-    deploymentPhaseBudget.reserveKnownMemory('owned-web', 512, owner);
+    f.shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    vi.spyOn(f.service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+    await f.service.runService(f.entry, profile, f.runtime, undefined, undefined,
+      { artifactCommitSha: target, operationId: 'owned-operation', requestId: 'ready-request', actor: 'ready-operator', trigger: 'webhook' });
     vi.spyOn(deploymentPhaseBudget, 'run').mockRejectedValueOnce(error);
     await expect(f.service.waitForReadiness(12345, undefined, undefined, undefined, 'owned-web')).rejects.toBe(error);
     expect(f.records).toContainEqual(expect.objectContaining({ action: 'deployment.phase.wait-timeout', operationId: 'owned-operation',
+      requestId: 'ready-request', operationActor: 'ready-operator', operationTrigger: 'webhook',
       details: { phaseWait: error.diagnostics } }));
     expect(deploymentPhaseBudget.memorySnapshot().map(r => r.key)).toContain('owned-web');
   });
@@ -103,9 +112,10 @@ describe('阶段等待超时证据与容量门禁', () => {
       requestedPids: 64, reservedPids: 64, availablePids: null });
     vi.spyOn(deploymentPhaseBudget, 'acquire').mockRejectedValueOnce(error);
     await expect(f.service.runService(f.entry, profile, f.runtime, undefined, undefined,
-      { artifactCommitSha: target, operationId: 'owned-operation', requestId: 'owned-request' })).rejects.toBe(error);
+      { artifactCommitSha: target, operationId: 'owned-operation', requestId: 'owned-request', actor: 'owned-operator', trigger: 'manual' })).rejects.toBe(error);
     expect(f.records).toContainEqual(expect.objectContaining({ action: 'deployment.phase.wait-timeout',
-      operationId: 'owned-operation', requestId: 'owned-request', details: { phaseWait: error.diagnostics } }));
+      operationId: 'owned-operation', requestId: 'owned-request', operationActor: 'owned-operator', operationTrigger: 'manual',
+      details: { phaseWait: error.diagnostics } }));
     expect(f.shell.commands.some(command => /^docker (run|create) /.test(command))).toBe(false);
   });
 });
