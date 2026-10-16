@@ -468,6 +468,80 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('失败诊断的运行证据边界', () => {
+    const cid = 'a'.repeat(64);
+    const startedAt = '2026-10-16T09:14:00.000Z';
+    function diagnosisFixture(errorMessage = '启动失败', options: { old?: boolean; missing?: boolean; wrongOwner?: boolean; noRun?: boolean; noId?: boolean; remote?: boolean; logs?: string; otherProfile?: boolean } = {}) {
+      const run = { id: 'dr-diagnosis', projectId: 'default', branchId: 'diagnosis', trigger: 'manual' as const,
+        status: 'failed' as const, phase: 'ready', seq: 1, firstEventSeq: 1, startedAt,
+        updatedAt: '2026-10-16T09:55:00.000Z', finishedAt: '2026-10-16T09:55:00.000Z',
+        events: [], ...(options.otherProfile ? { profileId: 'sibling' } : {}) };
+      stateService.addBranch({ id: 'diagnosis', projectId: 'default', branch: 'test-diagnosis', worktreePath: tmpDir,
+        status: 'error', createdAt: startedAt, lastDeploymentRunId: options.noRun ? undefined : run.id,
+        ...(options.remote ? { executorId: 'remote-1' } : {}),
+        services: { web: { profileId: 'web', containerName: 'owned-web', containerId: options.noId ? undefined : cid,
+          hostPort: 10001, status: 'error', errorMessage } } });
+      if (options.remote) registryNodes.push({ id: 'remote-1', role: 'worker', status: 'online' });
+      vi.spyOn(deploymentRunService, 'get').mockReturnValue(run);
+      const inspect = { id: cid, startedAt: options.old ? '2026-10-16T07:00:00Z' : '2026-10-16T09:15:00Z',
+        project: options.wrongOwner ? 'another-project' : 'default', branch: 'diagnosis', profile: 'web' };
+      const exec = vi.spyOn(mock, 'exec').mockImplementation(async (command) => {
+        if (options.missing) return { stdout: '', stderr: 'Error response from daemon: No such container: owned-web', exitCode: 1 };
+        if (command.startsWith('docker inspect')) return { stdout: JSON.stringify(inspect), stderr: '', exitCode: 0 };
+        return { stdout: options.logs ?? '2026-10-16T08:06:23.359147778Z worker process 42 exited with code 0', stderr: '', exitCode: 0 };
+      });
+      return { exec };
+    }
+    async function diagnosis() {
+      const response = await request(server, 'GET', '/api/branches/diagnosis/failure-diagnosis');
+      expect(response.status).toBe(200); return response.body.failedServices[0];
+    }
+    it('产物准入失败不能被旧容器正常退出日志覆盖', async () => {
+      const f = diagnosisFixture('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本', { old: true });
+      expect(await diagnosis()).toMatchObject({ errorCategory: 'artifact-admission', responsibilitySide: 'cds', tailLines: [], logEvidence: { status: 'outside-run' } });
+      expect(f.exec.mock.calls.some(([cmd]) => cmd.startsWith('docker logs'))).toBe(false);
+    });
+    it('阶段等待与缺失容器分别保留，不能声称旧服务可用', async () => {
+      diagnosisFixture('部署阶段等待超时，旧服务保持可用', { missing: true });
+      const value = await diagnosis();
+      expect(value).toMatchObject({ errorCategory: 'phase-admission', responsibilitySide: 'cds', logEvidence: { status: 'missing' } });
+      expect(value.errorHint).toContain('未核实旧服务'); expect(value.errorHint).not.toContain('旧服务保持可用');
+    });
+    it('容器缺失有明确分类，不编造应用崩溃', async () => {
+      diagnosisFixture('启动失败', { missing: true });
+      expect(await diagnosis()).toMatchObject({ errorCategory: 'container-missing', responsibilitySide: 'unknown', tailLines: [] });
+    });
+    it('共享库保护拒绝不归因为普通代码崩溃', async () => {
+      diagnosisFixture("exit code 1: CDS shared database policy failed: IMP_TARGET_SHA 'target' does not match deployed HEAD 'old'", { missing: true });
+      const value = await diagnosis();
+      expect(value).toMatchObject({ errorCategory: 'database-policy', responsibilitySide: 'config' });
+      expect(value.errorHint).toContain('不要关闭保护');
+    });
+    it('本轮正常exit0也不能归因为代码崩溃', async () => {
+      diagnosisFixture('启动失败', { logs: '2026-10-16T09:16:00Z worker process 42 exited with code 0' });
+      expect(await diagnosis()).toMatchObject({ errorCategory: 'normal-exit', responsibilitySide: 'unknown' });
+    });
+    it('正常退出行不掩盖随后非零退出', async () => {
+      diagnosisFixture('启动失败', { logs: '2026-10-16T09:16:00Z worker exited with code 0\n2026-10-16T09:17:00Z process exited with code 1' });
+      const value = await diagnosis();
+      expect(value).toMatchObject({ errorCategory: 'crashed', responsibilitySide: 'code' }); expect(value.errorHint).toContain('exit code 1');
+    });
+    it('仅用不可变身份读取本轮日志，当前编译错误仍可归因', async () => {
+      const f = diagnosisFixture('就绪探测超时', { logs: '2026-10-16T08:00:00Z OOMKilled\n2026-10-16T09:16:00Z error CS1002: expected ;\n2026-10-16T10:00:00Z Cannot find module later\nuntimestamped unrelated error' });
+      const value = await diagnosis();
+      expect(value).toMatchObject({ errorCategory: 'build-failed', responsibilitySide: 'code', tailLines: ['2026-10-16T09:16:00Z error CS1002: expected ;'], logEvidence: { status: 'run-window', containerId: cid, runId: 'dr-diagnosis' } });
+      const calls = f.exec.mock.calls.filter(([cmd]) => cmd.startsWith('docker logs'));
+      expect(calls).toHaveLength(1); expect(calls[0][0]).toContain(cid); expect(calls[0][0]).toContain('--since'); expect(calls[0][0]).toContain('--until');
+      expect(calls[0][1]).toMatchObject({ executionLane: 'observation' });
+    });
+    it.each(['wrongOwner', 'noRun', 'noId', 'remote', 'otherProfile'] as const)('缺少关联证据(%s)不借日志判断应用故障', async (key) => {
+      const f = diagnosisFixture('启动失败', { [key]: true, logs: '2026-10-16T09:16:00Z error CS1002: bad' });
+      const value = await diagnosis();
+      expect(value.responsibilitySide).toBe('unknown'); expect(value.tailLines).toEqual([]);
+      expect(f.exec.mock.calls.some(([cmd]) => cmd.startsWith('docker logs'))).toBe(false);
+    });
+  });
+
   // ── Remote branches ──
 
   describe('GET /api/remote-branches', () => {

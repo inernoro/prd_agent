@@ -63,6 +63,16 @@ describe('产物复核失败证据', () => {
 });
 
 describe('阶段等待超时证据与容量门禁', () => {
+  it('等待队列已满不宣称未经核实的旧服务可用', async () => {
+    const budget = new DeploymentPhaseBudget(() => 0);
+    const controllers = Array.from({ length: 64 }, () => new AbortController());
+    const pending = controllers.map(controller => budget.acquire('start', { projectId: 'owned' }, { signal: controller.signal }).catch(() => undefined));
+    try {
+      const error = await budget.acquire('start', { projectId: 'owned' }).catch(value => value);
+      expect(error.message).toContain('部署阶段等待已满');
+      expect(error.message).not.toContain('旧服务保持可用');
+    } finally { controllers.forEach(controller => controller.abort()); await Promise.all(pending); }
+  });
   it('只读准入快照解释实际缺口，不释放预约或改变队列', async () => {
     const budget = new DeploymentPhaseBudget(() => 2000);
     budget.reserveKnownMemory('other-runtime', 768, { projectId: 'other-project' });

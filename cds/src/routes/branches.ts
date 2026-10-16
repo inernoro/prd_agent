@@ -1,3 +1,4 @@
+import { collectFailureLogEvidence, type FailureLogEvidence } from '../services/failure-diagnosis-evidence.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget, deploymentHostMemoryEvidence } from '../services/deployment-phase-budget.js';
@@ -11956,10 +11957,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     // 错误模式归类:reg pattern → category + 中文 hint + 责任归属
-    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'build-failed' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
+    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'build-failed' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown'
+      | 'artifact-admission' | 'phase-admission' | 'container-missing' | 'normal-exit' | 'database-policy';
     type Side = 'code' | 'config' | 'cds' | 'unknown';
     const PATTERNS: Array<{ re: RegExp; category: Category; hint: string; side: Side }> = [
-      // 构建/编译失败优先级最高:这是最常见也最容易被误判成"未分类/CDS 侧"的根因。
+      // 准入失败是本轮直接错误，不能被旧容器正常退出或派生 exit1 覆盖。
+      { re: /CDS shared database policy failed:/, category: 'database-policy', side: 'config', hint: '共享数据库保护拒绝了本次启动 — 核对部署目标与保留的数据绑定；不要关闭保护或修改绑定来放行旧版本' },
+      { re: /本地产物的实际提交、平台或访问无法确认|产物准入/, category: 'artifact-admission', side: 'cds', hint: '本轮产物准入未通过 — 查看该运行的产物核验步骤；现有证据不能认定为应用代码崩溃' },
+      { re: /部署阶段等待(?:超时|已满)/, category: 'phase-admission', side: 'cds', hint: '本轮未取得部署阶段准入 — 查看该运行的阶段与资源证据；未核实旧服务是否仍可用' },
+      // 容器日志中构建/编译错误优先于退出码和就绪超时，保留具体失败证据。
       // 容器内 dotnet build / tsc 失败 → 进程没起来 → 就绪探测超时(症状),根因其实在编译错误。
       { re: /\berror\s+CS\d{3,5}\b/i, category: 'build-failed', hint: 'C# 编译失败 — 容器内 dotnet build 报错,进程无法启动。修复编译错误后重新部署', side: 'code' },
       { re: /\berror\s+TS\d{3,5}\b/i, category: 'build-failed', hint: 'TypeScript 编译失败 — 修复类型错误后重新部署', side: 'code' },
@@ -11980,17 +11986,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (p.re.test(text)) return { category: p.category, hint: p.hint, side: p.side };
       }
       // 兜底:exit code N → 进程异常退出
-      const exitMatch = text.match(/exit(\s+code|ed with code)?\s*[:=]?\s*(\d+)/i);
-      if (exitMatch) {
+      const exitMatches = [...text.matchAll(/exit(\s+code|ed with code)?\s*[:=]?\s*(\d+)\b/gi)];
+      const exitMatch = exitMatches.find(match => Number(match[2]) !== 0) || exitMatches[0];
+      if (exitMatch && Number(exitMatch[2]) !== 0) {
         return {
           category: 'crashed',
           hint: `进程异常退出 (exit code ${exitMatch[2]}) — 检查应用日志最后几行`,
           side: 'code',
         };
       }
+      if (exitMatch) return { category: 'normal-exit', hint: '日志记录退出码 0，不能据此判断应用崩溃；请核对本轮部署失败事件', side: 'unknown' };
       return { category: 'unknown', hint: '未识别的错误模式 — 查看完整日志诊断', side: 'unknown' };
     };
 
+    const recordedRun = branch.lastDeploymentRunId ? deploymentRunService?.get(branch.lastDeploymentRunId) : undefined;
+    const diagnosisRun = recordedRun?.branchId === branch.id && recordedRun.projectId === (branch.projectId || 'default') ? recordedRun : undefined;
+    const local = !branch.executorId || registry?.getAll().find(node => node.id === branch.executorId)?.role === 'embedded';
     const failedServices: Array<{
       profileId: string;
       containerName: string;
@@ -11999,19 +12010,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       errorCategory: Category;
       errorHint: string;
       responsibilitySide: Side;
+      logEvidence: FailureLogEvidence;
     }> = [];
     const services = branch.services || {};
     for (const [profileId, svc] of Object.entries(services)) {
       if (svc.status !== 'error') continue;
-      let tailLines: string[] = [];
-      try {
-        const raw = await containerService.getLogs(svc.containerName, 30);
-        tailLines = raw.split('\n').filter((l) => l.trim()).slice(-30);
-      } catch {
-        // 容器名不存在 / docker daemon 拉不到日志 — 静默降级,前端会显示空 array
-      }
+      const { tailLines, evidence } = await collectFailureLogEvidence(shell, { branch, profileId, service: svc, run: diagnosisRun, local: Boolean(local) });
       const blob = (svc.errorMessage || '') + '\n' + tailLines.join('\n');
       const cls = classify(blob);
+      if (cls.category === 'unknown' && evidence.status === 'missing') {
+        Object.assign(cls, { category: 'container-missing', hint: '当前登记的容器不存在 — 核对本轮创建和清理事件；不能据此归因为应用崩溃', side: 'unknown' });
+      } else if (cls.category === 'unknown' && evidence.status !== 'run-window') {
+        cls.hint = `${evidence.reason}；请查看本轮部署事件确认首个失败点`;
+      }
       failedServices.push({
         profileId,
         containerName: svc.containerName,
@@ -12020,18 +12031,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         errorCategory: cls.category,
         errorHint: cls.hint,
         responsibilitySide: cls.side,
+        logEvidence: evidence,
       });
     }
 
     res.json(logPayloadForHumanView(req, {
       branchId: branch.id,
       branchStatus: branch.status,
-      diagnosisSource: branch.lastDeploymentRunId && deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
+      diagnosisSource: diagnosisRun?.failure
         ? 'deployment-run'
         : 'legacy-container-pattern',
-      structuredFailure: branch.lastDeploymentRunId
-        ? deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
-        : undefined,
+      structuredFailure: diagnosisRun?.failure,
       failedServices,
     }));
   });

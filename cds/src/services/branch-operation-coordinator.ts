@@ -1161,6 +1161,8 @@ export class BranchOperationCoordinator {
         trigger: request.trigger,
         actor: request.actor || null,
         commitSha: request.commitSha || null,
+        commitPinned: Boolean(request.commitPinned),
+        versionId: request.versionId || null,
         source: request.source || null,
         reason: request.reason || null,
         priority: priorityOf(request),

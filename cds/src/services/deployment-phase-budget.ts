@@ -234,7 +234,7 @@ export class DeploymentPhaseBudget {
     try { options.check?.(); } catch (error) { return Promise.reject(error); }
     if (options.signal?.aborted) return Promise.reject(new Error('部署阶段等待已取消'));
     const waiting = this.waiting.get(phase) || [];
-    if (waiting.length >= 64) return Promise.reject(new Error('部署阶段等待已满，请稍后重试；旧服务保持可用'));
+    if (waiting.length >= 64) return Promise.reject(new Error('部署阶段等待已满，未获得阶段准入；请稍后重试并核对现有服务状态'));
     this.waiting.set(phase, waiting);
     return new Promise((resolve, reject) => {
       const request: Request = { owner, check: options.check, signal: options.signal, resolve, reject,
