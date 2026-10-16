@@ -137,6 +137,8 @@ export interface MdToPptOutlineStreamOptions extends MdToPptOutlineRequest {
   onRun?: (runId: string) => void;
   onKnowledgeResolved?: (items: ResolvedMdToPptKnowledgeReference[]) => void;
   onDone?: (info: { pages: number; runId?: string }) => void;
+  /** 已取得 runId 后仅传输断开；服务器任务仍可能继续，调用方必须保留恢复游标。 */
+  onDisconnect?: (message: string) => void;
   onError?: (message: string) => void;
 }
 
@@ -147,6 +149,14 @@ export interface MdToPptOutlineStreamOptions extends MdToPptOutlineRequest {
 export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () => void {
   const abortController = new AbortController();
   (async () => {
+    let runObserved = false;
+    const reportConnectionFailure = (message: string) => {
+      if (runObserved && options.onDisconnect) {
+        options.onDisconnect(message);
+        return;
+      }
+      options.onError?.(message);
+    };
     try {
       const resolvedKnowledge = await resolveMdToPptKnowledgeReferences(options.knowledgeReferences ?? []);
       if (!resolvedKnowledge.success) {
@@ -198,7 +208,10 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
             try {
               const data = JSON.parse(currentData) as Record<string, unknown>;
               if (currentEvent === 'run') {
-                if (data.runId) options.onRun?.(data.runId as string);
+                if (data.runId) {
+                  runObserved = true;
+                  options.onRun?.(data.runId as string);
+                }
               } else if (currentEvent === 'meta') {
                 options.onMeta?.({
                   totalPages: (data.totalPages as number) ?? 0,
@@ -237,11 +250,11 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
         }
       }
       if (!resolved && !abortController.signal.aborted) {
-        options.onError?.('连接意外断开，请重试');
+        reportConnectionFailure('连接意外断开');
       }
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
-        options.onError?.((e as Error).message);
+        reportConnectionFailure((e as Error).message);
       }
     }
   })();

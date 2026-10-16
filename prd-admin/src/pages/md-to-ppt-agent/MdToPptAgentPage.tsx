@@ -2435,6 +2435,23 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           );
           finish();
         },
+        onDisconnect: () => {
+          if (!mountedRef.current) return;
+          // runId 已写入恢复游标，断开的只是浏览器传输；后台任务仍由服务器继续。
+          // 不调用 finish，避免 reload 的 EOF 把同一 run 的恢复游标误删并诱导用户重复付费。
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsg.id
+                ? {
+                    ...m,
+                    content: '页面连接已断开，但大纲仍在后台继续。请刷新页面找回当前任务，不要重新发送。',
+                    phase: 'outline',
+                    error: undefined,
+                  }
+                : m
+            )
+          );
+        },
         onError: (err) => finish(err),
       });
       cleanupRef.current = cleanup;
