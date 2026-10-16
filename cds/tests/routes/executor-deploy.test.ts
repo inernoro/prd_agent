@@ -554,6 +554,37 @@ describe('Executor /exec/deploy', () => {
     expect(entry!.worktreePath).not.toContain('/worktrees/default/');
   });
 
+  it('前置失败后远端不启动直接或传递依赖，独立服务仍可运行', async () => {
+    const launched: string[] = [];
+    const run = vi.spyOn(ContainerService.prototype, 'runService').mockImplementation(async (_entry, profile, service) => {
+      launched.push(profile.id);
+      if (profile.id === 'base') throw new Error('部署阶段等待超时：start memory-headroom');
+      if (profile.id === 'independent') {
+        const old = stateService.getBranch('remote-dependency-failure')!.services.base;
+        old.status = 'running'; old.errorMessage = undefined;
+      }
+      service.status = 'starting';
+    });
+    try {
+      const result = await postSse(server, '/exec/deploy', {
+        branchId: 'remote-dependency-failure', branchName: 'feature/dependency', projectId: 'default',
+        profiles: ([['grandchild', ['dependent']], ['dependent', ['base']], ['base', []], ['independent', []]] as Array<[string, string[]]>).map(([id, dependsOn]) => ({
+          id, name: id, dependsOn, dockerImage: 'node:22', workDir: '.', command: 'pnpm start', containerPort: 3000,
+        })), env: {},
+      });
+      expect(launched).toEqual(expect.arrayContaining(['base', 'independent']));
+      expect(launched).toHaveLength(2);
+      expect(stateService.getBranch('remote-dependency-failure')?.status).toBe('error');
+      const events = result.events.filter(event => event.event === 'step').map(event => event.data);
+      expect(events.find(event => event.step === 'startup-layer-0' && event.status !== 'running')).toMatchObject({ status: 'error', detail: { failedServices: ['base'] } });
+      expect(events.find(event => event.step === 'build-dependent')).toMatchObject({ status: 'error', detail: { blockedBy: ['base'] } });
+      expect(events.find(event => event.step === 'build-grandchild')).toMatchObject({ status: 'error', detail: { blockedBy: ['dependent'] } });
+      expect(result.events.find(event => event.event === 'complete')?.data.services).toMatchObject({
+        base: { status: 'error' }, independent: { status: 'running' }, dependent: { status: 'error' }, grandchild: { status: 'error' },
+      });
+    } finally { run.mockRestore(); }
+  });
+
   it('honors dependency layers even when the remote payload is out of order', async () => {
     const now = new Date().toISOString();
     stateService.addProject({

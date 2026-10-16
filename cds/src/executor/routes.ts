@@ -374,6 +374,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         ...(warnings.length > 0 ? { warnings } : {}),
       });
 
+      const failedProfileIds = new Set<string>();
+      const failureMessages = new Map<string, string>();
       for (const layer of layers) {
         sendEvent('step', {
           step: `startup-layer-${layer.layer}`,
@@ -381,6 +383,19 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           title: `启动第 ${layer.layer} 层`,
         });
         for (const profile of layer.items) {
+          assertCurrent();
+          const blockedBy = (profile.dependsOn || []).filter(id => failedProfileIds.has(id));
+          if (blockedBy.length > 0) {
+            failedProfileIds.add(profile.id);
+            const svc = entry.services[profile.id];
+            svc.status = 'error';
+            svc.errorMessage = `本轮前置服务失败，未启动依赖服务：${blockedBy.join(', ')}`;
+            failureMessages.set(profile.id, svc.errorMessage);
+            sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 因前置失败未启动`,
+              log: svc.errorMessage, detail: { profileId: profile.id, blockedBy } });
+            stateService.save();
+            continue;
+          }
           sendEvent('step', { step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}...` });
           const svc = entry.services[profile.id];
           svc.status = 'building';
@@ -433,15 +448,19 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           } catch (err) {
             if (err instanceof BranchOperationSupersededError) throw err;
             assertCurrent();
+            failedProfileIds.add(profile.id);
             svc.status = 'error';
             svc.errorMessage = (err as Error).message;
+            failureMessages.set(profile.id, svc.errorMessage);
             sendEvent('step', { step: `build-${profile.id}`, status: 'error', title: `${profile.name} 失败`, log: (err as Error).message });
           }
         }
+        const failedServices = layer.items.filter(profile => failedProfileIds.has(profile.id)).map(profile => profile.id);
         sendEvent('step', {
           step: `startup-layer-${layer.layer}`,
-          status: 'done',
-          title: `第 ${layer.layer} 层完成`,
+          status: failedServices.length > 0 ? 'error' : 'done',
+          title: failedServices.length > 0 ? `第 ${layer.layer} 层结束，${failedServices.length} 个服务失败或受阻` : `第 ${layer.layer} 层完成`,
+          ...(failedServices.length > 0 ? { detail: { failedServices } } : {}),
         });
       }
 
@@ -450,6 +469,11 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
       // Update overall status
       assertCurrent();
+      // 旧入口健康同步可能回写 running；本轮失败仍禁止提交候选并保留根因。
+      for (const [profileId, message] of failureMessages) {
+        const service = entry.services[profileId];
+        if (service) { service.status = 'error'; service.errorMessage = message; }
+      }
       await commitServiceReplacements({ entry, profileIds: profilesData.map(profile => profile.id), state: stateService,
         container: containerService, assertCurrent });
       const statuses = Object.values(entry.services).map(s => s.status);
@@ -459,7 +483,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       // （Bugbot「Remote deploy ignores service errors」），不能任一 running 就报 running。
       entry.status = statuses.length === 0
         ? 'idle'
-        : statuses.some(s => s === 'error') ? 'error'
+        : failedProfileIds.size > 0 || statuses.some(s => s === 'error') ? 'error'
         : statuses.some(s => s === 'running') ? 'running'
         : 'error';
       entry.lastAccessedAt = new Date().toISOString();

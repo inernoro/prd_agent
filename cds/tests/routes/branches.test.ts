@@ -3599,6 +3599,56 @@ describe('Branch Routes', () => {
     });
   });
 
+  describe('本轮前置失败阻断依赖服务', () => {
+    it.each(['start-error', 'not-ready'])('阻断直接与传递依赖，保留独立分支并以失败终结：%s', async failure => {
+      for (const profile of stateService.getBuildProfiles()) stateService.removeBuildProfile(profile.id);
+      for (const [id, dependsOn] of [
+        ['base', []], ['healthy', []], ['dependent', ['base']],
+        ['grandchild', ['dependent']], ['independent', ['healthy']],
+      ] as Array<[string, string[]]>) stateService.addBuildProfile({
+        id, projectId: 'default', name: id, dependsOn, dockerImage: 'node:22', command: 'pnpm start', workDir: '.', containerPort: 3000,
+      });
+      stateService.addBranch({
+        id: 'dependency-failure', projectId: 'default', branch: 'feature/dependency-failure',
+        worktreePath: path.join(tmpDir, 'worktrees', 'dependency-failure'), status: 'running',
+        createdAt: new Date().toISOString(), services: {
+          base: { profileId: 'base', containerName: 'old-base', hostPort: 19000, status: 'running' },
+          dependent: { profileId: 'dependent', containerName: 'old-dependent', hostPort: 19001, status: 'running' },
+        },
+      });
+      const launched: string[] = [];
+      let failingPort = -1;
+      const run = vi.spyOn(containerService, 'runService').mockImplementation(async (_entry, profile, service) => {
+        launched.push(profile.id);
+        if (profile.id === 'base') failingPort = service.hostPort;
+        if (profile.id === 'independent') {
+          const old = stateService.getBranch('dependency-failure')!.services.base;
+          old.status = 'running'; old.errorMessage = undefined;
+        }
+        if (profile.id === 'base' && failure === 'start-error') throw new Error('部署阶段等待超时：start memory-headroom');
+        service.status = 'starting';
+      });
+      const ready = vi.spyOn(containerService, 'waitForReadiness').mockImplementation(async port => port !== failingPort || failure !== 'not-ready');
+      try {
+        const response = await request(server, 'POST', '/api/branches/dependency-failure/deploy');
+        expect(launched).toEqual(expect.arrayContaining(['base', 'healthy', 'independent']));
+        expect(launched).not.toContain('dependent');
+        expect(launched).not.toContain('grandchild');
+        const entry = stateService.getBranch('dependency-failure')!;
+        expect(entry.status).toBe('error');
+        expect(entry.services.dependent.errorMessage).toContain('base');
+        expect(entry.services.grandchild.errorMessage).toContain('dependent');
+        expect(entry.services.independent.status).toBe('running');
+        const runId = String(response.headers['x-cds-deployment-run-id']);
+        expect(deploymentRunService.get(runId)).toMatchObject({ status: 'failed' });
+        expect(deploymentRunService.get(runId)?.finishedAt).toBeTruthy();
+        const steps = String(response.body).split('\n').filter(line => line.startsWith('data: ')).map(line => JSON.parse(line.slice(6)));
+        expect(steps.find(step => step.step === 'layer-0' && step.status !== 'running')).toMatchObject({ status: 'error', detail: { failedServices: ['base'] } });
+        expect(steps.find(step => step.step === 'build-dependent' && step.status === 'error')).toMatchObject({ detail: { blockedBy: ['base'] } });
+      } finally { run.mockRestore(); ready.mockRestore(); }
+    });
+  });
+
   describe('structured deployment diagnosis', () => {
     it('classifies the first concrete build error and keeps evidence references on the run', async () => {
       await request(server, 'POST', '/api/build-profiles', {
