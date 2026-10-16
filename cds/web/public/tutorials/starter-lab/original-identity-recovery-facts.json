@@ -1,0 +1,72 @@
+{
+  "date": "2026-10-16",
+  "status": "desktop-specialist-verified",
+  "functionalCommit": "500b08f554e5cb88f92a6e76332818fb6cf1778d",
+  "cliVersion": "0.17.0",
+  "ci": {
+    "url": "https://github.com/inernoro/prd_agent/actions/runs/38751056734",
+    "attempt": 2,
+    "passed": 10016,
+    "skipped": 11,
+    "firstAttemptFailureRetained": true
+  },
+  "assertions": {
+    "at": "2026-10-16T05:45:32.817177+00:00",
+    "firstOrdinaryAccountCreatedAndLoginVerified": true,
+    "initialProjectsEmpty": true,
+    "entireConnectionAndIdentityLoss": true,
+    "recoveredSamePrincipalAndProject": true,
+    "oldPairStillRevoked": true,
+    "oneDeviceRequestPerFlow": true,
+    "noProjectCreation": true,
+    "scopedIdentityCannotCreateOrIssueOtherProject": true,
+    "legacyClaimExactSyntheticKeyOnly": true,
+    "legacyAccountAndGrantGates": true,
+    "sameCommandContinuedWithoutPostWhilePaused": true,
+    "twoFreshProcessesSingleGetReuse": true,
+    "files0600GitIgnoredAndTicketAcknowledged": true,
+    "passed": true,
+    "browserStatus": "已完成真实浏览器原账号原项目批准、单条匿名归属、停用与项目授权恢复、原项目定位及双主题回读"
+  },
+  "project": {
+    "id": "8dbfa9eb0ea6",
+    "github": "https://github.com/inernoro/cds-onboarding-receipt-lab",
+    "cds": "https://cds.miduo.org/branches/8dbfa9eb0ea6",
+    "relationship": "同一授权专项仓库及同一CDS项目；本轮只新建隔离测试账号和测试凭据，不新建仓库或项目，不部署案例应用"
+  },
+  "recording": {
+    "complete": true,
+    "seconds": 52.0,
+    "frames": 13,
+    "segments": 13,
+    "sha256": "966896ed05b70f1ca0f57bd4f15349b1a6c9c217413d15dbfd6e6147db8cb42d",
+    "kind": "真实浏览器采样实录；按实操顺序保留状态、压缩等待并适当停帧，没有界面重绘或虚构操作，无音轨；字幕解释与CLI/API佐证相互对应",
+    "functionalCommit": "bb8ac00df48554f2f94d343684aace3b377d357c"
+  },
+  "boundaries": [
+    "第三方账号提供方恢复",
+    "独立机器主体恢复",
+    "历史业务匿名凭据批量归属",
+    "不兼容数据迁移与多服务协调回滚",
+    "移动触控与长期负载"
+  ],
+  "verificationDates": [
+    "2026-10-15",
+    "2026-10-16"
+  ],
+  "uiCommit": "bb8ac00df48554f2f94d343684aace3b377d357c",
+  "uiEvidence": {
+    "originalProjectLocator": true,
+    "hiddenSelectionPreservedAfterSave": true,
+    "sameIdentityAndProjectDeviceApproval": true,
+    "singleAnonymousCredentialClaim": true,
+    "disabledAccountAndWithdrawnProjectRestore": true,
+    "themes": [
+      "dark",
+      "light"
+    ],
+    "viewport": "1280x720 desktop",
+    "mobileTouchVerified": false
+  },
+  "uiCi": "https://github.com/inernoro/prd_agent/actions/runs/38755532838"
+}
