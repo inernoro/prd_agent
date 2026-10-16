@@ -13831,7 +13831,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             failedProfileIds.add(profile.id);
             const svc = entry.services[profile.id];
             svc.status = 'error';
-            svc.errorMessage = `本轮前置服务失败，未启动依赖服务：${blockedBy.join(', ')}`;
+            svc.errorMessage = `本轮前置服务失败，未启动依赖服务：${blockedBy.join(', ')}。请先查看前置服务日志并修复失败原因，待本轮部署结束后再重新部署。`;
             failureMessages.set(profile.id, svc.errorMessage);
             logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 因前置失败未启动`,
               log: svc.errorMessage, detail: { profileId: profile.id, blockedBy }, timestamp: new Date().toISOString() });

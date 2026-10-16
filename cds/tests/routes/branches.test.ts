@@ -3637,6 +3637,7 @@ describe('Branch Routes', () => {
         const entry = stateService.getBranch('dependency-failure')!;
         expect(entry.status).toBe('error');
         expect(entry.services.dependent.errorMessage).toContain('base');
+        expect(entry.services.dependent.errorMessage).toContain('待本轮部署结束后再重新部署');
         expect(entry.services.grandchild.errorMessage).toContain('dependent');
         expect(entry.services.independent.status).toBe('running');
         const runId = String(response.headers['x-cds-deployment-run-id']);
