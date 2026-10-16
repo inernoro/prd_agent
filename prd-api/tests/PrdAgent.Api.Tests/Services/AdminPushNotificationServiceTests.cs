@@ -1,15 +1,19 @@
 using System.Net;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using Xunit;
 
@@ -17,6 +21,11 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class AdminPushNotificationServiceTests
 {
+    private const string QuotaRawMessage = "上游 AI 服务因额度不足拒绝了本次调用，本次 AI 创作未完成。\n" +
+                                           "环境：CDS 预览环境（分支：fix/quota-alert）\n" +
+                                           "模型：anthropic/claude-sonnet\n平台：OpenRouter\n" +
+                                           "请稍后重试；管理员需要检查服务额度或切换可用配置。诊断信息已保留。";
+
     [Fact]
     public async Task DispatchPendingAsync_DeliversOpenNotificationOnce()
     {
@@ -868,26 +877,221 @@ public sealed class AdminPushNotificationServiceTests
         Assert.DoesNotContain("/keys/", presentation.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void NotificationsController_NewQuotaAlert_ShouldKeepSafeEnvironmentAndModelDetails()
+    [Theory]
+    [InlineData("null")]
+    [InlineData("missing")]
+    [InlineData(" ")]
+    [InlineData("admin")]
+    [InlineData(" AdMiN ")]
+    public async Task NotificationsController_List_ShouldResolveLegacySectionsBeforeReturningDtos(string sectionState)
     {
-        const string message = "上游 AI 服务因额度不足拒绝了本次调用，本次 AI 创作未完成。\n" +
-                               "环境：CDS 预览环境（分支：fix/quota-alert）\n" +
-                               "模型：anthropic/claude-sonnet\n" +
-                               "平台：OpenRouter\n" +
-                               "请稍后重试；管理员需要检查服务额度或切换可用配置。诊断信息已保留。";
-        var presentation = NotificationsController.ToUserReadablePresentation(new AdminNotification
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyQuotaAsync(testDb, sectionState);
+        await InsertPersonalControlsAsync(testDb);
+        var controller = CreateNotificationsController(testDb.Context, "u1");
+        var items = ReadNotificationItems(await controller.List(ct: CancellationToken.None));
+
+        Assert.Equal(new[] { "explicit-personal", "mine", "personal-global" },
+            items.Select(x => x.GetProperty("id").GetString()).OrderBy(x => x).ToArray());
+        Assert.All(items, x => Assert.Equal("personal", x.GetProperty("section").GetString()));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task NotificationsController_List_ShouldUseActualRoleAndPermissionClaims(bool adminRole, bool adminPermission)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyQuotaAsync(testDb, "null");
+        var controller = CreateNotificationsController(testDb.Context, "u1",
+            adminRole: adminRole, adminPermission: adminPermission);
+        Assert.Equal(adminRole, controller.User.IsInRole(UserRole.ADMIN.ToString()));
+
+        var items = ReadNotificationItems(await controller.List(ct: CancellationToken.None));
+        Assert.Equal(adminRole && adminPermission, items.Any(x => x.GetProperty("id").GetString() == "quota"));
+    }
+
+    [Theory]
+    [InlineData("null", false)]
+    [InlineData("missing", false)]
+    [InlineData("null", true)]
+    [InlineData("missing", true)]
+    public async Task NotificationsController_Handle_ShouldNotMutateLegacyAdminNotifications(string sectionState, bool handleAll)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyQuotaAsync(testDb, sectionState);
+        await InsertPersonalControlsAsync(testDb);
+        var controller = CreateNotificationsController(testDb.Context, "u1");
+        if (handleAll)
         {
-            Key = "llm-quota-exceeded:v2:0123456789abcdef",
-            Title = "AI 服务额度不足",
-            Message = message,
-            Source = "llm-gateway-quota",
+            Assert.IsType<OkObjectResult>(await controller.HandleAll(CancellationToken.None));
+        }
+        else
+        {
+            Assert.IsType<OkObjectResult>(await controller.Handle("mine", CancellationToken.None));
+            Assert.IsType<NotFoundObjectResult>(await controller.Handle("quota", CancellationToken.None));
+        }
+
+        var records = await testDb.Context.AdminNotifications.Find(_ => true).ToListAsync();
+        Assert.Equal("handled", records.Single(x => x.Id == "mine").Status);
+        Assert.Equal("open", records.Single(x => x.Id == "other").Status);
+        Assert.Equal(handleAll ? "handled" : "open", records.Single(x => x.Id == "explicit-personal").Status);
+        var quota = records.Single(x => x.Id == "quota");
+        Assert.Equal("open", quota.Status);
+        Assert.Null(quota.HandledAt);
+        Assert.Equal(QuotaRawMessage, quota.Message);
+        var admin = CreateNotificationsController(testDb.Context, "u1", adminRole: true, adminPermission: true);
+        Assert.IsType<OkObjectResult>(await admin.Handle("quota", CancellationToken.None));
+        Assert.Equal("handled", (await testDb.Context.AdminNotifications.Find(x => x.Id == "quota").SingleAsync()).Status);
+    }
+
+    [Theory]
+    [InlineData("llm-quota-exceeded")]
+    [InlineData("llm-quota-exceeded:v2:0123456789abcdef")]
+    public async Task NotificationsController_QuotaList_ShouldShowSummaryWithoutChangingStoredDiagnostics(string key)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification
+        {
+            Id = "quota", Key = key, Title = "AI 服务额度不足", Message = QuotaRawMessage,
+            Source = "llm-gateway-quota", Section = AdminNotificationSections.Admin,
+        });
+        var admin = CreateNotificationsController(testDb.Context, "u1", adminRole: true, adminPermission: true);
+        var item = Assert.Single(ReadNotificationItems(await admin.List(ct: CancellationToken.None)));
+        var message = item.GetProperty("message").GetString();
+        Assert.Equal("AI 创作服务需要管理员处理", item.GetProperty("title").GetString());
+        Assert.Contains("请稍后重试", message);
+        Assert.Contains("管理员需要检查", message);
+        Assert.DoesNotContain("fix/quota-alert", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("anthropic/claude-sonnet", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("OpenRouter", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("quota", item.GetProperty("id").GetString());
+        Assert.Equal(key, item.GetProperty("key").GetString());
+        Assert.Equal("llm-gateway-quota", item.GetProperty("source").GetString());
+        var stored = await testDb.Context.AdminNotifications.Find(x => x.Id == "quota").SingleAsync();
+        Assert.Equal(QuotaRawMessage, stored.Message);
+        Assert.Equal("AI 服务额度不足", stored.Title);
+    }
+
+    [Theory]
+    [InlineData("data-transfer", "null")]
+    [InlineData("data-transfer", "missing")]
+    [InlineData("data-transfer", " ")]
+    [InlineData("data-transfer-accepted", "null")]
+    [InlineData("data-transfer-accepted", "missing")]
+    [InlineData("data-transfer-accepted", " ")]
+    [InlineData("data-transfer-rejected", "null")]
+    [InlineData("data-transfer-rejected", "missing")]
+    [InlineData("data-transfer-rejected", " ")]
+    public async Task NotificationsController_List_ShouldPreserveTargetedLegacyDataTransfersBeforeLimit(string prefix, string sectionState)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyDataTransferAsync(testDb, prefix, sectionState);
+        await InsertPersonalControlsAsync(testDb);
+        var controller = CreateNotificationsController(testDb.Context, "u1");
+        var items = ReadNotificationItems(await controller.List(ct: CancellationToken.None));
+
+        Assert.Equal(new[] { "explicit-personal", "mine", "personal-global", "transfer" },
+            items.Select(x => x.GetProperty("id").GetString()).OrderBy(x => x).ToArray());
+        var transfer = Assert.Single(items, x => x.GetProperty("id").GetString() == "transfer");
+        Assert.Equal("personal", transfer.GetProperty("section").GetString());
+        Assert.Equal("个人通知", transfer.GetProperty("sectionLabel").GetString());
+        Assert.Equal("本人数据分享", transfer.GetProperty("title").GetString());
+        var stored = await testDb.Context.AdminNotifications.Find(x => x.Id == "transfer").SingleAsync();
+        Assert.Equal("system", stored.Source);
+        Assert.Equal("u1", stored.TargetUserId);
+        Assert.True(string.IsNullOrWhiteSpace(stored.Section));
+        Assert.Equal("open", stored.Status);
+    }
+
+    [Theory]
+    [InlineData("data-transfer", false)]
+    [InlineData("data-transfer", true)]
+    [InlineData("data-transfer-accepted", false)]
+    [InlineData("data-transfer-accepted", true)]
+    [InlineData("data-transfer-rejected", false)]
+    [InlineData("data-transfer-rejected", true)]
+    public async Task NotificationsController_Handle_ShouldPreserveTargetedLegacyDataTransfers(string prefix, bool handleAll)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyDataTransferAsync(testDb, prefix, "null");
+        var controller = CreateNotificationsController(testDb.Context, "u1");
+        Assert.IsType<OkObjectResult>(handleAll
+            ? await controller.HandleAll(CancellationToken.None)
+            : await controller.Handle("transfer", CancellationToken.None));
+        var records = await testDb.Context.AdminNotifications.Find(_ => true).ToListAsync();
+        Assert.Equal("handled", records.Single(x => x.Id == "transfer").Status);
+        foreach (var id in new[] { "transfer-other", "transfer-global", "transfer-admin", "transfer-quota" })
+        {
+            var record = records.Single(x => x.Id == id);
+            Assert.Equal("open", record.Status);
+            Assert.Null(record.HandledAt);
+            Assert.IsType<NotFoundObjectResult>(await controller.Handle(id, CancellationToken.None));
+        }
+        Assert.All(records.Where(x => x.Id.StartsWith("system-admin-", StringComparison.Ordinal)),
+            x => Assert.Equal("open", x.Status));
+    }
+
+    private static async Task InsertLegacyDataTransferAsync(AdminPushTestDatabase db, string prefix, string sectionState)
+    {
+        const string transferId = "1234567890abcdef1234567890abcdef";
+        var document = new AdminNotification
+        {
+            Id = "transfer", Key = $"{prefix}:{transferId}", Source = "system", TargetUserId = "u1",
+            Title = "本人数据分享", ActionUrl = $"/data-transfers?id={transferId}",
+            CreatedAt = DateTime.UtcNow.AddDays(-1),
+        }.ToBsonDocument();
+        var sectionField = BsonClassMap.LookupClassMap(typeof(AdminNotification))
+            .GetMemberMap(nameof(AdminNotification.Section)).ElementName;
+        if (sectionState == "missing") document.Remove(sectionField);
+        else document[sectionField] = sectionState == "null" ? BsonNull.Value : new BsonString(sectionState);
+        await db.Context.Database.GetCollection<BsonDocument>("admin_notifications").InsertOneAsync(document);
+        await db.Context.AdminNotifications.InsertManyAsync(new[]
+        {
+            new AdminNotification { Id = "transfer-other", Key = $"{prefix}:2234567890abcdef1234567890abcdef", Source = "system", TargetUserId = "u2" },
+            new AdminNotification { Id = "transfer-global", Key = $"{prefix}:3234567890abcdef1234567890abcdef", Source = "system" },
+            new AdminNotification { Id = "transfer-admin", Key = $"{prefix}:4234567890abcdef1234567890abcdef", Source = "system", TargetUserId = "u1", Section = AdminNotificationSections.Admin },
+            new AdminNotification { Id = "transfer-quota", Key = $"{prefix}:5234567890abcdef1234567890abcdef", Source = "llm-gateway-quota", TargetUserId = "u1" },
+        }.Concat(Enumerable.Range(0, 201).Select(index => new AdminNotification
+        {
+            Id = $"system-admin-{index}", Key = $"system-admin:{index}", Source = "system", TargetUserId = "u1",
+        })));
+    }
+
+    private static async Task InsertLegacyQuotaAsync(AdminPushTestDatabase db, string sectionState)
+    {
+        var document = new AdminNotification
+        {
+            Id = "quota", Key = "llm-quota-exceeded:v2:0123456789abcdef",
+            Title = "AI 服务额度不足", Message = QuotaRawMessage, Source = "llm-gateway-quota",
+        }.ToBsonDocument();
+        var sectionField = BsonClassMap.LookupClassMap(typeof(AdminNotification))
+            .GetMemberMap(nameof(AdminNotification.Section)).ElementName;
+        if (sectionState == "missing") document.Remove(sectionField);
+        else document[sectionField] = sectionState == "null" ? BsonNull.Value : new BsonString(sectionState);
+        var collection = db.Context.Database.GetCollection<BsonDocument>("admin_notifications");
+        await collection.InsertOneAsync(document);
+        var stored = await collection.Find(_ => true).SingleAsync();
+        Assert.Equal(sectionState != "missing", stored.Contains(sectionField));
+        if (sectionState == "null") Assert.True(stored[sectionField].IsBsonNull);
+    }
+
+    private static Task InsertPersonalControlsAsync(AdminPushTestDatabase db)
+        => db.Context.AdminNotifications.InsertManyAsync(new[]
+        {
+            new AdminNotification { Id = "mine", Title = "本人提醒", Source = "defect-agent", TargetUserId = "u1" },
+            new AdminNotification { Id = "other", Title = "他人提醒", Source = "defect-agent", TargetUserId = "u2" },
+            new AdminNotification { Id = "personal-global", Title = "个人分区公告", Source = "defect-agent" },
+            new AdminNotification { Id = "explicit-personal", Source = "llm-gateway-quota", Section = AdminNotificationSections.Personal, TargetUserId = "u1" },
         });
 
-        Assert.Equal("AI 服务额度不足", presentation.Title);
-        Assert.Contains("环境：CDS 预览环境", presentation.Message);
-        Assert.Contains("模型：anthropic/claude-sonnet", presentation.Message);
-        Assert.Contains("平台：OpenRouter", presentation.Message);
+    private static JsonElement[] ReadNotificationItems(IActionResult result)
+    {
+        var ok = Assert.IsType<OkObjectResult>(result);
+        return JsonSerializer.SerializeToElement(ok.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            .GetProperty("data").GetProperty("items").EnumerateArray().ToArray();
     }
 
     [Fact]
@@ -1014,7 +1218,9 @@ public sealed class AdminPushNotificationServiceTests
     private static NotificationsController CreateNotificationsController(
         MongoDbContext db,
         string userId,
-        bool stableSmoke = false)
+        bool stableSmoke = false,
+        bool adminRole = false,
+        bool adminPermission = false)
     {
         var push = CreateService(db, new RecordingHttpClientFactory(HttpStatusCode.OK));
         var events = new AdminNotificationEventService(
@@ -1025,7 +1231,10 @@ public sealed class AdminPushNotificationServiceTests
         var claims = new List<Claim>
         {
             new("sub", userId),
+            new("permissions", AdminPermissionCatalog.Access),
         };
+        if (adminRole) claims.Add(new Claim("role", UserRole.ADMIN.ToString()));
+        if (adminPermission) claims.Add(new Claim("permissions", AdminPermissionCatalog.SettingsWrite));
         if (stableSmoke)
         {
             claims.Add(new Claim(
@@ -1039,7 +1248,7 @@ public sealed class AdminPushNotificationServiceTests
             {
                 HttpContext = new DefaultHttpContext
                 {
-                    User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")),
+                    User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test", ClaimTypes.Name, "role")),
                 },
             },
         };
@@ -1055,7 +1264,7 @@ public sealed class AdminPushNotificationServiceTests
 
     private static readonly IConfiguration EmptyConfiguration = new ConfigurationBuilder().Build();
 
-    private sealed class AdminPushTestDatabase : IAsyncDisposable
+    internal sealed class AdminPushTestDatabase : IAsyncDisposable
     {
         private AdminPushTestDatabase(MongoClient client, string databaseName, MongoDbContext context)
         {

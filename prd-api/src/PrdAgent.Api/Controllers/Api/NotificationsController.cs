@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
@@ -17,6 +19,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("dashboard", AdminPermissionCatalog.Access)]
 public sealed class NotificationsController : ControllerBase
 {
+    private const string LegacyPersonalDataTransferKeyPattern = @"^data-transfer(?:-accepted|-rejected)?:[0-9a-f]{32}$";
     private readonly MongoDbContext _db;
     private readonly AdminPushNotificationService _pushService;
     private readonly AdminNotificationEventService _eventService;
@@ -325,7 +328,7 @@ public sealed class NotificationsController : ControllerBase
 
         if (!includeAdmin)
         {
-            filter &= Builders<AdminNotification>.Filter.Ne(x => x.Section, AdminNotificationSections.Admin);
+            filter &= Builders<AdminNotification>.Filter.Not(BuildAdminSectionFilter());
         }
 
         if (!includeHandled)
@@ -336,9 +339,35 @@ public sealed class NotificationsController : ControllerBase
         return filter;
     }
 
+    private static FilterDefinition<AdminNotification> BuildAdminSectionFilter()
+    {
+        var builder = Builders<AdminNotification>.Filter;
+        var explicitAdmin = builder.Regex(x => x.Section,
+            new BsonRegularExpression($@"^\s*{Regex.Escape(AdminNotificationSections.Admin)}\s*$", "i"));
+        var absentOrBlank = builder.Eq(x => x.Section, null)
+                            | builder.Regex(x => x.Section, new BsonRegularExpression(@"^\s*$"));
+        var adminSources = string.Join("|", AdminNotificationSourceCatalog.Definitions
+            .Where(x => x.Section == AdminNotificationSections.Admin)
+            .Select(x => Regex.Escape(x.Source)));
+        var sourceIsAdmin = builder.Regex(x => x.Source,
+            new BsonRegularExpression($@"^\s*(?:{adminSources})\s*$", "i"));
+
+        // 既有数据分享使用这三个结构化事件Key；不能把所有定向system消息都放行。
+        var personalDataTransfer = builder.Regex(x => x.Source, new BsonRegularExpression(@"^\s*system\s*$", "i"))
+                                   & builder.Regex(x => x.Key, new BsonRegularExpression(LegacyPersonalDataTransferKeyPattern))
+                                   & builder.Regex(x => x.TargetUserId, new BsonRegularExpression(@"\S"));
+        // 显式分区仍优先；只有历史空分区的已知个人业务不采用管理来源默认。
+        return explicitAdmin | (absentOrBlank & sourceIsAdmin & builder.Not(personalDataTransfer));
+    }
+
     private static object ToNotificationDto(AdminNotification n)
     {
-        var section = AdminNotificationSourceCatalog.ResolveSection(n.Source, n.Section);
+        var legacyPersonalDataTransfer = string.IsNullOrWhiteSpace(n.Section)
+                                         && AdminNotificationSourceCatalog.NormalizeSource(n.Source) == "system"
+                                         && !string.IsNullOrWhiteSpace(n.TargetUserId)
+                                         && Regex.IsMatch(n.Key ?? string.Empty, LegacyPersonalDataTransferKeyPattern, RegexOptions.CultureInvariant);
+        var section = AdminNotificationSourceCatalog.ResolveSection(n.Source,
+            legacyPersonalDataTransfer ? AdminNotificationSections.Personal : n.Section);
         var presentation = ToUserReadablePresentation(n);
         return new
         {
@@ -367,11 +396,6 @@ public sealed class NotificationsController : ControllerBase
     {
         if (string.Equals(notification.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase))
         {
-            if (notification.Key?.StartsWith("llm-quota-exceeded:v2:", StringComparison.Ordinal) == true)
-            {
-                return (notification.Title, notification.Message);
-            }
-
             return (
                 "AI 创作服务需要管理员处理",
                 "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。");

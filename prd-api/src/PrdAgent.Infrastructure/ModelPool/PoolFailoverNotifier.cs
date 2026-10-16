@@ -222,6 +222,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
         var existing = await _db.AdminNotifications
             .Find(n => n.Key == key && n.Status == "open")
             .FirstOrDefaultAsync(ct);
+        var section = AdminNotificationSourceCatalog.ResolveSection(source, existing?.Section);
 
         if (existing != null)
         {
@@ -229,6 +230,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 .Set(n => n.Title, title)
                 .Set(n => n.Message, message)
                 .Set(n => n.Level, level)
+                .Set(n => n.Section, section)
                 .Set(n => n.UpdatedAt, DateTime.UtcNow);
 
             await _db.AdminNotifications.UpdateOneAsync(
@@ -243,6 +245,7 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
                 Message = message,
                 Level = level,
                 Source = source,
+                Section = section,
                 TargetUserId = targetUserId,
                 Status = "open",
                 // 故障转移是「持续到恢复为止」的运营告警:就地更新 + 恢复时由 CloseNotificationByKeyAsync 关闭。
