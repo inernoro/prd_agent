@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
-import { readCleanupBlocker, writeCleanupBlocker, cleanupFailureFromAttachments, isCleanupReadOnlyJourney } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
+import { readCleanupBlocker, writeCleanupBlocker, cleanupFailureFromAttachments, isCleanupReadOnlyJourney, readShortVideoCleanupCapability } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
 import { collectPlaywrightCases } from '../stable-smoke-results.mjs';
 import { runReportRiskRegression } from '../stable-smoke-run.mjs';
 
@@ -25,6 +25,27 @@ test('REG-stsmk-cleanup-circuit-001 清理任务仍200或回读未知必须熔�
   assert.ok(cleanupFailureFromAttachments([attachment({ runReadbackStatus: 404, errors: ['cleanup failed'] })], runId));
   assert.equal(cleanupFailureFromAttachments([attachment({ runReadbackStatus: 404 })], runId), undefined);
   assert.ok(cleanupFailureFromAttachments([attachment({ inspectionRunId: 'other-run' })], runId));
+});
+
+const deployed = '1'.repeat(40);
+const supportedController = '[Route("api/short-video-materials")]\n[HttpGet("runs/{runId}")]\n[HttpDelete("runs/{runId}")]\n[HttpPost("runs/{runId}/cancel")]';
+const versionResponse = (overrides = {}) => ({ ok: () => true, json: async () => ({ actualCommit: deployed, expectedCommit: deployed, commitMatch: 'match', ...overrides }) });
+test('REG-stsmk-cleanup-circuit-001 创建前须按实际部署源核取消删除回读，缺一项或未知均停跑', async () => {
+  for (const missing of ['[HttpGet("runs/{runId}")]', '[HttpDelete("runs/{runId}")]', '[HttpPost("runs/{runId}/cancel")]']) {
+    const result = await readShortVideoCleanupCapability({ getVersion: async () => versionResponse(), readControllerSource: revision => { assert.equal(revision, deployed);return supportedController.replace(missing, ''); } });
+    assert.equal(result.supported, false);
+    assert.match(result.reason, /零创建/);
+  }
+  assert.equal((await readShortVideoCleanupCapability({ getVersion: async () => versionResponse(), readControllerSource: () => { throw Error('exact source unavailable'); } })).supported, false);
+  assert.equal((await readShortVideoCleanupCapability({ getVersion: async () => versionResponse(), readControllerSource: () => supportedController })).supported, true);
+});
+test('REG-stsmk-cleanup-circuit-001 漂移或非法部署不得查询猜测源码，健康与HTTP200不替代清理合同', async () => {
+  let reads = 0;
+  for (const value of [{ commitMatch: 'mismatch' }, { actualCommit: 'invalid' }, { expectedCommit: '2'.repeat(40) }]) {
+    const result = await readShortVideoCleanupCapability({ getVersion: async () => versionResponse(value), readControllerSource: () => { reads++;return supportedController; } });
+    assert.equal(result.supported, false);
+  }
+  assert.equal(reads, 0);
 });
 
 test('REG-stsmk-cleanup-circuit-001 本地熔断跨重试保留且读错状态不能放行', t => {
@@ -58,6 +79,26 @@ test('REG-stsmk-cleanup-circuit-001 仅显式只读旅程可继续，融合写�
 });
 
 const spec = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+test('REG-stsmk-cleanup-circuit-001 原三条短视频旅程创建和登录前必须消费同一能力预检', async () => {
+  const titles = ['[PARSE-001][PARSE-002][PARSE-005][PARSE-007][PARSE-008]', '[PARSE-001][PARSE-006][PARSE-007]', '[PARSE-003][PARSE-004][REG-short-video-input-001]'];
+  for (const title of titles) {
+    const start = spec.indexOf(`  test('${title}`);assert.ok(start >= 0);
+    const body = spec.slice(start, spec.indexOf('\n  test(', start + 1));
+    const guard = body.indexOf('await requireShortVideoCleanupCapability(request, testInfo);');
+    assert.ok(guard > 0 && guard < body.indexOf('loginAndReadToken'));
+    if (body.includes('browser.newContext')) assert.ok(guard < body.indexOf('browser.newContext'));
+  }
+  const start = spec.indexOf('async function requireShortVideoCleanupCapability(');
+  const finish = spec.indexOf('\nconst recordingJourneyPlan', start);
+  const source = spec.slice(start, finish).replace(': APIRequestContext', '').replace(': TestInfo', '');
+  let attached, skipped = false;
+  const fn = new Function('readShortVideoCleanupCapability', 'Buffer', 'test', `return (${source});`)(
+    async ({ getVersion }) => { assert.equal(await getVersion(), 'readonly-version');return { supported: false, reason: '缺删除能力；零创建停跑' }; }, Buffer,
+    { skip: (blocked, reason) => { skipped = blocked;assert.match(reason, /零创建/);throw Error('safety-skip'); } },
+  );
+  await assert.rejects(fn({ get: path => { assert.equal(path, '/api/version');return 'readonly-version'; } }, { attach: async (name, value) => { attached = { name, value: JSON.parse(value.body) }; } }), /safety-skip/);
+  assert.equal(skipped, true);assert.equal(attached.name, 'short-video-cleanup-preflight');assert.equal(attached.value.supported, false);
+});
 function sourceHook(begin, end, bindings) {
   const start = spec.indexOf(begin);
   assert.ok(start >= 0);

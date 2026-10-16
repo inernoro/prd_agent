@@ -1,10 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 export const sharedCleanupSafetyPath = resolve(process.env.CODEX_HOME || resolve(homedir(), '.codex'), 'automations/stable-smoke-48h/safety-fuse.json');
 const readOnlyIds = new Set(['CORE-001', 'CORE-002', 'CORE-003', 'CORE-010', 'REG-STSMK-PRODUCTION-READ-ONLY-001', 'REG-AUTH-IDENTITY-PERMISSIONS-001']);
 const localPath = directory => resolve(directory, 'cleanup-safety-circuit.json');
+
+export async function readShortVideoCleanupCapability({ getVersion, readControllerSource = revision => execFileSync('git', ['show', `${revision}:prd-api/src/PrdAgent.Api/Controllers/Api/ShortVideoMaterialController.cs`], { cwd: resolve(dirname(fileURLToPath(import.meta.url)), '../..'), encoding: 'utf8', timeout: 10000, maxBuffer: 256 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }) }) {
+  const blocked = reason => ({ supported: false, reason: `${reason}；本用例零创建停跑，保留未执行。恢复当前部署可核验的单任务清理能力后按原case复验，不要求发布工具分支或指定业务版本。` });
+  try {
+    const response = await getVersion();
+    if (!response.ok()) return blocked('当前实际部署版本无法核实');
+    const version = await response.json();
+    const revision = version.actualCommit;
+    if (!/^[a-f0-9]{40}$/.test(revision || '') || version.expectedCommit !== revision || version.commitMatch !== 'match') return blocked('当前部署版本不完整或发生漂移，不能猜测清理能力');
+    const source = readControllerSource(revision);
+    const contracts = [/^\s*\[Route\("api\/short-video-materials"\)\]/m, /^\s*\[HttpGet\("runs\/\{runId\}"\)\]/m, /^\s*\[HttpDelete\("runs\/\{runId\}"\)\]/m, /^\s*\[HttpPost\("runs\/\{runId\}\/cancel"\)\]/m];
+    return { ...(!contracts.every(pattern => pattern.test(source)) ? blocked('当前实际部署未声明完整的单任务取消、删除和回读路由') : { supported: true, reason: '当前实际部署具备路由声明；只证明创建前安全前置，实际清理仍须原资源404' }), deploymentCommit: revision, controllerSha256: createHash('sha256').update(source).digest('hex') };
+  } catch {
+    return blocked('当前实际部署源码或版本不可核验，清理能力未知');
+  }
+}
 
 function readCircuit(path, environment) {
   if (!existsSync(path)) return undefined;

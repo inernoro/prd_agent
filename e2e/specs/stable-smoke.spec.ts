@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
-import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker } from '../utils/stableSmokeCleanupSafety.mjs';
+import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability } from '../utils/stableSmokeCleanupSafety.mjs';
 import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan } from '../utils/stableSmokeRecording.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
@@ -37,6 +37,11 @@ type BusinessCatalog = {
 };
 
 const specDir = dirname(fileURLToPath(import.meta.url));
+async function requireShortVideoCleanupCapability(request: APIRequestContext, testInfo: TestInfo) {
+  const capability = await readShortVideoCleanupCapability({ getVersion: () => request.get('/api/version') });
+  await testInfo.attach('short-video-cleanup-preflight', { body: Buffer.from(JSON.stringify(capability)), contentType: 'application/json' });
+  test.skip(!capability.supported, capability.reason);
+}
 const recordingJourneyPlan = readRecordingJourneyPlan(process.env);
 const webEvidenceHarnessUrl = pathToFileURL(resolve(specDir,
   '../../.claude/skills/create-visual-test-to-kb/scripts/harness.mjs')).href;
@@ -4309,6 +4314,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[PARSE-001][PARSE-002][PARSE-005][PARSE-007][PARSE-008] 视频上传、链接解析、阶段进度、入库结果与清理闭环', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
     test.setTimeout(420_000);
+    await requireShortVideoCleanupCapability(request, testInfo);
     const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, serviceWorkers: 'block' });
     const page = await context.newPage();
     const token = await loginAndReadToken(page, request, '/document-store');
@@ -4450,6 +4456,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[PARSE-001][PARSE-006][PARSE-007] 移动端可上传视频、进入解析并回读入库终态', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
     test.setTimeout(420_000);
+    await requireShortVideoCleanupCapability(request, testInfo);
     const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
     const page = await mobileContext.newPage();
     const token = await loginAndReadToken(page, request, '/document-store');
@@ -4538,6 +4545,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
   test('[PARSE-003][PARSE-004][REG-short-video-input-001] 非法与失效链接说明恢复动作且长文案不溢出', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(180_000);
+    await requireShortVideoCleanupCapability(request, testInfo);
     const token = await loginAndReadToken(page, request, '/document-store');
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-short-video-error-r${testInfo.retry}`;
     let storeId = '';
