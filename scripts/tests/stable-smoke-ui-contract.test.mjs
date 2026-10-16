@@ -10,6 +10,118 @@ import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-resul
 import * as uiContract from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
 
+test('REG-stsmk-account-scope-001 GWBASE API入口与真实控制台入口按现存发布合同分离', () => {
+  assert.equal(typeof uiContract.resolveGatewayUiBaseUrl, 'function');
+  const apiBase = 'https://inspection.invalid';
+  const release = readFileSync(new URL('../../exec_dep.sh', import.meta.url), 'utf8');
+  const mount = release.match(/PRD_AGENT_PUBLIC_LLMGW_PAGE_PATH:-([^}]+)/)?.[1];
+  assert.equal(mount, '/llmgw/');
+  const runtime = readFileSync(new URL('../../llmgw/web/src/lib/runtimeBase.ts', import.meta.url), 'utf8');
+  const runtimeFunction = runtime.match(/export function getRuntimeBasePath[^]*?\n}/)?.[0];
+  assert.ok(runtimeFunction);
+  const runtimeBase = new Function('pathname', runtimeFunction.slice(runtimeFunction.indexOf('{') + 1, runtimeFunction.lastIndexOf('}')));
+  for (const environment of ['cds', 'production']) {
+    const uiBase = uiContract.resolveGatewayUiBaseUrl(`${apiBase}/`, environment);
+    const expected = environment === 'production' ? new URL(mount, apiBase).href.replace(/\/$/, '') : apiBase;
+    assert.equal(uiBase, expected);
+    assert.equal(runtimeBase(new URL(`${uiBase}/login`).pathname), environment === 'production' ? '/llmgw' : '');
+  }
+  for (const [base, environment] of [['https://inspection.invalid/unknown', 'production'], ['http://inspection.invalid', 'cds'],
+    ['https://user:secret@inspection.invalid', 'production'], ['https://inspection.invalid?x=1', 'cds'], [apiBase, 'unknown']]) {
+    assert.throws(() => uiContract.resolveGatewayUiBaseUrl(base, environment), /test\//);
+  }
+});
+
+test('REG-stsmk-account-scope-001 GWBASE 已证前缀日志使用同一精确allowlist且不改写请求', async () => {
+  const requestId = '92921338e63541b89a8f0298dff54309-0-0';
+  const logId = 'verified-own-log';
+  const baseUrl = 'https://inspection.invalid';
+  const routes = [];
+  await uiContract.installGatewayLogReadScope({ route: async (pattern, handler) => routes.push({ pattern, handler }) }, {
+    baseUrl, requestId, verifiedLog: { id: logId, requestId },
+  });
+  for (const prefix of ['', '/llmgw']) {
+    for (const [path, allowed, method = 'GET', origin = baseUrl] of [
+      [`/gw/logs?requestId=${requestId}&view=logical&pageSize=30`, true], [`/gw/logs/${logId}`, true],
+      ['/gw/logs', false], ['/gw/logs?requestId=other-run', false],
+      [`/gw/logs?requestId=${requestId}&requestId=other-run`, false],
+      ...['meta', 'summary', 'timeseries', 'sessions', 'other-log'].map(id => [`/gw/logs/${id}?requestId=${requestId}`, false]),
+      [`/gw/logs/${logId}?requestId=other-run`, false],
+      [`/gw/logs?requestId=${requestId}`, false, 'POST'], [`/gw/logs/${logId}`, false, 'DELETE'],
+      [`/gw/logs?requestId=${requestId}`, false, 'GET', 'https://other.invalid'],
+    ]) {
+      const url = new URL(`${prefix}${path}`, origin);
+      const route = routes.find(entry => entry.pattern(url));
+      assert.ok(route, `网络前未守住${url.pathname}`);
+      let result = '';
+      await route.handler({
+        request: () => ({ url: () => url.href, method: () => method }),
+        continue: async (...args) => { assert.equal(args.length, 0, '真实URL/请求不能被改写'); result = 'continue'; },
+        abort: async reason => { assert.equal(reason, 'blockedbyclient'); result = 'abort'; },
+        fulfill: () => assert.fail('不得伪造成功响应'), fetch: () => assert.fail('不得额外读取'),
+      });
+      assert.equal(result, allowed ? 'continue' : 'abort', url.pathname);
+    }
+  }
+});
+
+test('REG-stsmk-account-scope-001 GWBASE 前缀后台用量在网络前阻断而非读后过滤', async () => {
+  const routes = [];
+  await uiContract.blockUnscopedBackgroundReads({ route: async (pattern, handler) => routes.push({ pattern, handler }) });
+  const url = new URL('https://inspection.invalid/llmgw/gw/logical-models/usage?days=30');
+  const route = routes.find(entry => typeof entry.pattern === 'function' && entry.pattern(url));
+  assert.ok(route, '真实子路径控制台的历史用量未被阻断');
+  let aborted = false;
+  await route.handler({ abort: async () => { aborted = true; }, continue: () => assert.fail('不得发送历史用量请求'), fulfill: () => assert.fail('不得伪造用量') });
+  assert.equal(aborted, true);
+});
+
+test('REG-stsmk-account-scope-001 GWBASE 执行原登录返回及两条日志UI接线，前缀响应必须真正匹配', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const login = source.split('async function loginGateway(')[1].split('  const signingKeyId')[0];
+  const prefix = login.slice(login.indexOf('{') + 1);
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const apiBase = 'https://inspection.invalid';
+  const loginResult = await new AsyncFunction('request', 'requiredEnv', 'process', 'resolveGatewayUiBaseUrl', prefix)(
+    {}, key => ({ STABLE_SMOKE_GW_BASE_URL: apiBase, STABLE_SMOKE_ENVIRONMENT: 'production' })[key],
+    { env: { STABLE_SMOKE_GW_TOKEN: 'offline-only' } }, uiContract.resolveGatewayUiBaseUrl,
+  );
+  assert.equal(loginResult.baseUrl, apiBase);
+  assert.equal(loginResult.uiBaseUrl, `${apiBase}/llmgw`);
+  assert.equal((source.split('async function loginGateway(')[1].split('\nasync function seedGatewayConsoleSession(')[0].match(/\buiBaseUrl\b/g) || []).length, 4, '三个鉴权返回必须共享同一UI入口');
+  assert.doesNotMatch(source, /\.goto\(`\$\{gateway(?:Session)?\.baseUrl\}/, '所有网关页面都必须使用UI而非API入口');
+  const requestId = '92921338e63541b89a8f0298dff54309-0-0';
+  const log = { id: 'verified-own-log', requestId };
+  for (const [pageName, gatewayName, extra] of [['gatewayAuditPage', 'gatewaySession', { gatewayLog: log, runId: requestId.slice(0, 32) }],
+    ['gatewayFailurePage', 'gateway', { failedLog: log, failedRequestId: requestId }]]) {
+    const raw = source.split(`const ${pageName} = await page.context().newPage();`)[1];
+    assert.ok(raw);
+    const code = raw.slice(raw.indexOf('try {') + 'try {'.length).split('const scopedListResponse = await scopedListResponsePromise;')[0];
+    const events = []; let matches;
+    const response = { url: () => `${apiBase}/llmgw/gw/logs?requestId=${requestId}&pageSize=30`, request: () => ({ method: () => 'GET' }) };
+    const page = {
+      waitForResponse: predicate => { matches = predicate; return Promise.resolve(response); },
+      goto: async url => {
+        assert.equal(events[0], 'guard', '首个导航前必须安装真实守卫');
+        events.push(url);
+        assert.ok(url.startsWith(`${loginResult.uiBaseUrl}/`), '真实页面不得落到MAP根控制台');
+        assert.equal(new URL(url).searchParams.has('transaction'), false, '不得强塞详情ID');
+        if (new URL(url).pathname.endsWith('/logs')) {
+          assert.equal(matches(response), true, '真实prefixed列表响应未被等待器识别');
+          assert.equal(matches({ ...response, url: () => `https://other.invalid/llmgw/gw/logs?requestId=${requestId}` }), false, '不得匹配其他origin');
+        }
+      },
+    };
+    const bindings = {
+      [pageName]: page, [gatewayName]: loginResult, request: {}, ...extra,
+      installGatewayLogReadScope: async () => { events.push('guard'); }, seedGatewayConsoleSession: async () => {},
+      gatewayApiPolicyPath: uiContract.gatewayApiPolicyPath,
+    };
+    await new AsyncFunction(...Object.keys(bindings), code)(...Object.values(bindings));
+    assert.equal(events.filter(value => value.startsWith('https:')).length, 2);
+  }
+});
+
 test('REG-stsmk-account-scope-001 网关日志UI只放精确本轮列表和已核实详情，拒绝元信息与汇总', async () => {
   assert.equal(typeof uiContract.installGatewayLogReadScope, 'function');
   const requestId = '92921338e63541b89a8f0298dff54309-0-0';
@@ -268,7 +380,7 @@ test('REG-stsmk-account-scope-001 网关配置先确认上下文且不得无筛�
   assert.deepEqual([...source.matchAll(/\/gw\/logs([^`'"]*)/g)].map(match => match[1]), [
     '?requestId=${encodeURIComponent(requestId)}&pageSize=10', '/${matched!.id}', '', '',
   ], '实际调用仅精确查询和已匹配详情；其余两个字面量只许用于真实response路径判定');
-  assert.equal((source.match(/url\.pathname === '\/gw\/logs'/g) || []).length, 2,
+  assert.equal((source.match(/gatewayApiPolicyPath\(url\.pathname\) === '\/gw\/logs'/g) || []).length, 2,
     '两个无query字面量必须都是页面response路径比较，不能新增裸网络请求');
   const contextRead = audit.indexOf('const context = await request.get(');
   const contextChecked = audit.indexOf('expect(contextBody.success).toBe(true)');

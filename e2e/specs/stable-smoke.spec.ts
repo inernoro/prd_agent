@@ -15,7 +15,7 @@ import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSup
 import { assertDefaultJpegPrimary, submitDefaultJpegThroughUi } from '../utils/stableSmokeJpegJourney.mjs';
 import { findDocumentUploadCard, readDocumentUploadView, observeDocumentUploadPhases, releaseDocumentUploadResponse } from '../utils/stableSmokeDocumentUpload.mjs';
 import { assertRealLiteraryMarkerStream, assertLiteraryWorkspacePersisted, deleteAndVerifyLiteraryWorkspace } from '../utils/stableSmokeLiterary.mjs';
-import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockUnscopedBackgroundReads, blockRetiredAsrPoolAudit, installGatewayLogReadScope } from '../utils/stableSmokeUiContract.mjs';
+import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockUnscopedBackgroundReads, blockRetiredAsrPoolAudit, installGatewayLogReadScope, resolveGatewayUiBaseUrl, gatewayApiPolicyPath } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
   probeStableSmokeReadiness,
@@ -1325,10 +1325,11 @@ async function expectDeleteSucceeded(response: APIResponse | Response, context: 
 
 async function loginGateway(request: APIRequestContext) {
   const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+  const uiBaseUrl = resolveGatewayUiBaseUrl(baseUrl, requiredEnv('STABLE_SMOKE_ENVIRONMENT'));
   // 本地排障用：已经拿到的控制台会话令牌直接复用（例如 MAP 管理员一键登录换来的），不再走签名或口令。
   const presetToken = process.env.STABLE_SMOKE_GW_TOKEN?.trim();
   if (presetToken) {
-    return { baseUrl, headers: { Authorization: `Bearer ${presetToken}` } };
+    return { baseUrl, uiBaseUrl, headers: { Authorization: `Bearer ${presetToken}` } };
   }
   const signingKeyId = process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim();
   const signingPrivateKey = process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim();
@@ -1364,6 +1365,7 @@ async function loginGateway(request: APIRequestContext) {
     expect(exchangeEnvelope.data.mustChangePassword).toBe(false);
     return {
       baseUrl,
+      uiBaseUrl,
       headers: { Authorization: `Bearer ${exchangeEnvelope.data.token}` },
     };
   }
@@ -1381,6 +1383,7 @@ async function loginGateway(request: APIRequestContext) {
   expect(body.data.mustChangePassword).toBe(false);
   return {
     baseUrl,
+    uiBaseUrl,
     headers: { Authorization: `Bearer ${body.data.token}` },
   };
 }
@@ -6560,7 +6563,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.setTimeout(180_000);
     await blockUnscopedBackgroundReads(page);
     const gateway = await loginGateway(request);
-    await page.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${gateway.uiBaseUrl}/login`, { waitUntil: 'domcontentloaded' });
     await setGatewayConsoleTheme(page, 'light');
     const loginShell = page.locator('.lg-login-shell');
     await expect(loginShell).toBeVisible();
@@ -6579,7 +6582,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取图片逻辑模型').toBe(true);
     const logical = selectGatewayImageLogicalModel(logicalBody.data.items);
 
-    await page.goto(`${gateway.baseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${gateway.uiBaseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
     const { list, detail: modelBlock, routeDetails } = await openGatewayLogicalModelDetails(page, logical);
     const routeDetail = routeDetails.first();
     await setGatewayConsoleTheme(page, 'dark');
@@ -6910,16 +6913,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await installGatewayLogReadScope(gatewayFailurePage, {
           baseUrl: gateway.baseUrl, requestId, verifiedLog: failedLog,
         });
-        await gatewayFailurePage.goto(`${gateway.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
+        await gatewayFailurePage.goto(`${gateway.uiBaseUrl}/login`, { waitUntil: 'domcontentloaded' });
         await seedGatewayConsoleSession(gatewayFailurePage, request, gateway);
         const scopedListResponsePromise = gatewayFailurePage.waitForResponse(response => {
           const url = new URL(response.url());
           const ids = url.searchParams.getAll('requestId');
-          return response.request().method() === 'GET' && url.pathname === '/gw/logs'
+          return response.request().method() === 'GET' && url.origin === new URL(gateway.baseUrl).origin
+            && gatewayApiPolicyPath(url.pathname) === '/gw/logs'
             && ids.length === 1 && ids[0] === requestId;
         });
         await gatewayFailurePage.goto(
-          `${gateway.baseUrl}/logs?requestId=${encodeURIComponent(failedRequestId)}`,
+          `${gateway.uiBaseUrl}/logs?requestId=${encodeURIComponent(failedRequestId)}`,
           { waitUntil: 'domcontentloaded' },
         );
         const scopedListResponse = await scopedListResponsePromise;
@@ -6934,7 +6938,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await expect(matchingDialog).toBeVisible();
         const requestEvidence = matchingDialog.locator('[aria-label="前后请求导航"]').getByText(failedRequestId, { exact: true });
         await expect(requestEvidence, '全路失败的 requestId 必须能在网关调用日志中打开').toBeVisible({ timeout: 30_000 });
-        await gatewayFailurePage.goto(`${gateway.baseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
+        await gatewayFailurePage.goto(`${gateway.uiBaseUrl}/logical-models`, { waitUntil: 'domcontentloaded' });
         const failedModelRow = gatewayFailurePage
           .locator('.lg-logical-model-grid')
           .filter({ hasText: logical!.publicId })
@@ -7700,16 +7704,17 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await installGatewayLogReadScope(gatewayAuditPage, {
           baseUrl: gatewaySession.baseUrl, requestId, verifiedLog: gatewayLog,
         });
-        await gatewayAuditPage.goto(`${gatewaySession.baseUrl}/login`, { waitUntil: 'domcontentloaded' });
+        await gatewayAuditPage.goto(`${gatewaySession.uiBaseUrl}/login`, { waitUntil: 'domcontentloaded' });
         await seedGatewayConsoleSession(gatewayAuditPage, request, gatewaySession);
         const scopedListResponsePromise = gatewayAuditPage.waitForResponse(response => {
           const url = new URL(response.url());
           const ids = url.searchParams.getAll('requestId');
-          return response.request().method() === 'GET' && url.pathname === '/gw/logs'
+          return response.request().method() === 'GET' && url.origin === new URL(gatewaySession.baseUrl).origin
+            && gatewayApiPolicyPath(url.pathname) === '/gw/logs'
             && ids.length === 1 && ids[0] === requestId;
         });
         await gatewayAuditPage.goto(
-          `${gatewaySession.baseUrl}/logs?requestId=${encodeURIComponent(requestId)}`,
+          `${gatewaySession.uiBaseUrl}/logs?requestId=${encodeURIComponent(requestId)}`,
           { waitUntil: 'domcontentloaded' },
         );
         const scopedListResponse = await scopedListResponsePromise;
