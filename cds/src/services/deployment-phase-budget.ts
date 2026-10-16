@@ -53,6 +53,24 @@ export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
 export const DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS = 20 * 60_000;
 export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null; operationGeneration?: number }
+export type DeploymentPhaseWaitReason = 'memory-headroom' | 'pid-headroom' | 'cpu-startup-capacity' | 'phase-capacity' | 'admission-deadline';
+export interface DeploymentPhaseTimeoutDetails {
+  phase: DeploymentPhase; reason: DeploymentPhaseWaitReason; waitedMs: number; active: number; limit: number;
+  requestedMemoryMB: number; reservedMemoryMB: number; availableMemoryMB: number | null;
+  requestedPids: number; reservedPids: number; availablePids: number | null;
+}
+const PHASE_LABELS: Record<DeploymentPhase, string> = { pull: '镜像拉取', start: '容器启动', ready: '就绪探测', cleanup: '容器清理', terminal: '终止清理' };
+const WAIT_REASON_LABELS: Record<DeploymentPhaseWaitReason, string> = {
+  'memory-headroom': '内存余量不足', 'pid-headroom': '进程余量不足', 'cpu-startup-capacity': '启动期并发已满',
+  'phase-capacity': '阶段并发已满', 'admission-deadline': '已超过准入等待期限',
+};
+export class DeploymentPhaseTimeoutError extends Error {
+  readonly code = 'deployment.phase-wait-timeout';
+  constructor(readonly diagnostics: DeploymentPhaseTimeoutDetails) {
+    super(`部署阶段等待超时：${PHASE_LABELS[diagnostics.phase]}，${WAIT_REASON_LABELS[diagnostics.reason]}；未获得阶段准入。请查看阶段准入事件后处理。`);
+    this.name = 'DeploymentPhaseTimeoutError';
+  }
+}
 interface Request {
   owner: DeploymentPhaseOwner; check?: () => void; signal?: AbortSignal;
   resolve: (release: () => void) => void; reject: (error: Error) => void;
@@ -79,9 +97,7 @@ export class DeploymentPhaseBudget {
     return Object.fromEntries((['pull', 'start', 'ready', 'cleanup', 'terminal'] as const).map(phase => [phase, {
       limit: this.limits[phase], active: [...(this.active.get(phase) || [])].map(request => ({ ...request.owner, memoryMB: request.memoryMB })),
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
-        reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom'
-          : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom'
-          : phase === 'start' && !this.cpuAllows(request) ? 'cpu-startup-capacity' : 'phase-capacity' })),
+        reason: this.waitReason(phase, request) })),
     }]));
   }
 
@@ -157,6 +173,28 @@ export class DeploymentPhaseBudget {
     return warming < limit;
   }
 
+  private waitReason(phase: DeploymentPhase, request: Request): DeploymentPhaseWaitReason {
+    if (phase === 'start') {
+      if (!this.memoryAllows(request.memoryMB, request.reservationKey)) return 'memory-headroom';
+      if (!this.pidsAllow(request)) return 'pid-headroom';
+      if (!this.cpuAllows(request)) return 'cpu-startup-capacity';
+    }
+    return (this.active.get(phase)?.size || 0) >= this.limits[phase] ? 'phase-capacity' : 'admission-deadline';
+  }
+
+  private timeoutDetails(phase: DeploymentPhase, request: Request): DeploymentPhaseTimeoutDetails {
+    const reservations = [...this.memoryReservations].filter(([key]) => key !== request.reservationKey).map(([, value]) => value);
+    const anonymous = [...(this.active.get('start') || [])].filter(item => !item.reservationKey);
+    const finite = (value: number) => Number.isFinite(value) ? value : null;
+    // 只记录汇总与本请求配额，不把其他项目、容器或环境变量泄露给失败请求。
+    return { phase, reason: this.waitReason(phase, request), waitedMs: Date.now() - request.enqueuedAt,
+      active: this.active.get(phase)?.size || 0, limit: this.limits[phase], requestedMemoryMB: request.memoryMB,
+      reservedMemoryMB: [...reservations, ...anonymous].reduce((sum, value) => sum + value.memoryMB, 0),
+      availableMemoryMB: phase === 'start' ? finite(this.availableMemoryMB()) : null,
+      requestedPids: request.pids, reservedPids: [...reservations, ...anonymous].reduce((sum, value) => sum + value.pids, 0),
+      availablePids: phase === 'start' ? finite(this.availablePids()) : null };
+  }
+
   acquire(phase: DeploymentPhase, owner: DeploymentPhaseOwner, options: {
     check?: () => void; signal?: AbortSignal; memoryMB?: number; reservationKey?: string; pids?: number;
   } = {}): Promise<() => void> {
@@ -188,7 +226,7 @@ export class DeploymentPhaseBudget {
       for (let index = queue.length - 1; index >= 0; index--) {
         const request = queue[index];
         try { request.check?.(); if (request.signal?.aborted) throw new Error('部署阶段等待已取消');
-          if (Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new Error('部署阶段等待超时，旧服务保持可用');
+          if (Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new DeploymentPhaseTimeoutError(this.timeoutDetails(phase, request));
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
       while (active.size < this.limits[phase] && queue.length) {
