@@ -2369,6 +2369,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
 
+  const refuseUnprotectedArtifactSwap = (res: Response, drainTimeoutMs: number): boolean => {
+    if (drainTimeoutMs <= 0) return false;
+    // 当前更新器先修改 checkout/dist 再排空；不能把“等一等”冒充完整发布协议。
+    // 必须在 fetch/checkout/构建/落盘之前拒绝，直到全入口屏障和进程交接完成接线。
+    sendSSE(res, 'error', { code: 'safe_platform_release_unavailable',
+      message: '当前更新入口尚不具备完整换盘与进程交接屏障，已拒绝本次安全更新；未修改代码或产物，未安排重启。',
+      nextAction: '由平台维护者完成独立发布协议及首次交接验证；不要改为强制更新绕过当前任务保护要求。' });
+    res.end(); return true;
+  };
+
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
   // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
   // handler 打补丁必然漏（deploy 就漏过一次），改为路由器级一次罩住。
@@ -24105,6 +24115,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
     initSSE(res);
+    if (refuseUnprotectedArtifactSwap(res, restartDrainTimeoutMs)) return;
     // 2026-05-07 actor 真名修复(用户反馈"七八轮还是 actor: unknown"):
     //   - GitHub auth 模式下 github-auth.ts middleware 把登录用户贴在
     //     (req as any).cdsUser.githubLogin
@@ -25020,6 +25031,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const restartDrainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
 
     initSSE(res);
+    if (refuseUnprotectedArtifactSwap(res, restartDrainTimeoutMs)) return;
     // 2026-05-07 同 /api/self-update:actor 真名 + 落盘 SSOT。
     const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
     const actor =

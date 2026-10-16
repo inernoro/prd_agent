@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import type { DeploymentInputSnapshot } from './deployment-input.js';
 import type { ArtifactAdmission } from './artifact-admission.js';
+import { MaintenanceAdmission, type ReleaseParticipant } from './platform-release-barrier.js';
 
 export type BranchOperationKind =
   | 'deploy'
@@ -293,7 +294,31 @@ export class BranchOperationCoordinator {
 
   private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
 
+  private readonly maintenanceAdmission = new MaintenanceAdmission();
+  private readonly preparingExecutions = new Set<object>();
+  private readonly liveExecutions = new Set<string>();
+
   constructor(private readonly events?: ServerEventLogSink | null) {}
+
+  /** 取消资格不代表执行体退出；影子集合只在真实释放/完成时删除。 */
+  releaseParticipant(): ReleaseParticipant {
+    return { closeAdmission: () => {
+      // 准备请求和续接没有可跨屏障传递的父资格。只在本协调器完全空闲时持闸，
+      // 否则立即拒绝维护，不把一个已受理请求或 force-rebuild 续接拦在半途。
+      if (this.liveExecutions.size || this.preparingExecutions.size || this.pendingWebhookDeploys.size
+        || this.pendingReplayClaims.size || this.reservedContinuations.size) {
+        throw new Error('分支协调器仍有执行、准备、续约或待办，拒绝进入平台发布');
+      }
+      const reopen = this.maintenanceAdmission.close();
+      return { reopen, inspect: () => ({ known: true, blockers: [
+        ...[...this.liveExecutions].map(id => ({ kind: 'execution', id })),
+        ...[...this.preparingExecutions].map((_, index) => ({ kind: 'preparation', id: String(index) })),
+        ...[...this.pendingWebhookDeploys.values()].map(item => ({ kind: 'pending', id: item.operationId })),
+        ...[...this.pendingReplayClaims.values()].map(item => ({ kind: 'claimed-replay', id: item.pending.operationId })),
+        ...[...this.reservedContinuations.values()].map(item => ({ kind: 'continuation', id: item.operationId })),
+      ] }) };
+    } };
+  }
 
   /** 受理前的只读身份解析有资格围栏，不持有执行lease或创建部署run。 */
   beginArtifactTargetRead(request: BranchOperationRequest): { assertCurrent: () => void; confirmIdentity: (fullSha: string) => void; release: () => void } {
@@ -305,6 +330,7 @@ export class BranchOperationCoordinator {
 
   /** 执行器准备阶段沿用同一有界资格集合；未点名源码目标不参与同目标共用。 */
   beginDeploymentPreparation(request: BranchOperationRequest): { assertCurrent: () => void; confirmIdentity: (fullSha: string) => void; release: () => void } {
+    this.maintenanceAdmission.assertOpen();
     if (!['deploy', 'deploy-profile'].includes(request.kind)
       || (request.commitSha != null && !/^[0-9a-f]{7,40}$/i.test(request.commitSha))) throw new Error('部署准备目标无效');
     const key = this.operationKey(request);
@@ -322,6 +348,7 @@ export class BranchOperationCoordinator {
     const item = equivalent ? same! : { request: { ...request }, readers: new Map<object, BranchOperationRequest>(), requestedSha: request.commitSha?.toLowerCase() || '', resolvedSha: undefined as string | undefined };
     if (!equivalent) this.invalidateArtifactTargetReads(request);
     const reader = {}; item.readers.set(reader, { ...request });
+    this.preparingExecutions.add(reader);
     const updatePriority = () => {
       const highest = [...item.readers.values()].reduce((a, b) => priorityOf(a) >= priorityOf(b) ? a : b);
       item.request = { ...highest, commitSha: item.resolvedSha || item.requestedSha };
@@ -342,6 +369,7 @@ export class BranchOperationCoordinator {
         item.resolvedSha = full; updatePriority();
       },
       release: () => {
+        this.preparingExecutions.delete(reader);
         item.readers.delete(reader);
         if (!item.readers.size && this.artifactTargetReads.get(key) === item) this.artifactTargetReads.delete(key);
         else if (item.readers.size) updatePriority();
@@ -429,6 +457,8 @@ export class BranchOperationCoordinator {
 
 
   begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean } = {}): BranchOperationDecision {
+    if (this.maintenanceAdmission.isClosed()) return { status: 'rejected', operationId: '',
+      generation: this.currentGeneration(request.branchId), reason: 'CBD 平台维护中，未受理新操作；已有待办保留。' };
     if (options.waitForArtifacts && (request.versionId || request.hasOneShotOptions)) {
       return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
         reason: '本次指定版本或一次性选项不能作为产物等待恢复，请在产物齐备后重试' };
@@ -449,6 +479,7 @@ export class BranchOperationCoordinator {
     if (!active || active.operationId !== lease.operationId || active.generation !== lease.generation) return decision;
     // 尚未开始执行。直接保存原身份为pending，不用complete制造失败或新建另一个任务。
     this.active.delete(this.operationKey(lease.request));
+    this.liveExecutions.delete(`${lease.operationId}:${lease.generation}`);
     this.pendingWebhookDeploys.set(this.operationKey(lease.request), { operationId: lease.operationId,
       generation: lease.generation, branchId: lease.branchId, request: lease.request, mergedCount: 1, updatedAt: nowIso() });
     this.record('branch.operation.queued', lease.request, lease.operationId, lease.generation, 'info', { artifactWaiting: true });
@@ -631,6 +662,7 @@ export class BranchOperationCoordinator {
   }
 
   private finishAndDrain(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error: string | undefined, limit: number): PendingWebhookDeploy[] {
+    this.liveExecutions.delete(`${lease.operationId}:${lease.generation}`);
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;
     const sameGeneration = active?.generation === lease.generation;
@@ -659,6 +691,8 @@ export class BranchOperationCoordinator {
 
   /** 领取可执行意图；用于完成、派发失败及定时对账，领取后仍由凭据保护。 */
   drainReady(branchId?: string, projectId?: string | null, limit = Infinity): PendingWebhookDeploy[] {
+    // 不领取、不清理过期凭据；未持久化的待办阻止发布，放弃维护后仍可继续领取。
+    if (this.maintenanceAdmission.isClosed()) return [];
     this.prunePendingReplayClaims();
     const ready: PendingWebhookDeploy[] = [];
     const ordered = [...this.pendingWebhookDeploys.entries()].sort((a, b) => a[1].generation - b[1].generation);
@@ -764,6 +798,7 @@ export class BranchOperationCoordinator {
   }
 
   getArtifactWaiters(limit = 16, offset = 0): Array<{ pending: PendingWebhookDeploy; input: DeploymentInputSnapshot }> {
+    if (this.maintenanceAdmission.isClosed()) return [];
     const pending = [...this.pendingWebhookDeploys.values()].filter(item =>
       this.deploymentInputs.get(this.replayKey(item))?.artifactAdmission?.state === 'waiting');
     const selected = [];
@@ -822,6 +857,7 @@ export class BranchOperationCoordinator {
       cancelled: false,
     };
     this.active.set(key, active);
+    this.liveExecutions.add(`${operationId}:${generation}`);
     const lease: BranchOperationLease = {
       operationId,
       branchId,

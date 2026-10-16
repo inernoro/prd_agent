@@ -105,6 +105,9 @@ describe('ReleaseService 阶段一止血', () => {
       for (const run of stateService.getReleaseRuns()) {
         if (isReleaseRunInFlight(run)) service.cancelRelease(run.releaseId, 'test-teardown');
       }
+      const hold = service.releaseParticipant().closeAdmission();
+      try { await waitFor(() => hold.inspect().blockers.length === 0); }
+      finally { hold.reopen(); }
     }
     await new Promise<void>((resolve) => healthServer.close(() => resolve()));
     await stateService.flush();
@@ -384,12 +387,17 @@ describe('ReleaseService 阶段一止血', () => {
     // healthchecking → success。没有转移断言时，一条已经终态化的 run 会被
     // 悄悄改回在途再改成成功，在途守卫和审计记录同时失真。
     let cancel: () => void = () => {};
+    let ready!: () => void;
+    const callerReady = new Promise<void>(resolve => { ready = resolve; });
     const { service } = createService(async () => {
+      // startRelease 返回与 SSH 开始之间没有时序保证；显式握手，避免测试依赖微任务数量。
+      await callerReady;
       cancel();
       return 'deployed';
     });
     const run = await start(service);
     cancel = () => { service.cancelRelease(run.releaseId, 'alice'); };
+    ready();
 
     await waitFor(() => isReleaseRunTerminal(stateService.getReleaseRun(run.releaseId)!.status));
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -482,6 +490,26 @@ describe('ReleaseService 阶段一止血', () => {
       try { return true; } finally { /* 等 finally 摘牌 */ }
     });
     await new Promise((r) => setTimeout(r, 20));
+    const next = await start(service);
+    expect(next.releaseId).not.toBe(run.releaseId);
+  });
+
+  it('平台维护不能把发布账本终态当作 SSH 执行体退出', async () => {
+    let finish!: () => void;
+    let commandEntered = false;
+    const stuck = new Promise<string>(resolve => { finish = () => resolve('done'); });
+    const { service } = createService(() => { commandEntered = true; return stuck; });
+    const run = await start(service);
+    await waitFor(() => commandEntered);
+    const hold = service.releaseParticipant().closeAdmission();
+    try {
+      service.cancelRelease(run.releaseId, 'test-only');
+      expect(isReleaseRunTerminal(stateService.getReleaseRun(run.releaseId)!.status)).toBe(true);
+      expect(hold.inspect().blockers.some(item => item.kind === 'release-execution')).toBe(true);
+      await expect(start(service)).rejects.toThrow('维护');
+      finish();
+      await waitFor(() => hold.inspect().blockers.length === 0);
+    } finally { finish(); hold.reopen(); }
     const next = await start(service);
     expect(next.releaseId).not.toBe(run.releaseId);
   });

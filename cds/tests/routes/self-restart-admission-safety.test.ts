@@ -22,6 +22,7 @@ vi.mock('node:child_process', async original => ({ ...await original<typeof impo
 describe('显式排空的真实重启路由', () => {
   let dir: string, state: StateService, coordinator: BranchOperationCoordinator, shell: MockShellExecutor;
   let handler: (req: any, res: any) => Promise<void>;
+  let updateHandlers: Array<(req: any, res: any) => Promise<void>>;
   beforeEach(() => {
     vi.useFakeTimers(); vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     vi.stubEnv('CDS_SELFUPDATE_DRAIN_TIMEOUT_MS', '1');
@@ -38,6 +39,7 @@ describe('显式排空的真实重启路由', () => {
     const router = createBranchRouter({ stateService: state, config, shell, branchOperationCoordinator: coordinator,
       worktreeService: new WorktreeService(shell, dir), containerService: new ContainerService(shell, config) });
     handler = router.stack.find(layer => layer.route?.path === '/self-restart')!.route.stack[0].handle;
+    updateHandlers = ['/self-update', '/self-force-sync'].map(route => router.stack.find(layer => layer.route?.path === route)!.route.stack[0].handle);
   });
   afterEach(async () => {
     vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.clearAllMocks(); vi.unstubAllEnvs();
@@ -89,5 +91,20 @@ describe('显式排空的真实重启路由', () => {
     const text = await run();
     expect(text).toContain('已拒绝重启'); expect(text).not.toContain('event: done');
     expect(spawn).not.toHaveBeenCalled(); expect(process.exit).not.toHaveBeenCalled();
+  });
+  it.each([{ drainTimeoutMs: 1 }, { drain: true }, { waitForDrain: 'yes' }, { restartDrainTimeoutMs: 1000 }])
+  ('更新与强制同步请求 %j 在任何磁盘变更前拒绝未接线的安全发布', async body => {
+    const mark = vi.spyOn(state, 'markSelfUpdateActive');
+    const interrupt = vi.spyOn(coordinator, 'interruptAll');
+    for (const update of updateHandlers) {
+      handler = update;
+      const text = await run({ ...body, force: true });
+      expect(text).toContain('safe_platform_release_unavailable');
+      expect(text).not.toContain('event: done');
+    }
+    expect(shell.commands).toEqual([]);
+    expect(mark).not.toHaveBeenCalled(); expect(interrupt).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled(); expect(process.exit).not.toHaveBeenCalled();
+    expect(state.getSelfUpdateHistory(20)).toEqual([]);
   });
 });
