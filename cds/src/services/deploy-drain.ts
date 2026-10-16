@@ -128,8 +128,14 @@ export function isRunAlive(run: DrainableRun, nowMs: number): boolean {
 }
 
 /** 当前仍值得等待的 run（在途且心跳新鲜）。 */
-export function pendingRunsToDrain(runs: readonly DrainableRun[], nowMs: number): DrainableRun[] {
-  return runs.filter((r) => isRunAlive(r, nowMs));
+export function pendingRunsToDrain(runs: readonly DrainableRun[], nowMs: number,
+  isExecutionWaiting?: (runId: string, nowMs: number) => boolean): DrainableRun[] {
+  return runs.filter((run) => {
+    if (!isRunInFlight(run)) return false;
+    if (isRunAlive(run, nowMs)) return true;
+    if (run.kind === 'release') return false;
+    try { return isExecutionWaiting?.(run.id, nowMs) === true; } catch { return false; }
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -255,6 +261,7 @@ export interface DrainDeps {
   timeoutMs: number;
   pollIntervalMs?: number;
   onWait?: (pending: DrainableRun[], waitedMs: number) => void;
+  isExecutionWaiting?: (runId: string, nowMs: number) => boolean;
 }
 
 /**
@@ -270,7 +277,7 @@ export async function drainInFlightDeploys(deps: DrainDeps): Promise<DrainOutcom
     return { drained: true, waitedMs: 0, remaining: [], skipped: true };
   }
   const poll = Math.max(200, deps.pollIntervalMs ?? 2_000);
-  let pending = pendingRunsToDrain(deps.listRuns(), deps.now());
+  let pending = pendingRunsToDrain(deps.listRuns(), deps.now(), deps.isExecutionWaiting);
   if (pending.length === 0) {
     return { drained: true, waitedMs: 0, remaining: [], skipped: true };
   }
@@ -284,6 +291,6 @@ export async function drainInFlightDeploys(deps: DrainDeps): Promise<DrainOutcom
     }
     deps.onWait?.(pending, waited);
     await deps.sleep(Math.min(poll, deps.timeoutMs - waited));
-    pending = pendingRunsToDrain(deps.listRuns(), deps.now());
+    pending = pendingRunsToDrain(deps.listRuns(), deps.now(), deps.isExecutionWaiting);
   }
 }
