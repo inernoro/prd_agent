@@ -204,6 +204,7 @@
 - [CDS 多分支数据库隔离指南(Phase 5) · 指南](./guide.cds.multi-branch-db.md) `guide.cds.multi-branch-db`
 - [CDS 一键可视化部署 · 指南](./guide.cds.one-click-deploy.md) `guide.cds.one-click-deploy`
 - [CDS ORM 接入 · 指南](./guide.cds.orm-support.md) `guide.cds.orm-support`
+- [CBD 平台候选准备与首次发布边界](./guide.cds.platform.safe-release.md) `guide.cds.platform.safe-release`
 - [CDS 基建凭据轮换 Runbook（操作智能体执行本）](./guide.cds.infra-credential-rotation.md) `guide.cds.infra-credential-rotation`
 - [从零开始使用 CDS · 指南](./guide.cds.tutorial.md) `guide.cds.tutorial`
 - [CDS 列表视图  拓扑视图 功能对齐 · 指南](./guide.cds.view-parity.md) `guide.cds.view-parity`
