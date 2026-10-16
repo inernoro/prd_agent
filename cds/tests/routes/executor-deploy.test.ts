@@ -524,6 +524,7 @@ describe('Executor /exec/deploy', () => {
       expect(launched).toEqual(expect.arrayContaining(['base', 'independent']));
       expect(launched).toHaveLength(2);
       expect(stateService.getBranch('remote-dependency-failure')?.status).toBe('error');
+      expect(stateService.getBranch('remote-dependency-failure')?.services.dependent.errorMessage).toContain('待本轮部署结束后再重新部署');
       const events = result.events.filter(event => event.event === 'step').map(event => event.data);
       expect(events.find(event => event.step === 'startup-layer-0' && event.status !== 'running')).toMatchObject({ status: 'error', detail: { failedServices: ['base'] } });
       expect(events.find(event => event.step === 'build-dependent')).toMatchObject({ status: 'error', detail: { blockedBy: ['base'] } });
