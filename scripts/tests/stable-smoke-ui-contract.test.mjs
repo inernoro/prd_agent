@@ -8,6 +8,7 @@ import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisu
 import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
 import * as uiContract from '../../e2e/utils/stableSmokeUiContract.mjs';
+import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
 
 test('REG-stsmk-account-scope-001 网关日志UI只放精确本轮列表和已核实详情，拒绝元信息与汇总', async () => {
   assert.equal(typeof uiContract.installGatewayLogReadScope, 'function');
@@ -607,4 +608,88 @@ test('REC-006保留真实局部主题门禁：暗色计划配浅色测量必须�
     assert.equal(result.record.theme, 'dark');
     assert.equal(JSON.parse(readFileSync(join(outputPath, 'manifest.json'), 'utf8'))[0].themeProbe, 'target');
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+const recordingCleanupSource = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+function actualRecordingCleanupBody() {
+  const raw = recordingCleanupSource.split('async function cleanupRecordingIdempotencyFixture(')[1]?.split('\nasync function cleanupShortVideoFixture(')[0];
+  assert.ok(raw, '原REC-010必须接入可独立回读三类本轮资源的真实清理函数');
+  const body = raw.slice(raw.indexOf(') {') + 3).trim();
+  return body.slice(0, body.lastIndexOf('}'))
+    .replace('const errors: string[]', 'const errors')
+    .replace('const receipt: Record<string, unknown>', 'const receipt');
+}
+function recordingCleanupFixture({ residual = '', readThrows = '', archiveStatus = 'completed', sessionStatus = 'completed' } = {}, body = actualRecordingCleanupBody()) {
+  const calls = []; const receipts = [];
+  let sessionReads = 0;
+  const paths = { store: '/api/document-store/stores/own-store', session: '/api/document-store/recording-uploads/own-session', entry: '/api/document-store/entries/own-entry' };
+  const respond = (method, path) => {
+    assert.ok(Object.values(paths).includes(path), '不得读写其他ID或全局列表');
+    calls.push({ method, path });
+    if (method === 'GET' && path === paths.session && ++sessionReads === 1) {
+      return { status: () => 200, json: async () => ({ success: true, data: { sessionId: 'own-session', status: sessionStatus, archiveStatus, entryId: 'own-entry' } }) };
+    }
+    const kind = Object.keys(paths).find(key => paths[key] === path);
+    if (method === 'GET' && kind === readThrows) throw Error('读取失败 token=offline-cleanup-canary');
+    return { status: () => method === 'DELETE' ? 200 : kind === residual ? 200 : 404 };
+  };
+  const page = { request: Object.fromEntries(['get', 'delete'].map(method => [method, async path => respond(method.toUpperCase(), path)])) };
+  const info = { attach: async (name, attachment) => { assert.equal(name, 'recording-idempotency-cleanup-receipt'); receipts.push(JSON.parse(attachment.body)); } };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'testInfo', 'retryTransientTransport', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'requiredEnv', 'redactStableSmokeDiagnosticText', body);
+  const action = () => execute(page, 'offline-only', 'own-store', 'own-session', 'own-entry', info,
+    async (_label, operation) => operation(), () => ({}), 100, () => 'stsmk-own-run', redactStableSmokeDiagnosticText);
+  return { calls, receipts, paths, action, page, info, execute };
+}
+
+test('REG-stsmk-account-scope-001 REC010真实清理函数三项404才绿，任一200或读取异常必红且先留回执', async () => {
+  for (const options of [{}, ...['store', 'session', 'entry'].map(residual => ({ residual })), { readThrows: 'session' }]) {
+    const f = recordingCleanupFixture(options);
+    if (!Object.keys(options).length) await f.action(); else await assert.rejects(f.action, /录音幂等测试清理未闭环/);
+    assert.equal(f.receipts.length, 1, '抛错前必须独立记录清理，不靠finally无异常推断');
+    const receipt = f.receipts[0];
+    assert.equal(receipt.storeId, 'own-store'); assert.equal(receipt.sessionId, 'own-session'); assert.equal(receipt.entryId, 'own-entry');
+    for (const kind of ['store', 'session', 'entry']) assert.ok(f.calls.some(call => call.method === 'GET' && call.path === f.paths[kind]));
+    assert.equal(JSON.stringify(receipt).includes('offline-cleanup-canary'), false);
+    assert.equal(f.calls.some(call => call.method === 'DELETE' && call.path === f.paths.session), false, '完成会话不可绕过原400取消边界');
+    assert.match(receipt.physicalRetentionBoundary, /不可访问.*物理零行/);
+  }
+});
+
+test('REG-stsmk-account-scope-001 REC010须确认已完成归档，pending或completing即使404也不得清理绿', async () => {
+  for (const options of [{ archiveStatus: 'pending' }, { archiveStatus: 'archiving' }, { sessionStatus: 'completing' }]) {
+    const f = recordingCleanupFixture(options);
+    await assert.rejects(f.action, /录音幂等测试清理未闭环/);
+    assert.equal(f.receipts.length, 1);
+    assert.ok(f.receipts[0].errors.length > 0);
+    assert.ok(f.calls.some(call => call.method === 'DELETE' && call.path === f.paths.store), '风险判据失败后仍清理本轮父库');
+    assert.equal(f.calls.some(call => call.method === 'DELETE' && call.path === f.paths.session), false);
+  }
+});
+
+test('REG-stsmk-account-scope-001 REC010实际finally接线不可丢，删读回判据会复现残留假绿', async () => {
+  const raw = recordingCleanupSource.split("test('[REC-010]")[1]?.split("  test('[REC-001]")[0];
+  assert.ok(raw);
+  const finallyText = raw.split('} finally {')[1];
+  assert.ok(finallyText);
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const finalizer = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'testInfo', 'cleanupRecordingIdempotencyFixture', 'expect', 'authHeaders', finallyText.slice(0, finallyText.lastIndexOf('});')).replace(/}\s*$/, ''));
+  const f = recordingCleanupFixture({ residual: 'entry' });
+  await assert.rejects(() => finalizer(f.page, 'offline-only', 'own-store', 'own-session', 'own-entry', f.info,
+    () => f.action(), value => ({ toContain: expected => assert.ok(value.includes(expected)) }), () => ({})), /录音幂等测试清理未闭环/);
+  assert.ok(f.calls.some(call => call.path === f.paths.entry && call.method === 'GET'));
+  const withoutReadbackPredicate = actualRecordingCleanupBody().replace('if (status !== 404)', 'if (false)');
+  assert.notEqual(withoutReadbackPredicate, actualRecordingCleanupBody());
+  await recordingCleanupFixture({ residual: 'entry' }, withoutReadbackPredicate).action();
+});
+
+test('REG-stsmk-account-scope-001 REC010创建即保存三类身份，原分片和幂等判据/付费边界不减', () => {
+  const body = recordingCleanupSource.split("test('[REC-010]")[1].split("  test('[REC-001]")[0];
+  for (const name of ['recording-idempotency-store-created', 'recording-idempotency-session-created', 'recording-idempotency-entry-created', 'recording-idempotency-primary-failure']) assert.ok(body.includes(name));
+  assert.ok(body.indexOf('recording-idempotency-store-created') < body.indexOf('/recording-uploads`'));
+  assert.ok(body.indexOf('recording-idempotency-session-created') < body.indexOf('const midpoint'));
+  assert.ok(body.indexOf('recording-idempotency-entry-created') < body.indexOf('const secondComplete'));
+  for (const original of ['speechFixture.length / 2', 'data.nextChunkIndex).toBe(index + 1)', 'data.uploadedBytes).toBeGreaterThan(0)', 'nextChunkIndex).toBe(index + 1)', 'duplicate).toBe(true)', 'second.entry.id).toBe(first.entry.id)', 'second.reused).toBe(true)']) assert.ok(body.includes(original), `原核心判据不得削弱：${original}`);
+  assert.doesNotMatch(body, /\/transcribe|trigger.*asr|modelId|skip\(/i);
+  assert.match(actualRecordingCleanupBody(), /complete可能触发既有默认ASR/);
 });
