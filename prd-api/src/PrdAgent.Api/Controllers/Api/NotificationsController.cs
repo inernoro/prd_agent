@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
@@ -325,7 +327,7 @@ public sealed class NotificationsController : ControllerBase
 
         if (!includeAdmin)
         {
-            filter &= Builders<AdminNotification>.Filter.Ne(x => x.Section, AdminNotificationSections.Admin);
+            filter &= Builders<AdminNotification>.Filter.Not(BuildAdminSectionFilter());
         }
 
         if (!includeHandled)
@@ -334,6 +336,23 @@ public sealed class NotificationsController : ControllerBase
         }
 
         return filter;
+    }
+
+    private static FilterDefinition<AdminNotification> BuildAdminSectionFilter()
+    {
+        var builder = Builders<AdminNotification>.Filter;
+        var explicitAdmin = builder.Regex(x => x.Section,
+            new BsonRegularExpression($@"^\s*{Regex.Escape(AdminNotificationSections.Admin)}\s*$", "i"));
+        var absentOrBlank = builder.Eq(x => x.Section, null)
+                            | builder.Regex(x => x.Section, new BsonRegularExpression(@"^\s*$"));
+        var adminSources = string.Join("|", AdminNotificationSourceCatalog.Definitions
+            .Where(x => x.Section == AdminNotificationSections.Admin)
+            .Select(x => Regex.Escape(x.Source)));
+        var sourceIsAdmin = builder.Regex(x => x.Source,
+            new BsonRegularExpression($@"^\s*(?:{adminSources})\s*$", "i"));
+
+        // 历史空分区按同一来源目录推导；显式个人分区不被来源覆盖。
+        return explicitAdmin | (absentOrBlank & sourceIsAdmin);
     }
 
     private static object ToNotificationDto(AdminNotification n)
@@ -367,11 +386,6 @@ public sealed class NotificationsController : ControllerBase
     {
         if (string.Equals(notification.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase))
         {
-            if (notification.Key?.StartsWith("llm-quota-exceeded:v2:", StringComparison.Ordinal) == true)
-            {
-                return (notification.Title, notification.Message);
-            }
-
             return (
                 "AI 创作服务需要管理员处理",
                 "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。");
