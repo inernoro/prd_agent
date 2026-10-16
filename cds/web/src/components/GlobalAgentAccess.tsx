@@ -119,6 +119,7 @@ export function GlobalAgentAccess(): JSX.Element {
         open={open}
         onOpenChange={handleOpenChange}
         projects={projects || []}
+        projectsLoading={projects === null}
         context={context}
       />
     </>

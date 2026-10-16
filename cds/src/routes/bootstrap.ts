@@ -17,11 +17,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { SkillProxy, SkillProxyError, isSafeSkillKey, readCappedBody } from '../services/skill-proxy.js';
+import { buildAgentSetupGuide, buildAgentTaskGuide } from '../services/agent-setup-guide.js';
+import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
+import { AGENT_SETUP_MIN_CLI_VERSION, AGENT_SETUP_VERSION, CDS_SKILL_KEYS, parseAgentSetupSelection } from '../shared/agent-setup.js';
 
 const execFileAsync = promisify(execFile);
 
 /** CDS 自己的技能：操作 CDS 必需，缺一个就等于装了个半成品。 */
-const CDS_SKILL_KEYS = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'] as const;
 
 export interface BootstrapPreset {
   key: string;
@@ -459,6 +461,39 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
     return host ? `${proto}://${host}` : deps.cdsUpstream;
   };
+
+  // Public, read-only discovery. Never looks up projects or issues credentials.
+  router.get(['/agent/setup.md', '/agent/setup.json'], (req, res) => {
+    const selection = parseAgentSetupSelection(req.query);
+    if (!selection) {
+      res.status(400).json({ error: 'invalid_agent_setup', message: '接入目标或技能无效，请从接入 Agent 页面重新复制口令。' });
+      return;
+    }
+    const origin = resolveOrigin(req);
+    // Only an HTTP origin is allowed in generated commands; forwarded headers are untrusted.
+    let parsed: URL;
+    try { parsed = new URL(origin); } catch { res.status(400).end(); return; }
+    if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.origin !== origin
+      || !/^[A-Za-z0-9.:[\]-]+$/.test(parsed.host)) {
+      res.status(400).end();
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (req.path.endsWith('.json')) {
+      res.json({
+        version: AGENT_SETUP_VERSION,
+        minCliVersion: AGENT_SETUP_MIN_CLI_VERSION,
+        cliVersion: readBundledCdsCliVersion(deps.repoRoot),
+        ...selection,
+        installedSkills: CDS_SKILL_KEYS,
+        authentication: 'existing-page-approval',
+        selfCheck: 'setup-check',
+      });
+      return;
+    }
+    res.type('text/markdown; charset=utf-8').send(selection.stage === 'task' ? buildAgentTaskGuide(selection) : buildAgentSetupGuide(origin, selection));
+  });
 
   router.get('/bootstrap/presets', (_req, res) => {
     res.json({

@@ -16,6 +16,13 @@
 - [自更新](#自更新)
 - [维护](#维护)
 
+## 智能体短入口
+
+- `GET /api/agent/setup.md`：匿名接入说明，只返回公开操作约定；目标使用 `target=existing&project=<id>`、`target=new` 或 `target=system`。
+- `mission=<登记任务 ID>` 复用页面任务目录；`stage=task` 在自检后按需读取该任务的步骤、安全边界和验收条件。
+- `GET /api/agent/setup.json`：匿名协议与 CLI 版本、技能选择，不查询项目数据、不签发凭据。
+- `cdscli setup-check --host <接入主机> --project <真实项目 ID> --skills <逗号分隔技能>`：实际校验技能、版本、凭据及目标访问；系统只读任务使用 `--system`。失败返回非零状态和脱敏的阶段、原因与恢复动作，不能作为业务验收通过的证据。
+
 ## 核心分组速查
 
 | 分组 | 路径前缀 | 何时用 |
