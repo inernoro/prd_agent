@@ -5,9 +5,10 @@ import os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { WorktreeService } from '../../src/services/worktree.js';
 import { ShellExecutor } from '../../src/services/shell-executor.js';
+import type { IShellExecutor } from '../../src/types.js';
 
 describe('实际不同服务并行准备独立源码', () => {
-  it('同一分支的A/B目标同时准备均成功，不修改旧目录或串用对方提交', async () => {
+  it.each(['warm', 'cold'] as const)('同一分支的A/B目标同时准备均成功，不修改旧目录或串用对方提交：%s', async scenario => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-source-concurrent-'));
     const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
@@ -22,17 +23,31 @@ describe('实际不同服务并行准备独立源码', () => {
       const shaB = git(['rev-parse', 'HEAD'], repo), current = path.join(root, 'current');
       git(['clone', repo, current], root);
       const shell = new ShellExecutor();
-      const first = new WorktreeService(shell), second = new WorktreeService(shell);
-      const results = await Promise.allSettled([first.prepareDeploymentSource('main', current, shaA),
-        second.prepareDeploymentSource('main', current, shaB)]);
+      const target = scenario === 'cold' ? path.join(root, 'worktrees', 'main') : current;
+      let missingReads = 0, resume = () => {};
+      const bothMissing = new Promise<void>(resolve => { resume = resolve; });
+      const actual: IShellExecutor = { exec: async (command, options) => {
+        const result = await shell.exec(command, options);
+        // 两实例都真实观察到同一缺失目标，再继续原恢复路径，不模拟 Git 的结果。
+        if (scenario === 'cold' && command === 'git rev-parse HEAD' && options?.cwd === target && missingReads < 2) {
+          if (++missingReads === 2) resume(); await bothMissing;
+        }
+        return result;
+      } };
+      const first = new WorktreeService(actual), second = new WorktreeService(actual);
+      if (scenario === 'cold') { await first.create(current, 'main', target); fs.rmSync(target, { recursive: true, force: true }); }
+      const secondSha = scenario === 'cold' ? shaA : shaB;
+      const results = await Promise.allSettled([first.prepareDeploymentSource(current, 'main', target, shaA),
+        second.prepareDeploymentSource(current, 'main', target, secondSha)]);
       console.info(JSON.stringify({ concurrentResults: results.map(r => r.status === 'fulfilled'
         ? { status: r.status, target: r.value.afterFull } : { status: r.status, reason: r.reason?.message }) }));
       expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
       if (results[0].status !== 'fulfilled' || results[1].status !== 'fulfilled') throw new Error('Parallel owned preparation failed');
       const a = results[0].value, b = results[1].value;
-      expect(a.afterFull).toBe(shaA); expect(b.afterFull).toBe(shaB); expect(a.sourcePath).not.toBe(b.sourcePath);
+      expect(a.afterFull).toBe(shaA); expect(b.afterFull).toBe(secondSha); expect(a.sourcePath).not.toBe(b.sourcePath);
       expect(fs.readFileSync(path.join(a.sourcePath, 'version.txt'), 'utf8')).toBe('A');
-      expect(fs.readFileSync(path.join(b.sourcePath, 'version.txt'), 'utf8')).toBe('B');
+      expect(fs.readFileSync(path.join(b.sourcePath, 'version.txt'), 'utf8')).toBe(scenario === 'cold' ? 'A' : 'B');
+      expect(git(['rev-parse', 'HEAD'], target)).toBe(shaB);
       expect(git(['rev-parse', 'HEAD'], current)).toBe(shaB);
       expect(fs.readFileSync(path.join(current, 'version.txt'), 'utf8')).toBe('B');
     } finally { fs.rmSync(root, { recursive: true, force: true }); }

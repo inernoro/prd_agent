@@ -6,7 +6,7 @@ import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
 import { fetchWithLockRetry } from './git-fetch-retry.js';
-import { worktreePathActivity } from './worktree-path-activity.js';
+import { readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity, worktreePathActivity } from './worktree-path-activity.js';
 
 /**
  * Current worktree layout version. See `CdsState.worktreeLayoutVersion`
@@ -17,6 +17,24 @@ export const CURRENT_WORKTREE_LAYOUT_VERSION = 2;
 
 /** Project id attributed to orphan worktrees discovered during the flat→nested migration. */
 export const LEGACY_PROJECT_ID = 'default';
+
+export type DeploymentSourcePreparationErrorCode =
+  | 'invalid-branch-ref'
+  | 'deployment-worktree-unavailable'
+  | 'deployment-worktree-recovery-failed';
+
+/** 部署源码准备失败的稳定分类，避免把 cwd 缺失误报成非法分支。 */
+export class DeploymentSourcePreparationError extends Error {
+  constructor(
+    readonly code: DeploymentSourcePreparationErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DeploymentSourcePreparationError';
+  }
+}
+
+const deploymentWorktreeRecoveries = new Map<string, Promise<Awaited<ReturnType<IShellExecutor['exec']>>>>();
 
 /**
  * WorktreeService — thin wrapper around `git worktree` for building
@@ -249,32 +267,141 @@ export class WorktreeService {
 
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
     return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)], async () => {
-      const fetchResult = await this.fetchWithLockRetry(repoRoot, branch);
-      if (fetchResult.exitCode !== 0) {
-        throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
-      }
-
-      // Always prune stale worktree references before creating a new one.
-      // This handles the case where git has a registered worktree whose
-      // directory no longer exists (e.g. after a crash or manual rm).
-      await this.shell.exec('git worktree prune', { cwd: repoRoot });
-
-      // Remove leftover directory if it still exists
-      const checkDir = await this.shell.exec(`test -d "${targetDir}" && echo exists`);
-      if (checkDir.stdout.trim() === 'exists') {
-        await this.shell.exec(`rm -rf "${targetDir}"`);
-      }
-
-      const addCommand = `git worktree add "${targetDir}" "origin/${branch}"`;
-      let addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
-      if (addResult.exitCode !== 0 && isMissingRegisteredWorktreeError(addResult)) {
-        await this.shell.exec('git worktree prune', { cwd: repoRoot });
-        addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
-      }
-      if (addResult.exitCode !== 0) {
-        throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
-      }
+      await this.createManagedWorktree(repoRoot, branch, targetDir);
     });
+  }
+
+  /** 调用方已持有 targetDir 活动锁时复用，避免恢复路径二次获取同一把锁。 */
+  private async createManagedWorktree(repoRoot: string, branch: string, targetDir: string): Promise<void> {
+    const fetchResult = await this.fetchWithLockRetry(repoRoot, branch);
+    if (fetchResult.exitCode !== 0) {
+      throw new Error(`拉取分支 "${branch}" 失败:\n${combinedOutput(fetchResult)}`);
+    }
+
+    // Always prune stale worktree references before creating a new one.
+    // This handles the case where git has a registered worktree whose
+    // directory no longer exists (e.g. after a crash or manual rm).
+    await this.shell.exec('git worktree prune', { cwd: repoRoot });
+
+    // Remove leftover directory if it still exists
+    const checkDir = await this.shell.exec(`test -d "${targetDir}" && echo exists`);
+    if (checkDir.stdout.trim() === 'exists') {
+      await this.shell.exec(`rm -rf "${targetDir}"`);
+    }
+
+    const addCommand = `git worktree add "${targetDir}" "origin/${branch}"`;
+    let addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+    if (addResult.exitCode !== 0 && isMissingRegisteredWorktreeError(addResult)) {
+      await this.shell.exec('git worktree prune', { cwd: repoRoot });
+      addResult = await this.shell.exec(addCommand, { cwd: repoRoot });
+    }
+    if (addResult.exitCode !== 0) {
+      throw new Error(`创建工作树 "${branch}" 失败:\n${combinedOutput(addResult)}`);
+    }
+  }
+
+  private async ensureDeploymentWorktree(
+    repoRoot: string,
+    branch: string,
+    targetDir: string,
+  ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+    const usable = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
+    if (usable.exitCode === 0 && /^[0-9a-f]{7,40}$/i.test(usable.stdout.trim())) return usable;
+    // 仅合并同一实际冷路径的恢复；外层活动租约继续保护回收与独立源码准备。
+    let current = path.resolve(targetDir), key: string;
+    const missing: string[] = [];
+    for (;;) {
+      try { key = path.join(await fs.promises.realpath(current), ...missing); break; }
+      catch (error) {
+        const parent = path.dirname(current);
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || parent === current) {
+          throw new DeploymentSourcePreparationError('deployment-worktree-unavailable', '部署工作树不可访问，请检查目录权限后重试');
+        }
+        missing.unshift(path.basename(current)); current = parent;
+      }
+    }
+    const pending = deploymentWorktreeRecoveries.get(key);
+    if (pending) return pending;
+    const recovery = this.recoverDeploymentWorktree(repoRoot, branch, targetDir);
+    deploymentWorktreeRecoveries.set(key, recovery);
+    try { return await recovery; }
+    finally { if (deploymentWorktreeRecoveries.get(key) === recovery) deploymentWorktreeRecoveries.delete(key); }
+  }
+
+  private async recoverDeploymentWorktree(
+    repoRoot: string,
+    branch: string,
+    targetDir: string,
+  ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
+    const usable = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
+    if (usable.exitCode === 0 && /^[0-9a-f]{7,40}$/i.test(usable.stdout.trim())) return usable;
+
+    let targetExists = true;
+    try {
+      await fs.promises.lstat(targetDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') targetExists = false;
+      else {
+        throw new DeploymentSourcePreparationError(
+          'deployment-worktree-unavailable',
+          '部署工作树不可访问，请检查目录权限后重试',
+        );
+      }
+    }
+
+    // 已存在但不是本仓库登记的 worktree 时禁止删除，避免恢复流程误伤外部目录。
+    if (targetExists) {
+      const listed = await this.shell.exec('git -c core.quotePath=false worktree list --porcelain', { cwd: repoRoot });
+      const registered = new Set(listed.exitCode === 0 ? listed.stdout.split('\n')
+        .filter(line => line.startsWith('worktree '))
+        .map(line => path.resolve(line.slice('worktree '.length).trim()))
+        : []);
+      let removedLegacyAlias = false;
+      if (!registered.has(path.resolve(targetDir))) {
+        try {
+          // FU-04 只产生 default/<slug> -> ../<slug>；不跟随未知链接目标核实归属。
+          const alias = await readWorktreeDirectoryIdentity(targetDir, false);
+          const parent = path.dirname(path.resolve(targetDir)), base = path.dirname(parent), slug = path.basename(targetDir);
+          const realBase = await fs.promises.realpath(base), flat = path.join(base, slug);
+          if (alias?.entry.link && path.basename(parent) === LEGACY_PROJECT_ID
+            && alias.entryPath === path.join(realBase, LEGACY_PROJECT_ID, slug)
+            && path.resolve(parent, alias.entry.link) === flat && registered.has(path.join(realBase, slug))) {
+            const current = await readWorktreeDirectoryIdentity(targetDir, false);
+            if (current && sameWorktreeDirectoryIdentity(alias, current)) {
+              let missing = false;
+              try { fs.lstatSync(flat); }
+              catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') missing = true; else throw error; }
+              // 同一进程内不在缺失确认与 unlink 之间让出；只移除别名，不删除/遍历其目标。
+              if (missing) { fs.unlinkSync(targetDir); removedLegacyAlias = true; }
+            }
+          }
+        } catch { /* 无法证明精确归属或安全移除时，保留原对象并按陌生目录拒绝。 */ }
+      }
+      if (!removedLegacyAlias) {
+        throw new DeploymentSourcePreparationError(
+          'deployment-worktree-unavailable',
+          '部署工作树已存在但不可用，已保留原目录，请检查并修复后重试',
+        );
+      }
+    }
+
+    try {
+      await this.createManagedWorktree(repoRoot, branch, targetDir);
+    } catch {
+      throw new DeploymentSourcePreparationError(
+        'deployment-worktree-recovery-failed',
+        '部署工作树暂时无法恢复，请检查仓库访问与存储状态后重试',
+      );
+    }
+
+    const recovered = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
+    if (recovered.exitCode !== 0 || !/^[0-9a-f]{7,40}$/i.test(recovered.stdout.trim())) {
+      throw new DeploymentSourcePreparationError(
+        'deployment-worktree-recovery-failed',
+        '部署工作树恢复后仍不可用，已停止部署',
+      );
+    }
+    return recovered;
   }
 
   /** Pull latest code for an existing worktree.
@@ -337,15 +464,18 @@ export class WorktreeService {
   }
 
   /** 准备本次部署专用的源码目录，不 reset 已运行容器可能挂载的旧目录。 */
-  async prepareDeploymentSource(branch: string, targetDir: string, commitSha?: string): Promise<{
+  async prepareDeploymentSource(repoRoot: string, branch: string, targetDir: string, commitSha?: string): Promise<{
     head: string; before: string; after: string; afterFull: string; updated: boolean; sourcePath: string;
   }> {
     return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)], async () => {
       if (commitSha !== undefined && !/^[0-9a-f]{7,40}$/i.test(commitSha)) throw new Error('目标提交必须是有效的 Git SHA');
       const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
-      const valid = await this.shell.exec(`git check-ref-format --branch ${quote(branch)}`, { cwd: targetDir });
-      if (valid.exitCode !== 0) throw new Error('无法准备非法分支的部署源码');
-      const before = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
+      // 分支格式只依赖 Git 语法，不应依赖可能被 LRU 回收的分支工作树。
+      const valid = await this.shell.exec(`git check-ref-format --branch ${quote(branch)}`);
+      if (valid.exitCode !== 0) {
+        throw new DeploymentSourcePreparationError('invalid-branch-ref', '无法准备非法分支的部署源码');
+      }
+      const before = await this.ensureDeploymentWorktree(repoRoot, branch, targetDir);
       const fetched = await this.fetchWithLockRetry(targetDir, branch);
       if (fetched.exitCode !== 0) throw new Error(`部署源码拉取失败:\n${combinedOutput(fetched)}`);
       const ref = commitSha || `origin/${branch}`;
