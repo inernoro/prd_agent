@@ -9,6 +9,52 @@ import { productionReadOnlyGrep } from '../stable-smoke-run.mjs';
 import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-results.mjs';
 import * as uiContract from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
+import * as recordingTools from '../../e2e/utils/stableSmokeRecording.mjs';
+
+test('REG-stsmk-account-scope-001 REC010有界等待真实归档与同源run终态，不以首次pending或确定性ID冒充清理', async () => {
+  assert.equal(typeof recordingTools.waitForRecordingIdempotencySettlement, 'function');
+  for (const bad of ['', 'archive', 'running', 'identity', 'retrying']) {
+    let clock = 0; let reads = 0;
+    const result = await recordingTools.waitForRecordingIdempotencySettlement({
+      sessionId: 'own-session', storeId: 'own-store', entryId: 'own-entry', runIds: ['own-run'],
+      timeoutMs: 3, intervalMs: 1, now: () => clock, sleep: async ms => { clock += ms; },
+      readSession: async () => ({ sessionId: 'own-session', entryId: 'own-entry', status: 'completed', archiveStatus: bad === 'archive' || reads++ === 0 ? 'pending' : 'completed' }),
+      readRun: async id => { assert.equal(id, 'own-run'); return { id, storeId: bad === 'identity' ? 'foreign' : 'own-store', sourceEntryId: 'own-entry', kind: 'transcribe', status: bad === 'running' ? 'running' : bad === 'retrying' ? 'failed' : 'done', automaticRetryNextAt: bad === 'retrying' ? 'later' : null }; },
+    });
+    assert.equal(result.settled, !bad, bad);
+    assert.ok(result.observations.length >= 1);
+    if (!bad) assert.ok(result.observations.length >= 2, '首次pending必须继续等到归档完成');
+    else assert.ok(result.errors.length > 0, '有界等待失败必须保留红项');
+    assert.ok(clock <= 3, '不得无限轮询');
+  }
+});
+
+test('REG-stsmk-account-scope-001 REC010原case真实完成前缀登记两次run并拒绝缺失或漂移，清理能拿到所有已知ID', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[REC-010]")[1].split('} catch (error) {')[0];
+  const prefix = body.slice(body.indexOf('const firstComplete =')).replace(/readEnvelope<[^]*?>\(/g, 'readEnvelope(');
+  for (const [firstId, secondId, duplicate, expected] of [['own-run', 'own-run', false, true], [null, 'own-run', false, false], ['own-run', null, false, false], ['own-run', 'other-own-run', false, false], ['own-run', 'own-run', true, false]]) {
+    const ids = []; const attachments = []; let calls = 0;
+    const complete = () => ({ entry: { id: 'own-entry' }, sessionId: 'own-session', reused: true, deferredTranscriptionRunId: ++calls === 1 ? firstId : secondId });
+    const page = { request: { post: async path => { assert.equal(path, '/api/document-store/recording-uploads/own-session/complete'); return complete(); }, get: async path => { assert.equal(path, '/api/document-store/stores/own-store/entries?all=true&pageSize=500'); return { items: [{ id: 'own-entry', storeId: 'own-store' }], total: duplicate ? 2 : 1 }; } } };
+    const expectValue = value => ({ toBe: expectedValue => assert.equal(value, expectedValue), toBeTruthy: () => assert.ok(value), toHaveLength: length => assert.equal(value.length, length) });
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+    const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'readEnvelope', 'authHeaders', 'expect', 'assertRecordingIdempotencyRuns', prefix);
+    const action = () => execute(page, 'offline-only', 'own-store', 'own-session', '', ids,
+      { attach: async (name, value) => attachments.push({ name, value: JSON.parse(value.body) }) }, async response => response, () => ({}), expectValue, recordingTools.assertRecordingIdempotencyRuns);
+    if (expected) await action(); else await assert.rejects(action);
+    if (firstId) assert.ok(ids.includes(firstId), '首次真实返回的run立即登记');
+    assert.ok(attachments.some(item => item.value.deferredTranscriptionRunId === firstId));
+    if (calls === 2 && secondId) assert.ok(ids.includes(secondId), '不一致的第二run也须纳入finally清理');
+  }
+  const localSuite = source.split("test.describe('REC010清理闭环不自动重试'")[1]?.split("test('[REC-001]")[0];
+  assert.ok(localSuite);
+  const configs = [];
+  const configCall = localSuite.match(/test\.describe\.configure\([^]*?\);/)?.[0];
+  assert.ok(configCall);
+  new Function('test', configCall)({ describe: { configure: value => configs.push(value) } });
+  assert.deepEqual(configs, [{ retries: 0 }], '原case失败后不得自动再创建一轮付费资源');
+});
 
 test('REG-stsmk-account-scope-001 GWBASE API入口与真实控制台入口按现存发布合同分离', () => {
   assert.equal(typeof uiContract.resolveGatewayUiBaseUrl, 'function');
@@ -729,47 +775,55 @@ function actualRecordingCleanupBody() {
   const body = raw.slice(raw.indexOf(') {') + 3).trim();
   return body.slice(0, body.lastIndexOf('}'))
     .replace('const errors: string[]', 'const errors')
-    .replace('const receipt: Record<string, unknown>', 'const receipt');
+    .replace('const receipt: Record<string, unknown>', 'const receipt')
+    .replace(/readEnvelope<[^]*?>\(/g, 'readEnvelope(');
 }
-function recordingCleanupFixture({ residual = '', readThrows = '', archiveStatus = 'completed', sessionStatus = 'completed' } = {}, body = actualRecordingCleanupBody()) {
+function recordingCleanupFixture({ residual = '', readThrows = '', archiveStatus = 'completed', sessionStatus = 'completed', runStatus = 'done', missingRun = false } = {}, body = actualRecordingCleanupBody()) {
   const calls = []; const receipts = [];
-  let sessionReads = 0;
-  const paths = { store: '/api/document-store/stores/own-store', session: '/api/document-store/recording-uploads/own-session', entry: '/api/document-store/entries/own-entry' };
+  let deleted = false;
+  const paths = { store: '/api/document-store/stores/own-store', session: '/api/document-store/recording-uploads/own-session', entry: '/api/document-store/entries/own-entry', run: '/api/document-store/agent-runs/own-run' };
   const respond = (method, path) => {
     assert.ok(Object.values(paths).includes(path), '不得读写其他ID或全局列表');
     calls.push({ method, path });
-    if (method === 'GET' && path === paths.session && ++sessionReads === 1) {
+    if (method === 'GET' && path === paths.session && !deleted) {
       return { status: () => 200, json: async () => ({ success: true, data: { sessionId: 'own-session', status: sessionStatus, archiveStatus, entryId: 'own-entry' } }) };
     }
+    if (method === 'GET' && path === paths.run && !deleted) return { status: () => 200, json: async () => ({ success: true, data: { id: 'own-run', storeId: 'own-store', sourceEntryId: 'own-entry', kind: 'transcribe', status: runStatus } }) };
     const kind = Object.keys(paths).find(key => paths[key] === path);
+    if (method === 'DELETE' && kind === 'store') deleted = true;
     if (method === 'GET' && kind === readThrows) throw Error('读取失败 token=offline-cleanup-canary');
     return { status: () => method === 'DELETE' ? 200 : kind === residual ? 200 : 404 };
   };
   const page = { request: Object.fromEntries(['get', 'delete'].map(method => [method, async path => respond(method.toUpperCase(), path)])) };
   const info = { attach: async (name, attachment) => { assert.equal(name, 'recording-idempotency-cleanup-receipt'); receipts.push(JSON.parse(attachment.body)); } };
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'testInfo', 'retryTransientTransport', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'requiredEnv', 'redactStableSmokeDiagnosticText', body);
-  const action = () => execute(page, 'offline-only', 'own-store', 'own-session', 'own-entry', info,
-    async (_label, operation) => operation(), () => ({}), 100, () => 'stsmk-own-run', redactStableSmokeDiagnosticText);
+  const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'retryTransientTransport', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'requiredEnv', 'redactStableSmokeDiagnosticText', 'waitForRecordingIdempotencySettlement', 'readEnvelope', body);
+  const action = () => execute(page, 'offline-only', 'own-store', 'own-session', 'own-entry', missingRun ? [] : ['own-run'], info,
+    async (_label, operation) => operation(), () => ({}), 100, () => 'stsmk-own-run', redactStableSmokeDiagnosticText,
+    options => { let clock = 0; return recordingTools.waitForRecordingIdempotencySettlement({ ...options, timeoutMs: 3, intervalMs: 1, now: () => clock, sleep: async ms => { clock += ms; } }); },
+    async response => { assert.equal(response.status(), 200); return (await response.json()).data; });
   return { calls, receipts, paths, action, page, info, execute };
 }
 
-test('REG-stsmk-account-scope-001 REC010真实清理函数三项404才绿，任一200或读取异常必红且先留回执', async () => {
-  for (const options of [{}, ...['store', 'session', 'entry'].map(residual => ({ residual })), { readThrows: 'session' }]) {
+test('REG-stsmk-account-scope-001 REC010真实清理函数四类404才绿，run残留或任一读取异常必红且先留回执', async () => {
+  for (const options of [{}, ...['store', 'session', 'entry', 'run'].map(residual => ({ residual })), { readThrows: 'session' }, { readThrows: 'run' }]) {
     const f = recordingCleanupFixture(options);
     if (!Object.keys(options).length) await f.action(); else await assert.rejects(f.action, /录音幂等测试清理未闭环/);
     assert.equal(f.receipts.length, 1, '抛错前必须独立记录清理，不靠finally无异常推断');
     const receipt = f.receipts[0];
     assert.equal(receipt.storeId, 'own-store'); assert.equal(receipt.sessionId, 'own-session'); assert.equal(receipt.entryId, 'own-entry');
-    for (const kind of ['store', 'session', 'entry']) assert.ok(f.calls.some(call => call.method === 'GET' && call.path === f.paths[kind]));
+    for (const kind of ['store', 'session', 'entry', 'run']) assert.ok(f.calls.some(call => call.method === 'GET' && call.path === f.paths[kind]));
     assert.equal(JSON.stringify(receipt).includes('offline-cleanup-canary'), false);
     assert.equal(f.calls.some(call => call.method === 'DELETE' && call.path === f.paths.session), false, '完成会话不可绕过原400取消边界');
     assert.match(receipt.physicalRetentionBoundary, /不可访问.*物理零行/);
+    assert.match(receipt.modelCallBoundary, /至多4轮.*网关attempt.*未知/);
+    assert.match(receipt.runUniquenessBoundary, /不是独立run唯一性证明.*未关闭/);
+    assert.equal(receipt['run:own-runReadbackStatus'], options.readThrows === 'run' ? null : options.residual === 'run' ? 200 : 404);
   }
 });
 
 test('REG-stsmk-account-scope-001 REC010须确认已完成归档，pending或completing即使404也不得清理绿', async () => {
-  for (const options of [{ archiveStatus: 'pending' }, { archiveStatus: 'archiving' }, { sessionStatus: 'completing' }]) {
+  for (const options of [{ archiveStatus: 'pending' }, { archiveStatus: 'archiving' }, { sessionStatus: 'completing' }, { runStatus: 'running' }, { runStatus: 'failed' }, { missingRun: true }]) {
     const f = recordingCleanupFixture(options);
     await assert.rejects(f.action, /录音幂等测试清理未闭环/);
     assert.equal(f.receipts.length, 1);
@@ -785,10 +839,10 @@ test('REG-stsmk-account-scope-001 REC010实际finally接线不可丢，删读回
   const finallyText = raw.split('} finally {')[1];
   assert.ok(finallyText);
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-  const finalizer = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'testInfo', 'cleanupRecordingIdempotencyFixture', 'expect', 'authHeaders', finallyText.slice(0, finallyText.lastIndexOf('});')).replace(/}\s*$/, ''));
+  const finalizer = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'cleanupRecordingIdempotencyFixture', finallyText.split('\n    }\n  });')[0]);
   const f = recordingCleanupFixture({ residual: 'entry' });
-  await assert.rejects(() => finalizer(f.page, 'offline-only', 'own-store', 'own-session', 'own-entry', f.info,
-    () => f.action(), value => ({ toContain: expected => assert.ok(value.includes(expected)) }), () => ({})), /录音幂等测试清理未闭环/);
+  await assert.rejects(() => finalizer(f.page, 'offline-only', 'own-store', 'own-session', 'own-entry', ['own-run'], f.info,
+    (...args) => { assert.deepEqual(args[5], ['own-run']); return f.action(); }), /录音幂等测试清理未闭环/);
   assert.ok(f.calls.some(call => call.path === f.paths.entry && call.method === 'GET'));
   const withoutReadbackPredicate = actualRecordingCleanupBody().replace('if (status !== 404)', 'if (false)');
   assert.notEqual(withoutReadbackPredicate, actualRecordingCleanupBody());

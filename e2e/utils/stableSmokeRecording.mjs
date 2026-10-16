@@ -1,6 +1,55 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
+export function assertRecordingIdempotencyRuns(firstRunId, secondRunId) {
+  if (typeof firstRunId !== 'string' || !firstRunId.trim()
+    || typeof secondRunId !== 'string' || !secondRunId.trim()) throw Error('完成响应缺少真实deferredTranscriptionRunId，无法核销转录任务');
+  if (firstRunId !== secondRunId) throw Error('重复complete产生了不同的转录任务');
+}
+
+export async function waitForRecordingIdempotencySettlement({
+  sessionId, storeId, entryId, runIds, readSession, readRun,
+  timeoutMs = 30_000, intervalMs = 1_000, now = Date.now,
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+}) {
+  const observations = [];
+  const errors = [];
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > 30_000
+    || !Number.isFinite(intervalMs) || intervalMs <= 0) throw Error('录音收尾轮询必须使用不超过30秒的正有界预算');
+  if (!sessionId || !storeId || !entryId || !Array.isArray(runIds) || runIds.length === 0
+    || runIds.some(id => typeof id !== 'string' || !id.trim())) {
+    return { settled: false, observations, errors: ['缺少本轮会话、条目或真实转录run身份，不能证明收尾完成'] };
+  }
+  const deadline = now() + timeoutMs;
+  // 同时约束时钟与轮数；网络回读只消费剩余预算，不重新complete或触发转录。
+  const maxPolls = Math.ceil(timeoutMs / intervalMs);
+  for (let index = 0; index < maxPolls && now() < deadline; index += 1) {
+    const session = await readSession(Math.max(1, deadline - now()));
+    const observation = { sessionStatus: session.status, archiveStatus: session.archiveStatus, runs: [] };
+    observations.push(observation);
+    if (session.sessionId !== sessionId || session.entryId !== entryId) {
+      errors.push('精确会话回读的条目身份不匹配'); break;
+    }
+    for (const runId of new Set(runIds)) {
+      if (now() >= deadline) break;
+      const run = await readRun(runId, Math.max(1, deadline - now()));
+      observation.runs.push({ id: run.id, status: run.status, automaticRetryNextAt: run.automaticRetryNextAt ?? null });
+      if (run.id !== runId || run.storeId !== storeId || run.sourceEntryId !== entryId || run.kind !== 'transcribe') {
+        errors.push('已知转录run回读不属于本轮知识库/条目或种类不匹配'); break;
+      }
+      if (['cancelled', 'failed'].includes(run.status) && !run.automaticRetryNextAt) errors.push('本轮转录run以失败或取消收尾，不能记为完成');
+    }
+    if (errors.length) break;
+    if (session.status === 'completed' && session.archiveStatus === 'completed'
+      && observation.runs.length === new Set(runIds).size && observation.runs.every(run => run.status === 'done')) {
+      return { settled: true, observations, errors };
+    }
+    if (now() < deadline) await sleep(Math.min(intervalMs, deadline - now()));
+  }
+  if (!errors.length) errors.push('有界等待后归档或已知转录run仍未完成，可能保留活分片/后台重试，不能清理判绿');
+  return { settled: false, observations, errors };
+}
+
 function validateRecordingCasePlan(plan, environment) {
   if (!['cds', 'production'].includes(environment) || plan?.environment !== environment) {
     throw Error('录音冻结清单环境缺失或与当前巡检环境不一致');

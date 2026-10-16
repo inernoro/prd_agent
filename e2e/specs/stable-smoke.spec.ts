@@ -7,7 +7,7 @@ import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
 import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability, readImageReferenceRejectionCapability } from '../utils/stableSmokeCleanupSafety.mjs';
-import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan } from '../utils/stableSmokeRecording.mjs';
+import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan, assertRecordingIdempotencyRuns, waitForRecordingIdempotencySettlement, type RecordingSettlementSession, type RecordingSettlementRun } from '../utils/stableSmokeRecording.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
@@ -613,16 +613,18 @@ async function cleanupRecordingIdempotencyFixture(
   storeId: string,
   sessionId: string,
   entryId: string,
+  deferredRunIds: string[],
   testInfo: TestInfo,
 ) {
   const errors: string[] = [];
   const receipt: Record<string, unknown> = {
-    inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), storeId, sessionId, entryId,
+    inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), storeId, sessionId, entryId, deferredRunIds: [...new Set(deferredRunIds)],
     sessionBeforeDeleteStatus: null, sessionStatus: null, archiveStatus: null,
     cancelStatus: null, storeDeleteStatus: null,
     storeReadbackStatus: null, sessionReadbackStatus: null, entryReadbackStatus: null,
-    physicalRetentionBoundary: 'API不可访问不等于物理零行；成功归档已await清分片，Completed协调行按既有Worker到期回收，非Mongo TTL',
-    modelCallBoundary: 'complete可能触发既有默认ASR；本清理无额外模型动作，不能把原旅程标为零模型',
+    physicalRetentionBoundary: 'API不可访问不等于物理零行；归档与转录均完成后按服务合同清分片，Completed协调行按既有Worker到期回收，非Mongo TTL',
+    modelCallBoundary: 'complete可能触发既有默认ASR；确定性runId不等于一次ASR，实际1678自动重排最多3次即至多4轮，单轮网关attempt另计且实际次数未知；本清理无额外模型动作',
+    runUniquenessBoundary: '现有API仅精确GET或latest，无本轮条目全量run计数接口；两次返回ID相等不是独立run唯一性证明，此验收债务未关闭',
   };
   let cleanupEntryId = entryId;
   if (sessionId) {
@@ -646,7 +648,19 @@ async function cleanupRecordingIdempotencyFixture(
       }
       if (session.status === 'completed') {
         // Completed不能DELETE取消；父库删除后的404只证明业务不可访问。
-        if (session.archiveStatus !== 'completed') errors.push('录音仍待归档，可能保留活分片，不能将API404当物理清理成功');
+        const settlement = await waitForRecordingIdempotencySettlement({
+          sessionId, storeId, entryId: cleanupEntryId, runIds: deferredRunIds,
+          readSession: async remainingMs => readEnvelope<RecordingSettlementSession>(await page.request.get(
+            `/api/document-store/recording-uploads/${encodeURIComponent(sessionId)}`,
+            { headers: authHeaders(token), timeout: Math.min(5_000, remainingMs) },
+          )),
+          readRun: async (runId, remainingMs) => readEnvelope<RecordingSettlementRun>(await page.request.get(
+            `/api/document-store/agent-runs/${encodeURIComponent(runId)}`,
+            { headers: authHeaders(token), timeout: Math.min(5_000, remainingMs) },
+          )),
+        });
+        receipt.settlement = settlement;
+        if (!settlement.settled) errors.push(...settlement.errors);
       } else if (session.status === 'uploading' && !cleanupEntryId) {
         const cancelled = await retryTransientTransport('取消本轮未完成录音上传', () => page.request.delete(
           `/api/document-store/recording-uploads/${encodeURIComponent(sessionId)}`,
@@ -677,8 +691,10 @@ async function cleanupRecordingIdempotencyFixture(
     ['store', storeId, `/api/document-store/stores/${encodeURIComponent(storeId)}`],
     ['session', sessionId, `/api/document-store/recording-uploads/${encodeURIComponent(sessionId)}`],
     ['entry', cleanupEntryId, `/api/document-store/entries/${encodeURIComponent(cleanupEntryId)}`],
+    ...[...new Set(deferredRunIds)].map(runId => [`run:${runId}`, runId, `/api/document-store/agent-runs/${encodeURIComponent(runId)}`]),
   ]) {
     if (!id) continue;
+    receipt[`${kind}ReadbackStatus`] = null;
     try {
       const response = await retryTransientTransport(`核对本轮录音${kind}删除`, () => page.request.get(path, {
         headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
@@ -5834,12 +5850,15 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test.describe('REC010清理闭环不自动重试', () => {
+  test.describe.configure({ retries: 0 });
   test('[REC-010] 录音分片重复完成幂等且无重复条目', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     let storeId = '';
     let sessionId = '';
     let entryId = '';
+    const deferredRunIds: string[] = [];
     try {
       const createStore = await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
@@ -5888,17 +5907,31 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const firstComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
         headers: authHeaders(token),
       });
-      const first = await readEnvelope<{ entry: { id: string }; sessionId: string }>(firstComplete);
+      const first = await readEnvelope<{ entry: { id: string }; sessionId: string; deferredTranscriptionRunId?: string | null }>(firstComplete);
       entryId = first.entry.id;
+      if (typeof first.deferredTranscriptionRunId === 'string' && first.deferredTranscriptionRunId) deferredRunIds.push(first.deferredTranscriptionRunId);
       await testInfo.attach('recording-idempotency-entry-created', {
-        body: JSON.stringify({ storeId, sessionId, entryId }), contentType: 'application/json',
+        body: JSON.stringify({ storeId, sessionId, entryId, deferredTranscriptionRunId: first.deferredTranscriptionRunId ?? null }), contentType: 'application/json',
       });
+      expect(first.sessionId).toBe(sessionId);
       const secondComplete = await page.request.post(`/api/document-store/recording-uploads/${sessionId}/complete`, {
         headers: authHeaders(token),
       });
-      const second = await readEnvelope<{ entry: { id: string }; reused: boolean }>(secondComplete);
+      const second = await readEnvelope<{ entry: { id: string }; reused: boolean; deferredTranscriptionRunId?: string | null }>(secondComplete);
+      if (typeof second.deferredTranscriptionRunId === 'string' && second.deferredTranscriptionRunId) deferredRunIds.push(second.deferredTranscriptionRunId);
+      await testInfo.attach('recording-idempotency-second-complete', {
+        body: JSON.stringify({ storeId, sessionId, entryId: second.entry.id, deferredTranscriptionRunId: second.deferredTranscriptionRunId ?? null }), contentType: 'application/json',
+      });
+      assertRecordingIdempotencyRuns(first.deferredTranscriptionRunId, second.deferredTranscriptionRunId);
       expect(second.entry.id).toBe(first.entry.id);
       expect(second.reused).toBe(true);
+      const entries = await readEnvelope<{ items: Array<{ id: string; storeId: string }>; total: number }>(
+        await page.request.get(`/api/document-store/stores/${storeId}/entries?all=true&pageSize=500`, { headers: authHeaders(token) }),
+      );
+      expect(entries.total).toBe(1);
+      expect(entries.items).toHaveLength(1);
+      expect(entries.items[0].id).toBe(entryId);
+      expect(entries.items[0].storeId).toBe(storeId);
     } catch (error) {
       await testInfo.attach('recording-idempotency-primary-failure', {
         body: redactStableSmokeDiagnosticText(error instanceof Error ? error.message : String(error)),
@@ -5906,8 +5939,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       throw error;
     } finally {
-      await cleanupRecordingIdempotencyFixture(page, token, storeId, sessionId, entryId, testInfo);
+      await cleanupRecordingIdempotencyFixture(page, token, storeId, sessionId, entryId, deferredRunIds, testInfo);
     }
+  });
   });
 
   test('[REC-001][REC-002] 现场录音自动开始且暂停继续保留前后音频', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
