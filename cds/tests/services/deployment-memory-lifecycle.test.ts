@@ -545,7 +545,7 @@ describe('启动期CPU占位与物理责任分离', () => {
       release();
     }
     const before = budget.memorySnapshot();
-    expect(before.every(item => Object.keys(item).sort().join(',') === 'accountedResidentMB,chargedMemoryMB,key,memoryMB,owner,pids')).toBe(true);
+    expect(before.every(item => Object.keys(item).sort().join(',') === 'key,memoryMB,owner,pids')).toBe(true);
     expect(budget.snapshot().start.active).toEqual([]);
     let admitted = false;
     const abort = new AbortController();
