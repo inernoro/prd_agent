@@ -34,6 +34,25 @@ test('同轮重复回填不增加事故频次，修复后不抹掉首次失败',
   assert.ok(green.events.some(e => e.status === 'flaky'));
   assert.equal(green.defects[0].status, 'open');
 });
+test('REG-stsmk-report-risk-001 后续回填必须保留既有闭环诊断与热点补充证据，不污染原对象', () => {
+  const first = updatePools({}, input, contract);
+  first.latestClosure = { runId: input.runId, status: 'blocked', evidence: 'immutable-evidence' };
+  first.allDone = true;
+  first.hotspots.find(f => f.featureId === 'F19').latestValidatedReview = { reportId: 'verified-old-report', score: 88 };
+  first.hotspots.find(f => f.featureId === 'F19').supplementalReviews = [{ runId: 'supplemental-run', status: 'fail' }];
+  first.runs[0].maintenanceRecovery = { status: 'verified', resourceIds: ['original-resource'] };
+  first.events[0].diagnosis = { fixRef: 'original-fix-ref' };
+  const snapshot = structuredClone(first);
+  const next = updatePools(first, input, contract);
+  assert.deepEqual(next.latestClosure, first.latestClosure);
+  assert.deepEqual(next.hotspots.find(f => f.featureId === 'F19').latestValidatedReview, { reportId: 'verified-old-report', score: 88 });
+  assert.deepEqual(next.hotspots.find(f => f.featureId === 'F19').supplementalReviews, [{ runId: 'supplemental-run', status: 'fail' }]);
+  assert.deepEqual(next.runs[0].maintenanceRecovery, { status: 'verified', resourceIds: ['original-resource'] });
+  assert.deepEqual(next.events[0].diagnosis, { fixRef: 'original-fix-ref' });
+  assert.deepEqual(first, snapshot);
+  assert.equal(next.allDone, false, '旧轮完成标记不能让当前flaky轮冒绿');
+  assert.equal(next.hotspots.find(f => f.featureId === 'F19').latest.find(x => x.environment === 'production').status, 'flaky');
+});
 test('两个不同轮次同因失败才增加频次；成功和未执行不算改善或新事故', () => {
   const first = updatePools({}, input, contract);
   const second = updatePools(first, { ...input, runId: 'stsmk-memory-002' }, contract);

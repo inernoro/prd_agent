@@ -87,7 +87,7 @@ export function updatePools(previous, { runId, profile = 'routine', commit = '',
   const previousRun = (previous.runs || []).find(run => run.runId === runId);
   const existingEvents = new Map((previous.events || []).map(event => [event.key, event]));
   const defects = new Map((previous.defects || []).map(defect => [defect.defectId, { ...defect }]));
-  const run = { runId, profile, commit, deployments, completedAt, reportUrl, evidenceVerified: Boolean(reportUrl), results: [] };
+  const run = { ...previousRun, runId, profile, commit, deployments, completedAt, reportUrl, evidenceVerified: Boolean(reportUrl), results: [] };
   for (const feature of contract.features) for (const environment of ['production', 'cds']) {
     const selected = rows.filter(row => row.environment === environment && feature.caseIds.includes(row.caseId));
     // 映射聚合只是回读视图，缺少原子项不能被一条成功掩盖。
@@ -101,7 +101,7 @@ export function updatePools(previous, { runId, profile = 'routine', commit = '',
     for (const row of selected) {
       const rowStatus = caseStatus(row);
       const key = `${runId}:${environment}:${row.caseId}:${rowStatus}`;
-      existingEvents.set(key, { key, runId, environment, caseId: row.caseId, featureIds: contract.features.filter(item => item.caseIds.includes(row.caseId)).map(item => item.id), status: rowStatus, time: completedAt, commit, reportUrl, rootCause: '未知', cleanup: row.cleanupStatus || '未独立回读', requestId: row.requestId || '' });
+      existingEvents.set(key, { ...existingEvents.get(key), key, runId, environment, caseId: row.caseId, featureIds: contract.features.filter(item => item.caseIds.includes(row.caseId)).map(item => item.id), status: rowStatus, time: completedAt, commit, reportUrl, rootCause: existingEvents.get(key)?.rootCause || '未知', cleanup: row.cleanupStatus || '未独立回读', requestId: row.requestId || '' });
       if (['fail', 'flaky', 'blocked'].includes(rowStatus)) {
         const matched = [...defects.values()].filter(item => item.environment === environment && item.caseIds?.includes(row.caseId) && item.status !== 'verified');
         const defectId = row.defectId || (row.caseId === 'REG-visual-mobile-entry-001' ? 'ACCEPTANCE-monitor-link-001' : matched.length === 1 ? matched[0].defectId : `DEF-STSMK-${environment.toUpperCase()}-${row.caseId}`);
@@ -126,14 +126,14 @@ export function updatePools(previous, { runId, profile = 'routine', commit = '',
     const recent = events.filter(event => event.featureIds.includes(feature.id)
       && shanghaiDay(event.time) <= windowEnd && shanghaiDay(event.time) >= windowStart
       && ['fail', 'flaky', 'blocked'].includes(event.status));
-    return { featureId: feature.id, title: feature.title, permanent: true, method: feature.method, history: feature.history, window: { start: windowStart, end: windowEnd, timezone: 'Asia/Shanghai' }, recentFailureRuns: [...new Set(recent.filter(event => event.status !== 'blocked').map(event => `${event.environment}:${event.runId}`))].length, sustainedBlocked: recent.some(event => event.status === 'blocked'), recent: recent.length > 0, latest: run.results.filter(result => result.featureId === feature.id) };
+    return { ...(previous.hotspots || []).find(item => item.featureId === feature.id), featureId: feature.id, title: feature.title, permanent: true, method: feature.method, history: feature.history, window: { start: windowStart, end: windowEnd, timezone: 'Asia/Shanghai' }, recentFailureRuns: [...new Set(recent.filter(event => event.status !== 'blocked').map(event => `${event.environment}:${event.runId}`))].length, sustainedBlocked: recent.some(event => event.status === 'blocked'), recent: recent.length > 0, latest: run.results.filter(result => result.featureId === feature.id) };
   });
   const methods = [...(previous.methods || [])];
   for (const method of contract.commonMethods || []) if (!methods.some(item => item.id === method.id)) methods.push(method);
   for (const defect of defects.values()) if (!methods.some(method => method.defectId === defect.defectId)) {
     methods.push({ id: `C-${defect.defectId}`, defectId: defect.defectId, status: '待验证', basisRunId: defect.firstRunId, caseIds: defect.caseIds, prediction: '原失败输入与原断言能稳定变红，正常对照变绿', deadlineAt: new Date(Date.parse(completedAt) + 14 * 86400000).toISOString(), owner: '测试维护与对应模块负责人' });
   }
-  return { revision: (previous.revision || 0) + 1, contractVersion: contract.version, updatedAt: completedAt, hotspots, methods, events, defects: [...defects.values()], runs, changes: { runId, newRun: !previousRun, reportVerified: Boolean(reportUrl), pendingRetests: { production: pendingRetests({ defects: [...defects.values()] }, 'production'), cds: pendingRetests({ defects: [...defects.values()] }, 'cds') } } };
+  return { ...previous, ...(Object.hasOwn(previous, 'allDone') ? { allDone: false } : {}), revision: (previous.revision || 0) + 1, contractVersion: contract.version, updatedAt: completedAt, hotspots, methods, events, defects: [...defects.values()], runs, changes: { runId, newRun: !previousRun, reportVerified: Boolean(reportUrl), pendingRetests: { production: pendingRetests({ defects: [...defects.values()] }, 'production'), cds: pendingRetests({ defects: [...defects.values()] }, 'cds') } } };
 }
 
 export function renderExperienceSummary(state) {
