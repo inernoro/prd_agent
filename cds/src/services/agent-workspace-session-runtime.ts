@@ -2254,8 +2254,9 @@ export class AgentWorkspaceSessionRuntime {
         const code = (error as { code?: string }).code;
         const expiration = ['deadline', 'cancelled'].includes(code || '')
           || code === 'workspace_probe_cleanup_unconfirmed' && Date.now() >= originalDeadline;
+        // 步骤的相对超时可能先于原绝对期限到达；继续原窗，不重开或延长预算。
         if (!lease.creationAcknowledged || lease.kind === 'storage-volume' || !expiration
-          || !(beginConfirmation() || confirmationStarted && Date.now() < deadline)) throw error;
+          || !(Date.now() < deadline || beginConfirmation())) throw error;
         await delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())));
         continue;
       }

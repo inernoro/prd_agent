@@ -6,12 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentWorkspaceSessionRuntime } from '../../src/services/agent-workspace-session-runtime.js';
+import { OperationExecutionError } from '../../src/services/isolated-shell-executor.js';
 import type { ExecOptions, ExecResult, IShellExecutor } from '../../src/types.js';
 const result = (stdout = '', stderr = '', exitCode = 0): ExecResult => ({ stdout, stderr, exitCode });
 const deferred = <T>() => { let resolve!: (value: T) => void; const promise = new Promise<T>(r => { resolve = r; }); return { promise, resolve }; };
 
 function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean;
-  removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean; delayedRemovalReply?: boolean; keepRemovalVisible?: boolean; delayedRemovalMs?: number } = {}) {
+  removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean; delayedRemovalReply?: boolean; keepRemovalVisible?: boolean; delayedRemovalMs?: number;
+  earlyRemovalExpiry?: 'deadline' | 'cancelled' } = {}) {
   const accepted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
   const events: any[] = []; let visible = false; let pendingName = ''; let operationId = ''; let journalAtAdmission: any;
   const containerId = 'a'.repeat(64); let aborted = false, removalAttempts = 0;
@@ -48,6 +50,7 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
       if (command.startsWith('docker kill')) return result('', 'container is not running', 1);
       if (command.startsWith('docker rm -f')) {
         removalAttempts++;
+        if (config.earlyRemovalExpiry && removalAttempts === 1) throw new OperationExecutionError(config.earlyRemovalExpiry);
         if (config.delayedRemovalMs) {
           if (!visible) return result('', `No such container: ${containerId}`, 1);
           if (removalAttempts > 1) return result('', `removal of container ${containerId} is already in progress`, 1);
@@ -76,6 +79,49 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
 }
 
 describe('capability probe cancellation reconciliation', () => {
+  it.each(['deadline', 'cancelled'] as const)('已确认 CID 在原窗口内收到 %s 后仍按同一有限期限核实清理', async code => {
+    const f = fixture(true, { earlyRemovalExpiry: code });
+    let restoreClock = () => {}, restoreRemove = () => {};
+    if (code === 'deadline') {
+      const runtime = f.runtime as any;
+      const remove = runtime.removeConfirmedProbeContainer.bind(runtime);
+      const intercepted = vi.spyOn(runtime, 'removeConfirmedProbeContainer').mockImplementation(async (...args: any[]) => {
+        try { return await remove(...args); }
+        catch (error) {
+          // 仅固定原 D 交界的两次读钟；不改生产期限或真实 AbortSignal。
+          const clock = vi.spyOn(Date, 'now').mockReturnValue(args[2]);
+          clock.mockReturnValueOnce(args[2] - 1);
+          restoreClock = () => clock.mockRestore();
+          throw error;
+        }
+      });
+      restoreRemove = () => intercepted.mockRestore();
+    }
+    try {
+      const probe = f.runtime.capability(true); await f.accepted.promise;
+      await expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined(); await probe;
+      const early = f.events.find(event => event.action === 'agent.probe.cleanup.step.interrupted' && event.details.outcome === code);
+      expect(early).toBeDefined();
+      expect(early.details.finishedAt).toBeLessThan(early.details.deadline);
+      expect(f.calls.filter(call => call.command.startsWith('docker rm -f')).map(call => call.command))
+        .toEqual([`docker rm -f '${f.containerId}'`, `docker rm -f '${f.containerId}'`]);
+      expect(f.calls.filter(call => call.command.startsWith('docker run --rm'))).toHaveLength(1);
+      const steps = f.events.filter(event => event.action === 'agent.probe.cleanup.step.requested');
+      expect(steps.every(event => event.details.deadline - event.details.requestedAt > 0 && event.details.deadline - event.details.requestedAt <= 60)).toBe(true);
+      const windows = f.events.filter(event => event.action === 'agent.probe.cleanup.confirmation-window.started');
+      expect(windows.length).toBeLessThanOrEqual(1);
+      if (code === 'deadline') expect(windows).toHaveLength(1);
+      expect(windows.every(event => event.details.originalDeadline === early.details.deadline
+        && event.details.confirmationDeadline - event.details.originalDeadline === 60)).toBe(true);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmed')).toBe(true);
+      expect(f.visible).toBe(false);
+    } finally {
+      restoreClock(); restoreRemove();
+      await f.runtime.closeCapabilityProbes().catch(() => undefined);
+      fs.rmSync(f.rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('uses the fixed confirmed-resource window after one step expires, without extending any step or reissuing a name', async () => {
     const f = fixture(true, { delayedRemovalMs: 80 });
     try {
