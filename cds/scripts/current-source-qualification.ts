@@ -40,6 +40,10 @@ const tutorialQualificationFixedHead = '0bb6d4bd44e89faeb8e0d53c9e721acb9fa3ddc6
 const capacityHintHead = '4bddfd87ab24d21301e6ea052ca8a24206abbe47';
 const structuredColdHead = '7cc15c706f5f751dff9af134201f6c5d1abbd9c3';
 const structuredColdValidatedHead = '4ee6554c57b35720ef8fab0d929b7aacb1e61403';
+const structuredIntegratedHead = 'c48691a282f1133277d6336418352f90bf361b63';
+const cleanupWindowFixBase = 'f2dfcfd95e7610e238b14b8eabd1fd7becd126ef';
+const cleanupWindowFixHead = 'fc8da8e83f447fed9c3529ff9e1aedbbcc28e2bf';
+const cleanupWindowFiles = ['cds/src/services/agent-workspace-session-runtime.ts', 'cds/tests/services/agent-workspace-capability-cleanup.test.ts', 'changelogs/2026-10-16_cds-probe-cleanup-expiry.md'];
 const structuredColdSources = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/worktree.ts'];
 const tutorialMaintenanceWebFiles = ['cds/web/public/tutorials/starter-lab/app.js', 'cds/web/public/tutorials/starter-lab/chapters.json', 'cds/web/public/tutorials/starter-lab/index.html', 'cds/web/public/tutorials/starter-lab/media/original-identity-recovery-complete.png', 'cds/web/public/tutorials/starter-lab/media/original-identity-recovery.mp4', 'cds/web/public/tutorials/starter-lab/media/original-identity-recovery.vtt', 'cds/web/public/tutorials/starter-lab/original-identity-recovery-facts.json'];
 const memoryRescanSources = ['cds/src/index.ts', 'cds/src/services/container.ts', 'cds/src/services/deployment-phase-budget.ts'];
@@ -57,7 +61,7 @@ const cpuStageSourceChanges = ["cds/src/executor/routes.ts", "cds/src/routes/bra
 const memoryStageSourceChanges = ["cds/src/index.ts", "cds/src/infra/state-store/mongo-split-store.ts", "cds/src/services/container.ts", "cds/src/services/orphan-container-reaper.ts", "cds/src/services/resource-usage-sampler.ts", "cds/src/services/scheduler-service-stop.ts", "cds/src/services/scheduler.ts", "cds/src/services/service-replacement.ts", "cds/src/services/service-runtime.ts"];
 
 export function assertCurrentSourceQualification(expectedPreviousSources: readonly string[], report: Record<string, any>, native = true): void {
-  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead, widgetStreamQualifiedHead, widgetTerminalFixHead, previewActivityHead, frozenIntegrationHead, diagnosticInstrumentationHead, receiptEvidenceHead, memoryRescanHead, latestMaintenanceHead, preColdIntegrationHead, coldReviewFixBase, coldReviewFixHead, coldIntegratedQualifiedHead, tutorialMaintenanceHead, tutorialIntegratedHead, tutorialQualificationFixedHead, capacityHintHead, structuredColdHead, structuredColdValidatedHead], { stdio: 'pipe', timeout: 120000 });
+  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead, widgetStreamQualifiedHead, widgetTerminalFixHead, previewActivityHead, frozenIntegrationHead, diagnosticInstrumentationHead, receiptEvidenceHead, memoryRescanHead, latestMaintenanceHead, preColdIntegrationHead, coldReviewFixBase, coldReviewFixHead, coldIntegratedQualifiedHead, tutorialMaintenanceHead, tutorialIntegratedHead, tutorialQualificationFixedHead, capacityHintHead, structuredColdHead, structuredColdValidatedHead, structuredIntegratedHead, cleanupWindowFixBase, cleanupWindowFixHead], { stdio: 'pipe', timeout: 120000 });
   const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
     { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
   report.previousQualifiedHead = previousQualifiedHead;
@@ -186,9 +190,24 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
   assert.deepEqual(report.fixtureOnlyFiles, ['cds/tests/routes/github-webhook.test.ts', 'changelogs/2026-10-16_cds-github-http-fixture.md']);
   report.structuredColdValidatedParents = parents(structuredColdValidatedHead);
   assert.deepEqual(report.structuredColdValidatedParents, [structuredColdHead]);
-  report.finalStructuredIntegrationSources = changedSince(capacityHintHead, report.head);
+  report.finalStructuredIntegrationSources = changedSince(capacityHintHead, structuredIntegratedHead);
   assert.deepEqual(report.finalStructuredIntegrationSources, structuredColdSources.slice().sort());
-  assert.deepEqual(changedWeb(capacityHintHead, report.head), []);
+  assert.deepEqual(changedWeb(capacityHintHead, structuredIntegratedHead), []);
+  report.structuredIntegratedParents = parents(structuredIntegratedHead);
+  assert.deepEqual(report.structuredIntegratedParents, [capacityHintHead, structuredColdValidatedHead].sort());
+  report.cleanupWindowFixSources = changedSince(cleanupWindowFixBase, cleanupWindowFixHead);
+  assert.deepEqual(report.cleanupWindowFixSources, ['cds/src/services/agent-workspace-session-runtime.ts']);
+  report.cleanupWindowFixFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', cleanupWindowFixBase,
+    cleanupWindowFixHead], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.cleanupWindowFixFiles, cleanupWindowFiles.slice().sort());
+  report.cleanupWindowFixParents = parents(cleanupWindowFixHead);
+  assert.deepEqual(report.cleanupWindowFixParents, [cleanupWindowFixBase]);
+  report.currentCleanupSources = changedSince(structuredIntegratedHead, report.head);
+  assert.deepEqual(report.currentCleanupSources, ['cds/src/services/agent-workspace-session-runtime.ts']);
+  assert.deepEqual(changedWeb(structuredIntegratedHead, report.head), []);
+  report.currentCleanupFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', structuredIntegratedHead,
+    report.head], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.currentCleanupFiles, [...cleanupWindowFiles, 'cds/scripts/current-source-qualification.ts'].sort());
   report.currentParents = parents(report.head);
-  assert.deepEqual(report.currentParents, [capacityHintHead, structuredColdValidatedHead].sort());
+  assert.deepEqual(report.currentParents, [structuredIntegratedHead]);
 }
