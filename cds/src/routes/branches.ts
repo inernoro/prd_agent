@@ -3074,7 +3074,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       getBranch: id => stateService.getBranch(id), inspect: (pending, input, entry, assertCurrent) =>
         inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent),
       onChecked: (pending, previous, result) => {
-        if (previous.state === result.state && previous.reason === result.reason
+        if (previous.state === result.state && previous.reason === result.reason && previous.stage === result.stage
           && previous.profileIds?.join(',') === result.profileIds?.join(',')) return;
         const run = deploymentRunService?.getForOperation(pending.operationId, pending.generation);
         if (!run || run.status !== 'queued') return;
@@ -3091,7 +3091,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         deploymentRunService!.append(run.id, { phase, status: 'queued', level: 'info',
           message: result.state === 'ready' ? '全部必需产物核验通过，等待部署资格与执行槽'
             : messages[result.reason!] || '产物核验暂不可用，等待重试；旧服务继续保留',
-          detail: { reason: result.reason, profileIds: result.profileIds, targetCommitSha: result.targetCommitSha } });
+          detail: { reason: result.reason, stage: result.stage, profileIds: result.profileIds, targetCommitSha: result.targetCommitSha } });
       } });
     for (const pending of ready) dispatchPendingWebhookDeploy(pending);
   });

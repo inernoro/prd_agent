@@ -4345,6 +4345,36 @@ describe('Branch Routes', () => {
       } finally { release(); await Promise.all([first, second]); registration.mockRestore(); }
     });
 
+    it('排队产物核验只改变步骤时仍记录事件，同一步骤重复复核不制造噪音', async () => {
+      const target = 'b'.repeat(40), id = 'artifact-stage-evidence';
+      await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API',
+        dockerImage: `ghcr.io/owned/api:sha-${target}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
+      stateService.addBranch({ id, projectId: 'default', branch: 'feature/artifact-stage-evidence',
+        worktreePath: path.join(tmpDir, 'worktrees', id), status: 'idle', createdAt: new Date().toISOString(), services: {} });
+      let stage: 'daemon' | 'pull' | 'inspect' = 'daemon', now = 100_000;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      const inspection = vi.spyOn(containerService, 'inspectDeploymentArtifacts').mockImplementation(async () => ({
+        state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
+        reason: 'verification-unavailable', stage, profileIds: ['api'], artifacts: [] }));
+      try {
+        const before = mock.commands.length;
+        const response = await request(server, 'POST', `/api/branches/${id}/deploy`, { commitSha: target });
+        expect(response.status).toBe(200);
+        await requestArtifactWaitRefresh(branchOperationCoordinator);
+        const run = deploymentRunService.get(String(response.headers['x-cds-deployment-run-id']))!;
+        for (const next of ['pull', 'inspect', 'inspect'] as const) {
+          stage = next; now += 31_000;
+          await requestArtifactWaitRefresh(branchOperationCoordinator);
+        }
+        expect(run.status).toBe('queued');
+        expect(run.events.filter(event => event.detail?.stage).map(event => ({
+          reason: event.detail?.reason, stage: event.detail?.stage,
+        }))).toEqual(['daemon', 'pull', 'inspect'].map(stage => ({ reason: 'verification-unavailable', stage })));
+        expect(branchOperationCoordinator.getActiveOperations(id)).toHaveLength(0);
+        expect(mock.commands.slice(before).some(command => /docker (rm|run)|git fetch|network create|database-init/.test(command))).toBe(false);
+      } finally { inspection.mockRestore(); clock.mockRestore(); }
+    });
+
     it('最后一个必需产物缺失时保留旧入口与孤儿服务，不初始化数据库或准备源码，原任务持久等待', async () => {
       const target = 'b'.repeat(40); const imageId = `sha256:${'c'.repeat(64)}`;
       for (const role of ['api', 'web']) await request(server, 'POST', '/api/build-profiles', { id: role, name: role,
