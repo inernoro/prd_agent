@@ -5112,12 +5112,24 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       </div>
 
       {/* History modal：历史生成列表，点击载入继续精修/编辑/发布 */}
-      {showHistory && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={() => setShowHistory(false)}>
+      {showHistory && createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="历史生成"
+          onClick={() => setShowHistory(false)}
+        >
           <div
             data-testid="history-modal"
-            className="w-[560px] rounded-xl border border-token-subtle bg-[var(--bg-elevated)] shadow-xl"
-            style={{ maxHeight: '72vh', display: 'flex', flexDirection: 'column' }}
+            className="rounded-xl border border-token-subtle bg-[var(--bg-elevated)] shadow-xl"
+            style={{
+              width: 'min(560px, calc(100vw - 32px))',
+              maxWidth: 'calc(100vw - 32px)',
+              maxHeight: 'min(72vh, calc(100dvh - 32px))',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">
@@ -5125,7 +5137,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 <History size={13} className="text-purple-400" />
                 历史生成
               </span>
-              <button onClick={() => setShowHistory(false)} className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
+              <button
+                onClick={() => setShowHistory(false)}
+                aria-label="关闭历史生成"
+                className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+              >
                 <X size={14} />
               </button>
             </div>
@@ -5176,7 +5192,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 演示模式（自定义全屏）：主 deck + 底部子页缩略条（诉求 9）。Esc / 关闭按钮退出。 */}
