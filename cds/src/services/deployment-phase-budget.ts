@@ -296,7 +296,15 @@ export function restoreDeploymentMemoryReservations(branches: readonly BranchEnt
   for (const branch of branches) {
     const hints = new Map(profiles(branch).map(profile => [profile.id, profile.resources?.memoryMB || 512]));
     for (const service of Object.values(branch.services)) for (const runtime of serviceRuntimeRefs(service)) {
-      const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
+      // 失败替换仍可保留已经发布的旧版本；它和普通 running 服务一样，
+      // 没有待兑现的启动承诺。不能因父服务 error 再恢复一份启动预约。
+      // 这里只分类持久身份，不以异步内存采样抵扣，也不释放本进程任何预约。
+      const published = service.status === 'error' && runtime.containerId
+        && /^[a-f0-9]{64}$/.test(runtime.containerId)
+        && service.servingRuntime?.containerName === runtime.containerName
+        && service.servingRuntime.containerId === runtime.containerId
+        && service.pendingRuntime?.containerName !== runtime.containerName;
+      const incomplete = !published && runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
       if (incomplete) deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, hints.get(service.profileId) || 512,
         { projectId: branch.projectId, branchId: branch.id, profileId: service.profileId }, 64, true);
