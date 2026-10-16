@@ -101,6 +101,8 @@ const WorkflowCanvasPage = lazy(() => import('@/pages/workflow-agent').then(m =>
 const WorkflowEditorPage = lazy(() => import('@/pages/workflow-agent').then(m => ({ default: m.WorkflowEditorPage })));
 const LiteraryAgentEditorPageWrapper = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentEditorPageWrapper })));
 const ReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportDetailPage })));
+const MonthlyReportDetailPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.MonthlyReportDetailPage })));
+const MonthlyReportEditorPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.MonthlyReportEditorPage })));
 const ReviewAgentSubmitPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentSubmitPage })));
 const ReviewAgentResultPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentResultPage })));
 const ReviewAgentAllPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentAllPage })));
@@ -421,6 +423,8 @@ export default function App() {
         <Route path="review-agent/assessments" element={<RequirePermission perm="review-agent.use"><ReviewAssessmentListPage /></RequirePermission>} />
         <Route path="review-agent/assessments/:id" element={<RequirePermission perm="review-agent.use"><ReviewAssessmentDetailPage /></RequirePermission>} />
         <Route path="report-agent/report/:reportId" element={<RequirePermission perm="report-agent.use"><ReportDetailPage /></RequirePermission>} />
+        <Route path="report-agent/monthly/:reportId" element={<RequirePermission perm="report-agent.use"><MonthlyReportDetailPage /></RequirePermission>} />
+        <Route path="report-agent/monthly/:reportId/edit" element={<RequirePermission perm="report-agent.use"><MonthlyReportEditorPage /></RequirePermission>} />
         <Route path="workflow-agent/:workflowId" element={<RequirePermission perm="workflow-agent.use"><WorkflowEditorPage /></RequirePermission>} />
         <Route path="weekly-poster/wizard" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterWizardPage /></RequirePermission>} />
         <Route path="weekly-poster/advanced" element={<RequirePermission perm="report-agent.template.manage"><WeeklyPosterEditorPage /></RequirePermission>} />
