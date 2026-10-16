@@ -13794,6 +13794,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
         portStart: config.portStart, operationId: branchOperationLease?.operationId });
       await stateService.flush();
+      // 只记录本轮结果，旧 servingRuntime/上轮 running 不能替代本轮依赖就绪。
+      const failedProfileIds = new Set<string>();
+      const failureMessages = new Map<string, string>();
       // ── Execute layer by layer (parallel within each layer) ──
       for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
         const layer = layers[layerIdx];
@@ -13821,6 +13824,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 部署收尾（释放分支租约）绝不发生在兄弟闭包还存活的时刻，根治
         // 「脱管闭包 + 同分支重复租约叠加」（2026-07-16 队列堵死复盘）。
         await runLayerWithSharedAbort(layer.items, async (profile, layerSignal) => {
+          assertBranchOperationCurrent(branchOperationLease, `before-layer-service-${profile.id}`);
+          const blockedBy = (profile.dependsOn || []).filter(id => failedProfileIds.has(id));
+          if (blockedBy.length > 0) {
+            failedProfileIds.add(profile.id);
+            const svc = entry.services[profile.id];
+            svc.status = 'error';
+            svc.errorMessage = `本轮前置服务失败，未启动依赖服务：${blockedBy.join(', ')}`;
+            failureMessages.set(profile.id, svc.errorMessage);
+            logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 因前置失败未启动`,
+              log: svc.errorMessage, detail: { profileId: profile.id, blockedBy }, timestamp: new Date().toISOString() });
+            stateService.save();
+            return;
+          }
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
@@ -14175,8 +14191,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             } else {
               const errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
               assertBranchOperationCurrent(branchOperationLease, `after-readiness-error-${profile.id}`);
+              failedProfileIds.add(profile.id);
               svc.status = 'error';
               svc.errorMessage = errorMessage;
+              failureMessages.set(profile.id, errorMessage);
               logDeploy(id, `${profile.name} 就绪探测超时`);
               logEvent({
                 step: `build-${profile.id}`,
@@ -14190,8 +14208,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch (err) {
             if (err instanceof BranchOperationSupersededError) throw err;
             assertBranchOperationCurrent(branchOperationLease, `before-service-error-${profile.id}`);
+            failedProfileIds.add(profile.id);
             svc.status = 'error';
             svc.errorMessage = (err as Error).message;
+            failureMessages.set(profile.id, svc.errorMessage);
             const elapsed = Date.now() - serviceStartTime;
             logEvent({
               step: `build-${profile.id}`,
@@ -14218,17 +14238,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
 
         const layerElapsed = Date.now() - layerStartTime;
+        const failedServices = layer.items.filter(profile => failedProfileIds.has(profile.id)).map(profile => profile.id);
         logEvent({
           step: `layer-${layer.layer}`,
-          status: 'done',
-          title: `第 ${layer.layer} 层完成`,
-          detail: { elapsedMs: layerElapsed },
+          status: failedServices.length > 0 ? 'error' : 'done',
+          title: failedServices.length > 0 ? `第 ${layer.layer} 层结束，${failedServices.length} 个服务失败或受阻` : `第 ${layer.layer} 层完成`,
+          detail: { elapsedMs: layerElapsed, ...(failedServices.length > 0 ? { failedServices } : {}) },
           timestamp: new Date().toISOString(),
         });
       }
 
       // ── Update overall status ──
       assertBranchOperationCurrent(branchOperationLease, 'before-deploy-finalize');
+      // 旧入口健康同步可能回写 running；本轮失败仍禁止提交候选并保留根因。
+      for (const [profileId, message] of failureMessages) {
+        const service = entry.services[profileId];
+        if (service) { service.status = 'error'; service.errorMessage = message; }
+      }
       advanceDeploymentRun(deploymentRun?.id, 'verifying', {
         phase: 'ready',
         message: '服务构建与启动阶段结束，开始汇总就绪结果',
@@ -14307,14 +14333,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
       const hasStarting = activeStatuses.some((s) => s === 'starting');
-      let hasError = activeStatuses.some((s) => s === 'error');
+      let hasError = failedProfileIds.size > 0 || activeStatuses.some((s) => s === 'error');
       const noServiceStarted = profiles.length > 0 && !hasRunning && !hasStarting && !hasError;
       const failedNames = activeServices
-        .filter(([, s]) => s.status === 'error')
+        .filter(([sid, s]) => failedProfileIds.has(sid) || s.status === 'error')
         .map(([, s]) => s.profileId);
       const failedReasons = activeServices
-        .filter(([, s]) => s.status === 'error')
-        .map(([sid, svc]) => `${sid}: ${svc.errorMessage || '启动失败'}`);
+        .filter(([sid, s]) => failedProfileIds.has(sid) || s.status === 'error')
+        .map(([sid, svc]) => `${sid}: ${failureMessages.get(sid) || svc.errorMessage || '启动失败'}`);
       if (noServiceStarted) {
         hasError = true;
         const idleServices = activeServices.map(([sid, svc]) => `${sid}:${svc.status}`).join(', ') || '(none)';
