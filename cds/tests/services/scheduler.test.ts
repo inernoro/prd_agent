@@ -77,11 +77,12 @@ describe('SchedulerService', () => {
   });
 
   describe('forwarder activity admission', () => {
-    it('refreshes LRU from original request time and selects the actually idle branch', () => {
+    it('refreshes LRU from real time without treating a quiet snapshot as eviction permission', () => {
       stateService.addBranch(makeBranch('busy', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 10000).toISOString() }));
       stateService.addBranch(makeBranch('idle', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 5000).toISOString() }));
       scheduler.setActivityProvider(id => ({ at: id === 'busy' ? clock.now() - 1000 : 0, active: false }));
-      expect(scheduler.selectLruVictim()?.id).toBe('idle');
+      scheduler.refreshActivity();
+      expect(scheduler.selectLruVictim()).toBeNull();
       expect(stateService.getBranch('busy')?.lastAccessedAt).toBe(new Date(clock.now() - 1000).toISOString());
     });
 
@@ -91,6 +92,7 @@ describe('SchedulerService', () => {
       await scheduler.tick(); await scheduler.markCold('unknown');
       expect(cooled).toEqual([]); expect(scheduler.selectLruVictim()).toBeNull();
       expect(scheduler.getSnapshot().hot.map(b => b.activityObservation)).toEqual(['active', 'unavailable']);
+      expect(scheduler.getSnapshot().automaticCooling).toBe('paused-without-forwarder-handoff');
     });
 
     it('rejects an over-capacity wake when telemetry cannot justify any eviction', async () => {
@@ -100,6 +102,19 @@ describe('SchedulerService', () => {
       scheduler.setActivityProvider(() => null);
       await expect(scheduler.wake('new')).rejects.toThrow('热容量已满');
       expect(woken).toEqual([]); expect(cooled).toEqual([]);
+      await expect(scheduler.evictLruIfOverCapacity('new')).rejects.toThrow('热容量已满');
+    });
+
+    it('never evicts a branch in the window before a new request is published', async () => {
+      setup({ maxHotBranches: 1 });
+      stateService.addBranch(makeBranch('resident', 'running', { heatState: 'hot', lastAccessedAt: new Date(clock.now() - 86400000).toISOString() }));
+      stateService.addBranch(makeBranch('new', 'idle', { heatState: 'cold' }));
+      scheduler.setActivityProvider(() => ({ at: 0, active: false }));
+      await scheduler.tick();
+      await expect(scheduler.evictLruIfOverCapacity('new')).rejects.toThrow('热容量已满');
+      await expect(scheduler.wake('new')).rejects.toThrow('热容量已满');
+      expect(cooled).toEqual([]); expect(woken).toEqual([]);
+      expect(stateService.getBranch('new')?.status).toBe('idle');
     });
 
     it('never rolls back newer master traffic with an older forwarder observation', () => {

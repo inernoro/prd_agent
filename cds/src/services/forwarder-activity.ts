@@ -1,16 +1,14 @@
-import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { PROBE_MARKER_HEADER, probeRequestHeaders } from './probe-marker.js';
+import { isTrustedProbeRequest } from './probe-marker.js';
 
 export const ACTIVITY_MAX_AGE_MS = 15_000;
 const MAX_ROWS = 4096;
 const MAX_BYTES = 2 * 1024 * 1024;
-interface ActivityRow { branchId: string; probeHash: string; at: number; active: number }
-interface ActivitySnapshot { version: 1; at: number; overflow: boolean; rows: ActivityRow[] }
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+interface ActivityRow { branchId: string; at: number; active: number }
+interface ActivitySnapshot { version: 2; at: number; overflow: boolean; rows: ActivityRow[] }
 
-/** 私有本机快照只含分支、时间、计数与探测令牌摘要，不含 URL、Cookie 或业务数据。 */
+/** 私有本机快照只含分支、时间、计数，不含 URL、Cookie 或业务数据。 */
 export class ForwarderActivityWriter {
   private rows = new Map<string, ActivityRow>();
   private overflowed = false;
@@ -19,10 +17,8 @@ export class ForwarderActivityWriter {
 
   begin(branchId: string | undefined, headers: Record<string, unknown>, url: string): () => void {
     if (!branchId || branchId.length > 512 || /^\/(?:_cds|__forwarder)(?:\/|$|\?)/.test(url)) return () => {};
-    const raw = headers[PROBE_MARKER_HEADER];
-    const token = Array.isArray(raw) ? raw[0] : raw;
-    const probeHash = typeof token === 'string' && token ? hash(token) : '';
-    const key = `${branchId}\0${probeHash}`;
+    if (isTrustedProbeRequest(headers)) return () => {};
+    const key = branchId; // 外部任意令牌不产生新身份，始终按路由确定的分支聚合。
     let row = this.rows.get(key);
     if (!row) {
       this.prune();
@@ -31,7 +27,7 @@ export class ForwarderActivityWriter {
         this.overflowed = true;
         return () => {};
       }
-      row = { branchId, probeHash, at: this.now(), active: 0 };
+      row = { branchId, at: this.now(), active: 0 };
       this.rows.set(key, row);
     }
     row.at = this.now(); row.active += 1;
@@ -52,7 +48,7 @@ export class ForwarderActivityWriter {
     const temp = `${this.file}.${process.pid}.tmp`;
     try {
       this.prune();
-      const snapshot: ActivitySnapshot = { version: 1, at: this.now(), overflow: this.overflowed, rows: [...this.rows.values()] };
+      const snapshot: ActivitySnapshot = { version: 2, at: this.now(), overflow: this.overflowed, rows: [...this.rows.values()] };
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       await fs.writeFile(temp, JSON.stringify(snapshot), { mode: 0o600 });
       await fs.rename(temp, this.file);
@@ -64,7 +60,6 @@ export class ForwarderActivityWriter {
 export class ForwarderActivityReader {
   private snapshot: ActivitySnapshot | null = null;
   private reading = false;
-  private readonly trustedProbeHash = hash(probeRequestHeaders()[PROBE_MARKER_HEADER]);
   constructor(private readonly file: string, private readonly now = Date.now) {}
 
   async refresh(): Promise<void> {
@@ -73,10 +68,9 @@ export class ForwarderActivityReader {
     try {
       if ((await fs.stat(this.file)).size > MAX_BYTES) throw new Error('activity snapshot too large');
       const value = JSON.parse(await fs.readFile(this.file, 'utf8')) as ActivitySnapshot;
-      if (value.version !== 1 || !Number.isFinite(value.at) || value.at > this.now()
+      if (value.version !== 2 || !Number.isFinite(value.at) || value.at > this.now()
         || typeof value.overflow !== 'boolean' || !Array.isArray(value.rows) || value.rows.length > MAX_ROWS
         || value.rows.some(row => !row || typeof row.branchId !== 'string' || !row.branchId || row.branchId.length > 512
-          || typeof row.probeHash !== 'string' || !/^(?:[a-f0-9]{64})?$/.test(row.probeHash)
           || !Number.isFinite(row.at) || row.at > value.at || row.at < 0
           || !Number.isSafeInteger(row.active) || row.active < 0)) throw new Error('invalid activity snapshot');
       this.snapshot = value;
@@ -91,7 +85,7 @@ export class ForwarderActivityReader {
 
   activity(branchId: string): { at: number; active: boolean } | null {
     if (!this.isFresh()) return null;
-    const rows = this.snapshot!.rows.filter(row => row.branchId === branchId && row.probeHash !== this.trustedProbeHash);
+    const rows = this.snapshot!.rows.filter(row => row.branchId === branchId);
     return { at: Math.max(0, ...rows.map(row => row.at)), active: rows.some(row => row.active > 0) };
   }
 }

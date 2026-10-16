@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { ForwarderActivityReader, ForwarderActivityWriter, ACTIVITY_MAX_AGE_MS } from '../../src/services/forwarder-activity.js';
-import { probeRequestHeaders, PROBE_MARKER_HEADER } from '../../src/services/probe-marker.js';
+import { probeRequestHeaders, PROBE_MARKER_HEADER, configureSharedProbeMarker } from '../../src/services/probe-marker.js';
 
 describe('forwarder activity across independent processes', () => {
   let dir: string, file: string, now: number;
@@ -42,6 +42,27 @@ describe('forwarder activity across independent processes', () => {
     expect(raw).not.toContain('/api/items');
   });
 
+  it('aggregates thousands of forged probe identities into a single real branch row', async () => {
+    for (let i = 0; i < 5000; i++) writer.begin('app', { [PROBE_MARKER_HEADER]: `fake-${i}` }, '/')();
+    await writer.flush(); await reader.refresh();
+    expect(reader.isFresh()).toBe(true);
+    expect(JSON.parse(await fs.readFile(file, 'utf8')).rows).toHaveLength(1);
+  });
+
+  it('keeps shared probe identity across master restarts and never reclassifies old probes', async () => {
+    const tokenFile = path.join(dir, 'probe-token');
+    await configureSharedProbeMarker(tokenFile);
+    const headers = probeRequestHeaders();
+    writer.begin('probe', headers, '/'); await writer.flush();
+    await configureSharedProbeMarker(tokenFile);
+    expect(probeRequestHeaders()).toEqual(headers);
+    const restartedReader = new ForwarderActivityReader(file, () => now);
+    await restartedReader.refresh(); expect(restartedReader.activity('probe')).toEqual({ at: 0, active: false });
+    expect((await fs.stat(tokenFile)).mode & 0o777).toBe(0o600);
+    await fs.chmod(tokenFile, 0o644);
+    await expect(configureSharedProbeMarker(tokenFile)).rejects.toThrow('文件权限');
+  });
+
   it('ignores control-plane widgets and unmapped hosts', async () => {
     writer.begin('app', {}, '/_cds/api/stream');
     writer.begin('app', {}, '/__forwarder/healthz');
@@ -54,8 +75,8 @@ describe('forwarder activity across independent processes', () => {
     await reader.refresh(); expect(reader.activity('app')).toBeNull();
     writer.begin('app', {}, '/'); await writer.flush(); await reader.refresh();
     now += ACTIVITY_MAX_AGE_MS + 1; expect(reader.activity('app')).toBeNull();
-    for (const body of ['{', 'x'.repeat(2 * 1024 * 1024 + 1), JSON.stringify({ version: 1, at: now + 1, rows: [], overflow: false }),
-      JSON.stringify({ version: 1, at: now, overflow: false, rows: [{ branchId: 'app', probeHash: '', at: now, active: -1 }] })]) {
+    for (const body of ['{', 'x'.repeat(2 * 1024 * 1024 + 1), JSON.stringify({ version: 2, at: now + 1, rows: [], overflow: false }),
+      JSON.stringify({ version: 2, at: now, overflow: false, rows: [{ branchId: 'app', at: now, active: -1 }] })]) {
       await fs.writeFile(file, body); await reader.refresh(); expect(reader.activity('app')).toBeNull();
     }
   });

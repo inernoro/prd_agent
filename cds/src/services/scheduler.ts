@@ -35,6 +35,7 @@ export interface SchedulerSnapshot {
   hot: Array<{ slug: string; lastAccessedAt: string | undefined; pinned: boolean; activityObservation?: 'unavailable' | 'active' | 'quiet' }>;
   cold: Array<{ slug: string; lastAccessedAt: string | undefined }>;
   capacityUsage: { current: number; max: number };
+  automaticCooling?: 'paused-without-forwarder-handoff';
 }
 
 export type WakeFn = (slug: string) => Promise<void>;
@@ -293,12 +294,6 @@ export class SchedulerService {
       return;
     }
 
-    // 数据面观测缺失时不得用陈旧 LRU 驱逐，也不能据此超额唤醒。
-    if (this.activityProvider && this.config.maxHotBranches > 0
-      && this.getHotBranches().filter(b => b.id !== slug).length >= this.config.maxHotBranches
-      && !this.selectLruVictim(slug)) {
-      throw new Error('热容量已满，当前分支受保护或访问观测尚未就绪。请等待容量释放后重试。');
-    }
     // Evict LRU if the new branch would push us over capacity.
     await this.evictLruIfOverCapacity(slug);
 
@@ -368,6 +363,8 @@ export class SchedulerService {
    * Returns null if there's nothing to evict.
    */
   selectLruVictim(excludeSlug?: string): BranchEntry | null {
+    // 异步快照不能证明读取后没有新请求；完整数据面交接前不自动抢占其他分支。
+    if (this.activityProvider) return null;
     const hotBranches = this.getHotBranches().filter(b => b.id !== excludeSlug && !this.isPinned(b) && !this.activityProtected(b));
     if (hotBranches.length === 0) return null;
 
@@ -394,6 +391,7 @@ export class SchedulerService {
     // +1 for the branch we're about to wake (if it's not already hot).
     if (hotCount + 1 <= max) return 0;
 
+    if (this.activityProvider) throw new Error('热容量已满，数据面尚无安全交接。请由负责人释放本分支资源或等待容量，不能自动驱逐其他任务。');
     const victim = this.selectLruVictim(excludeSlug);
     if (!victim) {
       console.warn(`[scheduler] capacity overrun: ${hotCount + 1} hot but no evictable branch (all pinned)`);
@@ -410,6 +408,8 @@ export class SchedulerService {
    */
   async tick(): Promise<void> {
     if (!this.isEnabled()) return;
+    // 访问回传只用于观测，不是停止许可；禁止在快照发布间隙中断新请求。
+    if (this.activityProvider) { this.refreshActivity(); return; }
 
     const now = this.clock.now();
     const idleTTLMs = (this.config.idleTTLSeconds || 900) * 1000;
@@ -483,6 +483,7 @@ export class SchedulerService {
 
     return {
       enabled: this.isEnabled(),
+      ...(this.activityProvider ? { automaticCooling: 'paused-without-forwarder-handoff' as const } : {}),
       config: this.config,
       hot,
       cold,

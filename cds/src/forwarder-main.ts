@@ -29,6 +29,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { configureSharedProbeMarker } from './services/probe-marker.js';
 import { ForwarderActivityWriter } from './services/forwarder-activity.js';
 import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute, stickyEntryMemberFor } from './forwarder/route-resolver.js';
@@ -60,6 +61,7 @@ const ROUTES_JSON_DEFAULT = path.resolve(
 );
 const ROUTES_JSON = process.env.CDS_FORWARDER_ROUTES_JSON ?? ROUTES_JSON_DEFAULT;
 const RELOAD_DEBOUNCE_MS = 200;
+await configureSharedProbeMarker(`${ROUTES_JSON}.probe-token`);
 const activity = new ForwarderActivityWriter(`${ROUTES_JSON}.activity.json`);
 const activityTimer = setInterval(() => { void activity.flush().catch(() => {}); }, 1000);
 activityTimer.unref();

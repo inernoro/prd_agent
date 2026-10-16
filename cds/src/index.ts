@@ -100,6 +100,7 @@ import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
 import { getCdsAiAccessKey } from './config/known-env-keys.js';
 import { createGracefulShutdownController } from './services/graceful-shutdown.js';
+import { configureSharedProbeMarker } from './services/probe-marker.js';
 import { ForwarderActivityReader } from './services/forwarder-activity.js';
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 import { PreviewCanaryService, type PreviewCanaryTarget } from './services/preview-canary.js';
@@ -2883,6 +2884,7 @@ let forwarderActivityTimer: NodeJS.Timeout | undefined;
 let startForwarderActivity = () => {};
 if (process.env.CDS_USE_FORWARDER === '1' && config.mode !== 'executor' && !isPreviewInstance()) {
   const routePath = process.env.CDS_FORWARDER_ROUTES_JSON || path.join(config.repoRoot, 'cds', '.cds', 'forwarder-routes.json');
+  await configureSharedProbeMarker(`${routePath}.probe-token`);
   const activityReader = new ForwarderActivityReader(`${routePath}.activity.json`);
   schedulerService.setActivityProvider(slug => activityReader.activity(slug));
   startForwarderActivity = () => {
@@ -3217,13 +3219,10 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
     let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
 
     try {
-      // Synchronous prefix (runs before the first await): flip to a loading
-      // state and persist, so the waiting page the proxy renders right after
-      // firing this callback shows live progress instead of the cooled
-      // dead-end. Kept INSIDE the try so a throwing save() (disk/Mongo failure)
-      // still hits the finally and completes the lease — otherwise the
-      // coordinator would keep an active op forever and reject all future
-      // deploy/restart/stop on this branch until process restart.
+      // 准入失败发生在状态变化和第一个容器命令前，保留原来的 idle/stopped。
+      await schedulerService.evictLruIfOverCapacity(slug);
+      lease?.assertCurrent('auto-wake after capacity admission');
+      // 准入通过后再持久化恢复中状态；异常仍由下面 finally 释放租约。
       const wakeStartedAt = new Date().toISOString();
       branch.status = 'restarting';
       branch.lastDeployStartedAt = wakeStartedAt;
@@ -3232,25 +3231,6 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
       }
       stateService.save();
 
-      // Enforce the scheduler's hot-pool budget the same way scheduler.wake()
-      // does — evict the LRU branch before bringing this one up. Otherwise
-      // opening several cooled preview URLs would markHot() them all past
-      // maxHotBranches until the next scheduler tick, blowing the configured
-      // hot-container budget. No-op when the scheduler is disabled or
-      // maxHotBranches is unset.
-      //
-      // Best-effort: eviction can throw when the chosen LRU victim has an active
-      // higher-priority operation (its cool path rethrows the lease rejection).
-      // That's unrelated to THIS branch — letting it fall into the catch below
-      // would poison the requested branch into `error` and stop future preview
-      // retries over a mere capacity hiccup. Swallow it; the next scheduler tick
-      // re-enforces capacity. (A superseding op on THIS branch still surfaces via
-      // the assertCurrent checks in the restart loop, not here.)
-      try {
-        await schedulerService.evictLruIfOverCapacity(slug);
-      } catch (evictErr) {
-        console.warn(`[auto-wake] capacity eviction skipped for "${slug}": ${(evictErr as Error).message}`);
-      }
 
       const profiles = stateService.getBuildProfilesForProject(branch.projectId);
       const failed: string[] = [];
