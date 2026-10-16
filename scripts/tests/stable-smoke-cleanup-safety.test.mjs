@@ -5,6 +5,90 @@ import test from 'node:test';
 import { readCleanupBlocker, writeCleanupBlocker, cleanupFailureFromAttachments, isCleanupReadOnlyJourney, readShortVideoCleanupCapability } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
 import { collectPlaywrightCases } from '../stable-smoke-results.mjs';
 import { runReportRiskRegression } from '../stable-smoke-run.mjs';
+import * as safety from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
+
+const referenceController = readFileSync(new URL('../../prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs', import.meta.url), 'utf8');
+const referenceContract = readFileSync(new URL('../../prd-api/src/PrdAgent.Core/Models/MultiImage/ImageReferenceContract.cs', import.meta.url), 'utf8');
+const referenceSource = (controller = referenceController, contract = referenceContract) => (_revision, path) => path.endsWith('/ImageMasterController.cs') ? controller : contract;
+const actualVisual = '1678c63d6eded9044275ae7e441b96d4ce5b1219';
+
+test('REG-stsmk-cleanup-circuit-001 VISCOUNT 实际旧版本不能把数量负例送入计费生成', async () => {
+  assert.equal(typeof safety.readImageReferenceRejectionCapability, 'function');
+  const result = await safety.readImageReferenceRejectionCapability({ getVersion: async () => versionResponse({ actualCommit: actualVisual, expectedCommit: actualVisual }) });
+  assert.equal(result.supported, false);
+  assert.equal(result.deploymentCommit, actualVisual);
+  assert.match(result.reason, /零创建.*未执行/);
+});
+
+test('REG-stsmk-cleanup-circuit-001 VISCOUNT 必须证明实际handler先拒绝及DTO与validator合同，改掉任一必红', async () => {
+  assert.equal(typeof safety.readImageReferenceRejectionCapability, 'function');
+  const check = (controller, contract) => safety.readImageReferenceRejectionCapability({ getVersion: async () => versionResponse(), readSource: referenceSource(controller, contract) });
+  assert.equal((await check(referenceController, referenceContract)).supported, true);
+  for (const [from, to] of [['ImageReferenceContract.ValidateDeclared(', 'ImageReferenceContract.Validate('],
+    ['if (!referenceValidation.IsValid)', 'if (referenceValidation.IsValid)'],
+    ['return BadRequest(ApiResponse<object>.Fail(\n                    referenceValidation.ErrorCode', 'return Ok(ApiResponse<object>.Fail(\n                    referenceValidation.ErrorCode'],
+    ['public int? ExpectedImageRefCount { get; set; }', ''],
+    ['public int? ExpectedImageRefCount { get; set; }', 'public int? ExpectedImageRefCount { get; set; } = 0;'],
+    ['var referenceValidation =', 'await _db.ImageGenRuns.InsertOneAsync(run, cancellationToken: ct);\n            var referenceValidation ='],
+    ['var referenceValidation =', 'await UpsertWorkspaceCanvasPlaceholderAsync();\n            var referenceValidation ='],
+    ['var referenceValidation =', 'await queue.EnqueueAsync(run);\n            var referenceValidation =']]) {
+    assert.ok(referenceController.includes(from), from);
+    assert.equal((await check(referenceController.replace(from, to), referenceContract)).supported, false, from);
+  }
+  assert.equal((await check(referenceController.replace(/var submittedImageRefCount =[^]*?: string\.IsNullOrWhiteSpace\(initSha\) \? 0 : 1;/, 'var submittedImageRefCount = 1;'), referenceContract)).supported, false, '错误的收到数量计算不能放行');
+  const begin = referenceController.indexOf('            var referenceValidation =');
+  const end = referenceController.indexOf('            // 关键：', begin);
+  const guard = referenceController.slice(begin, end);
+  assert.ok(begin > 0 && end > begin);
+  for (const replacement of [`/*${guard}*/`, `if (false) { ${guard} }`]) {
+    assert.equal((await check(referenceController.slice(0, begin) + replacement + referenceController.slice(end), referenceContract)).supported, false, '注释或不可达嵌套声明不能充当安全证据');
+  }
+  for (const [from, to] of [['"IMAGE_REF_COUNT_REQUIRED"', '"OTHER_REQUIRED"'], ['"IMAGE_REF_INCOMPLETE"', '"OTHER_INCOMPLETE"'],
+    ['new ImageReferenceValidation(false, RequiredCountCode', 'new ImageReferenceValidation(true, RequiredCountCode'],
+    ['return effectiveExpected == submittedCount', 'return effectiveExpected != submittedCount']]) {
+    assert.ok(referenceContract.includes(from));
+    assert.equal((await check(referenceController, referenceContract.replace(from, to))).supported, false, from);
+  }
+});
+
+test('REG-stsmk-cleanup-circuit-001 VISCOUNT 公共版本未知/HTTP失败/源码不可核或核对中漂移均failclosed', async () => {
+  assert.equal(typeof safety.readImageReferenceRejectionCapability, 'function');
+  let reads = 0;
+  for (const value of [{ actualCommit: '' }, { actualCommit: 'not-a-commit' }, { expectedCommit: '2'.repeat(40) }, { commitMatch: 'mismatch' }]) {
+    const result = await safety.readImageReferenceRejectionCapability({ getVersion: async () => versionResponse(value), readSource: () => { reads++;return ''; } });
+    assert.equal(result.supported, false);
+  }
+  assert.equal(reads, 0);
+  for (const getVersion of [async () => ({ ok: () => false }), async () => { throw Error('transport'); }]) {
+    assert.equal((await safety.readImageReferenceRejectionCapability({ getVersion })).supported, false);
+  }
+  assert.equal((await safety.readImageReferenceRejectionCapability({ getVersion: async () => versionResponse(), readSource: () => { throw Error('source unavailable'); } })).supported, false);
+  let versions = 0;
+  const result = await safety.readImageReferenceRejectionCapability({ getVersion: async () => versionResponse(++versions === 1 ? {} : { actualCommit: '2'.repeat(40), expectedCommit: '2'.repeat(40) }), readSource: referenceSource() });
+  assert.equal(versions, 2);assert.equal(result.supported, false);assert.match(result.reason, /漂移/);
+});
+
+test('REG-stsmk-cleanup-circuit-001 VISCOUNT 执行原VIS011前缀和真实准入函数，未证明能力时零登录零创建', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const begin = source.indexOf("  test('[VIS-011][REG-image-reference-count-001]");
+  const body = source.slice(begin, source.indexOf('\n  test(', begin + 1));
+  const callPrefix = body.slice(body.indexOf('=> {') + 4, body.indexOf('    try {'));
+  let logins = 0, creates = 0, attached;
+  const requireStart = source.indexOf('async function requireImageReferenceRejectionCapability(');
+  assert.ok(requireStart >= 0);
+  const requireText = source.slice(requireStart, source.indexOf('\nasync function requireShortVideoCleanupCapability(', requireStart)).replace(': APIRequestContext', '').replace(': TestInfo', '');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const guard = new Function('readImageReferenceRejectionCapability', 'Buffer', 'test', `return (${requireText});`)(
+    options => safety.readImageReferenceRejectionCapability({ ...options, readSource: () => '' }), Buffer,
+    { skip: (blocked, reason) => { if (blocked) { assert.match(reason, /零创建/);throw Error('reference-safety-skip'); } } },
+  );
+  const runPrefix = new AsyncFunction('page', 'request', 'testInfo', 'requireImageReferenceRejectionCapability', 'loginAndReadToken', 'createVisualWorkspace', callPrefix);
+  await assert.rejects(() => runPrefix({}, { get: async path => { assert.equal(path, '/api/version');return versionResponse(); } },
+    { attach: async (name, value) => { attached = { name, data: JSON.parse(value.body) }; } }, guard,
+    async () => { logins++;throw Error('unexpected-login'); }, async () => { creates++;return { workspace: {} }; }), /reference-safety-skip/);
+  assert.equal(logins, 0);assert.equal(creates, 0);assert.equal(attached.name, 'image-reference-rejection-preflight');assert.equal(attached.data.supported, false);
+  for (const predicate of ['expect(missing.status()).toBe(400)', 'expect(incomplete.status()).toBe(400)', "toBe('IMAGE_REF_COUNT_REQUIRED')", "toBe('IMAGE_REF_INCOMPLETE')", 'expect(missingBody.success).toBe(false)', 'expect(incompleteBody.success).toBe(false)']) assert.ok(body.includes(predicate), predicate);
+});
 
 const root = '/tmp/prd-agent-stable-smoke';
 mkdirSync(root, { recursive: true });

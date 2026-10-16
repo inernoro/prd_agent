@@ -1,4 +1,5 @@
 export const sharedCleanupSafetyPath: string;
+export function readImageReferenceRejectionCapability(options: { getVersion: () => Promise<{ ok(): boolean; json(): Promise<{ actualCommit?: string; expectedCommit?: string; commitMatch?: string }> }>; readSource?: (revision: string, path: string) => string }): Promise<{ supported: boolean; reason: string; deploymentCommit?: string; controllerSha256?: string; validatorSha256?: string }>;
 export function readShortVideoCleanupCapability(options: { getVersion: () => Promise<{ ok(): boolean; json(): Promise<{ actualCommit?: string; expectedCommit?: string; commitMatch?: string }> }>; readControllerSource?: (revision: string) => string }): Promise<{ supported: boolean; reason: string; deploymentCommit?: string; controllerSha256?: string }>;
 export function readCleanupBlocker(options: { outputDirectory: string; environment: string; sharedPath?: string }): { reason: string; resourceIds: string[] } | undefined;
 export function isCleanupReadOnlyJourney(title: string): boolean;

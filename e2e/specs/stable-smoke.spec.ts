@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
-import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability } from '../utils/stableSmokeCleanupSafety.mjs';
+import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability, readImageReferenceRejectionCapability } from '../utils/stableSmokeCleanupSafety.mjs';
 import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan } from '../utils/stableSmokeRecording.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
@@ -37,6 +37,11 @@ type BusinessCatalog = {
 };
 
 const specDir = dirname(fileURLToPath(import.meta.url));
+async function requireImageReferenceRejectionCapability(request: APIRequestContext, testInfo: TestInfo) {
+  const capability = await readImageReferenceRejectionCapability({ getVersion: () => request.get('/api/version') });
+  await testInfo.attach('image-reference-rejection-preflight', { body: Buffer.from(JSON.stringify(capability)), contentType: 'application/json' });
+  test.skip(!capability.supported, capability.reason);
+}
 async function requireShortVideoCleanupCapability(request: APIRequestContext, testInfo: TestInfo) {
   const capability = await readShortVideoCleanupCapability({ getVersion: () => request.get('/api/version') });
   await testInfo.attach('short-video-cleanup-preflight', { body: Buffer.from(JSON.stringify(capability)), contentType: 'application/json' });
@@ -6384,7 +6389,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIS-011][REG-image-reference-count-001] 参考图数量缺失或不一致时在调用上游前拒绝', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[VIS-011][REG-image-reference-count-001] 参考图数量缺失或不一致时在调用上游前拒绝', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    await requireImageReferenceRejectionCapability(request, testInfo);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'reference-count-contract');
     try {
