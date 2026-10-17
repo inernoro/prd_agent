@@ -78,6 +78,14 @@ function directory(directory: string): void {
 /** 对路径、内容和权限一起校验；不跟随链接、不读取设备、拒绝多硬链接文件。 */
 export function platformBundleDigest(root: string): string {
   directory(root);
+  // 运行包和现有安装目录不是同一契约。禁止把 .cds、.env、业务数据或 checkout
+  // 一起交给换盘事务，即使调用方为它们计算了正确的校验和也不能放行。
+  const allowed = new Set(['dist', 'web', 'node_modules', 'package.json', 'pnpm-lock.yaml', 'build-info.json']);
+  directory(path.join(root, 'web'));
+  if (fs.readdirSync(root).some(name => !allowed.has(name))
+    || fs.readdirSync(path.join(root, 'web')).some(name => name !== 'dist')) {
+    throw new Error('运行包只能包含编译产物和运行依赖，不允许状态、凭据或业务目录');
+  }
   const files: Array<[string, number, string]> = [['/', fs.statSync(root).mode & 0o777, '']];
   const walk = (relative: string) => {
     for (const name of fs.readdirSync(path.join(root, relative)).sort()) {

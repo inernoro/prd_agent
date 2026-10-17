@@ -82,13 +82,16 @@ describe('外部维护控制器的持久发布事务', () => {
     expect(receipts()).toHaveLength(1); expect(fs.existsSync(path.join(plan.root, '.release-lock'))).toBe(false);
     expect(result.events.map(event => event.phase)).toEqual(['prepared', 'draining', 'stopping', 'switching', 'starting', 'verifying', 'committed']);
   });
-  it.each(['candidate', 'baseline', 'identity', 'missing-entry', 'symlink'] as const)
+  it.each(['candidate', 'baseline', 'identity', 'missing-entry', 'symlink', 'runtime-state', 'credentials', 'web-source'] as const)
   ('%s 不合格时不取得屏障、不发停止信号', async failure => {
     if (failure === 'candidate') fs.appendFileSync(path.join(plan.candidateDirectory, 'dist/index.js'), '\n// tampered');
     if (failure === 'baseline') fs.appendFileSync(path.join(current(), 'dist/index.js'), '\n// tampered');
     if (failure === 'identity') runtime.pid++;
     if (failure === 'missing-entry') fs.unlinkSync(path.join(plan.candidateDirectory, 'web/dist/index.html'));
-    if (failure === 'symlink') fs.symlinkSync('/etc/passwd', path.join(plan.candidateDirectory, 'outside'));
+    if (failure === 'symlink') fs.symlinkSync('/etc/passwd', path.join(plan.candidateDirectory, 'dist/outside'));
+    if (failure === 'runtime-state') fs.mkdirSync(path.join(plan.candidateDirectory, '.cds'));
+    if (failure === 'credentials') fs.writeFileSync(path.join(plan.candidateDirectory, '.env'), 'FIXTURE_ONLY=1');
+    if (failure === 'web-source') fs.mkdirSync(path.join(plan.candidateDirectory, 'web/src'));
     await expect(executePlatformRelease(plan, host)).rejects.toThrow();
     expect(host.acquire).not.toHaveBeenCalled(); expect(host.stopOwned).not.toHaveBeenCalled();
   });
