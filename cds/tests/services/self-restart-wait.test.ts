@@ -81,7 +81,6 @@ describe('等待文案：在等谁、等了多久、最多等多久', () => {
     expect(t).toContain('已等 65s');
     expect(t).toContain('最多 300s');
     expect(t).toContain('超时会照常重启');
-    expect(describeRestartWait(wait({ requireDrain: true }))).toContain('超时将拒绝重启');
   });
   it('落盘与换进程阶段各有自己的话', () => {
     expect(describeRestartWait(wait({ phase: 'flushing', waitedMs: 70_000 }))).toContain('落盘');

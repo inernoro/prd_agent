@@ -680,21 +680,9 @@ describe('human project grants through the production server', () => {
 
   it('masks member diagnostics, operation history and embedded service logs while retaining owner and stored output', async () => {
     const branch = state.getBranch('branch-project-a')!;
-    const startedAt = '2026-10-16T09:14:00.000Z';
-    const containerId = 'a'.repeat(64);
-    const runs = new DeploymentRunService(state, { now: () => new Date(startedAt) });
-    const run = await runs.begin({ projectId: 'project-a', branchId: branch.id, trigger: 'manual' });
-    branch.lastDeploymentRunId = run.id;
     branch.status = 'error';
     branch.services['profile-project-a'] = { profileId: 'profile-project-a', containerName: 'fake-container',
-      containerId, hostPort: 13000, status: 'error', buildLog: 'TOKEN=fake-service-log-secret' };
-    vi.spyOn(shell, 'exec').mockImplementation(async command => {
-      if (command.startsWith('docker inspect')) return { stdout: JSON.stringify({ id: containerId,
-        startedAt, project: 'project-a', branch: branch.id, profile: 'profile-project-a' }), stderr: '', exitCode: 0 };
-      if (command.startsWith('docker logs')) return {
-        stdout: `${startedAt} PASSWORD=fake-diagnostic-secret\n`, stderr: '', exitCode: 0 };
-      return { stdout: '', stderr: '', exitCode: 0 };
-    });
+      hostPort: 13000, status: 'error', buildLog: 'TOKEN=fake-service-log-secret' };
     state.appendLog(branch.id, { type: 'build', startedAt: new Date().toISOString(), status: 'error',
       events: [{ step: 'build', status: 'error', log: 'API_TOKEN=fake-operation-secret',
         detail: { env: { API_TOKEN: 'fake-structured-log-secret' }, command: 'redis-server --requirepass fake-log-command-secret' },

@@ -6,7 +6,7 @@ import { ProjectAdmissionOrder } from './project-admission-order.js';
 import { buildLoadPressure, type BuildLoadPressure } from './build-gate.js';
 import { HOST_LOAD_SATURATED_RATIO } from './control-plane-pressure.js';
 
-let memorySample = { mb: os.freemem() / 1048576, at: Date.now(), source: 'os-freemem' as 'os-freemem' | 'linux-memavailable' };
+let memorySample = { mb: os.freemem() / 1048576, at: Date.now() };
 let memoryRead: Promise<void> | undefined;
 let daemonMemory: { usedMB: number; pids?: number; at: number; maxAgeMs: number } | undefined;
 export function setDeploymentPhaseHostUsage(usedMB: number, at: number, maxAgeMs: number, pids?: number): void {
@@ -35,12 +35,11 @@ function sampleHostMemoryMB(): number {
     memoryRead = readFile('/proc/meminfo', 'utf8').then(text => {
       const value = /(?:^|\n)MemAvailable:\s+(\d+) kB/.exec(text);
       if (!value) throw new Error('memory sample unavailable');
-      memorySample = { mb: Number(value[1]) / 1024, at: Date.now(), source: 'linux-memavailable' };
-    }).catch(() => { memorySample = { mb: os.freemem() / 1048576, at: Date.now(), source: 'os-freemem' }; })
+      memorySample = { mb: Number(value[1]) / 1024, at: Date.now() };
+    }).catch(() => { memorySample = { mb: os.freemem() / 1048576, at: Date.now() }; })
       .finally(() => { memoryRead = undefined; });
   }
-  if (process.platform !== 'linux') memorySample = { mb: os.freemem() / 1048576, at: Date.now(), source: 'os-freemem' };
-  const physical = process.platform === 'linux' && Date.now() - memorySample.at > 5000 ? 0 : memorySample.mb;
+  const physical = process.platform !== 'linux' ? os.freemem() / 1048576 : Date.now() - memorySample.at > 5000 ? 0 : memorySample.mb;
   const budget = deploymentHostMemoryBudgetMB();
   if (budget === null) return physical;
   if (!budget || !daemonMemory || Date.now() - daemonMemory.at > daemonMemory.maxAgeMs) return 0;
@@ -51,53 +50,9 @@ export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null
   memoryProvider = provider || sampleHostMemoryMB;
 }
 
-/** 复用门禁的实际采样；不读取凭据、不触发 Docker 盘点、不修改预约或预算。 */
-export function deploymentHostMemoryEvidence() {
-  const effective = memoryProvider();
-  const now = Date.now();
-  const linux = process.platform === 'linux';
-  const budgetMB = deploymentHostMemoryBudgetMB();
-  const sampleAgeMs = linux ? now - memorySample.at : 0;
-  const daemonAgeMs = daemonMemory ? now - daemonMemory.at : null;
-  return {
-    sampledAt: new Date(linux ? memorySample.at : now).toISOString(),
-    source: linux ? memorySample.source : 'os-freemem',
-    physicalAvailableMB: memorySample.mb,
-    sampleAgeMs, sampleMaxAgeMs: linux ? 5000 : null,
-    sampleFresh: !linux || sampleAgeMs <= 5000,
-    sampleReadPending: Boolean(memoryRead),
-    configuredBudgetMB: budgetMB,
-    budgetState: budgetMB === null ? 'unconfigured' : budgetMB === 0 ? 'invalid' : 'configured',
-    daemonUsedMB: daemonMemory?.usedMB ?? null,
-    daemonSampleAgeMs: daemonAgeMs,
-    daemonSampleMaxAgeMs: daemonMemory?.maxAgeMs ?? null,
-    daemonSampleFresh: Boolean(daemonMemory && daemonAgeMs! <= daemonMemory.maxAgeMs),
-    effectiveAvailableMB: Number.isFinite(effective) ? effective : null,
-    providerOverride: memoryProvider !== sampleHostMemoryMB,
-  };
-}
-
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
 export const DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS = 20 * 60_000;
 export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null; operationGeneration?: number }
-export type DeploymentPhaseWaitReason = 'memory-headroom' | 'pid-headroom' | 'cpu-startup-capacity' | 'phase-capacity' | 'admission-deadline';
-export interface DeploymentPhaseTimeoutDetails {
-  phase: DeploymentPhase; reason: DeploymentPhaseWaitReason; waitedMs: number; active: number; limit: number;
-  requestedMemoryMB: number; reservedMemoryMB: number; availableMemoryMB: number | null;
-  requestedPids: number; reservedPids: number; availablePids: number | null;
-}
-const PHASE_LABELS: Record<DeploymentPhase, string> = { pull: '镜像拉取', start: '容器启动', ready: '就绪探测', cleanup: '容器清理', terminal: '终止清理' };
-const WAIT_REASON_LABELS: Record<DeploymentPhaseWaitReason, string> = {
-  'memory-headroom': '内存余量不足', 'pid-headroom': '进程余量不足', 'cpu-startup-capacity': '启动期并发已满',
-  'phase-capacity': '阶段并发已满', 'admission-deadline': '已超过准入等待期限',
-};
-export class DeploymentPhaseTimeoutError extends Error {
-  readonly code = 'deployment.phase-wait-timeout';
-  constructor(readonly diagnostics: DeploymentPhaseTimeoutDetails) {
-    super(`部署阶段等待超时：${PHASE_LABELS[diagnostics.phase]}，${WAIT_REASON_LABELS[diagnostics.reason]}；未获得阶段准入。请查看阶段准入事件后处理。`);
-    this.name = 'DeploymentPhaseTimeoutError';
-  }
-}
 interface Request {
   owner: DeploymentPhaseOwner; check?: () => void; signal?: AbortSignal;
   resolve: (release: () => void) => void; reject: (error: Error) => void;
@@ -124,8 +79,9 @@ export class DeploymentPhaseBudget {
     return Object.fromEntries((['pull', 'start', 'ready', 'cleanup', 'terminal'] as const).map(phase => [phase, {
       limit: this.limits[phase], active: [...(this.active.get(phase) || [])].map(request => ({ ...request.owner, memoryMB: request.memoryMB })),
       queued: (this.waiting.get(phase) || []).map(request => ({ ...request.owner, enqueuedAt: request.enqueuedAt,
-        reason: this.waitReason(phase, request),
-        ...(phase === 'start' ? { memoryAdmission: this.memoryDecision(request.memoryMB, request.reservationKey) } : {}) })),
+        reason: phase === 'start' && !this.memoryAllows(request.memoryMB, request.reservationKey) ? 'memory-headroom'
+          : phase === 'start' && !this.pidsAllow(request) ? 'pid-headroom'
+          : phase === 'start' && !this.cpuAllows(request) ? 'cpu-startup-capacity' : 'phase-capacity' })),
     }]));
   }
 
@@ -177,17 +133,12 @@ export class DeploymentPhaseBudget {
     }
     return { released, retained };
   }
-  private memoryDecision(memoryMB: number, key?: string) {
+  private memoryAllows(memoryMB: number, key?: string): boolean {
     const available = this.availableMemoryMB();
     const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
       + [...(this.active.get('start') || [])].filter(request => !request.reservationKey).reduce((sum, request) => sum + request.memoryMB, 0);
-    const required = this.headroomMB + reserved + memoryMB;
-    return { availableMemoryMB: Number.isFinite(available) ? available : null,
-      headroomMB: this.headroomMB, reservedMemoryMB: reserved, requestedMemoryMB: memoryMB,
-      requiredMemoryMB: required, deficitMemoryMB: Number.isFinite(available) ? Math.max(0, required - available) : null,
-      allowed: Number.isFinite(available) && available >= required };
+    return Number.isFinite(available) && available >= this.headroomMB + reserved + memoryMB;
   }
-  private memoryAllows(memoryMB: number, key?: string): boolean { return this.memoryDecision(memoryMB, key).allowed; }
   private pidsAllow(request: Request): boolean {
     const reserved = [...this.memoryReservations].reduce((sum, [key, value]) => sum + (key === request.reservationKey ? 0 : value.pids), 0)
       + [...(this.active.get('start') || [])].filter(item => !item.reservationKey).reduce((sum, item) => sum + item.pids, 0);
@@ -206,35 +157,13 @@ export class DeploymentPhaseBudget {
     return warming < limit;
   }
 
-  private waitReason(phase: DeploymentPhase, request: Request): DeploymentPhaseWaitReason {
-    if (phase === 'start') {
-      if (!this.memoryAllows(request.memoryMB, request.reservationKey)) return 'memory-headroom';
-      if (!this.pidsAllow(request)) return 'pid-headroom';
-      if (!this.cpuAllows(request)) return 'cpu-startup-capacity';
-    }
-    return (this.active.get(phase)?.size || 0) >= this.limits[phase] ? 'phase-capacity' : 'admission-deadline';
-  }
-
-  private timeoutDetails(phase: DeploymentPhase, request: Request): DeploymentPhaseTimeoutDetails {
-    const reservations = [...this.memoryReservations].filter(([key]) => key !== request.reservationKey).map(([, value]) => value);
-    const anonymous = [...(this.active.get('start') || [])].filter(item => !item.reservationKey);
-    const finite = (value: number) => Number.isFinite(value) ? value : null;
-    // 只记录汇总与本请求配额，不把其他项目、容器或环境变量泄露给失败请求。
-    return { phase, reason: this.waitReason(phase, request), waitedMs: Date.now() - request.enqueuedAt,
-      active: this.active.get(phase)?.size || 0, limit: this.limits[phase], requestedMemoryMB: request.memoryMB,
-      reservedMemoryMB: [...reservations, ...anonymous].reduce((sum, value) => sum + value.memoryMB, 0),
-      availableMemoryMB: phase === 'start' ? finite(this.availableMemoryMB()) : null,
-      requestedPids: request.pids, reservedPids: [...reservations, ...anonymous].reduce((sum, value) => sum + value.pids, 0),
-      availablePids: phase === 'start' ? finite(this.availablePids()) : null };
-  }
-
   acquire(phase: DeploymentPhase, owner: DeploymentPhaseOwner, options: {
     check?: () => void; signal?: AbortSignal; memoryMB?: number; reservationKey?: string; pids?: number;
   } = {}): Promise<() => void> {
     try { options.check?.(); } catch (error) { return Promise.reject(error); }
     if (options.signal?.aborted) return Promise.reject(new Error('部署阶段等待已取消'));
     const waiting = this.waiting.get(phase) || [];
-    if (waiting.length >= 64) return Promise.reject(new Error('部署阶段等待已满，未获得阶段准入；请稍后重试并核对现有服务状态'));
+    if (waiting.length >= 64) return Promise.reject(new Error('部署阶段等待已满，请稍后重试；旧服务保持可用'));
     this.waiting.set(phase, waiting);
     return new Promise((resolve, reject) => {
       const request: Request = { owner, check: options.check, signal: options.signal, resolve, reject,
@@ -259,7 +188,7 @@ export class DeploymentPhaseBudget {
       for (let index = queue.length - 1; index >= 0; index--) {
         const request = queue[index];
         try { request.check?.(); if (request.signal?.aborted) throw new Error('部署阶段等待已取消');
-          if (Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new DeploymentPhaseTimeoutError(this.timeoutDetails(phase, request));
+          if (Date.now() - request.enqueuedAt > DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new Error('部署阶段等待超时，旧服务保持可用');
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
       while (active.size < this.limits[phase] && queue.length) {
@@ -296,15 +225,7 @@ export function restoreDeploymentMemoryReservations(branches: readonly BranchEnt
   for (const branch of branches) {
     const hints = new Map(profiles(branch).map(profile => [profile.id, profile.resources?.memoryMB || 512]));
     for (const service of Object.values(branch.services)) for (const runtime of serviceRuntimeRefs(service)) {
-      // 失败替换仍可保留已经发布的旧版本；它和普通 running 服务一样，
-      // 没有待兑现的启动承诺。不能因父服务 error 再恢复一份启动预约。
-      // 这里只分类持久身份，不以异步内存采样抵扣，也不释放本进程任何预约。
-      const published = service.status === 'error' && runtime.containerId
-        && /^[a-f0-9]{64}$/.test(runtime.containerId)
-        && service.servingRuntime?.containerName === runtime.containerName
-        && service.servingRuntime.containerId === runtime.containerId
-        && service.pendingRuntime?.containerName !== runtime.containerName;
-      const incomplete = !published && runtime.creationIssued && (runtime === service ? service.status !== 'running'
+      const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
       if (incomplete) deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, hints.get(service.profileId) || 512,
         { projectId: branch.projectId, branchId: branch.id, profileId: service.profileId }, 64, true);

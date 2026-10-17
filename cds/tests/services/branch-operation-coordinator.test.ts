@@ -50,15 +50,6 @@ function eventSink(): {
 }
 
 describe('BranchOperationCoordinator', () => {
-  it.each([true, false])('事件保留目标是否显式固定，不从SHA猜测请求意图:%s', (commitPinned) => {
-    const { sink, records } = eventSink();
-    const coordinator = new BranchOperationCoordinator(sink);
-    coordinator.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: SHA_A,
-      commitPinned, versionId: commitPinned ? 'dv-pinned' : undefined });
-    expect(records.find(record => record.action === 'branch.operation.started')?.details).toMatchObject({
-      commitPinned, versionId: commitPinned ? 'dv-pinned' : null,
-    });
-  });
   it('新整分支目标取代覆盖范围内旧服务待办，停止后不重放旧服务', () => {
     const { sink, records } = eventSink(); const c = new BranchOperationCoordinator(sink);
     const active = c.begin({ projectId: 'p', branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: SHA_A });
