@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { MaintenanceWorkGroup, type ReleaseParticipant } from './platform-release-barrier.js';
 import type { StateService } from './state.js';
 import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleasePreflightCheck, ReleasePreflightRecord, ReleaseRun, ReleaseRunProgress, ReleaseRunStatus, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
@@ -380,6 +381,9 @@ interface ReleaseExecutionHandle {
 }
 
 export class ReleaseService {
+  private readonly releaseWork = new MaintenanceWorkGroup();
+
+  releaseParticipant(): ReleaseParticipant { return this.releaseWork; }
   private readonly now: () => Date;
   private readonly execTimeoutMs: number;
   private readonly heartbeatIntervalMs: number;
@@ -492,6 +496,10 @@ export class ReleaseService {
   }
 
   async preflight(input: ReleaseStartInput): Promise<ReleasePreflightResult> {
+    return this.releaseWork.run('preflight', () => this.preflightAdmitted(input));
+  }
+
+  private async preflightAdmitted(input: ReleaseStartInput): Promise<ReleasePreflightResult> {
     const checks: ReleasePreflightCheck[] = [];
     const push = (check: ReleasePreflightCheck): void => { checks.push(check); };
     const branch = this.stateService.getBranch(input.branchId);
@@ -853,6 +861,10 @@ export class ReleaseService {
   }
 
   async startRelease(input: ReleaseStartInput): Promise<ReleaseRun> {
+    return this.releaseWork.run('start-release', () => this.startReleaseAdmitted(input));
+  }
+
+  private async startReleaseAdmitted(input: ReleaseStartInput): Promise<ReleaseRun> {
     const preflight = await this.resolvePreflight(input);
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
       throw new Error(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
@@ -918,6 +930,10 @@ export class ReleaseService {
   }
 
   async startRollback(releaseId: string, operator?: string, targetReleaseId?: string): Promise<ReleaseRun> {
+    return this.releaseWork.run('start-rollback', () => this.startRollbackAdmitted(releaseId, operator, targetReleaseId));
+  }
+
+  private async startRollbackAdmitted(releaseId: string, operator?: string, targetReleaseId?: string): Promise<ReleaseRun> {
     const current = this.stateService.getReleaseRun(releaseId);
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     const target = this.stateService.getReleaseTarget(current.targetId);
@@ -1118,12 +1134,20 @@ export class ReleaseService {
    * 输出过一遍脱敏（与发布日志同一判据），杜绝 docker 输出里带出凭据。
    */
   async diskDiagnosis(target: ReleaseTarget): Promise<string> {
+    return this.releaseWork.run('disk-diagnosis', () => this.diskDiagnosisAdmitted(target));
+  }
+
+  private async diskDiagnosisAdmitted(target: ReleaseTarget): Promise<string> {
     if (target.type !== 'ssh' || !target.ssh) throw new Error('MVP 只支持站点发布目标的磁盘诊断');
     const output = await this.sshExec(target, buildDiskDiagnosisCommand(target.ssh.appPath));
     return maskSshExecSecrets(output);
   }
 
   async readRemoteReleaseState(target: ReleaseTarget): Promise<ReleaseRemoteStateResult> {
+    return this.releaseWork.run('remote-state', () => this.readRemoteReleaseStateAdmitted(target));
+  }
+
+  private async readRemoteReleaseStateAdmitted(target: ReleaseTarget): Promise<ReleaseRemoteStateResult> {
     const strategy = effectiveReleaseStrategy(target);
     const mode = strategy.mode;
     const runs = this.stateService.getReleaseRuns({ targetId: target.id });
@@ -1167,6 +1191,13 @@ export class ReleaseService {
   async reclaimRemoteReleaseArtifacts(
     target: ReleaseTarget,
     options: { maxRemovals?: number; dryRun?: boolean } = {},
+  ): Promise<ReleaseArtifactReclaimResult> {
+    return this.releaseWork.run('artifact-reclaim', () => this.reclaimRemoteReleaseArtifactsAdmitted(target, options));
+  }
+
+  private async reclaimRemoteReleaseArtifactsAdmitted(
+    target: ReleaseTarget,
+    options: { maxRemovals?: number; dryRun?: boolean },
   ): Promise<ReleaseArtifactReclaimResult> {
     // 锁必须在**盘点之前**拿、在删除之后才放：盘点与删除之间的那段窗口正是
     // 「检查通过了、发布随后启动、删除才真正执行」的事故形状（Codex P2）。
@@ -1375,6 +1406,10 @@ export class ReleaseService {
     fn: () => Promise<void>,
     failStatus: ReleaseRunStatus,
   ): Promise<void> {
+    return this.releaseWork.run('release-execution', () => this.executeAdmitted(releaseId, fn, failStatus));
+  }
+
+  private executeAdmitted(releaseId: string, fn: () => Promise<void>, failStatus: ReleaseRunStatus): Promise<void> {
     const handle: ReleaseExecutionHandle = { controller: new AbortController() };
     this.inFlight.set(releaseId, handle);
     return fn()
