@@ -1,6 +1,7 @@
+import { collectFailureLogEvidence, type FailureLogEvidence } from '../services/failure-diagnosis-evidence.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
-import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
+import { deploymentPhaseBudget, deploymentHostMemoryEvidence } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
 import { serveContainerLogStream } from '../services/container-log-stream-response.js';
 import { projectResourceNamespace } from '../services/preview-slug.js';
@@ -32,7 +33,7 @@ import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
 import { isCommitShaLike } from '../services/release-commit-clock.js';
 import {
-  drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
+  drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns, isRunInFlight,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
@@ -2439,11 +2440,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   const RESTART_GATE_RELEASE_MS = 15_000;
 
+  function refuseUnsafeRestart(message: string): never {
+    endSelfUpdateDrain();
+    setRestartWait(null);
+    throw new Error(`安全排空未完成，已拒绝重启：${message}`);
+  }
+
   async function drainDeploysBeforeSelfUpdateRestart(context: {
     trigger: string;
     branch?: string;
     toSha?: string;
     source: string;
+    requireDrain?: boolean;
     /** 每 10 秒一条进度，给 SSE 用：客户端的读超时不会因为「没动静」而断掉。 */
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
   }): Promise<void> {
@@ -2451,7 +2459,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 的 0 吞掉换成 5 分钟——文档明写「设 0 关闭」，实际却照等不误，还顺带把部署闸
     // 关满五分钟。只有「没设 / 设了非数字」才落默认值。
     const rawDrainTimeout = Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS ?? '', 10);
-    const timeoutMs = Number.isFinite(rawDrainTimeout) ? Math.max(0, rawDrainTimeout) : 5 * 60_000;
+    const configuredTimeoutMs = Number.isFinite(rawDrainTimeout) ? Math.max(0, rawDrainTimeout) : 5 * 60_000;
+    // 显式安全排空不能被全局的“0 = 跳过等待”静默降级。
+    const timeoutMs = context.requireDrain ? Math.max(1, configuredTimeoutMs) : configuredTimeoutMs;
     // 先关闸再开始等（顺序要紧）：等待期间与「等完到进程退出」之间到达的新部署
     // 若还能建 run，重启照样把它腰斩，排空只是把窗口从几分钟压到几秒。闸门自带
     // 过期时间，重启万一没发生也会自动开，不会把部署永久锁死。
@@ -2480,6 +2490,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           waitedMs,
           timeoutMs,
           pendingRuns: pending.map((r) => r.id),
+          requireDrain: context.requireDrain,
         };
         setRestartWait(state);
         if (waitedMs - lastProgressAt >= 10_000) {
@@ -2491,6 +2502,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       },
     });
+    if (context.requireDrain && !outcome.drained) refuseUnsafeRestart(`仍有 ${outcome.remaining.length} 个部署或发布未结束`);
     setRestartWait({ source: context.source, phase: 'flushing', since: drainSince, waitedMs: Date.now() - drainSince, timeoutMs, pendingRuns: [] });
     if (outcome.skipped) {
       context.onProgress?.('done', '没有在途部署，不用等，直接重启');
@@ -2521,6 +2533,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     toSha?: string;
     actor?: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
+    requireDrain?: boolean;
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
   }): Promise<void> {
     // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
@@ -2528,6 +2541,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     await drainDeploysBeforeSelfUpdateRestart({
       trigger: context.trigger, branch: context.branch, toSha: context.toSha,
       source: context.source, onProgress: context.onProgress,
+      requireDrain: context.requireDrain,
     });
     const result = await waitForFlushWithTimeout(
       () => stateService.flush(),
@@ -2547,6 +2561,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
       },
     );
+
+    if (context.requireDrain) {
+      if (result !== 'flushed') refuseUnsafeRestart(result === 'timeout' ? '状态落盘超时' : '状态落盘失败');
+      // 心跳过期不是物理执行终结证明；最终复核不能按陈旧心跳忽略未终态记录。
+      const pending = collectDrainableRuns({ deploymentRuns: stateService.getDeploymentRuns() as unknown as DrainableRun[],
+        releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[] }).filter(isRunInFlight);
+      if (pending.length) refuseUnsafeRestart(`最终复核仍有 ${pending.length} 个未终态部署或发布`);
+      await waitForRestartSafeBranchOperationsForRoute(context.source, 0);
+    }
 
     if (result === 'timeout') {
       serverEventLogStore?.record({
@@ -3074,7 +3097,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       getBranch: id => stateService.getBranch(id), inspect: (pending, input, entry, assertCurrent) =>
         inspectArtifactInput(entry, input, pending.request.profileId, assertCurrent),
       onChecked: (pending, previous, result) => {
-        if (previous.state === result.state && previous.reason === result.reason
+        if (previous.state === result.state && previous.reason === result.reason && previous.stage === result.stage
           && previous.profileIds?.join(',') === result.profileIds?.join(',')) return;
         const run = deploymentRunService?.getForOperation(pending.operationId, pending.generation);
         if (!run || run.status !== 'queued') return;
@@ -3091,7 +3114,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         deploymentRunService!.append(run.id, { phase, status: 'queued', level: 'info',
           message: result.state === 'ready' ? '全部必需产物核验通过，等待部署资格与执行槽'
             : messages[result.reason!] || '产物核验暂不可用，等待重试；旧服务继续保留',
-          detail: { reason: result.reason, profileIds: result.profileIds, targetCommitSha: result.targetCommitSha } });
+          detail: { reason: result.reason, stage: result.stage, profileIds: result.profileIds, targetCommitSha: result.targetCommitSha } });
       } });
     for (const pending of ready) dispatchPendingWebhookDeploy(pending);
   });
@@ -3460,13 +3483,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     timeoutMs: number,
     intervalMs = 1000,
   ) {
-    return waitForRestartSafeBranchOperations({
+    if (!branchOperationCoordinator) refuseUnsafeRestart('分支操作协调器不可用，无法确认执行已结束');
+    const result = await waitForRestartSafeBranchOperations({
       source,
       getActiveOperations: () => branchOperationCoordinator?.getActiveOperations() || [],
       serverEventLogStore,
       timeoutMs,
       intervalMs,
     });
+    if (!result.ok) refuseUnsafeRestart(`仍有 ${result.active.length} 个分支操作未结束`);
+    return result;
   }
 
   async function captureContainerLogSnapshots(
@@ -11931,10 +11957,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     // 错误模式归类:reg pattern → category + 中文 hint + 责任归属
-    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'build-failed' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown';
+    type Category = 'port-conflict' | 'oom' | 'missing-deps' | 'build-failed' | 'crashed' | 'health-timeout' | 'image-pull' | 'unknown'
+      | 'artifact-admission' | 'phase-admission' | 'container-missing' | 'normal-exit' | 'database-policy';
     type Side = 'code' | 'config' | 'cds' | 'unknown';
     const PATTERNS: Array<{ re: RegExp; category: Category; hint: string; side: Side }> = [
-      // 构建/编译失败优先级最高:这是最常见也最容易被误判成"未分类/CDS 侧"的根因。
+      // 准入失败是本轮直接错误，不能被旧容器正常退出或派生 exit1 覆盖。
+      { re: /CDS shared database policy failed:/, category: 'database-policy', side: 'config', hint: '共享数据库保护拒绝了本次启动 — 核对部署目标与保留的数据绑定；不要关闭保护或修改绑定来放行旧版本' },
+      { re: /本地产物的实际提交、平台或访问无法确认|产物准入/, category: 'artifact-admission', side: 'cds', hint: '本轮产物准入未通过 — 查看该运行的产物核验步骤；现有证据不能认定为应用代码崩溃' },
+      { re: /部署阶段等待(?:超时|已满)/, category: 'phase-admission', side: 'cds', hint: '本轮未取得部署阶段准入 — 查看该运行的阶段与资源证据；未核实旧服务是否仍可用' },
+      // 容器日志中构建/编译错误优先于退出码和就绪超时，保留具体失败证据。
       // 容器内 dotnet build / tsc 失败 → 进程没起来 → 就绪探测超时(症状),根因其实在编译错误。
       { re: /\berror\s+CS\d{3,5}\b/i, category: 'build-failed', hint: 'C# 编译失败 — 容器内 dotnet build 报错,进程无法启动。修复编译错误后重新部署', side: 'code' },
       { re: /\berror\s+TS\d{3,5}\b/i, category: 'build-failed', hint: 'TypeScript 编译失败 — 修复类型错误后重新部署', side: 'code' },
@@ -11955,17 +11986,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (p.re.test(text)) return { category: p.category, hint: p.hint, side: p.side };
       }
       // 兜底:exit code N → 进程异常退出
-      const exitMatch = text.match(/exit(\s+code|ed with code)?\s*[:=]?\s*(\d+)/i);
-      if (exitMatch) {
+      const exitMatches = [...text.matchAll(/exit(\s+code|ed with code)?\s*[:=]?\s*(\d+)\b/gi)];
+      const exitMatch = exitMatches.find(match => Number(match[2]) !== 0) || exitMatches[0];
+      if (exitMatch && Number(exitMatch[2]) !== 0) {
         return {
           category: 'crashed',
           hint: `进程异常退出 (exit code ${exitMatch[2]}) — 检查应用日志最后几行`,
           side: 'code',
         };
       }
+      if (exitMatch) return { category: 'normal-exit', hint: '日志记录退出码 0，不能据此判断应用崩溃；请核对本轮部署失败事件', side: 'unknown' };
       return { category: 'unknown', hint: '未识别的错误模式 — 查看完整日志诊断', side: 'unknown' };
     };
 
+    const recordedRun = branch.lastDeploymentRunId ? deploymentRunService?.get(branch.lastDeploymentRunId) : undefined;
+    const diagnosisRun = recordedRun?.branchId === branch.id && recordedRun.projectId === (branch.projectId || 'default') ? recordedRun : undefined;
+    const local = !branch.executorId || registry?.getAll().find(node => node.id === branch.executorId)?.role === 'embedded';
     const failedServices: Array<{
       profileId: string;
       containerName: string;
@@ -11974,19 +12010,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       errorCategory: Category;
       errorHint: string;
       responsibilitySide: Side;
+      logEvidence: FailureLogEvidence;
     }> = [];
     const services = branch.services || {};
     for (const [profileId, svc] of Object.entries(services)) {
       if (svc.status !== 'error') continue;
-      let tailLines: string[] = [];
-      try {
-        const raw = await containerService.getLogs(svc.containerName, 30);
-        tailLines = raw.split('\n').filter((l) => l.trim()).slice(-30);
-      } catch {
-        // 容器名不存在 / docker daemon 拉不到日志 — 静默降级,前端会显示空 array
-      }
+      const { tailLines, evidence } = await collectFailureLogEvidence(shell, { branch, profileId, service: svc, run: diagnosisRun, local: Boolean(local) });
       const blob = (svc.errorMessage || '') + '\n' + tailLines.join('\n');
       const cls = classify(blob);
+      if (cls.category === 'unknown' && evidence.status === 'missing') {
+        Object.assign(cls, { category: 'container-missing', hint: '当前登记的容器不存在 — 核对本轮创建和清理事件；不能据此归因为应用崩溃', side: 'unknown' });
+      } else if (cls.category === 'unknown' && evidence.status !== 'run-window') {
+        cls.hint = `${evidence.reason}；请查看本轮部署事件确认首个失败点`;
+      }
       failedServices.push({
         profileId,
         containerName: svc.containerName,
@@ -11995,18 +12031,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         errorCategory: cls.category,
         errorHint: cls.hint,
         responsibilitySide: cls.side,
+        logEvidence: evidence,
       });
     }
 
     res.json(logPayloadForHumanView(req, {
       branchId: branch.id,
       branchStatus: branch.status,
-      diagnosisSource: branch.lastDeploymentRunId && deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
+      diagnosisSource: diagnosisRun?.failure
         ? 'deployment-run'
         : 'legacy-container-pattern',
-      structuredFailure: branch.lastDeploymentRunId
-        ? deploymentRunService?.get(branch.lastDeploymentRunId)?.failure
-        : undefined,
+      structuredFailure: diagnosisRun?.failure,
       failedServices,
     }));
   });
@@ -13770,6 +13805,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reserveServiceReplacements({ entry, profileIds: profiles.map(profile => profile.id), state: stateService,
         portStart: config.portStart, operationId: branchOperationLease?.operationId });
       await stateService.flush();
+      // 只记录本轮结果，旧 servingRuntime/上轮 running 不能替代本轮依赖就绪。
+      const failedProfileIds = new Set<string>();
+      const failureMessages = new Map<string, string>();
       // ── Execute layer by layer (parallel within each layer) ──
       for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
         const layer = layers[layerIdx];
@@ -13797,6 +13835,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 部署收尾（释放分支租约）绝不发生在兄弟闭包还存活的时刻，根治
         // 「脱管闭包 + 同分支重复租约叠加」（2026-07-16 队列堵死复盘）。
         await runLayerWithSharedAbort(layer.items, async (profile, layerSignal) => {
+          assertBranchOperationCurrent(branchOperationLease, `before-layer-service-${profile.id}`);
+          const blockedBy = (profile.dependsOn || []).filter(id => failedProfileIds.has(id));
+          if (blockedBy.length > 0) {
+            failedProfileIds.add(profile.id);
+            const svc = entry.services[profile.id];
+            svc.status = 'error';
+            svc.errorMessage = `本轮前置服务失败，未启动依赖服务：${blockedBy.join(', ')}。请先查看前置服务日志并修复失败原因，待本轮部署结束后再重新部署。`;
+            failureMessages.set(profile.id, svc.errorMessage);
+            logEvent({ step: `build-${profile.id}`, status: 'error', title: `${profile.name} 因前置失败未启动`,
+              log: svc.errorMessage, detail: { profileId: profile.id, blockedBy }, timestamp: new Date().toISOString() });
+            stateService.save();
+            return;
+          }
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
@@ -14151,8 +14202,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
             } else {
               const errorMessage = await buildReadinessTimeoutMessage(containerService, svc.containerName);
               assertBranchOperationCurrent(branchOperationLease, `after-readiness-error-${profile.id}`);
+              failedProfileIds.add(profile.id);
               svc.status = 'error';
               svc.errorMessage = errorMessage;
+              failureMessages.set(profile.id, errorMessage);
               logDeploy(id, `${profile.name} 就绪探测超时`);
               logEvent({
                 step: `build-${profile.id}`,
@@ -14166,8 +14219,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           } catch (err) {
             if (err instanceof BranchOperationSupersededError) throw err;
             assertBranchOperationCurrent(branchOperationLease, `before-service-error-${profile.id}`);
+            failedProfileIds.add(profile.id);
             svc.status = 'error';
             svc.errorMessage = (err as Error).message;
+            failureMessages.set(profile.id, svc.errorMessage);
             const elapsed = Date.now() - serviceStartTime;
             logEvent({
               step: `build-${profile.id}`,
@@ -14194,17 +14249,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
 
         const layerElapsed = Date.now() - layerStartTime;
+        const failedServices = layer.items.filter(profile => failedProfileIds.has(profile.id)).map(profile => profile.id);
         logEvent({
           step: `layer-${layer.layer}`,
-          status: 'done',
-          title: `第 ${layer.layer} 层完成`,
-          detail: { elapsedMs: layerElapsed },
+          status: failedServices.length > 0 ? 'error' : 'done',
+          title: failedServices.length > 0 ? `第 ${layer.layer} 层结束，${failedServices.length} 个服务失败或受阻` : `第 ${layer.layer} 层完成`,
+          detail: { elapsedMs: layerElapsed, ...(failedServices.length > 0 ? { failedServices } : {}) },
           timestamp: new Date().toISOString(),
         });
       }
 
       // ── Update overall status ──
       assertBranchOperationCurrent(branchOperationLease, 'before-deploy-finalize');
+      // 旧入口健康同步可能回写 running；本轮失败仍禁止提交候选并保留根因。
+      for (const [profileId, message] of failureMessages) {
+        const service = entry.services[profileId];
+        if (service) { service.status = 'error'; service.errorMessage = message; }
+      }
       advanceDeploymentRun(deploymentRun?.id, 'verifying', {
         phase: 'ready',
         message: '服务构建与启动阶段结束，开始汇总就绪结果',
@@ -14283,14 +14344,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const activeStatuses = activeServices.map(([, s]) => s.status);
       const hasRunning = activeStatuses.some((s) => s === 'running');
       const hasStarting = activeStatuses.some((s) => s === 'starting');
-      let hasError = activeStatuses.some((s) => s === 'error');
+      let hasError = failedProfileIds.size > 0 || activeStatuses.some((s) => s === 'error');
       const noServiceStarted = profiles.length > 0 && !hasRunning && !hasStarting && !hasError;
       const failedNames = activeServices
-        .filter(([, s]) => s.status === 'error')
+        .filter(([sid, s]) => failedProfileIds.has(sid) || s.status === 'error')
         .map(([, s]) => s.profileId);
       const failedReasons = activeServices
-        .filter(([, s]) => s.status === 'error')
-        .map(([sid, svc]) => `${sid}: ${svc.errorMessage || '启动失败'}`);
+        .filter(([sid, s]) => failedProfileIds.has(sid) || s.status === 'error')
+        .map(([sid, svc]) => `${sid}: ${failureMessages.get(sid) || svc.errorMessage || '启动失败'}`);
       if (noServiceStarted) {
         hasError = true;
         const idleServices = activeServices.map(([sid, svc]) => `${sid}:${svc.status}`).join(', ') || '(none)';
@@ -23965,7 +24026,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const startedAt = Date.now();
     let branch = '';
     let fullSha = '';
-    let terminalStateCommitted = false;
+    const drainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
     const commitSelfRestartState = (terminal = false): void => {
       const history = stateService.getSelfUpdateHistory(20);
       selfStatusCache.commitSelfUpdateState(
@@ -23976,7 +24037,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         },
         { terminal },
       );
-      if (terminal) terminalStateCommitted = true;
     };
     try {
       branch = resolveSelfUpdateTargetBranch(
@@ -23997,7 +24057,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         logText: `[restart] 仅重启当前精确版本 ${fullSha.slice(0, 8)}，不拉取或切换代码`,
       });
       commitSelfRestartState();
-      const drainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
       if (drainTimeoutMs > 0) {
         sendSSE(res, 'step', {
           step: 'drain',
@@ -24006,6 +24065,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         });
         await waitForRestartSafeBranchOperationsForRoute('api.self-restart', drainTimeoutMs);
       }
+      await flushSelfUpdateStateBeforeRestart({
+        trigger: 'manual',
+        branch,
+        fromSha: fullSha.slice(0, 8),
+        toSha: fullSha.slice(0, 8),
+        actor,
+        requireDrain: drainTimeoutMs > 0,
+        source: 'api.self-restart',
+        onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
+      });
       stateService.recordSelfUpdate({
         ts: new Date().toISOString(),
         branch,
@@ -24018,15 +24087,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         updateMode: 'restart-only',
       });
       commitSelfRestartState(true);
-      await flushSelfUpdateStateBeforeRestart({
-        trigger: 'manual',
-        branch,
-        fromSha: fullSha.slice(0, 8),
-        toSha: fullSha.slice(0, 8),
-        actor,
-        source: 'api.self-restart',
-        onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
-      });
       sendSSE(res, 'step', {
         step: 'restart',
         status: 'running',
@@ -24046,8 +24106,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         exitOnFailure: true,
       });
     } catch (err) {
+      if (drainTimeoutMs > 0) { endSelfUpdateDrain(); setRestartWait(null); }
+      if (fullSha) stateService.recordSelfUpdate({ ts: new Date().toISOString(), branch,
+        fromSha: fullSha.slice(0, 8), toSha: fullSha.slice(0, 8), trigger: 'manual', status: 'failed',
+        durationMs: Date.now() - startedAt, actor, updateMode: 'restart-only' });
       stateService.clearSelfUpdateActive();
-      if (!terminalStateCommitted) commitSelfRestartState(true);
+      commitSelfRestartState(true);
       sendSSE(res, 'error', {
         code: 'self_restart_failed',
         message: (err as Error).message,
@@ -24058,6 +24122,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
   // POST /api/self-update — switch branch + pull + restart CDS (SSE progress)
   router.post('/self-update', async (req, res) => {
+    if (resolveRestartDrainTimeoutFromRequest(req.body) > 0) {
+      res.status(409).json({ error: 'protected_self_update_unavailable',
+        message: '受保护的平台更新尚未具备换盘前准入屏障及回滚验证，本次已在修改代码或产物前拒绝；请由平台维护者准备独立发布事务。' });
+      return;
+    }
     // 预览实例（CDS 托管 CDS）不支持自更新：它由父 CDS 按分支部署，更新 = push 新 commit。
     if (isPreviewInstance()) {
       res.status(403).json({
@@ -24796,24 +24865,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 已负责 interruptAll + 重启后 reconcile。只有请求显式 drain=true 或
       // drainTimeoutMs>0 时才等待,避免日常更新被旧 180s 窗口拖成数分钟。
       const drainStartedAt = Date.now();
-      const restartDrain = restartDrainTimeoutMs > 0
-        ? await (async () => {
-            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
-            return waitForRestartSafeBranchOperationsForRoute('api.self-update', restartDrainTimeoutMs);
-          })()
-        : { ok: true, active: [] };
+      if (restartDrainTimeoutMs > 0) {
+        send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
+        await waitForRestartSafeBranchOperationsForRoute('api.self-update', restartDrainTimeoutMs);
+      }
       // 把排空等待计入 timings(可达 180s)。此前不记导致进度条各 step 之和远小于
       // totalMs,UI 大片留白且"总计"对不上。
       const drainMs = Date.now() - drainStartedAt;
       timingRecorder.merge({ drainMs });
       if (restartDrainTimeoutMs <= 0) {
         send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
-      } else if (!restartDrain.ok) {
-        send(
-          'drain',
-          'warning',
-          `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
-        );
       } else {
         send('drain', 'done', `分支操作已排空 (${Math.floor(drainMs / 1000)}s)`);
       }
@@ -24843,6 +24904,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         fromSha,
         toSha: newHead || fromSha,
         actor,
+        requireDrain: restartDrainTimeoutMs > 0,
         source: 'api.self-update',
         onProgress: (status, title) => send('drain-deploys', status, title),
       });
@@ -24879,6 +24941,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         exitOnFailure: true,
       });
     } catch (err) {
+      if (restartDrainTimeoutMs > 0) { endSelfUpdateDrain(); setRestartWait(null); }
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       if (!res.writableEnded) {
         failWith('unknown', { raw: (err as Error).message });
@@ -24977,6 +25040,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // Streams SSE so the operator watching the UI gets real-time progress.
   // ─────────────────────────────────────────────────────────────────────
   router.post('/self-force-sync', async (req, res) => {
+    if (resolveRestartDrainTimeoutFromRequest(req.body) > 0) {
+      res.status(409).json({ error: 'protected_self_update_unavailable',
+        message: '受保护的平台同步尚未具备换盘前准入屏障及回滚验证，本次已在修改代码或产物前拒绝；请由平台维护者准备独立发布事务。' });
+      return;
+    }
     // 预览实例不支持自更新（同 /self-update）。
     if (isPreviewInstance()) {
       res.status(403).json({
@@ -25733,22 +25801,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
       // 同 self-update:默认不等排空;显式 drain=true 或 drainTimeoutMs>0 才等待。
       const drainStartedAt = Date.now();
-      const restartDrain = restartDrainTimeoutMs > 0
-        ? await (async () => {
-            send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
-            return waitForRestartSafeBranchOperationsForRoute('api.self-force-sync', restartDrainTimeoutMs);
-          })()
-        : { ok: true, active: [] };
+      if (restartDrainTimeoutMs > 0) {
+        send('drain', 'running', `等待 in-flight 分支操作排空(最多 ${Math.floor(restartDrainTimeoutMs / 1000)}s)…`);
+        await waitForRestartSafeBranchOperationsForRoute('api.self-force-sync', restartDrainTimeoutMs);
+      }
       const drainMs = Date.now() - drainStartedAt;
       timingRecorder.merge({ drainMs });
       if (restartDrainTimeoutMs <= 0) {
         send('drain', 'done', '已跳过排空等待(默认策略,立即重启)');
-      } else if (!restartDrain.ok) {
-        send(
-          'drain',
-          'warning',
-          `优雅窗口超时,仍有 ${restartDrain.active.length} 个分支写操作在跑——直接 restart,在跑的 op 会被 webhook 重试`,
-        );
       } else {
         send('drain', 'done', `分支操作已排空 (${Math.floor(drainMs / 1000)}s)`);
       }
@@ -25779,6 +25839,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         fromSha,
         toSha: newHead || fromSha,
         actor,
+        requireDrain: restartDrainTimeoutMs > 0,
         source: 'api.self-force-sync',
         onProgress: (status, title) => send('drain-deploys', status, title),
       });
@@ -25811,6 +25872,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-force-sync',
       });
     } catch (err) {
+      if (restartDrainTimeoutMs > 0) { endSelfUpdateDrain(); setRestartWait(null); }
       const catchDiagnosis = diagnoseSelfUpdateFailure({ stage: 'unknown', raw: (err as Error).message });
       if (!res.writableEnded) {
         sendSSE(res, 'error', {
@@ -26079,6 +26141,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       buildGate: { active: gate.active, queued: gate.queued, max: gate.max, load: gate.load },
       deploymentPhases: deploymentPhaseBudget.snapshot(),
       deploymentMemoryReservations: deploymentPhaseBudget.memorySnapshot(),
+      deploymentHostMemory: deploymentHostMemoryEvidence(),
       warnings,
       generatedAt: new Date().toISOString(),
     });

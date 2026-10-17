@@ -384,12 +384,17 @@ describe('ReleaseService 阶段一止血', () => {
     // healthchecking → success。没有转移断言时，一条已经终态化的 run 会被
     // 悄悄改回在途再改成成功，在途守卫和审计记录同时失真。
     let cancel: () => void = () => {};
+    let resumeSsh!: () => void;
+    const sshGate = new Promise<void>(resolve => { resumeSsh = resolve; });
     const { service } = createService(async () => {
+      // 显式确认调用方已取得 run 身份；不依赖包装层的 Promise 微任务数量。
+      await sshGate;
       cancel();
       return 'deployed';
     });
     const run = await start(service);
     cancel = () => { service.cancelRelease(run.releaseId, 'alice'); };
+    resumeSsh();
 
     await waitFor(() => isReleaseRunTerminal(stateService.getReleaseRun(run.releaseId)!.status));
     await new Promise((resolve) => setTimeout(resolve, 30));

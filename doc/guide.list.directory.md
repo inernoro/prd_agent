@@ -194,6 +194,7 @@
 - [CDS 部署验收 · 指南](./guide.cds.deploy-acceptance.md) `guide.cds.deploy-acceptance`
 - [CDS 部署方式选择 · 指南](./guide.cds.deploy-three-paths.md) `guide.cds.deploy-three-paths`
 - [CDS 环境与凭据 · 指南](./guide.cds.env.md) `guide.cds.env`
+- [CBD 平台发布屏障与回滚准备 · 指南](./guide.cds.platform.release.md) `guide.cds.platform.release`
 - [CDS Forwarder 部署与迁移 · 指南](./guide.cds.forwarder-deploy.md) `guide.cds.forwarder-deploy`
 - [CDS 全栈基础设施冒烟样例指南 · 指南](./guide.cds.fullstack-infra-smoke.md) `guide.cds.fullstack-infra-smoke`
 - [CDS GitHub App 接入与私有仓库部署 · 指南](./guide.cds.github-app.md) `guide.cds.github-app`

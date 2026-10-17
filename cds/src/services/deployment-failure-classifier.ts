@@ -11,6 +11,12 @@ interface FailureRule {
 
 const RULES: FailureRule[] = [
   {
+    code: 'config.database.policy',
+    pattern: /CDS shared database policy failed:/,
+    owner: 'config', retryable: false,
+    suggestedAction: '核对部署目标与保留的数据绑定；不要关闭保护或修改绑定来放行旧版本',
+  },
+  {
     code: 'build.compile.csharp',
     pattern: /\berror\s+CS\d{3,5}\b|Build FAILED.*\.cs/i,
     owner: 'code', retryable: false, suggestedAction: '修复日志中的首个 C# 编译错误后重新部署',
@@ -69,7 +75,7 @@ const RULES: FailureRule[] = [
   },
   {
     code: 'runtime.process.crashed',
-    pattern: /exit(?:\s+code|ed with code)?\s*[:=]?\s*\d+|segmentation fault|进程异常退出/i,
+    pattern: /exit(?:\s+code|ed with code)?\s*[:=]?\s*[1-9]\d*\b|segmentation fault|进程异常退出/i,
     owner: 'code', retryable: false, suggestedAction: '查看进程退出前的最后一段服务日志并修复应用错误',
   },
 ];
