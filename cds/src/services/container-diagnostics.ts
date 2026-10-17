@@ -312,10 +312,7 @@ export class DockerEventMonitor {
       : {};
     if (signal?.aborted) return;
     const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
-    // 归属核验后的 stop/remove 使用完整 ID；Docker 事件仍携带可变名称。
-    // 优先匹配物理身份，避免把 CBD 自己的失败候选清理误报为外部停服。
-    const lifecycleIntent = findRecentContainerLifecycleIntent(evt.Actor?.ID || evt.id)
-      || findRecentContainerLifecycleIntent(containerName);
+    const lifecycleIntent = findRecentContainerLifecycleIntent(containerName);
     const normalizedAction = action.toLowerCase();
     const exitCode = Number.isFinite(Number(state?.exitCode ?? attrs.exitCode))
       ? Number(state?.exitCode ?? attrs.exitCode)

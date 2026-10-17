@@ -4,7 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { serviceRuntimeRefs, runtimeRef } from './service-runtime.js';
-import { deploymentPhaseBudget, DeploymentPhaseTimeoutError, type DeploymentPhaseOwner } from './deployment-phase-budget.js';
+import { deploymentPhaseBudget, type DeploymentPhaseOwner } from './deployment-phase-budget.js';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { ContainerLogStreamHub, ContainerLogStreamEnd } from './container-log-stream-hub.js';
@@ -29,7 +29,7 @@ import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkP
 import { buildInfraPublishFlags, infraPublishBindHint, resolveInfraPublishHosts } from './infra-publish.js';
 import { evaluateInfraAuthentication } from './infra-auth-policy.js';
 import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConnections, resolveConfiguredMysqlMaxConnections } from './infra-connection-defaults.js';
-import { admittedArtifactProfile, ArtifactAdmissionError, inspectDeploymentArtifacts, type ArtifactInspectionOptions } from './artifact-admission.js';
+import { admittedArtifactProfile, inspectDeploymentArtifacts, type ArtifactInspectionOptions } from './artifact-admission.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
 /**
@@ -110,9 +110,6 @@ export interface ContainerRemoveContext {
   source?: string | null;
   details?: Record<string, unknown>;
 }
-
-type DeploymentDiagnosticContext = Pick<ContainerRemoveContext, 'requestId' | 'actor' | 'trigger'>;
-interface RuntimePhaseScope { owner: DeploymentPhaseOwner; check?: () => void; context: DeploymentDiagnosticContext }
 
 function isDockerNoSuchContainer(result: { stderr?: string; stdout?: string }): boolean {
   return /No such container:/i.test(`${result.stderr || ''}\n${result.stdout || ''}`);
@@ -703,7 +700,7 @@ export class ContainerStopUnconfirmedError extends Error {
 
 export class ContainerService {
   private recoveredMemoryAfterKey?: string;
-  private readonly runtimePhaseOwners = new Map<string, RuntimePhaseScope>();
+  private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
 
   /** 冷恢复与已确认结束的创建共用同一真实盘点；未知或在途创建不能仅凭缺席快照释放。 */
   async reconcileDeploymentMemoryReservations(branches: readonly BranchEntry[], options: {
@@ -905,8 +902,6 @@ export class ContainerService {
     serviceId?: string | null;
     requestId?: string | null;
     operationId?: string | null;
-    operationActor?: string | null;
-    operationTrigger?: string | null;
     containerName?: string | null;
     status?: string | null;
     exitCode?: number | null;
@@ -938,14 +933,6 @@ export class ContainerService {
     context: ContainerRemoveContext = {},
   ): void {
     recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
-  }
-
-  private recordPhaseTimeout(error: unknown, owner: DeploymentPhaseOwner, containerName: string, context: DeploymentDiagnosticContext = {}): void {
-    if (!(error instanceof DeploymentPhaseTimeoutError)) return;
-    this.recordContainerEvent({ severity: 'error', source: 'deployment-phase-budget', action: 'deployment.phase.wait-timeout',
-      ...owner, containerName, requestId: context.requestId, operationActor: context.actor ?? null,
-      operationTrigger: context.trigger ?? null, message: error.message, error: { code: error.code, message: error.message },
-      details: { phaseWait: error.diagnostics } });
   }
 
   private qualifiedShell(assertCurrent?: (step: string) => void): IShellExecutor {
@@ -1462,7 +1449,7 @@ export class ContainerService {
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
     let releaseOwnMemory: (() => boolean) | undefined;
-    let installedPhaseOwner: RuntimePhaseScope | undefined;
+    let installedPhaseOwner: { owner: DeploymentPhaseOwner; check?: () => void } | undefined;
     let creationIssued = false, runtimeCommandSettled = false;
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
@@ -1513,16 +1500,7 @@ export class ContainerService {
       const admitted = await this.inspectDeploymentArtifacts([profile], target,
         () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true,
           isComponentUnchangedSince: context.isComponentUnchangedSince });
-      if (admitted.state !== 'ready') {
-        const error = new ArtifactAdmissionError(admitted);
-        this.recordContainerEvent({ severity: 'error', source: 'artifact-admission', action: 'deployment.artifact.rejected',
-          ...phaseOwner, requestId: context.requestId, containerName: service.containerName,
-          operationActor: context.actor ?? null, operationTrigger: context.trigger ?? null,
-          message: error.message, error: { code: error.code, message: error.message },
-          details: { artifactAdmission: { reason: error.reason, stage: error.stage, targetCommitSha: admitted.targetCommitSha,
-            checkedAt: admitted.checkedAt } } });
-        throw error;
-      }
+      if (admitted.state !== 'ready') throw new Error('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本');
       // 已有仓库内容摘要保留其可跨执行器取回的引用；可变本地标签才收敛为本机固定ID。
       const originalImage = profile.dockerImage;
       profile = admittedArtifactProfile({ ...profile, localArtifact: false }, admitted);
@@ -1999,8 +1977,7 @@ export class ContainerService {
       phaseCheck();
       if (!profile.prebuiltImage) await context.onBeforeSourceStart?.();
       phaseCheck();
-      installedPhaseOwner = { owner: phaseOwner, check: phaseCheck,
-        context: { requestId: context.requestId, actor: context.actor, trigger: context.trigger } };
+      installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
       this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
@@ -2161,7 +2138,6 @@ export class ContainerService {
       }
       phaseCheck();
     } catch (error) {
-      this.recordPhaseTimeout(error, phaseOwner, service.containerName, context);
       if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) === installedPhaseOwner) this.runtimePhaseOwners.delete(service.containerName);
       if (releaseStart) {
         releaseStart(); releaseStart = undefined;
@@ -2469,9 +2445,6 @@ export class ContainerService {
         () => this.waitForReadinessUnbudgeted(hostPort, probe, onAttempt, onOutput, containerName), { check: scope?.check });
       if (ready) { scope?.check?.(); releaseMemory?.(); }
       return ready;
-    } catch (error) {
-      this.recordPhaseTimeout(error, scope?.owner || {}, containerName || '', scope?.context);
-      throw error;
     } finally {
       if (containerName && scope && this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
     }

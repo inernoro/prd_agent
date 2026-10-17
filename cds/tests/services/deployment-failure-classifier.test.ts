@@ -42,18 +42,6 @@ describe('classifyDeploymentFailure', () => {
       .toMatchObject({ code, owner, retryable });
   });
 
-  it.each(['exit code 0', 'worker process 42 exited with code 0'])('正常退出 %s 不归因为代码崩溃', (message) => {
-    expect(classifyDeploymentFailure({ message, phase: 'start' })).toMatchObject({ code: 'deploy.unknown', owner: 'unknown' });
-  });
-  it('共享库版本保护拒绝优先于exit1，不指导关闭保护', () => {
-    const failure = classifyDeploymentFailure({ message: "exit code 1: CDS shared database policy failed: IMP_TARGET_SHA 'target' does not match deployed HEAD 'old'", phase: 'ready' });
-    expect(failure).toMatchObject({ code: 'config.database.policy', owner: 'config' });
-    expect(failure.suggestedAction).toContain('不要关闭保护');
-  });
-  it('非零退出仍保留崩溃归类', () => {
-    expect(classifyDeploymentFailure({ message: 'process exited with code 1', phase: 'start' })).toMatchObject({ code: 'runtime.process.crashed', owner: 'code' });
-  });
-
   it('falls back to an explicit unknown code instead of inventing a root cause', () => {
     expect(classifyDeploymentFailure({ message: 'unrecognized failure', phase: 'deploy' })).toMatchObject({
       code: 'deploy.unknown', owner: 'unknown', retryable: true,

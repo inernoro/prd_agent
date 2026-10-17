@@ -132,32 +132,6 @@ describe('container lifecycle intent correlation', () => {
     });
   });
 
-  it.each(['actor-id', 'legacy-id'])('correlates ID-based cleanup through %s before a name-based intent', async format => {
-    const id = 'a'.repeat(64), containerName = 'owned-candidate';
-    recordContainerLifecycleIntent({ containerName, kind: 'cds-stop', reason: 'older name intent', operationId: 'old-operation' });
-    recordContainerLifecycleIntent({ containerName: id, kind: 'cds-remove', reason: 'failed candidate cleanup', operationId: 'owned-operation' });
-    const records: any[] = [], callbacks: any[] = [];
-    const shell: IShellExecutor = { exec: async () => ({ exitCode: 1, stdout: '', stderr: 'container already removed' }) };
-    const monitor = new DockerEventMonitor(shell, { record: record => { records.push(record); } }, event => { callbacks.push(event); });
-    await (monitor as any).handleLine(JSON.stringify({ Action: 'kill', ...(format === 'legacy-id' ? { id } : {}),
-      Actor: { ...(format === 'actor-id' ? { ID: id } : {}), Attributes: { name: containerName, signal: '15' } } }));
-    expect(records[0]).toMatchObject({ operationId: 'owned-operation',
-      details: { classification: { source: 'cds', unexpected: false } } });
-    expect(callbacks[0].lifecycleIntent.operationId).toBe('owned-operation');
-  });
-
-  it('does not correlate expired or different container IDs with an external kill', async () => {
-    const id = 'a'.repeat(64);
-    recordContainerLifecycleIntent({ containerName: id, kind: 'cds-remove', reason: 'expired',
-      requestedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString() });
-    recordContainerLifecycleIntent({ containerName: 'b'.repeat(64), kind: 'cds-remove', reason: 'other runtime' });
-    const records: any[] = [];
-    const shell: IShellExecutor = { exec: async () => ({ exitCode: 1, stdout: '', stderr: 'unavailable' }) };
-    const monitor = new DockerEventMonitor(shell, { record: record => { records.push(record); } });
-    await (monitor as any).handleLine(JSON.stringify({ Action: 'kill', Actor: { ID: id, Attributes: { name: 'unrelated', signal: '15' } } }));
-    expect(records[0].details.classification).toMatchObject({ unexpected: true });
-  });
-
   it('records normal docker exits as info instead of error', async () => {
     const containerName = 'cds-prd-agent-main-api-prd-agent';
     const records: any[] = [];
