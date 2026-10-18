@@ -380,9 +380,20 @@ test('异常项在模块总览前提前展示并给出干预动作', () => {
   ]);
   const report = renderVisualGateReport(result);
   assert.match(report, /能否发布 \| 不可以/);
-  assert.match(report, /## 需处理的 1 项异常/);
-  assert.ok(report.indexOf('## 需处理的 1 项异常') < report.indexOf('## 模块覆盖'));
+  assert.match(report, /## 已采集证据中的 1 项异常/);
+  assert.ok(report.indexOf('## 已采集证据中的 1 项异常') < report.indexOf('## 模块覆盖'));
   assert.match(report, /是：模块负责人修复后复测/);
+});
+
+test('已采集证据无异常时不把未采集槽位写成全面通过', () => {
+  const result = validateVisualEvidence(catalog, [
+    evidence({ name: '入口图', sha256: 'hash-a' }),
+    evidence({ name: '结果图', sha256: 'hash-b', slotId: 'VISUAL-VISUAL-02', primaryState: '结果', coverageStates: ['结果'], testType: '视觉', theme: 'dark', viewportClass: 'desktop', breadcrumb: '首页 → 视觉创作 → 生成进度 → 图片结果 → 结果' }),
+  ]);
+  const report = renderVisualGateReport(result);
+  assert.match(report, /已采集证据未发现视觉异常/);
+  assert.match(report, /覆盖缺口仍须按“模块覆盖”和“需处理事项”补齐/);
+  assert.doesNotMatch(report, /全部环境 \| 全部模块 \| 全部状态[\s\S]*\| 通过 \| 无需干预/);
 });
 
 test('技术路径只进入独立附录', () => {
