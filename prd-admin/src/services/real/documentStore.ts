@@ -266,10 +266,16 @@ export async function uploadDocumentFileWithProgress(
     xhr.open('POST', api.documentStore.entries.upload(storeId));
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.min(99, Math.round((e.loaded / e.total) * 100)), 'uploading');
+      if (e.lengthComputable) {
+        const requestBodySent = e.total > 0 && e.loaded >= e.total;
+        onProgress(
+          Math.min(99, Math.round((e.loaded / e.total) * 100)),
+          requestBodySent ? 'parsing' : 'uploading',
+        );
+      }
     };
-    // 某些浏览器/代理不会补发 loaded === total 的最后一帧 progress，但 upload load
-    // 仍会可靠触发。99 表示请求体已发送、正在等待服务端解析；100 只在完整响应回来后报告。
+    // 浏览器可能不给 upload load 单独留出可观察时机，因此 loaded === total 与 upload load
+    // 都是“请求体已发送、正在等待服务端解析”的权威信号。100 只在完整响应回来后报告。
     xhr.upload.onload = () => onProgress(99, 'parsing');
     xhr.onload = () => {
       onProgress(100, 'parsing');
