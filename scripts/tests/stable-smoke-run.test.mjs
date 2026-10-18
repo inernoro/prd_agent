@@ -63,6 +63,7 @@ import {
   validateEnvironmentConfig,
   validateEnvironmentIdentities,
   validateProductionVisualUnlock,
+  visualManifestForExecution,
   validateProductionReadOnlyConfig,
   validateSelectedEnvironmentConfig,
   visualGateExecutionMatchesResult,
@@ -192,6 +193,15 @@ test('REG-stsmk-report-risk-001 例行视觉记录绑定本轮独立策略，不
   assert.match(source, /const cdsPreparation = await isolateCdsPreparation\(profile, selected/);
   assert.match(source, /initialVisualEnvironments\.includes\('cds'\)\s*\? mergeVisualPlans/);
   assert.match(source, /errors\.push\(\.\.\.await validateEnvironmentIdentities\(environment, values\)\)/);
+});
+
+test('REG-stsmk-report-risk-001 未启动环境缺视觉清单保留原阻塞，已启动后缺清单仍硬失败', () => {
+  assert.deepEqual(visualManifestForExecution(null, { status: 'blocked', executionStarted: false }, '正式环境'), []);
+  assert.deepEqual(visualManifestForExecution([], { status: 'executed' }, '正式环境'), []);
+  assert.throws(
+    () => visualManifestForExecution(null, { status: 'executed' }, '正式环境'),
+    /正式环境 视觉 manifest 不是有效数组/,
+  );
 });
 
 function gatewayToken(securityVersion = '7') {
