@@ -1420,7 +1420,10 @@ export function evaluateProductionSafetyGate(
   requiredCaseIds = [],
   profile = 'full',
 ) {
-  const hazardousFailures = [...new Map(cdsRows.filter((row) => {
+  const cdsExecutionNotStarted = profile === 'routine'
+    && cdsExecution?.status === 'blocked'
+    && cdsExecution.executionStarted === false;
+  const hazardousFailures = cdsExecutionNotStarted ? [] : [...new Map(cdsRows.filter((row) => {
     const attemptErrors = Array.isArray(row.attemptErrors) ? row.attemptErrors.join(' ') : '';
     const isCleanupCase = Array.isArray(row.tags) && row.tags.some((tag) => ['cleanup', '@cleanup'].includes(tag));
     const isCleanupHazard = (isCleanupCase && row.cleanupStatus !== 'passed') || /\bP0\b|数据污染|清理失败|pollution/i.test(

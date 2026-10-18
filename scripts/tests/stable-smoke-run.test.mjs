@@ -165,6 +165,17 @@ test('REG-stsmk-report-risk-001 例行CDS准备未启动阻塞与视觉欠证不
   assert.equal(applyCdsVisualSafetyGate(gate, 'routine', { verdict: '不通过' }).restricted, false);
   assert.equal(applyCdsVisualSafetyGate(gate, 'full', { verdict: '不通过' }).restricted, true);
   assert.equal(applyCdsVisualSafetyGate({ ...gate, restricted: true }, 'routine', { verdict: '通过' }).restricted, true);
+  const syntheticCleanupFailure = [{
+    caseId: 'COMMON-004',
+    status: 'fail',
+    tags: ['@cleanup'],
+    error: '没有执行带清理回读的业务旅程',
+    hadFailedAttempt: true,
+  }];
+  const blockedExecution = { status: 'blocked', executionStarted: blocked.executionStarted };
+  assert.equal(evaluateProductionSafetyGate(blockedExecution, syntheticCleanupFailure, false, [], 'routine').restricted, false);
+  assert.equal(evaluateProductionSafetyGate({ status: 'failed' }, syntheticCleanupFailure, false, [], 'routine').restricted, true);
+  assert.equal(evaluateProductionSafetyGate(blockedExecution, syntheticCleanupFailure, false, [], 'full').restricted, true);
 });
 
 test('REG-stsmk-report-risk-001 例行视觉记录绑定本轮独立策略，不伪写CDS功能或视觉通过', () => {
