@@ -1439,6 +1439,12 @@ export function enforceExecutionVerdict(summary, executions) {
   };
 }
 
+export function visualManifestForExecution(manifest, execution, environment) {
+  if (Array.isArray(manifest)) return manifest;
+  if (execution?.status === 'blocked' && execution.executionStarted === false) return [];
+  throw new Error(`${environment} 视觉 manifest 不是有效数组`);
+}
+
 export function evaluateProductionSafetyGate(
   cdsExecution,
   cdsRows = [],
@@ -2484,11 +2490,16 @@ async function main() {
       visualPlanForReportPath = resolve(runDir, 'visual-plan-combined.md');
       writeFileSync(visualPlanForGatePath, `${JSON.stringify(combinedPlan, null, 2)}\n`, 'utf8');
       writeFileSync(visualPlanForReportPath, `${renderVisualPlan(combinedPlan)}\n`, 'utf8');
-      const cdsManifest = initialVisualEnvironments.includes('cds') ? readJson(resolve(requestedVisualManifest)) : [];
-      const productionManifest = readJson(resolve(requestedProductionVisualManifest || resolve(runDir, 'production-visual-evidence/manifest.json')));
-      if (!Array.isArray(cdsManifest) || !Array.isArray(productionManifest)) {
-        throw new Error('CDS 或正式环境视觉 manifest 不是有效数组');
-      }
+      const cdsExecution = executions.find((execution) => execution.environment === 'cds');
+      const productionExecution = executions.find((execution) => execution.environment === 'production');
+      const cdsManifest = initialVisualEnvironments.includes('cds')
+        ? visualManifestForExecution(readJson(resolve(requestedVisualManifest)), cdsExecution, 'CDS')
+        : [];
+      const productionManifest = visualManifestForExecution(
+        readJson(resolve(requestedProductionVisualManifest || resolve(runDir, 'production-visual-evidence/manifest.json'))),
+        productionExecution,
+        '正式环境',
+      );
       visualManifestPath = resolve(runDir, 'visual-manifest-combined.json');
       writeFileSync(visualManifestPath, `${JSON.stringify([...cdsManifest, ...productionManifest], null, 2)}\n`, 'utf8');
       visualGateEnvironments = initialVisualEnvironments.includes('cds') ? ['cds', 'production'] : ['production'];
