@@ -272,13 +272,15 @@ export function renderVisualPlan(plan) {
     '',
     '## 逐模块视觉取证任务',
     '',
+    '> 本节是运行前冻结的计划基线，不代表本轮执行结果。完成数、通过数和缺证项必须以视觉门禁的模块覆盖与逐张证据账本为准。',
+    '',
     ...plan.modules.flatMap((module) => {
       const moduleSlots = plan.slots.filter((slot) => slot.moduleId === module.id);
       return [
         `<a id="visual-plan-${module.id}"></a>`,
-        `### ${module.name} · 0/${module.planned} 项完成`,
+        `### ${module.name} · ${module.planned} 项计划基线`,
         '',
-        '| 序号 | 验收场景 | 类型 | 主题 | 设备 | 完整测试路径 | 预期证明 | 当前状态 | 是否需干预 | 测试方法 |',
+        '| 序号 | 验收场景 | 类型 | 主题 | 设备 | 完整测试路径 | 预期证明 | 计划快照状态 | 是否需干预 | 测试方法 |',
         '|---:|---|---|---|---|---|---|---|---|---|',
         ...moduleSlots.map((slot, index) => `| ${index + 1} | ${slot.scenario} | ${slot.testType} | ${slot.theme === 'dark' ? '暗色' : '亮色'} | ${slot.viewportClass === 'mobile' ? '真实触控移动端' : '桌面端'} | ${slot.breadcrumb} | ${slot.expectedProof} | ${slot.status} | 是，需要执行并取证 | [查看](${slot.methodAnchor}) |`),
         '',
