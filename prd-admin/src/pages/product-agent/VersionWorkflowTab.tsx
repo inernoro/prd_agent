@@ -47,6 +47,7 @@ import {
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
 import type { VersionRegistrationMessageParseResult } from '@/services/real/versionRegistration';
 import { VersionCopyActions } from './VersionCopyActions';
+import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -68,7 +69,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [members, setMembers] = useState<ProductMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadedProductId, setLoadedProductId] = useState('');
-  const [dialog, setDialog] = useState<'initiation' | null>(null);
+  const [dialog, setDialog] = useState<'initiation' | 'release' | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
@@ -151,7 +152,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex flex-wrap items-center gap-2">
-          <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)}><Plus size={14} />申领正式版本号</Primary>
+          <Primary onClick={() => setDialog('release')}><Plus size={14} />申领正式版本号</Primary>
           <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]">临时优化需求</button>
           <span className="group relative"><HelpCircle size={15} className="cursor-help text-token-muted" />
             <span className="surface-tone-dark invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-token-subtle bg-[#181a20] p-3 text-xs leading-5 text-token-secondary shadow-xl group-hover:visible">
@@ -183,6 +184,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
       />
     </>}
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
+    {dialog === 'release' && <ReleaseApplicationDialog productId={productId} onClose={() => setDialog(null)} onChanged={reload} />}
     {retrySeed && (
       <InitiationWizard
         productId={productId}

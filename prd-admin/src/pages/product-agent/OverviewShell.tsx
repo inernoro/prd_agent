@@ -37,6 +37,7 @@ import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { LegacyVersionArchive } from './LegacyVersionArchive';
+import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
@@ -794,6 +795,8 @@ function VersionOverviewSection({ isAdmin, products, canViewLegacy }: { isAdmin:
   const [tab, setTab] = useState<'release' | 'initiation'>('release');
   const [view, setView] = useState<'current' | 'legacy' | 'snapshots'>('current');
   const [selectedProductId, setSelectedProductId] = useState('');
+  const [releaseProductId, setReleaseProductId] = useState<string | null>(null);
+  const [releaseRefreshKey, setReleaseRefreshKey] = useState(0);
   const viewOptions = canViewLegacy
     ? ([['current', '当前工作流'], ['legacy', '旧登记记录'], ['snapshots', '历史存档']] as const)
     : ([['current', '当前工作流'], ['snapshots', '历史存档']] as const);
@@ -808,9 +811,8 @@ function VersionOverviewSection({ isAdmin, products, canViewLegacy }: { isAdmin:
         <form className="mb-1 flex flex-wrap items-center gap-2" onSubmit={(event) => {
           event.preventDefault();
           if (!selectedProductId) return;
-          navigate(tab === 'release'
-            ? `/product-agent/p/${selectedProductId}/release/new`
-            : `/product-agent/p/${selectedProductId}?tab=versions&versionTab=initiation&versionAction=apply`);
+          if (tab === 'release') setReleaseProductId(selectedProductId);
+          else navigate(`/product-agent/p/${selectedProductId}?tab=versions&versionTab=initiation&versionAction=apply`);
         }}>
           <select required value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} aria-label="选择要申领版本的产品" className="rounded-md border border-token-subtle bg-token-nested px-2 py-1.5 text-xs text-token-primary">
             <option value="">选择产品</option>
@@ -826,9 +828,10 @@ function VersionOverviewSection({ isAdmin, products, canViewLegacy }: { isAdmin:
           <button key={key} type="button" onClick={() => setView(key)} className={`rounded-lg border px-3 py-1.5 ${view === key ? 'border-cyan-400/45 bg-cyan-400/10 text-[color:var(--accent-fg-blue)]' : 'border-token-subtle bg-token-nested text-token-secondary hover-bg-soft'}`}>{label}</button>
         ))}
       </div>
-      {view === 'current' && tab === 'release' && <ReleaseOverviewTable isAdmin={isAdmin} products={products} />}
+      {view === 'current' && tab === 'release' && <ReleaseOverviewTable key={releaseRefreshKey} isAdmin={isAdmin} products={products} />}
       {view === 'current' && tab === 'initiation' && <InitiationOverviewTable isAdmin={isAdmin} products={products} />}
       {view !== 'current' && <LegacyVersionArchive kind={tab === 'release' ? 'formal' : 'internal'} isAdmin={isAdmin} mode={view} />}
+      {releaseProductId && <ReleaseApplicationDialog productId={releaseProductId} onClose={() => setReleaseProductId(null)} onChanged={() => setReleaseRefreshKey((value) => value + 1)} />}
     </div>
   );
 }

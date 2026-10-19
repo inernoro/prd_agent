@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
@@ -80,16 +81,23 @@ export function ReleaseWorkflowDetail({
   productId,
   releaseId,
   isNew,
+  onClose,
+  onCreated,
+  temporary: temporaryOverride,
 }: {
   productId: string;
   releaseId: string;
   isNew: boolean;
+  onClose?: () => void;
+  onCreated?: (release: ProductRelease, autoCopied: boolean) => void;
+  temporary?: boolean;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
   const issuedState = location.state as { issuedCode?: string; autoCopied?: boolean } | null;
   const [searchParams] = useSearchParams();
-  const temporary = searchParams.get('temporary') === '1';
+  const temporary = temporaryOverride ?? searchParams.get('temporary') === '1';
+  const goBack = () => { if (onClose) onClose(); else navigate(-1); };
   const currentUser = useAuthStore((state) => state.user);
   const permissions = useAuthStore((state) => state.permissions ?? []);
   const isRoot = useAuthStore((state) => state.isRoot);
@@ -424,7 +432,8 @@ export function ReleaseWorkflowDetail({
     } catch {
       // 详情页保留手动复制入口。
     }
-    navigate(`/product-agent/p/${productId}/release/${res.data.id}`, { replace: true, state: { issuedCode: res.data.vCode, autoCopied } });
+    if (onCreated) onCreated(res.data, autoCopied);
+    else navigate(`/product-agent/p/${productId}/release/${res.data.id}`, { replace: true, state: { issuedCode: res.data.vCode, autoCopied } });
   };
 
   const saveManifest = async () => {
@@ -471,7 +480,7 @@ export function ReleaseWorkflowDetail({
         <div className="text-sm text-token-secondary">{loadError || '未找到上线记录'}</div>
         <button
           type="button"
-          onClick={() => navigate(-1)}
+          onClick={goBack}
           className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary hover-bg-soft"
         >
           返回
@@ -484,7 +493,7 @@ export function ReleaseWorkflowDetail({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-token-primary">
+          <h1 className={onClose ? 'sr-only' : 'text-lg font-semibold text-token-primary'}>
             {isNew ? (temporary ? '临时优化需求上线' : '申领正式版本号') : releaseDisplayTitle}
           </h1>
           {!isNew && release && (
@@ -768,7 +777,7 @@ export function ReleaseWorkflowDetail({
         {isRecordDetail ? (
           canCompleteRelease ? (
             <>
-              <SecondaryButton onClick={() => navigate(-1)}>取消</SecondaryButton>
+              <SecondaryButton onClick={goBack}>取消</SecondaryButton>
               {!readOnly && (
                 <SecondaryButton onClick={() => void saveManifest()} disabled={busy || manifestInvalid}>
                   保存功能清单
@@ -779,11 +788,11 @@ export function ReleaseWorkflowDetail({
               </PrimaryButton>
             </>
           ) : (
-            <SecondaryButton onClick={() => navigate(-1)}>返回</SecondaryButton>
+            <SecondaryButton onClick={goBack}>返回</SecondaryButton>
           )
         ) : (
           <>
-            <SecondaryButton onClick={() => navigate(-1)}>取消</SecondaryButton>
+            <SecondaryButton onClick={goBack}>取消</SecondaryButton>
             {isNew ? (
               <PrimaryButton
                 onClick={() => void saveNew()}
@@ -1103,6 +1112,39 @@ function MemberChecks({ members, selected, onChange }: {
       <UserSearchSelect value="" onChange={(id) => { if (id && !selected.includes(id)) onChange([...selected, id]); }} placeholder="搜索其他项目成员" uiSize="sm" />
     </div>
   );
+}
+
+export function ReleaseApplicationDialog({ productId, onClose, onChanged }: {
+  productId: string;
+  onClose: () => void;
+  onChanged?: () => void | Promise<void>;
+}) {
+  const [issued, setIssued] = useState<{ release: ProductRelease; autoCopied: boolean } | null>(null);
+  const close = () => {
+    onClose();
+    if (issued) void onChanged?.();
+  };
+  return <Dialog
+    open
+    onOpenChange={(open) => { if (!open) close(); }}
+    title={issued ? '正式版本申领结果' : '申领正式版本号'}
+    maxWidth={960}
+    contentStyle={{ height: 'min(780px, calc(100dvh - 64px))', maxHeight: 'calc(100dvh - 64px)' }}
+    content={<div style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+      {issued && <p role="status" className="mb-3 rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2 text-sm text-token-secondary">
+        {issued.release.vCode} 已生成{issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。
+      </p>}
+      <ReleaseWorkflowDetail
+        key={issued?.release.id ?? 'new'}
+        productId={productId}
+        releaseId={issued?.release.id ?? 'new'}
+        isNew={!issued}
+        temporary={false}
+        onClose={close}
+        onCreated={(release, autoCopied) => setIssued({ release, autoCopied })}
+      />
+    </div>}
+  />;
 }
 
 export function ReleaseDetailShell({
