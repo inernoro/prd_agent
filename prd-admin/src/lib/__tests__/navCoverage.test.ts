@@ -81,6 +81,16 @@ function isParameterizedOrSubRoute(route: string): boolean {
 }
 
 describe('NAV_REGISTRY 元数据校验', () => {
+  it('产品管理保留评审与需求评估子路由，旧评审首页不再作为独立导航', () => {
+    const routes = new Map(NAV_REGISTRY.map((entry) => [entry.path, entry]));
+    expect(routes.get('/product-agent/review/submit')?.placement).toBe('fullscreen');
+    expect(routes.get('/product-agent/review/submissions/:id')?.placement).toBe('fullscreen');
+    expect(routes.get('/product-agent/review/all')?.placement).toBe('fullscreen');
+    expect(routes.get('/product-agent/requirements/assessments')?.placement).toBe('fullscreen');
+    expect(routes.get('/product-agent/requirements/assessments/:id')?.placement).toBe('fullscreen');
+    expect(routes.get('/review-agent')?.nav).toBeUndefined();
+  });
+
   it('每个 entry 的 path 唯一', () => {
     const seen = new Map<string, number>();
     for (const e of NAV_REGISTRY) {

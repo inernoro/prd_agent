@@ -4,6 +4,7 @@ import { ArrowLeft, ListOrdered, Upload, ChevronRight, ChevronLeft, CheckCircle,
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { listAssessments, createAssessment } from '@/services';
 import type { RequirementAssessmentRun } from '@/services';
+import { useReviewNavigation } from './reviewNavigation';
 
 const PAGE_SIZE = 20;
 
@@ -24,6 +25,7 @@ function getStatusDisplay(run: RequirementAssessmentRun): { label: string; color
 
 export function ReviewAssessmentListPage() {
   const navigate = useNavigate();
+  const reviewNav = useReviewNavigation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [items, setItems] = useState<RequirementAssessmentRun[]>([]);
@@ -66,7 +68,7 @@ export function ReviewAssessmentListPage() {
     const res = await createAssessment(file);
     setUploading(false);
     if (res.success && res.data) {
-      navigate(`/review-agent/assessments/${res.data.run.id}`);
+      navigate(reviewNav.assessment(res.data.run.id));
     } else {
       setUploadError(res.error?.message ?? '上传解析失败，请重试');
     }
@@ -80,9 +82,9 @@ export function ReviewAssessmentListPage() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate('/review-agent')}
+            onClick={() => navigate(reviewNav.requirementHome)}
             className="p-2 rounded-lg bg-token-nested border border-token-subtle hover-bg-soft transition-colors"
-            title="返回产品评审"
+            title={reviewNav.inProductManagement ? '返回需求' : '返回产品评审'}
           >
             <ArrowLeft className="w-4 h-4 text-token-secondary" />
           </button>
@@ -149,7 +151,7 @@ export function ReviewAssessmentListPage() {
             return (
               <button
                 key={run.id}
-                onClick={() => navigate(`/review-agent/assessments/${run.id}`)}
+                onClick={() => navigate(reviewNav.assessment(run.id))}
                 className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-xl px-5 py-4 text-left transition-colors group"
               >
                 <div className="flex-1 min-w-0">

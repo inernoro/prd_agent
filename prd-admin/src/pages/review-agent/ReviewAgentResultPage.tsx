@@ -1,4 +1,5 @@
 import { useSmartBack } from '@/hooks/useSmartBack';
+import { useReviewNavigation } from './reviewNavigation';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User, RefreshCw, Megaphone, History, Upload, Clock as ClockIcon } from 'lucide-react';
@@ -175,8 +176,9 @@ function RawOutputDebug({ result }: { result: ReviewResult }) {
 export function ReviewAgentResultPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const reviewNav = useReviewNavigation();
   // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回列表
-  const goBack = useSmartBack('/review-agent');
+  const goBack = useSmartBack(reviewNav.reviewHome);
 
   const [submission, setSubmission] = useState<ReviewSubmission | null>(null);
   const [result, setResult] = useState<ReviewResult | null>(null);
@@ -513,7 +515,7 @@ export function ReviewAgentResultPage() {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8 text-center">
         <p className="text-token-muted">提交记录不存在</p>
-        <button onClick={() => navigate('/review-agent')} className="mt-4 text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] text-sm">
+        <button onClick={() => navigate(reviewNav.reviewHome)} className="mt-4 text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] text-sm">
           返回列表
         </button>
       </div>

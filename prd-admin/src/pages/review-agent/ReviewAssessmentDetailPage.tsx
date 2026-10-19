@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useReviewNavigation } from './reviewNavigation';
 import { ArrowLeft, ListOrdered, Download, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { connectSse } from '@/lib/useSseStream';
@@ -33,6 +34,7 @@ function TierChip({ tier }: { tier?: string | null }) {
 export function ReviewAssessmentDetailPage() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
+  const reviewNav = useReviewNavigation();
 
   const [run, setRun] = useState<RequirementAssessmentRun | null>(null);
   const [items, setItems] = useState<RequirementAssessmentItem[]>([]);
@@ -181,7 +183,7 @@ export function ReviewAssessmentDetailPage() {
       <div className="flex items-center justify-between mb-6 gap-3">
         <div className="flex items-center gap-3 min-w-0">
           <button
-            onClick={() => navigate('/review-agent/assessments')}
+            onClick={() => navigate(reviewNav.assessments)}
             className="p-2 rounded-lg bg-token-nested border border-token-subtle hover-bg-soft transition-colors flex-shrink-0"
             title="返回需求评估列表"
           >

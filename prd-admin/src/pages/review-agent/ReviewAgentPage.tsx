@@ -8,6 +8,7 @@ import type { ReviewSubmission } from '@/services';
 import { ReviewAgentDimensionsModal } from './ReviewAgentDimensionsModal';
 import { ReviewAgentWebhookModal } from './ReviewAgentWebhookModal';
 import { VersionRegistrationDialog } from './VersionRegistrationDialog';
+import { useReviewNavigation } from './reviewNavigation';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
@@ -33,6 +34,7 @@ const PAGE_SIZE = 50;
 
 export function ReviewAgentPage() {
   const navigate = useNavigate();
+  const reviewNav = useReviewNavigation();
   const permissions = useAuthStore(s => s.permissions ?? []);
   const canViewAll = permissions.includes('review-agent.view-all') || permissions.includes('super');
   const canManage = permissions.includes('review-agent.manage') || permissions.includes('super');
@@ -81,25 +83,19 @@ export function ReviewAgentPage() {
             <ClipboardCheck className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-token-primary">产品评审智能体</h1>
+            <h1 className="text-xl font-semibold text-token-primary">方案评审</h1>
             <p className="text-sm text-token-muted mt-0.5">上传产品方案，AI 多维度评审打分</p>
             <div className="flex flex-wrap items-center gap-2 mt-3">
-              <button
-                onClick={() => setVersionRegistrationOpen(true)}
-                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
-                title="从已完成评审申领 T 号，或从已登记 T 号申领 V 号"
-              >
-                <BookOpenCheck className="w-3.5 h-3.5" />
-                版本号申领
-              </button>
-              <button
-                onClick={() => navigate('/review-agent/assessments')}
-                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
-                title="上传 Excel 需求表，按八因子规则评估并输出优先级排序"
-              >
-                <ListOrdered className="w-3.5 h-3.5" />
-                需求评估
-              </button>
+              {!reviewNav.inProductManagement && (
+                <>
+                  <button onClick={() => setVersionRegistrationOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary hover-bg-soft" title="从评审申领 T 号或从 T 号申领 V 号">
+                    <BookOpenCheck className="w-3.5 h-3.5" />版本号申领
+                  </button>
+                  <button onClick={() => navigate(reviewNav.assessments)} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary hover-bg-soft" title="上传 Excel 需求表并进行优先级评估">
+                    <ListOrdered className="w-3.5 h-3.5" />需求评估
+                  </button>
+                </>
+              )}
               <TipsEntryButton compact />
               {canManage && (
                 <>
@@ -123,7 +119,7 @@ export function ReviewAgentPage() {
               )}
               {canViewAll && (
                 <button
-                  onClick={() => navigate('/review-agent/all')}
+                  onClick={() => navigate(reviewNav.all)}
                   className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
                 >
                   <Users className="w-3.5 h-3.5" />
@@ -131,7 +127,7 @@ export function ReviewAgentPage() {
                 </button>
               )}
               <button
-                onClick={() => navigate('/review-agent/submit')}
+                onClick={() => navigate(reviewNav.submit)}
                 className="flex items-center gap-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 transition-colors"
               >
                 <Plus className="w-4 h-4" />
@@ -190,7 +186,7 @@ export function ReviewAgentPage() {
             </div>
             {activeTab === 'all' && (
               <button
-                onClick={() => navigate('/review-agent/submit')}
+                onClick={() => navigate(reviewNav.submit)}
                 className="inline-flex items-center gap-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] transition-colors"
               >
                 <Plus className="w-4 h-4" />
@@ -205,7 +201,7 @@ export function ReviewAgentPage() {
               return (
                 <button
                   key={item.id}
-                  onClick={() => navigate(`/review-agent/submissions/${item.id}`)}
+                  onClick={() => navigate(reviewNav.submission(item.id))}
                   className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-xl px-5 py-4 text-left transition-colors group"
                 >
                   <div className="flex-1 min-w-0">

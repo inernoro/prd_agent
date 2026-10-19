@@ -474,6 +474,7 @@ export default function AgentLauncherPage() {
   const now = useNowByMinute();
 
   const canUseReviewAgent = permissions.includes('review-agent.use');
+  const canUseProductAgent = permissions.includes('product-agent.use') || permissions.includes('super');
   const canUsePrReview = permissions.includes('pr-review.use');
   const launcherPerms = useMemo(() => deriveLauncherPerms(permissions, isRoot), [permissions, isRoot]);
   // 排序侧与记账侧必须用同一个解析器，否则「记进去的 key」和「查出来的 key」对不上
@@ -536,6 +537,7 @@ export default function AgentLauncherPage() {
     const tools: ToolboxItem[] = [];
     for (const item of dedupeToolboxItems(items)) {
       if (item.agentKey === 'review-agent' && !canUseReviewAgent) continue;
+      if (item.agentKey === 'review-agent' && canUseProductAgent) continue;
       if (item.agentKey === 'pr-review' && !canUsePrReview) continue;
       if (item.kind === 'tool') tools.push(item);
       else if (item.kind === 'agent' || item.routePath) agents.push(item);
@@ -544,7 +546,7 @@ export default function AgentLauncherPage() {
     agents.push(...staticAgents);
     tools.push(...staticUtilities);
     return { agents, tools, infra: staticInfra };
-  }, [items, staticAgents, staticUtilities, staticInfra, canUseReviewAgent, canUsePrReview]);
+  }, [items, staticAgents, staticUtilities, staticInfra, canUseReviewAgent, canUseProductAgent, canUsePrReview]);
 
   const query = searchQuery.trim().toLowerCase();
 

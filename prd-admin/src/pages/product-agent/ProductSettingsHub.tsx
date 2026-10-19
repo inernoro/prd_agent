@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import {
   ShieldCheck,
   Boxes,
@@ -25,6 +26,7 @@ import {
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
 import { toast } from '@/lib/toast';
+import { useAuthStore } from '@/stores/authStore';
 import {
   listProducts, upsertGradeOption, deleteGradeOption,
   getConsultKnowledge, getConsultKnowledgeEntry, addConsultKnowledge,
@@ -107,8 +109,24 @@ export function ProductSettingsHub() {
 // ════════════════════════ 权限 ════════════════════════
 
 function PermissionPanel() {
+  const permissions = useAuthStore((state) => state.permissions ?? []);
+  const canConfigureRoles = permissions.includes('super') || (permissions.includes('users.read') && permissions.includes('authz.manage'));
   return (
     <div className="flex flex-col gap-5">
+      <div className="rounded-xl border border-token-subtle bg-token-nested p-4">
+        <div className="text-sm font-medium text-token-primary">评审菜单权限</div>
+        <div className="mt-2 space-y-1 text-xs leading-5 text-token-secondary">
+          <p>进入产品管理需要“产品管理 - 进入”；在产品管理内看到“评审”菜单，还需要“产品管理 - 评审”。</p>
+          <p>“查看全部”控制全部评审记录；“配置”控制通知配置和维度配置；“申诉受理”单独授权。</p>
+        </div>
+        {canConfigureRoles ? (
+          <Link to="/users" className="mt-3 inline-flex rounded-md border border-token-subtle px-3 py-1.5 text-xs text-token-primary hover-bg-soft">
+            前往用户权限配置
+          </Link>
+        ) : (
+          <p className="mt-2 text-xs text-token-muted">如需调整菜单可见范围，请联系权限管理员。</p>
+        )}
+      </div>
       <div className="rounded-xl border border-dashed border-token-subtle bg-token-nested p-4">
         <div className="text-sm font-medium text-token-primary">按角色分配页面权限</div>
         <div className="mt-1 text-xs leading-5 text-token-muted">

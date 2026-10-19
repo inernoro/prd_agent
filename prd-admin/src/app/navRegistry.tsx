@@ -51,7 +51,12 @@ const ChangelogPage = lazy(() => import('@/pages/changelog/ChangelogPage'));
 const SkillAgentPage = lazy(() => import('@/pages/SkillAgentPage'));
 const McpConsolePage = lazy(() => import('@/pages/mcp-console/McpConsolePage'));
 const ArenaPage = lazy(() => import('@/pages/arena/ArenaPage').then(m => ({ default: m.ArenaPage })));
+const ReviewAgentSubmitPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentSubmitPage })));
 const ReviewAgentPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentPage })));
+const ReviewAgentResultPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentResultPage })));
+const ReviewAgentAllPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAgentAllPage })));
+const ReviewAssessmentListPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAssessmentListPage })));
+const ReviewAssessmentDetailPage = lazy(() => import('@/pages/review-agent').then(m => ({ default: m.ReviewAssessmentDetailPage })));
 const CcasAgentPage = lazy(() => import('@/pages/ccas-agent').then(m => ({ default: m.CcasAgentPage })));
 const EmailAgentPage = lazy(() => import('@/pages/email-agent').then(m => ({ default: m.EmailAgentPage })));
 const ShituAgentPage = lazy(() => import('@/pages/shitu-agent').then(m => ({ default: m.ShituAgentPage })));
@@ -144,6 +149,13 @@ function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElem
       <RequirePermission perm={perm}>{el}</RequirePermission>
     </RequireAuth>
   );
+}
+
+function productReviewGuarded(section: 'review' | 'requirements', el: ReactElement): ReactElement {
+  return fullscreenGuarded('product-agent.use',
+    <RequirePermission perm="review-agent.use">
+      <OverviewShell sectionOverride={section}>{el}</OverviewShell>
+    </RequirePermission>);
 }
 
 // ── 注册表正文 ─────────────────────────────────────────────
@@ -411,15 +423,6 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     path: '/review-agent',
     permission: 'review-agent.use',
     element: shellGuarded('review-agent.use', <ReviewAgentPage />),
-    nav: {
-      label: '产品评审智能体',
-      shortLabel: '评审',
-      description: '上传产品方案 (.md)，AI 多维度评审打分',
-      icon: 'ClipboardCheck',
-      section: 'toolbox',
-      appKey: 'review-agent',
-      tags: ['评审', '产品', 'PRD'],
-    },
   },
   {
     path: '/model-leaderboard',
@@ -610,6 +613,39 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       wip: true,
       tags: ['项目管理', 'PMO', '看板', '甘特图', '任务拆解'],
     },
+  },
+  {
+    path: '/product-agent/review/submit',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('review', <ReviewAgentSubmitPage />),
+  },
+  {
+    path: '/product-agent/review/submissions/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('review', <ReviewAgentResultPage />),
+  },
+  {
+    path: '/product-agent/review/all',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('review',
+      <RequirePermission perm="review-agent.view-all">
+        <ReviewAgentAllPage />
+      </RequirePermission>),
+  },
+  {
+    path: '/product-agent/requirements/assessments',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('requirements', <ReviewAssessmentListPage />),
+  },
+  {
+    path: '/product-agent/requirements/assessments/:id',
+    placement: 'fullscreen',
+    permission: 'product-agent.use',
+    element: productReviewGuarded('requirements', <ReviewAssessmentDetailPage />),
   },
   {
     // 知识详情页（静态段 knowledge 优先于 :kind 通配），全屏，不进导航

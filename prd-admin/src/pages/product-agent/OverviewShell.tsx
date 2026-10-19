@@ -6,7 +6,7 @@
  * 概览仪表盘：KPI 卡片 + ECharts 图表 + 最近活动流。需求/功能/缺陷为跨产品数据表。
  * 数据按可访问范围（admin 看全部），后端 /api/product/overview/*。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import type { EChartsOption } from 'echarts';
 import {
@@ -22,6 +22,9 @@ import {
   Upload,
   ArrowLeft,
   Search,
+  ClipboardCheck,
+  ListOrdered,
+  BookOpenCheck,
 } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -59,10 +62,13 @@ import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { formatInitiationReviewScore } from './initiationWorkflowUtils';
 import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { filterByTracked } from './productRecordTrackStorage';
+import { useAuthStore } from '@/stores/authStore';
+import { ReviewAgentPage } from '@/pages/review-agent';
+import { VersionRegistrationDialog } from '@/pages/review-agent/VersionRegistrationDialog';
 
-type Section = 'dashboard' | 'products' | 'requirements' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
+type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
-const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'settings']);
+const SECTION_KEYS = new Set<Section>(['dashboard', 'products', 'requirements', 'review', 'features', 'defects', 'versions', 'customers', 'knowledge', 'graph', 'settings']);
 
 function parseOverviewSection(value: string | null): Section {
   if (value && SECTION_KEYS.has(value as Section)) return value as Section;
@@ -71,20 +77,26 @@ function parseOverviewSection(value: string | null): Section {
 
 const CHART_COLORS = ['#22D3EE', '#FBBF24', '#A78BFA', '#4ADE80', '#F87171', '#60A5FA'];
 
-export function OverviewShell() {
+export function OverviewShell({ sectionOverride, children }: { sectionOverride?: Section; children?: ReactNode }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const permissions = useAuthStore((state) => state.permissions ?? []);
+  const canUseReview = permissions.includes('review-agent.use') || permissions.includes('super');
   // 与 SingleProductView 一致：分区由 URL ?section= 派生，避免 state 与地址栏不同步
-  const active: Section = parseOverviewSection(searchParams.get('section'));
+  const active: Section = sectionOverride ?? parseOverviewSection(searchParams.get('section'));
 
   const selectSection = useCallback((section: Section) => {
+    if (sectionOverride) {
+      navigate(section === 'dashboard' ? '/product-agent' : `/product-agent?section=${section}`);
+      return;
+    }
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       if (section === 'dashboard') next.delete('section');
       else next.set('section', section);
       return next;
     }, { replace: true });
-  }, [setSearchParams]);
+  }, [navigate, sectionOverride, setSearchParams]);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
@@ -109,6 +121,7 @@ export function OverviewShell() {
     { key: 'dashboard', label: '概览', icon: LayoutDashboard },
     { key: 'products', label: '产品', icon: Boxes },
     { key: 'requirements', label: '需求', icon: ListChecks },
+    { key: 'review', label: '评审', icon: ClipboardCheck, hidden: !canUseReview },
     { key: 'features', label: '功能', icon: Puzzle },
     { key: 'defects', label: '缺陷', icon: Bug },
     { key: 'versions', label: '版本', icon: Boxes },
@@ -134,6 +147,10 @@ export function OverviewShell() {
       active={active}
       onSelect={selectSection}
     >
+      {children ? (
+        <div className="h-full min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>{children}</div>
+      ) : (
+      <>
       {active === 'dashboard' && (
         <SectionShell title="概览仪表盘" desc={isAdmin ? '全局视角，跨全部产品' : '全局视角，跨我参与的产品'}>
           <DashboardSection stats={stats} loading={statsLoading} onGoto={selectSection} />
@@ -146,8 +163,13 @@ export function OverviewShell() {
       )}
       {active === 'requirements' && (
         <SectionShell title="需求" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
-          <RequirementsTable isAdmin={isAdmin} products={products} />
+          <RequirementsTable isAdmin={isAdmin} products={products} canUseReview={canUseReview} />
         </SectionShell>
+      )}
+      {active === 'review' && (
+        <div className="h-full min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+          {canUseReview ? <ReviewAgentPage /> : <div className="p-6 text-sm text-token-muted">暂无评审权限，请联系管理员。</div>}
+        </div>
       )}
       {active === 'features' && (
         <div className="flex h-full min-h-0 flex-col">
@@ -167,7 +189,7 @@ export function OverviewShell() {
       )}
       {active === 'versions' && (
         <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示，列字段与单产品版本页对齐（含负责人/组员/会议时间等）；点击行进入详情；管理员可导入 Excel 历史数据">
-          <VersionOverviewSection isAdmin={isAdmin} products={products} />
+          <VersionOverviewSection isAdmin={isAdmin} products={products} canUseReview={canUseReview} />
         </SectionShell>
       )}
       {active === 'customers' && (
@@ -192,6 +214,8 @@ export function OverviewShell() {
         </div>
       )}
       {active === 'settings' && <ProductSettingsHub />}
+      </>
+      )}
     </ProductAgentLayout>
   );
 }
@@ -402,9 +426,11 @@ function AdminImportButton({ onClick }: { onClick: () => void }) {
 function RequirementsTable({
   isAdmin,
   products,
+  canUseReview,
 }: {
   isAdmin: boolean;
   products: Product[];
+  canUseReview: boolean;
 }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
@@ -504,6 +530,11 @@ function RequirementsTable({
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         <div className="flex shrink-0 items-center gap-2">
+          {canUseReview && (
+            <button type="button" onClick={() => navigate('/product-agent/requirements/assessments')} className="flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-primary hover-bg-soft">
+              <ListOrdered size={13} />需求评估
+            </button>
+          )}
           <MineToggle mine={mine} setMine={setMine} />
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
         </div>
@@ -743,16 +774,25 @@ function overviewAnnouncementCell(row: OverviewReleaseRow) {
   return <span className="text-token-muted">-</span>;
 }
 
-function VersionOverviewSection({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+function VersionOverviewSection({ isAdmin, products, canUseReview }: { isAdmin: boolean; products: Product[]; canUseReview: boolean }) {
   const [tab, setTab] = useState<'release' | 'initiation'>('release');
+  const [registrationOpen, setRegistrationOpen] = useState(false);
   return (
     <div>
-      <div className="mb-3 flex border-b border-token-subtle">
-        <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
-        <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</OverviewSubTab>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-token-subtle">
+        <div className="flex">
+          <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
+          <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</OverviewSubTab>
+        </div>
+        {canUseReview && (
+          <button type="button" onClick={() => setRegistrationOpen(true)} className="mb-1 flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-primary hover-bg-soft">
+            <BookOpenCheck size={14} />公开版本号申领与记录
+          </button>
+        )}
       </div>
       {tab === 'release' && <ReleaseOverviewTable isAdmin={isAdmin} products={products} />}
       {tab === 'initiation' && <InitiationOverviewTable isAdmin={isAdmin} products={products} />}
+      <VersionRegistrationDialog open={registrationOpen} onClose={() => setRegistrationOpen(false)} />
     </div>
   );
 }

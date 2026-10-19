@@ -1,4 +1,5 @@
 import { useSmartBack } from '@/hooks/useSmartBack';
+import { useReviewNavigation } from './reviewNavigation';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Clock, List, Trophy } from 'lucide-react';
@@ -38,8 +39,9 @@ interface Submitter {
 
 export function ReviewAgentAllPage() {
   const navigate = useNavigate();
+  const reviewNav = useReviewNavigation();
   // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回评审首页
-  const goBack = useSmartBack('/review-agent');
+  const goBack = useSmartBack(reviewNav.reviewHome);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const viewParam = (searchParams.get('view') as ViewMode) || 'list';
@@ -227,7 +229,7 @@ export function ReviewAgentAllPage() {
                     return (
                       <button
                         key={item.id}
-                        onClick={() => navigate(`/review-agent/submissions/${item.id}`)}
+                        onClick={() => navigate(reviewNav.submission(item.id))}
                         className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-5 py-4 text-left transition-colors"
                       >
                         <div className="flex-1 min-w-0">

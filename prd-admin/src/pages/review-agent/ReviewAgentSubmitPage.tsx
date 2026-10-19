@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { ClipboardCheck, Upload, FileText, X, AlertCircle } from 'lucide-react';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { createReviewSubmission } from '@/services';
+import { useReviewNavigation } from './reviewNavigation';
 
 export function ReviewAgentSubmitPage() {
   const navigate = useNavigate();
+  const reviewNav = useReviewNavigation();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [title, setTitle] = useState('');
@@ -65,7 +67,7 @@ export function ReviewAgentSubmitPage() {
 
       const submissionId = submitRes.data!.submission.id;
       // replace：提交表单完成使命后不留在 history，返回时直接回到进入提交页前的页面
-      navigate(`/review-agent/submissions/${submissionId}`, { replace: true });
+      navigate(reviewNav.submission(submissionId), { replace: true });
     } catch (e) {
       setError('提交过程发生错误，请重试');
       setUploading(false);
@@ -169,7 +171,7 @@ export function ReviewAgentSubmitPage() {
         {/* 操作按钮 */}
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate('/review-agent')}
+            onClick={() => navigate(reviewNav.reviewHome)}
             disabled={isLoading}
             className="flex-1 bg-token-nested hover-bg-soft disabled:opacity-50 border border-token-subtle rounded-lg py-3 text-sm text-token-secondary transition-colors"
           >
