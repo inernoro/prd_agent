@@ -13,10 +13,10 @@ import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 function getStatusDisplay(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
     if (item.isPassed === false) return { label: '未通过', color: 'text-[color:var(--accent-fg-warning)]', icon: <XCircle className="w-3.5 h-3.5" /> };
-    return { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
+    return { label: '已通过', color: 'text-[color:var(--accent-fg-success)]', icon: <CheckCircle className="w-3.5 h-3.5" /> };
   }
-  if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
-  if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <MapSpinner size={14} /> };
+  if (item.status === 'Error') return { label: '失败', color: 'text-[color:var(--accent-fg-danger)]', icon: <XCircle className="w-3.5 h-3.5" /> };
+  if (item.status === 'Running') return { label: '评审中', color: 'text-[color:var(--accent-fg-blue)]', icon: <MapSpinner size={14} /> };
   return { label: '等待评审', color: 'text-[color:var(--accent-fg-amber)]', icon: <Clock className="w-3.5 h-3.5" /> };
 }
 
@@ -74,23 +74,20 @@ export function ReviewAgentPage() {
 
   return (
     <>
-    <div className="max-w-3xl mx-auto px-4 py-6">
-      {/* 页头 */}
-      <div className="mb-6">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
-            <ClipboardCheck className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
-          </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-token-subtle px-4 py-4 sm:px-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-token-primary">方案评审</h1>
-            <p className="text-sm text-token-muted mt-0.5">上传产品方案，AI 多维度评审打分</p>
-            <div className="flex flex-wrap items-center gap-2 mt-3">
+            <h1 className="text-base font-semibold text-token-primary">方案评审</h1>
+            <p className="mt-0.5 text-xs text-token-muted">上传产品方案，AI 多维度评审打分</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
               {!reviewNav.inProductManagement && (
                 <>
-                  {canUseProduct && <button onClick={() => navigate('/product-agent?section=versions')} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary hover-bg-soft" title="在产品管理的内部与正式版本页申领">
+                  {canUseProduct && <button onClick={() => navigate('/product-agent?section=versions')} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft" title="在产品管理的内部与正式版本页申领">
                     <BookOpenCheck className="w-3.5 h-3.5" />到产品管理申领版本号
                   </button>}
-                  <button onClick={() => navigate(reviewNav.assessments)} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary hover-bg-soft" title="上传 Excel 需求表并进行优先级评估">
+                  <button onClick={() => navigate(reviewNav.assessments)} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft" title="上传 Excel 需求表并进行优先级评估">
                     <ListOrdered className="w-3.5 h-3.5" />需求评估
                   </button>
                 </>
@@ -100,7 +97,7 @@ export function ReviewAgentPage() {
                 <>
                   <button
                     onClick={() => setWebhookModalOpen(true)}
-                    className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                    className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft transition-colors"
                     title="Webhook 通知配置"
                   >
                     <Bell className="w-3.5 h-3.5" />
@@ -108,7 +105,7 @@ export function ReviewAgentPage() {
                   </button>
                   <button
                     onClick={() => setDimsModalOpen(true)}
-                    className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                    className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft transition-colors"
                     title="评审维度配置"
                   >
                     <Settings2 className="w-3.5 h-3.5" />
@@ -119,7 +116,7 @@ export function ReviewAgentPage() {
               {canViewAll && (
                 <button
                   onClick={() => navigate(reviewNav.all)}
-                  className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
+                  className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft transition-colors"
                 >
                   <Users className="w-3.5 h-3.5" />
                   全部提交
@@ -127,7 +124,7 @@ export function ReviewAgentPage() {
               )}
               <button
                 onClick={() => navigate(reviewNav.submit)}
-                className="flex items-center gap-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 transition-colors"
+                className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-sm font-medium text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 提交方案
@@ -135,33 +132,32 @@ export function ReviewAgentPage() {
             </div>
           </div>
         </div>
-      </div>
-
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6" style={{ overscrollBehavior: 'contain' }}>
       {/* 筛选 Tab + 搜索 */}
-      <div className="flex items-center gap-3 mb-5">
-        <div className="flex gap-1 p-1 bg-token-nested rounded-lg border border-token-subtle">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap border-b border-token-subtle">
           {FILTER_TABS.map(tab => (
             <button
               key={tab.key}
               onClick={() => handleTabChange(tab.key)}
-              className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+              className={`border-b-2 px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-500/60 ${
                 activeTab === tab.key
-                  ? 'bg-indigo-600 text-white'
-                  : 'text-token-secondary hover-text-primary'
+                  ? 'border-cyan-400 text-[color:var(--accent-fg-blue)]'
+                  : 'border-transparent text-token-muted hover-text-primary'
               }`}
             >
               {tab.label}
             </button>
           ))}
         </div>
-        <div className="flex-1 relative">
+        <div className="relative w-full sm:w-72">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-token-muted" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="搜索方案标题..."
-            className="w-full bg-token-nested border border-token-subtle rounded-lg pl-9 pr-4 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-indigo-500/50 transition-colors"
+            className="w-full rounded-lg border border-token-subtle bg-token-nested py-2 pl-9 pr-4 text-sm text-token-primary placeholder-token-muted outline-none focus:border-cyan-500/40 transition-colors"
           />
         </div>
       </div>
@@ -194,21 +190,21 @@ export function ReviewAgentPage() {
             )}
           </div>
         ) : (
-          <div className="space-y-2">
+          <div className="overflow-hidden rounded-xl border border-token-subtle bg-token-nested">
             {filtered.map(item => {
               const statusInfo = getStatusDisplay(item);
               return (
                 <button
                   key={item.id}
                   onClick={() => navigate(reviewNav.submission(item.id))}
-                  className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-xl px-5 py-4 text-left transition-colors group"
+                  className="group flex w-full items-center gap-4 border-b border-token-subtle px-4 py-3.5 text-left transition-colors last:border-b-0 hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-500/60"
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-token-primary truncate group-hover:text-[color:var(--accent-fg-blue)] transition-colors">
                       {item.title}
                     </p>
-                    <div className="flex items-center gap-3 text-xs text-token-muted mt-1">
-                      <span>{item.fileName}</span>
+                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-token-muted">
+                      <span className="max-w-full truncate">{item.fileName}</span>
                       <span>·</span>
                       <span>{new Date(item.submittedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
@@ -245,6 +241,7 @@ export function ReviewAgentPage() {
           </button>
         </div>
       )}
+    </div>
     </div>
       <ReviewAgentDimensionsModal open={dimsModalOpen} onClose={() => setDimsModalOpen(false)} />
       <ReviewAgentWebhookModal open={webhookModalOpen} onClose={() => setWebhookModalOpen(false)} />

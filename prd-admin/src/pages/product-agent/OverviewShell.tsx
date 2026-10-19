@@ -181,7 +181,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
         </SectionShell>
       )}
       {active === 'review' && (
-        <div className="h-full min-h-0 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+        <div className="h-full min-h-0">
           {canUseReview ? <ReviewAgentPage /> : <div className="p-6 text-sm text-token-muted">暂无评审权限，请联系管理员。</div>}
         </div>
       )}
