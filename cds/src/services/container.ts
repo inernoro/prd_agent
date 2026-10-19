@@ -961,8 +961,8 @@ export class ContainerService {
     kind: ContainerLifecycleIntentKind,
     reason: string,
     context: ContainerRemoveContext = {},
-  ): void {
-    recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
+  ) {
+    return recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
   }
 
   private qualifiedShell(assertCurrent?: (step: string) => void): IShellExecutor {
@@ -2669,7 +2669,18 @@ export class ContainerService {
     }
     onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
     context.assertCurrent?.('before docker restart');
-    const result = await shell.exec(`docker restart ${containerName}`);
+    let restartIntent: ReturnType<typeof recordContainerLifecycleIntent>;
+    let result: Awaited<ReturnType<IShellExecutor['exec']>>;
+    try {
+      result = await shell.exec(`docker restart ${containerName}`, {
+        beforeStart: () => {
+          context.assertCurrent?.('restart execution admitted');
+          restartIntent = this.noteLifecycleIntent(containerName, 'cds-restart', context.reason || '原地重启现有容器', context);
+        },
+      });
+    } finally {
+      if (restartIntent) restartIntent.completedAt = new Date().toISOString();
+    }
     context.assertCurrent?.('after docker restart');
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);

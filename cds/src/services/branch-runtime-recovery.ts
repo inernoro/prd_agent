@@ -10,6 +10,7 @@ export async function recoverBranchRuntime(options: {
   entry: BranchEntry; profiles: BuildProfile[]; state: StateService;
   container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'isolateReplacementPeer' | 'restartServiceInPlace' | 'waitForReadiness' | 'waitForStartupSignal'>;
   expectedCommitSha: string; expectedContainers: Record<string, string>; restartProfiles: string[];
+  operationId?: string; requestId?: string; actor?: string;
   assertCurrent: (step: string) => void; onProgress?: (message: string) => void;
 }): Promise<{ network: string; profiles: string[] }> {
   const { entry, profiles, state, container, assertCurrent } = options;
@@ -52,7 +53,9 @@ export async function recoverBranchRuntime(options: {
     check(`runtime recovery restart ${id}`);
     options.onProgress?.(`刷新应用连接: ${id}`);
     if (!await container.restartServiceInPlace(candidates.get(id)!.containerId!, undefined,
-      { branchId: entry.id, projectId: entry.projectId, profileId: id, operation: 'runtime-recovery', source: 'branch-runtime-recovery', assertCurrent: check }))
+      { branchId: entry.id, projectId: entry.projectId, profileId: id, operation: 'runtime-recovery', source: 'branch-runtime-recovery',
+        operationId: options.operationId, requestId: options.requestId, actor: options.actor, trigger: 'manual',
+        reason: '核对当前容器身份后刷新 APP 连接，保留容器与数据', assertCurrent: check }))
       throw new Error(`应用原地重启失败: ${id}`);
   }
   for (const profile of profiles) {

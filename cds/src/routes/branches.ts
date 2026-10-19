@@ -1,5 +1,6 @@
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
+import { parseBranchExtraVolumes } from '../services/branch-extra-volumes.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
@@ -15794,9 +15795,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const mismatch = assertProjectAccess(req as any, entry.projectId || 'default');
     if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
     if (entry.executorId) { res.status(409).json({ error: '远端执行器恢复请在所属执行器执行' }); return; }
-    const { expectedCommitSha, expectedContainers } = req.body || {};
+    const { expectedCommitSha, expectedContainers, restartProfileIds } = req.body || {};
     if (typeof expectedCommitSha !== 'string' || !expectedContainers || typeof expectedContainers !== 'object' || Array.isArray(expectedContainers)) {
       res.status(400).json({ error: '必须提供完整提交和逐服务完整容器身份' }); return;
+    }
+    if (restartProfileIds !== undefined && (!Array.isArray(restartProfileIds)
+      || restartProfileIds.some(id => typeof id !== 'string' || !Object.prototype.hasOwnProperty.call(entry.services, id))
+      || new Set(restartProfileIds).size !== restartProfileIds.length)) {
+      res.status(400).json({ error: '重启清单必须由当前分支的不同服务组成' }); return;
     }
     const lease = beginBranchOperation(req, res, entry, { kind: 'restart', source: 'api.recover-runtime', reason: '验证并恢复同批当前容器；保留数据库与历史部署结果' });
     if (branchOperationCoordinator && !lease) return;
@@ -15808,8 +15814,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const profiles = stateService.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry));
       const result = await recoverBranchRuntime({ entry, profiles, state: stateService, container: containerService,
         expectedCommitSha, expectedContainers,
+        operationId: lease?.operationId, requestId: (req as any).cdsRequestId, actor: resolveActorFromRequest(req),
         // 项目声明的应用刷新连接；分支额外数据库/缓存/存储保留进程和数据。
-        restartProfiles: stateService.getBuildProfilesForProject(entry.projectId || 'default').map(p => p.id).filter(id => Boolean(entry.services[id])),
+        restartProfiles: restartProfileIds ?? stateService.getBuildProfilesForProject(entry.projectId || 'default').map(p => p.id).filter(id => Boolean(entry.services[id])),
         assertCurrent: step => assertBranchOperationCurrent(lease, step),
         onProgress: message => sendSSE(res, 'progress', { message }),
       });
@@ -18063,6 +18070,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         seenSubdomains.add(sd);
         subdomain = sd;
       }
+      let cacheMounts: BuildProfile['cacheMounts'];
+      try {
+        cacheMounts = parseBranchExtraVolumes(entry.projectId || 'default', entry.id, raw?.cacheMounts,
+          entry.extraProfiles?.find(p => p.id === id)?.cacheMounts);
+      } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
       seen.add(id);
       sanitized.push({
         id,
@@ -18089,6 +18101,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ...(readinessProbe ? { readinessProbe } : {}),
         ...(startupSignal ? { startupSignal } : {}),
         ...(raw?.prebuiltImage === true ? { prebuiltImage: true } : {}),
+        ...(cacheMounts !== undefined ? { cacheMounts } : {}),
       } as BuildProfile);
     }
     // 破坏性移除回滚预备（Codex P2「Defer destructive extra-service saves until redeploy is accepted」）：
@@ -18200,10 +18213,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-exec', async (req, res) => {
     const { id } = req.params;
-    const { profileId, command } = req.body as { profileId?: string; command?: string };
+    const { profileId, command, stdin, expectedContainerId } = req.body as {
+      profileId?: string; command?: string; stdin?: string; expectedContainerId?: string;
+    };
     if (!command || typeof command !== 'string' || !command.trim()) {
       res.status(400).json({ error: '请输入命令' });
       return;
+    }
+    if (stdin !== undefined && (typeof stdin !== 'string' || Buffer.byteLength(stdin) > 1024 * 1024)) {
+      res.status(400).json({ error: '标准输入必须是最多 1 MiB 的字符串' }); return;
+    }
+    if (expectedContainerId !== undefined && (typeof expectedContainerId !== 'string' || !/^[a-f0-9]{64}$/.test(expectedContainerId))) {
+      res.status(400).json({ error: '必须提供完整容器身份' }); return;
     }
 
     const entry = stateService.getBranch(id);
@@ -18212,10 +18233,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+
     const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
     if (!svc) {
       res.status(404).json({ error: '未找到运行中的服务' });
       return;
+    }
+    if (expectedContainerId !== undefined && svc.containerId !== expectedContainerId) {
+      res.status(409).json({ error: '当前容器身份已变化，拒绝执行' }); return;
     }
 
     try {
@@ -18226,8 +18253,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // private key included), and `$(cmd)` ran as the CDS main process.
       // Single-quote it; the container shell does the expansion.
       const result = await shell.exec(
-        `docker exec ${svc.containerName} sh -c ${shellQuote(command)}`,
-        { timeout: 30_000 },
+        `docker exec ${stdin !== undefined ? '-i ' : ''}${expectedContainerId || svc.containerName} sh -c ${shellQuote(command)}`,
+        { timeout: 30_000, ...(stdin !== undefined ? { stdin } : {}), beforeStart: () => {
+          if (expectedContainerId !== undefined && stateService.getBranch(id)?.services[svc.profileId]?.containerId !== expectedContainerId)
+            throw new Error('当前容器身份已变化，拒绝执行');
+        } },
       );
       // F15 (HIGH severity, 2026-05-02): docker exec output is the #1 leak
       // vector — `env` / `printenv` / `cat .env` / app debug commands all
@@ -18291,7 +18321,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         masked: mask,
       });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message === '当前容器身份已变化，拒绝执行' ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 

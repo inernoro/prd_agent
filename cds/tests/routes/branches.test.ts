@@ -2371,6 +2371,44 @@ describe('Branch Routes', () => {
       expect(badCwd.status).toBe(400);
     });
 
+    it('persists extra-service data in a branch-owned named volume and rejects foreign volume reuse', async () => {
+      seedBranch('b1'); seedBranch('b2');
+      const profile = { id: 'data', name: 'data', dockerImage: 'mysql:8.0', containerPort: 3306, prebuiltImage: true,
+        cacheMounts: [{ kind: 'volume', hostPath: 'scheduler-data', containerPath: '/var/lib/mysql' }] };
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [profile] })).status).toBe(200);
+      const saved = stateService.getBranch('b1')!.extraProfiles![0];
+      expect(saved.cacheMounts![0].hostPath).toMatch(/^cds-extra-[a-f0-9]{20}-scheduler-data$/);
+      expect((await request(server, 'PUT', '/api/branches/b2/extra-services', { extraProfiles: [saved] })).status).toBe(400);
+      expect(stateService.getBranch('b2')!.extraProfiles).toBeUndefined();
+      const { cacheMounts: _mounts, ...omitted } = saved;
+      expect((await request(server, 'PUT', '/api/branches/b1/extra-services', { extraProfiles: [omitted] })).status).toBe(200);
+      expect(stateService.getBranch('b1')!.extraProfiles![0].cacheMounts).toEqual(saved.cacheMounts);
+    });
+
+    it('container-exec fences exact identity and sends sensitive input over stdin rather than command arguments', async () => {
+      seedBranch('b1'); const cid = 'b'.repeat(64);
+      stateService.getBranch('b1')!.services['data'] = {
+        profileId: 'data', containerId: cid, containerName: 'cds-b1-data', hostPort: 10099, status: 'running',
+      };
+      const body = { profileId: 'data', command: 'cat >/dev/null', stdin: 'private-input-value', expectedContainerId: cid };
+      const wrong = await request(server, 'POST', '/api/branches/b1/container-exec', { ...body, expectedContainerId: 'a'.repeat(64) });
+      expect(wrong.status).toBe(409); expect(mock.commands.some(c => c.startsWith('docker exec'))).toBe(false);
+      const good = await request(server, 'POST', '/api/branches/b1/container-exec', body);
+      expect(good.status).toBe(200);
+      const index = mock.commands.findIndex(c => c.startsWith('docker exec -i'));
+      expect(mock.commands[index]).toBe(`docker exec -i ${cid} sh -c 'cat >/dev/null'`);
+      expect(mock.stdins[index]).toBe(body.stdin); expect(mock.commands.join('\n')).not.toContain(body.stdin);
+      const original = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker exec')) stateService.getBranch('b1')!.services.data.containerId = 'a'.repeat(64);
+        options?.beforeStart?.(); return original(command, options);
+      };
+      try {
+        const stale = await request(server, 'POST', '/api/branches/b1/container-exec', body);
+        expect(stale.status).toBe(409); expect(String(stale.body.error)).toContain('身份已变化');
+      } finally { mock.exec = original; }
+    });
+
     it('container-exec masks a secret stored via profile-overrides (Codex P2: resolve overrides before masking exec output)', async () => {
       seedBranch('b1');
       await request(server, 'PUT', '/api/branches/b1/extra-services', {
@@ -7349,6 +7387,19 @@ describe('Branch Routes', () => {
   // ── 轻量重启 + 分支系统日志（2026-05-18）──
 
   describe('POST /api/branches/:id/recover-runtime', () => {
+    it('rejects unknown or duplicate explicit restart profiles before starting a recovery', async () => {
+      stateService.addBranch({ id: 'recover', branch: 'recover', projectId: 'default', worktreePath: '/tmp/wt/recover',
+        services: {}, status: 'error', createdAt: new Date().toISOString() });
+      const response = await request(server, 'POST', '/api/branches/recover/recover-runtime', {
+        expectedCommitSha: 'a'.repeat(40), expectedContainers: {}, restartProfileIds: ['other-project-db'],
+      });
+      expect(response.status).toBe(400); expect(mock.commands).toEqual([]);
+      stateService.getBranch('recover')!.services.api = { profileId: 'api', containerName: 'recover-api', hostPort: 12345, status: 'running' };
+      const duplicate = await request(server, 'POST', '/api/branches/recover/recover-runtime', {
+        expectedCommitSha: 'a'.repeat(40), expectedContainers: {}, restartProfileIds: ['api', 'api'],
+      });
+      expect(duplicate.status).toBe(400); expect(mock.commands).toEqual([]);
+    });
     it('不存在和缺少精确身份时拒绝，不能触发宿主命令', async () => {
       expect((await request(server, 'POST', '/api/branches/nope/recover-runtime')).status).toBe(404);
       stateService.addBranch({ id: 'recover', branch: 'recover', projectId: 'default', worktreePath: '/tmp/wt/recover',

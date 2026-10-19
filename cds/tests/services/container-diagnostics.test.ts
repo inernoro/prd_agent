@@ -9,6 +9,27 @@ import type { ServerEventLogSink } from '../../src/services/server-event-log-sto
 import type { IShellExecutor, ShellResult } from '../../src/types.js';
 
 describe('container lifecycle intent correlation', () => {
+  it('correlates restart by immutable CID, preserves late delivery, and does not hide a later crash', async () => {
+    clearContainerLifecycleIntentsForTest();
+    const cid = 'b'.repeat(64);
+    const intent = recordContainerLifecycleIntent({ containerName: cid, kind: 'cds-restart', reason: '刷新连接',
+      operationId: 'recovery-op' });
+    // Use current timestamps so the global five-minute retention remains valid.
+    const start = Date.now(); intent!.requestedAt = new Date(start).toISOString();
+    intent!.completedAt = new Date(start + 100).toISOString();
+    const records: any[] = [];
+    const monitor = new DockerEventMonitor({ exec: async () => ({ stdout: '', stderr: '', exitCode: 1 }) },
+      { record: record => { records.push(record); } });
+    const event = (at: number, action = 'die') => JSON.stringify({ Action: action, timeNano: (at * 1e6),
+      Actor: { ID: cid, Attributes: { name: 'cds-actual-runtime-name', exitCode: '0', signal: '15' } } });
+    await (monitor as any).handleLine(event(start + 50));
+    expect(records.at(-1)).toMatchObject({ operationId: 'recovery-op', details: { classification: { stopClass: 'cds-restart' } } });
+    expect(records.at(-1).message).not.toContain('没有匹配到');
+    await (monitor as any).handleLine(event(start + 101));
+    expect(records.at(-1).details.classification.stopClass).not.toBe('cds-restart');
+    expect(records.at(-1).operationId).toBeNull();
+    clearContainerLifecycleIntentsForTest();
+  });
   afterEach(() => clearContainerLifecycleIntentsForTest());
 
   it('matches docker event container names with a leading slash', () => {
