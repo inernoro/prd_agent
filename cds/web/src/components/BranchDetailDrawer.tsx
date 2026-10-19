@@ -6059,6 +6059,12 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                     onClick={() => { setActiveResult(-1); setResultMode('output'); }}>执行记录</button>
                 </div>
               ) : null}
+              {resultState.result?.truncated ? (
+                <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                  <span>结果太多，已缩减显示。修改语句可能已执行，请先核对数据，避免重复提交。</span>
+                  <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => { setActiveResult(-1); setResultMode('output'); }}>查看已有执行记录</button>
+                </div>
+              ) : null}
               {resultState.status === 'error' && resultState.failure ? <DatabaseExecutionNotice failure={resultState.failure} batchWrite={resultState.batchWrite} showDiagnostics={canManageConsole} /> : null}
               <div className="grid min-h-0 flex-1">
                 <DbResultTable
