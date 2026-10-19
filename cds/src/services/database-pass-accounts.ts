@@ -26,9 +26,15 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
     const db = await mysql.createConnection({ host: '127.0.0.1', port: target.port, user: target.adminUser, password: target.adminPassword, connectTimeout: 5000, ...(target.mysqlCa?{ssl:{ca:target.mysqlCa,rejectUnauthorized:true,verifyIdentity:false}}:{}) });
     try {
       if (create) {
+        // A database-wide SELECT also authorizes SECURITY DEFINER views, which may
+        // expose other databases. Snapshot only current base tables, never views.
+        const [tables] = await db.query<any[]>("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME", [target.database]);
+        if (!tables.length) throw new Error('此库没有可授权的基本表，暂不能签发只读通行证；视图需要单独权限审查。');
+        const quote = (value: string) => '`' + value.replaceAll('`','``') + '`';
         await db.query('CREATE USER ?@\'%\' IDENTIFIED BY ? REQUIRE SSL WITH MAX_USER_CONNECTIONS 10', [account.username, account.password]);
-        try { await db.query('GRANT SELECT ON ' + '`' + target.database.replaceAll('`','``') + '`.* TO ?@\'%\'', [account.username]); }
-        catch (error) { await db.query('DROP USER IF EXISTS ?@\'%\'', [account.username]); throw error; }
+        try {
+          for (const table of tables) await db.query('GRANT SELECT ON ' + quote(target.database) + '.' + quote(String(table.TABLE_NAME)) + ' TO ?@\'%\'', [account.username]);
+        } catch (error) { await db.query('DROP USER IF EXISTS ?@\'%\'', [account.username]); throw error; }
       } else {
         // Revoke login first; killing only this generated account never touches application sessions.
         await db.query('DROP USER IF EXISTS ?@\'%\'', [account.username]);

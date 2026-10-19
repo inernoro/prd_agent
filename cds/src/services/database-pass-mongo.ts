@@ -1,6 +1,6 @@
 import net, { type Socket } from 'node:net';
 import { BSON } from 'mongodb';
-import { relayFrames } from './database-pass-wire.js';
+import { relayFrames, firstFrame } from './database-pass-wire.js';
 
 // Reject ambiguous BSON before deserialization (duplicate keys can have different
 // interpretations in drivers and mongod). Bound recursion and every byte range.
@@ -38,6 +38,26 @@ export function mongoPassCommand(packet:Buffer): {body:Record<string,any>;name:s
 
 export class MongoPassIdentity {
   private started=false;
+  private authRequests=new Set<number>();
+  private trackAuthentication(packet:Buffer):boolean {
+    const id=packet.readInt32LE(4);
+    if(this.authRequests.has(id)||this.authRequests.size>=8)return false;
+    this.authRequests.add(id);return true;
+  }
+  /** Only a successful server response to a bound SCRAM request ends the deadline. */
+  authenticatedReply(packet:Buffer):boolean {
+    try {
+      if(packet.length<16||packet.readInt32LE(0)!==packet.length||!this.authRequests.delete(packet.readInt32LE(8)))return false;
+      let body:Record<string,any>;
+      if(packet.readInt32LE(12)===1){
+        if(packet.length<41||packet.readInt32LE(32)!==1)return false;
+        const doc=bsonKeys(packet,36);if(doc.end!==packet.length)return false;
+        body=BSON.deserialize(packet.subarray(36));
+      }else body=mongoPassCommand(packet).body;
+      const auth=body.speculativeAuthenticate||body;
+      return body.ok===1&&auth.ok===1&&auth.done===true;
+    }catch{return false;}
+  }
   constructor(private database:string,private username:string){}
   private start(body:Record<string,any>,nested=false):boolean {
     if(Object.keys(body)[0]!=='saslStart' || body.saslStart!==1 || !['SCRAM-SHA-1','SCRAM-SHA-256'].includes(body.mechanism) || (body[nested?'db':'$db']!==this.database) || (nested&&body.$db!==undefined&&body.$db!==this.database))return false;
@@ -50,12 +70,12 @@ export class MongoPassIdentity {
       const {body,name,legacy}=mongoPassCommand(packet);
       if(name==='hello'||name==='ismaster'){
         if((body.compression!==undefined&&(!Array.isArray(body.compression)||body.compression.some((value:unknown)=>value!=='none'))) || (body.saslSupportedMechs!==undefined&&body.saslSupportedMechs!==`${this.database}.${this.username}`))return false;
-        if(body.speculativeAuthenticate){if(!this.start(body.speculativeAuthenticate,true))return false;this.started=true;}
+        if(body.speculativeAuthenticate){if(!this.start(body.speculativeAuthenticate,true)||!this.trackAuthentication(packet))return false;this.started=true;}
         return true;
       }
       if(legacy)return false;
-      if(name==='saslstart'){if(!this.start(body))return false;this.started=true;return true;}
-      if(name==='saslcontinue')return this.started&&body.$db===this.database;
+      if(name==='saslstart'){if(!this.start(body)||!this.trackAuthentication(packet))return false;this.started=true;return true;}
+      if(name==='saslcontinue')return this.started&&body.$db===this.database&&this.trackAuthentication(packet);
       if(name==='authenticate'||name==='getnonce'||name==='logout')return false;
       if(!this.started)return false;
       return body.$db===this.database || (body.$db==='admin'&&['ping','buildinfo','endsessions','connectionstatus','listdatabases'].includes(name));
@@ -67,10 +87,22 @@ export function relayMongoPass(client:Socket,input:{port:number;database:string;
   const identity=new MongoPassIdentity(input.database,input.username);
   const upstream=input.remember(net.connect({host:'127.0.0.1',port:input.port}));
   client.once('close',()=>upstream.destroy());upstream.once('close',()=>client.destroy());
+  // An absolute deadline also defeats credential-free hello/fragment trickling.
+  const deadline=setTimeout(()=>client.destroy(),10000);deadline.unref();
+  client.once('close',()=>clearTimeout(deadline));
   client.setTimeout(10000,()=>client.destroy());
-  upstream.on('data',chunk=>client.write(chunk));
+  void(async()=>{
+    while(!client.destroyed){
+      const packet=await firstFrame(upstream,buffer=>buffer.readInt32LE(0),65536);
+      client.write(packet);
+      if(identity.authenticatedReply(packet)){
+        clearTimeout(deadline);client.setTimeout(0);
+        upstream.pipe(client);upstream.resume();return;
+      }
+    }
+  })().catch(()=>client.destroy());
   relayFrames(client,b=>b.readInt32LE(0),()=>16*1024*1024,packet=>{
     if(!identity.accept(packet)){input.denied();client.destroy();return;}
-    client.setTimeout(0);upstream.write(packet);
+    upstream.write(packet);
   });
 }

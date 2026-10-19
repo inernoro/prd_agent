@@ -3,7 +3,8 @@ import {BSON} from 'mongodb';
 import {mysqlPassLogin} from '../../src/services/database-pass-mysql.js';
 import {MongoPassIdentity} from '../../src/services/database-pass-mongo.js';
 import {normalizeReadOnlyStatement,normalizeConsoleWrite,stripSqlComments} from '../../src/services/sql-statement-policy.js';
-const message=(body:Record<string,any>)=>{const b=BSON.serialize(body),h=Buffer.alloc(21);h.writeInt32LE(h.length+b.length);h.writeInt32LE(2013,12);return Buffer.concat([h,b]);};
+let requestId=0;
+const message=(body:Record<string,any>)=>{const b=BSON.serialize(body),h=Buffer.alloc(21);h.writeInt32LE(h.length+b.length);h.writeInt32LE(++requestId,4);h.writeInt32LE(2013,12);return Buffer.concat([h,b]);};
 const scram=(username:string)=>new BSON.Binary(Buffer.from(`n,,n=${username},r=abc123`));
 it('MySQL subtraction cannot conceal a COMMIT/write script from read policy',()=>{
   for(const space of ['', '1','x'])expect(()=>normalizeReadOnlyStatement(`SELECT 1--${space}1; COMMIT; UPDATE items SET value=1`,'mysql')).toThrow();
