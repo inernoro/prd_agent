@@ -41,6 +41,7 @@ import {
 import { WorkflowEditor } from './WorkflowTemplateSection';
 import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 import { useGradeOptions } from './gradeOptions';
+import { ProductPermissionsPanel, type ProductPermissionTab } from './ProductPermissionsPanel';
 
 type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb';
 
@@ -113,13 +114,15 @@ const PERMISSION_TABS = [
 ];
 
 function PermissionPanel() {
-  const [tab, setTab] = useState('menu');
+  const [tab, setTab] = useState<ProductPermissionTab>('menu');
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-token-subtle pb-3">
-        <Tabs items={PERMISSION_TABS} activeKey={tab} onChange={setTab} className="flex-wrap" />
+        <Tabs items={PERMISSION_TABS} activeKey={tab} onChange={(key) => setTab(key as ProductPermissionTab)} className="flex-wrap" />
       </div>
-      <div key={tab} className="min-h-0 flex-1" aria-label={PERMISSION_TABS.find((item) => item.key === tab)?.label} />
+      <div className="min-h-0 flex-1 pt-5" aria-label={PERMISSION_TABS.find((item) => item.key === tab)?.label}>
+        <ProductPermissionsPanel tab={tab} />
+      </div>
     </div>
   );
 }
