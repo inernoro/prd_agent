@@ -14,9 +14,11 @@ export interface DatabasePass {
   id: string; projectId: string; branchId: string; resourceId: string; owner: string;
   username: string; database: string; runtime: DatabasePassTarget['runtime']; targetPort: number;
   allowlist: string[]; ttlMinutes: number; status: 'preparing'|'prepared'|'active'|'revoked'|'expired'|'cleanup-failed';
-  createdAt: string; expiresAt: string; activatedAt?: string; port?: number;
-  secret: SealedSecret; cleanupTarget?:SealedSecret; reason?: string; tlsCa?: string;
+  createdAt: string; expiresAt: string; reclaimedAt?: string; activatedAt?: string; port?: number;
+  secret?: SealedSecret; cleanupTarget?:SealedSecret; reason?: string; tlsCa?: string;
 }
+
+export const DATABASE_PASS_TERMINAL_HISTORY_LIMIT = 100;
 
 /** Only the authenticated peer, or explicitly trusted local reverse proxy, can supply the default IP. */
 export function databasePassClientIp(req: { socket: { remoteAddress?: string }; headers: Record<string,unknown> }): string {
@@ -50,14 +52,32 @@ export class DatabasePassService {
   capability() {
     const tcp=resourceTcpAccessConfig();
     const enabled=process.env.CDS_DATABASE_PASS_ENABLED==='1' && tcp.enabled && !isPreviewInstance() && isSealingEnabled() && !this.vaultError;
-    return {enabled,host:tcp.host,defaultTtlMinutes:30,mode:'direct' as const,reason:this.vaultError?'通行证记录无法读取，请管理员检查存储；签发已停止。':enabled?'':'本实例尚未启用数据库通行证或凭据加密。'};
+    return {enabled,host:tcp.host,defaultTtlMinutes:30,mode:'direct' as const,reason:this.vaultError?'通行证记录无法读取或安全写入，请管理员检查存储；签发已停止。':enabled?'':'本实例尚未启用数据库通行证或凭据加密。'};
   }
   private async withPassLock<T>(id:string,operation:()=>Promise<T>):Promise<T>{
     const previous=this.operations.get(id)||Promise.resolve();
     const pending=previous.catch(()=>{}).then(operation);this.operations.set(id,pending);
     try{return await pending;}finally{if(this.operations.get(id)===pending)this.operations.delete(id);}
   }
+  private trimTerminalHistory(): boolean {
+    let changed = false;
+    const terminal = this.passes.filter(pass => ['revoked', 'expired'].includes(pass.status));
+    for (const pass of terminal) {
+      for (const key of ['secret', 'cleanupTarget', 'tlsCa'] as const) {
+        if (key in pass) { delete pass[key]; changed = true; }
+      }
+    }
+    const newest = new Set(terminal.sort((a, b) =>
+      (Date.parse(b.reclaimedAt || b.createdAt) || 0) - (Date.parse(a.reclaimedAt || a.createdAt) || 0))
+      .slice(0, DATABASE_PASS_TERMINAL_HISTORY_LIMIT).map(pass => pass.id));
+    if (terminal.length > DATABASE_PASS_TERMINAL_HISTORY_LIMIT) {
+      this.passes = this.passes.filter(pass => !['revoked', 'expired'].includes(pass.status) || newest.has(pass.id));
+      changed = true;
+    }
+    return changed;
+  }
   private persist() {
+    this.trimTerminalHistory();
     fs.mkdirSync(this.directory,{recursive:true,mode:0o700});
     const temporary=this.file+'.tmp';
     const fd=fs.openSync(temporary,'w',0o600);
@@ -68,7 +88,10 @@ export class DatabasePassService {
   private audit(pass:DatabasePass,event:string,details:Record<string,unknown>={}) {
     this.auditLog.write({ts:new Date().toISOString(),passId:pass.id,projectId:pass.projectId,branchId:pass.branchId,resourceId:pass.resourceId,owner:pass.owner,username:pass.username,database:pass.database,event,...details});
   }
-  private async recover(){for(const pass of this.passes)if(!['revoked','expired'].includes(pass.status))await this.revokeInternal(pass,'控制面重启，原通行证不自动续期');}
+  private async recover(){
+    if(this.trimTerminalHistory()){try{this.persist();}catch{this.vaultError=true;}}
+    for(const pass of [...this.passes])if(!['revoked','expired'].includes(pass.status))await this.revokeInternal(pass,'控制面重启，原通行证不自动续期');
+  }
   private async sweep(){this.auditLog.flush();for(const pass of this.passes)if((!['revoked','expired'].includes(pass.status)&&Date.parse(pass.expiresAt)<=Date.now())||pass.status==='cleanup-failed')await this.revokeInternal(pass,'通行证到期');}
   private safe(pass:DatabasePass){const {secret,cleanupTarget,...publicPass}=pass;return {...publicPass,host:this.capability().host,permission:'read-only',review:'既有资源权限检查通过'};}
   async list(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;await this.sweep();return this.passes.filter(p=>p.owner===owner&&p.projectId===scope.projectId&&p.branchId===scope.branchId&&p.resourceId===scope.resourceId).map(p=>this.safe(p));}
@@ -107,6 +130,7 @@ export class DatabasePassService {
     if(!['prepared','active'].includes(pass.status))throw new Error('通行证已失效，不能复制凭据');
     await this.boundTarget(pass);const ca=pass.tlsCa;
     if(!ca)throw new Error('TLS证书尚未就绪');
+    if(!isSealedSecret(pass.secret))throw new Error('通行证凭据不可用，请重新申请');
     this.audit(pass,'credentials-copied');
     return {username:pass.username,password:unsealToken(pass.secret),database:pass.database,host:this.capability().host,port:pass.port||null,tlsRequired:true,tlsCa:ca,authSource:pass.runtime==='mongodb'?pass.database:undefined,expiresAt:pass.status==='active'?pass.expiresAt:null};
   }
@@ -158,8 +182,12 @@ export class DatabasePassService {
     try{this.persist();}catch{/* durable preparation record remains available for recovery */}
     try{
       await this.reclaimTargets(pass);
+      const recovery = { secret: pass.secret, cleanupTarget: pass.cleanupTarget, tlsCa: pass.tlsCa };
       pass.status=Date.parse(pass.expiresAt)<=Date.now()?'expired':'revoked';
-      this.persist();this.audit(pass,'account-reclaimed',{reason,status:pass.status});
+      pass.reclaimedAt=new Date().toISOString();
+      try{this.persist();}
+      catch(error){Object.assign(pass,recovery);pass.status='cleanup-failed';delete pass.reclaimedAt;throw error;}
+      this.audit(pass,'account-reclaimed',{reason,status:pass.status});
     }catch{try{this.audit(pass,'account-cleanup-failed',{reason});}catch{/* already closed */}}
   }
   async revoke(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){await this.ready;const pass=this.find(id,owner,scope);await this.revokeInternal(pass,'用户撤销');return this.safe(pass);}

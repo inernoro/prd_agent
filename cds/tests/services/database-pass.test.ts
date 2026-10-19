@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DatabasePassService, databasePassClientIp } from '../../src/services/database-pass.js';
+import { DatabasePassService, databasePassClientIp, DATABASE_PASS_TERMINAL_HISTORY_LIMIT } from '../../src/services/database-pass.js';
 import { postgresPassStartup } from '../../src/services/database-pass-gateway.js';
 
 const mocks=vi.hoisted(()=>({account:vi.fn(),gateway:vi.fn(),close:vi.fn(),activate:vi.fn()}));
@@ -27,6 +27,35 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     expect(fs.readFileSync(path.join(dir,'audit.jsonl'),'utf8')).not.toContain(credential.password);
     expect(mocks.gateway).toHaveBeenCalledTimes(2);expect(mocks.activate).not.toHaveBeenCalled();expect(first).not.toHaveProperty('secret');
     await service.revoke(first.id,'human:one',scope);await service.revoke(second.id,'human:one',scope);
+  });
+  it('成功回收清除临时口令、管理员快照和CA，活动记录仍保留所需凭据',async()=>{
+    const service=new DatabasePassService(dir,target),first=await service.prepare(scope,'one',['192.0.2.10/32']),second=await service.prepare(scope,'one',['192.0.2.10/32']);
+    await service.revoke(first.id,'one',scope);
+    const stored=JSON.parse(fs.readFileSync(path.join(dir,'passes.json'),'utf8'));
+    const terminal=stored.find((p:any)=>p.id===first.id),active=stored.find((p:any)=>p.id===second.id);
+    for(const key of ['secret','cleanupTarget','tlsCa']){expect(terminal).not.toHaveProperty(key);expect(active).toHaveProperty(key);}
+    expect(terminal.reclaimedAt).toBeTruthy();expect(await service.events(scope,'one')).toContainEqual(expect.objectContaining({passId:first.id,event:'account-reclaimed'}));
+    await service.revoke(second.id,'one',scope);
+  });
+  it('加载旧账本即清理终态秘密并限制历史数量，不裁掉仍待回收的记录',async()=>{
+    const service=new DatabasePassService(dir,target);await service.prepare(scope,'one',['192.0.2.10/32']);
+    const source=JSON.parse(fs.readFileSync(path.join(dir,'passes.json'),'utf8'))[0];
+    const old=Array.from({length:125},(_,i)=>({...source,id:i.toString(16).padStart(20,'0'),username:'cdsp_'+i.toString(16).padStart(20,'0'),createdAt:new Date(1700000000000+i*1000).toISOString(),status:i%2?'revoked':'expired'}));
+    const pending={...source,status:'cleanup-failed'};fs.writeFileSync(path.join(dir,'passes.json'),JSON.stringify([...old,pending]));mocks.account.mockRejectedValue(new Error('offline'));
+    const recovered=new DatabasePassService(dir,target);await recovered.list(scope,'one');
+    const stored=JSON.parse(fs.readFileSync(path.join(dir,'passes.json'),'utf8'));expect(stored).toHaveLength(DATABASE_PASS_TERMINAL_HISTORY_LIMIT+1);
+    expect(stored.filter((p:any)=>p.status!=='cleanup-failed').every((p:any)=>!p.secret&&!p.cleanupTarget&&!p.tlsCa)).toBe(true);
+    expect(stored.some((p:any)=>p.id===old[0].id)).toBe(false);expect(stored.some((p:any)=>p.id===old[124].id)).toBe(true);
+    expect(stored.find((p:any)=>p.id===pending.id)).toMatchObject({status:'cleanup-failed',secret:source.secret,cleanupTarget:source.cleanupTarget});
+    expect(fs.readFileSync(path.join(dir,'audit.jsonl'),'utf8')).toContain('review-approved');
+    mocks.account.mockResolvedValue(undefined);const fresh=await recovered.prepare(scope,'one',['192.0.2.10/32']);await recovered.revoke(fresh.id,'one',scope);
+    const after=JSON.parse(fs.readFileSync(path.join(dir,'passes.json'),'utf8'));expect(after).toHaveLength(DATABASE_PASS_TERMINAL_HISTORY_LIMIT);expect(after.some((p:any)=>p.id===fresh.id)).toBe(true);
+  });
+  it('回收后持久化失败仍保留重试凭据，存储恢复后再清理秘密',async()=>{
+    const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32']);
+    fs.mkdirSync(path.join(dir,'passes.json.tmp'));expect((await service.revoke(pass.id,'one',scope)).status).toBe('cleanup-failed');
+    fs.rmSync(path.join(dir,'passes.json.tmp'),{recursive:true});expect((await service.revoke(pass.id,'one',scope)).status).toBe('revoked');
+    const stored=JSON.parse(fs.readFileSync(path.join(dir,'passes.json'),'utf8'))[0];expect(stored).not.toHaveProperty('secret');expect(stored).not.toHaveProperty('cleanupTarget');
   });
   it('放行使用复制的原地址；单次期限从激活开始，并回收账号',async()=>{
     const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32'],1);

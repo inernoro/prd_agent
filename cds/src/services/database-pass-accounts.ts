@@ -39,8 +39,20 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
     return;
   }
   if (target.runtime === 'postgres') {
-    const db = new pg.Client({ host: '127.0.0.1', port: target.port, database: target.database, user: target.adminUser, password: target.adminPassword, connectionTimeoutMillis: 5000 });
-    try{await db.connect();}catch(error){await db.end().catch(()=>{});throw error;}
+    const connect = async (database: string) => {
+      const client = new pg.Client({ host: '127.0.0.1', port: target.port, database, user: target.adminUser, password: target.adminPassword, connectionTimeoutMillis: 5000 });
+      try { await client.connect(); return client; }
+      catch (error) { await client.end().catch(() => {}); throw error; }
+    };
+    let db: pg.Client | undefined;
+    let connectedDatabase = '';
+    for (const database of create ? [target.database] : [...new Set(['postgres', 'template1', target.database])]) {
+      try { db = await connect(database); connectedDatabase = database; break; }
+      catch (error) {
+        if (create || !['3D000', '42501', '55000'].includes(String((error as { code?: string }).code))) throw error;
+      }
+    }
+    if (!db) throw new Error('没有可连接的 PostgreSQL 维护库，账号回收将重试');
     try {
       if (create) {
         // PUBLIC EXECUTE on SECURITY DEFINER functions can evade ordinary SELECT grants.
@@ -68,6 +80,16 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
         if (exists.rowCount) {
           await db.query(`ALTER ROLE ${ident(account.username)} NOLOGIN`);
           await db.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename=$1', [account.username]);
+          // Table/schema grants live in the original database; shared roles survive its deletion.
+          if (connectedDatabase !== target.database) {
+            let original: pg.Client | undefined;
+            try { original = await connect(target.database); }
+            catch (error) { if ((error as { code?: string }).code !== '3D000') throw error; }
+            if (original) {
+              try { await original.query(`DROP OWNED BY ${ident(account.username)}`); }
+              finally { await original.end(); }
+            }
+          }
           await db.query(`DROP OWNED BY ${ident(account.username)}`);
           await db.query(`DROP ROLE ${ident(account.username)}`);
         }
