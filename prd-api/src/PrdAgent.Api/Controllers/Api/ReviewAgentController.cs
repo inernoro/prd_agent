@@ -2509,6 +2509,8 @@ public class ReviewAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择项目类别"));
         if (!IsVersionRegistrationVersionType(versionType))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择版本类别"));
+        if (!request.PlannedTrainingAt.HasValue)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计培训时间后再申领正式版本号"));
         var projectMembers = request.ProjectMemberNames?.Count > 0
             ? NormalizeNames(request.ProjectMemberNames)
             : internalSource?.ProjectMemberNames.ToList() ?? new();
@@ -2546,6 +2548,7 @@ public class ReviewAgentController : ControllerBase
             ProjectMemberNames = projectMembers,
             PlannedProjectAt = internalSource?.PlannedProjectAt,
             PlannedReleaseAt = request.PlannedReleaseAt,
+            PlannedTrainingAt = request.PlannedTrainingAt,
             ContractParty = TrimToNull(request.ContractParty),
             DevelopmentStatus = FirstPresent(request.DevelopmentStatus, internalSource?.DevelopmentStatus),
             Remark = TrimToNull(request.Remark),
@@ -3217,6 +3220,7 @@ public class ReviewAgentController : ControllerBase
         ProjectMemberNames = source.ProjectMemberNames.ToList(),
         PlannedProjectAt = source.PlannedProjectAt,
         PlannedReleaseAt = source.PlannedReleaseAt,
+        PlannedTrainingAt = source.PlannedTrainingAt,
         ContractParty = source.ContractParty,
         DevelopmentStatus = source.DevelopmentStatus,
         Remark = source.Remark,
@@ -3303,6 +3307,7 @@ public sealed class CreateFormalVersionRegistrationRequest : VersionRegistration
     public string? TCode { get; set; }
     public bool? IsGlobalOpen { get; set; }
     public DateTime? PlannedReleaseAt { get; set; }
+    public DateTime? PlannedTrainingAt { get; set; }
     public string? ContractParty { get; set; }
 }
 

@@ -30,6 +30,7 @@ export interface VersionRegistration {
   projectMemberNames: string[];
   plannedProjectAt?: string | null;
   plannedReleaseAt?: string | null;
+  plannedTrainingAt?: string | null;
   contractParty?: string | null;
   developmentStatus?: string | null;
   remark?: string | null;
@@ -94,6 +95,7 @@ export interface VersionRegistrationImportRow extends VersionRegistrationFields 
 export interface VersionRegistrationMessageParseResult extends VersionRegistrationFields {
   isGlobalOpen?: boolean | null;
   plannedReleaseAt?: string;
+  plannedTrainingAt?: string;
   tCode?: string;
   matchedFields: string[];
 }
@@ -195,6 +197,7 @@ export function createFormalVersionRegistration(
     tCode?: string;
     isGlobalOpen?: boolean | null;
     plannedReleaseAt?: string;
+    plannedTrainingAt: string;
     contractParty?: string;
   },
 ): Promise<ApiResponse<{ record: VersionRegistration; copyTemplate: string }>> {

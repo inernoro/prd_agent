@@ -60,6 +60,7 @@ type FormState = {
   projectMembers: string;
   plannedProjectAt: string;
   plannedReleaseAt: string;
+  plannedTrainingAt: string;
   isGlobalOpen: '' | 'yes' | 'no';
   contractParty: string;
   developmentStatus: string;
@@ -94,6 +95,7 @@ function emptyForm(): FormState {
     projectMembers: '',
     plannedProjectAt: '',
     plannedReleaseAt: '',
+    plannedTrainingAt: '',
     isGlobalOpen: '',
     contractParty: '',
     developmentStatus: '',
@@ -151,6 +153,7 @@ function formFromRegistration(record: VersionRegistration): FormState {
     projectMembers: (record.projectMemberNames ?? []).join('、'),
     plannedProjectAt: dateOnly(record.plannedProjectAt),
     plannedReleaseAt: dateOnly(record.plannedReleaseAt),
+    plannedTrainingAt: dateTimeLocal(record.plannedTrainingAt),
     isGlobalOpen: boolToChoice(record.isGlobalOpen),
     contractParty: record.contractParty ?? '',
     developmentStatus: record.developmentStatus ?? '',
@@ -163,6 +166,13 @@ function dateOnly(value?: string | null): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return '';
   return parsed.toISOString().slice(0, 10);
+}
+
+function dateTimeLocal(value?: string | null): string {
+  if (!value) return '';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return new Date(parsed.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
 }
 
 function formatDate(value?: string | null): string {
@@ -232,6 +242,7 @@ function formPatchFromMessage(result: VersionRegistrationMessageParseResult): Pa
   if (result.projectMemberNames?.length) patch.projectMembers = result.projectMemberNames.join('、');
   if (result.plannedProjectAt) patch.plannedProjectAt = dateOnly(result.plannedProjectAt);
   if (result.plannedReleaseAt) patch.plannedReleaseAt = dateOnly(result.plannedReleaseAt);
+  if (result.plannedTrainingAt) patch.plannedTrainingAt = dateTimeLocal(result.plannedTrainingAt);
   if (result.isGlobalOpen != null) patch.isGlobalOpen = boolToChoice(result.isGlobalOpen);
   return patch;
 }
@@ -239,7 +250,7 @@ function formPatchFromMessage(result: VersionRegistrationMessageParseResult): Pa
 function messagePlaceholder(kind: ApplyKind): string {
   return kind === 'internal'
     ? '粘贴企微中的“版本立项”内容，例如：\n项目类别：非定制\n版本类别：小版本\n是否需要UI设计：否\n需求来源：登康\n计划立项时间：2026.09.30'
-    : '粘贴企微中的“版本上线”内容，例如：\n项目类别：定制\n版本类别：小版本\n是否全域开放：是\n需求来源：拜耳\n项目组成员：宇凡、火巍\n计划上线时间：2026.09.21';
+    : '粘贴企微中的“版本上线”内容，例如：\n项目类别：定制\n版本类别：小版本\n是否全域开放：是\n需求来源：拜耳\n项目组成员：宇凡、火巍\n计划上线时间：2026.09.21\n预计培训时间：2026.09.20 14:30';
 }
 
 function normalizeMatchText(value?: string | null): string {
@@ -284,6 +295,7 @@ function ApplicationRecordList({ records }: { records: VersionRegistration[] }) 
             <div><dt className="text-token-muted">需求来源</dt><dd className="mt-0.5 text-token-secondary">{record.demandSource || '未填写'}</dd></div>
             <div><dt className="text-token-muted">产品负责人</dt><dd className="mt-0.5 text-token-secondary">{record.ownerName || record.createdByName || '未填写'}</dd></div>
             <div><dt className="text-token-muted">项目组成员</dt><dd className="mt-0.5 text-token-secondary">{record.projectMemberNames.length > 0 ? record.projectMemberNames.join('、') : '未填写'}</dd></div>
+            {record.kind === 'formal' ? <div><dt className="text-token-muted">预计培训时间</dt><dd className="mt-0.5 text-token-secondary">{record.plannedTrainingAt ? new Date(record.plannedTrainingAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '历史记录未填写'}</dd></div> : null}
             <div><dt className="text-token-muted">登记来源</dt><dd className="mt-0.5 text-token-secondary">{record.sourceType === 'history_import' ? '历史导入' : '当前申领'}</dd></div>
           </dl>
           {record.planUrl ? <p className="mt-3 break-all text-xs text-[color:var(--accent-fg-blue)]">方案地址：{record.planUrl}</p> : null}
@@ -360,6 +372,11 @@ function InputFields({ form, setForm, mode, strictFormal }: { form: FormState; s
       <Field label={isInternal ? '计划立项时间' : '计划上线时间'} required={isInternal || isFormalRequired}>
         <input className={FIELD_CLASS} type="date" value={isInternal ? form.plannedProjectAt : form.plannedReleaseAt} onChange={(event) => setForm(isInternal ? { plannedProjectAt: event.target.value } : { plannedReleaseAt: event.target.value })} />
       </Field>
+      {!isInternal ? (
+        <Field label="预计培训时间（北京时间）" required>
+          <input className={FIELD_CLASS} type="datetime-local" required value={form.plannedTrainingAt} onChange={(event) => setForm({ plannedTrainingAt: event.target.value })} />
+        </Field>
+      ) : null}
       {isInternal ? (
         <Field label="开发状态">
           <input className={FIELD_CLASS} value={form.developmentStatus} onChange={(event) => setForm({ developmentStatus: event.target.value })} placeholder="可选" />
@@ -692,6 +709,10 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
       setMessage('请先选择系统和应用；版本号会按所选应用独立分配');
       return;
     }
+    if (kind === 'formal' && (!form.plannedTrainingAt || Number.isNaN(new Date(`${form.plannedTrainingAt}+08:00`).getTime()))) {
+      setMessage('请填写预计培训时间后再申领正式版本号');
+      return;
+    }
     setSubmitting(true);
     const base = { ...formPayload(form), applicationId: selectedApplicationId };
     const result = kind === 'internal'
@@ -703,6 +724,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
         tCode: formalSourceMode === 'manual_t' ? manualTCode.trim() : undefined,
         isGlobalOpen: boolValue(form.isGlobalOpen),
         plannedReleaseAt: form.plannedReleaseAt || undefined,
+        plannedTrainingAt: new Date(`${form.plannedTrainingAt}+08:00`).toISOString(),
         contractParty: form.contractParty.trim() || undefined,
       });
     setSubmitting(false);

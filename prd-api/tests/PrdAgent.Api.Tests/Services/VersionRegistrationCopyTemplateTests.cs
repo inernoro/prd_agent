@@ -51,6 +51,7 @@ public class VersionRegistrationCopyTemplateTests
             PlanUrl = "https://example.test/plan",
             ProjectMemberNames = new List<string> { "宇凡", "火巍", "启芬", "泽腾" },
             PlannedReleaseAt = new DateTime(2026, 9, 21),
+            PlannedTrainingAt = new DateTime(2026, 9, 20, 6, 30, 0, DateTimeKind.Utc),
         };
 
         VersionRegistrationCopyTemplate.Build(record).ShouldBe("""
@@ -63,10 +64,14 @@ public class VersionRegistrationCopyTemplateTests
             方案地址：https://example.test/plan
             项目组成员：宇凡、火巍、启芬、泽腾
             计划上线时间：2026.9.21
+            预计培训时间：2026.9.20 14:30
             V4.26.1
             """);
 
         record.PlanUrl = null;
         VersionRegistrationCopyTemplate.Build(record).ShouldContain("方案地址：\n");
+
+        record.PlannedTrainingAt = null;
+        VersionRegistrationCopyTemplate.Build(record).ShouldContain("预计培训时间：\n");
     }
 }

@@ -45,6 +45,7 @@ public sealed class VersionRegistrationMessageParserTests
             方案地址：https://miduo1031.yuque.com/rsaesz/oqbs8t/cozs3e0fueazdweh#gtBBz
             项目组成员：宇凡、火巍、启芬、泽腾
             计划上线时间：2026.9.21
+            预计培训时间：2026.9.20 14:30
             """;
 
         var result = VersionRegistrationMessageParser.Parse(message, "formal");
@@ -57,6 +58,7 @@ public sealed class VersionRegistrationMessageParserTests
         Assert.Equal("https://miduo1031.yuque.com/rsaesz/oqbs8t/cozs3e0fueazdweh#gtBBz", result.PlanUrl);
         Assert.Equal(new[] { "宇凡", "火巍", "启芬", "泽腾" }, result.ProjectMemberNames);
         Assert.Equal(new DateTime(2026, 9, 21), result.PlannedReleaseAt!.Value);
+        Assert.Equal(new DateTime(2026, 9, 20, 6, 30, 0, DateTimeKind.Utc), result.PlannedTrainingAt!.Value);
         Assert.Equal("T6.18.6", result.TCode);
     }
 
@@ -69,6 +71,16 @@ public sealed class VersionRegistrationMessageParserTests
         Assert.Null(result.DemandSource);
         Assert.Null(result.PlanName);
         Assert.Null(result.PlannedReleaseAt);
+        Assert.Null(result.PlannedTrainingAt);
         Assert.Empty(result.ProjectMemberNames);
+    }
+
+    [Fact]
+    public void Parse_培训时间缺少钟点时不自动补零()
+    {
+        var result = VersionRegistrationMessageParser.Parse("预计培训时间：2026.9.20", "formal");
+
+        Assert.Null(result.PlannedTrainingAt);
+        Assert.DoesNotContain("plannedTrainingAt", result.MatchedFields);
     }
 }
