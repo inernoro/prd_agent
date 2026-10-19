@@ -7,7 +7,6 @@ import { useAuthStore } from '@/stores/authStore';
 import type { ReviewSubmission } from '@/services';
 import { ReviewAgentDimensionsModal } from './ReviewAgentDimensionsModal';
 import { ReviewAgentWebhookModal } from './ReviewAgentWebhookModal';
-import { VersionRegistrationDialog } from './VersionRegistrationDialog';
 import { useReviewNavigation } from './reviewNavigation';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
@@ -40,7 +39,7 @@ export function ReviewAgentPage() {
   const canManage = permissions.includes('review-agent.manage') || permissions.includes('super');
   const [dimsModalOpen, setDimsModalOpen] = useState(false);
   const [webhookModalOpen, setWebhookModalOpen] = useState(false);
-  const [versionRegistrationOpen, setVersionRegistrationOpen] = useState(false);
+  const canUseProduct = permissions.includes('product-agent.use') || permissions.includes('product-agent.version-apply') || permissions.includes('super');
 
   const [items, setItems] = useState<ReviewSubmission[]>([]);
   const [total, setTotal] = useState(0);
@@ -88,9 +87,9 @@ export function ReviewAgentPage() {
             <div className="flex flex-wrap items-center gap-2 mt-3">
               {!reviewNav.inProductManagement && (
                 <>
-                  <button onClick={() => setVersionRegistrationOpen(true)} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary hover-bg-soft" title="从评审申领 T 号或从 T 号申领 V 号">
-                    <BookOpenCheck className="w-3.5 h-3.5" />版本号申领
-                  </button>
+                  {canUseProduct && <button onClick={() => navigate('/product-agent?section=versions')} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary hover-bg-soft" title="在产品管理的内部与正式版本页申领">
+                    <BookOpenCheck className="w-3.5 h-3.5" />到产品管理申领版本号
+                  </button>}
                   <button onClick={() => navigate(reviewNav.assessments)} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary hover-bg-soft" title="上传 Excel 需求表并进行优先级评估">
                     <ListOrdered className="w-3.5 h-3.5" />需求评估
                   </button>
@@ -249,7 +248,6 @@ export function ReviewAgentPage() {
     </div>
       <ReviewAgentDimensionsModal open={dimsModalOpen} onClose={() => setDimsModalOpen(false)} />
       <ReviewAgentWebhookModal open={webhookModalOpen} onClose={() => setWebhookModalOpen(false)} />
-      <VersionRegistrationDialog open={versionRegistrationOpen} onClose={() => setVersionRegistrationOpen(false)} />
     </>
   );
 }

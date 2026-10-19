@@ -74,4 +74,17 @@ public class VersionRegistrationCopyTemplateTests
         record.PlannedTrainingAt = null;
         VersionRegistrationCopyTemplate.Build(record).ShouldContain("预计培训时间：\n");
     }
+
+    [Fact]
+    public void 北京时间零点提交的计划日期_复制时不应显示为前一天()
+    {
+        var record = new VersionRegistration
+        {
+            Kind = VersionRegistrationKind.Internal,
+            Code = "T1.2.3",
+            PlannedProjectAt = new DateTime(2026, 10, 18, 16, 0, 0, DateTimeKind.Utc),
+        };
+
+        VersionRegistrationCopyTemplate.Build(record).ShouldContain("计划立项时间：2026.10.19");
+    }
 }

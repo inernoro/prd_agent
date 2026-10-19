@@ -472,6 +472,7 @@ public class MongoDbContext
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
     public IMongoCollection<ProductInitiation> ProductInitiations => _database.GetCollection<ProductInitiation>("product_initiations");
     public IMongoCollection<ProductRelease> ProductReleases => _database.GetCollection<ProductRelease>("product_releases");
+    public IMongoCollection<ProductVersionWorkflowSnapshot> ProductVersionWorkflowSnapshots => _database.GetCollection<ProductVersionWorkflowSnapshot>("product_version_workflow_snapshots");
     public IMongoCollection<VersionRegistrySystem> VersionRegistrySystems => _database.GetCollection<VersionRegistrySystem>("version_registry_systems");
     public IMongoCollection<VersionRegistryApplication> VersionRegistryApplications => _database.GetCollection<VersionRegistryApplication>("version_registry_applications");
     public IMongoCollection<VersionRegistration> VersionRegistrations => _database.GetCollection<VersionRegistration>("version_registrations");

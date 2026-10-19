@@ -6,6 +6,7 @@
  * 禁止再 JSON.stringify；返回 ApiResponse<T>，用 res.success 判断。
  */
 import { apiRequest } from './apiClient';
+import type { VersionRegistration, VersionRegistrationMessageParseResult } from './versionRegistration';
 import type { ApiResponse } from '@/types/api';
 import type {
   Product,
@@ -59,6 +60,18 @@ export function listProducts(params?: { page?: number; pageSize?: number; grade?
 }
 export function getProduct(id: string): Promise<ApiResponse<Product>> {
   return apiRequest<Product>(`/api/product/products/${id}`);
+}
+export interface VersionApplicationProduct {
+  id: string;
+  name: string;
+  productNo: string;
+  code?: string | null;
+}
+export function listVersionApplicationProducts(): Promise<ApiResponse<{ items: VersionApplicationProduct[] }>> {
+  return apiRequest('/api/product/version-workflow/products');
+}
+export function getVersionApplicationProduct(id: string): Promise<ApiResponse<VersionApplicationProduct>> {
+  return apiRequest(`/api/product/version-workflow/products/${encodeURIComponent(id)}`);
 }
 export function createProduct(body: Partial<Product>): Promise<ApiResponse<Product>> {
   return apiRequest<Product>('/api/product/products', { method: 'POST', body });
@@ -122,8 +135,19 @@ export function createInitiation(productId: string, body: {
   linkedProductId: string;
   projectType: 'standard' | 'custom';
   customerSource?: string;
+  demandSource?: string;
   planName: string;
   planUrl?: string;
+  requirementDescription?: string;
+  departmentName?: string;
+  ownerName?: string;
+  projectMemberNames?: string[];
+  plannedProjectAt?: string;
+  needUiDesign?: boolean;
+  isAiPoc?: boolean;
+  developmentStatus?: string;
+  remark?: string;
+  reviewSubmissionId?: string;
   versionType: 'major' | 'medium' | 'minor';
   requirementIds: string[];
 }) {
@@ -133,8 +157,19 @@ export function updateInitiation(id: string, body: {
   linkedProductId: string;
   projectType: 'standard' | 'custom';
   customerSource?: string;
+  demandSource?: string;
   planName: string;
   planUrl?: string;
+  requirementDescription?: string;
+  departmentName?: string;
+  ownerName?: string;
+  projectMemberNames?: string[];
+  plannedProjectAt?: string;
+  needUiDesign?: boolean;
+  isAiPoc?: boolean;
+  developmentStatus?: string;
+  remark?: string;
+  reviewSubmissionId?: string;
   versionType: 'major' | 'medium' | 'minor';
   requirementIds: string[];
 }) {
@@ -164,17 +199,43 @@ export function listReleases(productId: string, scope: 'mine' | 'all' = 'mine', 
 }
 export function createRelease(productId: string, body: {
   initiationId?: string;
+  manualTCode?: string;
   isTemporaryOptimization: boolean;
   planName?: string;
   ownerId: string;
   openBrandScope?: string;
+  isGlobalOpen?: boolean;
+  demandSource?: string;
+  planUrl?: string;
+  requirementDescription?: string;
+  departmentName?: string;
+  ownerName?: string;
+  projectMemberNames?: string[];
+  contractParty?: string;
+  remark?: string;
+  projectType?: 'standard' | 'custom';
+  versionType?: 'major' | 'medium' | 'minor';
   additionalRequirementIds?: string[];
   teamMemberIds: string[];
   plannedReleaseAt: string;
+  plannedTrainingAt: string;
   previousReleaseId?: string;
   featureManifest?: ReleaseFeatureItem[];
 }) {
   return apiRequest<ProductRelease>(`/api/product/products/${productId}/releases`, { method: 'POST', body });
+}
+export function listProductVersionReviewSources() {
+  return apiRequest<{ items: Array<{ id: string; title: string; fileName: string; completedAt?: string | null }> }>(
+    '/api/product/version-workflow/review-sources',
+  );
+}
+export function parseProductVersionMessage(kind: 'internal' | 'formal', text: string) {
+  return apiRequest<{ result: VersionRegistrationMessageParseResult }>(
+    '/api/product/version-workflow/parse-message', { method: 'POST', body: { kind, text } },
+  );
+}
+export function getProductVersionCopyTemplate(kind: 'initiation' | 'release', id: string) {
+  return apiRequest<{ text: string }>(`/api/product/${kind === 'initiation' ? 'initiations' : 'releases'}/${id}/copy-template`);
 }
 export function getRelease(id: string) {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}`);
@@ -195,6 +256,7 @@ export function completeRelease(id: string, announcementUrl: string) {
 }
 export function importVersionWorkflow(productId: string, body: {
   kind: 'initiation' | 'release';
+  sourceFileName?: string;
   rows: Array<Record<string, unknown>>;
 }) {
   return apiRequest<ImportRoutedResult>(
@@ -205,6 +267,7 @@ export function importVersionWorkflow(productId: string, body: {
 
 export function importOverviewVersionWorkflow(body: {
   kind: 'initiation' | 'release';
+  sourceFileName?: string;
   rows: Array<Record<string, unknown>>;
 }) {
   return apiRequest<ImportRoutedResult>('/api/product/overview/version-workflow/import', { method: 'POST', body });
@@ -212,11 +275,50 @@ export function importOverviewVersionWorkflow(body: {
 
 export interface ImportRoutedResult {
   created: number;
+  snapshotId?: string;
   updated?: number;
   skipped?: number;
   errors?: { row: number; message: string }[];
   routed?: Record<string, number>;
   unmatched?: Array<{ row?: number; label?: string; title?: string; planName?: string }>;
+}
+export function listLegacyVersionRegistrations(kind: 'internal' | 'formal', scope: 'mine' | 'all' = 'mine') {
+  return apiRequest<{ items: VersionRegistration[]; canViewAll: boolean }>(
+    `/api/product/overview/version-workflow/legacy?kind=${kind}&scope=${scope}`,
+  );
+}
+export function getLegacyVersionCopyTemplate(id: string) {
+  return apiRequest<{ text: string }>(`/api/product/overview/version-workflow/legacy/${id}/copy-template`);
+}
+
+export interface ProductVersionSnapshotSummary {
+  id: string;
+  name: string;
+  sourceType: string;
+  sourceFileName?: string | null;
+  importedCount: number;
+  skippedCount: number;
+  recordCount: number;
+  createdAt: string;
+  registry: boolean;
+}
+export function listProductVersionSnapshots(scope: 'mine' | 'all' = 'mine') {
+  return apiRequest<{ items: ProductVersionSnapshotSummary[]; canViewAll: boolean }>(
+    `/api/product/overview/version-workflow/snapshots?scope=${scope}`,
+  );
+}
+export function getProductVersionSnapshot(id: string) {
+  return apiRequest<{ snapshot: {
+    id: string; name: string; createdAt: string;
+    initiations?: ProductInitiation[]; releases?: ProductRelease[];
+    records?: VersionRegistration[];
+    errors?: Array<{ row: number; message: string }>;
+  }; registry: boolean }>(`/api/product/overview/version-workflow/snapshots/${id}`);
+}
+export function createProductVersionSnapshot(name?: string) {
+  return apiRequest<{ snapshotId: string; recordCount: number }>(
+    '/api/product/overview/version-workflow/snapshots', { method: 'POST', body: { name } },
+  );
 }
 
 // ── 需求 ──
@@ -970,6 +1072,9 @@ export interface OverviewReleaseRow {
   planName: string;
   versionType: string;
   departmentName?: string | null;
+  demandSource?: string | null;
+  plannedTrainingAt?: string | null;
+  isGlobalOpen?: boolean | null;
   ownerId?: string | null;
   ownerName?: string | null;
   teamMemberIds: string[];
@@ -998,6 +1103,8 @@ export interface OverviewInitiationRow {
   planName: string;
   versionType: string;
   requirementDescription?: string | null;
+  demandSource?: string | null;
+  projectMemberNames?: string[];
   departmentName?: string | null;
   primaryOwnerId?: string | null;
   ownerName?: string | null;
@@ -1006,6 +1113,8 @@ export interface OverviewInitiationRow {
   thirdDraftMeetingAt?: string | null;
   projectAt?: string | null;
   needUiDesign?: boolean | null;
+  isAiPoc?: boolean | null;
+  plannedProjectAt?: string | null;
   planUrl?: string | null;
   developmentStatus: string;
   remark?: string | null;

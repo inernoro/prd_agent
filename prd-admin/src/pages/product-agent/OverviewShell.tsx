@@ -24,7 +24,6 @@ import {
   Search,
   ClipboardCheck,
   ListOrdered,
-  BookOpenCheck,
 } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -36,6 +35,7 @@ import { ProductGraphCanvas } from './ProductGraphCanvas';
 import { OverviewKnowledgeList } from './knowledge/OverviewKnowledgeList';
 import { ProductHistoryImportDialog } from './ProductHistoryImportDialog';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { LegacyVersionArchive } from './LegacyVersionArchive';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
@@ -46,6 +46,8 @@ import {
   getOverviewRequirements,
   getOverviewReleases,
   getOverviewInitiations,
+  listVersionApplicationProducts,
+  type VersionApplicationProduct,
   type OverviewReleaseRow,
   type OverviewInitiationRow,
   getOverviewDefects,
@@ -60,11 +62,11 @@ import { formatListSectionTitle } from '@/lib/listSectionTitle';
 import { useListFilter, distinctOptions, OVERVIEW_LIST_SEARCH_BOX, type FilterFieldDef } from './listFilter';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { formatInitiationReviewScore } from './initiationWorkflowUtils';
-import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
+import { formatVersionBasicBool, formatVersionBasicDate, formatVersionTrainingTime, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { filterByTracked } from './productRecordTrackStorage';
 import { useAuthStore } from '@/stores/authStore';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { ReviewAgentPage } from '@/pages/review-agent';
-import { VersionRegistrationDialog } from '@/pages/review-agent/VersionRegistrationDialog';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
@@ -81,9 +83,13 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const permissions = useAuthStore((state) => state.permissions ?? []);
+  const isRoot = useAuthStore((state) => state.isRoot);
+  const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
   const canUseReview = permissions.includes('review-agent.use') || permissions.includes('super');
+  const canViewLegacyVersions = canUseProduct || hasEffectivePermission(permissions, 'review-agent.use', isRoot)
+    || hasEffectivePermission(permissions, 'product-agent.version-apply', isRoot);
   // 与 SingleProductView 一致：分区由 URL ?section= 派生，避免 state 与地址栏不同步
-  const active: Section = sectionOverride ?? parseOverviewSection(searchParams.get('section'));
+  const active: Section = canUseProduct ? (sectionOverride ?? parseOverviewSection(searchParams.get('section'))) : 'versions';
 
   const selectSection = useCallback((section: Section) => {
     if (sectionOverride) {
@@ -100,6 +106,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [products, setProducts] = useState<Product[]>([]);
+  const [versionProducts, setVersionProducts] = useState<VersionApplicationProduct[]>([]);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -109,15 +116,22 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
   }, []);
 
   useEffect(() => {
-    void loadStats();
-    void listProducts({ pageSize: 100 }).then((result) => {
-      if (result.success) setProducts(result.data.items);
+    if (canUseProduct) {
+      void loadStats();
+      void listProducts({ pageSize: 100 }).then((result) => {
+        if (result.success) setProducts(result.data.items);
+      });
+    } else {
+      setStatsLoading(false);
+    }
+    void listVersionApplicationProducts().then((result) => {
+      if (result.success) setVersionProducts(result.data.items);
     });
-  }, [loadStats]);
+  }, [canUseProduct, loadStats]);
 
   const isAdmin = stats?.isAdmin ?? false;
 
-  const navItems: NavItem<Section>[] = [
+  const navItems: NavItem<Section>[] = canUseProduct ? [
     { key: 'dashboard', label: '概览', icon: LayoutDashboard },
     { key: 'products', label: '产品', icon: Boxes },
     { key: 'requirements', label: '需求', icon: ListChecks },
@@ -129,12 +143,12 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
     { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin, dividerBefore: true },
-  ];
+  ] : [{ key: 'versions', label: '版本', icon: Boxes }];
 
   return (
     <ProductAgentLayout
-      title="产品管理"
-      subtitle="全局总览"
+      title={canUseProduct ? '产品管理' : '版本号申领'}
+      subtitle={canUseProduct ? '全局总览' : '内部版本与正式版本'}
       topSlot={
         <button
           onClick={() => navigate('/')}
@@ -189,7 +203,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
       )}
       {active === 'versions' && (
         <SectionShell title="版本" desc="正式版本与内部版本分 tab 展示，列字段与单产品版本页对齐（含负责人/组员/会议时间等）；点击行进入详情；管理员可导入 Excel 历史数据">
-          <VersionOverviewSection isAdmin={isAdmin} products={products} canUseReview={canUseReview} />
+          <VersionOverviewSection isAdmin={isAdmin} products={versionProducts} canViewLegacy={canViewLegacyVersions} />
         </SectionShell>
       )}
       {active === 'customers' && (
@@ -774,9 +788,15 @@ function overviewAnnouncementCell(row: OverviewReleaseRow) {
   return <span className="text-token-muted">-</span>;
 }
 
-function VersionOverviewSection({ isAdmin, products, canUseReview }: { isAdmin: boolean; products: Product[]; canUseReview: boolean }) {
+function VersionOverviewSection({ isAdmin, products, canViewLegacy }: { isAdmin: boolean; products: VersionApplicationProduct[]; canViewLegacy: boolean }) {
+  const navigate = useNavigate();
   const [tab, setTab] = useState<'release' | 'initiation'>('release');
-  const [registrationOpen, setRegistrationOpen] = useState(false);
+  const [view, setView] = useState<'current' | 'legacy' | 'snapshots'>('current');
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const viewOptions = canViewLegacy
+    ? ([['current', '当前工作流'], ['legacy', '旧登记记录'], ['snapshots', '历史存档']] as const)
+    : ([['current', '当前工作流'], ['snapshots', '历史存档']] as const);
+  useEffect(() => { if (!canViewLegacy && view === 'legacy') setView('current'); }, [canViewLegacy, view]);
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-token-subtle">
@@ -784,15 +804,24 @@ function VersionOverviewSection({ isAdmin, products, canUseReview }: { isAdmin: 
           <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
           <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</OverviewSubTab>
         </div>
-        {canUseReview && (
-          <button type="button" onClick={() => setRegistrationOpen(true)} className="mb-1 flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-primary hover-bg-soft">
-            <BookOpenCheck size={14} />公开版本号申领与记录
+        {view === 'current' && <div className="mb-1 flex flex-wrap items-center gap-2">
+          <select value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} aria-label="选择要申领版本的产品" className="rounded-md border border-token-subtle bg-token-nested px-2 py-1.5 text-xs text-token-primary">
+            <option value="">选择产品</option>
+            {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
+          </select>
+          <button type="button" disabled={!selectedProductId} onClick={() => navigate(`/product-agent/p/${selectedProductId}?tab=versions&versionTab=${tab}`)} className="rounded-md border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-primary hover-bg-soft disabled:opacity-40">
+            到所选产品{tab === 'release' ? '申领正式版本号' : '发起立项'}
           </button>
-        )}
+        </div>}
       </div>
-      {tab === 'release' && <ReleaseOverviewTable isAdmin={isAdmin} products={products} />}
-      {tab === 'initiation' && <InitiationOverviewTable isAdmin={isAdmin} products={products} />}
-      <VersionRegistrationDialog open={registrationOpen} onClose={() => setRegistrationOpen(false)} />
+      <div className="mb-4 flex flex-wrap gap-2 text-xs">
+        {viewOptions.map(([key, label]) => (
+          <button key={key} type="button" onClick={() => setView(key)} className={`rounded-lg border px-3 py-1.5 ${view === key ? 'border-cyan-400/45 bg-cyan-400/10 text-[color:var(--accent-fg-blue)]' : 'border-token-subtle bg-token-nested text-token-secondary hover-bg-soft'}`}>{label}</button>
+        ))}
+      </div>
+      {view === 'current' && tab === 'release' && <ReleaseOverviewTable isAdmin={isAdmin} products={products} />}
+      {view === 'current' && tab === 'initiation' && <InitiationOverviewTable isAdmin={isAdmin} products={products} />}
+      {view !== 'current' && <LegacyVersionArchive kind={tab === 'release' ? 'formal' : 'internal'} isAdmin={isAdmin} mode={view} />}
     </div>
   );
 }
@@ -809,7 +838,7 @@ function OverviewSubTab({ active, children, onClick }: { active: boolean; childr
   );
 }
 
-function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: VersionApplicationProduct[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewReleaseRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -826,18 +855,21 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
     filename: 'overview-releases.csv',
-    headers: ['产品', 'V号', 'T号', '项目类别', '版本类别', '方案', '部门', '负责人', '组员', '上线日期', '状态'],
+    headers: ['系统', '产品', 'V号', 'T号', '项目类别', '版本类别', '方案', '需求来源', '部门', '负责人', '组员', '上线日期', '预计培训时间', '状态'],
     mapRow: (r) => [
+      r.systemName ?? '',
       resolveVersionProductLabel(r, r.productName),
       r.vCode,
       r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : ''),
       overviewProjectTypeLabel(r.projectType),
       VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
       r.planName,
+      r.demandSource ?? '',
       r.departmentName ?? '',
       r.ownerName ?? '',
       r.teamMemberNames.join('、'),
       r.plannedReleaseAt ? formatVersionBasicDate(r.plannedReleaseAt) : '',
+      formatVersionTrainingTime(r.plannedTrainingAt),
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
     ],
   });
@@ -858,6 +890,7 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
           columns={[
+            { key: 'system', header: '系统', defaultWidth: 112, render: (r) => <TruncateCell text={r.systemName || '-'} maxChars={14} className="text-xs text-token-secondary" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-token-secondary" /> },
             { key: 'vcode', header: '正式版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
             { key: 'tcode', header: '内部版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-xs text-token-secondary">{r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : '-')}</span> },
@@ -865,12 +898,15 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
             { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
             { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-token-primary" /> },
             { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-token-secondary" /> },
+            { key: 'demandSource', header: '需求来源', defaultWidth: 112, render: (r) => <TruncateCell text={r.demandSource ?? '-'} maxChars={14} className="text-xs text-token-secondary" /> },
             { key: 'owner', header: '产品负责人（申领人）', defaultWidth: 120, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-token-secondary" /> },
             { key: 'team', header: '项目组成员', defaultWidth: 140, render: (r) => <TruncateCell text={r.teamMemberNames.length > 0 ? r.teamMemberNames.join('、') : '-'} maxChars={18} className="text-xs text-token-secondary" /> },
             { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-token-muted">-</span> },
             { key: 'releaseAt', header: '上线日期', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.plannedReleaseAt)}</span> },
+            { key: 'trainingAt', header: '预计培训时间', defaultWidth: 138, render: (r) => <span className="text-xs text-token-muted">{formatVersionTrainingTime(r.plannedTrainingAt)}</span> },
+            { key: 'globalOpen', header: '是否全域开放', defaultWidth: 112, render: (r) => <span className="text-xs text-token-secondary">{formatVersionBasicBool(r.isGlobalOpen)}</span> },
             { key: 'brand', header: '当前开放品牌', defaultWidth: 112, render: (r) => <TruncateCell text={r.openBrandScope || '上线全域开放'} maxChars={14} className="text-xs text-token-secondary" /> },
-            { key: 'requirements', header: '需求来源', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementTitles.length > 0 ? r.requirementTitles.join('、') : '-'} maxChars={20} className="text-xs text-token-secondary" /> },
+            { key: 'requirements', header: '关联需求', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementTitles.length > 0 ? r.requirementTitles.join('、') : '-'} maxChars={20} className="text-xs text-token-secondary" /> },
             { key: 'announcement', header: '上线公告地址', defaultWidth: 104, render: (r) => overviewAnnouncementCell(r) },
             { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
           ]}
@@ -888,7 +924,7 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
   );
 }
 
-function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
+function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; products: VersionApplicationProduct[] }) {
   const navigate = useNavigate();
   const [rows, setRows] = useState<OverviewInitiationRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -905,15 +941,18 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
 
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
     filename: 'overview-initiations.csv',
-    headers: ['产品', '项目类别', 'T号', '版本类别', '方案', '部门', '负责人', '开发状态', 'Agent评审', '状态'],
+    headers: ['系统', '产品', '项目类别', 'T号', '版本类别', '方案', '需求来源', '部门', '负责人', '计划立项时间', '开发状态', 'Agent评审', '状态'],
     mapRow: (r) => [
+      r.systemName ?? '',
       resolveVersionProductLabel(r, r.productName),
       overviewProjectTypeLabel(r.projectType, r.customerSource),
       r.tCode ?? '',
       VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType,
       r.planName,
+      r.demandSource ?? '',
       r.departmentName ?? '',
       r.ownerName ?? '',
+      formatVersionBasicDate(r.plannedProjectAt),
       r.developmentStatus,
       formatInitiationReviewScore(r),
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
@@ -936,11 +975,13 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
           columns={[
+            { key: 'system', header: '系统', defaultWidth: 112, render: (r) => <TruncateCell text={r.systemName || '-'} maxChars={14} className="text-xs text-token-secondary" /> },
             { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-token-secondary" /> },
             { key: 'projectType', header: '项目类别', defaultWidth: 108, render: (r) => <span className="text-xs text-token-secondary">{overviewProjectTypeLabel(r.projectType, r.customerSource)}</span> },
             { key: 'tcode', header: '立项号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '-'}</span> },
             { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
             { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-token-primary" /> },
+            { key: 'demandSource', header: '需求来源', defaultWidth: 112, render: (r) => <TruncateCell text={r.demandSource ?? '-'} maxChars={14} className="text-xs text-token-secondary" /> },
             { key: 'reqDesc', header: '项目需求描述', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementDescription ?? '-'} maxChars={20} className="text-xs text-token-secondary" /> },
             { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-token-secondary" /> },
             { key: 'owner', header: '产品负责人', defaultWidth: 104, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-token-secondary" /> },
@@ -949,6 +990,8 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
             { key: 'draft3', header: '第三稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.thirdDraftMeetingAt)}</span> },
             { key: 'projectAt', header: '立项时间', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.projectAt)}</span> },
             { key: 'ui', header: '需UI设计', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{formatVersionBasicBool(r.needUiDesign)}</span> },
+            { key: 'aiPoc', header: 'AI POC', defaultWidth: 78, render: (r) => <span className="text-xs text-token-secondary">{formatVersionBasicBool(r.isAiPoc)}</span> },
+            { key: 'plannedProjectAt', header: '计划立项时间', defaultWidth: 108, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.plannedProjectAt)}</span> },
             { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-token-muted">-</span> },
             { key: 'devStatus', header: '开发状态', defaultWidth: 88, render: (r) => <span className="text-xs text-token-secondary">{r.developmentStatus || '待开发'}</span> },
             { key: 'remark', header: '备注', defaultWidth: 120, render: (r) => <TruncateCell text={r.remark ?? '-'} maxChars={16} className="text-xs text-token-muted" /> },

@@ -3,11 +3,12 @@
  * 路由：/product-agent/p/:productId/release/:id（id=new 为新建）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { getUserCards } from '@/services/real/teams';
 import {
   completeRelease,
@@ -38,6 +39,9 @@ import { WorkflowAttributeTable, WorkflowDetailCard, WorkflowRecordTable } from 
 import { buildReleaseBasicInfoRows } from './versionBasicInfoCatalog';
 import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } from './versionDetailTables';
 import { DetailRecordActions } from './DetailRecordActions';
+import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
+import type { VersionRegistrationMessageParseResult } from '@/services/real/versionRegistration';
+import { VersionCopyActions } from './VersionCopyActions';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -51,6 +55,17 @@ export const FEATURE_CHANGE_LABEL: Record<FeatureChangeType, string> = {
   deprecated: '废弃',
   unchanged: '继承',
 };
+
+function shanghaiDateTimeInput(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(date);
+  const get = (name: string) => parts.find((part) => part.type === name)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
+}
 
 const CHANGE_BADGE_CLASS: Record<FeatureChangeType, string> = {
   added: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
@@ -71,9 +86,14 @@ export function ReleaseWorkflowDetail({
   isNew: boolean;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const issuedState = location.state as { issuedCode?: string; autoCopied?: boolean } | null;
   const [searchParams] = useSearchParams();
   const temporary = searchParams.get('temporary') === '1';
   const currentUser = useAuthStore((state) => state.user);
+  const permissions = useAuthStore((state) => state.permissions ?? []);
+  const isRoot = useAuthStore((state) => state.isRoot);
+  const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
 
   const [tab, setTab] = useState<DetailTab>('basic');
   const [loading, setLoading] = useState(true);
@@ -92,12 +112,27 @@ export function ReleaseWorkflowDetail({
   const [loadError, setLoadError] = useState('');
 
   const [initiationId, setInitiationId] = useState('');
+  const [manualTCode, setManualTCode] = useState('');
+  const [sourceMode, setSourceMode] = useState<'initiation' | 'manual_t'>('initiation');
   const [ownerId, setOwnerId] = useState(currentUser?.userId ?? '');
   const [showOwnerPicker, setShowOwnerPicker] = useState(false);
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const [showRequirementPicker, setShowRequirementPicker] = useState(false);
-  const [teamIds, setTeamIds] = useState<string[]>([]);
+  const [teamIds, setTeamIds] = useState<string[]>(currentUser?.userId ? [currentUser.userId] : []);
   const [releaseAt, setReleaseAt] = useState('');
+  const [trainingAt, setTrainingAt] = useState('');
+  const [projectType, setProjectType] = useState<'standard' | 'custom'>('standard');
+  const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>('minor');
+  const [planName, setPlanName] = useState('');
+  const [planUrl, setPlanUrl] = useState('');
+  const [demandSource, setDemandSource] = useState('');
+  const [requirementDescription, setRequirementDescription] = useState('');
+  const [departmentName, setDepartmentName] = useState('');
+  const [ownerName, setOwnerName] = useState('');
+  const [projectMembers, setProjectMembers] = useState('');
+  const [contractParty, setContractParty] = useState('');
+  const [remark, setRemark] = useState('');
+  const [isGlobalOpen, setIsGlobalOpen] = useState('');
   const [openBrandScope, setOpenBrandScope] = useState('上线全域开放');
   const [announcementUrl, setAnnouncementUrl] = useState('');
   const [busy, setBusy] = useState(false);
@@ -115,7 +150,7 @@ export function ReleaseWorkflowDetail({
     setLoading(true);
     setLoadError('');
     const [initRes, reqRes, memRes, featRes, defRes] = await Promise.all([
-      listInitiations(productId, 'mine'),
+      listInitiations(productId, 'all'),
       listRequirements(productId),
       listProductMembers(productId),
       listFeatures(productId),
@@ -270,7 +305,7 @@ export function ReleaseWorkflowDetail({
     return userDisplayNames.get(userId) ?? memberNameMap.get(userId) ?? userId;
   };
 
-  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId);
+  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId, canUseProduct);
   const isRecordDetail = !isNew && !!release;
   const isPendingWorkflow = isRecordDetail && release?.status === 'announcement_pending';
   const canCompleteRelease = isPendingWorkflow && release?.sourceType !== 'import';
@@ -295,18 +330,85 @@ export function ReleaseWorkflowDetail({
     [release, userDisplayNames, members],
   );
 
+  const chooseInitiation = (id: string) => {
+    setInitiationId(id);
+    const source = approved.find((item) => item.id === id);
+    if (!source) return;
+    setProjectType(source.projectType);
+    setVersionType(source.versionType);
+    setPlanName(source.planName);
+    setPlanUrl(source.planUrl ?? '');
+    setDemandSource(source.demandSource ?? '');
+    setRequirementDescription(source.requirementDescription ?? '');
+    setDepartmentName(source.departmentName ?? '');
+    setOwnerName(source.ownerName ?? '');
+    setProjectMembers((source.projectMemberNames ?? []).join('、'));
+  };
+
+  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
+    if (parsed.tCode) {
+      const source = approved.find((item) => item.tCode?.toUpperCase() === parsed.tCode?.toUpperCase());
+      if (source) {
+        setSourceMode('initiation');
+        chooseInitiation(source.id);
+        setManualTCode('');
+      } else {
+        setSourceMode('manual_t');
+        setManualTCode(parsed.tCode);
+        setInitiationId('');
+      }
+    }
+    if (parsed.projectType) setProjectType(parsed.projectType);
+    if (parsed.versionType) setVersionType(parsed.versionType);
+    if (parsed.demandSource) setDemandSource(parsed.demandSource);
+    if (parsed.planName) setPlanName(parsed.planName);
+    if (parsed.planUrl) setPlanUrl(parsed.planUrl);
+    if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
+    if (parsed.departmentName) setDepartmentName(parsed.departmentName);
+    if (parsed.ownerName) {
+      setOwnerName(parsed.ownerName);
+      const matchedOwner = members.find((member) => member.displayName === parsed.ownerName);
+      if (matchedOwner) setOwnerId(matchedOwner.userId);
+    }
+    if (parsed.projectMemberNames?.length) {
+      setProjectMembers(parsed.projectMemberNames.join('、'));
+      const matchedIds = members.filter((member) => parsed.projectMemberNames?.includes(member.displayName)).map((member) => member.userId);
+      if (matchedIds.length) setTeamIds(matchedIds);
+    }
+    if (parsed.plannedReleaseAt) setReleaseAt(parsed.plannedReleaseAt.slice(0, 10));
+    if (parsed.plannedTrainingAt) setTrainingAt(shanghaiDateTimeInput(parsed.plannedTrainingAt));
+    if (parsed.isGlobalOpen != null) setIsGlobalOpen(parsed.isGlobalOpen ? 'yes' : 'no');
+  };
+
   const saveNew = async () => {
+    if (!releaseAt || !trainingAt || Number.isNaN(new Date(`${trainingAt}+08:00`).getTime())) {
+      setMessage('请填写上线日期和预计培训时间');
+      return;
+    }
     setBusy(true);
     setMessage('');
     const res = await createRelease(productId, {
-      initiationId: temporary ? undefined : initiationId,
+      initiationId: temporary || sourceMode === 'manual_t' ? undefined : initiationId,
+      manualTCode: !temporary && sourceMode === 'manual_t' ? manualTCode.trim() : undefined,
       isTemporaryOptimization: temporary,
-      planName: temporary ? temporaryPlanName : undefined,
+      planName: temporary ? temporaryPlanName : planName.trim() || undefined,
       ownerId,
       openBrandScope,
+      isGlobalOpen: isGlobalOpen === '' ? undefined : isGlobalOpen === 'yes',
+      demandSource: demandSource.trim() || undefined,
+      planUrl: planUrl.trim() || undefined,
+      requirementDescription: requirementDescription.trim() || undefined,
+      departmentName: departmentName.trim() || undefined,
+      ownerName: ownerName.trim() || undefined,
+      projectMemberNames: projectMembers.split(/[、,，;；]/).map((name) => name.trim()).filter(Boolean),
+      contractParty: contractParty.trim() || undefined,
+      remark: remark.trim() || undefined,
+      projectType,
+      versionType,
       additionalRequirementIds: extraIds,
       teamMemberIds: teamIds,
-      plannedReleaseAt: new Date(`${releaseAt}T00:00:00`).toISOString(),
+      plannedReleaseAt: new Date(`${releaseAt}T00:00:00+08:00`).toISOString(),
+      plannedTrainingAt: new Date(`${trainingAt}+08:00`).toISOString(),
       previousReleaseId: previousReleaseId ?? undefined,
       featureManifest: activeManifest,
     });
@@ -315,7 +417,14 @@ export function ReleaseWorkflowDetail({
       setMessage(res.error?.message ?? '申领失败');
       return;
     }
-    navigate(`/product-agent/p/${productId}/release/${res.data.id}`, { replace: true });
+    let autoCopied = false;
+    try {
+      await navigator.clipboard.writeText(res.data.vCode);
+      autoCopied = true;
+    } catch {
+      // 详情页保留手动复制入口。
+    }
+    navigate(`/product-agent/p/${productId}/release/${res.data.id}`, { replace: true, state: { issuedCode: res.data.vCode, autoCopied } });
   };
 
   const saveManifest = async () => {
@@ -343,8 +452,8 @@ export function ReleaseWorkflowDetail({
     else setRelease(res.data);
   };
 
-  const basicInvalid = !ownerId || !releaseAt || teamIds.length === 0
-    || (temporary ? extraIds.length === 0 : !initiationId);
+  const basicInvalid = !ownerId || !releaseAt || !trainingAt || !isGlobalOpen || teamIds.length === 0
+    || (temporary ? extraIds.length === 0 : sourceMode === 'manual_t' ? !manualTCode.trim() || !planName.trim() : !initiationId);
   const manifestInvalid = activeManifest.length === 0;
   const releaseDisplayTitle = useMemo(() => {
     if (!release) return '正式版本';
@@ -402,6 +511,15 @@ export function ReleaseWorkflowDetail({
           )}
         </div>
       </div>
+
+      {!isNew && release && <>
+        {issuedState?.issuedCode === release.vCode && (
+          <p role="status" className="rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2 text-sm text-token-secondary">
+            {release.vCode} 已生成{issuedState?.autoCopied ? '并自动复制' : '；浏览器未允许自动复制，可使用下方按钮'}。
+          </p>
+        )}
+        <VersionCopyActions kind="release" id={release.id} code={release.vCode} />
+      </>}
 
       <div className="flex border-b border-token-subtle">
         <TabButton active={tab === 'basic'} onClick={() => setTab('basic')}>基础信息</TabButton>
@@ -470,7 +588,7 @@ export function ReleaseWorkflowDetail({
               <WorkflowRecordTable
                 emptyText="该正式版本未关联需求"
                 rows={releaseRequirements}
-                onRowClick={(id) => navigate(`/product-agent/p/${productId}/requirement/${id}`)}
+                onRowClick={canUseProduct ? (id) => navigate(`/product-agent/p/${productId}/requirement/${id}`) : undefined}
                 columns={requirementDetailColumns(reqWorkflow)}
               />
             </WorkflowDetailCard>
@@ -480,13 +598,14 @@ export function ReleaseWorkflowDetail({
               <WorkflowRecordTable
                 emptyText="该正式版本下还没有功能记录"
                 rows={releaseLinkedFeatures}
-                onRowClick={(id) => navigate(`/product-agent/p/${productId}/feature/${id}`)}
+                onRowClick={canUseProduct ? (id) => navigate(`/product-agent/p/${productId}/feature/${id}`) : undefined}
                 columns={featureDetailColumns()}
               />
               {canCompleteRelease && (
                 <div className="mt-4 border-t border-token-subtle pt-4">
                   <FeatureManifestPanel
                     navigate={navigate}
+                    canOpenProductDetails={canUseProduct}
                     productId={productId}
                     features={features}
                     featureById={featureById}
@@ -508,7 +627,7 @@ export function ReleaseWorkflowDetail({
               <WorkflowRecordTable
                 emptyText="该正式版本未关联缺陷"
                 rows={releaseDefects}
-                onRowClick={(id) => navigate(`/product-agent/p/${productId}/defect/${id}`)}
+                onRowClick={canUseProduct ? (id) => navigate(`/product-agent/p/${productId}/defect/${id}`) : undefined}
                 columns={defectDetailColumns()}
               />
             </WorkflowDetailCard>
@@ -518,6 +637,7 @@ export function ReleaseWorkflowDetail({
         <div className="space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5">
           {isNew ? (
             <>
+              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} />
               <Field label="产品负责人（申领人）*">
                 <div className="flex items-center gap-2">
                   <div className="min-w-0 flex-1">
@@ -535,12 +655,27 @@ export function ReleaseWorkflowDetail({
               </Field>
               {!temporary && (
                 <>
-                  <Field label="立项号 *">
-                    <Select value={initiationId} onChange={(e) => setInitiationId(e.target.value)} disabled={readOnly}>
-                      <option value="">请选择</option>
-                      {approved.map((i) => <option key={i.id} value={i.id}>{i.tCode} · {i.planName}</option>)}
+                  <Field label="内部 T 来源 *">
+                    <Select value={sourceMode} onChange={(e) => {
+                      const mode = e.target.value as typeof sourceMode;
+                      setSourceMode(mode);
+                      if (mode === 'manual_t') setInitiationId('');
+                      else setManualTCode('');
+                    }}>
+                      <option value="initiation">选择已通过立项</option>
+                      <option value="manual_t">手工填写 T 号（旧记录兜底）</option>
                     </Select>
                   </Field>
+                  {sourceMode === 'initiation' ? (
+                    <Field label="立项号 *">
+                      <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
+                        <option value="">请选择</option>
+                        {approved.map((i) => <option key={i.id} value={i.id}>{i.tCode} · {i.planName}</option>)}
+                      </Select>
+                    </Field>
+                  ) : (
+                    <Field label="手工 T 号 *"><Input value={manualTCode} onChange={(e) => setManualTCode(e.target.value)} placeholder="T1.2.3" /></Field>
+                  )}
                   {selectedInitiation && (
                     <InfoBox>
                       <b>方案：</b>{selectedInitiation.planName}<br />
@@ -554,7 +689,22 @@ export function ReleaseWorkflowDetail({
                 <InfoBox>临时优化需求请在「需求」标签页选择要上线的需求条目。</InfoBox>
               )}
               <Field label="项目组成员 *"><MemberChecks members={members} selected={teamIds} onChange={setTeamIds} /></Field>
+              {!temporary && <>
+                <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
+                <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
+              </>}
+              {!temporary && <Field label="产品方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>}
+              <Field label="需求来源"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} /></Field>
+              <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field>
+              <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
+              <Field label="产品负责人名称"><Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} /></Field>
+              <Field label="项目组成员名称"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="企微通知中的姓名，用顿号分隔" /></Field>
+              <Field label="合同签订方"><Input value={contractParty} onChange={(e) => setContractParty(e.target.value)} /></Field>
+              <Field label="项目需求描述"><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
+              <Field label="备注"><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
               <Field label="上线日期 *"><Input type="date" value={releaseAt} onChange={(e) => setReleaseAt(e.target.value)} /></Field>
+              <Field label="预计培训时间（北京时间）*"><Input type="datetime-local" value={trainingAt} onChange={(e) => setTrainingAt(e.target.value)} /></Field>
+              <Field label="是否全域开放 *"><Select value={isGlobalOpen} onChange={(e) => setIsGlobalOpen(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
               <Field label="当前开放品牌"><Input value={openBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder="上线全域开放" /></Field>
               <InfoBox>确认后自动审批并生成正式版本号，随后必须补充上线公告地址才能完成上线。</InfoBox>
             </>
@@ -597,6 +747,7 @@ export function ReleaseWorkflowDetail({
       ) : (
         <FeatureManifestPanel
           navigate={navigate}
+          canOpenProductDetails={canUseProduct}
           productId={productId}
           features={features}
           featureById={featureById}
@@ -650,6 +801,7 @@ export function ReleaseWorkflowDetail({
 
 function FeatureManifestPanel({
   navigate,
+  canOpenProductDetails,
   productId,
   features,
   featureById,
@@ -663,6 +815,7 @@ function FeatureManifestPanel({
   onChangeNote,
 }: {
   navigate: ReturnType<typeof useNavigate>;
+  canOpenProductDetails: boolean;
   productId: string;
   features: Feature[];
   featureById: Map<string, Feature>;
@@ -739,7 +892,7 @@ function FeatureManifestPanel({
               requirementCount={feature?.requirementIds.length ?? 0}
               item={item}
               readOnly={readOnly}
-              onOpen={() => navigate(`/product-agent/p/${productId}/feature/${item.featureId}`)}
+              onOpen={canOpenProductDetails ? () => navigate(`/product-agent/p/${productId}/feature/${item.featureId}`) : undefined}
               onChangeType={onChangeType}
               onChangeNote={onChangeNote}
               onRemove={onRemove}
@@ -921,16 +1074,33 @@ function RequirementSummary({ title, requirements, emptyText }: {
 function MemberChecks({ members, selected, onChange }: {
   members: ProductMember[]; selected: string[]; onChange: (ids: string[]) => void;
 }) {
+  const [extraNames, setExtraNames] = useState<Map<string, string>>(new Map());
+  const extraIds = useMemo(() => {
+    const knownIds = new Set(members.map((member) => member.userId));
+    return selected.filter((id) => !knownIds.has(id));
+  }, [members, selected]);
+  useEffect(() => {
+    if (extraIds.length === 0) return;
+    let active = true;
+    void getUserCards(extraIds).then((result) => {
+      if (active && result.success) setExtraNames(new Map(result.data.items.map((user) => [user.userId, user.displayName])));
+    });
+    return () => { active = false; };
+  }, [extraIds]);
   return (
-    <div className="max-h-40 overflow-auto rounded-lg border border-token-subtle bg-token-nested p-2">
-      {members.length === 0
-        ? <div className="p-2 text-xs text-token-muted-faint">暂无可选成员</div>
-        : members.map((m) => (
+    <div className="space-y-2 rounded-lg border border-token-subtle bg-token-nested p-2">
+      <div className="max-h-40 overflow-auto">
+        {members.length === 0
+          ? <div className="p-2 text-xs text-token-muted-faint">该产品暂无成员，可从用户目录搜索添加</div>
+          : members.map((m) => (
             <label key={m.userId} className="flex cursor-pointer gap-2 rounded px-2 py-1.5 text-xs text-token-secondary hover-bg-soft">
               <input type="checkbox" className="accent-cyan-400" checked={selected.includes(m.userId)}
                 onChange={() => onChange(selected.includes(m.userId) ? selected.filter((id) => id !== m.userId) : [...selected, m.userId])} />
               {m.displayName}
             </label>))}
+      </div>
+      {extraIds.map((id) => <button key={id} type="button" onClick={() => onChange(selected.filter((value) => value !== id))} className="mr-1 rounded-full border border-cyan-400/25 bg-cyan-400/10 px-2 py-1 text-xs text-token-secondary" title="移除成员">{extraNames.get(id) ?? id} ×</button>)}
+      <UserSearchSelect value="" onChange={(id) => { if (id && !selected.includes(id)) onChange([...selected, id]); }} placeholder="搜索其他项目成员" uiSize="sm" />
     </div>
   );
 }

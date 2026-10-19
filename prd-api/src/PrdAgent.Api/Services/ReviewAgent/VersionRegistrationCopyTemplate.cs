@@ -61,8 +61,17 @@ internal static class VersionRegistrationCopyTemplate
         null => string.Empty,
     };
 
-    private static string DateLabel(DateTime? value) =>
-        value?.ToString("yyyy.M.d", CultureInfo.InvariantCulture) ?? string.Empty;
+    private static string DateLabel(DateTime? value)
+    {
+        if (!value.HasValue) return string.Empty;
+        var date = value.Value.Kind switch
+        {
+            DateTimeKind.Utc => value.Value.AddHours(8),
+            DateTimeKind.Local => value.Value.ToUniversalTime().AddHours(8),
+            _ => value.Value,
+        };
+        return date.ToString("yyyy.M.d", CultureInfo.InvariantCulture);
+    }
 
     private static string TrainingTimeLabel(DateTime? value) =>
         value.HasValue

@@ -224,7 +224,9 @@ public sealed class AdminPermissionMiddleware
 
         var perms = await permissionService.GetEffectivePermissionsAsync(userId, isRoot);
         var has = perms.Contains(AdminPermissionCatalog.Super) ||
-                  perms.Contains(required);
+                  perms.Contains(required) ||
+                  (perms.Contains(AdminPermissionCatalog.ProductAgentVersionApply)
+                   && ProductVersionApplyRoutePolicy.Allows(path, method, required));
 
         // 所有权限都必须先具备 access 权限（除了 root/super）
         if (!isRoot &&

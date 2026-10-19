@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
-  listInitiations, listProductMembers, listProducts, listReleases, listRequirements,
-  syncInitiationReview, updateInitiation, getProduct,
+  listInitiations, listProductMembers, listVersionApplicationProducts, listReleases, listRequirements,
+  syncInitiationReview, updateInitiation, getVersionApplicationProduct, listProductVersionReviewSources,
+  type VersionApplicationProduct,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
@@ -21,11 +22,12 @@ import {
 import { hasRecoverableSseOutcome, waitForSubmissionDone } from './initiationReviewFinish';
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { toProductOptions } from './comboboxOptions';
-import type { ProductInitiation, ProductMember, ProductRelease, Product, Requirement } from './types';
-import { resolveVersionProductLabel } from './versionBasicInfoCatalog';
+import type { ProductInitiation, ProductMember, ProductRelease, Requirement } from './types';
+import { formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
 import {
   ListSelectionHeaderCell,
@@ -42,6 +44,9 @@ import {
   formatInitiationReviewScore,
   isMeetingResultPending,
 } from './initiationWorkflowUtils';
+import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
+import type { VersionRegistrationMessageParseResult } from '@/services/real/versionRegistration';
+import { VersionCopyActions } from './VersionCopyActions';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
@@ -54,13 +59,15 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function VersionWorkflowTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const currentUserId = useAuthStore((state) => state.user?.userId);
-  const [tab, setTab] = useState<MainTab>('release');
+  const [tab, setTab] = useState<MainTab>(searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release');
   const [initiations, setInitiations] = useState<ProductInitiation[]>([]);
   const [releases, setReleases] = useState<ProductRelease[]>([]);
   const [requirements, setRequirements] = useState<Requirement[]>([]);
   const [members, setMembers] = useState<ProductMember[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadedProductId, setLoadedProductId] = useState('');
   const [dialog, setDialog] = useState<'initiation' | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
@@ -72,7 +79,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [productName, setProductName] = useState('');
 
   useEffect(() => {
-    void getProduct(productId).then((res) => {
+    void getVersionApplicationProduct(productId).then((res) => {
       if (res.success) setProductName(res.data.name);
     });
   }, [productId]);
@@ -93,14 +100,11 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     if (r.success) setReleases(r.data.items);
     if (req.success) setRequirements(req.data.items);
     if (mem.success) setMembers(mem.data.members);
+    setLoadedProductId(productId);
     setLoading(false);
   }, [currentUserId, productId, recordScope, releaseOwnerId]);
 
   useEffect(() => { void reload(); }, [reload]);
-  const approved = useMemo(
-    () => initiations.filter((item) => item.status === 'approved' && item.tCode && item.createdBy === currentUserId),
-    [currentUserId, initiations],
-  );
   const filteredInitiations = useMemo(
     () => initiations.filter((item) => matchesRecord(item, query, statusFilter)),
     [initiations, query, statusFilter],
@@ -122,9 +126,10 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     [initiations, releases, tab],
   );
   useEffect(() => { setStatusFilter(''); }, [tab]);
-  if (loading) return <div className="py-16 text-center text-sm text-token-muted">正在加载版本流程...</div>;
+  if (loadedProductId !== productId) return <div className="py-16 text-center text-sm text-token-muted">正在加载版本流程...</div>;
 
   return <div className="flex flex-col gap-5">
+    {loading && <p role="status" className="text-xs text-token-muted">正在刷新版本记录…</p>}
     <div className="flex border-b border-token-subtle">
       <Tab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</Tab>
       <Tab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</Tab>
@@ -135,7 +140,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex flex-wrap items-center gap-2">
-          <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)} disabled={approved.length === 0}><Plus size={14} />申领正式版本号</Primary>
+          <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)}><Plus size={14} />申领正式版本号</Primary>
           <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]">临时优化需求</button>
           <span className="group relative"><HelpCircle size={15} className="cursor-help text-token-muted" />
             <span className="surface-tone-dark invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-token-subtle bg-[#181a20] p-3 text-xs leading-5 text-token-secondary shadow-xl group-hover:visible">
@@ -201,6 +206,9 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   /** 评审未通过时重新发起：预填基础信息并直接进入 Agent 评审步骤 */
   seed?: ProductInitiation;
 }) {
+  const permissions = useAuthStore((state) => state.permissions ?? []);
+  const isRoot = useAuthStore((state) => state.isRoot);
+  const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
   const isRetry = Boolean(seed);
   const wizardTitle = seed?.status === 'decision_pending'
     ? '继续立项决策'
@@ -215,10 +223,22 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   const [item, setItem] = useState<ProductInitiation | null>(seed ?? null);
   const [projectType, setProjectType] = useState<'standard' | 'custom'>(seed?.projectType ?? 'standard');
   const [customerSource, setCustomerSource] = useState(seed?.customerSource ?? '');
+  const [demandSource, setDemandSource] = useState(seed?.demandSource ?? '');
   const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
-  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<VersionApplicationProduct[]>([]);
   const [planName, setPlanName] = useState(seed?.planName ?? '');
   const [planUrl, setPlanUrl] = useState(seed?.planUrl ?? '');
+  const [requirementDescription, setRequirementDescription] = useState(seed?.requirementDescription ?? '');
+  const [departmentName, setDepartmentName] = useState(seed?.departmentName ?? '');
+  const [ownerName, setOwnerName] = useState(seed?.ownerName ?? '');
+  const [projectMembers, setProjectMembers] = useState((seed?.projectMemberNames ?? []).join('、'));
+  const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
+  const [needUiDesign, setNeedUiDesign] = useState(seed?.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no');
+  const [isAiPoc, setIsAiPoc] = useState(seed?.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no');
+  const [developmentStatus, setDevelopmentStatus] = useState(seed?.developmentStatus ?? '');
+  const [remark, setRemark] = useState(seed?.remark ?? '');
+  const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewSubmissionId ?? '');
+  const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string }>>([]);
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
   const [requirementIds, setRequirementIds] = useState<string[]>(seed?.requirementIds ?? []);
   const [file, setFile] = useState<File | null>(null);
@@ -228,6 +248,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   const [ownerId, setOwnerId] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [issuedCode, setIssuedCode] = useState('');
   const [reviewStage, setReviewStage] = useState<InitiationReviewStage>('idle');
   const [processLogs, setProcessLogs] = useState<ProcessLogEntry[]>([]);
   const [dimensionScores, setDimensionScores] = useState<ReviewDimensionScore[]>([]);
@@ -293,8 +314,11 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   );
 
   useEffect(() => {
-    void listProducts({ pageSize: 200 }).then((res) => {
+    void listVersionApplicationProducts().then((res) => {
       if (res.success) setCatalogProducts(res.data.items);
+    });
+    void listProductVersionReviewSources().then((res) => {
+      if (res.success) setReviewSources(res.data.items);
     });
   }, []);
 
@@ -307,14 +331,28 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     });
   }, [step]);
 
-  const productOptions = useMemo(() => toProductOptions(catalogProducts), [catalogProducts]);
+  const productOptions = useMemo(
+    () => toProductOptions(canUseProduct ? catalogProducts : catalogProducts.filter((product) => product.id === productId)),
+    [canUseProduct, catalogProducts, productId],
+  );
 
   const basePayload = () => ({
     linkedProductId,
     projectType,
     customerSource: projectType === 'custom' ? customerSource : undefined,
+    demandSource: demandSource.trim(),
     planName,
     planUrl: planUrl.trim() || undefined,
+    requirementDescription: requirementDescription.trim() || undefined,
+    departmentName: departmentName.trim() || undefined,
+    ownerName: ownerName.trim() || undefined,
+    projectMemberNames: projectMembers.split(/[、,，;；]/).map((name) => name.trim()).filter(Boolean),
+    plannedProjectAt: plannedProjectAt ? new Date(`${plannedProjectAt}T00:00:00+08:00`).toISOString() : undefined,
+    needUiDesign: needUiDesign === 'yes',
+    isAiPoc: isAiPoc === 'yes',
+    developmentStatus: developmentStatus.trim() || undefined,
+    remark: remark.trim() || undefined,
+    reviewSubmissionId: reviewSubmissionId || undefined,
     versionType,
     requirementIds,
   });
@@ -329,6 +367,9 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     if (!linkedProductId.trim()) return setMessage('请选择产品');
     if (!planName.trim()) return setMessage('请填写方案名称');
     if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
+    if (!demandSource.trim()) return setMessage('请填写需求来源');
+    if (!plannedProjectAt) return setMessage('请填写计划立项时间');
+    if (!needUiDesign || !isAiPoc) return setMessage('请选择 UI 设计和 AI POC 状态');
     setBusy(true);
     const payload = basePayload();
     const editable = item && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
@@ -337,7 +378,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
       : await createInitiation(productId, payload);
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '保存失败');
-    setItem(res.data); setStep(2); setMessage('');
+    setItem(res.data); setStep(res.data.reviewPassed ? 3 : 2); setMessage('');
   };
   const runReview = async () => {
     if (!file || !item) return setMessage('请先上传方案文件');
@@ -433,12 +474,60 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     });
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '提交失败');
-    await onChanged(); onClose();
+    await onChanged();
+    setItem(res.data);
+    if (res.data.tCode) {
+      setIssuedCode(res.data.tCode);
+      try {
+        await navigator.clipboard.writeText(res.data.tCode);
+        setMessage('立项号已生成并自动复制。');
+      } catch {
+        setMessage('立项号已生成；浏览器未允许自动复制，请点击复制编号。');
+      }
+    } else {
+      onClose();
+    }
+  };
+
+  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
+    if (parsed.projectType) setProjectType(parsed.projectType);
+    if (parsed.versionType) setVersionType(parsed.versionType);
+    if (parsed.demandSource) setDemandSource(parsed.demandSource);
+    if (parsed.planName) {
+      setPlanName(parsed.planName);
+      const match = reviewSources.find((source) => source.title.replace(/\s+/g, '') === parsed.planName?.replace(/\s+/g, ''));
+      if (match) setReviewSubmissionId(match.id);
+      const productMatches = catalogProducts.filter((product) =>
+        (canUseProduct || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
+      if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
+    }
+    if (parsed.planUrl) setPlanUrl(parsed.planUrl);
+    if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
+    if (parsed.departmentName) setDepartmentName(parsed.departmentName);
+    if (parsed.ownerName) setOwnerName(parsed.ownerName);
+    if (parsed.projectMemberNames?.length) setProjectMembers(parsed.projectMemberNames.join('、'));
+    if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
+    if (parsed.needUiDesign != null) setNeedUiDesign(parsed.needUiDesign ? 'yes' : 'no');
+    if (parsed.isAiPoc != null) setIsAiPoc(parsed.isAiPoc ? 'yes' : 'no');
+    if (parsed.developmentStatus) setDevelopmentStatus(parsed.developmentStatus);
+    if (parsed.remark) setRemark(parsed.remark);
   };
 
   return <Modal title={wizardTitle} onClose={onClose} width="max-w-3xl">
     <Stepper step={step} />
     {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} />
+      <Field label="已通过的产品评审记录（选填，可跳过重复评审）" full>
+        <Select value={reviewSubmissionId} onChange={(event) => {
+          const id = event.target.value;
+          setReviewSubmissionId(id);
+          const source = reviewSources.find((entry) => entry.id === id);
+          if (source) setPlanName(source.title);
+        }}>
+          <option value="">新上传方案并进行 Agent 评审</option>
+          {reviewSources.map((source) => <option key={source.id} value={source.id}>{source.title}</option>)}
+        </Select>
+      </Field>
       <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
       {projectType === 'custom' && <Field label="客户来源 *"><Input value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
       <Field label="产品 *" full>
@@ -454,6 +543,16 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
       <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>
       <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://（选填）" /></Field>
       <Field label="版本级别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
+      <Field label="需求来源 *"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
+      <Field label="计划立项时间 *"><Input type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} /></Field>
+      <Field label="是否需要 UI 设计 *"><Select value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
+      <Field label="是否属于 AI POC 项目 *"><Select value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
+      <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
+      <Field label="产品负责人"><Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} /></Field>
+      <Field label="项目组成员"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="用顿号或逗号分隔" /></Field>
+      <Field label="开发状态"><Input value={developmentStatus} onChange={(e) => setDevelopmentStatus(e.target.value)} /></Field>
+      <Field label="项目需求描述" full><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
+      <Field label="备注" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
       <Field label="关联需求" full>
         <RequirementChecks requirements={requirements} selected={requirementIds} onChange={setRequirementIds} />
       </Field>
@@ -488,7 +587,11 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
       )}
       {!reviewRunning && item?.reviewScore != null && <Score score={item.reviewScore} passed={item.reviewPassed === true} />}
     </div>}
-    {step === 3 && <div className="space-y-4">
+    {step === 3 && issuedCode && item ? <div className="space-y-3 rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-4">
+      <p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p>
+      <VersionCopyActions kind="initiation" id={item.id} code={issuedCode} />
+    </div> : null}
+    {step === 3 && !issuedCode && <div className="space-y-4">
       <Field label="是否需要开评审会"><Select value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></Select></Field>
       {meeting ? <>
         <Field label="预计评审会时间 *"><Input type="datetime-local" value={meetingAt} onChange={(e) => setMeetingAt(e.target.value)} /></Field>
@@ -521,7 +624,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
           {reviewRunning ? '评审进行中…' : '上传并打分'}
         </Primary>
       )}
-      {step === 3 && <Primary onClick={submitDecision} disabled={busy || (meeting ? !meetingAt : !ownerId)}>提交立项</Primary>}
+      {step === 3 && !issuedCode && <Primary onClick={submitDecision} disabled={busy || (meeting ? !meetingAt : !ownerId)}>提交立项</Primary>}
       </div>
     </div>
   </Modal>;
@@ -549,7 +652,7 @@ function InitiationTable({ productId, productName, items, members, currentUserId
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '是否需要UI设计', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
+      <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
           const isOwner = !readOnly && item.createdBy === currentUserId;
           const showRetryReview = isOwner && item.status === 'review_failed';
@@ -565,13 +668,14 @@ function InitiationTable({ productId, productName, items, members, currentUserId
         : '-'}</Td>
       <Td>{SCALE_LABEL[item.versionType]}</Td>
       <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
+      <Td>{item.demandSource || '-'}</Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
         <div>{names.get(item.primaryOwnerId ?? item.createdBy) ?? item.legacyData?.['产品负责人'] ?? item.primaryOwnerId ?? item.createdBy ?? '-'}</div>
         {!readOnly && item.status === 'owner_pending' && <button onClick={async () => { await approveInitiation(item.id); await onChanged(); }} className="mt-1 text-cyan-300">负责人同意</button>}
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
-      <Td>{formatDate(item.projectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td>
+      <Td>{formatDate(item.projectAt)}</Td><Td>{formatDate(item.plannedProjectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td><Td>{formatBool(item.isAiPoc)}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
       <Td>
@@ -599,7 +703,7 @@ function InitiationTable({ productId, productName, items, members, currentUserId
       </Td>
     </tr>
           );
-        })}{items.length === 0 && <Empty cols={18}>暂无立项记录</Empty>}
+        })}{items.length === 0 && <Empty cols={21}>暂无立项记录</Empty>}
       </Table>
     </>
   );
@@ -640,7 +744,7 @@ function ReleaseTable({ productId, productName, items, requirements, members, on
   });
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '预计培训时间', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item.id)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productName)}</Td>
@@ -650,16 +754,19 @@ function ReleaseTable({ productId, productName, items, requirements, members, on
         : (item.tCode ?? '临时优化需求')}</Td>
       <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td>
       <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
+      <Td>{item.demandSource || '-'}</Td>
       <Td>{item.departmentName || '-'}</Td><Td>{names.get(item.ownerId ?? '') ?? item.legacyData?.['产品负责人'] ?? item.ownerId ?? '-'}</Td>
       <Td>{item.teamMemberIds.map((id) => names.get(id) ?? id).join('、')}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
+      <Td>{item.plannedTrainingAt ? new Date(item.plannedTrainingAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '-'}</Td>
+      <Td>{formatBool(item.isGlobalOpen)}</Td>
       <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => reqNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? !readOnly && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
         : readOnly ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && <Empty cols={15}>暂无上线记录</Empty>}
+    </tr>)}{items.length === 0 && <Empty cols={18}>暂无上线记录</Empty>}
   </Table>
   </>;
 }

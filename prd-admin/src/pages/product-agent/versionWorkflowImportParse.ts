@@ -11,10 +11,13 @@ export type VersionWorkflowImportRow = {
   versionType?: string;
   projectType?: string;
   customerSource?: string;
+  demandSource?: string;
   requirementDescription?: string;
   departmentName?: string;
   ownerId?: string;
+  ownerName?: string;
   teamMemberIds?: string[];
+  projectMemberNames?: string[];
   planUrl?: string;
   firstDraftMeetingAt?: string;
   secondDraftMeetingAt?: string;
@@ -26,6 +29,9 @@ export type VersionWorkflowImportRow = {
   developmentStatus?: string;
   remark?: string;
   openBrandScope?: string;
+  isGlobalOpen?: boolean;
+  contractParty?: string;
+  plannedTrainingAt?: string;
   announcementUrl?: string;
   date?: string;
   legacyData?: Record<string, string>;
@@ -129,6 +135,21 @@ function splitMembers(raw?: string): string[] | undefined {
   return raw.split(/[、,，;；]/).map((item) => item.trim()).filter(Boolean);
 }
 
+function parseChinaTrainingTime(raw?: string): string | undefined {
+  const text = raw?.trim();
+  if (!text) return undefined;
+  const serial = Number(text);
+  if (Number.isFinite(serial) && serial > 20000 && serial < 100000) {
+    const parsed = XLSX.SSF.parse_date_code(serial);
+    if (parsed) return new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d, parsed.H - 8, parsed.M, parsed.S)).toISOString();
+  }
+  const match = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  if (!match) return undefined;
+  const [, year, month, day, hour, minute] = match;
+  const value = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 8, Number(minute)));
+  return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+}
+
 function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImportKind, headerRowIndex: number): VersionWorkflowImportRow[] {
   const planIndex = indexOfHeader(headers, '产品立项方案名称', '方案名称', '方案');
   const systemIndex = indexOfHeader(headers, '系统');
@@ -151,6 +172,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const requirementSourceIndex = indexOfHeader(headers, '需求来源');
   const platformIndex = indexOfHeader(headers, '平台');
   const contractPartyIndex = indexOfHeader(headers, '合同签订方');
+  const trainingTimeIndex = indexOfHeader(headers, '预计培训时间', '计划培训时间');
 
   const codeIndex = kind === 'release'
     ? indexOfHeader(headers, '正式版本号', 'v号', 'v 号', 'v上线号', '上线号')
@@ -211,10 +233,13 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       versionType: versionTypeIndex >= 0 ? values[versionTypeIndex]?.trim() : undefined,
       projectType: projectTypeIndex >= 0 ? mapProjectType(values[projectTypeIndex]) : undefined,
       customerSource: customerSourceIndex >= 0 ? values[customerSourceIndex]?.trim() : undefined,
+      demandSource: requirementSourceIndex >= 0 ? values[requirementSourceIndex]?.trim() : undefined,
       requirementDescription: requirementDescIndex >= 0 ? values[requirementDescIndex]?.trim() : undefined,
       departmentName: departmentIndex >= 0 ? values[departmentIndex]?.trim() : undefined,
       ownerId: ownerName,
+      ownerName,
       teamMemberIds: teamIndex >= 0 ? splitMembers(values[teamIndex]) : undefined,
+      projectMemberNames: teamIndex >= 0 ? splitMembers(values[teamIndex]) : undefined,
       planUrl: planUrlIndex >= 0 ? values[planUrlIndex]?.trim() : undefined,
       firstDraftMeetingAt: firstDraftIndex >= 0 ? parseDateValue(values[firstDraftIndex]) : undefined,
       secondDraftMeetingAt: secondDraftIndex >= 0 ? parseDateValue(values[secondDraftIndex]) : undefined,
@@ -226,6 +251,9 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       developmentStatus: developmentIndex >= 0 ? values[developmentIndex]?.trim() : undefined,
       remark: remarkIndex >= 0 ? values[remarkIndex]?.trim() : undefined,
       openBrandScope: openBrandIndex >= 0 ? values[openBrandIndex]?.trim() : undefined,
+      isGlobalOpen: openBrandIndex >= 0 ? mapBool(values[openBrandIndex]) : undefined,
+      contractParty: contractPartyIndex >= 0 ? values[contractPartyIndex]?.trim() : undefined,
+      plannedTrainingAt: trainingTimeIndex >= 0 ? parseChinaTrainingTime(values[trainingTimeIndex]) : undefined,
       announcementUrl: announcementIndex >= 0 ? values[announcementIndex]?.trim() : undefined,
       date: dateIndex >= 0 ? parseDateValue(values[dateIndex]) : undefined,
       legacyData: Object.keys(legacyData).length > 0 ? legacyData : undefined,
