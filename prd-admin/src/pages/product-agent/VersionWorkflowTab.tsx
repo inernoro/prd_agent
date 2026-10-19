@@ -210,7 +210,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   </div>;
 }
 
-export function InitiationWizard({ productId, requirements, members, onClose, onChanged, seed }: {
+export function InitiationWizard({ productId, members, onClose, onChanged, seed }: {
   productId: string;
   requirements: Requirement[];
   members: ProductMember[];
@@ -240,8 +240,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
   const [catalogProducts, setCatalogProducts] = useState<VersionApplicationProduct[]>([]);
   const [planName, setPlanName] = useState(seed?.planName ?? '');
-  const [planUrl, setPlanUrl] = useState(seed?.planUrl ?? '');
-  const [requirementDescription, setRequirementDescription] = useState(seed?.requirementDescription ?? '');
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed?.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no');
@@ -249,7 +247,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewSubmissionId ?? '');
   const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string }>>([]);
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
-  const [requirementIds, setRequirementIds] = useState<string[]>(seed?.requirementIds ?? []);
   const [file, setFile] = useState<File | null>(null);
   const [meeting, setMeeting] = useState(false);
   const [meetingAt, setMeetingAt] = useState('');
@@ -351,8 +348,8 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     customerSource: projectType === 'custom' ? customerSource : undefined,
     demandSource: demandSource.trim(),
     planName,
-    planUrl: planUrl.trim() || undefined,
-    requirementDescription: requirementDescription.trim() || undefined,
+    planUrl: item?.planUrl ?? undefined,
+    requirementDescription: item?.requirementDescription ?? undefined,
     projectMemberNames: item?.projectMemberNames,
     plannedProjectAt: plannedProjectAt ? new Date(`${plannedProjectAt}T00:00:00+08:00`).toISOString() : undefined,
     needUiDesign: needUiDesign === 'yes',
@@ -361,7 +358,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     remark: remark.trim() || undefined,
     reviewSubmissionId: reviewSubmissionId || undefined,
     versionType,
-    requirementIds,
+    requirementIds: item?.requirementIds ?? [],
   });
 
   const goPrevStep = () => {
@@ -508,8 +505,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
         (canUseProduct || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
       if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
     }
-    if (parsed.planUrl) setPlanUrl(parsed.planUrl);
-    if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
     if (parsed.needUiDesign != null) setNeedUiDesign(parsed.needUiDesign ? 'yes' : 'no');
     if (parsed.isAiPoc != null) setIsAiPoc(parsed.isAiPoc ? 'yes' : 'no');
@@ -544,17 +539,12 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
         />
       </Field>
       <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>
-      <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://（选填）" /></Field>
       <Field label="版本级别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
       <Field label="需求来源 *"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
       <Field label="计划立项时间 *"><Input type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} /></Field>
       <Field label="是否需要 UI 设计 *"><Select value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
       <Field label="是否属于 AI POC 项目 *"><Select value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
-      <Field label="项目需求描述" full><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
       <Field label="备注" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
-      <Field label="关联需求" full>
-        <RequirementChecks requirements={requirements} selected={requirementIds} onChange={setRequirementIds} />
-      </Field>
     </div>}
     {step === 2 && <div className="space-y-4">
       {!reviewRunning && (
@@ -870,56 +860,6 @@ function Modal({ title, onClose, width, children }: { title: string; onClose: ()
 function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) { return <label className={full ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>; }
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50" />; }
 function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className="surface-tone-dark w-full rounded-lg border border-token-subtle bg-[#111318] px-3 py-2 text-sm text-token-primary outline-none">{props.children}</select>; }
-function RequirementChecks({ requirements, selected, onChange }: {
-  requirements: Requirement[]; selected: string[]; onChange: (ids: string[]) => void;
-}) {
-  const [query, setQuery] = useState('');
-  const filtered = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase();
-    if (!keyword) return requirements;
-    return requirements.filter((requirement) =>
-      requirement.id.toLocaleLowerCase().includes(keyword)
-      || requirement.requirementNo.toLocaleLowerCase().includes(keyword)
-      || requirement.title.toLocaleLowerCase().includes(keyword));
-  }, [query, requirements]);
-
-  const toggle = (id: string) => {
-    onChange(selected.includes(id) ? selected.filter((selectedId) => selectedId !== id) : [...selected, id]);
-  };
-
-  return <div className="overflow-hidden rounded-lg border border-token-subtle bg-token-nested">
-    <div className="border-b border-token-subtle p-2">
-      <div className="relative">
-        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="搜索需求 ID 或标题"
-          className="w-full rounded-md border border-token-subtle bg-token-nested py-2 pl-9 pr-3 text-xs text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50"
-        />
-      </div>
-      <div className="mt-1.5 px-1 text-[11px] text-token-muted">
-        已选择 {selected.length} 条，共 {requirements.length} 条
-      </div>
-    </div>
-    <div className="max-h-48 overflow-auto p-2">
-      {filtered.length === 0 ? <div className="p-3 text-center text-xs text-token-muted">未找到匹配的需求</div> : filtered.map((requirement) =>
-        <label key={requirement.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-xs hover-bg-soft">
-          <input
-            type="checkbox"
-            className="mt-0.5 accent-cyan-400"
-            checked={selected.includes(requirement.id)}
-            onChange={() => toggle(requirement.id)}
-          />
-          <span className="min-w-0">
-            <span className="block font-mono text-cyan-200/80">{requirement.requirementNo}</span>
-            <span className="mt-0.5 block break-words text-token-secondary">{requirement.title}</span>
-          </span>
-        </label>)}
-    </div>
-  </div>;
-}
 function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
 function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary">{props.children}</button>; }
 function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted'}`}>{children}</button>; }
