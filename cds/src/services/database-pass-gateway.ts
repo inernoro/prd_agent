@@ -31,7 +31,7 @@ export async function openDatabasePassGateway(input: {
   const accept = (client: Socket) => {
     const ip=(client.remoteAddress || '').replace(/^::ffff:/,'');
     try {
-      if(closed || !active || sockets.size>=128 || !block.check(ip,'ipv4')) { input.audit('connection-denied',{ip,reason:!active?'通行证尚未放行':'IP不在白名单'});client.destroy();return; }
+      if(closed || !active || sockets.size>=128 || !block.check(ip,'ipv4')) { input.audit('connection-denied',{ip,reason:closed?'入口已关闭':!active?'通行证尚未放行':sockets.size>=128?'连接数已达上限':'IP不在白名单'});client.destroy();return; }
       input.audit('connection-accepted',{ip});
     } catch { client.destroy();return; } // An unavailable audit sink must not permit a new connection.
     remember(client);
@@ -80,8 +80,13 @@ export async function openDatabasePassGateway(input: {
     : net.createServer(accept);
   if(input.target.runtime==='mongodb')server.on('connection',(socket:Socket)=>{
     // Include incomplete TLS handshakes in expiry cleanup and reject non-allowlisted peers early.
-    remember(socket);const ip=(socket.remoteAddress||'').replace(/^::ffff:/,'');
-    if(closed||!active||!block.check(ip,'ipv4')){try{input.audit('connection-denied',{ip,reason:!active?'通行证尚未放行':'IP不在白名单'});}catch{/* fail closed */}finally{socket.destroy();}}
+    const ip=(socket.remoteAddress||'').replace(/^::ffff:/,'');
+    // Count and limit incomplete handshakes before a peer can allocate unbounded TLS sockets.
+    if(closed||!active||sockets.size>=128||!block.check(ip,'ipv4')){
+      try{input.audit('connection-denied',{ip,reason:closed?'入口已关闭':!active?'通行证尚未放行':sockets.size>=128?'连接数已达上限':'IP不在白名单'});}catch{/* fail closed */}finally{socket.destroy();}
+      return;
+    }
+    remember(socket);
   });
   server.on('tlsClientError',()=>{});
   await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(input.port,input.bindIp,()=>{server.removeListener('error',reject);resolve();});});

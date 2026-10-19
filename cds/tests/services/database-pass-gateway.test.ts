@@ -72,3 +72,15 @@ it('declines PostgreSQL GSSENC then requires TLS before forwarding a bound start
   const body=Buffer.from('user\0temp\0database\0qa\0\0'),head=Buffer.alloc(8);head.writeUInt32BE(body.length+8);head.writeUInt32BE(196608,4);const startup=Buffer.concat([head,body]);secure.write(startup);expect(await received).toEqual(startup);secure.destroy();
  }finally{client.destroy();gateway.close();for(const socket of backendSockets)socket.destroy();await new Promise<void>(resolve=>upstream.close(()=>resolve()));fs.rmSync(dir,{recursive:true,force:true});}
 },10000);
+
+it('enforces the MongoDB socket ceiling before unauthenticated TLS handshakes',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cds-pass-mongo-cap-')),clients:net.Socket[]=[];let release:(value:boolean)=>void=()=>{};
+ const denied=new Promise<boolean>(resolve=>{release=resolve;});
+ const gateway=await openDatabasePassGateway({target:{runtime:'mongodb',port:1,database:'qa',adminUser:'unused',adminPassword:'unused'},username:'temp',bindIp:'127.0.0.1',port:0,allowlist:['127.0.0.1/32'],...databasePassCertificates(dir,'127.0.0.1'),audit:(event,details)=>{if(event==='connection-denied'&&details.reason==='连接数已达上限')release(true);}});
+ let timer:ReturnType<typeof setTimeout>|undefined;
+ try{
+  await Promise.all(Array.from({length:129},()=>new Promise<void>((resolve,reject)=>{const socket=net.connect(gateway.port,'127.0.0.1');clients.push(socket);socket.on('error',()=>{});socket.once('connect',()=>{socket.resume();resolve();});socket.once('error',error=>(error as NodeJS.ErrnoException).code==='ECONNRESET'?resolve():reject(error));} )));
+  const bounded=await Promise.race([denied,new Promise<boolean>(resolve=>{timer=setTimeout(()=>resolve(false),1000);})]);
+  expect(bounded).toBe(true);
+ }finally{if(timer)clearTimeout(timer);for(const socket of clients)socket.destroy();gateway.close();fs.rmSync(dir,{recursive:true,force:true});}
+},10000);
