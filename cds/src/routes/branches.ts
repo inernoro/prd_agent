@@ -22651,6 +22651,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     res.status(403).json({ error: 'migration_owner_required', message: '迁移管理仅系统所有者可用；Agent 请先通过数据库具体操作审批入口。' });
   });
 
+  const peerPushRestoreMessage = '跨 CDS 覆盖恢复需要目标系统所有者发起拉取。请登录目标 CDS，将来源设为原 CDS、目标设为本机数据库，再执行迁移；当前端不能通过机器 Key 推送覆盖。';
+  function rejectPeerPushRestore(res: Response): void {
+    res.status(409).json({ code: 'migration_peer_push_requires_target_pull', error: peerPushRestoreMessage });
+  }
+
   // GET /api/data-migrations — list all migration tasks
   router.get('/data-migrations', (_req, res) => {
     res.json(stateService.getDataMigrations().map(publicDataMigration));
@@ -22670,6 +22675,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       res.status(400).json({ error: '缺少必填字段: name, dbType, source, target' });
       return;
     }
+    if (target.type === 'cds') { rejectPeerPushRestore(res); return; }
     const id = `mig-${Date.now().toString(36)}`;
     let sealedConnections: ReturnType<typeof sealMigrationConnections>;
     try {
@@ -22790,6 +22796,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (!existing) { res.status(404).json({ error: '迁移任务不存在' }); return; }
     if (existing.status === 'running') { res.status(400).json({ error: '任务正在运行中，无法编辑' }); return; }
     const { name, source, target, collections } = req.body as Partial<DataMigration>;
+    if (target?.type === 'cds') { rejectPeerPushRestore(res); return; }
     const updates: Partial<DataMigration> = {};
     if (name !== undefined) updates.name = name;
     if (source !== undefined || target !== undefined) {
@@ -22831,7 +22838,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // Consumers (by target.type):
   //   - local  : spawn mongorestore against CDS infra MongoDB, write to stdin
   //   - remote : spawn mongorestore; or ssh jump → remote mongorestore (stdin pipe)
-  //   - cds    : HTTP POST to peer's /local-restore endpoint, request body is the stream
+  //   - cds    : rejected before pipeline setup; target owner must initiate a pull
   //
   // Zero temp files. Archive+gzip throughout. SSH keepalive so long dumps don't drop.
   router.post('/data-migrations/:id/execute', async (req, res) => {
@@ -22839,6 +22846,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const migration = stateService.getDataMigration(id);
     if (!migration) { res.status(404).json({ error: '迁移任务不存在' }); return; }
     if (migration.status === 'running') { res.status(400).json({ error: '任务已在运行中' }); return; }
+    // Reject unsupported legacy push tasks before unsealing, marking running,
+    // spawning a dump, opening a tunnel, or contacting either CDS peer.
+    if (migration.target.type === 'cds') { rejectPeerPushRestore(res); return; }
 
     let executionConnections: ReturnType<typeof unsealMigrationConnections>;
     try {
@@ -23082,66 +23092,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       send: (progress: number, message: string) => void;
     },
   ): Promise<{ stdin: NodeJS.WritableStream; done: Promise<void>; kill: () => void }> {
-    // ── CDS peer target ──
-    if (target.type === 'cds') {
-      const peer = stateService.getCdsPeer(target.cdsPeerId || '');
-      if (!peer) throw new Error(`目标 CDS 密钥不存在: ${target.cdsPeerId}`);
-      cb.send(12, `连接目标 CDS 「${peer.name}」...`);
-      // Build URL with query params for target rename + collection filter
-      const qs = new URLSearchParams();
-      if (source.database) qs.set('sourceDb', source.database);
-      if (target.database) qs.set('targetDb', target.database);
-      if (target.projectId) qs.set('projectId', target.projectId);
-      if (target.serviceId) qs.set('serviceId', target.serviceId);
-      if (cols && cols.length) qs.set('collections', cols.join(','));
-      const apiPath = '/api/data-migrations/local-restore' + (qs.toString() ? '?' + qs.toString() : '');
-      const url = new URL(peer.baseUrl.replace(/\/$/, '') + apiPath);
-      const lib = url.protocol === 'https:' ? https : http;
-      const httpReq = lib.request({
-        method: 'POST',
-        protocol: url.protocol,
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname + url.search,
-        headers: {
-          'X-AI-Access-Key': peer.accessKey,
-          'X-CDS-Peer-Call': '1',
-          'Content-Type': 'application/octet-stream',
-          // Chunked transfer (no Content-Length, just stream)
-          'Transfer-Encoding': 'chunked',
-        },
-        timeout: 0,
-      });
-      httpReq.setTimeout(0);
-      cb.appendLog(`[target] CDS peer ${peer.name} → ${apiPath}`);
-
-      const done = new Promise<void>((resolve, reject) => {
-        httpReq.on('response', (peerRes) => {
-          const chunks: Buffer[] = [];
-          peerRes.on('data', (d) => chunks.push(d as Buffer));
-          peerRes.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf-8');
-            try {
-              const j = JSON.parse(text);
-              if (j && j.log) for (const line of String(j.log).split('\n')) if (line) { cb.appendLog(`[restore] ${line}`); cb.onProgressLine(line); }
-            } catch { cb.appendLog(`[target] ${text.slice(0, 500)}`); }
-            if ((peerRes.statusCode || 500) >= 400) {
-              reject(new Error(`目标 CDS 返回 ${peerRes.statusCode}: ${text.slice(0, 400)}`));
-            } else {
-              resolve();
-            }
-          });
-          peerRes.on('error', reject);
-        });
-        httpReq.on('error', (err) => reject(new Error(`连接目标 CDS 失败: ${err.message}`)));
-      });
-
-      return {
-        stdin: httpReq,
-        done,
-        kill: () => { try { httpReq.destroy(); } catch { /* */ } },
-      };
-    }
+    // Defense in depth: never forward ordinary peer keys to a restore endpoint.
+    if (target.type === 'cds') throw new Error(peerPushRestoreMessage);
 
     // ── Local / remote via mongorestore ──
     const eff = target.type === 'local' ? resolveMongoConn(target, migrationProjectId) : target;
