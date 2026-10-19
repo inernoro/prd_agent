@@ -1,6 +1,6 @@
 name: CDS Prebuilt (self-update express)
 
-# CDS 自更新「极速版」—— 每次 push 改了 cds/** 时，在 GitHub Actions 上把 CDS 编译好
+# CDS 自更新「极速版」—— push 修改 CDS 或镜像内技能时，在 GitHub Actions 上把 CDS 编译好
 # （esbuild 后端 + vite 前端 + tsc 类型门），打成 ghcr OCI 产物镜像 cds-dist:sha-<40hex>，
 # 供 CDS 自更新直接 docker pull + 解出，跳过本机编译（tsc 52s + vite 1.6min 卸到 CI）。
 # 自更新逻辑找不到对应 SHA 的预构建产物时，回退到现有「本机现编」路径——故本 workflow
@@ -13,6 +13,11 @@ on:
     paths:
       - "cds/**"
       - ".github/workflows/cds-prebuilt.yml"
+      - ".claude/skills/cds/**"
+      - ".claude/skills/cds-project-scan/**"
+      - ".claude/skills/cds-deploy-pipeline/**"
+      - ".claude/skills/cds-release/**"
+      - ".claude/skills/preview-url/**"
   workflow_dispatch:
 
 env:
