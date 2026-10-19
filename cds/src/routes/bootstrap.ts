@@ -473,7 +473,8 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     // Only an HTTP origin is allowed in generated commands; forwarded headers are untrusted.
     let parsed: URL;
     try { parsed = new URL(origin); } catch { res.status(400).end(); return; }
-    if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.origin !== origin
+    if (!['https:', 'http:'].includes(parsed.protocol) || parsed.username || parsed.password
+      || parsed.pathname !== '/' || parsed.search || parsed.hash
       || !/^[A-Za-z0-9.:[\]-]+$/.test(parsed.host)) {
       res.status(400).end();
       return;
@@ -492,7 +493,7 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
       });
       return;
     }
-    res.type('text/markdown; charset=utf-8').send(selection.stage === 'task' ? buildAgentTaskGuide(selection) : buildAgentSetupGuide(origin, selection));
+    res.type('text/markdown; charset=utf-8').send(selection.stage === 'task' ? buildAgentTaskGuide(selection) : buildAgentSetupGuide(parsed.origin, selection));
   });
 
   router.get('/bootstrap/presets', (_req, res) => {

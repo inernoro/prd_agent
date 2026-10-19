@@ -8,6 +8,7 @@ import type { AuthService } from '../../src/services/auth-service.js';
 import type { SkillProxy } from '../../src/services/skill-proxy.js';
 import { buildCdsAgentPrompt, createAgentMissionContext } from '../../web/src/lib/agent-onboarding.js';
 import { isPublicAgentSetupRoute } from '../../src/shared/agent-setup.js';
+import { AGENT_MISSION_DEFINITIONS, getAgentCapabilitiesForMission } from '../../src/shared/agent-mission-registry.js';
 
 describe('Agent public bootstrap through the real auth gate', () => {
   let server: http.Server;
@@ -62,6 +63,46 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(body.project).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();
     expect((await fetch(`${origin}/api/private`)).status).toBe(401);
+  });
+
+  it.each(Object.values(AGENT_MISSION_DEFINITIONS))('retains every required skill for mission $id', async mission => {
+    const response = await fetch(`${origin}/api/agent/setup.json?target=existing&project=proj-a&mission=${mission.id}`);
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const required = [...new Set(getAgentCapabilitiesForMission(mission.id).map(item => item.preferredSkill))];
+    expect(body.skills).toEqual(required);
+  });
+
+  it.each(['project-settings', 'release'])('includes core and specialized instructions for %s', async mission => {
+    const guide = await (await fetch(`${origin}/api/agent/setup.md?target=existing&project=proj-a&mission=${mission}`)).text();
+    const skills = guide.match(/本次只加载这些技能的 SKILL.md：([^。]+)/)![1].split('、');
+    expect(skills).toContain('cds');
+    expect(skills).toContain(mission === 'release' ? 'cds-release' : 'cds-project-scan');
+  });
+
+  it.each([
+    ['CDS.Example:443', 'https', 'https://cds.example'],
+    ['CDS.Example:80', 'http', 'http://cds.example'],
+    ['CDS.Example:8443', 'https', 'https://cds.example:8443'],
+  ])('normalizes a valid proxy origin %s with %s', async (host, proto, canonical) => {
+    const headers = { 'x-forwarded-host': host, 'x-forwarded-proto': proto };
+    const manifest = await fetch(`${origin}/api/agent/setup.json?target=existing&project=proj-a`, { headers });
+    expect(manifest.status).toBe(200);
+    const response = await fetch(`${origin}/api/agent/setup.md?target=existing&project=proj-a`, { headers });
+    expect(response.status).toBe(200);
+    const guide = await response.text();
+    expect(guide).toContain(`--host '${canonical}'`);
+    expect(guide).toContain(`${canonical}/api/agent/setup.md`);
+    expect(guide).not.toContain(host);
+  });
+
+  it.each(['owner:password@cds.example', 'cds.example/injected-path', 'cds.example?query=bad', 'cds.example#fragment', 'cds.example/path?query=bad'])('rejects non-origin proxy hosts: %s', async host => {
+    for (const suffix of ['md', 'json']) {
+      const response = await fetch(`${origin}/api/agent/setup.${suffix}`, {
+        headers: { 'x-forwarded-host': host, 'x-forwarded-proto': 'https' },
+      });
+      expect(response.status).toBe(400);
+    }
   });
 
   it('keeps new-project creation and credential adoption in the existing single command', async () => {

@@ -51,8 +51,7 @@ export function parseAgentSetupSelection(query: Record<string, unknown>): AgentS
 }
 
 export function getAgentSetupSkillKeys(target: CdsConnectTarget, mission?: AgentPageContextId): CdsSkillKey[] {
-  const preferred = mission ? [...new Set(getAgentCapabilitiesForMission(mission).map((item) => item.preferredSkill))] : ['cds' as const];
-  const skills = preferred.some((key) => key !== 'cds') ? preferred.filter((key) => key !== 'cds') : preferred;
+  const skills = mission ? [...new Set(getAgentCapabilitiesForMission(mission).map((item) => item.preferredSkill))] : ['cds' as const];
   if (target.kind === 'new' && !skills.includes('cds-project-scan')) skills.push('cds-project-scan');
   return skills;
 }
