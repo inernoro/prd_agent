@@ -15,7 +15,7 @@ export interface DatabasePass {
   username: string; database: string; runtime: DatabasePassTarget['runtime']; targetPort: number;
   allowlist: string[]; ttlMinutes: number; status: 'preparing'|'prepared'|'active'|'revoked'|'expired'|'cleanup-failed';
   createdAt: string; expiresAt: string; activatedAt?: string; port?: number;
-  secret: SealedSecret; reason?: string; tlsCa?: string;
+  secret: SealedSecret; cleanupTarget?:SealedSecret; reason?: string; tlsCa?: string;
 }
 
 /** Only the authenticated peer, or explicitly trusted local reverse proxy, can supply the default IP. */
@@ -33,6 +33,7 @@ export class DatabasePassService {
   private gateways=new Map<string,{port:number;activate:()=>void;close:()=>void}>();
   private operations=new Map<string,Promise<unknown>>();
   private vaultError=false;
+  private issuanceReservations=0;
   private ready: Promise<void>;
   private readonly file: string;
   private readonly auditLog: DatabasePassAudit;
@@ -69,7 +70,7 @@ export class DatabasePassService {
   }
   private async recover(){for(const pass of this.passes)if(!['revoked','expired'].includes(pass.status))await this.revokeInternal(pass,'控制面重启，原通行证不自动续期');}
   private async sweep(){this.auditLog.flush();for(const pass of this.passes)if((!['revoked','expired'].includes(pass.status)&&Date.parse(pass.expiresAt)<=Date.now())||pass.status==='cleanup-failed')await this.revokeInternal(pass,'通行证到期');}
-  private safe(pass:DatabasePass){const {secret,...publicPass}=pass;return {...publicPass,host:this.capability().host,permission:'read-only',review:'既有资源权限检查通过'};}
+  private safe(pass:DatabasePass){const {secret,cleanupTarget,...publicPass}=pass;return {...publicPass,host:this.capability().host,permission:'read-only',review:'既有资源权限检查通过'};}
   async list(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;await this.sweep();return this.passes.filter(p=>p.owner===owner&&p.projectId===scope.projectId&&p.branchId===scope.branchId&&p.resourceId===scope.resourceId).map(p=>this.safe(p));}
   private find(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){const pass=this.passes.find(p=>p.id===id&&p.owner===owner&&p.projectId===scope.projectId&&p.branchId===scope.branchId&&p.resourceId===scope.resourceId);if(!pass)throw new Error('通行证不存在或不属于当前用户和资源');return pass;}
   async prepare(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string,allowlist:string[],ttlMinutes=30){
@@ -78,10 +79,13 @@ export class DatabasePassService {
     if(!allowlist.length||allowlist.length>20||!Number.isInteger(ttlMinutes)||ttlMinutes<1||ttlMinutes>30)throw new Error('通行证需要明确IP白名单，有效期为1–30分钟');
     for(const rule of allowlist){const [ip,bits,...rest]=rule.split('/');if(isIP(ip)!==4||rest.length||!/^\d+$/.test(bits||'')||Number(bits)<1||Number(bits)>32)throw new Error('白名单须为IPv4/CIDR，不允许向所有IP放行');}
     await this.sweep();
-    if(this.passes.filter(p=>!['expired','revoked'].includes(p.status)).length>=50)throw new Error('活动通行证已达上限，请先撤销旧证');
-    const target=await this.target(scope),id=randomBytes(10).toString('hex'),password=randomBytes(24).toString('base64url');
-    const secret=sealToken(password);if(!isSealedSecret(secret))throw new Error('凭据加密尚未就绪');
-    const pass:DatabasePass={...scope,owner,id,username:'cdsp_'+id,database:target.database,runtime:target.runtime,targetPort:target.port,allowlist:[...allowlist],ttlMinutes,status:'preparing',secret,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*60_000).toISOString()};
+    if(this.passes.filter(p=>!['expired','revoked'].includes(p.status)).length+this.issuanceReservations>=50)throw new Error('通行证申请与活动数量已达上限，请等待申请完成或先撤销旧证');
+    // Reserve synchronously before asynchronous discovery; concurrent callers share the cap.
+    this.issuanceReservations++;let target:DatabasePassTarget;
+    try{target=await this.target(scope);}finally{this.issuanceReservations--;}
+    const id=randomBytes(10).toString('hex'),password=randomBytes(24).toString('base64url');
+    const secret=sealToken(password),cleanupTarget=sealToken(JSON.stringify(target));if(!isSealedSecret(secret)||!isSealedSecret(cleanupTarget))throw new Error('凭据加密尚未就绪');
+    const pass:DatabasePass={...scope,owner,id,username:'cdsp_'+id,database:target.database,runtime:target.runtime,targetPort:target.port,allowlist:[...allowlist],ttlMinutes,status:'preparing',secret,cleanupTarget,createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+30*60_000).toISOString()};
     this.passes.push(pass);this.persist();
     return this.withPassLock(id,async()=>{
     try {
@@ -123,6 +127,28 @@ export class DatabasePassService {
       return this.safe(pass);
     });
   }
+  private async reclaimTargets(pass:DatabasePass){
+    const targets:DatabasePassTarget[]=[];let failed=false;
+    // Current scoped credentials may have rotated. A port change must not prevent cleanup.
+    try{const current=await this.target(pass);if(current.runtime===pass.runtime&&current.database===pass.database)targets.push(current);}catch{/* original snapshot remains usable after branch deletion */}
+    if(pass.cleanupTarget){
+      try{
+        const original=JSON.parse(unsealToken(pass.cleanupTarget)) as DatabasePassTarget;
+        if(original.runtime!==pass.runtime||original.database!==pass.database||original.port!==pass.targetPort||!original.adminUser||typeof original.adminPassword!=='string')throw new Error('原目标回收记录不匹配');
+        targets.push(original);
+      }catch{failed=true;} // Still revoke the known current endpoint; do not discard damaged original evidence.
+    }
+    if(!targets.length)throw new Error('缺少可验证的账号回收目标');
+    const endpoints=new Map<string,DatabasePassTarget[]>();
+    for(const target of targets){const key=`${target.runtime}:${target.port}:${target.database}`;endpoints.set(key,[...(endpoints.get(key)||[]),target]);}
+    for(const alternatives of endpoints.values()){
+      let reclaimed=false;
+      for(const target of alternatives){try{await changeDatabasePassAccount(target,{username:pass.username,password:''},false);reclaimed=true;break;}catch{/* try the other known credential for this same endpoint */}}
+      if(!reclaimed)failed=true;
+    }
+    // Never claim all accounts gone when an old endpoint is unreachable; retry its encrypted snapshot.
+    if(failed)throw new Error('部分原目标尚未确认回收');
+  }
   private revokeInternal(pass:DatabasePass,reason:string){return this.withPassLock(pass.id,()=>this.reclaim(pass,reason));}
   private async reclaim(pass:DatabasePass,reason:string){
     const gateway=this.gateways.get(pass.id);gateway?.close();this.gateways.delete(pass.id);
@@ -131,7 +157,7 @@ export class DatabasePassService {
     // Storage failures must never prevent network closure or best-effort credential revocation.
     try{this.persist();}catch{/* durable preparation record remains available for recovery */}
     try{
-      await changeDatabasePassAccount(await this.boundTarget(pass),{username:pass.username,password:''},false);
+      await this.reclaimTargets(pass);
       pass.status=Date.parse(pass.expiresAt)<=Date.now()?'expired':'revoked';
       this.persist();this.audit(pass,'account-reclaimed',{reason,status:pass.status});
     }catch{try{this.audit(pass,'account-cleanup-failed',{reason});}catch{/* already closed */}}

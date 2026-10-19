@@ -140,3 +140,40 @@ describe('真实来源与PostgreSQL目标绑定',()=>{
     expect(postgresPassStartup(packet(['user','temp','user','root','database','qa']),'qa','temp')).toBe(false);
   });
 });
+it('回收同时覆盖换端口后的资源与加密保存的原目标；原目标不可达不阻断新目标回收且保留重试',async()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cds-pass-moved-'));vi.stubEnv('CDS_DATABASE_PASS_ENABLED','1');vi.stubEnv('CDS_SECRET_KEY','test-encrypted-revocation-key');vi.stubEnv('CDS_PREVIEW_INSTANCE','0');
+  let port=12345;const scope={projectId:'qa',branchId:'qa-main',resourceId:'infra:pg'};const resolve=async()=>({runtime:'postgres' as const,port,database:'qa_items',adminUser:'admin',adminPassword:'original-private-admin'});
+  mocks.account.mockReset().mockResolvedValue(undefined);mocks.gateway.mockReset().mockResolvedValue({port:43210,activate:()=>{},close:()=>{}});
+  try{
+    const service=new DatabasePassService(directory,resolve),pass=await service.prepare(scope,'one',['192.0.2.10/32']);
+    expect(pass).not.toHaveProperty('cleanupTarget');expect(fs.readFileSync(path.join(directory,'passes.json'),'utf8')).not.toContain('original-private-admin');
+    port=23456;mocks.account.mockImplementation(async(t,_a,create)=>{if(!create&&t.port===12345)throw new Error('old endpoint offline');});
+    expect((await service.revoke(pass.id,'one',scope)).status).toBe('cleanup-failed');
+    expect(mocks.account.mock.calls.filter(c=>!c[2]).map(c=>c[0].port)).toEqual([23456,12345]);
+    mocks.account.mockResolvedValue(undefined);expect((await service.revoke(pass.id,'one',scope)).status).toBe('revoked');
+  }finally{vi.unstubAllEnvs();fs.rmSync(directory,{recursive:true,force:true});}
+});
+it('重启后目标已删除，仍用加密原目标回收；认证轮换时使用当前同端口凭据',async()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cds-pass-recovery-'));vi.stubEnv('CDS_DATABASE_PASS_ENABLED','1');vi.stubEnv('CDS_SECRET_KEY','test-encrypted-revocation-key');vi.stubEnv('CDS_PREVIEW_INSTANCE','0');
+  const scope={projectId:'qa',branchId:'qa-main',resourceId:'infra:pg'};const original=async()=>({runtime:'postgres' as const,port:12345,database:'qa_items',adminUser:'admin',adminPassword:'original'});
+  mocks.account.mockReset().mockResolvedValue(undefined);mocks.gateway.mockReset().mockResolvedValue({port:43210,activate:()=>{},close:()=>{}});
+  try{
+    const service=new DatabasePassService(directory,original);await service.prepare(scope,'one',['192.0.2.10/32']);
+    const restarted=new DatabasePassService(directory,async()=>{throw new Error('branch deleted');});expect((await restarted.list(scope,'one'))[0].status).toBe('revoked');
+    expect(mocks.account.mock.calls.at(-1)?.[0].adminPassword).toBe('original');
+    let password='original';const rotated=new DatabasePassService(directory,async()=>({...await original(),adminPassword:password}));
+    const next=await rotated.prepare(scope,'one',['192.0.2.10/32']);password='rotated';await rotated.revoke(next.id,'one',scope);expect(mocks.account.mock.calls.at(-1)?.[0].adminPassword).toBe('rotated');
+  }finally{vi.unstubAllEnvs();fs.rmSync(directory,{recursive:true,force:true});}
+});
+it('并发发现目标前同步预占名额，55个并发请求只能创建50个账号与监听器',async()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'cds-pass-limit-'));vi.stubEnv('CDS_DATABASE_PASS_ENABLED','1');vi.stubEnv('CDS_SECRET_KEY','test-encrypted-revocation-key');vi.stubEnv('CDS_PREVIEW_INSTANCE','0');
+  let release=()=>{};const gate=new Promise<void>(resolve=>{release=resolve;});const target=vi.fn(async()=>{await gate;return {runtime:'postgres' as const,port:12345,database:'qa_items',adminUser:'admin',adminPassword:'private'};});
+  mocks.account.mockReset().mockResolvedValue(undefined);mocks.gateway.mockReset().mockResolvedValue({port:43210,activate:()=>{},close:()=>{}});
+  const scope={projectId:'qa',branchId:'qa-main',resourceId:'infra:pg'};
+  try{
+    const service=new DatabasePassService(directory,target),all=Promise.allSettled(Array.from({length:55},()=>service.prepare(scope,'one',['192.0.2.10/32'])));
+    await vi.waitFor(()=>expect(target).toHaveBeenCalledTimes(50));expect(mocks.account).not.toHaveBeenCalled();release();
+    const results=await all;expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(50);expect(results.filter(r=>r.status==='rejected')).toHaveLength(5);expect(mocks.gateway).toHaveBeenCalledTimes(50);
+    for(const r of results)if(r.status==='fulfilled')await service.revoke(r.value.id,'one',scope);
+  }finally{release();vi.unstubAllEnvs();fs.rmSync(directory,{recursive:true,force:true});}
+},20000);
