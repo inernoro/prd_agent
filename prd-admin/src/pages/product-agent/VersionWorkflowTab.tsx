@@ -4,8 +4,8 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
-  listInitiations, listProductMembers, listVersionApplicationProducts, listReleases, listRequirements,
-  syncInitiationReview, updateInitiation, getVersionApplicationProduct, listProductVersionReviewSources,
+  listInitiations, listProductMembers, listVersionApplicationProducts, listReleases, getOverviewReleases,
+  syncInitiationReview, updateInitiation, listProductVersionReviewSources,
   type VersionApplicationProduct,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -22,6 +22,9 @@ import {
 import { hasRecoverableSseOutcome, waitForSubmissionDone } from './initiationReviewFinish';
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
+import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { useProductListScope } from '@/lib/productListScope';
+import { loadProductVersionList } from '@/lib/productVersionList';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
@@ -49,6 +52,7 @@ import type { VersionRegistrationMessageParseResult } from '@/services/real/vers
 import { VersionCopyActions } from './VersionCopyActions';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { LegacyVersionArchive } from './LegacyVersionArchive';
 import { downloadListCsv } from './listExport';
 import { initiationExportConfig, releaseExportConfig, VERSION_WORKFLOW_STATUS_LABEL as STATUS_LABEL } from './versionWorkflowExport';
 
@@ -56,164 +60,241 @@ type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 
-export function VersionWorkflowTab({ productId, isAdmin = false }: { productId: string; isAdmin?: boolean }) {
+export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin = false }: { productId?: string; isAdmin?: boolean }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { productId, setProductId } = useProductListScope(initialProductId);
   const currentUserId = useAuthStore((state) => state.user?.userId);
-  const [tab, setTab] = useState<MainTab>(searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release');
+  const tab: MainTab = searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release';
+  const [products, setProducts] = useState<VersionApplicationProduct[]>([]);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [initiations, setInitiations] = useState<ProductInitiation[]>([]);
   const [releases, setReleases] = useState<ProductRelease[]>([]);
-  const [requirements, setRequirements] = useState<Requirement[]>([]);
-  const [members, setMembers] = useState<ProductMember[]>([]);
+  const [requirementNames, setRequirementNames] = useState<Map<string, string>>(new Map());
+  const [names, setNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
-  const [loadedProductId, setLoadedProductId] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [dialog, setDialog] = useState<'initiation' | 'release' | 'temporary' | null>(null);
+  const [actionProductId, setActionProductId] = useState('');
   const [importKind, setImportKind] = useState<MainTab | null>(null);
+  const [archive, setArchive] = useState<'legacy' | 'snapshots' | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
-  const [recordScope, setRecordScope] = useState<RecordScope>('mine');
+  const [recordScope, setRecordScope] = useState<RecordScope>('all');
   const [releaseOwnerId, setReleaseOwnerId] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
-  const [applicationProduct, setApplicationProduct] = useState<VersionApplicationProduct | null>(null);
-  const productName = applicationProduct?.name ?? '';
-  const memberNames = useMemo(() => new Map(members.map((member) => [member.userId, member.displayName])), [members]);
-  const internalExport = initiationExportConfig(productId, productName, memberNames);
-  const formalExport = releaseExportConfig(productId, productName, memberNames, requirements);
+  const requestSequence = useRef(0);
+  const productNames = useMemo(() => new Map(products.map((product) => [product.id, product.name])), [products]);
+  const productName = productNames.get(productId) ?? '';
+  const internalExport = initiationExportConfig(productId || '全部产品', productName, names, productNames);
+  const formalExport = releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames);
 
   useEffect(() => {
-    if (searchParams.get('versionAction') !== 'apply' || searchParams.get('versionTab') !== 'initiation') return;
-    setTab('initiation');
-    setDialog('initiation');
+    let active = true;
+    setCatalogLoaded(false);
+    setCatalogError('');
+    void listVersionApplicationProducts().then((result) => {
+      if (!active) return;
+      if (result.success) setProducts(result.data.items);
+      else setCatalogError(result.error?.message ?? '产品目录加载失败，请重试。');
+      setCatalogLoaded(true);
+    }).catch(() => {
+      if (!active) return;
+      setCatalogError('产品目录加载失败，请重试。');
+      setCatalogLoaded(true);
+    });
+    return () => { active = false; };
+  }, [catalogAttempt]);
+
+  const reload = useCallback(async () => {
+    if (!catalogLoaded || catalogError) return;
+    const sequence = ++requestSequence.current;
+    const isCurrent = () => requestSequence.current === sequence;
+    setLoading(true);
+    setLoadError('');
+    setProgress({ completed: 0, total: products.length });
+    const options = {
+      isCurrent,
+      onProgress: (completed: number, total: number) => {
+        if (isCurrent()) setProgress({ completed, total });
+      },
+    };
+    const ids = products.map((product) => product.id);
+    if (tab === 'initiation') {
+      const result = await loadProductVersionList(ids, (id) => listInitiations(id, 'all'), options);
+      if (!isCurrent()) return;
+      setInitiations(result.items);
+      if (result.failedProductIds.length) setLoadError(`有 ${result.failedProductIds.length} 个产品的内部版本加载失败，当前结果不完整，请重试。`);
+    } else {
+      const [result, overview] = await Promise.all([
+        loadProductVersionList(ids, (id) => listReleases(id, 'all'), options),
+        getOverviewReleases(),
+      ]);
+      if (!isCurrent()) return;
+      setReleases(result.items);
+      const titles = new Map<string, string>();
+      if (overview.success) overview.data.items.forEach((row) => {
+        row.requirementIds.forEach((id, index) => {
+          if (row.requirementTitles[index]) titles.set(id, row.requirementTitles[index]);
+        });
+      });
+      setRequirementNames(titles);
+      if (result.failedProductIds.length) setLoadError(`有 ${result.failedProductIds.length} 个产品的正式版本加载失败，当前结果不完整，请重试。`);
+      else if (!overview.success) setLoadError('版本已加载，但关联需求名称未能加载，请重试。');
+    }
+    setLoading(false);
+  }, [catalogLoaded, catalogError, products, tab]);
+
+  useEffect(() => {
+    void reload();
+    return () => { requestSequence.current += 1; };
+  }, [reload]);
+
+  useEffect(() => {
+    let active = true;
+    const ids = Array.from(new Set(tab === 'release'
+      ? releases.flatMap((item) => [item.createdBy, item.ownerId, ...item.teamMemberIds].filter((id): id is string => Boolean(id)))
+      : initiations.flatMap((item) => [item.createdBy, item.primaryOwnerId].filter((id): id is string => Boolean(id)))));
+    if (!ids.length) { setNames(new Map()); return; }
+    void getUserCards(ids).then((result) => {
+      if (active && result.success) setNames(new Map(result.data.items.map((user) => [user.userId, user.displayName])));
+    });
+    return () => { active = false; };
+  }, [initiations, releases, tab]);
+
+  useEffect(() => {
+    if (searchParams.get('versionAction') !== 'apply') return;
+    setActionProductId(productId);
+    setDialog(searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release');
     setSearchParams((previous) => {
       const next = new URLSearchParams(previous);
       next.delete('versionAction');
       return next;
     }, { replace: true });
-  }, [searchParams, setSearchParams]);
+  }, [productId, searchParams, setSearchParams]);
 
-  useEffect(() => {
-    let active = true;
-    setApplicationProduct(null);
-    void getVersionApplicationProduct(productId).then((res) => {
-      if (active && res.success) setApplicationProduct(res.data);
-    });
-    return () => { active = false; };
-  }, [productId]);
+  const setTab = (value: MainTab) => {
+    setStatusFilter('');
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.set('versionTab', value);
+      return next;
+    }, { replace: true });
+  };
+  const openApplication = (kind: 'initiation' | 'release' | 'temporary') => {
+    setActionProductId(productId);
+    setDialog(kind);
+  };
+  const visibleInitiations = useMemo(() => filterByTracked(
+    initiations.filter((item) => (!productId || item.productId === productId)
+      && (recordScope === 'all' || item.createdBy === currentUserId)
+      && matchesRecord(item, query, statusFilter)),
+    trackedOnly, 'initiation', (item) => ({ productId: item.productId, recordId: item.id }),
+  ), [initiations, productId, recordScope, currentUserId, query, statusFilter, trackedOnly]);
+  const visibleReleases = useMemo(() => filterByTracked(
+    releases.filter((item) => (!productId || item.productId === productId)
+      && (!releaseOwnerId || item.ownerId === releaseOwnerId)
+      && matchesRecord(item, query, statusFilter)),
+    trackedOnly, 'release', (item) => ({ productId: item.productId, recordId: item.id }),
+  ), [releases, productId, releaseOwnerId, query, statusFilter, trackedOnly]);
+  const statuses = useMemo(() => Array.from(new Set(
+    (tab === 'release' ? releases : initiations)
+      .filter((item) => !productId || item.productId === productId).map((item) => item.status),
+  )), [initiations, releases, productId, tab]);
+  const selectedProductUnavailable = catalogLoaded && !catalogError && Boolean(productId) && !productNames.has(productId);
+  const listLoading = !catalogLoaded || loading;
+  const dialogTitle = dialog === 'initiation' ? '申领内部版本号' : dialog === 'temporary' ? '临时优化需求' : '申领正式版本号';
 
-  const reload = useCallback(async () => {
-    setLoading(true);
-    const [i, r, req, mem] = await Promise.all([
-      listInitiations(productId, recordScope),
-      listReleases(productId, 'all', releaseOwnerId || undefined),
-      listRequirements(productId),
-      listProductMembers(productId),
-    ]);
-    if (i.success) setInitiations(i.data.items);
-    if (r.success) setReleases(r.data.items);
-    if (req.success) setRequirements(req.data.items);
-    if (mem.success) setMembers(mem.data.members);
-    setLoadedProductId(productId);
-    setLoading(false);
-  }, [productId, recordScope, releaseOwnerId]);
-
-  useEffect(() => { void reload(); }, [reload]);
-  const filteredInitiations = useMemo(
-    () => initiations.filter((item) => matchesRecord(item, query, statusFilter)),
-    [initiations, query, statusFilter],
-  );
-  const filteredReleases = useMemo(
-    () => releases.filter((item) => matchesRecord(item, query, statusFilter)),
-    [releases, query, statusFilter],
-  );
-  const visibleInitiations = useMemo(
-    () => filterByTracked(filteredInitiations, trackedOnly, 'initiation', (item) => ({ productId, recordId: item.id })),
-    [filteredInitiations, trackedOnly, productId],
-  );
-  const visibleReleases = useMemo(
-    () => filterByTracked(filteredReleases, trackedOnly, 'release', (item) => ({ productId, recordId: item.id })),
-    [filteredReleases, trackedOnly, productId],
-  );
-  const statuses = useMemo(
-    () => Array.from(new Set((tab === 'release' ? releases : initiations).map((item) => item.status))),
-    [initiations, releases, tab],
-  );
-  useEffect(() => { setStatusFilter(''); }, [tab]);
-  if (loadedProductId !== productId) return <div className="py-16 text-center text-sm text-token-muted">正在加载版本流程...</div>;
-
-  return <div className="flex flex-col gap-5">
-    {loading && <p role="status" className="text-xs text-token-muted">正在刷新版本记录…</p>}
-    <div className="flex border-b border-token-subtle">
+  return <div className="flex h-full min-h-0 flex-col gap-5">
+    <div className="flex shrink-0 border-b border-token-subtle">
       <Tab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</Tab>
       <Tab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</Tab>
     </div>
-    {tab === 'release' ? <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <RecordToolbar query={query} onQueryChange={setQuery} ownerId={releaseOwnerId} onOwnerChange={setReleaseOwnerId}
+    <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div role="group" aria-label="按产品筛选版本" className="w-56">
+          <ItemSearchSelect value={productId} onChange={setProductId} options={toProductOptions(products)}
+            placeholder={productId && !productName ? '正在加载产品…' : '输入产品名称或编号搜索'}
+            clearOptionLabel="全部产品" uiSize="sm" countUnit="个产品" />
+        </div>
+        <RecordToolbar query={query} onQueryChange={setQuery}
+          scope={recordScope} onScopeChange={setRecordScope}
+          ownerId={tab === 'release' ? releaseOwnerId : undefined}
+          onOwnerChange={tab === 'release' ? setReleaseOwnerId : undefined}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
-        <div className="flex flex-wrap items-center gap-2">
-          {isAdmin && applicationProduct && <Secondary onClick={() => setImportKind('release')}><Upload size={14} />导入历史正式版本</Secondary>}
-          <Secondary disabled={loading || visibleReleases.length === 0} onClick={() => downloadListCsv(formalExport.filename, formalExport.headers, visibleReleases.map(formalExport.mapRow))}><Download size={14} />导出正式版本</Secondary>
-          <Primary onClick={() => setDialog('release')}><Plus size={14} />申领正式版本号</Primary>
-          <button onClick={() => setDialog('temporary')} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]">临时优化需求</button>
-          <span className="group relative"><HelpCircle size={15} className="cursor-help text-token-muted" />
-            <span className="surface-tone-dark invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-token-subtle bg-[#181a20] p-3 text-xs leading-5 text-token-secondary shadow-xl group-hover:visible">
-              月度常规计划外、紧急且工作量较小的优化。产品工作量原则上不超过 3 天，研发不超过 5 天；无需 T 号，按小版本自动审批。
-            </span>
-          </span>
-        </div>
       </div>
-      <ReleaseTable productId={productId} productName={productName} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} currentUserId={currentUserId} />
-    </> : <>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
-          status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
-          trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
-        <div className="flex flex-wrap gap-2">
-          {isAdmin && applicationProduct && <Secondary onClick={() => setImportKind('initiation')}><Upload size={14} />导入历史内部版本</Secondary>}
-          <Secondary disabled={loading || visibleInitiations.length === 0} onClick={() => downloadListCsv(internalExport.filename, internalExport.headers, visibleInitiations.map(internalExport.mapRow))}><Download size={14} />导出内部版本</Secondary>
-          <Primary onClick={() => setDialog('initiation')}><Plus size={14} />申领内部版本号</Primary>
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {isAdmin && <Secondary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => setImportKind(tab)}><Upload size={14} />导入历史{tab === 'release' ? '正式' : '内部'}版本</Secondary>}
+        <Secondary disabled={listLoading || Boolean(catalogError) || Boolean(loadError) || (tab === 'release' ? visibleReleases : visibleInitiations).length === 0}
+          onClick={() => tab === 'release'
+            ? downloadListCsv(formalExport.filename, formalExport.headers, visibleReleases.map(formalExport.mapRow))
+            : downloadListCsv(internalExport.filename, internalExport.headers, visibleInitiations.map(internalExport.mapRow))}><Download size={14} />导出{tab === 'release' ? '正式' : '内部'}版本</Secondary>
+        <Primary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => openApplication(tab)}><Plus size={14} />申领{tab === 'release' ? '正式' : '内部'}版本号</Primary>
+        {tab === 'release' && <Secondary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => openApplication('temporary')}>临时优化需求</Secondary>}
+        {tab === 'release' && <span title="月度常规计划外、紧急且工作量较小的优化，无需 T 号，沿用既有自动审批规则。" className="text-token-muted"><HelpCircle size={15} /></span>}
       </div>
-      <InitiationTable
-        productId={productId}
-        productName={productName}
-        items={visibleInitiations}
-        members={members}
-        currentUserId={currentUserId}
-        onRetryReview={setRetrySeed}
-        onFillMeeting={setMeetingFillItem}
-        onChanged={reload}
-        readOnly={recordScope === 'all'}
-      />
-    </>}
-    {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
-    {(dialog === 'release' || dialog === 'temporary') && <ReleaseApplicationDialog productId={productId} temporary={dialog === 'temporary'} onClose={() => setDialog(null)} onChanged={reload} />}
-    {importKind && isAdmin && applicationProduct && <VersionWorkflowImportDialog kind={importKind} products={[applicationProduct]} fixedProductId={productId} onClose={() => setImportKind(null)} onImported={async () => { setImportKind(null); await reload(); }} />}
-    {retrySeed && (
-      <InitiationWizard
-        productId={productId}
-        requirements={requirements}
-        members={members}
-        seed={retrySeed}
-        onClose={() => setRetrySeed(null)}
-        onChanged={async () => { setRetrySeed(null); await reload(); }}
-      />
-    )}
-    {meetingFillItem && (
-      <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
-        <InitiationMeetingRoundsEditor
-          initiation={meetingFillItem}
-          editable={meetingFillItem.createdBy === currentUserId}
-          onSaved={async () => {
-            setMeetingFillItem(null);
-            await reload();
-          }}
-        />
-      </Modal>
-    )}
+    </div>
+    <div className="flex shrink-0 gap-3 text-xs text-token-muted">
+      <button type="button" onClick={() => setArchive('legacy')} className="hover-text-primary">查看旧登记记录</button>
+      <button type="button" onClick={() => setArchive('snapshots')} className="hover-text-primary">查看历史存档</button>
+    </div>
+    {(catalogError || loadError || selectedProductUnavailable) && <div role="alert" className="shrink-0 rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">
+      {catalogError || (selectedProductUnavailable ? '所选产品不存在或无权访问，请清除产品筛选后重试。' : loadError)}
+      {!selectedProductUnavailable && <button type="button" className="ml-3 text-[color:var(--accent-fg-blue)] hover:underline" onClick={() => catalogError ? setCatalogAttempt((value) => value + 1) : void reload()}>重试</button>}
+    </div>}
+    <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
+      {!catalogError && !selectedProductUnavailable && (listLoading
+        ? <MapSectionLoader text={progress.total ? `正在加载版本记录（${progress.completed}/${progress.total} 个产品）…` : '正在加载版本记录…'} />
+        : tab === 'release'
+          ? <ReleaseTable productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} />
+          : <InitiationTable productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} />)}
+    </div>
+    {dialog && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
+      <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
+      <ItemSearchSelect value="" onChange={setActionProductId} options={toProductOptions(products)} placeholder="输入产品名称或编号搜索" countUnit="个产品" />
+    </Modal>}
+    {dialog === 'initiation' && actionProductId && <InitiationApplication productId={actionProductId} onClose={() => setDialog(null)} onChanged={reload} />}
+    {(dialog === 'release' || dialog === 'temporary') && actionProductId && <ReleaseApplicationDialog productId={actionProductId} temporary={dialog === 'temporary'} onClose={() => setDialog(null)} onChanged={reload} />}
+    {importKind && isAdmin && <VersionWorkflowImportDialog kind={importKind} products={products} fixedProductId={productId || undefined}
+      onClose={() => setImportKind(null)} onImported={async () => { setImportKind(null); await reload(); }} />}
+    {archive && <Modal title={archive === 'legacy' ? '全域旧登记记录（只读）' : '全域历史存档'} onClose={() => setArchive(null)} width="max-w-6xl">
+      <LegacyVersionArchive kind={tab === 'release' ? 'formal' : 'internal'} isAdmin={isAdmin} mode={archive} />
+    </Modal>}
+    {retrySeed && <InitiationApplication productId={retrySeed.productId} seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={async () => { setRetrySeed(null); await reload(); }} />}
+    {meetingFillItem && <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
+      <InitiationMeetingRoundsEditor initiation={meetingFillItem} editable={meetingFillItem.createdBy === currentUserId}
+        onSaved={async () => { setMeetingFillItem(null); await reload(); }} />
+    </Modal>}
   </div>;
+}
+
+function InitiationApplication({ productId, seed, onClose, onChanged }: {
+  productId: string; seed?: ProductInitiation; onClose: () => void; onChanged: () => Promise<void>;
+}) {
+  const [members, setMembers] = useState<ProductMember[] | null>(null);
+  const [error, setError] = useState('');
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setMembers(null);
+    setError('');
+    void listProductMembers(productId).then((result) => {
+      if (!active) return;
+      if (result.success) setMembers(result.data.members);
+      else setError(result.error?.message ?? '产品成员加载失败，请重试。');
+    }).catch(() => { if (active) setError('产品成员加载失败，请重试。'); });
+    return () => { active = false; };
+  }, [productId, attempt]);
+  if (!members) return <Modal compact title="申领内部版本号" onClose={onClose} width="max-w-lg">
+    {error ? <div role="alert" className="text-sm text-token-secondary">{error}<button type="button" className="ml-2 hover:underline" onClick={() => setAttempt((value) => value + 1)}>重试</button></div>
+      : <MapSectionLoader text="正在加载申领信息…" />}
+  </Modal>;
+  return <InitiationWizard productId={productId} requirements={[]} members={members} seed={seed} onClose={onClose} onChanged={onChanged} />;
 }
 
 export function InitiationWizard({ productId, members, onClose, onChanged, seed }: {
@@ -625,49 +706,48 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed 
   </Modal>;
 }
 
-function InitiationTable({ productId, productName, items, members, currentUserId, onRetryReview, onFillMeeting, onChanged, readOnly }: {
+function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged }: {
   productId: string;
   productName: string;
+  productNames: ReadonlyMap<string, string>;
   items: ProductInitiation[];
-  members: ProductMember[];
+  names: ReadonlyMap<string, string>;
   currentUserId?: string;
   onRetryReview: (item: ProductInitiation) => void;
   onFillMeeting: (item: ProductInitiation) => void;
   onChanged: () => Promise<void>;
-  readOnly: boolean;
 }) {
   const navigate = useNavigate();
-  const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
-  const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, initiationExportConfig(productId, productName, names));
+  const openDetail = (item: ProductInitiation) => navigate(`/product-agent/p/${item.productId}/initiation/${item.id}`);
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, initiationExportConfig(productId || '全部产品', productName, names, productNames));
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
-          const isOwner = !readOnly && item.createdBy === currentUserId;
+          const isOwner = item.createdBy === currentUserId;
           const showRetryReview = isOwner && item.status === 'review_failed';
           const showFillMeeting = isOwner && isMeetingResultPending(item);
           const reviewScoreText = formatInitiationReviewScore(item);
           return (
-        <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')} onClick={() => openDetail(item.id)}>
+        <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')} onClick={() => openDetail(item)}>
           <ListTableSelectionCell selection={tableSelection} id={item.id} />
-          <Td>{resolveVersionProductLabel(item, productName)}</Td>
+          <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
-        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
         : '-'}</Td>
       <Td>{SCALE_LABEL[item.versionType]}</Td>
-      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
-        <div>{names.get(item.primaryOwnerId ?? item.createdBy) ?? item.legacyData?.['产品负责人'] ?? item.primaryOwnerId ?? item.createdBy ?? '-'}</div>
-        {!readOnly && item.status === 'owner_pending' && <button onClick={async () => { await approveInitiation(item.id); await onChanged(); }} className="mt-1 text-cyan-300">负责人同意</button>}
+        <div>{item.ownerName || names.get(item.primaryOwnerId ?? item.createdBy) || item.legacyData?.['产品负责人'] || item.primaryOwnerId || item.createdBy || '-'}</div>
+        {item.primaryOwnerId === currentUserId && item.status === 'owner_pending' && <button onClick={async (event) => { event.stopPropagation(); const result = await approveInitiation(item.id); if (result.success) await onChanged(); }} className="mt-1 text-cyan-300">负责人同意</button>}
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatDate(item.plannedProjectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td><Td>{formatBool(item.isAiPoc)}</Td>
-      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
+      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
       <Td>
         {reviewScoreText === '-' ? (
@@ -700,55 +780,42 @@ function InitiationTable({ productId, productName, items, members, currentUserId
   );
 }
 
-function ReleaseTable({ productId, productName, items, requirements, members, onChanged, currentUserId }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, onChanged, currentUserId }: {
   productId: string;
   productName: string;
-  items: ProductRelease[]; requirements: Requirement[]; members: ProductMember[]; onChanged: () => Promise<void>; currentUserId?: string;
+  productNames: ReadonlyMap<string, string>;
+  items: ProductRelease[];
+  requirementNames: ReadonlyMap<string, string>;
+  names: ReadonlyMap<string, string>;
+  onChanged: () => Promise<void>;
+  currentUserId?: string;
 }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState<string | null>(null);
   const [url, setUrl] = useState('');
-  const [directoryNames, setDirectoryNames] = useState<Map<string, string>>(new Map());
-  const names = useMemo(() => {
-    const result = new Map(directoryNames);
-    members.forEach((member) => result.set(member.userId, member.displayName));
-    return result;
-  }, [directoryNames, members]);
-  const reqNames = useMemo(() => new Map(requirements.map((r) => [r.id, r.title])), [requirements]);
-
-  useEffect(() => {
-    const ids = Array.from(new Set(items.flatMap((item) => [item.ownerId, ...item.teamMemberIds]).filter(Boolean))) as string[];
-    if (ids.length === 0) return;
-    let cancelled = false;
-    void getUserCards(ids).then((response) => {
-      if (cancelled || !response.success) return;
-      setDirectoryNames(new Map(response.data.items.map((user) => [user.userId, user.displayName])));
-    });
-    return () => { cancelled = true; };
-  }, [items]);
-  const openRelease = (id: string) => navigate(`/product-agent/p/${productId}/release/${id}`);
-  const openInitiation = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId, productName, names, requirements));
+  const openRelease = (item: ProductRelease) => navigate(`/product-agent/p/${item.productId}/release/${item.id}`);
+  const openInitiation = (item: ProductRelease) => navigate(`/product-agent/p/${item.productId}/initiation/${item.initiationId}`);
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
     <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '预计培训时间', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
-    {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item.id)}>
+    {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
-      <Td>{resolveVersionProductLabel(item, productName)}</Td>
-      <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
+      <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
+      <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
       <Td mono>{item.initiationId && item.tCode
-        ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item.initiationId!); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
         : (item.tCode ?? '临时优化需求')}</Td>
       <Td>{item.projectType === 'custom' ? '定制项目' : '非定制项目'}</Td><Td>{SCALE_LABEL[item.versionType]}</Td>
-      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
+      <Td><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
       <Td>{item.demandSource || '-'}</Td>
-      <Td>{item.departmentName || '-'}</Td><Td>{names.get(item.ownerId ?? '') ?? item.legacyData?.['产品负责人'] ?? item.ownerId ?? '-'}</Td>
-      <Td>{item.teamMemberIds.map((id) => names.get(id) ?? id).join('、')}</Td>
-      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" className="text-cyan-300">查看方案</a> : '-'}</Td>
+      <Td>{item.departmentName || '-'}</Td><Td>{item.ownerName || names.get(item.ownerId ?? '') || item.legacyData?.['产品负责人'] || item.ownerId || '-'}</Td>
+      <Td>{(item.projectMemberNames?.length ? item.projectMemberNames : item.teamMemberIds.map((id) => names.get(id) ?? id)).join('、')}</Td>
+      <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
       <Td>{item.plannedTrainingAt ? new Date(item.plannedTrainingAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '-'}</Td>
       <Td>{formatBool(item.isGlobalOpen)}</Td>
-      <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => reqNames.get(id) ?? id).join('、') || '-'}</Td>
+      <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? item.ownerId === currentUserId && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
         : item.ownerId !== currentUserId ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
@@ -817,7 +884,7 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
           className={filterClassName}
         >
           <option value="mine">我的申请</option>
-          <option value="all">全部成员（只读）</option>
+          <option value="all">全部申请</option>
         </select>}
     <select
       aria-label="状态"
@@ -833,12 +900,17 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
 }
 
 function Stepper({ step }: { step: number }) { return <div className="mb-6 flex">{['基础信息', 'Agent 评审', '立项决策'].map((label, i) => <div key={label} className="flex flex-1 items-center last:flex-none"><div className={`flex items-center gap-2 text-xs ${step >= i + 1 ? 'text-cyan-300' : 'text-token-muted'}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full border ${step > i + 1 ? 'border-cyan-400 bg-cyan-400 text-slate-950' : step === i + 1 ? 'border-cyan-400' : 'border-token-subtle'}`}>{step > i + 1 ? <CheckCircle2 size={15} /> : i + 1}</span>{label}</div>{i < 2 && <div className={`mx-3 h-px flex-1 ${step > i + 1 ? 'bg-cyan-400' : 'bg-token-nested'}`} />}</div>)}</div>; }
-function Modal({ title, onClose, width, children }: { title: string; onClose: () => void; width: string; children: React.ReactNode }) {
+function Modal({ title, onClose, width, children, compact = false }: { title: string; onClose: () => void; width: string; children: React.ReactNode; compact?: boolean }) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [onClose]);
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
         className={`flex w-full ${width} flex-col rounded-2xl border border-token-subtle bg-[#15171c]`}
-        style={{ height: 'min(90vh, 760px)', maxHeight: '90vh' }}
+        style={{ height: compact ? 'auto' : 'min(90vh, 760px)', maxHeight: '90vh' }}
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex shrink-0 justify-between border-b border-token-subtle px-6 py-4">
@@ -847,7 +919,7 @@ function Modal({ title, onClose, width, children }: { title: string; onClose: ()
             <X size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto p-6" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
+        <div className="flex-1 overflow-y-auto p-6" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {children}
         </div>
       </div>
