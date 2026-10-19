@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import yaml from 'js-yaml';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const scriptPath = path.join(repoRoot, 'cds', 'exec_cds.sh');
@@ -11,4 +13,12 @@ describe('exec_cds.sh nginx template guard', () => {
     expect(script).toContain('upstream cds_worker { server 127.0.0.1:${worker}; }');
     expect(script).not.toMatch(/upstream cds_worker \{[^}]*keepalive/i);
   });
+});
+
+it('generated nginx Compose limits json-file logging to three 50m files', () => {
+  const script = fs.readFileSync(scriptPath, 'utf8');
+  const body = script.match(/compose_content=\$\(cat <<EOF\n([\s\S]*?)\nEOF\n\)/)![1];
+  const generated = execFileSync('/bin/bash', ['-c', 'NGINX_CONTAINER=test_nginx; cat <<EOF\n'+body+'\nEOF'], {encoding:'utf8'});
+  const compose = yaml.load(generated) as any;
+  expect(compose.services.nginx.logging).toEqual({driver:'json-file',options:{'max-size':'50m','max-file':'3'}});
 });
