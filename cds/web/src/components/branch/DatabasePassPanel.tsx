@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
+import { databasePassState } from '@/lib/databasePassState';
 
 interface Pass {
   id:string;username:string;database:string;runtime:string;host:string;port?:number;
@@ -39,9 +40,7 @@ export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId
     finally{if(current())setBusy('');}
   }
   if(!allowed)return <div className="rounded border border-border p-3 text-xs text-muted-foreground">数据库通行证需要项目管理员审查和签发；当前角色没有放行权限。</div>;
-  const latest=overview?.passes.at(-1);
-  const terminal=latest&&['expired','revoked'].includes(latest.status);
-  const current=overview?.passes.filter(p=>['prepared','active','cleanup-failed','preparing'].includes(p.status)).at(-1);
+  const {latest,terminal,current}=databasePassState(overview?.passes||[]);
   return <section className="space-y-3 rounded-md border border-border bg-background/50 p-3" aria-label="数据库通行证">
     <div className="flex flex-wrap items-center gap-2"><ShieldCheck className="h-4 w-4"/><h3 className="text-sm font-semibold">数据库通行证 · 本地工具直连</h3><span className="text-xs text-muted-foreground">默认只读 · 30 分钟 · 独立临时账号</span></div>
     <p className="text-xs leading-5 text-muted-foreground">申请后复制账号、密码和 TLS 证书，再放行白名单。期限从成功放行开始；到期断开现有连接并回收账号。当前 IP 是本次页面访问的来源，数据库工具经 VPN 或内网访问时可能不同，请核对。</p>
