@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
+import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createBootstrapRouter } from '../../src/routes/bootstrap.js';
 import { createGithubAuthMiddleware } from '../../src/middleware/github-auth.js';
 import type { AuthService } from '../../src/services/auth-service.js';
@@ -58,11 +61,26 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const response = await fetch(`${origin}/api/agent/setup.json?target=existing&project=does-not-exist&skills=preview-url`);
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.3', cliVersion: '0.17.3', authentication: 'existing-page-approval' });
+    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.4', cliVersion: '0.17.4', authentication: 'existing-page-approval' });
     expect(body.installedSkills).toHaveLength(5);
     expect(body.project).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();
     expect((await fetch(`${origin}/api/private`)).status).toBe(401);
+  });
+
+  it('anonymous installation includes current hashes for all companion skills and their references', async () => {
+    const response = await fetch(`${origin}/api/skills/cds-pack/download`);
+    expect(response.status).toBe(200);
+    const archive = Buffer.from(await response.arrayBuffer());
+    const manifest = JSON.parse(execFileSync('tar', ['-xzOf', '-', 'skills/cds/cli/cds-skill-manifest.json'], { input: archive, encoding: 'utf8' }));
+    expect(manifest).toMatchObject({ format: 'agent-skills', version: '0.17.4' });
+    for (const skill of manifest.skills) {
+      const content = fs.readFileSync(path.resolve(process.cwd(), '../.claude/skills', skill, 'SKILL.md'));
+      expect(manifest.files[`${skill}/SKILL.md`]).toBe(createHash('sha256').update(content).digest('hex'));
+    }
+    expect(manifest.files['cds/cli/cdscli.py']).toMatch(/^[0-9a-f]{64}$/);
+    expect(manifest.files['cds/reference/api.md']).toMatch(/^[0-9a-f]{64}$/);
+    expect(manifest.files['cds/cli/cds-skill-manifest.json']).toBeUndefined();
   });
 
   it.each(Object.values(AGENT_MISSION_DEFINITIONS))('retains every required skill for mission $id', async mission => {

@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.4"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -759,6 +759,36 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
     if missing:
         fail("skills", "incomplete_bundle", "完整技能包缺少 " + "、".join(missing) + "；重新安装或运行 cdscli update。")
+    try:
+        bundle = json.loads(Path(__file__).with_name("cds-skill-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fail("skills", "bundle_manifest_unavailable", "完整技能包的 manifest 缺失或不可读；重新安装或运行 cdscli update，不重新授权。")
+        return
+    if (not isinstance(bundle, dict) or bundle.get("format") != "agent-skills"
+            or not isinstance(bundle.get("skills"), list)
+            or any(not isinstance(key, str) for key in bundle["skills"])
+            or set(bundle["skills"]) != set(skill_keys)):
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能；重新安装完整包，不重新授权。")
+    if bundle.get("version") != VERSION:
+        fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致；统一更新完整五技能包，不只复制核心 CLI。")
+    file_hashes = bundle.get("files")
+    required_files = [key + "/SKILL.md" for key in skill_keys] + ["cds/cli/cdscli.py"]
+    if not isinstance(file_hashes, dict) or any(name not in file_hashes for name in required_files):
+        fail("skills", "invalid_bundle_manifest", "技能包缺少完整文件摘要；重新安装或运行 cdscli update。")
+    for name, digest in file_hashes.items():
+        relative = Path(name)
+        if (relative.is_absolute() or ".." in relative.parts or len(relative.parts) < 2
+                or relative.parts[0] not in skill_keys or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            fail("skills", "invalid_bundle_manifest", "技能包文件摘要无效；重新安装完整包。")
+        candidate = skills_root / relative
+        try:
+            candidate.resolve().relative_to(skills_root.resolve())
+            matches = candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() == digest
+        except (OSError, ValueError):
+            matches = False
+        if not matches:
+            fail("skills", "bundle_content_mismatch", "技能内容与 manifest 不一致，可能为混装或旧版；统一更新完整五技能包，不重新授权。")
     checks.append({"stage": "skills", "passed": True, "loadOnly": selected})
 
     print("接入自检：核对服务端协议与版本。", file=sys.stderr)

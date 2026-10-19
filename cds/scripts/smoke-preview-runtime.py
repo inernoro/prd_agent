@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """验证 CI 预览运行镜像能启动并提供真实 HTML 与入口资源。"""
 import io
+import hashlib
 import json
 import re
 import tarfile
@@ -54,6 +55,15 @@ def main():
         bundle = response.read()
     with tarfile.open(fileobj=io.BytesIO(bundle), mode='r:gz') as archive:
         cli = archive.extractfile('skills/cds/cli/cdscli.py').read().decode()
+        receipt = json.load(archive.extractfile('skills/cds/cli/cds-skill-manifest.json'))
+        assert receipt.get('format') == 'agent-skills', '技能 manifest 格式不一致'
+        assert receipt.get('version') == setup.get('cliVersion'), '技能 manifest 版本不一致'
+        required_skills = {'cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'}
+        assert set(receipt.get('skills', [])) == required_skills
+        required_files = {skill + '/SKILL.md' for skill in required_skills} | {'cds/cli/cdscli.py'}
+        assert required_files <= receipt.get('files', {}).keys(), '技能 manifest 未覆盖完整五技能'
+        for name, digest in receipt['files'].items():
+            assert hashlib.sha256(archive.extractfile('skills/' + name).read()).hexdigest() == digest, '技能文件与 manifest 不一致'
     bundled_version = re.search(r'^VERSION\s*=\s*[\"\']([^\"\']+)', cli, re.MULTILINE)
     assert bundled_version and bundled_version.group(1) == setup.get('cliVersion'), '下载包与实例 CLI 版本不一致'
     assert 'def cmd_setup_check(' in cli, '下载包缺少接入自检'

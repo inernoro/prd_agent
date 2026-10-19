@@ -1,6 +1,8 @@
 """Exercise the shipped CLI over real HTTP with isolated workspace credentials."""
 import json
+import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,7 +33,9 @@ class SetupCheckTests(unittest.TestCase):
         self.redirects = {}
         self.status = "active"
         self.kind = "project"
-        self.version = "0.17.3"
+        self.version = re.search(r'^VERSION = "([^"]+)"', self.cli.read_text(), re.MULTILINE)[1]
+        self.bundle_manifest = self.cli.with_name("cds-skill-manifest.json")
+        self.write_bundle_manifest()
         self.project_status = 200
         self.returned_project = "proj-a"
         test = self
@@ -79,6 +83,15 @@ class SetupCheckTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join()
         self.tmp.cleanup()
+
+    def write_bundle_manifest(self):
+        skills_root = self.cli.parents[2]
+        files = {p.relative_to(skills_root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                 for key in SKILLS for p in (skills_root / key).rglob('*')
+                 if p.is_file() and p != self.bundle_manifest}
+        self.bundle_manifest.write_text(json.dumps({
+            "format": "agent-skills", "version": self.version, "skills": list(SKILLS), "files": files,
+        }))
 
     def run_cli(self, *args, credential_env=None):
         env = {key: value for key, value in os.environ.items()
@@ -265,6 +278,54 @@ class SetupCheckTests(unittest.TestCase):
         (self.root / ".agents/skills/preview-url/SKILL.md").unlink()
         self.assert_failure("incomplete_bundle")
         self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_is_required_and_parseable(self):
+        for content in (None, "{broken"):
+            with self.subTest(content=content):
+                if content is None:
+                    self.bundle_manifest.unlink()
+                else:
+                    self.bundle_manifest.write_text(content)
+                self.assert_failure("bundle_manifest_unavailable")
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_version_and_coverage_are_required(self):
+        original = json.loads(self.bundle_manifest.read_text())
+        for update, reason in (({"version": "0.1.0"}, "stale_bundle"),
+                               ({"skills": ["cds"]}, "invalid_bundle_manifest"),
+                               ({"files": {}}, "invalid_bundle_manifest")):
+            with self.subTest(update=update):
+                self.bundle_manifest.write_text(json.dumps({**original, **update}))
+                self.assert_failure(reason)
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_detects_mixed_companion_content(self):
+        (self.cli.parents[2] / "cds-release/SKILL.md").write_text("obsolete release instructions")
+        self.assert_failure("bundle_content_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_checks_references_too(self):
+        reference = self.cli.parents[2] / "cds-deploy-pipeline/reference.md"
+        reference.write_text("current deployment contract")
+        self.write_bundle_manifest()
+        reference.write_text("obsolete deployment contract")
+        self.assert_failure("bundle_content_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_bundle_manifest_cannot_reference_paths_outside_skills(self):
+        manifest = json.loads(self.bundle_manifest.read_text())
+        manifest["files"]["../../outside"] = "0" * 64
+        self.bundle_manifest.write_text(json.dumps(manifest))
+        self.assert_failure("invalid_bundle_manifest")
+        self.assertEqual(self.requests, [])
+
+    def test_custom_files_outside_bundle_manifest_remain_usable(self):
+        extra = self.cli.parents[2] / "cds/local-notes.md"
+        extra.write_text("user custom notes")
+        result, payload = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(extra.read_text(), "user custom notes")
 
     def test_active_credential_without_real_project_access_fails(self):
         self.project_status = 403
