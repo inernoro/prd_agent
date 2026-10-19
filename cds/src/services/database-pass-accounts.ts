@@ -69,11 +69,14 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
         try {
           const publicWrite=await db.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND c.relkind IN ('r','p','v','m','f') AND has_table_privilege($1,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE') UNION ALL SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' AND has_schema_privilege($1,oid,'CREATE') UNION ALL SELECT 1 WHERE has_database_privilege($1,current_database(),'CREATE') LIMIT 1",[account.username]);
           if(publicWrite.rowCount)throw new Error('数据库PUBLIC权限允许写入，不能签发隔离只读账号');
+          const inheritedViews=await db.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND c.relkind IN ('v','m') AND has_table_privilege($1,c.oid,'SELECT') LIMIT 1",[account.username]);
+          if(inheritedViews.rowCount)throw new Error('数据库 PUBLIC 权限允许读取未经审查的视图，暂不能签发隔离只读账号。');
           await db.query(`GRANT CONNECT ON DATABASE ${ident(target.database)} TO ${ident(account.username)}`);
-          const schemas = await db.query("SELECT nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema'");
+          const schemas = await db.query("SELECT oid, nspname FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema'");
           for (const row of schemas.rows) {
             await db.query(`GRANT USAGE ON SCHEMA ${ident(row.nspname)} TO ${ident(account.username)}`);
-            await db.query(`GRANT SELECT ON ALL TABLES IN SCHEMA ${ident(row.nspname)} TO ${ident(account.username)}`);
+            const tables=await db.query("SELECT relname FROM pg_class WHERE relnamespace=$1 AND relkind IN ('r','p') ORDER BY relname",[row.oid]);
+            for(const table of tables.rows)await db.query(`GRANT SELECT ON TABLE ${ident(row.nspname)}.${ident(table.relname)} TO ${ident(account.username)}`);
           }
           await db.query(`ALTER ROLE ${ident(account.username)} SET default_transaction_read_only=on`);
         } catch (error) {
