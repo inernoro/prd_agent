@@ -20,6 +20,7 @@ it('MongoDB only authenticates the generated identity and keeps data commands wi
   const id=new MongoPassIdentity('qa','temp');
   expect(id.accept(message({find:'x',$db:'qa'}))).toBe(false);
   expect(id.accept(message({hello:1,compression:[]}))).toBe(true);
+  expect(id.accept(message({hello:1,compression:['none']}))).toBe(true);
   expect(id.accept(message({hello:1,saslSupportedMechs:'admin.root'}))).toBe(false);
   expect(id.accept(message({hello:1,compression:['zlib']}))).toBe(false);
   expect(id.accept(message({saslStart:1,mechanism:'SCRAM-SHA-256',payload:scram('root'),$db:'qa'}))).toBe(false);

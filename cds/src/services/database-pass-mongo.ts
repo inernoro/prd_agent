@@ -49,7 +49,7 @@ export class MongoPassIdentity {
     try {
       const {body,name,legacy}=mongoPassCommand(packet);
       if(name==='hello'||name==='ismaster'){
-        if(body.compression?.length || (body.saslSupportedMechs!==undefined&&body.saslSupportedMechs!==`${this.database}.${this.username}`))return false;
+        if((body.compression!==undefined&&(!Array.isArray(body.compression)||body.compression.some((value:unknown)=>value!=='none'))) || (body.saslSupportedMechs!==undefined&&body.saslSupportedMechs!==`${this.database}.${this.username}`))return false;
         if(body.speculativeAuthenticate){if(!this.start(body.speculativeAuthenticate,true))return false;this.started=true;}
         return true;
       }
