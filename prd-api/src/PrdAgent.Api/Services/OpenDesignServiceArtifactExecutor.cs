@@ -84,7 +84,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
     public string Runtime => DesignArtifactRuntimes.OpenDesign;
 
     public bool Supports(string artifactType, string operation) =>
-        artifactType == DesignArtifactTypes.WebPage
+        artifactType is DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt
         && operation is DesignArtifactOperations.Generate or DesignArtifactOperations.Edit;
 
     // ───────────────────────── 能力探针 ─────────────────────────
@@ -272,7 +272,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                     yield return new DesignArtifactExecutorChunk(
                         "phase",
                         BusyPhase(submit.Slot, wait, UtcNow() - queuedSince),
-                        Progress: translator.Progress);
+                        Progress: translator.Progress,
+                        PhaseCode: DesignArtifactPhaseCodes.WaitingCapacity);
                     await Delay(wait, ct);
                     continue;
                 }
@@ -298,7 +299,8 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                             "engine_starting" or "engine_restarting" => $"设计执行服务正在准备引擎，约 {(int)wait.TotalSeconds} 秒后重试提交",
                             _ => $"设计执行服务暂时不能接单，约 {(int)wait.TotalSeconds} 秒后重试提交（同一任务重复提交不会重复生成）",
                         },
-                        Progress: translator.Progress);
+                        Progress: translator.Progress,
+                        PhaseCode: DesignArtifactPhaseCodes.ServiceRecovering);
                     await Delay(wait, ct);
                     continue;
                 }
@@ -378,7 +380,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                             yield break;
                         case OpenDesignEventTranslator.Error:
                             remoteTerminal = true;
-                            var code = OpenDesignEventTranslator.ReadPayloadString(evt.PayloadJson, "code");
+                            var code = OpenDesignEventTranslator.ReadPayloadStableToken(evt.PayloadJson, "code");
                             _logger.LogWarning(
                                 "设计执行服务报告任务失败 transport={Transport} run={RunId} code={Code} message={RemoteMessage}",
                                 TransportLogName, run.Id, code ?? "unknown",
@@ -471,9 +473,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["apiKey"] = workspace.ModelToken,
                 ["model"] = workspace.Model,
                 ["sourceSystem"] = "map",
-                ["appCallerCode"] = run.Operation == DesignArtifactOperations.Edit
-                    ? AppCallerRegistry.Admin.WebHosting.EditHtml
-                    : AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+                ["appCallerCode"] = DesignArtifactGatewayGrantService.CallerFor(run),
                 ["userId"] = run.UserId,
                 ["runId"] = run.Id,
             },

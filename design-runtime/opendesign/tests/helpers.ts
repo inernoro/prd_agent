@@ -59,6 +59,7 @@ export class FakeOpenDesign implements EngineDaemon {
   version = '0.21.1';
   readonly runBodies: Array<Record<string, unknown>> = [];
   readonly imports: Array<Record<string, unknown>> = [];
+  readonly conversations: Array<Record<string, unknown>> = [];
   readonly cancels: string[] = [];
   readonly tokensSeen: string[] = [];
   onRun: (context: FakeRunContext) => Promise<FakeRunOutcome> | FakeRunOutcome = () => ({ status: 'succeeded' });
@@ -149,6 +150,12 @@ export class FakeOpenDesign implements EngineDaemon {
     if (url.pathname === '/api/import/folder' && req.method === 'POST') {
       this.imports.push(JSON.parse((await readBody(req)).toString('utf8')));
       json(res, 200, { project: { id: 'od-project', skillId: 'web-prototype' }, conversationId: 'od-conversation' });
+      return;
+    }
+    if (url.pathname === '/api/projects/od-project/conversations' && req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)).toString('utf8')) as Record<string, unknown>;
+      this.conversations.push(body);
+      json(res, 200, { conversation: { id: `od-quality-conversation-${this.conversations.length}` } });
       return;
     }
     if (url.pathname === '/api/runs' && req.method === 'POST') {
@@ -413,6 +420,30 @@ export async function startHarness(options: { apiKey?: string; overrides?: Desig
       codexObservation: 'codex-cli 0.143.0',
       missingSkillFiles: [],
       designSystems: ['default', 'editorial'],
+      browserQuality: { ready: true, executablePath: '/test/chromium', observation: 'test Chromium' },
+    },
+    browserQualityRunner: {
+      run: async (job) => {
+        fs.mkdirSync(job.evidenceDir, { recursive: true });
+        const measurements = [
+          { viewport: 'desktop' as const, width: 1440, height: 900 },
+          { viewport: 'mobile' as const, width: 390, height: 844 },
+        ].map((viewport) => {
+          const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
+          fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+          return {
+            ...viewport,
+            documentWidth: viewport.width,
+            h1Count: 1,
+            visibleHeadingCount: 2,
+            visibleCtaCount: 1,
+            visibleLandmarkCount: 2,
+            issues: [],
+            screenshotPath,
+          };
+        });
+        return { browserVersion: 'test-chromium', measurements };
+      },
     },
     log: () => undefined,
     ...options.overrides,

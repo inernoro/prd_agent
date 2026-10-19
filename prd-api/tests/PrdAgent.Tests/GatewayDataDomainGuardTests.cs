@@ -1449,7 +1449,7 @@ public class GatewayDataDomainGuardTests
     {
         var usagePage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
 
-        foreach (var label in new[] { "费用四状态", "可估算", "供应商实际", "估算未知", "已对账" })
+        foreach (var label in new[] { "金额证据四状态", "可估算", "供应商实际", "估算未知", "已对账" })
         {
             Assert.Contains(label, usagePage);
         }
@@ -1464,6 +1464,36 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("前端不猜测汇率", usagePage);
         Assert.DoesNotContain("providerToEstimatedFxRate *", usagePage);
         Assert.DoesNotContain("* item.providerToEstimatedFxRate", usagePage);
+    }
+
+    [Fact]
+    public void 计费展示明确金额性质_未知不伪装为零()
+    {
+        var core = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostKind.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var helpers = ReadRepoFile("llmgw/web/src/lib/logsHelpers.ts");
+        var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var usage = ReadRepoFile("llmgw/web/src/pages/UsagePage.tsx");
+        var logicalModels = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        foreach (var value in new[]
+        {
+            "provider_actual",
+            "official_baseline_estimate",
+            "provider_policy_estimate",
+            "unpriced",
+            "no_usage",
+        })
+        {
+            Assert.Contains($"\"{value}\"", core);
+            Assert.Contains($"\"{value}\"", console);
+        }
+
+        Assert.Contains("OpenAI 官方基准价估算，经 APIYI 调用", helpers);
+        Assert.Contains("Gateway 估算", logs);
+        Assert.Contains("本月预算占用", usage);
+        Assert.DoesNotContain("本月已结算", usage);
+        Assert.Contains("近 30 天 Gateway 估算", logicalModels);
     }
 
     [Fact]
@@ -3158,8 +3188,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("unknownCostRequests: number", consoleTypes);
         Assert.Contains("priceCoveragePercent: number", consoleTypes);
         Assert.Contains("fmtCost(it.estimatedCost, it.estimatedCostCurrency)", logsView);
-        Assert.Contains("缺价格保持未知，不显示为 0", logsView);
-        Assert.Contains("有完整价格快照时显示估算；缺价格保持未知，不显示为 0。", logsView);
+        Assert.Contains("明确区分实际、估算、未计价和无用量，未知不显示为 0", logsView);
+        Assert.Contains("costKindLabel(it.costKind", logsView);
         Assert.Contains("未知：缺 token 或价格快照", ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx"));
     }
 

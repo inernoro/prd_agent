@@ -11,7 +11,6 @@ import {
   Plus,
   Upload,
   BookOpen,
-  ChevronUp,
   Check,
   AlertCircle,
   RotateCcw,
@@ -37,24 +36,16 @@ import {
   streamMdToPptConvert,
   streamMdToPptPatch,
   publishMdToPpt,
-  persistMdToPptLocalEdit,
   getMdToPptRun,
   getRecentMdToPptRuns,
   streamMdToPptOutline,
   getMdToPptTemplates,
-  getMdToPptProfiles,
-  getMdToPptPoolModels,
-  createMdToPptProfileFromPool,
-  type MdToPptProfileItem,
-  type MdToPptPoolModelItem,
   createMdToPptTemplate,
   deleteMdToPptTemplate,
-  prewarmMdToPpt,
-  getMdToPptConnectionStatus,
 } from '@/services/real/mdToPptService';
 
 import { apiRequest } from '@/services/real/apiClient';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 import { sessionStorageOrNull } from '@/lib/designArtifactLaunch';
 import { listMyTeams } from '@/services/real/teams';
@@ -401,11 +392,18 @@ export function parseChineseSmallNumber(raw: string): number | null {
 }
 
 export function parseExplicitPages(content: string): number | null {
-  const match = content.match(/(?:严格|共|生成|做|制作|输出|约|大约|总共)?\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:页|p)/i);
-  if (!match) return null;
-  const raw = match[1];
-  const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
-  return parsed && parsed > 0 ? Math.max(1, Math.min(30, parsed)) : null;
+  const matches = content.matchAll(/(?:严格|共|生成|做|制作|输出|约|大约|总共)?\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:页|p(?![a-z0-9_]))/gi);
+  for (const match of matches) {
+    const raw = match[1];
+    const rawOffset = (match.index ?? 0) + match[0].lastIndexOf(raw);
+    const prefix = content.slice(0, rawOffset);
+    // “第 20 页”是对文档内页码的引用，“6.1 PR”是章节号；
+    // 它们都不是用户要求的演示稿页数。P 单位也不得吞掉 PR/prompt 这类单词前缀。
+    if (/(?:第|\d\s*\.)\s*$/u.test(prefix)) continue;
+    const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
+    if (parsed && parsed > 0) return Math.max(1, Math.min(30, parsed));
+  }
+  return null;
 }
 
 export function resolveNaturalPatchSlideIndex(instruction: string): number | null {
@@ -430,12 +428,25 @@ export function resolveNaturalPatchSlideIndex(instruction: string): number | nul
 // extraChars 是「手里没有正文、但知道它有多长」的那部分：从 sessionStorage 恢复的
 // 知识条目只存了身份与篇幅，正文是空的。不把篇幅补回来，一篇长文档刷新之后会被估成
 // 最低的 4 页，而服务端是严格按客户端给的页数执行的。
-export function estimatePages(content: string, extraChars = 0): number {
-  const explicit = parseExplicitPages(content);
-  if (explicit) return explicit;
+function estimatePagesByLength(content: string, extraChars = 0): number {
   const len = content.trim().length + Math.max(0, extraChars);
   if (len === 0) return 8;
   return Math.max(4, Math.min(20, Math.round(len / 700)));
+}
+
+export function estimatePages(content: string, extraChars = 0): number {
+  return parseExplicitPages(content) ?? estimatePagesByLength(content, extraChars);
+}
+
+/**
+ * 大纲请求的页数权威计算：只有用户需求可以声明页数；
+ * 附件与知识内容只参与篇幅估算，不得把资料里的章节号、页码或“共20页”当成指令。
+ * extraChars 用于补回从 sessionStorage 恢复、已剥离正文的知识条目篇幅。
+ */
+export function resolveOutlineTargetPages(userRequest: string, referenceContent: string, extraChars = 0): number {
+  const explicit = parseExplicitPages(userRequest);
+  if (explicit) return explicit;
+  return estimatePagesByLength([userRequest, referenceContent].filter(Boolean).join('\n\n'), extraChars);
 }
 
 function genId(): string {
@@ -816,9 +827,28 @@ const FONT_LINKS =
   '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin data-map-inject>' +
   '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&family=Newsreader:ital,wght@0,400;0,500;1,300;1,400&family=Hanken+Grotesk:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;0,800;1,400;1,600&family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@300;400;700&display=swap" rel="stylesheet" data-map-inject>';
 
-function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?: string }): string {
+function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?: string; assetBaseUrl?: string }): string {
   if (!html) return html;
   const bridgeIdentity = ',documentId:' + JSON.stringify(opts?.documentId ?? '');
+  let assetBase = '';
+  if (opts?.assetBaseUrl) {
+    try {
+      const parsed = new URL(opts.assetBaseUrl);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        if (/\/[^/]+\.html?$/i.test(parsed.pathname)) {
+          parsed.pathname = parsed.pathname.slice(0, parsed.pathname.lastIndexOf('/') + 1);
+        } else if (!parsed.pathname.endsWith('/')) {
+          parsed.pathname += '/';
+        }
+        parsed.search = '';
+        parsed.hash = '';
+        const escaped = parsed.href.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+        assetBase = `<base href="${escaped}" data-map-inject>`;
+      }
+    } catch {
+      assetBase = '';
+    }
+  }
 
   // 1. in-memory storage shim（遮蔽 opaque origin 下 reveal 对 storage 的访问）
   const storageshim =
@@ -990,7 +1020,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?:
 
   // 不再注入任何主题 CSS 覆盖层：AI 输出的 <style> 就是最终视觉（风格语义见 THEME_OPTIONS 注释）。
   // 历史上这里有一层 !important 覆盖把 AI 的设计强行盖掉换皮，已按用户纠偏删除（2026-06-10）。
-  const headInject = storageshim + navguard + controlScript + editorScript + FONT_LINKS;
+  const headInject = assetBase + storageshim + navguard + controlScript + editorScript + FONT_LINKS;
 
   let result = html;
   if (/<head[^>]*>/i.test(result)) {
@@ -1063,12 +1093,6 @@ function warnIfDegraded(run: { degraded?: number }): void {
       '部分页面生成失败，这些页已退化为「标题 + 要点」兜底版式，可在工具栏「重绘本页」重试。'
     );
   }
-}
-
-function profileRunsOnGateway(profile: MdToPptProfileItem | null): boolean {
-  if (!profile) return true;
-  const runtime = (profile.runtime ?? '').toLowerCase();
-  return runtime !== 'codex' && runtime !== 'custom' && runtime !== 'cds-agent';
 }
 
 // ─── 幻灯进度解析（Gamma 式"页面一张张点亮"）────────────────────────────────
@@ -1488,22 +1512,16 @@ export function MdToPptAgentPage() {
 }
 
 function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
-  const navigate = useNavigate();
   const SESSION_KEY = context.sessionKey;
   const OUTLINE_RUN_KEY = context.outlineRunKey;
   const mountedRef = useRef(true);
-
-  // ─── CDS 连接状态：openai-compatible 配置优先走 LLM Gateway 直出；
-  // 这里只作为 CDS Agent 兼容路径的状态提示，不再整页禁用。
-  const [connStatus, setConnStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
 
   // ─── Session lazy-load: run BEFORE any other useState so saveSession
   // never overwrites sessionStorage with empty initial state on first render.
   const [savedSession] = useState<SessionState | null>(() => loadSession(SESSION_KEY));
 
   // ─── Global settings (收进设置区，不占对话空间）
-  // 引擎由运行配置决定：openai-compatible 走 LLM Gateway 直出，anthropic/CDS 配置走 CDS Agent 兼容。
-  // 实际模型经 SSE model 事件回显（ai-model-visibility）。
+  // 成品执行器由服务端统一固定为 OpenDesign；这里只保留设计风格，不暴露运行时选择。
   const [theme, setTheme] = useState(savedSession?.theme ?? 'tech-dark');
   // 自定义模板（上传参考图 → 视觉模型提取风格规范，生成时优先于官方主题）
   const [templateId, setTemplateId] = useState<string | null>(savedSession?.templateId ?? null);
@@ -1552,6 +1570,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── Artifact state（右侧）
   const [generatedHtml, setGeneratedHtml] = useState('');
+  const [artifactSiteUrl, setArtifactSiteUrl] = useState('');
   const [activeRunId, setActiveRunId] = useState(savedSession?.activeRunId ?? '');
   const [publishedUrl, setPublishedUrl] = useState('');
   const [isPublishing, setIsPublishing] = useState(false);
@@ -1560,33 +1579,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
   const [modelInfo, setModelInfo] = useState<{ model: string; platform: string } | null>(null);
 
-  // ─── 模型运行配置（用户随时切换，2026-06-11 诉求 7）：选中项随 convert/patch/prewarm 下发
-  const [profiles, setProfiles] = useState<MdToPptProfileItem[]>([]);
-  const [selectedProfileId, setSelectedProfileIdRaw] = useState<string | null>(() => {
-    try { return sessionStorage.getItem('md2ppt-profile'); } catch { return null; }
-  });
-  const [showModelPicker, setShowModelPicker] = useState(false);
-  // 模型池直选（2026-06-11 用户提案：池里配过的 baseUrl/key 不再手抄；
-  // 选中哪个就把哪个运行配置交给后端，由后端按 protocol 选择 Gateway 直出或 CDS 兼容路径。
-  const [poolModels, setPoolModels] = useState<MdToPptPoolModelItem[]>([]);
-  const [poolQuery, setPoolQuery] = useState('');
-  const [poolBusyId, setPoolBusyId] = useState<string | null>(null);
-  const poolLoadedRef = useRef(false);
-  const setSelectedProfileId = useCallback((id: string | null) => {
-    setSelectedProfileIdRaw(id);
-    try {
-      if (id) sessionStorage.setItem('md2ppt-profile', id);
-      else sessionStorage.removeItem('md2ppt-profile');
-    } catch { /* ignore */ }
-  }, []);
-  const effectiveProfile = useMemo(() => {
-    return profiles.find((p) => p.id === selectedProfileId)
-      ?? profiles.find((p) => p.isEffectiveDefault)
-      ?? profiles[0]
-      ?? null;
-  }, [profiles, selectedProfileId]);
-  const runtimeIsGateway = profileRunsOnGateway(effectiveProfile);
-  const runtimeRouteLabel = runtimeIsGateway ? 'LLM Gateway 直出' : 'CDS Agent 兼容';
+  const runtimeRouteLabel = 'OpenDesign 设计打磨';
 
   // ─── 换模板确认（2026-06-11 诉求 8）：有产物时切模板 = AI 整体重绘约 1 分钟，
   //     误触代价大，必须先确认再执行
@@ -1764,12 +1757,18 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   // 身份随文档/编辑模式更换，普通重渲染不改 srcDoc；旧文档的 ready 不可解锁新文档。
   const previewDocument = useMemo(() => {
     const id = crypto.randomUUID();
-    return { id, html: prepareIframeHtml(generatedHtml, { editor: editMode, documentId: id }) };
-  }, [generatedHtml, editMode]);
+    const useEditableDraft = editMode;
+    return {
+      id,
+      html: useEditableDraft || !artifactSiteUrl
+        ? prepareIframeHtml(generatedHtml, { editor: useEditableDraft, documentId: id, assetBaseUrl: artifactSiteUrl })
+        : '',
+      url: useEditableDraft ? '' : artifactSiteUrl,
+    };
+  }, [generatedHtml, artifactSiteUrl, editMode]);
   const [readyPreviewId, setReadyPreviewId] = useState<string | null>(null);
   const previewReady = readyPreviewId === previewDocument.id;
   const [dirtyEdits, setDirtyEdits] = useState(false);
-  const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [slidePos, setSlidePos] = useState<{ cur: number; total: number } | null>(null);
   const editedHtmlRef = useRef<string>('');
   const previewWrapRef = useRef<HTMLDivElement>(null);
@@ -1892,6 +1891,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
+  const patchParentRef = useRef<{ runId: string; siteUrl: string } | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   // 演示模式（自定义全屏覆盖层 + 底部缩略条，诉求 9）
   const [presentMode, setPresentMode] = useState(false);
@@ -1900,20 +1900,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mobileInputRef = useRef<HTMLTextAreaElement>(null);
-
-  // ─── CDS 连接状态：进入页面即检测，给兼容路径提示使用。
-  // seq 守卫：重新检测可能与挂载检测/连点并发，慢的旧响应不得覆盖新结果（Bugbot Medium）
-  const connCheckSeqRef = useRef(0);
-  const runConnectionCheck = useCallback(() => {
-    const seq = ++connCheckSeqRef.current;
-    setConnStatus('checking');
-    void getMdToPptConnectionStatus().then((connected) => {
-      if (seq === connCheckSeqRef.current) setConnStatus(connected ? 'connected' : 'disconnected');
-    });
-  }, []);
-  useEffect(() => {
-    runConnectionCheck();
-  }, [runConnectionCheck]);
 
   // ─── Elapsed timer for artifact progress
   useEffect(() => {
@@ -1973,6 +1959,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       if (run.status === 'done' && run.html) {
         const recovered = resolveRecoveredDeckState(run);
         setGeneratedHtml(recovered.html);
+        setArtifactSiteUrl(run.siteUrl ?? '');
         setActiveRunId(recovered.runId);
         setArtifactPhase('done');
         warnIfDegraded(run);
@@ -1982,6 +1969,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         if (cancelled) return;
         if (parent) {
           setGeneratedHtml(parent.html);
+          setArtifactSiteUrl(parent.siteUrl ?? '');
           setActiveRunId(parent.id);
           setArtifactPhase('done');
         } else {
@@ -2074,12 +2062,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     saveSession(SESSION_KEY, { messages, activeRunId, activeKnowledgeRefs, pendingKbRefs, launchImported, theme, templateId, outlineDraft });
   }, [SESSION_KEY, messages, activeRunId, activeKnowledgeRefs, pendingKbRefs, launchImported, theme, templateId, outlineDraft]);
 
-  // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）；模型配置列表同时载入
+  // 模板列表进页即载（右侧模板画廊是空状态主视觉，必须秒出）。
   useEffect(() => {
     if (templatesLoadedRef.current) return;
     templatesLoadedRef.current = true;
     void getMdToPptTemplates().then(setCustomTemplates);
-    void getMdToPptProfiles().then(setProfiles);
   }, []);
 
   // ─── 圈选反馈指令组装（texts 为空时退化为坐标描述）
@@ -2165,52 +2152,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       ? editedHtmlRef.current
       : generatedHtml;
   }, [generatedHtml]);
-
-  // ─── 提交编辑：先在服务端形成带父版本与内容哈希的新 run，再允许精修或发布。
-  const commitEdits = useCallback(async (): Promise<{ html: string; runId: string } | null> => {
-    const editedHtml = editedHtmlRef.current;
-    if (!editedHtml || !looksLikeDeck(editedHtml)) {
-      setDirtyEdits(false);
-      return generatedHtml && activeRunId ? { html: generatedHtml, runId: activeRunId } : null;
-    }
-    if (!activeRunId) {
-      toast.error('保存编辑失败', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
-      return null;
-    }
-
-    setIsSavingEdit(true);
-    try {
-      const result = await persistMdToPptLocalEdit(activeRunId, editedHtml);
-      if (!mountedRef.current) return null;
-      if (!result.success) {
-        toast.error('保存编辑失败', result.error + '。当前修改仍保留在编辑器中。');
-        return null;
-      }
-
-      setGeneratedHtml(result.data.html);
-      setActiveRunId(result.data.runId);
-      editedHtmlRef.current = '';
-      setDirtyEdits(false);
-      return { html: result.data.html, runId: result.data.runId };
-    } catch {
-      toast.error('保存编辑失败', '网络连接中断，当前修改仍保留在编辑器中。');
-      return null;
-    } finally {
-      setIsSavingEdit(false);
-    }
-  }, [generatedHtml, activeRunId]);
-
-  const toggleEditMode = useCallback(() => {
-    pendingRestoreRef.current = restoreSlideRef.current; // 进出编辑都触发 iframe 重载，先快照页位
-    if (editMode) {
-      void commitEdits().then((saved) => {
-        if (saved) setEditMode(false);
-      });
-    } else {
-      setFeedbackMode(false); // 编辑与圈选互斥
-      setEditMode(true);
-    }
-  }, [editMode, commitEdits]);
 
   // ─── 全屏演示：自定义覆盖层（含底部子页缩略条，诉求 9：不再只有一张全屏 ppt）
   const handleFullscreen = useCallback(() => {
@@ -2340,7 +2281,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         0,
       );
       const targetPages = targetPagesOverride
-        ?? estimatePages(userText + attachmentText + kbContext, restoredKbChars);
+        ?? resolveOutlineTargetPages(userText, attachmentText + kbContext, restoredKbChars);
 
       const assistantMsg = pushMsg({
         role: 'assistant',
@@ -2492,15 +2433,30 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 : m
             )
           );
-          // 预热运行环境：Gateway 直出配置后端会静默跳过，CDS 兼容配置才会创建预热会话。
-          prewarmMdToPpt(selectedProfileId);
           finish();
+        },
+        onDisconnect: () => {
+          if (!mountedRef.current) return;
+          // runId 已写入恢复游标，断开的只是浏览器传输；后台任务仍由服务器继续。
+          // 不调用 finish，避免 reload 的 EOF 把同一 run 的恢复游标误删并诱导用户重复付费。
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsg.id
+                ? {
+                    ...m,
+                    content: '页面连接已断开，但大纲仍在后台继续。请刷新页面找回当前任务，不要重新发送。',
+                    phase: 'outline',
+                    error: undefined,
+                  }
+                : m
+            )
+          );
         },
         onError: (err) => finish(err),
       });
       cleanupRef.current = cleanup;
     },
-    [messages, pushMsg, outlineDraft, selectedProfileId, OUTLINE_RUN_KEY]
+    [messages, pushMsg, outlineDraft, OUTLINE_RUN_KEY]
   );
 
   // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
@@ -2516,6 +2472,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       setIsProcessing(true);
       setArtifactPhase('generating');
       setPublishedUrl('');
+      setArtifactSiteUrl('');
       setFeedbackMode(false);
       resetStreamPreview();
       setExpectedPages(pages);
@@ -2545,6 +2502,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           if (!run) return;
           if (run.status === 'done' && run.html) {
             setGeneratedHtml(run.html);
+            setArtifactSiteUrl(run.siteUrl ?? '');
             setArtifactPhase('done');
             setIsProcessing(false);
             warnIfDegraded(run);
@@ -2581,7 +2539,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         slideCount: pages ?? undefined,
         outlinePages,
         summary,
-        runtimeProfileId: selectedProfileId ?? undefined,
         sourceSurface: activeKnowledgeRefs.length > 0 ? 'knowledge-base' : 'html-ppt',
         parentOutlineRunId,
         knowledgeReferences: activeKnowledgeRefs
@@ -2637,6 +2594,17 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         },
         onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
+        onPhase: (phase) => {
+          setMessages((prev) => prev.map((message) => message.id === genMsg.id
+            ? { ...message, content: phase.message || `正在打磨演示稿（${phase.progress}%）` }
+            : message));
+        },
+        onPreview: (preview) => {
+          if (!mountedRef.current || !looksLikeDeck(preview.html)) return;
+          setGeneratedHtml(preview.html);
+          setArtifactSiteUrl('');
+          setArtifactPhase('generating');
+        },
         onDone: (result) => {
           if (!mountedRef.current) return;
           const html = result.html;
@@ -2653,6 +2621,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             return;
           }
           setGeneratedHtml(html);
+          setArtifactSiteUrl(result.siteUrl ?? '');
           setArtifactPhase('done');
           setIsProcessing(false);
           const pageCount = outlinePages?.length ?? pages;
@@ -2699,6 +2668,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               }
               if (run && run.status === 'done' && run.html) {
                 setGeneratedHtml(run.html);
+                setArtifactSiteUrl(run.siteUrl ?? '');
                 setArtifactPhase('done');
                 setIsProcessing(false);
                 warnIfDegraded(run);
@@ -2727,7 +2697,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
       cleanupRef.current = cleanup;
     },
-    [isProcessing, pushMsg, theme, templateId, selectedProfileId, activeKnowledgeRefs, resetStreamPreview, handleStreamDelta, handleThinkingDelta, SESSION_KEY]
+    [isProcessing, pushMsg, theme, templateId, activeKnowledgeRefs, resetStreamPreview, handleStreamDelta, handleThinkingDelta, SESSION_KEY]
   );
 
   // 序列化大纲（注入生成提示词 / 调整上下文共用）
@@ -2833,10 +2803,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       baseHtml?: string,
       styleOverride?: { theme?: string; templateId?: string | null },
       slideIndex?: number,
-      parentRunIdOverride?: string
+      parentRunIdOverride?: string,
+      manualEditHtml?: string
     ) => {
       const base = baseHtml ?? generatedHtml;
       const sourceRunId = parentRunIdOverride ?? activeRunId;
+      const sourceSiteUrl = artifactSiteUrl;
       if (!base || isProcessing || !mountedRef.current) return;
       if (!sourceRunId) {
         toast.error('无法精修', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
@@ -2844,6 +2816,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       }
 
       setIsProcessing(true);
+      patchParentRef.current = { runId: sourceRunId, siteUrl: sourceSiteUrl };
       setArtifactPhase('patching');
       resetStreamPreview();
       const effectiveSlideIndex = slideIndex ?? resolveNaturalPatchSlideIndex(instruction);
@@ -2862,11 +2835,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const cleanup = streamMdToPptPatch({
         parentRunId: sourceRunId,
         currentHtml: base,
+        manualEditHtml,
         slideRequest: instruction,
         slideIndex: effectiveSlideIndex ?? undefined,
         theme: styleOverride?.theme ?? theme,
         templateId: effTemplateId ?? undefined,
-        runtimeProfileId: selectedProfileId ?? undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
         },
@@ -2877,6 +2850,18 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         },
         onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
+        onPhase: (phase) => {
+          setMessages((prev) => prev.map((message) => message.id === patchMsg.id
+            ? { ...message, content: phase.message || `正在修改演示稿（${phase.progress}%）` }
+            : message));
+        },
+        onPreview: (preview) => {
+          if (!mountedRef.current || !looksLikeDeck(preview.html)) return;
+          // 手动草稿在任务成功前始终留在隔离编辑器中；预览事件不能覆盖用户尚未落成的修改。
+          if (manualEditHtml) return;
+          setGeneratedHtml(preview.html);
+          setArtifactSiteUrl('');
+        },
         onDone: (result) => {
           const html = result.html;
           if (!looksLikeDeck(html)) {
@@ -2891,12 +2876,20 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             setArtifactPhase('done');
             setPatchingSlide(null);
             setActiveRunId(sourceRunId);
+            patchParentRef.current = null;
             return;
           }
           setGeneratedHtml(html);
+          setArtifactSiteUrl(result.siteUrl ?? '');
+          if (manualEditHtml) {
+            editedHtmlRef.current = '';
+            setDirtyEdits(false);
+            setEditMode(false);
+          }
           setArtifactPhase('done');
           setIsProcessing(false);
           setPatchingSlide(null);
+          patchParentRef.current = null;
           setMessages((prev) =>
             prev.map((m) =>
               m.id === patchMsg.id
@@ -2917,13 +2910,39 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setArtifactPhase('done');
           setPatchingSlide(null);
           setActiveRunId(sourceRunId);
+          setArtifactSiteUrl(sourceSiteUrl);
+          if (manualEditHtml) {
+            toast.error('保存编辑失败', '当前草稿和原版本都已保留，可检查后再次保存。');
+          }
+          patchParentRef.current = null;
         },
       });
 
       cleanupRef.current = cleanup;
     },
-    [generatedHtml, isProcessing, pushMsg, theme, templateId, selectedProfileId, activeRunId, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
+    [generatedHtml, artifactSiteUrl, isProcessing, pushMsg, theme, templateId, activeRunId, slidePos, resetStreamPreview, handleStreamDelta, handleThinkingDelta]
   );
+
+  const saveManualEdits = useCallback(() => {
+    const editedHtml = editedHtmlRef.current;
+    if (!dirtyEdits || !editedHtml) {
+      setEditMode(false);
+      return;
+    }
+    if (!looksLikeDeck(editedHtml) || !activeRunId) {
+      toast.error('无法保存编辑', '当前草稿不完整或缺少来源版本，草稿仍保留在编辑器中。');
+      return;
+    }
+    pushMsg({ role: 'user', content: '保存手动编辑并执行设计质量检查' });
+    startPatch(
+      '应用用户在隔离编辑器中完成的可见文字与排版微调；以冻结的手动编辑提案为变更意图，保留未修改页面、事实、交互和全部配套资源，并完成全稿质量检查。',
+      generatedHtml,
+      undefined,
+      undefined,
+      activeRunId,
+      editedHtml
+    );
+  }, [activeRunId, dirtyEdits, generatedHtml, pushMsg, startPatch]);
 
   // ─── 换风格/换模板 = AI 参照新设计参照整体重绘（2026-06-10 用户纠偏：风格是
   //     AI 的设计参照，不是前端 CSS 换皮）。无产物时只改选择（影响下一次生成）；
@@ -2957,18 +2976,15 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   );
 
   // ─── 确认执行换模板重绘（pendingTemplateSwitch 确认条的「确认重绘」）
-  const applyTemplateSwitch = useCallback(async () => {
+  const applyTemplateSwitch = useCallback(() => {
     const p = pendingTemplateSwitch;
     if (!p || isProcessing) return;
-    let base = latestHtml();
-    let sourceRunId = activeRunId;
     if (editMode) {
-      const saved = await commitEdits();
-      if (!saved) return;
-      base = saved.html;
-      sourceRunId = saved.runId;
-      setEditMode(false);
+      toast.warning('请先保存手动编辑', '质量检查通过后再切换模板，避免一次操作触发两次设计任务。');
+      return;
     }
+    const base = latestHtml();
+    const sourceRunId = activeRunId;
     setPendingTemplateSwitch(null);
     if (p.kind === 'official') {
       setTheme(p.value);
@@ -2992,21 +3008,18 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         sourceRunId
       );
     }
-  }, [pendingTemplateSwitch, isProcessing, latestHtml, activeRunId, editMode, commitEdits, pushMsg, startPatch]);
+  }, [pendingTemplateSwitch, isProcessing, latestHtml, activeRunId, editMode, pushMsg, startPatch]);
 
   // ─── 重绘当前页（诉求 4/6：溢出/挤压页的一键修复，slideIndex 定向只动这一页）
-  const redrawCurrentPage = useCallback(async () => {
+  const redrawCurrentPage = useCallback(() => {
     if (!slidePos || isProcessing) return;
     const n = slidePos.cur;
-    let base = latestHtml();
-    let sourceRunId = activeRunId;
     if (editMode) {
-      const saved = await commitEdits();
-      if (!saved) return;
-      base = saved.html;
-      sourceRunId = saved.runId;
-      setEditMode(false);
+      toast.warning('请先保存手动编辑', '质量检查通过后再重绘页面，避免一次操作触发两次设计任务。');
+      return;
     }
+    const base = latestHtml();
+    const sourceRunId = activeRunId;
     pushMsg({ role: 'user', content: `重绘第 ${n} 页` });
     startPatch(
       `只重绘第 ${n} 页：整页重新设计排版，修复溢出、挤压、文字逐字竖排等版面问题；` +
@@ -3016,7 +3029,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       n,
       sourceRunId
     );
-  }, [slidePos, isProcessing, latestHtml, activeRunId, editMode, commitEdits, pushMsg, startPatch]);
+  }, [slidePos, isProcessing, latestHtml, activeRunId, editMode, pushMsg, startPatch]);
 
   // ─── 上传参考图创建模板（零摩擦：选图即建，名字默认取文件名；视觉提取约 5-15s）
   const handleTemplateFile = useCallback(
@@ -3090,6 +3103,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       }
       // 载入为当前产物：可继续对话精修 / 编辑 / 换风格 / 发布
       setGeneratedHtml(run.html);
+      setArtifactSiteUrl(run.siteUrl ?? '');
       setActiveRunId(run.id);
       setArtifactPhase('done');
       setPublishedUrl('');
@@ -3147,6 +3161,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const handleSend = useCallback(async () => {
     const text = input.trim();
     if (!text || isProcessing || launchImportBlocked) return;
+    if (editMode) {
+      toast.warning('请先保存手动编辑', '保存并通过质量检查后，再提交新的精修要求。');
+      return;
+    }
     markLaunchDraftSent(context.launch, sessionStorageOrNull());
 
     const atts = [...pendingAttachments];
@@ -3165,16 +3183,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
     // 决策：有 HTML → patch；有大纲工作稿（且无新附件）→ AI 调整大纲；否则 → 请求大纲
     if (generatedHtml) {
-      // 对话精修模式。若编辑模式有未提交修改，以编辑稿为基底并先落盘。
-      let base = latestHtml();
-      let sourceRunId = activeRunId;
-      if (editMode) {
-        const saved = await commitEdits();
-        if (!saved) return;
-        base = saved.html;
-        sourceRunId = saved.runId;
-        setEditMode(false);
-      }
+      const base = latestHtml();
+      const sourceRunId = activeRunId;
       startPatch(text, base, undefined, undefined, sourceRunId);
     } else if (outlineDraft && atts.length === 0 && kbs.length === 0) {
       // outline-ready 阶段：输入即调整大纲（右侧工作稿为基底）
@@ -3183,23 +3193,20 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       // 初次生成：大纲先行
       void requestOutline(text, atts, kbs);
     }
-  }, [input, isProcessing, launchImportBlocked, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, commitEdits, context.launch]);
+  }, [input, isProcessing, launchImportBlocked, pendingAttachments, pendingKbRefs, generatedHtml, outlineDraft, pushMsg, startPatch, requestOutline, requestOutlineAdjust, latestHtml, activeRunId, editMode, context.launch]);
 
   // ─── Publish（携带主题样式发布，标题取自 deck <title>）
   const handlePublish = useCallback(async () => {
-    let base = latestHtml();
-    let sourceRunId = activeRunId;
+    const base = latestHtml();
+    const sourceRunId = activeRunId;
     if (!base) return;
     if (!looksLikeDeck(base)) {
       toast.error('无法发布', '当前 PPT 内容不完整，请保留现有版本并重新生成或精修。');
       return;
     }
     if (editMode) {
-      const saved = await commitEdits();
-      if (!saved) return;
-      base = saved.html;
-      sourceRunId = saved.runId;
-      setEditMode(false);
+      toast.warning('请先保存手动编辑', '保存并通过质量检查后才能发布；原版本仍保持不变。');
+      return;
     }
     if (!sourceRunId) {
       toast.error('无法发布', '当前演示稿没有可追溯的来源版本，请先恢复历史版本或重新生成。');
@@ -3223,15 +3230,21 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         setDirtyEdits(false);
       }
       setPublishedUrl(result.siteUrl);
+      setArtifactSiteUrl(result.siteUrl);
     } else {
       toast.error('发布失败', result.error || '请稍后重试，当前版本未被覆盖。');
     }
-  }, [latestHtml, activeRunId, editMode, commitEdits, destinationTeamId]);
+  }, [latestHtml, activeRunId, editMode, destinationTeamId]);
 
   // ─── Abort
   const handleAbort = useCallback(() => {
     cleanupRef.current?.();
     cleanupRef.current = null;
+    if (patchParentRef.current) {
+      setActiveRunId(patchParentRef.current.runId);
+      setArtifactSiteUrl(patchParentRef.current.siteUrl);
+      patchParentRef.current = null;
+    }
     try { sessionStorage.removeItem(OUTLINE_RUN_KEY); } catch { /* ignore */ }
     setIsProcessing(false);
     setOutlineAdjusting(false);
@@ -3247,6 +3260,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     cleanupRef.current = null;
     setMessages([]);
     setGeneratedHtml('');
+    setArtifactSiteUrl('');
     setActiveRunId('');
     setPublishedUrl('');
     setIsProcessing(false);
@@ -3306,6 +3320,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     if (lastUserPrompt) {
       setInput(lastUserPrompt);
       setGeneratedHtml('');
+      setArtifactSiteUrl('');
       setArtifactPhase('idle');
       inputRef.current?.focus();
       toast.info('已带回上次需求', '检查后点发送即可重新开始。');
@@ -3426,49 +3441,20 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       )}
 
       <div
-        className={[
-          'hidden md:flex shrink-0 flex-wrap items-center justify-between gap-3 px-4 py-2 border-b text-xs',
-          runtimeIsGateway
-            ? 'bg-emerald-500/8 border-emerald-500/15 text-emerald-300'
-            : connStatus === 'connected'
-              ? 'bg-sky-500/8 border-sky-500/15 text-sky-300'
-              : 'bg-amber-500/8 border-amber-500/15 text-amber-300',
-        ].join(' ')}
+        className="hidden md:flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-token-subtle bg-token-nested px-4 py-2 text-xs text-token-secondary"
       >
         <div className="min-w-0 flex flex-wrap items-center gap-2">
-          {connStatus === 'checking' && !runtimeIsGateway ? <MapSpinner size={12} /> : <AlertCircle size={12} />}
+          <Sparkles size={12} />
           <span className="font-semibold">{runtimeRouteLabel}</span>
           <span className="text-current/80">·</span>
           <span className="min-w-[220px] flex-1 leading-relaxed">
-            {runtimeIsGateway
-              ? '生产默认走 LLM Gateway 可运行路径，生成页会做 HTML 片段校验；用户创意输入仍保留在设计约束内。'
-              : connStatus === 'checking'
-                ? '当前模型使用 CDS Agent 兼容路径，正在检查连接状态。'
-                : connStatus === 'connected'
-                  ? '当前模型使用 CDS Agent 兼容路径，建议仅用于明确依赖 Agent runtime 的旧配置。'
-                  : '当前模型需要 CDS Agent 兼容路径，但尚未检测到可用连接。'}
+            成品生成、精修和重绘统一由 OpenDesign 规划、成型并逐页检查；服务不可用时会明确保留输入并提示重试。
           </span>
         </div>
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 text-[10px]">
-          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">HTML 片段校验</span>
-          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">模板风格锁定</span>
-          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">创意方向可控</span>
-          {!runtimeIsGateway && (
-            <>
-              <button
-                onClick={() => navigate('/infra-services')}
-                className="px-2 py-0.5 rounded border border-current/25 hover-bg-soft"
-              >
-                基础设施服务
-              </button>
-              <button
-                onClick={runConnectionCheck}
-                className="px-2 py-0.5 rounded border border-current/20 opacity-80 hover-bg-soft"
-              >
-                重新检测
-              </button>
-            </>
-          )}
+          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">冻结来源</span>
+          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">逐页双视口检查</span>
+          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">失败不降级</span>
         </div>
       </div>
 
@@ -3599,22 +3585,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 <BookOpen size={15} />
                 知识库
               </button>
-              {profiles.length > 0 && (
-                <button
-                  onClick={() => {
-                    setShowModelPicker((v) => !v);
-                    if (!poolLoadedRef.current) {
-                      poolLoadedRef.current = true;
-                      void getMdToPptPoolModels().then(setPoolModels);
-                    }
-                  }}
-                  disabled={isProcessing}
-                  className="min-w-0 flex h-10 flex-1 items-center justify-center gap-1.5 rounded-md border border-token-subtle bg-token-nested px-2 text-[11px] font-mono text-token-secondary disabled:opacity-40"
-                >
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
-                  <span className="truncate">{(effectiveProfile?.model ?? '默认模型').split('/').pop()}</span>
-                </button>
-              )}
               <button
                 onClick={handleSend}
                 disabled={!input.trim() || isProcessing || launchImportBlocked}
@@ -3625,38 +3595,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               </button>
             </div>
           </div>
-
-          {showModelPicker && profiles.length > 0 && (
-            <div className="rounded-lg border border-token-subtle bg-[var(--bg-elevated)] p-2">
-              <div className="px-1 pb-2 text-[11px] font-semibold text-token-muted">选择后续生成模型</div>
-              <div className="max-h-[240px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
-                {profiles.map((p) => {
-                  const active = effectiveProfile?.id === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => {
-                        setSelectedProfileId(p.id);
-                        setShowModelPicker(false);
-                        if (outlineDraft) prewarmMdToPpt(p.id);
-                      }}
-                      className={[
-                        'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left',
-                        active ? 'bg-purple-400/12 text-purple-100' : 'text-token-secondary',
-                      ].join(' ')}
-                    >
-                      <span className={['h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-purple-300' : 'bg-token-nested'].join(' ')} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[12px] font-mono">{p.model}</span>
-                        <span className="block truncate text-[10px] text-token-muted">{p.name}{p.isEffectiveDefault ? ' · 默认' : ''}</span>
-                      </span>
-                      {active && <Check size={13} />}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           {messages.length === 0 && !generatedHtml && (
             <div className="space-y-2">
@@ -4078,147 +4016,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     </div>
                   )}
                 </div>
-
-                {/* 模型 chip + 切换弹层（诉求 7：任何时候都能换模型，数据源 = 基础设施运行配置） */}
-                {profiles.length > 0 && (
-                  <div className="relative shrink-0 min-w-0">
-                    <button
-                      onClick={() => {
-                        setShowModelPicker((v) => !v);
-                        if (!poolLoadedRef.current) {
-                          poolLoadedRef.current = true;
-                          void getMdToPptPoolModels().then(setPoolModels);
-                        }
-                      }}
-                      disabled={isProcessing}
-                      data-testid="model-picker-chip"
-                      title={'当前模型：' + (effectiveProfile?.model ?? '默认') + '（点击切换，影响后续生成/精修）'}
-                      className="flex items-center gap-1 h-7 px-2 rounded-lg text-[10px] font-mono bg-token-nested text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover-bg-soft border border-token-subtle disabled:opacity-40 max-w-[170px]"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80 shrink-0" />
-                      {/* 只显示短名（去掉 vendor 前缀），全名在 title；避免长 ID 挤压底部工具行 */}
-                      <span className="truncate">
-                        {(effectiveProfile?.model ?? 'CDS 默认').split('/').pop()}
-                      </span>
-                      <ChevronUp size={9} className="shrink-0 opacity-60" />
-                    </button>
-
-                    {showModelPicker && (
-                      <div
-                        className="fixed inset-0"
-                        style={{ zIndex: 9 }}
-                        onClick={() => setShowModelPicker(false)}
-                      />
-                    )}
-                    {showModelPicker && (
-                      <div
-                        data-testid="model-picker-pop"
-                        className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-token-subtle bg-[var(--bg-elevated)] shadow-xl z-10 overflow-hidden"
-                      >
-                        <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)] border-b border-token-subtle">
-                          切换生成模型（来自「基础设施 → 配置」的运行配置）
-                        </div>
-                        <div style={{ maxHeight: 200, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-                          {profiles.map((p) => {
-                            const active = effectiveProfile?.id === p.id;
-                            return (
-                              <button
-                                key={p.id}
-                                onClick={() => {
-                                  setSelectedProfileId(p.id);
-                                  setShowModelPicker(false);
-                                  // 大纲阶段切模型 → 立刻按新模型重新预热
-                                  if (outlineDraft) prewarmMdToPpt(p.id);
-                                }}
-                                className={[
-                                  'w-full flex items-center gap-2 px-3 py-2 text-left hover-bg-soft',
-                                  active ? 'bg-purple-500/10' : '',
-                                ].join(' ')}
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <div className={['text-[11px] font-mono truncate', active ? 'text-purple-200' : 'text-[var(--text-secondary)]'].join(' ')}>
-                                    {p.model}
-                                  </div>
-                                  <div className="text-[9px] text-[var(--text-tertiary)] truncate">
-                                    {p.name}{p.isEffectiveDefault ? ' · 默认' : ''}{p.owned ? '' : ' · 团队共享'}
-                                  </div>
-                                </div>
-                                {active && <Check size={11} className="text-purple-300 shrink-0" />}
-                              </button>
-                            );
-                          })}
-                        </div>
-
-                        {/* 模型池直选：池里配过的 baseUrl/key 直接用，点选即物化为配置并选中 */}
-                        <div className="px-3 py-1.5 text-[10px] text-[var(--text-tertiary)] border-t border-token-subtle flex items-center justify-between gap-2">
-                          <span>从模型池直选（自动复用平台 baseUrl/key）</span>
-                          <a href="/infra-services?tab=config" className="shrink-0 text-sky-300/80 hover:text-sky-200">高级配置</a>
-                        </div>
-                        <div className="px-2 pb-1.5">
-                          <input
-                            value={poolQuery}
-                            onChange={(e) => setPoolQuery(e.target.value)}
-                            placeholder="搜索模型 / 平台..."
-                            data-testid="pool-search"
-                            className="w-full h-7 px-2 rounded-md text-[11px] bg-token-nested text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-token-subtle outline-none focus:border-purple-400/50"
-                          />
-                        </div>
-                        <div style={{ maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain' }} data-testid="pool-list">
-                          {poolModels
-                            .filter((m) => {
-                              const q = poolQuery.trim().toLowerCase();
-                              if (!q) return true;
-                              return m.model.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || m.platform.toLowerCase().includes(q);
-                            })
-                            .slice(0, 30)
-                            .map((m) => {
-                              // 凭据预检不过的模型置灰（点了必撞「缺少 API key」4xx），原因放 title
-                              const blocked = m.available === false;
-                              return (
-                              <button
-                                key={m.id}
-                                disabled={poolBusyId != null || blocked}
-                                title={blocked ? (m.unavailableReason ?? '该模型当前不可用') : undefined}
-                                onClick={async () => {
-                                  setPoolBusyId(m.id);
-                                  const created = await createMdToPptProfileFromPool(m.id);
-                                  setPoolBusyId(null);
-                                  if (!created) return;
-                                  // 物化成功：刷新配置列表并立即选中（选中谁，convert/patch 就传谁给 CDS）
-                                  const latest = await getMdToPptProfiles();
-                                  setProfiles(latest);
-                                  setSelectedProfileId(created.id);
-                                  setShowModelPicker(false);
-                                  if (outlineDraft) prewarmMdToPpt(created.id);
-                                }}
-                                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                <div className="min-w-0 flex-1">
-                                  <div className="text-[11px] font-mono truncate text-[var(--text-secondary)]">{m.model}</div>
-                                  <div className="text-[9px] text-[var(--text-tertiary)] truncate">
-                                    {blocked ? (m.unavailableReason ?? '不可用') : `${m.platform}${m.isMain ? ' · 系统主模型' : ''}`}
-                                  </div>
-                                </div>
-                                {poolBusyId === m.id ? (
-                                  <MapSpinner size={10} />
-                                ) : blocked ? (
-                                  <span className="shrink-0 text-[9px] text-amber-300/70">不可用</span>
-                                ) : m.ready ? (
-                                  <span className="shrink-0 text-[9px] text-emerald-300/80">已就绪</span>
-                                ) : (
-                                  <span className="shrink-0 text-[9px] text-[var(--text-tertiary)]">点选即用</span>
-                                )}
-                              </button>
-                              );
-                            })}
-                          {poolModels.length === 0 && (
-                            <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)]">模型池加载中或为空...</div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {/* 快捷键提示挪进 placeholder/title（2026-06-11 视觉验收：原文字提示被模型
                     chip 挤成两行折叠），底部工具行保持单行不挤压 */}
@@ -5153,6 +4950,33 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   )}
                   <button
                     type="button"
+                    onClick={() => {
+                      if (editMode) {
+                        saveManualEdits();
+                        return;
+                      }
+                      pendingRestoreRef.current = restoreSlideRef.current;
+                      editedHtmlRef.current = '';
+                      setDirtyEdits(false);
+                      setEditMode(true);
+                    }}
+                    disabled={isStreaming}
+                    data-testid="manual-edit-button"
+                    title={editMode
+                      ? '把当前草稿作为冻结修改提案交给 OpenDesign，并在质量检查通过后形成新版本'
+                      : '在隔离草稿中修改可见文字；保存时仍由 OpenDesign 完成质量检查'}
+                    className={[
+                      'flex min-h-11 min-w-11 items-center gap-1 px-3 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                      editMode
+                        ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
+                        : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
+                    ].join(' ')}
+                  >
+                    <Pencil size={11} />
+                    {editMode ? (dirtyEdits ? '保存并检查' : '退出编辑') : '编辑内容'}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setFeedbackMode((v) => !v)}
                     disabled={isStreaming || editMode}
                     title="圈选反馈：拖框圈出要修改的区域，写一句要求，自动组装成精修指令"
@@ -5165,21 +4989,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   >
                     <BoxSelect size={11} />
                     圈选反馈
-                  </button>
-                  <button
-                    type="button"
-                    onClick={toggleEditMode}
-                    disabled={isStreaming || isSavingEdit}
-                    title={editMode ? '完成编辑并保存修改' : '直接编辑：点击幻灯片文字修改内容、调整字号'}
-                    className={[
-                      'flex min-h-11 min-w-11 items-center gap-1 px-3 py-1 rounded-md text-[11px] border disabled:opacity-40',
-                      editMode
-                        ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
-                        : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
-                    ].join(' ')}
-                  >
-                    {isSavingEdit ? <MapSpinner size={11} /> : editMode ? <Check size={11} /> : <Pencil size={11} />}
-                    {isSavingEdit ? '保存中' : editMode ? '完成编辑' : '编辑内容'}
                   </button>
                   <button
                     type="button"
@@ -5218,7 +5027,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 bg-purple-500/10 border-b border-purple-500/20 text-[11px] text-[color:var(--accent-fg-violet)]">
                   <Pencil size={11} className="shrink-0" />
                   <span>
-                    编辑模式：点击幻灯片里的文字直接修改，悬浮工具条 A+/A- 调字号，Esc 取消选中；点「完成编辑」保存
+                    编辑模式：点击幻灯片里的文字直接修改，悬浮工具条 A+/A- 调字号，Esc 取消选中；点「保存并检查」生成新版本
                   </span>
                   {dirtyEdits && (
                     <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 border border-purple-500/30">
@@ -5279,10 +5088,20 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   key={previewDocument.id}
                   ref={iframeRef}
                   className="flex-1 w-full border-0"
-                  srcDoc={previewDocument.html}
+                  {...(previewDocument.url
+                    ? { src: previewDocument.url }
+                    : { srcDoc: previewDocument.html })}
                   sandbox="allow-scripts"
                   title="PPT 预览"
                   style={{ minHeight: 0 }}
+                  onLoad={() => {
+                    if (previewDocument.url) {
+                      iframeRef.current?.contentWindow?.postMessage({
+                        type: 'map-ppt-init',
+                        documentId: previewDocument.id,
+                      }, '*');
+                    }
+                  }}
                 />
                 {/* 圈选反馈遮罩（借鉴 open-design PreviewDrawOverlay 极简版） */}
                 <SelectionFeedbackOverlay
@@ -5310,12 +5129,24 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       </div>
 
       {/* History modal：历史生成列表，点击载入继续精修/编辑/发布 */}
-      {showHistory && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={() => setShowHistory(false)}>
+      {showHistory && createPortal(
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="历史生成"
+          onClick={() => setShowHistory(false)}
+        >
           <div
             data-testid="history-modal"
-            className="w-[560px] rounded-xl border border-token-subtle bg-[var(--bg-elevated)] shadow-xl"
-            style={{ maxHeight: '72vh', display: 'flex', flexDirection: 'column' }}
+            className="rounded-xl border border-token-subtle bg-[var(--bg-elevated)] shadow-xl"
+            style={{
+              width: 'min(560px, calc(100vw - 32px))',
+              maxWidth: 'calc(100vw - 32px)',
+              maxHeight: 'min(72vh, calc(100dvh - 32px))',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
             onClick={(e) => e.stopPropagation()}
           >
             <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">
@@ -5323,7 +5154,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 <History size={13} className="text-purple-400" />
                 历史生成
               </span>
-              <button onClick={() => setShowHistory(false)} className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]">
+              <button
+                onClick={() => setShowHistory(false)}
+                aria-label="关闭历史生成"
+                className="text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+              >
                 <X size={14} />
               </button>
             </div>
@@ -5374,7 +5209,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* 演示模式（自定义全屏）：主 deck + 底部子页缩略条（诉求 9）。Esc / 关闭按钮退出。 */}
@@ -5415,11 +5251,19 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           <div className="flex-1 min-h-0 bg-token-nested">
             <iframe
               ref={presentIframeRef}
-              srcDoc={prepareIframeHtml(generatedHtml)}
+              {...(artifactSiteUrl
+                ? { src: artifactSiteUrl }
+                : { srcDoc: prepareIframeHtml(generatedHtml) })}
               sandbox="allow-scripts"
               title="全屏演示"
               className="w-full h-full border-0"
               onLoad={() => {
+                 if (artifactSiteUrl) {
+                   presentIframeRef.current?.contentWindow?.postMessage({
+                     type: 'map-ppt-init',
+                     documentId: `presentation-${previewDocument.id}`,
+                   }, '*');
+                 }
                 if (presentIdx > 0) {
                   window.setTimeout(() => presentIframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: presentIdx }, '*'), 400);
                 }

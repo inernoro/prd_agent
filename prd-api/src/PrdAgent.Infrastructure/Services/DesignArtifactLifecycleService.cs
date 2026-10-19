@@ -23,6 +23,17 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
     private const int MaxAdapterEvents = 1000;
     private const long MaxManifestFileBytes = 100L * 1024 * 1024;
     private const long MaxManifestTotalBytes = 100L * 1024 * 1024;
+    private static readonly HashSet<string> BrowserQualityIssueCodes = new(StringComparer.Ordinal)
+    {
+        "horizontal_overflow", "main_content_clipped", "primary_cta_clipped", "empty_link",
+        "broken_fragment_target", "mobile_navigation_unusable", "table_unreadable", "key_text_contrast_low",
+    };
+    private static readonly HashSet<string> BrowserQualityMeasurementKeys = new(StringComparer.Ordinal)
+    {
+        "documentWidth", "viewportWidth", "present", "visible", "left", "right", "href",
+        "linkCount", "visibleLinkCount", "hasVisibleToggle", "tableWidth", "scrollable",
+        "minCellWidth", "ratio", "minimum", "fontSize", "fontWeight",
+    };
 
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _events;
@@ -64,6 +75,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             Sequence = 1,
             Type = DesignArtifactLifecycleEventTypes.Run,
             Phase = "设计任务已开始",
+            PhaseCode = DesignArtifactPhaseCodes.StartingDesign,
             Progress = 0,
             OccurredAt = now,
             Authoritative = true,
@@ -89,7 +101,10 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             ParentPlanRunId = parentPlanRunId,
             ParentPlanContentHash = parentPlanContentHash,
             Progress = 0,
+            PhaseCode = DesignArtifactPhaseCodes.StartingDesign,
             Phase = runEvent.Phase!,
+            FirstVisibleFeedbackAt = now,
+            LastProgressAt = now,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -115,6 +130,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         if (!AdapterEventTypes.Contains(type))
             throw Invalid("adapter 只能追加非权威阶段事件");
         var phase = Required(request.Phase, "phase", 200);
+        var phaseCode = SafeToken(request.PhaseCode ?? DesignArtifactPhaseCodes.ComposingPage, "phaseCode", 64);
         if (request.Progress is < 0 or > 99)
             throw Invalid("adapter 事件进度必须介于 0 到 99");
 
@@ -135,7 +151,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             var now = DateTime.UtcNow;
             var updates = new BsonDocument
             {
+                { nameof(DesignArtifactRun.PhaseCode), phaseCode },
                 { nameof(DesignArtifactRun.Phase), phase },
+                { nameof(DesignArtifactRun.LastProgressAt), now },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
             };
             if (request.Progress.HasValue)
@@ -153,7 +171,8 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 phase,
                 request.Progress,
                 false,
-                incrementLifecycle: false);
+                incrementLifecycle: false,
+                phaseCode: phaseCode);
             if (updated != null)
                 return updated.LifecycleEvents[^1];
         }
@@ -184,7 +203,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 { nameof(DesignArtifactRun.LeaseOwnerId), leaseOwner },
                 { nameof(DesignArtifactRun.LeaseExpiresAt), request.LeaseExpiresAt },
                 { nameof(DesignArtifactRun.HeartbeatAt), now },
+                { nameof(DesignArtifactRun.PhaseCode), DesignArtifactPhaseCodes.StartingDesign },
                 { nameof(DesignArtifactRun.Phase), "设计任务执行中" },
+                { nameof(DesignArtifactRun.LastProgressAt), now },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
             },
             DesignArtifactLifecycleEventTypes.Phase,
@@ -235,8 +256,10 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 { nameof(DesignArtifactRun.ManifestValidation), receipt.ToBsonDocument() },
                 { nameof(DesignArtifactRun.VersionBoundary), boundary.ToBsonDocument() },
                 { nameof(DesignArtifactRun.Status), RunStatuses.Committing },
+                { nameof(DesignArtifactRun.PhaseCode), DesignArtifactPhaseCodes.CommittingArtifact },
                 { nameof(DesignArtifactRun.Phase), "产物清单已提交" },
                 { nameof(DesignArtifactRun.Progress), Math.Max(current.Progress, 95) },
+                { nameof(DesignArtifactRun.LastProgressAt), now },
                 { nameof(DesignArtifactRun.UpdatedAt), now },
             },
             DesignArtifactLifecycleEventTypes.Manifest,
@@ -271,7 +294,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         {
             { nameof(DesignArtifactRun.Status), RunStatuses.Done },
             { nameof(DesignArtifactRun.Progress), 100 },
+            { nameof(DesignArtifactRun.PhaseCode), DesignArtifactPhaseCodes.Completed },
             { nameof(DesignArtifactRun.Phase), isPlanning ? "设计规划已完成" : "设计产物已完成" },
+            { nameof(DesignArtifactRun.LastProgressAt), now },
             { nameof(DesignArtifactRun.CompletedAt), now },
             { nameof(DesignArtifactRun.UpdatedAt), now },
         };
@@ -300,22 +325,27 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         if (current.Status is not (RunStatuses.Running or RunStatuses.Committing))
             throw Conflict();
         var failureCode = SafeToken(request.FailureCode, "failureCode", 64);
+        var runtimeFailure = NormalizeRuntimeFailure(request.RuntimeFailure, failureCode);
         var now = DateTime.UtcNow;
+        var updates = new BsonDocument
+        {
+            { nameof(DesignArtifactRun.Status), RunStatuses.Error },
+            { nameof(DesignArtifactRun.LifecycleFailureCode), failureCode },
+            { nameof(DesignArtifactRun.Phase), "设计任务未完成" },
+            { nameof(DesignArtifactRun.CompletedAt), now },
+            { nameof(DesignArtifactRun.UpdatedAt), now },
+        };
+        if (runtimeFailure != null)
+            updates[nameof(DesignArtifactRun.RuntimeFailure)] = runtimeFailure.ToBsonDocument();
         var updated = await AtomicUpdateWithEventAsync(
             CasFilter(current, request.Expected, current.Status),
             current,
-            new BsonDocument
-            {
-                { nameof(DesignArtifactRun.Status), RunStatuses.Error },
-                { nameof(DesignArtifactRun.LifecycleFailureCode), failureCode },
-                { nameof(DesignArtifactRun.Phase), "设计任务未完成" },
-                { nameof(DesignArtifactRun.CompletedAt), now },
-                { nameof(DesignArtifactRun.UpdatedAt), now },
-            },
+            updates,
             DesignArtifactLifecycleEventTypes.Error,
             "设计任务未完成",
             current.Progress,
-            true);
+            true,
+            runtimeFailure: runtimeFailure);
         if (updated == null) throw Conflict();
         await ProjectRunMetaBestEffortAsync(updated);
         return updated;
@@ -600,8 +630,20 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         string? phase,
         int? progress,
         bool authoritative,
-        bool incrementLifecycle = true)
+        bool incrementLifecycle = true,
+        string? phaseCode = null,
+        DesignArtifactRuntimeFailure? runtimeFailure = null)
     {
+        if (updates.TryGetValue(nameof(DesignArtifactRun.LastProgressAt), out var progressAtValue)
+            && progressAtValue is BsonDateTime progressAt)
+        {
+            var previous = current.LastProgressAt ?? current.CreatedAt;
+            var next = progressAt.ToUniversalTime();
+            var gapSeconds = next >= previous ? (next - previous).TotalSeconds : 0;
+            updates[nameof(DesignArtifactRun.MaxStaticGapSeconds)] = Math.Round(
+                Math.Max(current.MaxStaticGapSeconds ?? 0, gapSeconds),
+                1);
+        }
         var nextSequence = new BsonDocument("$add", new BsonArray
         {
             new BsonDocument("$ifNull", new BsonArray { $"${nameof(DesignArtifactRun.LifecycleEventSequence)}", 0 }),
@@ -614,10 +656,13 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             { nameof(DesignArtifactEventEnvelope.Sequence), nextSequence },
             { nameof(DesignArtifactEventEnvelope.Type), eventType },
             { nameof(DesignArtifactEventEnvelope.Phase), phase == null ? BsonNull.Value : phase },
+            { nameof(DesignArtifactEventEnvelope.PhaseCode), phaseCode == null ? BsonNull.Value : phaseCode },
             { nameof(DesignArtifactEventEnvelope.Progress), progress.HasValue ? progress.Value : BsonNull.Value },
             { nameof(DesignArtifactEventEnvelope.OccurredAt), DateTime.UtcNow },
             { nameof(DesignArtifactEventEnvelope.Authoritative), authoritative },
         };
+        if (runtimeFailure != null)
+            eventDocument[nameof(DesignArtifactEventEnvelope.RuntimeFailure)] = runtimeFailure.ToBsonDocument();
         updates[nameof(DesignArtifactRun.LifecycleEventSequence)] = nextSequence;
         updates[nameof(DesignArtifactRun.LifecycleEvents)] = new BsonDocument("$concatArrays", new BsonArray
         {
@@ -1030,6 +1075,117 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         if (normalized.Count == 0 || normalized.Count > 32)
             throw Invalid($"{name} 数量无效");
         return normalized;
+    }
+
+    private static DesignArtifactRuntimeFailure? NormalizeRuntimeFailure(
+        DesignArtifactRuntimeFailure? value,
+        string failureCode)
+    {
+        if (value == null) return null;
+        var issueCodes = (value.IssueCodes ?? [])
+            .Take(16)
+            .Select(code => SafeToken(code, "runtimeFailure.issueCodes", 64))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(code => code, StringComparer.Ordinal)
+            .ToList();
+        var repairAttempts = value.RepairAttempts is >= 0 and <= 1_000
+            ? value.RepairAttempts
+            : null;
+        return new DesignArtifactRuntimeFailure
+        {
+            Code = failureCode,
+            IssueCodes = issueCodes,
+            RepairAttempts = repairAttempts,
+            RepairBudgetExhausted = value.RepairBudgetExhausted,
+            BrowserQualityEvidence = NormalizeBrowserQualityFailureEvidence(value.BrowserQualityEvidence),
+        };
+    }
+
+    private static DesignArtifactBrowserQualityFailureEvidence? NormalizeBrowserQualityFailureEvidence(
+        DesignArtifactBrowserQualityFailureEvidence? value)
+    {
+        if (value == null) return null;
+        if (value.SchemaVersion != "map-browser-quality-failure-evidence-v1"
+            || value.RepairAttempts is < 0 or > 1_000
+            || value.Attempts.Count is < 1 or > 3)
+            throw Invalid("runtimeFailure.browserQualityEvidence 无效");
+        return new DesignArtifactBrowserQualityFailureEvidence
+        {
+            SchemaVersion = value.SchemaVersion,
+            RuleVersion = SafeToken(value.RuleVersion, "runtimeFailure.browserQualityEvidence.ruleVersion", 64),
+            HeuristicVersion = SafeToken(value.HeuristicVersion, "runtimeFailure.browserQualityEvidence.heuristicVersion", 64),
+            RepairAttempts = value.RepairAttempts,
+            RepairBudgetExhausted = value.RepairBudgetExhausted,
+            Attempts = value.Attempts.Select(NormalizeBrowserQualityFailureAttempt).ToList(),
+        };
+    }
+
+    private static DesignArtifactBrowserQualityFailureAttempt NormalizeBrowserQualityFailureAttempt(
+        DesignArtifactBrowserQualityFailureAttempt value)
+    {
+        if (value.RepairAttempt is < 0 or > 1_000
+            || !double.IsFinite(value.Score)
+            || value.Score is < 0 or > 100
+            || value.Issues.Count > 16)
+            throw Invalid("runtimeFailure.browserQualityEvidence.attempt 无效");
+        return new DesignArtifactBrowserQualityFailureAttempt
+        {
+            RepairAttempt = value.RepairAttempt,
+            HardPassed = value.HardPassed,
+            Score = value.Score,
+            Issues = value.Issues.Select(NormalizeBrowserQualityFailureIssue).ToList(),
+        };
+    }
+
+    private static DesignArtifactBrowserQualityFailureIssue NormalizeBrowserQualityFailureIssue(
+        DesignArtifactBrowserQualityFailureIssue value)
+    {
+        var issueCode = SafeToken(value.IssueCode, "runtimeFailure.browserQualityEvidence.issueCode", 64);
+        if (!BrowserQualityIssueCodes.Contains(issueCode) || value.Viewport is not ("desktop" or "mobile")
+            || value.Actual.Count > 8)
+            throw Invalid("runtimeFailure.browserQualityEvidence.issue 无效");
+        var actual = new Dictionary<string, object?>(StringComparer.Ordinal);
+        foreach (var (key, raw) in value.Actual)
+        {
+            if (!BrowserQualityMeasurementKeys.Contains(key))
+                throw Invalid("runtimeFailure.browserQualityEvidence.actual 无效");
+            actual[key] = raw switch
+            {
+                null => null,
+                bool boolean => boolean,
+                string text when text.Length <= 120 && !text.Any(char.IsControl) => text,
+                double number when double.IsFinite(number) => number,
+                float number when float.IsFinite(number) => number,
+                int number => number,
+                long number => number,
+                _ => throw Invalid("runtimeFailure.browserQualityEvidence.actual 无效"),
+            };
+        }
+        return new DesignArtifactBrowserQualityFailureIssue
+        {
+            IssueCode = issueCode,
+            Viewport = value.Viewport,
+            Actual = actual,
+            Target = SafeDiagnosticText(value.Target, 160),
+            ElementSummary = value.ElementSummary == null ? null : new DesignArtifactBrowserElementSummary
+            {
+                Tag = SafeDiagnosticText(value.ElementSummary.Tag, 40),
+                Id = OptionalDiagnosticText(value.ElementSummary.Id, 80),
+                Role = OptionalDiagnosticText(value.ElementSummary.Role, 80),
+                Label = OptionalDiagnosticText(value.ElementSummary.Label, 160),
+            },
+        };
+    }
+
+    private static string SafeDiagnosticText(string? value, int maxLength)
+        => OptionalDiagnosticText(value, maxLength) ?? throw Invalid("runtimeFailure.browserQualityEvidence 文本无效");
+
+    private static string? OptionalDiagnosticText(string? value, int maxLength)
+    {
+        var normalized = Optional(value, maxLength);
+        return normalized != null && !normalized.Any(char.IsControl)
+            ? normalized
+            : normalized == null ? null : throw Invalid("runtimeFailure.browserQualityEvidence 文本无效");
     }
 
     private static void ValidateCapability(

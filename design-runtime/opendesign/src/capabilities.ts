@@ -22,6 +22,7 @@ export interface Capabilities {
   codexVersion: string | null;
   pinnedCodexVersion: string;
   designSystems: string[];
+  browserQuality: { ready: boolean; observation: string };
   healthy: boolean;
   /** 引擎本身能用（不看 API key）。就绪探针用它。 */
   engineReady: boolean;
@@ -70,6 +71,17 @@ export async function describeCapabilities(context: CapabilitiesContext): Promis
       },
     }));
   }
+  if (selfCheck.browserQuality && !selfCheck.browserQuality.ready) {
+    engineConditions.push(renderCondition({
+      code: 'browser_quality_unavailable',
+      actor: { kind: 'deployment', label: '运行镜像' },
+      event: '没有可执行的隔离 Chromium 浏览器',
+      impact: '无法完成桌面与移动视口的最终质量检查，暂不接新任务',
+      urgency: { kind: 'act', action: '按 design-runtime/opendesign/Dockerfile 重建镜像，确认 Playwright Chromium 已安装' },
+      retryable: false,
+      technical: { observation: selfCheck.browserQuality.observation },
+    }));
+  }
   const slotCondition = tasks.slotCondition();
   if (slotCondition) engineConditions.push(slotCondition);
 
@@ -116,6 +128,10 @@ export async function describeCapabilities(context: CapabilitiesContext): Promis
     codexVersion: selfCheck.codexVersion,
     pinnedCodexVersion: OPEN_DESIGN_CODEX_VERSION,
     designSystems: selfCheck.designSystems,
+    browserQuality: {
+      ready: selfCheck.browserQuality?.ready ?? true,
+      observation: selfCheck.browserQuality?.observation ?? 'test override',
+    },
     healthy,
     engineReady: engineConditions.length === 0 && state !== 'starting',
     busy: state === 'running' || state === 'resetting',

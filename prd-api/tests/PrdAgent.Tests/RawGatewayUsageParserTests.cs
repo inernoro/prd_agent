@@ -184,4 +184,70 @@ public sealed class RawGatewayUsageParserTests
         Assert.Equal(1000, result.InputTokens);
         Assert.Equal(800, result.CacheReadInputTokens);
     }
+
+    [Fact]
+    public void Parse_ResponsesUsage_PreservesReasoningAndNestedCacheWriteSemantics()
+    {
+        const string response = """
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "output_tokens": 120,
+            "input_tokens_details": {
+              "cached_tokens": 600,
+              "cache_write_tokens": 150
+            },
+            "output_tokens_details": {
+              "reasoning_tokens": 80
+            }
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(1000, result.InputTokens);
+        Assert.Equal(120, result.OutputTokens);
+        Assert.Equal(80, result.ReasoningTokens);
+        Assert.Equal(600, result.CacheReadInputTokens);
+        Assert.Equal(150, result.CacheCreationInputTokens);
+        Assert.True(result.CacheCreationCountedInsideInput);
+    }
+
+    [Fact]
+    public void Parse_NestedCacheWriteWinsOverLegacyRootField_WithoutDoubleCounting()
+    {
+        const string response = """
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "cache_creation_input_tokens": 900,
+            "input_tokens_details": { "cache_write_tokens": 150 }
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(150, result.CacheCreationInputTokens);
+        Assert.True(result.CacheCreationCountedInsideInput);
+    }
+
+    [Fact]
+    public void Parse_RootCacheCreation_RemainsIndependentUsage()
+    {
+        const string response = """
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "cache_creation_input_tokens": 150
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(150, result.CacheCreationInputTokens);
+        Assert.False(result.CacheCreationCountedInsideInput);
+    }
 }

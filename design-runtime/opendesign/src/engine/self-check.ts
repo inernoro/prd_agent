@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { DESIGN_SYSTEM_ID_RE, OPEN_DESIGN_CODEX_VERSION } from '../prompts.js';
+import { probeBrowserQuality, type BrowserQualityProbe } from '../quality/browser-runner.js';
 import { missingWebPrototypeSourceFiles } from './web-prototype.js';
 
 export interface EngineSelfCheck {
@@ -14,6 +15,8 @@ export interface EngineSelfCheck {
   codexObservation: string;
   missingSkillFiles: string[];
   designSystems: string[];
+  /** 测试旧桩可省略；真实启动一定探测，缺浏览器时 readiness 必须失败。 */
+  browserQuality?: BrowserQualityProbe;
 }
 
 /** 列出可选的设计系统：目录名合规（与任务书 designSystemId 同一个正则）且带 DESIGN.md。 */
@@ -46,6 +49,9 @@ export async function runEngineSelfCheck(input: {
   codexBin: string;
   webPrototypeSourceDir: string;
   designSystemsDir: string;
+  engineHome?: string;
+  engineUid?: number;
+  engineGid?: number;
 }): Promise<EngineSelfCheck> {
   const codex = await readCodexVersion(input.codexBin);
   return {
@@ -54,5 +60,10 @@ export async function runEngineSelfCheck(input: {
     codexObservation: codex.observation,
     missingSkillFiles: missingWebPrototypeSourceFiles(input.webPrototypeSourceDir),
     designSystems: listDesignSystems(input.designSystemsDir),
+    browserQuality: probeBrowserQuality({
+      engineHome: input.engineHome,
+      engineUid: input.engineUid,
+      engineGid: input.engineGid,
+    }),
   };
 }

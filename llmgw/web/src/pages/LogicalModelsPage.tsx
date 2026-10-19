@@ -340,7 +340,7 @@ export function LogicalModelsPage() {
           <>
             <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
             <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
-            {usage ? <span>近 30 天 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
+            {usage ? <span>近 30 天 Gateway 估算 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
             {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
             <span>已设默认 <strong>{items.filter((x) => x.isDefaultForType).length}</strong> 个用途</span>
           </>
@@ -435,7 +435,7 @@ export function LogicalModelsPage() {
             <div className="lg-logical-model-grid lg-logical-model-heading" style={{ ...ROW_GRID, ...ROW_HEAD }}>
               <span style={COL_CAP}>模型</span>
               <span style={COL_CAP}>上游线路与单价</span>
-              <span style={COL_CAP}>近 30 天</span>
+              <span style={COL_CAP}>近 30 天 Gateway 估算</span>
               <span style={COL_CAP}>状态</span>
               <span />
             </div>
@@ -496,7 +496,7 @@ export function LogicalModelsPage() {
                           <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
                           <span style={{ display: 'flex', flexDirection: 'column' }}>
                             <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsd(stat.totalCostUsd)}</span>
-                            <span style={HINT_TEXT}>{formatCount(stat.totalCalls)} 次</span>
+                            <span style={HINT_TEXT}>Gateway 估算 · {formatCount(stat.totalCalls)} 次</span>
                           </span>
                         </>
                       ) : <span style={HINT_TEXT}>暂无</span>}

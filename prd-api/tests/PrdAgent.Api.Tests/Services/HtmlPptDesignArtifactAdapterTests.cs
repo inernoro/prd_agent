@@ -16,6 +16,25 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class HtmlPptDesignArtifactAdapterTests
 {
     [Fact]
+    public void HostedPresentationNavigationBridge_ShouldDriveTheRealDeckAfterAnExplicitParentHandshake()
+    {
+        const string source = "<!doctype html><html><body><div class=\"reveal\"><div class=\"slides\"><section>第一页</section><section>第二页</section></div></div></body></html>";
+
+        var hosted = Encoding.UTF8.GetString(HostedSiteService.RewritePublishedEntryHtml(
+            Encoding.UTF8.GetBytes(source),
+            "index.html"));
+
+        Assert.Contains("event.source !== window.parent", hosted, StringComparison.Ordinal);
+        Assert.Contains("data.type === 'map-ppt-init'", hosted, StringComparison.Ordinal);
+        Assert.Contains("data.type === 'map-ppt-nav'", hosted, StringComparison.Ordinal);
+        Assert.Contains("data.type === 'map-ppt-goto'", hosted, StringComparison.Ordinal);
+        Assert.Contains("window.Reveal.next()", hosted, StringComparison.Ordinal);
+        Assert.Contains("window.Reveal.slide(target)", hosted, StringComparison.Ordinal);
+        Assert.Contains("bridgePost('map-ppt-slide')", hosted, StringComparison.Ordinal);
+        Assert.Contains("<section>第一页</section><section>第二页</section>", hosted, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AdapterContract_ShouldNotAcceptRuntimeAuthorityConfiguration()
     {
         var constructorFields = typeof(HtmlPptDesignArtifactAdapter)
@@ -262,6 +281,11 @@ public sealed class HtmlPptDesignArtifactAdapterTests
         await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
 
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetTeamsNotPublishableAsync(
+                run.UserId,
+                It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
         sites.Setup(service => service.CreateFromHtmlIdempotentAsync(
                 run.UserId,
                 It.Is<byte[]>(bytes => Encoding.UTF8.GetString(bytes) == html),
@@ -353,6 +377,11 @@ public sealed class HtmlPptDesignArtifactAdapterTests
         var calls = new List<string>();
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         HostedSiteRevisionService? revisions = null;
+        sites.Setup(service => service.GetTeamsNotPublishableAsync(
+                run.UserId,
+                It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
         sites.Setup(service => service.CreateFromHtmlIdempotentAsync(
                 run.UserId,
                 It.Is<byte[]>(bytes => Encoding.UTF8.GetString(bytes) == html),
@@ -412,6 +441,122 @@ public sealed class HtmlPptDesignArtifactAdapterTests
     }
 
     [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishCoordinator_OpenDesignPackage_ShouldReuseVerifiedSiteWithoutFlatteningAssets()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        const string authoredHtml = "<!doctype html><html><head><link rel=\"stylesheet\" href=\"assets/deck.css\"></head><body><div class=\"reveal\"><div class=\"slides\"><section>第一页</section></div></div></body></html>";
+        const string hostedHtml = "<!doctype html><html><head><link rel=\"stylesheet\" href=\"./assets/deck.css\"></head><body><div class=\"reveal\"><div class=\"slides\"><section>第一页</section></div></div><script src=\"./assets/nav.js\"></script></body></html>";
+        var sourceHash = MdToPptController.ComputeHtmlHash(authoredHtml);
+        var run = Run("publish-open-design-package", "convert", "done", authoredHtml, sourceHash);
+        run.Runtime = DesignArtifactRuntimes.OpenDesign;
+        await fixture.Db.MdToPptRuns.InsertOneAsync(run);
+
+        const string siteId = "open-design-ppt-site";
+        const string revisionId = "open-design-ppt-revision";
+        var now = new DateTime(2026, 10, 16, 1, 2, 3, DateTimeKind.Utc);
+        var site = new HostedSite
+        {
+            Id = siteId,
+            OwnerUserId = run.UserId,
+            Title = run.Title,
+            SourceType = "design-agent",
+            SourceRef = run.Id,
+            EntryFile = "index.html",
+            SiteUrl = "https://site.invalid/open-design-ppt/index.html",
+            ContentVersion = now,
+            Files =
+            [
+                new HostedSiteFile { Path = "index.html", CosKey = "site/index.html", Size = Encoding.UTF8.GetByteCount(hostedHtml), MimeType = "text/html" },
+                new HostedSiteFile { Path = "assets/deck.css", CosKey = "site/assets/deck.css", Size = 20, MimeType = "text/css" },
+                new HostedSiteFile { Path = "assets/nav.js", CosKey = "site/assets/nav.js", Size = 20, MimeType = "text/javascript" },
+            ],
+        };
+        var hostedBytes = Encoding.UTF8.GetBytes(hostedHtml);
+        var cssBytes = Encoding.UTF8.GetBytes(".slides{display:block}");
+        var navBytes = Encoding.UTF8.GetBytes("window.deckReady=true;");
+        var revision = new HostedSiteRevision
+        {
+            Id = revisionId,
+            SiteId = siteId,
+            CreatedByUserId = run.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Baseline,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            SourceRunId = run.Id,
+            Html = hostedHtml,
+            VerifiedFiles =
+            [
+                Verified("index.html", hostedBytes, "text/html"),
+                Verified("assets/deck.css", cssBytes, "text/css"),
+                Verified("assets/nav.js", navBytes, "text/javascript"),
+            ],
+            BasedOnContentVersion = now,
+            PublishedContentVersion = now,
+            CreatedAt = now,
+            PublishedAt = now,
+        };
+        await fixture.Db.HostedSites.InsertOneAsync(site);
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(revision);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(new DesignArtifactRun
+        {
+            Id = run.Id,
+            DeploymentSlug = DeploymentScope.Current,
+            UserId = run.UserId,
+            ArtifactType = DesignArtifactTypes.HtmlPpt,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Status = RunStatuses.Done,
+            ArtifactSiteId = siteId,
+            ArtifactRevisionId = revisionId,
+            ProducedArtifactSiteId = siteId,
+            ProducedArtifactRevisionId = revisionId,
+            WorkspaceResultSha256 = new string('a', 64),
+        });
+
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetTeamsNotPublishableAsync(
+                run.UserId,
+                It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        sites.Setup(service => service.GetRevisionEntryHtmlAsync(siteId, run.UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, hostedHtml, now));
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var artifacts = new Mock<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict);
+        var coordinator = new HtmlPptPublishCoordinator(
+            fixture.Db,
+            sites.Object,
+            revisions.Object,
+            artifacts.Object,
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        var result = await coordinator.PublishAsync(run, run.Title, null, [], []);
+
+        Assert.Equal(siteId, result.Site.Id);
+        Assert.Equal(revisionId, result.Revision.Id);
+        Assert.Equal(sourceHash, result.ContentHash);
+        Assert.Equal(3, result.Revision.VerifiedFiles.Count);
+        Assert.Contains(result.Revision.VerifiedFiles, item => item.Path == "assets/deck.css");
+        Assert.Contains(result.Revision.VerifiedFiles, item => item.Path == "assets/nav.js");
+        sites.VerifyAll();
+        revisions.VerifyNoOtherCalls();
+        artifacts.VerifyNoOtherCalls();
+
+        var replay = await coordinator.PublishAsync(run, run.Title, null, [], []);
+        Assert.Equal(revisionId, replay.Revision.Id);
+        Assert.Equal(sourceHash, replay.ContentHash);
+    }
+
+    private static HostedSiteRevisionFile Verified(string path, byte[] bytes, string mimeType) => new()
+    {
+        Path = path,
+        Content = bytes,
+        Sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant(),
+        MimeType = mimeType,
+    };
+
+    [Fact]
     public void PublishIdentifiersAndBackoff_ShouldBeDeterministicAndBounded()
     {
         var hash = new string('a', 64);
@@ -452,6 +597,11 @@ public sealed class HtmlPptDesignArtifactAdapterTests
         await fixture.Db.MdToPptRuns.InsertOneAsync(run);
 
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.GetTeamsNotPublishableAsync(
+                run.UserId,
+                It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
         sites.Setup(service => service.CreateFromHtmlIdempotentAsync(
                 It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string?>(),
                 It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<List<string>?>(),
