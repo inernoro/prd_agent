@@ -366,6 +366,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   projects: {
     id: 'projects',
+    requiredSkills: ['cds-deploy-pipeline', 'preview-url'],
     categoryId: 'integrate',
     scope: 'system',
     icon: 'project',
@@ -461,7 +462,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   'project-onboarding': {
     id: 'project-onboarding',
-    requiredSkills: ['preview-url'],
+    requiredSkills: ['cds-deploy-pipeline', 'preview-url'],
     categoryId: 'integrate',
     scope: 'project',
     icon: 'project',
