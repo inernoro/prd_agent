@@ -24,6 +24,7 @@
 /** 失败发生在哪一步。与 SSE step 名对齐，便于前端高亮对应阶段。 */
 export type SelfUpdateFailureStage =
   | 'concurrency'
+  | 'restart-drain'
   | 'fetch'
   | 'gate'
   | 'checkout'
@@ -173,6 +174,10 @@ const FAILURE_PATTERNS: FailurePattern[] = [
 ];
 
 const STAGE_FALLBACK: Record<SelfUpdateFailureStage, { cause: string; nextAction: string }> = {
+  'restart-drain': {
+    cause: '等待其他项目操作结束超时，本次更新与重启已取消。',
+    nextAction: '等在途部署或发布结束后重新更新；本次不会自动重启，也不会中断或重新部署其他项目。',
+  },
   concurrency: {
     cause: '已有一次更新正在进行，本次请求被拒绝以避免两次构建互相串台。',
     nextAction: '等当前那次更新跑完（面板上能看到进度），再发起本次更新。',

@@ -4664,6 +4664,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
   app.use('/api', (req, res, next) => {
     if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    // Let already accepted, authenticated queued work drain to completion.
+    if (pendingReplayGate.isTrusted(req)) { next(); return; }
     const draining = selfUpdateDrainBlockReason(Date.now());
     if (!draining) { next(); return; }
     res.setHeader('Retry-After', '60');
