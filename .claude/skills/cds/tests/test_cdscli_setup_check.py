@@ -125,6 +125,13 @@ class SetupCheckTests(unittest.TestCase):
         self.assertEqual(self.credentials.read_bytes(), before)
         self.assertFalse((self.root / ".git/info/exclude").exists())
 
+    def test_repository_bundle_passes_without_installing_or_updating(self):
+        self.cli = CLI
+        result, payload = self.run_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(payload["data"]["checks"][1]["stage"], "skills")
+
     def test_host_mismatch_sends_no_credentials(self):
         self.assert_failure("host_mismatch", host="https://other.example")
         self.assertEqual(self.requests, [])
