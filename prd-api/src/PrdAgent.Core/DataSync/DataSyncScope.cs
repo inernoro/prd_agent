@@ -255,6 +255,7 @@ public static class DataSyncScope
             new DataSyncCollection("product_rules", System.Array.Empty<string>()),
             new DataSyncCollection("product_structure_nodes", System.Array.Empty<string>()),
             new DataSyncCollection("product_terms", System.Array.Empty<string>()),
+            new DataSyncCollection("product_version_workflow_snapshots", System.Array.Empty<string>()),
             new DataSyncCollection("product_versions", System.Array.Empty<string>()),
             new DataSyncCollection("product_workflow_definitions", System.Array.Empty<string>()),
             new DataSyncCollection("products", System.Array.Empty<string>()),
