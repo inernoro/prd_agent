@@ -22,18 +22,23 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     let projectMode = 'ok';
     let failedRequests = 0;
+    let anonymousAuth = false;
     const releaseProjects = [];
     let projectRequestStarted;
     await context.route('**/api/**', async route => {
       const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/api/auth/status' && anonymousAuth) {
+        await route.fulfill({ json: { authenticated: false, enabled: true } });
+        return;
+      }
       if (pathname === '/api/projects') {
         if (projectMode === 'wait') await new Promise(resolve => {
           releaseProjects.push(resolve);
           projectRequestStarted();
         });
-        if (projectMode === 'fail') {
+        if (projectMode === 'fail' || projectMode === 'signed-out') {
           failedRequests++;
-          await route.fulfill({ status: 503, json: { error: 'scope_probe_unavailable' } });
+          await route.fulfill({ status: projectMode === 'signed-out' ? 401 : 503, json: { error: 'scope_probe_unavailable' } });
           return;
         }
         const projects = projectMode === 'empty' ? [] : [
@@ -132,6 +137,24 @@ try {
     url = await copyPrompt(dialog);
     assert.equal(url.searchParams.get('target'), 'new');
     console.log(`PASS ${width}: genuine empty list still allows first project onboarding`);
+    await page.keyboard.press('Escape');
+    projectMode = 'signed-out';
+    anonymousAuth = true;
+    await page.goto(server.url + '/', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '接入 Agent', exact: true }).click();
+    dialog = page.getByRole('dialog');
+    url = await copyPrompt(dialog);
+    assert.equal(url.searchParams.get('target'), 'new');
+    console.log(`PASS ${width}: signed-out discovery still allows first project approval flow`);
+    await page.keyboard.press('Escape');
+    anonymousAuth = false;
+    dialog = await open('/branches/not-visible');
+    await dialog.getByRole('alert').filter({ hasText: '当前项目不在可见列表中' }).waitFor();
+    assert.equal(await dialog.locator('pre').count(), 0);
+    await dialog.getByRole('button', { name: /创建一个新项目/ }).click();
+    url = await copyPrompt(dialog);
+    assert.equal(url.searchParams.get('target'), 'new');
+    console.log(`PASS ${width}: signed-out page target stays blocked until explicit new-project choice`);
     assert.deepEqual(errors, []);
     await context.close();
   }

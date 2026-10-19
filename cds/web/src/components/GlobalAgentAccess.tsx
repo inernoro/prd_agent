@@ -8,7 +8,7 @@ import {
   resolveAgentPageContext,
   type AgentPageContextId,
 } from '@/lib/agent-onboarding';
-import { apiRequest, isChildPreviewCdsInstance } from '@/lib/api';
+import { ApiError, apiRequest, isChildPreviewCdsInstance } from '@/lib/api';
 
 type AgentProjectsResponse = {
   projects?: Array<{
@@ -86,7 +86,11 @@ export function GlobalAgentAccess(): JSX.Element {
       .catch((err: unknown) => {
         if (ctrl.signal.aborted || (err as DOMException)?.name === 'AbortError') return;
         setProjects([]);
-        setProjectsError('项目范围暂时无法确认，请重新读取；尚未生成接入口令。');
+        // Anonymous onboarding can request a first project without reading existing projects.
+        // An explicit page project still remains unavailable in the dialog until resolved.
+        setProjectsError(err instanceof ApiError && err.status === 401
+          ? ''
+          : '项目范围暂时无法确认，请重新读取；尚未生成接入口令。');
       });
     return () => ctrl.abort();
   }, [open, projectsRequest]);
