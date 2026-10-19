@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, RefreshCw, Save, Search, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/design/Button';
-import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { ProductPermissionPeople } from './ProductPermissionPeople';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import {
   createSystemRole, getAdminAuthzMe, getAdminPermissionCatalog, getSystemRoles,
-  getUserAuthz, updateSystemRole, updateUserAuthz,
+  updateSystemRole,
 } from '@/services';
-import type { AdminPermissionDef, AdminUserAuthzSnapshot, SystemRoleDto } from '@/services/contracts/authz';
+import type { AdminPermissionDef, SystemRoleDto } from '@/services/contracts/authz';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
-import { mergePermissionOverrides, mergeScopedRolePermissions, permissionOverride, type PermissionOverride } from './productPermissionEditing';
+import { mergeScopedRolePermissions } from './productPermissionEditing';
 
 export type ProductPermissionTab = 'menu' | 'function' | 'role';
 type PermissionEntry = { key: string; label: string; permissions: string[]; note?: string };
@@ -83,47 +83,9 @@ function PermissionAssignments({ tab, catalog, roles }: { tab: 'menu' | 'functio
     .map((item) => ({ key: item.key, label: item.name, permissions: [item.key], note: item.description ?? undefined })), [catalog, tab]);
   const [selected, setSelected] = useState(entries[0]?.key ?? '');
   const [query, setQuery] = useState('');
-  const [userId, setUserId] = useState('');
-  const [snapshot, setSnapshot] = useState<AdminUserAuthzSnapshot | null>(null);
-  const [userLoading, setUserLoading] = useState(false);
-  const [userError, setUserError] = useState('');
-  const [changes, setChanges] = useState<Record<string, PermissionOverride>>({});
   const [saving, setSaving] = useState(false);
   const entry = entries.find((item) => item.key === selected);
-  const userRole = roles.find((role) => role.key === snapshot?.effectiveSystemRoleKey);
   const visible = entries.filter((item) => `${item.label} ${item.note ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()));
-
-  useEffect(() => {
-    let cancelled = false;
-    setSnapshot(null); setChanges({}); setUserError('');
-    if (!userId) { setUserLoading(false); return; }
-    setUserLoading(true);
-    void getUserAuthz(userId).then((result) => {
-      if (cancelled) return;
-      if (result.success) setSnapshot(result.data);
-      else setUserError(result.error.message);
-    }).catch(() => { if (!cancelled) setUserError('人员权限读取失败，请重新选择或重试。'); })
-      .finally(() => { if (!cancelled) setUserLoading(false); });
-    return () => { cancelled = true; };
-  }, [userId]);
-
-  const save = async () => {
-    if (!snapshot || saving || Object.keys(changes).length === 0) return;
-    setSaving(true); setUserError('');
-    try {
-      const latest = await getUserAuthz(snapshot.userId);
-      if (!latest.success) throw new Error(latest.error.message);
-      if (Object.keys(changes).some((key) => permissionOverride(latest.data, key) !== permissionOverride(snapshot, key))) {
-        setSnapshot(latest.data); setChanges({});
-        throw new Error('该人员的权限已被其他管理员更新，已重新读取。请核对后再配置。');
-      }
-      const result = await updateUserAuthz(snapshot.userId, mergePermissionOverrides(latest.data, changes));
-      if (!result.success) throw new Error(result.error.message);
-      setSnapshot(result.data); setChanges({}); toast.success('人员权限已保存');
-      await refreshMyPermissions();
-    } catch (cause) { setUserError(cause instanceof Error ? cause.message : '保存失败，请重试。'); }
-    finally { setSaving(false); }
-  };
 
   return <div className="grid min-h-0 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
     <div>
@@ -132,37 +94,15 @@ function PermissionAssignments({ tab, catalog, roles }: { tab: 'menu' | 'functio
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={tab === 'menu' ? '搜索菜单' : '搜索功能'} aria-label={tab === 'menu' ? '搜索菜单' : '搜索功能'} className="min-w-0 flex-1 bg-transparent py-2 text-sm text-token-primary outline-none" />
       </label>
       <nav aria-label={tab === 'menu' ? '菜单列表' : '功能列表'} className="space-y-1">
-        {visible.map((item) => <button key={item.key} type="button" aria-pressed={selected === item.key} disabled={saving} onClick={() => { setSelected(item.key); setChanges({}); }} className={`w-full rounded-md px-3 py-2.5 text-left text-sm transition-colors ${selected === item.key ? 'surface-action text-token-primary' : 'text-token-secondary hover-bg-soft'}`}>{item.label}</button>)}
+        {visible.map((item) => <button key={item.key} type="button" aria-pressed={selected === item.key} disabled={saving} onClick={() => setSelected(item.key)} className={`w-full rounded-md px-3 py-2.5 text-left text-sm transition-colors ${selected === item.key ? 'surface-action text-token-primary' : 'text-token-secondary hover-bg-soft'}`}>{item.label}</button>)}
         {visible.length === 0 && <p className="p-3 text-xs text-token-muted">没有匹配的项目，请调整关键词。</p>}
       </nav>
     </div>
     <section className="min-w-0 rounded-lg border border-token-subtle p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
-        <div><h3 className="text-sm font-semibold text-token-primary">{entry?.label}</h3><p className="mt-1 text-xs leading-6 text-token-secondary">{entry?.note ?? '先选择人员，再配置此功能的现有权限。'}</p></div>
-        <Button size="sm" variant="primary" onClick={() => void save()} disabled={!snapshot || saving || Object.keys(changes).length === 0}>{saving ? <MapSpinner size={14} /> : <Save size={14} />}保存</Button>
+        <div><h3 className="text-sm font-semibold text-token-primary">{entry?.label}</h3><p className="mt-1 text-xs leading-6 text-token-secondary">{entry?.note ?? '勾选人员后批量配置，也可以直接调整单人的权限。'}</p></div>
       </div>
-      {entry && entry.permissions.length === 0 ? <Notice title="当前没有独立授权项" text={entry.note ?? '该页面沿用已有的访问规则。'} /> : <>
-        <div><label className="mb-2 block text-xs text-token-secondary">配置人员</label>{saving ? <p className="py-2 text-sm text-token-secondary">{snapshot?.displayName || snapshot?.username} · 正在保存</p> : <UserSearchSelect value={userId} onChange={(value) => { setChanges({}); setUserId(value); }} placeholder="搜索并选择要配置的人员" />}</div>
-        {userLoading ? <MapSectionLoader text="正在读取人员权限…" /> : snapshot ? <div className="mt-5 space-y-3">
-          <p className="text-xs text-token-muted">{snapshot.displayName || snapshot.username} · 当前角色：{userRole?.name ?? snapshot.effectiveSystemRoleKey}</p>
-          {entry?.permissions.map((key) => {
-            const definition = catalog.find((item) => item.key === key);
-            if (!definition) return <Notice key={key} title="该权限暂不可配置" text="服务端权限目录未返回此项，请检查部署版本。" />;
-            const mode = changes[key] ?? permissionOverride(snapshot, key);
-            return <div key={key} className="flex flex-wrap items-center justify-between gap-3 border-b border-token-subtle py-3 last:border-b-0">
-              <div className="min-w-0 flex-1"><p className="text-sm text-token-primary">{definition.name}</p><p className="mt-1 text-xs leading-5 text-token-muted">{definition.description}</p></div>
-              <select aria-label={`${definition.name}的人员授权`} className={`${inputClass} sm:w-44`} value={mode} onChange={(event) => {
-                const value = event.target.value as PermissionOverride;
-                setChanges((previous) => { const next = { ...previous }; if (value === permissionOverride(snapshot, key)) delete next[key]; else next[key] = value; return next; });
-              }} disabled={saving}>
-                <option value="inherit">继承角色</option><option value="allow">额外允许</option><option value="deny">明确禁止</option>
-              </select>
-            </div>;
-          })}
-          <p className="text-xs leading-5 text-token-muted">“继承角色”清除该项人员例外；保存只修改你调整的权限。超级管理员的访问由既有超级权限控制。</p>
-        </div> : !userError && <div className="py-10 text-center text-sm text-token-muted">选择人员后显示其现有授权，可按角色继承或单独调整。</div>}
-      </>}
-      {userError && <p role="alert" className="mt-4 text-sm text-[color:var(--accent-fg-danger)]">{userError}</p>}
+      {entry && entry.permissions.length === 0 ? <Notice title="当前没有独立授权项" text={entry.note ?? '该页面沿用已有的访问规则。'} /> : entry && <ProductPermissionPeople key={entry.key} permissionKeys={entry.permissions} catalog={catalog} roles={roles} onBusyChange={setSaving} onSaved={refreshMyPermissions} />}
     </section>
   </div>;
 }
