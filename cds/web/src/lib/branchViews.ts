@@ -74,7 +74,16 @@ export function removeBranchView(settings: BranchViewsSettings, id: string): Bra
   return { views, selectedId: views.some((view) => view.id === settings.selectedId) ? settings.selectedId : views[0].id };
 }
 
-export function newBranchViewId(): string { return `v-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`; }
+let fallbackViewId = 0;
+export function newBranchViewId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `v-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  }
+  // Local preference IDs are not credentials. LAN HTTP lacks randomUUID; keep rapid
+  // additions distinct even when the clock and random source return the same value.
+  fallbackViewId += 1;
+  return `v-${Date.now().toString(36)}-${fallbackViewId.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export interface CategorizedBranch extends BranchSubmitterInput { id: string; branch: string; tags?: string[] }
 export interface BranchViewGroup { id: string; name: string; unknown: boolean }

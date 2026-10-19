@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { BRANCH_VIEW_LIMIT, branchViewGroups, branchViewsStorageKey, defaultBranchViews, groupBranchesByView, normalizeBranchViews, readBranchViews, removeBranchView, type BranchView } from '../../web/src/lib/branchViews';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BRANCH_VIEW_LIMIT, branchViewGroups, branchViewsStorageKey, defaultBranchViews, groupBranchesByView, normalizeBranchViews, readBranchViews, removeBranchView, newBranchViewId, type BranchView } from '../../web/src/lib/branchViews';
 import { branchSubmitter } from '../../web/src/lib/branchSubmitters';
 
 const view = (source: BranchView['source'], extra: Partial<BranchView> = {}): BranchView => ({ id: source, name: source, source, ...extra });
@@ -85,5 +85,19 @@ describe('分类与搜索定位的共同归类判定', () => {
     expect(branchViewGroups(custom, branch('b', 'main', ['登录']))[0].name).toBe('未分类');
     expect(a.tags).toEqual(['模块:登录', '模块:支付', '角色:开发']);
     expect(groupBranchesByView(custom, [])).toEqual([]);
+  });
+});
+
+describe('内网 HTTP 的分类 ID',()=>{
+  afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();});
+  it('HTTPS 使用可用的 randomUUID',()=>{
+    vi.stubGlobal('crypto',{randomUUID:()=> '01234567-89ab-cdef-0123-456789abcdef'});
+    expect(newBranchViewId()).toBe('v-0123456789ab');
+  });
+  it.each([{},undefined])('缺少 randomUUID 或 crypto 时仍能新增、保存、删除分类：%s',crypto=>{
+    vi.stubGlobal('crypto',crypto);vi.spyOn(Date,'now').mockReturnValue(1);vi.spyOn(Math,'random').mockReturnValue(0);
+    const ids=Array.from({length:12},()=>newBranchViewId());expect(new Set(ids).size).toBe(12);
+    const saved=normalizeBranchViews(JSON.parse(JSON.stringify({views:ids.map(id=>view('submitters',{id})),selectedId:ids[1]})));
+    expect(saved.views).toHaveLength(12);expect(saved.selectedId).toBe(ids[1]);expect(removeBranchView(saved,ids[1]).views).toHaveLength(11);
   });
 });
