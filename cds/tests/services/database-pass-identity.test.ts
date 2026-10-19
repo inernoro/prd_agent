@@ -2,7 +2,7 @@ import {it,expect} from 'vitest';
 import {BSON} from 'mongodb';
 import {mysqlPassLogin} from '../../src/services/database-pass-mysql.js';
 import {MongoPassIdentity} from '../../src/services/database-pass-mongo.js';
-import {normalizeReadOnlyStatement,stripSqlComments} from '../../src/services/sql-statement-policy.js';
+import {normalizeReadOnlyStatement,normalizeConsoleWrite,stripSqlComments} from '../../src/services/sql-statement-policy.js';
 const message=(body:Record<string,any>)=>{const b=BSON.serialize(body),h=Buffer.alloc(21);h.writeInt32LE(h.length+b.length);h.writeInt32LE(2013,12);return Buffer.concat([h,b]);};
 const scram=(username:string)=>new BSON.Binary(Buffer.from(`n,,n=${username},r=abc123`));
 it('MySQL subtraction cannot conceal a COMMIT/write script from read policy',()=>{
@@ -54,4 +54,14 @@ it('PostgreSQL nested comments and dollar-quoted strings cannot conceal followin
   for(const sql of ["SELECT $$'$$; COMMIT; UPDATE items SET value=1; --'", "SELECT 1 /* outer /* inner */ ' */; COMMIT; UPDATE items SET value=1; --'", 'SELECT a$$ FROM items; COMMIT; UPDATE items SET value=1; SELECT $$$$'])expect(()=>normalizeReadOnlyStatement(sql,'postgres')).toThrow();
   expect(()=>normalizeReadOnlyStatement("SELECT $tag$-- ' ; UPDATE demo$tag$; SELECT 2",'postgres')).not.toThrow();
   expect(()=>normalizeReadOnlyStatement('SELECT 1 /* outer /* nested */ still a comment */; SELECT 2','postgres')).not.toThrow();
+});
+
+it('every batch statement is admitted; file COPY and large-object file functions are forbidden',()=>{
+  for(const sql of ["SELECT 1; COPY pg_catalog.pg_class TO '/tmp/leak'", "SELECT 1; COPY t FROM E'/tmp/file'", 'SELECT 1; COPY t TO $$filename$$', "DO $$BEGIN COPY t TO '/tmp/file'; END$$;SELECT 1", "SELECT lo_export(1,'/tmp/file')", "SELECT lo_import('/etc/passwd')", 'SELECT pg_catalog."lo_export"(1, $path$/tmp/file$path$)']){
+    expect(()=>normalizeConsoleWrite(sql,'postgres'),sql).toThrow(/宿主文件|外部进程/);
+    expect(()=>normalizeReadOnlyStatement(sql,'postgres')).toThrow();
+  }
+  expect(()=>normalizeConsoleWrite('SELECT 1; COPY t TO STDOUT','postgres')).toThrow(/不支持/);
+  expect(()=>normalizeConsoleWrite('SELECT 1; DISCARD ALL','postgres')).toThrow(/不支持/);
+  expect(()=>normalizeConsoleWrite('BEGIN; SELECT 1; UPDATE items SET n=2; ROLLBACK; SELECT 3','postgres')).not.toThrow();
 });

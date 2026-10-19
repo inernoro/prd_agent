@@ -88,16 +88,20 @@ export function isLockingRead(sql: string, dialect?: SqlDialect): boolean {
 const HOST_ESCAPE_TOKENS: readonly RegExp[] = [
   /\boutfile\b/i,
   /\bdumpfile\b/i,
-  /\bload_file\s*\(/i,
+  /\bload_file\b/i,
   /\bpg_read_file\b/i,
   /\bpg_read_binary_file\b/i,
   /\bpg_ls_dir\b/i,
+  /\blo_import\b/i,
+  /\blo_export\b/i,
 ];
 
 /** 只能按词组认的（`LOAD DATA` / `COPY ... PROGRAM`）：先剥注释再匹配。 */
 const HOST_ESCAPE_PHRASES: readonly RegExp[] = [
   /\bload\s+data\b/i,
   /\bcopy\b[\s\S]*\bprogram\b/i,
+  // Server-side filenames may be ordinary, escape, Unicode, or dollar-quoted strings.
+  /\bcopy\b[\s\S]*?\b(?:to|from)\s*(?:(?:e|u&)?'|\$(?:[a-z_\u0080-\uffff][a-z0-9_\u0080-\uffff]*)?\$)/i,
 ];
 
 /** 方言：`#` 在 MySQL 里是行注释，在 PostgreSQL 里是运算符（`#>>` / `#>` / `#-` / 位异或）。 */
@@ -302,16 +306,16 @@ export function normalizeConsoleWrite(sql: string, dialect?: SqlDialect): string
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 100_000) throw new Error('SQL 过长（上限 100KB）');
-  if (!isSqlScript(body, dialect)) return normalizeWriteStatement(body, dialect);
   assertNoHostEscape(body, dialect);
+  if (!isSqlScript(body, dialect)) return normalizeWriteStatement(body, dialect);
   const code = stripSqlComments(body, { maskLiterals: true, dialect });
   // 工作台接受 SQL，不接受 mysql/psql 的本地命令或脚本文件指令。
   if (code.includes('\\') || /(^|;)\s*(source|delimiter)\b/i.test(code)) {
     throw new Error('执行框只接受 SQL 语句，不支持客户端命令或外部脚本文件。');
   }
-  const head = code.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
-  if (![...READ_STATEMENT_HEADS, ...WRITE_STATEMENT_HEADS, ...TRANSACTION_CONTROL_HEADS, ...CONNECTION_SCOPED_HEADS].includes(head)) {
-    throw new Error('无法识别 SQL 脚本的首条语句，未执行。');
+  for(const statement of code.split(';').filter(part=>part.trim())){
+    const head=statement.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase()||'';
+    if(![...READ_STATEMENT_HEADS,...WRITE_STATEMENT_HEADS,...TRANSACTION_CONTROL_HEADS,...CONNECTION_SCOPED_HEADS].includes(head))throw new Error('SQL 脚本含不支持的语句，未执行；请移除客户端指令或服务器文件操作。');
   }
   return body;
 }
