@@ -50,6 +50,10 @@ export class AlarmRelay {
     this.state.readyAt = Date.now(); this.save();
   }
   getItem(id: string) { return this.state.queue.find(i => i.id === id); }
+  unavailableItems(channels: AlarmChannelConfig[]) {
+    const available = new Set(channels.filter(c => c.enabled && c.kind === 'bark').map(c => c.id));
+    return this.state.queue.filter(item => !available.has(item.channelId));
+  }
   acknowledge(id: string): Item | undefined {
     const item = this.state.queue.find(i => i.id === id);
     this.state.queue = this.state.queue.filter(i => i.id !== id); this.save(); return item;
@@ -75,14 +79,24 @@ export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps
   channels: () => AlarmChannelConfig[];
   acknowledged: (item: Item, result: { ok: boolean; reason?: string; merged?: boolean }) => Promise<void>;
 }) {
+  const retireUnavailable = async () => {
+    for (const item of relay.unavailableItems(deps.channels())) {
+      // 先处理取消记录，再移出主站队列；不再交给接收端，也不能把取消当成送达。
+      try {
+        await deps.acknowledged(item, { ok: false, reason: '通知通道已停用或删除，本次投递已取消' });
+      } catch { throw new Error('未能保存取消记录，请稍后重试'); }
+      relay.acknowledge(item.id);
+    }
+  };
   router.use('/cds-system/alarm-relay', (req, res, next) => {
     const denied = assertUnscopedAdmin(req as Parameters<typeof assertUnscopedAdmin>[0]);
     if (denied) { res.status(denied.status).json(denied.body); return; }
     res.setHeader('Cache-Control', 'no-store'); next();
   });
   router.get('/cds-system/alarm-relay', (_req, res) => res.json(relay.status()));
-  router.put('/cds-system/alarm-relay', (req, res) => {
+  router.put('/cds-system/alarm-relay', async (req, res) => {
     try {
+      if (req.body.enabled === false) await retireUnavailable();
       if (req.body.publicKey) {
         const ids = req.body.channelIds;
         if (!Array.isArray(ids) || !ids.length || ids.some(id => !deps.channels().some(c => c.id === id && c.kind === 'bark'))) throw new Error('仅支持现有 Bark 通道');
@@ -103,6 +117,7 @@ export function registerAlarmRelayRoutes(router: Router, relay: AlarmRelay, deps
           relay.acknowledge(ack.id);
         }
       }
+      await retireUnavailable();
       res.json(relay.envelope(deps.channels()));
     } catch { res.status(400).json({ message: '外部通知同步失败，请检查接收端配置与回执' }); }
   });

@@ -6435,8 +6435,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         });
         else alarmLedger.record(item.channelId, result, item.event.drill ? 'drill' : 'alert', Date.now());
         const channel = stateService.listAlarmChannels().find(c => c.id === item.channelId);
-        if (channel && !result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
-          channelId: channel.id, channelName: channel.name, channelKind: channel.kind,
+        if (!result.merged) await withAlarmDeliveryHistory(activeServerEventLogStore, {
+          channelId: item.channelId, channelName: channel?.name ?? '已删除的通知通道', channelKind: channel?.kind ?? 'bark',
           kind: item.event.drill ? 'drill' : 'alert', eventKind: item.event.kind, projectId: item.event.projectId,
           targetId: item.event.targetId, targetName: item.event.targetName, detectedAt: item.event.detectedAt,
           title: item.event.targetName, body: '由独立监控统一投递，详细证据保留在事件记录中。',
