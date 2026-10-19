@@ -13449,13 +13449,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
           : `分支: \`${entry.branch}\`\n阶段: 准备独立部署源码`,
         force: true,
       });
-      const pullResult = selectedDeploymentVersion
+      let pullResult = selectedDeploymentVersion
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : deploymentNeedsSourceCheckout(profiles.map(p => resolveEffectiveProfile(p, inputBranch())))
         ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha)
         : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, requestCommitSha);
+      // Automatic database initialization reads repository files even for image-only services.
+      // Inspect the resolved target tree, never the mutable canonical checkout, before skipping source.
+      if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)
+        && await worktreeService.needsDatabaseInitializationSource(entry.worktreePath, pullResult.afterFull,
+          profiles.map(p => resolveEffectiveProfile(p, inputBranch()).workDir || '.'))) {
+        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, pullResult.afterFull);
+      }
       const deploymentSourceEntry = hasDeploymentSource(pullResult)
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
@@ -13687,6 +13694,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           detail: { versionId: selectedDeploymentVersion.id },
           timestamp: new Date().toISOString(),
         });
+      } else if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)) {
+        logEvent({ step: 'database-init', status: 'done', title: '目标提交无数据库初始化文件，跳过宿主源码扫描',
+          timestamp: new Date().toISOString() });
       } else {
         await runDatabaseInitializationForDeploy({
           entry: deploymentSourceEntry,

@@ -7,10 +7,11 @@ import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
 import { fetchWithLockRetry } from './git-fetch-retry.js';
 import { worktreePathActivity } from './worktree-path-activity.js';
+import { hasDatabaseInitializationSource } from './stack-detector.js';
 
 /** 仅应用已在镜像内且没有宿主文件依赖时，部署无需物化源码。 */
 export function deploymentNeedsSourceCheckout(profiles: readonly BuildProfile[]): boolean {
-  return profiles.length === 0 || profiles.some(p => !p.prebuiltImage || !!p.command?.trim()
+  return profiles.length === 0 || profiles.some(p => !p.prebuiltImage
     || !!p.managedBuild || !!p.localArtifact || p.cacheMounts?.some(m => m.kind !== 'volume'));
 }
 
@@ -351,6 +352,16 @@ export class WorktreeService {
   async resolveDeploymentCommit(branch: string, targetDir: string, commitSha?: string) {
     return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)],
       () => this.resolveDeploymentTarget(branch, targetDir, commitSha), true);
+  }
+
+  /** A failed/partial tree read retains the exact checkout instead of scanning mutable host source. */
+  async needsDatabaseInitializationSource(targetDir: string, commitSha: string, workDirs: readonly string[]): Promise<boolean> {
+    if (!/^[0-9a-f]{40}$/i.test(commitSha)) throw new Error('数据库初始化必须绑定完整提交');
+    try {
+      const tree = await this.shell.exec(`git ls-tree -r -z --name-only ${commitSha}`, { cwd: targetDir, timeout: 30_000 });
+      if (tree.exitCode !== 0 || (tree.stdout && !tree.stdout.endsWith('\0'))) return true;
+      return hasDatabaseInitializationSource(tree.stdout.split('\0').filter(Boolean), workDirs);
+    } catch { return true; }
   }
 
   private async resolveDeploymentTarget(branch: string, targetDir: string, commitSha?: string) {

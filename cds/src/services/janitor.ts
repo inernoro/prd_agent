@@ -288,7 +288,7 @@ export interface OrphanWorktreeFs {
    * `knownProjectIds` 是**白名单**，不是提示：只有名字在其中的顶层目录才是项目桶，
    * 其余一律整个跳过（既不当桶往下枚举，也不当候选）。见实现里的注释。
    */
-  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<WorktreeEnumeration>;
+  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<WorktreeEnumeration & { sourceBuckets?: string[] }>;
   /** 当前被任何容器（含已停止）bind-mount 的宿主路径。查不到时返回 null。 */
   listMountedHostPaths: () => Promise<string[] | null>;
   /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
@@ -309,6 +309,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
   listWorktreeDirs: async (base, knownProjectIds) => {
     const out: DiskWorktreeDir[] = [];
     const unreadable: string[] = [];
+    const sourceBuckets = new Set<string>();
     // 项目桶白名单（Codex PR #1275 二轮 P1）。此前是「顶层每个目录都当项目桶」，
     // 在**从扁平布局迁移过来的存量部署**上会酿成删活代码：
     // FU-04 的 migrateFlatLayoutIfNeeded 采用符号链接而非移动——原来的
@@ -354,7 +355,20 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
         continue;
       }
       for (const slug of slugs) {
-        if (slug.name === '.deployment-sources') continue; // 专用叶子回收，不能按孤儿分支删整桶。
+        if (slug.name === '.deployment-sources') {
+          // Never offer the whole source bucket for deletion, but keep its project discoverable.
+          const sourceRoot = path.join(projDir, slug.name);
+          if (!slug.isDirectory()) { sourceBuckets.add(proj.name); continue; }
+          try {
+            const buckets = await fs.promises.readdir(sourceRoot, { withFileTypes: true });
+            for (const bucket of buckets) {
+              if (!bucket.isDirectory() || (await fs.promises.readdir(path.join(sourceRoot, bucket.name))).length) {
+                sourceBuckets.add(proj.name); break;
+              }
+            }
+          } catch { unreadable.push(sourceRoot); }
+          continue;
+        }
         // 桶内条目认两种形态：真实目录，以及**指向真实 worktree 的符号链接**——
         // 扁平布局迁移留下的 `<base>/default/<slug>` 正是后者（Codex 六轮 P2）。
         // 此前 isDirectory() 一票否决把别名整个漏掉，而它的真身在顶层又被项目桶
@@ -397,7 +411,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
         }
       }
     }
-    return { dirs: out, unreadable };
+    return { dirs: out, unreadable, ...(sourceBuckets.size ? { sourceBuckets: [...sourceBuckets] } : {}) };
   },
   listMountedHostPaths: () => listMountedHostPaths(execDockerDetailed),
   readDirectoryIdentity: readWorktreeDirectoryIdentity,
@@ -780,7 +794,7 @@ export class JanitorService {
       );
     }
     if (tombstones.length && !enumerationBroken) {
-      const stillThere = new Set<string>();
+      const stillThere = new Set(enumeration.sourceBuckets || []);
       const removedSet = new Set(removed);
       for (const d of diskDirs) {
         if (removedSet.has(normalizeWorktreePath(d.path))) continue;
@@ -965,7 +979,8 @@ export class JanitorService {
               deferred: report.orphanWorktrees.deferred,
             }
             : null,
-          ...(report.deploymentSources?.scanned ? { deploymentSources: {
+          ...(report.deploymentSources && (report.deploymentSources.scanned || report.deploymentSources.failed.length
+            || Object.keys(report.deploymentSources.held).length) ? { deploymentSources: {
             scanned: report.deploymentSources.scanned, attempted: report.deploymentSources.attempted,
             removed: report.deploymentSources.removed.length, held: Object.keys(report.deploymentSources.held).length,
             deferred: report.deploymentSources.deferred,
@@ -1170,7 +1185,7 @@ export class JanitorService {
           nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
         const sources = report.deploymentSources;
         if (sources.lastAttemptedPath) this.deploymentSourceCursor = sources.lastAttemptedPath;
-        if (sources.scanned || sources.failed.length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
+        if (sources.scanned || sources.failed.length || Object.keys(sources.held).length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
         for (const f of sources.failed) report.errors.push(`deployment source: ${f.path}: ${f.error}`);
         report.orphanWorktrees = await this.runOrphanWorktreeReconcile();
         const o = report.orphanWorktrees;

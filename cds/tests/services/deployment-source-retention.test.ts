@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,8 +7,9 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { WorktreeService } from '../../src/services/worktree.js';
 import type { IShellExecutor } from '../../src/types.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 const exec = promisify(execFile), roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(p => fs.rm(p, {recursive:true,force:true}))); });
+afterEach(async () => { await flushAllJsonStateStores(); await Promise.all(roots.splice(0).map(p => fs.rm(p, {recursive:true,force:true}))); });
 async function fixture() {
  const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'cds-source-retention-')));roots.push(root);
  const repo=path.join(root,'repo');await fs.mkdir(repo);
@@ -40,6 +41,17 @@ describe('actual Git image-only source preparation',()=>{
   expect(a.sourcePath).not.toBe(b.sourcePath);expect(await fs.readFile(path.join(a.sourcePath,'source.txt'),'utf8')).toBe('immutable source');
   expect(execFileSync('/usr/bin/git',['-C',b.sourcePath,'rev-parse','HEAD'],{encoding:'utf8'}).trim()).toBe(f.sha);
  });
+ it('database source decisions and initialization files follow target A or C while canonical stays at B',async()=>{
+  const f=await fixture();await fs.writeFile(path.join(f.repo,'init.sql'),'select 1; -- A');f.git('add','.');f.git('commit','-m','init A');const a=f.git('rev-parse','HEAD');
+  await fs.writeFile(path.join(f.repo,'init.sql'),'select 2; -- B');f.git('commit','-am','init B');const b=f.git('rev-parse','HEAD');
+  const canonical=path.join(f.root,'canonical');f.git('worktree','add','--detach',canonical,b);
+  await fs.unlink(path.join(f.repo,'init.sql'));f.git('commit','-am','remove init');const c=f.git('rev-parse','HEAD');
+  expect(await f.service.needsDatabaseInitializationSource(canonical,a,['.'])).toBe(true);
+  expect(await f.service.needsDatabaseInitializationSource(canonical,c,['.'])).toBe(false);
+  const source=await f.service.prepareDeploymentSource('main',canonical,a);
+  expect(await fs.readFile(path.join(source.sourcePath,'init.sql'),'utf8')).toBe('select 1; -- A');
+  expect(await fs.readFile(path.join(canonical,'init.sql'),'utf8')).toBe('select 2; -- B');
+ });
 });
 
 import { JanitorService, defaultOrphanWorktreeFs } from '../../src/services/janitor.js';
@@ -49,6 +61,7 @@ import { readWorktreeDirectoryIdentity, WorktreeClaimHeldError } from '../../src
 import { reclaimDeploymentSources } from '../../src/services/deployment-source-retention.js';
 import { deploymentNeedsSourceCheckout } from '../../src/services/worktree.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
+import { detectDatabaseInitialization, hasDatabaseInitializationSource } from '../../src/services/stack-detector.js';
 
 async function sourceFixture() {
  const f=await fixture(),base=path.join(f.root,'worktrees'),canonical=path.join(base,'proj','branch');
@@ -69,6 +82,35 @@ describe('safe detached source retention on real Git and files',()=>{
   const report=await janitor.sweep();expect(report.deploymentSources?.removed).toContain(stale);expect(await fs.readFile(path.join(used,'source.txt'),'utf8')).toBe('immutable source');
   expect(janitor.getSnapshot().lastSweep?.deploymentSources).toMatchObject({scanned:2,attempted:1,removed:1,held:1,deferred:0});
   expect(f.git('worktree','list','--porcelain')).not.toContain(stale);expect(await fs.stat(f.canonical)).toBeTruthy();
+ });
+ it('keeps a deleted project discoverable while source data is held, then retires it after cleanup',async()=>{
+  const f=await sourceFixture();const dir=await f.make(),data=path.join(dir,'.cds-data');
+  await fs.mkdir(data);await fs.writeFile(path.join(data,'db'),'keep');f.git('worktree','remove',f.canonical);
+  const old=new Date(Date.now()-4*3600_000);await fs.utimes(dir,old,old);
+  const state=new StateService(path.join(f.root,'state.json'));state.addDeletedProjectWorktreeBucket('proj');
+  const janitor=new JanitorService(state,{enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,dockerPrune:false,imageRetention:false},f.base,undefined,()=>null,undefined,undefined,f.files);
+  const first=await janitor.sweep();expect(first.deploymentSources?.held[dir]).toBeTruthy();
+  expect(state.getDeletedProjectWorktreeBuckets().map(t=>t.projectId)).toEqual(['proj']);
+  await flushAllJsonStateStores();
+  expect(JSON.parse(await fs.readFile(path.join(f.root,'state.json'),'utf8')).deletedProjectWorktreeBuckets.map((t:any)=>t.projectId)).toEqual(['proj']);
+  expect(await fs.readFile(path.join(data,'db'),'utf8')).toBe('keep');
+  await fs.rm(data,{recursive:true});await fs.utimes(dir,old,old);
+  expect((await janitor.sweep()).deploymentSources?.removed).toContain(dir);
+  expect(state.getDeletedProjectWorktreeBuckets()).toEqual([]);
+  expect(f.git('worktree','list','--porcelain')).not.toContain(dir);
+ });
+ it('reports unreadable source buckets even when no leaf was scanned',async()=>{
+  const f=await sourceFixture();await f.make();const root=path.join(f.base,'proj','.deployment-sources');
+  const original=fs.readdir.bind(fs);const read=vi.spyOn(fs,'readdir').mockImplementation(((p:any,...args:any[])=>
+    String(p)===root?Promise.reject(Object.assign(new Error('denied'),{code:'EACCES'})):(original as any)(p,...args))as any);
+  const log=vi.spyOn(console,'log').mockImplementation(()=>{});
+  try{
+   const state=new StateService(path.join(f.root,'state.json'));state.addProject({id:'proj',slug:'proj',name:'Test',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}as any);state.addBranch(f.branch);
+   const janitor=new JanitorService(state,{enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,dockerPrune:false,imageRetention:false},f.base,undefined,()=>null,undefined,undefined,f.files);
+   const report=await janitor.sweep();expect(report.deploymentSources?.held[root]).toBeTruthy();
+   expect(janitor.getSnapshot().lastSweep?.deploymentSources).toMatchObject({scanned:0,attempted:0,held:1});
+   expect(log.mock.calls.some(args=>String(args[0]).includes('部署源码回收'))).toBe(true);
+  }finally{read.mockRestore();log.mockRestore();}
  });
  it.each(['child','parent'])('retains a snapshot covered by a %s bind, including stopped containers',async kind=>{
   const f=await sourceFixture();const dir=await f.make();f.files.listMountedHostPaths=async()=>[kind==='child'?path.join(dir,'some-data'):path.dirname(dir)];
@@ -144,8 +186,21 @@ describe('source requirement uses actual effective profile shape',()=>{
  it('only pure image graphs skip source checkout',()=>{
   expect(deploymentNeedsSourceCheckout([image])).toBe(false);
   expect(deploymentNeedsSourceCheckout([{...image,cacheMounts:[{kind:'volume',hostPath:'cache',containerPath:'/cache'}]}])).toBe(false);
-  expect(deploymentNeedsSourceCheckout([{...image,command:'sh ./start.sh'}])).toBe(true);
+  expect(deploymentNeedsSourceCheckout([{...image,command:'node dist/server.js'}])).toBe(false);
   expect(deploymentNeedsSourceCheckout([{...image,prebuiltImage:false}])).toBe(true);
   expect(deploymentNeedsSourceCheckout([{...image,cacheMounts:[{hostPath:'/host/config',containerPath:'/config'}]}])).toBe(true);
+ });
+ it.each(['prisma/schema.prisma','drizzle.config.mjs','src/data-source.ts','config/database.js','manage.py','alembic.ini','db/migrate/001.rb','init.sql'])('shares database source signal %s with the existing detector',async file=>{
+  const f=await fixture(),scan=path.join(f.root,'api');await fs.mkdir(path.dirname(path.join(scan,file)),{recursive:true});await fs.writeFile(path.join(scan,file),'fixture');
+  expect(detectDatabaseInitialization(scan).length).toBeGreaterThan(0);
+  expect(hasDatabaseInitializationSource([`api/${file}`],['api'])).toBe(true);
+  expect(hasDatabaseInitializationSource([`api/${file}`],['./api/'])).toBe(true);
+  expect(hasDatabaseInitializationSource([`unrelated/${file}`],['api'])).toBe(false);
+ });
+ it('retains source if the exact Git tree cannot be completely read',async()=>{
+  for(const result of [{stdout:'manage.py',stderr:'',exitCode:0},{stdout:'',stderr:'unavailable',exitCode:1}]){
+   const service=new WorktreeService({exec:async()=>result});
+   expect(await service.needsDatabaseInitializationSource('/unused','a'.repeat(40),['.'])).toBe(true);
+  }
  });
 });

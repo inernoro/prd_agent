@@ -3461,19 +3461,44 @@ describe('Branch Routes', () => {
     });
   });
 
-  it.each(['/deploy', '/deploy/api'])('pure image %s resolves its target without creating a detached source tree', async endpoint => {
+  it.each([['/deploy',''], ['/deploy/api',''], ['/deploy','node dist/server.js'], ['/deploy/api','node dist/server.js']])('pure image %s command %s resolves its target without creating a detached source tree', async (endpoint,command) => {
     const sha = 'b'.repeat(40);
     stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API',
-      dockerImage: `ghcr.io/acme/api:sha-${sha}`, prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 });
+      dockerImage: `ghcr.io/acme/api:sha-${sha}`, prebuiltImage: true, command, workDir: '.', containerPort: 3000 });
     stateService.addBranch({ id: 'image-without-source', projectId: 'default', branch: 'feature/image-only',
       worktreePath: path.join(tmpDir, 'worktrees', 'image-without-source'), status: 'idle', services: {}, createdAt: new Date().toISOString() });
     mock.addResponsePatternFirst(/git rev-parse/, () => ({ stdout: sha, stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/git ls-tree/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     readyArtifactFixture();
     const response = await request(server, 'POST', `/api/branches/image-without-source${endpoint}`, { commitSha: sha });
     expect((await waitForAcceptedRun(response)).status).toBe('running');
     expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
     expect(mock.commands.filter(command => command.includes('git worktree add --detach'))).toEqual([]);
     expect(fs.existsSync(WorktreeService.deploymentSourceRootFor(stateService.getBranch('image-without-source')!.worktreePath))).toBe(false);
+  });
+
+  it.each([true,false])('image deploy initializes only target-commit scripts (target has init: %s)',async targetHasInit=>{
+    const sha='b'.repeat(40),canonical=path.join(tmpDir,'worktrees','image-db-target');
+    fs.mkdirSync(canonical,{recursive:true});fs.writeFileSync(path.join(canonical,'manage.py'),'canonical B must not run');
+    stateService.addBuildProfile({id:'api',projectId:'default',name:'API',dockerImage:`ghcr.io/acme/api:sha-${sha}`,prebuiltImage:true,command:'node dist/server.js',workDir:'.',containerPort:3000});
+    stateService.addBranch({id:'image-db-target',projectId:'default',branch:'feature/image-db',worktreePath:canonical,status:'idle',services:{},createdAt:new Date().toISOString()});
+    mock.addResponsePatternFirst(/git rev-parse/,()=>({stdout:sha,stderr:'',exitCode:0}));
+    mock.addResponsePatternFirst(/git ls-tree/,()=>({stdout:targetHasInit?'manage.py\0':'',stderr:'',exitCode:0}));
+    mock.addResponsePatternFirst(/git worktree add --detach '([^']+)'/,match=>{
+      fs.mkdirSync(match[1],{recursive:true});fs.writeFileSync(path.join(match[1],'manage.py'),'target A only');return{stdout:'',stderr:'',exitCode:0};
+    });
+    const migration=vi.spyOn(containerService,'runProfileCommand').mockImplementation(async entry=>{
+      expect(entry.worktreePath).not.toBe(canonical);
+      expect(fs.readFileSync(path.join(entry.worktreePath,'manage.py'),'utf8')).toBe('target A only');
+      return{stdout:'migration done',stderr:'',exitCode:0};
+    });
+    readyArtifactFixture();
+    try{
+      const response=await request(server,'POST','/api/branches/image-db-target/deploy',{commitSha:sha});
+      expect((await waitForAcceptedRun(response)).status).toBe('running');
+      expect(migration).toHaveBeenCalledTimes(targetHasInit?1:0);
+      expect(fs.readFileSync(path.join(canonical,'manage.py'),'utf8')).toBe('canonical B must not run');
+    }finally{migration.mockRestore();}
   });
 
   describe('immutable deployment version reuse', () => {
