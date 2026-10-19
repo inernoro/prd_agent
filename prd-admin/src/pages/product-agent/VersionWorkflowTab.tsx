@@ -59,7 +59,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function VersionWorkflowTab({ productId }: { productId: string }) {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const currentUserId = useAuthStore((state) => state.user?.userId);
   const [tab, setTab] = useState<MainTab>(searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release');
   const [initiations, setInitiations] = useState<ProductInitiation[]>([]);
@@ -77,6 +77,17 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [productName, setProductName] = useState('');
+
+  useEffect(() => {
+    if (searchParams.get('versionAction') !== 'apply' || searchParams.get('versionTab') !== 'initiation') return;
+    setTab('initiation');
+    setDialog('initiation');
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      next.delete('versionAction');
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     void getVersionApplicationProduct(productId).then((res) => {
@@ -156,7 +167,7 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex gap-2">
-          <Primary onClick={() => setDialog('initiation')}><Plus size={14} />立项</Primary>
+          <Primary onClick={() => setDialog('initiation')}><Plus size={14} />申领内部版本号</Primary>
         </div>
       </div>
       <InitiationTable
@@ -214,7 +225,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     ? '继续立项决策'
     : isRetry
       ? '重新发起立项'
-      : '发起立项';
+      : '申领内部版本号';
   const [step, setStep] = useState(() => {
     if (seed?.status === 'review_failed') return 2;
     if (seed?.status === 'decision_pending') return 3;
