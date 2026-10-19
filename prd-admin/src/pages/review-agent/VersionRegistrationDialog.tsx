@@ -402,52 +402,40 @@ function InputFields({ form, setForm, mode, strictFormal }: { form: FormState; s
   );
 }
 
-function VersionRegistrySelect({
-  systems,
-  selectedSystemId,
+export function VersionRegistrySelect({
+  applications,
   selectedApplicationId,
   suggestedApplication,
-  onSelectSystem,
   onSelectApplication,
   onOpenRegistry,
 }: {
-  systems: VersionRegistrySystem[];
-  selectedSystemId: string;
+  applications: VersionRegistryApplication[];
   selectedApplicationId: string;
   suggestedApplication?: VersionRegistryApplication;
-  onSelectSystem: (systemId: string) => void;
   onSelectApplication: (applicationId: string) => void;
   onOpenRegistry: () => void;
 }) {
-  const selectedSystem = systems.find((system) => system.id === selectedSystemId);
-  const applications = selectedSystem?.applications ?? [];
   return (
     <section className="rounded-xl border border-indigo-500/35 bg-indigo-500/[0.04] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-medium text-token-primary">先确定系统和应用</h3>
-          <p className="mt-1 text-xs leading-5 text-token-muted">版本号按应用独立分配。粘贴企微内容或选中方案后，系统会优先带出匹配的应用。</p>
+          <h3 className="text-sm font-medium text-token-primary">确定应用</h3>
+          <p className="mt-1 text-xs leading-5 text-token-muted">版本号按应用独立分配。粘贴企微内容或选中方案后会优先匹配应用；未匹配时可直接选择。</p>
         </div>
         <button type="button" onClick={onOpenRegistry} className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--accent-fg-blue)] hover:underline">
-          <Settings2 className="h-3.5 w-3.5" />新建系统或应用
+          <Settings2 className="h-3.5 w-3.5" />管理应用
         </button>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <Field label="系统" required>
-          <select className={FIELD_CLASS} value={selectedSystemId} onChange={(event) => onSelectSystem(event.target.value)}>
-            <option value="">请选择系统</option>
-            {systems.map((system) => <option key={system.id} value={system.id}>{system.name}</option>)}
-          </select>
-        </Field>
+      <div className="mt-4">
         <Field label="应用" required>
-          <select className={FIELD_CLASS} value={selectedApplicationId} disabled={!selectedSystemId} onChange={(event) => onSelectApplication(event.target.value)}>
-            <option value="">{selectedSystemId ? '请选择应用' : '请先选择系统'}</option>
+          <select className={FIELD_CLASS} value={selectedApplicationId} onChange={(event) => onSelectApplication(event.target.value)}>
+            <option value="">请选择应用</option>
             {applications.map((application) => <option key={application.id} value={application.id}>{application.name}</option>)}
           </select>
         </Field>
       </div>
-      {suggestedApplication ? (
-        <p className="mt-3 text-xs text-[color:var(--accent-fg-blue)]">已从方案匹配到“{suggestedApplication.systemName} / {suggestedApplication.name}”。你仍可手动调整。</p>
+      {suggestedApplication?.id === selectedApplicationId ? (
+        <p className="mt-3 text-xs text-[color:var(--accent-fg-blue)]">已从方案匹配到“{suggestedApplication.name}”。如有误可选择其他应用。</p>
       ) : null}
     </section>
   );
@@ -466,7 +454,6 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   const [snapshots, setSnapshots] = useState<VersionRegistrationSnapshotSummary[]>([]);
   const [registrySystems, setRegistrySystems] = useState<VersionRegistrySystem[]>([]);
   const [registryMatches, setRegistryMatches] = useState<VersionRegistryMatch[]>([]);
-  const [selectedSystemId, setSelectedSystemId] = useState('');
   const [selectedApplicationId, setSelectedApplicationId] = useState('');
   const [publicRecords, setPublicRecords] = useState<VersionRegistration[]>([]);
   const [publicKind, setPublicKind] = useState<'' | ApplyKind>('');
@@ -559,16 +546,9 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
   );
   const patchForm = (update: Partial<FormState>) => setForm((previous) => ({ ...previous, ...update }));
 
-  const chooseSystem = useCallback((systemId: string) => {
-    setSelectedSystemId(systemId);
-    setSelectedApplicationId('');
-  }, []);
-
   const chooseApplication = useCallback((applicationId: string) => {
     setSelectedApplicationId(applicationId);
-    const application = registryApplications.find((item) => item.id === applicationId);
-    if (application) setSelectedSystemId(application.systemId);
-  }, [registryApplications]);
+  }, []);
 
   const chooseKind = (nextKind: ApplyKind) => {
     setKind(nextKind);
@@ -581,7 +561,6 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     setReviewSubmissionId('');
     setInternalRegistrationId('');
     setManualTCode('');
-    setSelectedSystemId('');
     setSelectedApplicationId('');
     setRegistryMatches([]);
   };
@@ -663,7 +642,6 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
         setRegistryMatches(result.data.items);
         const firstMatch = result.data.items[0];
         if (firstMatch && !selectedApplicationId) {
-          setSelectedSystemId(firstMatch.systemId);
           setSelectedApplicationId(firstMatch.id);
         }
       });
@@ -706,7 +684,7 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
       return;
     }
     if (!selectedApplicationId) {
-      setMessage('请先选择系统和应用；版本号会按所选应用独立分配');
+      setMessage('请先选择应用；版本号会按所选应用独立分配');
       return;
     }
     if (kind === 'formal' && (!form.plannedTrainingAt || Number.isNaN(new Date(`${form.plannedTrainingAt}+08:00`).getTime()))) {
@@ -874,7 +852,6 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
     }
     setNewApplicationName('');
     await reload();
-    setSelectedSystemId(result.data.application.systemId);
     setSelectedApplicationId(result.data.application.id);
     setMessage(result.data.reused ? `应用“${result.data.application.name}”已存在，已直接复用。` : `已创建应用“${result.data.application.name}”，现在可以返回申领页使用。`);
   };
@@ -1006,11 +983,9 @@ export function VersionRegistrationDialog({ open, onClose }: Props) {
                   </div>
 
                   <VersionRegistrySelect
-                    systems={registrySystems}
-                    selectedSystemId={selectedSystemId}
+                    applications={registryApplications}
                     selectedApplicationId={selectedApplicationId}
                     suggestedApplication={suggestedApplication}
-                    onSelectSystem={chooseSystem}
                     onSelectApplication={chooseApplication}
                     onOpenRegistry={() => setView('registry')}
                   />
