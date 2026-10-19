@@ -233,6 +233,11 @@ export function ReleaseWorkflowDetail({
     if (currentUser?.userId && !ownerId) setOwnerId(currentUser.userId);
   }, [currentUser?.userId, ownerId]);
 
+  useEffect(() => {
+    if (!isNew || !ownerId) return;
+    setTeamIds((previous) => previous.includes(ownerId) ? previous : [ownerId, ...previous]);
+  }, [isNew, ownerId]);
+
   const inheritedRequirementIds = useMemo(() => selectedInitiation?.requirementIds ?? [], [selectedInitiation]);
   const inheritedRequirements = useMemo(
     () => requirements.filter((r) => inheritedRequirementIds.includes(r.id)),
@@ -697,7 +702,10 @@ export function ReleaseWorkflowDetail({
               {temporary && (
                 <InfoBox>临时优化需求请在「需求」标签页选择要上线的需求条目。</InfoBox>
               )}
-              <Field label="项目组成员 *"><MemberChecks members={members} selected={teamIds} onChange={setTeamIds} /></Field>
+              <div role="group" aria-label="项目组成员">
+                <span className="mb-1.5 block text-xs text-token-secondary">项目组成员 *</span>
+                <MemberChecks members={members} selected={teamIds} onChange={setTeamIds} />
+              </div>
               {!temporary && <>
                 <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
                 <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
@@ -1083,6 +1091,7 @@ function RequirementSummary({ title, requirements, emptyText }: {
 function MemberChecks({ members, selected, onChange }: {
   members: ProductMember[]; selected: string[]; onChange: (ids: string[]) => void;
 }) {
+  const currentUser = useAuthStore((state) => state.user);
   const [extraNames, setExtraNames] = useState<Map<string, string>>(new Map());
   const extraIds = useMemo(() => {
     const knownIds = new Set(members.map((member) => member.userId));
@@ -1096,20 +1105,33 @@ function MemberChecks({ members, selected, onChange }: {
     });
     return () => { active = false; };
   }, [extraIds]);
+  const memberName = (id: string) => members.find((member) => member.userId === id)?.displayName
+    || (id === currentUser?.userId ? currentUser?.displayName : extraNames.get(id)) || id;
+  const availableMembers = members.filter((member) => !selected.includes(member.userId));
   return (
-    <div className="space-y-2 rounded-lg border border-token-subtle bg-token-nested p-2">
-      <div className="max-h-40 overflow-auto">
-        {members.length === 0
-          ? <div className="p-2 text-xs text-token-muted-faint">该产品暂无成员，可从用户目录搜索添加</div>
-          : members.map((m) => (
-            <label key={m.userId} className="flex cursor-pointer gap-2 rounded px-2 py-1.5 text-xs text-token-secondary hover-bg-soft">
-              <input type="checkbox" className="accent-cyan-400" checked={selected.includes(m.userId)}
-                onChange={() => onChange(selected.includes(m.userId) ? selected.filter((id) => id !== m.userId) : [...selected, m.userId])} />
-              {m.displayName}
-            </label>))}
-      </div>
-      {extraIds.map((id) => <button key={id} type="button" onClick={() => onChange(selected.filter((value) => value !== id))} className="mr-1 rounded-full border border-cyan-400/25 bg-cyan-400/10 px-2 py-1 text-xs text-token-secondary" title="移除成员">{extraNames.get(id) ?? id} ×</button>)}
-      <UserSearchSelect value="" onChange={(id) => { if (id && !selected.includes(id)) onChange([...selected, id]); }} placeholder="搜索其他项目成员" uiSize="sm" />
+    <div className="space-y-4">
+      <section aria-label="已选项目成员" className="rounded-lg border border-token-subtle bg-token-nested p-3">
+        <div className="mb-2 text-xs font-medium text-token-secondary">已选成员（{selected.length}）</div>
+        {selected.length === 0
+          ? <p className="py-2 text-xs text-token-muted">尚未选择成员，请在下方搜索添加。</p>
+          : <div role="list" className="space-y-2" style={{ maxHeight: 200, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+              {selected.map((id) => <div role="listitem" key={id} className="flex items-center justify-between gap-4 rounded-md border border-token-subtle px-3 py-2">
+                <span className="min-w-0 break-words text-sm text-token-primary">{memberName(id)}</span>
+                <button type="button" aria-label={`移除成员 ${memberName(id)}`} onClick={() => onChange(selected.filter((value) => value !== id))} className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-token-muted hover-bg-soft hover:text-[color:var(--semantic-danger-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+                  <X size={12} />移除
+                </button>
+              </div>)}
+            </div>}
+      </section>
+      <section aria-label="添加项目成员" className="rounded-lg border border-token-subtle bg-token-nested p-3">
+        <div className="mb-2 text-xs font-medium text-token-secondary">添加成员</div>
+        <UserSearchSelect value="" onChange={(id) => { if (id && !selected.includes(id)) onChange([...selected, id]); }} placeholder="搜索姓名，添加其他项目成员" uiSize="sm" />
+        {availableMembers.length > 0 && <div className="mt-3 flex flex-wrap gap-2" style={{ maxHeight: 160, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {availableMembers.map((member) => <button key={member.userId} type="button" onClick={() => onChange([...selected, member.userId])} className="inline-flex items-center gap-1 rounded-md border border-token-subtle px-2.5 py-1.5 text-xs text-token-secondary hover-bg-soft">
+            <Plus size={12} />添加 {member.displayName}
+          </button>)}
+        </div>}
+      </section>
     </div>
   );
 }
