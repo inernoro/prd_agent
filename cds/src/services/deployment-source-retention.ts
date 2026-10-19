@@ -9,6 +9,7 @@ export interface DeploymentSourceRetentionReport {
   scanned: number; attempted: number; removed: string[]; held: Record<string, string>;
   failed: Array<{ path: string; error: string }>; deferred: number;
   lastAttemptedPath?: string;
+  lastScannedPath?: string;
 }
 const related = (a: string, b: string) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -28,6 +29,7 @@ export async function reclaimDeploymentSources(input: {
   const realBase = await fs.realpath(input.base).catch(() => null);
   if (!realBase) return report;
   const candidates: Array<{ dir: string; mtime: number; identity: WorktreeDirectoryIdentity }> = [];
+  const sourceDirs: string[] = [];
   for (const project of new Set(input.projectIds)) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(project) || project === '..') continue;
     const projectDir = path.join(input.base, project), root = path.join(projectDir, '.deployment-sources');
@@ -43,27 +45,32 @@ export async function reclaimDeploymentSources(input: {
       if (!leaves) { report.held[bucketPath] = '无法读取部署源码目录'; continue; }
       for (const leaf of leaves) {
         if (!leaf.isDirectory() || !UUID.test(leaf.name)) continue;
-        const dir = path.join(bucketPath, leaf.name);
-        if (++report.scanned > 1024) { report.deferred++; continue; }
-        const identity = await input.files.readDirectoryIdentity?.(dir);
-        const expectedPath = path.join(realBase, path.relative(path.resolve(input.base), path.resolve(dir)));
-        if (!identity || identity.entryPath !== expectedPath) { report.held[dir] = '目录归属无法确认'; continue; }
-        const mtime = await input.files.statDirMtimeMs(dir);
-        if (mtime === null || input.nowMs - mtime < minAge || isClaimed(dir)) {
-          report.held[dir] = '目录过新、正在部署、台账引用或容器挂载'; continue;
-        }
-        candidates.push({ dir, mtime, identity });
+        sourceDirs.push(path.join(bucketPath, leaf.name));
       }
     }
+  }
+  sourceDirs.sort();
+  const next = input.afterPath ? sourceDirs.findIndex(dir => dir > input.afterPath!) : 0;
+  const start = next < 0 ? 0 : next;
+  const scanOrder = [...sourceDirs.slice(start), ...sourceDirs.slice(0, start)];
+  for (const dir of scanOrder) {
+    if (report.scanned >= 1024) { report.deferred++; continue; }
+    report.scanned++; report.lastScannedPath = dir;
+    const identity = await input.files.readDirectoryIdentity?.(dir);
+    const expectedPath = path.join(realBase, path.relative(path.resolve(input.base), path.resolve(dir)));
+    if (!identity || identity.entryPath !== expectedPath) { report.held[dir] = '目录归属无法确认'; continue; }
+    const mtime = await input.files.statDirMtimeMs(dir);
+    if (mtime === null || input.nowMs - mtime < minAge || isClaimed(dir)) {
+      report.held[dir] = '目录过新、正在部署、台账引用或容器挂载'; continue;
+    }
+    candidates.push({ dir, mtime, identity });
   }
   if (!candidates.length) return report;
   const mounted = await input.files.listMountedHostPaths();
   if (mounted === null) { report.held[input.base] = '容器挂载枚举未完整确认，本轮不回收部署源码'; return report; }
-  candidates.sort((a,b) => a.mtime - b.mtime || a.dir.localeCompare(b.dir));
-  // Continue after the previous round's dispatch so retained data cannot starve later clean leaves.
-  const previous = candidates.findIndex(c => c.dir === input.afterPath);
-  const ordered = previous < 0 ? candidates : [...candidates.slice(previous + 1), ...candidates.slice(0, previous + 1)];
-  for (const {dir, identity} of ordered) {
+  // Preserve the scan order. Resuming after the last dispatch keeps the 20-removal
+  // budget and 1024-leaf window on one cursor, including worker-held leaves.
+  for (const {dir, identity} of candidates) {
     if (isMounted(dir, mounted)) { report.held[dir] = '运行或停止的容器仍挂载该目录'; continue; }
     if (report.attempted >= max) { report.deferred++; continue; }
     const activity = worktreePathActivity.tryAcquire([dir]);

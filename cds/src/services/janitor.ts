@@ -1184,7 +1184,7 @@ export class JanitorService {
           branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
           nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
         const sources = report.deploymentSources;
-        if (sources.lastAttemptedPath) this.deploymentSourceCursor = sources.lastAttemptedPath;
+        this.deploymentSourceCursor = sources.lastAttemptedPath ?? sources.lastScannedPath ?? this.deploymentSourceCursor;
         if (sources.scanned || sources.failed.length || Object.keys(sources.held).length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
         for (const f of sources.failed) report.errors.push(`deployment source: ${f.path}: ${f.error}`);
         report.orphanWorktrees = await this.runOrphanWorktreeReconcile();

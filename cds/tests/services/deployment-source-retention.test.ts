@@ -159,6 +159,41 @@ describe('safe detached source retention on real Git and files',()=>{
   expect((await janitor.sweep()).deploymentSources?.attempted).toBe(20);expect(seen.size).toBe(20);
   expect((await janitor.sweep()).deploymentSources?.attempted).toBe(20);expect(seen.size).toBe(21);
  });
+ it('advances dispatch inside a 2048-leaf scan even when both windows begin with worker-held data',async()=>{
+  const f=await sourceFixture(),original=await f.make(),bucket=path.dirname(original);
+  const leaf=(i:number)=>path.join(bucket,`${i.toString(16).padStart(8,'0')}-0000-4000-8000-000000000000`);
+  const clean=leaf(20);f.git('worktree','move',original,clean);
+  await Promise.all(Array.from({length:2048},async(_,i)=>{
+   if(i===20)return;const dir=leaf(i);await fs.mkdir(path.join(dir,'.cds-data'),{recursive:true});await fs.writeFile(path.join(dir,'.cds-data','keep'),'persistent');
+  }));
+  f.files.statDirMtimeMs=async()=>0;
+  const state=new StateService(path.join(f.root,'state.json'));state.addProject({id:'proj',slug:'proj',name:'Test',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}as any);state.addBranch(f.branch);
+  const janitor=new JanitorService(state,{enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,dockerPrune:false,imageRetention:false},f.base,undefined,()=>null,undefined,undefined,f.files);
+  const removed:string[]=[];
+  for(let round=0;round<4;round++){
+   const report=(await janitor.sweep()).deploymentSources!;expect(report.scanned).toBeLessThanOrEqual(1024);expect(report.attempted).toBe(20);removed.push(...report.removed);
+  }
+  expect(removed).toContain(clean);expect(f.git('worktree','list','--porcelain')).not.toContain(clean);
+  for(const i of [0,19,21,1024,1043,2047])expect(await fs.readFile(path.join(leaf(i),'.cds-data','keep'),'utf8')).toBe('persistent');
+ },20000);
+ it.each([false,true])('scans beyond retained prefixes even when the previous scan leaf disappeared: %s',async removeCursor=>{
+  const f=await sourceFixture(),original=await f.make(),bucket=path.dirname(original);
+  const clean=path.join(bucket,'ffffffff-ffff-4fff-8fff-ffffffffffff');f.git('worktree','move',original,clean);
+  const young:string[]=[];
+  for(let i=0;i<(removeCursor?1025:1024);i++){
+   const dir=path.join(bucket,`${i.toString(16).padStart(8,'0')}-0000-4000-8000-000000000000`);
+   await fs.mkdir(dir);await fs.writeFile(path.join(dir,'keep'),'young');young.push(dir);
+  }
+  const state=new StateService(path.join(f.root,'state.json'));state.addProject({id:'proj',slug:'proj',name:'Test',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}as any);state.addBranch(f.branch);
+  const janitor=new JanitorService(state,{enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,dockerPrune:false,imageRetention:false},f.base,undefined,()=>null,undefined,undefined,f.files);
+  const first=(await janitor.sweep()).deploymentSources!;
+  expect(first.scanned).toBe(1024);expect(first.attempted).toBe(0);expect(first.removed).toEqual([]);
+  if(removeCursor)await fs.rm(first.lastScannedPath!,{recursive:true});
+  const second=(await janitor.sweep()).deploymentSources!;
+  expect(second.scanned).toBeLessThanOrEqual(1024);expect(second.attempted).toBe(1);expect(second.removed).toContain(clean);
+  expect(f.git('worktree','list','--porcelain')).not.toContain(clean);
+  for(const dir of young)if(!removeCursor||dir!==first.lastScannedPath)expect(await fs.readFile(path.join(dir,'keep'),'utf8')).toBe('young');
+ },15000);
  it('rejects a parent swapped to a foreign directory inside the same base before identity capture',async()=>{
   const f=await sourceFixture();const dir=await f.make(),bucket=path.dirname(dir);
   const sourceRoot=path.dirname(bucket),foreignRoot=path.join(f.base,'proj','foreign');
