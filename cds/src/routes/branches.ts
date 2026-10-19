@@ -1,3 +1,4 @@
+import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
@@ -1620,7 +1621,7 @@ function normalizeIpv4Allowlist(input: unknown): string[] {
       result.push(`${ip}/32`);
     }
   }
-  return Array.from(new Set(result));
+  return normalizeRestrictedIpv4Allowlist(result);
 }
 
 async function ensureDockerNetwork(shell: IShellExecutor, network: string): Promise<void> {

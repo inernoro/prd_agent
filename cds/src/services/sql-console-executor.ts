@@ -21,25 +21,43 @@ export interface SqlConsoleOptions {
 export class SqlResultCollector {
   private sets: SqlConsoleResultSet[] = [];
   private records: string[] = [];
-  private bytes = 0;
+  private bytes = Buffer.byteLength(JSON.stringify({ columns: [], rows: [], rowCount: 0, resultSets: [], output: 'SQL 执行已停止，未返回完整结果。', truncated: false })) + 32;
   private truncated = false;
-  constructor(private cap = 256 * 1024) {}
-  fields(columns: string[]): SqlConsoleResultSet {
+  constructor(private cap = 256 * 1024) { this.cap = Math.max(cap, this.bytes); }
+  fields(columns: string[]): SqlConsoleResultSet | undefined {
+    const remaining = this.cap - this.bytes;
+    let minimum = columns.length * 3;
+    if (minimum > remaining) { this.truncated = true; return; }
+    for (const name of columns) { minimum += name.length; if (minimum > remaining) { this.truncated = true; return; } }
     const set = { columns, rows: [] as Array<Array<string | null>>, rowCount: 0 };
-    this.bytes += Buffer.byteLength(JSON.stringify(columns));
+    // Include the result object, array separators, future row-count digits, and the
+    // compatibility columns duplicated at the top level for the first query.
+    const size = Buffer.byteLength(JSON.stringify(set)) + 33
+      + (this.sets.length === 0 ? Buffer.byteLength(JSON.stringify(columns)) - 2 : 0);
+    if (this.bytes + size > this.cap) { this.truncated = true; return; }
+    this.bytes += size;
     this.sets.push(set);
     return set;
   }
-  row(set: SqlConsoleResultSet, values: unknown[]): void {
+  row(set: SqlConsoleResultSet | undefined, values: unknown[]): void {
+    if (!set) return;
     set.rowCount += 1;
+    const remaining = this.cap - this.bytes;
+    let minimum = values.length * 3;
+    if (minimum > remaining) { this.truncated = true; return; }
+    for (const value of values) {
+      minimum += typeof value === 'string' || Buffer.isBuffer(value) ? value.length : 0;
+      if (minimum > remaining) { this.truncated = true; return; }
+    }
     const row = values.map(value => value === null ? null : Buffer.isBuffer(value) ? (isUtf8(value) ? value.toString('utf8') : `\\x${value.toString('hex')}`) : String(value));
-    const size = Buffer.byteLength(JSON.stringify(row));
+    const size = (Buffer.byteLength(JSON.stringify(row)) + 1) * (set === this.sets[0] ? 2 : 1);
     if (this.bytes + size > this.cap) { this.truncated = true; return; }
     this.bytes += size;
     set.rows.push(row);
   }
   record(value: string): void {
-    const size = Buffer.byteLength(value);
+    if (value.length > this.cap - this.bytes) { this.truncated = true; return; }
+    const size = Buffer.byteLength(JSON.stringify(value));
     if (this.bytes + size > this.cap) { this.truncated = true; return; }
     this.bytes += size;
     this.records.push(value);
@@ -96,7 +114,7 @@ async function executeMysql(options: SqlConsoleOptions, collector: SqlResultColl
       if (!collect) return;
       // mysql2 typings advertise indices on metadata/headers, but some versions omit them.
       // rowsAsArray is the stable boundary; a DML header is never a table row.
-      if (Array.isArray(row) && current) collector.row(current,row);
+      if (Array.isArray(row)) { if (current) collector.row(current,row); }
       else {
         current=undefined;
         const header = row as ResultSetHeader;
@@ -135,10 +153,13 @@ class ConsolePgQuery extends pg.Query {
     this.current = this.collector.fields(message.fields.map(field => field.name));
     (pg.Query.prototype as unknown as { handleRowDescription(message: unknown): void }).handleRowDescription.call(this, message);
   }
-  handleCommandComplete(message: { text: string }, connection: unknown): void {
+  handleCommandComplete(message: { text: string }): void {
     this.collector.record(message.text);
     this.current = undefined;
-    (pg.Query.prototype as unknown as { handleCommandComplete(message: unknown, connection: unknown): void }).handleCommandComplete.call(this, message, connection);
+    // This adapter uses simple-query text only. Do not invoke pg's aggregate-result
+    // handler: it retains every previous FieldDef array outside the collector cap.
+    // Keeping the native result's command unset lets the next RowDescription reuse
+    // its parser metadata; end-event native results are deliberately ignored.
   }
 }
 

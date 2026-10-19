@@ -164,7 +164,7 @@ describe('resource external TCP access', () => {
     const endpoint = '/api/branches/main-branch/resources/infra%3Amysql-main/external-access';
     const valid = { enabled: true, ttlMinutes: 120, allowlist: ['203.0.113.10'] };
     expect((await request(server!, 'PUT', endpoint, valid)).status).toBe(403);
-    for (const body of [{ ...valid, ttlMinutes: 0 }, { ...valid, ttlMinutes: 1441 }, { ...valid, ttlMinutes: 1.5 }, { ...valid, allowlist: ['0.0.0.0/0'] }, { ...valid, allowlist: ['203.0.113.10/32/1'] }]) {
+    for (const body of [{ ...valid, ttlMinutes: 0 }, { ...valid, ttlMinutes: 1441 }, { ...valid, ttlMinutes: 1.5 }, { ...valid, allowlist: ['0.0.0.0/0'] }, { ...valid, allowlist: ['0.0.0.0/1', '128.0.0.0/1'] }, { ...valid, allowlist: ['203.0.113.10/32/1'] }]) {
       expect((await request(server!, 'PUT', endpoint, body, { 'x-test-cookie-auth': '1' })).status).toBe(400);
     }
     vi.stubEnv('CDS_RESOURCE_TCP_ENABLED', '0');

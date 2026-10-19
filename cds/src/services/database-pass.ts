@@ -9,6 +9,7 @@ import { resourceTcpAccessConfig } from './resource-tcp-access.js';
 import { changeDatabasePassAccount, type DatabasePassTarget } from './database-pass-accounts.js';
 import { openDatabasePassGateway } from './database-pass-gateway.js';
 import { databasePassCertificates } from './database-pass-certificates.js';
+import { normalizeRestrictedIpv4Allowlist } from './restricted-ipv4-allowlist.js';
 
 export interface DatabasePass {
   id: string; projectId: string; branchId: string; resourceId: string; owner: string;
@@ -101,7 +102,7 @@ export class DatabasePassService {
     await this.ready;
     if(!this.capability().enabled)throw new Error(this.capability().reason);
     if(!allowlist.length||allowlist.length>20||!Number.isInteger(ttlMinutes)||ttlMinutes<1||ttlMinutes>30)throw new Error('通行证需要明确IP白名单，有效期为1–30分钟');
-    for(const rule of allowlist){const [ip,bits,...rest]=rule.split('/');if(isIP(ip)!==4||rest.length||!/^\d+$/.test(bits||'')||Number(bits)<1||Number(bits)>32)throw new Error('白名单须为IPv4/CIDR，不允许向所有IP放行');}
+    allowlist=normalizeRestrictedIpv4Allowlist(allowlist);
     await this.sweep();
     if(this.passes.filter(p=>!['expired','revoked'].includes(p.status)).length+this.issuanceReservations>=50)throw new Error('通行证申请与活动数量已达上限，请等待申请完成或先撤销旧证');
     // Reserve synchronously before asynchronous discovery; concurrent callers share the cap.

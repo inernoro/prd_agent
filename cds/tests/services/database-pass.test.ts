@@ -134,7 +134,7 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
   });
   it('不允许缺少白名单、全网、超30分钟或未加密签发',async()=>{
     const service=new DatabasePassService(dir,target);
-    for(const rules of [[],['0.0.0.0/0'],['example.com/32'],['192.0.2.10/32/1']])await expect(service.prepare(scope,'one',rules)).rejects.toThrow();
+    for(const rules of [[],['0.0.0.0/0'],['0.0.0.0/1','128.0.0.0/1'],['example.com/32'],['192.0.2.10/32/1']])await expect(service.prepare(scope,'one',rules)).rejects.toThrow();
     await expect(service.prepare(scope,'one',['192.0.2.10/32'],31)).rejects.toThrow();
     vi.stubEnv('CDS_SECRET_KEY','');await expect(service.prepare(scope,'one',['192.0.2.10/32'])).rejects.toThrow();expect(mocks.account).not.toHaveBeenCalled();
   });

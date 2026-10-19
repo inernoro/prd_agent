@@ -32,12 +32,26 @@ describe('数据库协议多结果展示', () => {
   });
 
   it('按 UTF-8 字节截断，不切破一个值；保留先前完整行及后续空查询列名', () => {
-    const collector = new SqlResultCollector(64);
+    const collector = new SqlResultCollector(512);
     const first = collector.fields(['text']);
     collector.row(first, ['短内容']);
-    collector.row(first, ['汉'.repeat(30)]);
+    collector.row(first, ['汉'.repeat(200)]);
     collector.fields(['empty']);
     expect(collector.result()).toMatchObject({ truncated: true, rows: [['短内容']], rowCount: 2 });
     expect(collector.result().resultSets![1].columns).toEqual(['empty']);
   });
+});
+
+it('bounds wide/repeated query metadata, including JSON overhead and first-result duplication',()=>{
+ const cap=4096,collector=new SqlResultCollector(cap);
+ const first=collector.fields(['kept']);collector.row(first,['正常']);
+ for(let i=0;i<1000;i++){const set=collector.fields(['列'.repeat(100)]);collector.row(set,['row']);}
+ const result=collector.result();expect(result.truncated).toBe(true);expect(result.rows).toEqual([['正常']]);
+ expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(cap);expect(result.resultSets!.length).toBeLessThan(1000);
+});
+it('drops oversized metadata without creating a fake empty result or retaining its rows',()=>{
+ const collector=new SqlResultCollector(1024);const skipped=collector.fields(['名'.repeat(2000)]);expect(skipped).toBeUndefined();collector.row(skipped,['discard']);
+ collector.record('UPDATE 1');const kept=collector.fields(['ok']);collector.row(kept,['2']);
+ expect(collector.result()).toMatchObject({truncated:true,columns:['ok'],rows:[['2']],output:'UPDATE 1'});
+ expect(Buffer.byteLength(JSON.stringify(collector.result()))).toBeLessThanOrEqual(1024);
 });

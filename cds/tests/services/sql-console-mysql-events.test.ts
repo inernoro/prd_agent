@@ -39,3 +39,8 @@ it('does not retry a failed TLS control connection or execute the SQL',async()=>
  expect(mocks.create).toHaveBeenCalledTimes(2);expect(query).not.toHaveBeenCalled();
  expect(control.destroy).toHaveBeenCalled();expect(connection.destroy).toHaveBeenCalled();
 });
+
+it('skips rows whose metadata exceeded the cap without inventing modification headers',async()=>{
+ connections(q=>{q.emit('fields',[{name:'x'.repeat(300000)}]);q.emit('result',['discard'],0);q.emit('result',{affectedRows:1},1);q.emit('fields',[{name:'kept'}]);q.emit('result',['2'],2);q.emit('end');});
+ const result=await executeSqlConsole(options);expect(result).toMatchObject({truncated:true,columns:['kept'],rows:[['2']]});expect(result.resultSets).toHaveLength(1);expect(result.output).toContain('1 row affected');expect(result.output).not.toContain('undefined');
+});

@@ -816,6 +816,9 @@ describe('resource database access', () => {
     });
     await new Promise<void>((resolve) => { server = harness.app.listen(0, '127.0.0.1', resolve); });
     const base = '/api/branches/main-branch/resources/infra%3Amysql-batch/data/query-write';
+    const fullNetwork=await request(server!, 'POST', '/api/branches/main-branch/resources/infra%3Amysql-batch/database-passes', {allowlist:['0.0.0.0/1','128.0.0.0/1'],ttlMinutes:30}, {'x-test-cookie-auth':'1'});
+    expect(fullNetwork.status).toBe(409);expect(fullNetwork.body.error).toContain('覆盖全部');
+
     const sql = 'UPDATE sample SET n=1; UPDATE sample SET n=2';
     const body = { sql, confirmResourceName: 'MySQL batch' };
     const denied = await request(server!, 'POST', base, body, { 'x-test-project-key': '1' });
