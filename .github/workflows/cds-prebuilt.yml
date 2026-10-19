@@ -111,21 +111,27 @@ jobs:
             cp -R ".claude/skills/$skill" "cds/agent-skills/$skill"
           done
 
-      - name: Build & push CDS preview runtime
+      # 验收前只加载到 runner，部署端不能拉到未通过冒烟的 SHA 产物。
+      - name: Build & load CDS preview runtime
         uses: docker/build-push-action@v5
         with:
           context: ./cds
           file: ./cds/Dockerfile.preview
-          push: true
+          push: false
+          load: true
           tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Smoke CDS preview runtime
         run: |
-          docker run -d --name cds-preview-smoke --memory 768m --cpus 1 \
+          docker run --pull=never -d --name cds-preview-smoke --memory 768m --cpus 1 \
             -p 127.0.0.1:19900:9900 \
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
           python3 cds/scripts/smoke-preview-runtime.py http://127.0.0.1:19900
+
+      - name: Publish verified CDS preview runtime
+        if: success()
+        run: docker push ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
 
       - name: Preview smoke logs
         if: failure()
