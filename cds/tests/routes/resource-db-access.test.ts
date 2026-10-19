@@ -821,6 +821,9 @@ describe('resource database access', () => {
     const denied = await request(server!, 'POST', base, body, { 'x-test-project-key': '1' });
     expect(denied.status).toBe(403);
     expect(harness.sqlExecutor).not.toHaveBeenCalled();
+    const ambiguous = await request(server!, 'POST', base, { ...body, sql: String.raw`UPDATE demo SET x='a\'; LOAD/**/DATA INFILE '/tmp/p' INTO TABLE demo; SELECT 'x'` }, { 'x-test-cookie-auth': '1' });
+    expect(ambiguous.status).toBe(400);
+    expect(harness.sqlExecutor).not.toHaveBeenCalled();
     const success = await request(server!, 'POST', base, body, { 'x-test-cookie-auth': '1' });
     expect(success.status).toBe(200);
     expect(success.body.output).toContain('1 row affected');

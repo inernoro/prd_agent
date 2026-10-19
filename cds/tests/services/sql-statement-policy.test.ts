@@ -325,3 +325,24 @@ describe('前后端判据不许漂移', () => {
     expectGuardRedOnMutation(guard, realFront, mutate(realFront, "'with', 'table', 'values'", "'table', 'values'"));
   });
 });
+
+describe('write scripts under resource string modes',()=>{
+  const prefix=String.raw`UPDATE demo SET x='a\'; `;
+  it('recognizes a second statement exposed by NO_BACKSLASH_ESCAPES',()=>{
+    expect(isSqlScript(prefix+String.raw`UPDATE demo SET n=2; SELECT 'x'`,'mysql')).toBe(true);
+  });
+  it('rejects hidden host access and client commands in either string interpretation',()=>{
+    for(const suffix of [
+      String.raw`SELECT 1 INTO OUTFILE '/tmp/p'; SELECT 'x'`,
+      String.raw`LOAD/**/DATA INFILE '/tmp/p' INTO TABLE demo; SELECT 'x'`,
+      String.raw`source /tmp/p; SELECT 'x'`,
+      String.raw`\! id; SELECT 'x'`,
+    ]){
+      expect(()=>normalizeConsoleWrite(prefix+suffix,'mysql'),suffix).toThrow();
+      expect(()=>normalizeWriteStatement(prefix+suffix,'mysql'),suffix).toThrow();
+    }
+  });
+  it('also scans PostgreSQL writes with either standard string configuration',()=>{
+    expect(()=>normalizeConsoleWrite(prefix+String.raw`COPY demo TO/**/'/tmp/p'; SELECT 'x'`,'postgres')).toThrow();
+  });
+});

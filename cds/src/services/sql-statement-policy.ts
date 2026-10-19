@@ -110,7 +110,7 @@ export type SqlDialect = 'mysql' | 'postgres';
 export interface SqlScanOptions {
   /** 抹掉字符串字面量的内容（引号保留）。 */
   maskLiterals?: boolean;
-  /** Scan both standard and backslash-escaped strings on the read path; server modes vary. */
+  /** Scan both standard and backslash-escaped strings; server modes vary. */
   backslashEscapes?: boolean;
   /**
    * 语句所属方言。**不传 = 不知道 = 按「`#` 不是注释」处理**。
@@ -209,10 +209,12 @@ export function classifySqlStatement(sql: string, dialect?: SqlDialect): SqlStat
 
 /** 命中宿主逃逸写法就抛；两条路径共用。 */
 export function assertNoHostEscape(sql: string, dialect?: SqlDialect): void {
-  const stripped = stripSqlComments(sql, { dialect });
-  for (const pattern of [...HOST_ESCAPE_TOKENS, ...HOST_ESCAPE_PHRASES]) {
-    if (pattern.test(sql) || pattern.test(stripped)) {
-      throw new Error('检测到读写宿主文件或调用外部进程的 SQL（如 INTO OUTFILE / LOAD DATA / COPY ... PROGRAM），已拒绝执行。');
+  for (const backslashEscapes of [true, false]) {
+    const stripped = stripSqlComments(sql, { dialect, backslashEscapes });
+    for (const pattern of [...HOST_ESCAPE_TOKENS, ...HOST_ESCAPE_PHRASES]) {
+      if (pattern.test(sql) || pattern.test(stripped)) {
+        throw new Error('检测到读写宿主文件或调用外部进程的 SQL（如 INTO OUTFILE / LOAD DATA / COPY ... PROGRAM），已拒绝执行。');
+      }
     }
   }
 }
@@ -299,7 +301,8 @@ export function normalizeWriteStatement(sql: string, dialect?: SqlDialect): stri
 
 /** 批量修改由一个客户端连接执行，不拆成若干独立的 query 请求。 */
 export function isSqlScript(sql: string, dialect?: SqlDialect): boolean {
-  return stripSqlComments(normalizeStatementBody(sql), { maskLiterals: true, dialect }).includes(';');
+  return [true, false].some(backslashEscapes =>
+    stripSqlComments(normalizeStatementBody(sql), { maskLiterals: true, dialect, backslashEscapes }).includes(';'));
 }
 
 export function normalizeConsoleWrite(sql: string, dialect?: SqlDialect): string {
@@ -308,14 +311,18 @@ export function normalizeConsoleWrite(sql: string, dialect?: SqlDialect): string
   if (body.length > 100_000) throw new Error('SQL 过长（上限 100KB）');
   assertNoHostEscape(body, dialect);
   if (!isSqlScript(body, dialect)) return normalizeWriteStatement(body, dialect);
-  const code = stripSqlComments(body, { maskLiterals: true, dialect });
-  // 工作台接受 SQL，不接受 mysql/psql 的本地命令或脚本文件指令。
-  if (code.includes('\\') || /(^|;)\s*(source|delimiter)\b/i.test(code)) {
-    throw new Error('执行框只接受 SQL 语句，不支持客户端命令或外部脚本文件。');
-  }
-  for(const statement of code.split(';').filter(part=>part.trim())){
-    const head=statement.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase()||'';
-    if(![...READ_STATEMENT_HEADS,...WRITE_STATEMENT_HEADS,...TRANSACTION_CONTROL_HEADS,...CONNECTION_SCOPED_HEADS].includes(head))throw new Error('SQL 脚本含不支持的语句，未执行；请移除客户端指令或服务器文件操作。');
+  // The script can itself SET sql_mode/standard_conforming_strings. Every possible
+  // interpretation must admit every statement; never trust just the leading UPDATE.
+  for (const backslashEscapes of [true, false]) {
+    const code = stripSqlComments(body, { maskLiterals: true, dialect, backslashEscapes });
+    // 工作台接受 SQL，不接受 mysql/psql 的本地命令或脚本文件指令。
+    if (code.includes('\\') || /(^|;)\s*(source|delimiter)\b/i.test(code)) {
+      throw new Error('执行框只接受 SQL 语句，不支持客户端命令或外部脚本文件。');
+    }
+    for (const statement of code.split(';').filter(part => part.trim())) {
+      const head = statement.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase() || '';
+      if (![...READ_STATEMENT_HEADS, ...WRITE_STATEMENT_HEADS, ...TRANSACTION_CONTROL_HEADS, ...CONNECTION_SCOPED_HEADS].includes(head)) throw new Error('SQL 脚本含不支持的语句，未执行；请移除客户端指令或服务器文件操作。');
+    }
   }
   return body;
 }
