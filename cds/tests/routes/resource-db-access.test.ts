@@ -935,6 +935,8 @@ describe('resource database access', () => {
     harness.stateService.setCustomEnvVar('MYSQL_DATABASE', 'branch_app', 'main-branch');
     harness.stateService.setCustomEnvVar('MYSQL_USER', 'cds_main', 'main-branch');
     harness.stateService.setCustomEnvVar('MYSQL_PASSWORD', 'branch-pw', 'main-branch');
+    const mysqlCa = '-----BEGIN CERTIFICATE-----\nqa-resource-ca\n-----END CERTIFICATE-----';
+    harness.shell.addResponsePattern(/docker exec 'cds-mysql-main' cat \/var\/lib\/mysql\/ca.pem/, () => ({ stdout: mysqlCa, stderr: '', exitCode: 0 }));
     harness.sqlExecutor.mockImplementation(async options => options.sql.startsWith('SELECT') ? sqlResult(['id', 'name'], [['1', 'Ada']]) : sqlResult());
     await new Promise<void>((resolve) => {
       server = harness.app.listen(0, '127.0.0.1', resolve);
@@ -956,6 +958,7 @@ describe('resource database access', () => {
     expect(harness.sqlExecutor).toHaveBeenCalledTimes(6);
     expect(harness.sqlExecutor.mock.calls.every(([o]) => o.user === 'cds_main' && o.password === 'branch-pw' && o.database === 'branch_app')).toBe(true);
     expect(harness.sqlExecutor.mock.calls.map(([o]) => o.readOnly)).toEqual([false, false, true, false, false, false]);
+    expect(harness.sqlExecutor.mock.calls.every(([o]) => o.mysqlCa === mysqlCa)).toBe(true);
   });
 
   it('runs PostgreSQL DDL and CRUD against the branch-selected database', async () => {
@@ -998,6 +1001,7 @@ describe('resource database access', () => {
     expect(harness.sqlExecutor).toHaveBeenCalledTimes(6);
     expect(harness.sqlExecutor.mock.calls.every(([o]) => o.user === 'cds_main' && o.password === 'branch-pw' && o.database === 'branch_pg')).toBe(true);
     expect(harness.sqlExecutor.mock.calls.map(([o]) => o.readOnly)).toEqual([false, false, true, false, false, false]);
+    expect(harness.sqlExecutor.mock.calls.every(([o]) => o.mysqlCa === undefined)).toBe(true);
   });
 
   it('resolves PostgreSQL service env templates before workbench queries and init SQL', async () => {

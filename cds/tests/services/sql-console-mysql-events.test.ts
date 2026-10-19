@@ -23,3 +23,19 @@ it('also supports actual mysql2 events that omit metadata/header indices',async(
  connections(q=>{q.emit('fields',[{name:'one'}]);q.emit('result',['1'],0);q.emit('fields',undefined);q.emit('result',{affectedRows:1});q.emit('fields',[{name:'three'}]);q.emit('result',['3'],2);q.emit('end');});
  const result=await executeSqlConsole(options);expect(result.resultSets?.map(s=>s.rows)).toEqual([[['1']],[['3']]]);expect(result.output).toContain('1 row affected');
 });
+
+it('uses the resource CA for both the control and SQL connections',async()=>{
+ connections(q=>q.emit('end'));
+ const mysqlCa='-----BEGIN CERTIFICATE-----\nresource-ca\n-----END CERTIFICATE-----';
+ await executeSqlConsole({...options,mysqlCa});
+ expect(mocks.create).toHaveBeenCalledTimes(2);
+ for(const [config] of mocks.create.mock.calls)expect(config.ssl).toEqual({ca:mysqlCa,rejectUnauthorized:true,verifyIdentity:false});
+});
+it('does not retry a failed TLS control connection or execute the SQL',async()=>{
+ const {control,connection}=connections(q=>q.emit('end'));
+ control.connect=cb=>cb(new Error('certificate verify failed'));
+ const query=vi.spyOn(connection,'query');
+ await expect(executeSqlConsole({...options,mysqlCa:'wrong-ca'})).rejects.toThrow('certificate verify failed');
+ expect(mocks.create).toHaveBeenCalledTimes(2);expect(query).not.toHaveBeenCalled();
+ expect(control.destroy).toHaveBeenCalled();expect(connection.destroy).toHaveBeenCalled();
+});

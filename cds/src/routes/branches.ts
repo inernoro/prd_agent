@@ -7007,14 +7007,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { user, password, database: postgresDatabaseForBranch(service, branch), secrets: [password] };
   }
 
+  /** Auto-generated MySQL CA is public material; legacy servers may have no TLS CA. */
+  async function mysqlResourceCa(containerName: string): Promise<string | undefined> {
+    if (isPreviewInstance() || !containerName) return undefined;
+    const read = await shell.exec(`docker exec ${routeShellQuote(containerName)} cat /var/lib/mysql/ca.pem`, { timeout: 5000 });
+    return read.exitCode === 0 && read.stdout.includes('BEGIN CERTIFICATE') ? read.stdout : undefined;
+  }
+
   async function runSqlDataQuery(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000, readOnly = true): Promise<DbDataQueryResult> {
     if (service.status !== 'running') throw new Error('数据库服务当前未运行，请启动后重试。');
     const creds = runtime === 'postgres' ? postgresClientCredentials(service, branch) : mysqlClientCredentials(service, branch);
     if (!creds.database || !/^[a-zA-Z0-9_]+$/.test(creds.database)) throw new Error('数据库名不合法，未执行 SQL。');
     try {
+      const mysqlCa = runtime === 'mysql' ? await mysqlResourceCa(service.containerName || '') : undefined;
       return await (deps.sqlConsoleExecutor || executeSqlConsole)({
         runtime, port: service.hostPort, user: creds.user, password: creds.password,
-        database: creds.database, sql, timeoutMs, readOnly,
+        database: creds.database, sql, timeoutMs, readOnly, ...(mysqlCa ? { mysqlCa } : {}),
       });
     } catch (error) {
       const message = explainBranchDbAuthFailure({
@@ -9480,11 +9488,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const env=resolvedInfraEnv(service,branch);
     const mysqlAdmin=runtime==='mysql'?resolveMysqlAdmin(service,branch):undefined;
     if(mysqlAdmin&&!mysqlAdmin.available)throw new Error('MySQL未配置可用的root管理员凭据，不能签发通行证');
-    let mysqlCa:string|undefined;
-    if(runtime==='mysql'){
-      const read=await shell.exec(`docker exec ${routeShellQuote(resourceContainerName(resource))} cat /var/lib/mysql/ca.pem`,{timeout:5000});
-      if(read.exitCode===0&&read.stdout.includes('BEGIN CERTIFICATE'))mysqlCa=read.stdout;
-    }
+    const mysqlCa = runtime === 'mysql' ? await mysqlResourceCa(resourceContainerName(resource)) : undefined;
     return {runtime:runtime as DatabasePassTarget['runtime'],port:service.hostPort,
       database:runtime==='mongodb'?mongoDatabaseForBranch(service,branch):sqlDataDatabase(runtime as SqlDataRuntime,service,branch),
       adminUser:runtime==='mysql'?'root':runtime==='postgres'?(env.POSTGRES_USER||'postgres'):(env.MONGO_INITDB_ROOT_USERNAME||''),

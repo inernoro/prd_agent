@@ -13,6 +13,8 @@ export interface SqlConsoleOptions {
   sql: string;
   readOnly: boolean;
   timeoutMs: number;
+  /** Resource CA for the fixed loopback MySQL endpoint. Never retry TLS failures as plaintext. */
+  mysqlCa?: string;
 }
 
 /** Database protocol metadata, rather than CLI display text, is the result boundary. */
@@ -53,8 +55,12 @@ export class SqlResultCollector {
 }
 
 async function executeMysql(options: SqlConsoleOptions, collector: SqlResultCollector): Promise<void> {
-  const control = mysql.createConnection({ host: '127.0.0.1', port: options.port, user: options.user, password: options.password, database: options.database, connectTimeout: Math.min(options.timeoutMs, 10_000) });
+  // Docker MySQL's generated certificate lacks a loopback SAN. Authenticate against
+  // this resource's CA only; the endpoint is fixed to loopback, never caller supplied.
+  const tls = options.mysqlCa ? { ssl: { ca: options.mysqlCa, rejectUnauthorized: true, verifyIdentity: false } } : {};
+  const control = mysql.createConnection({ ...tls, host: '127.0.0.1', port: options.port, user: options.user, password: options.password, database: options.database, connectTimeout: Math.min(options.timeoutMs, 10_000) });
   const connection = mysql.createConnection({
+    ...tls,
     host: '127.0.0.1', port: options.port, user: options.user,
     password: options.password, database: options.database,
     charset: 'utf8mb4', multipleStatements: true, rowsAsArray: true,
