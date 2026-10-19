@@ -50,6 +50,8 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   projects: AgentProjectOption[];
   projectsLoading?: boolean;
+  projectsError?: string;
+  onReloadProjects?: () => void;
   context?: AgentPageContext;
 }
 
@@ -64,7 +66,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: 
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
 
-export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoading = false, context }: Props): JSX.Element {
+export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoading = false, projectsError = '', onReloadProjects, context }: Props): JSX.Element {
   const [active, setActive] = useState<TabKey>('connect');
   const sourceContext = context || createAgentMissionContext('projects');
   const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
@@ -111,6 +113,11 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
     effectiveProjectId,
   });
   const targetKind = target.kind;
+  const setupError = target.kind === 'system' ? '' : projectsError || (
+    !projectsLoading && target.kind === 'existing' && !projects.some((project) => project.id === target.projectId)
+      ? '当前项目不在可见列表中，请重新读取或明确选择目标；尚未生成接入口令。'
+      : ''
+  );
   const prompt = useMemo(
     () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
     [cdsOrigin, target.kind, effectiveProjectId, selectedContext.id, selectedContext.pagePath],
@@ -194,6 +201,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
               onChange={(event) => chooseProject(event.target.value)}
               className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 text-sm text-foreground"
             >
+              {target.kind === 'existing' && !projects.some((project) => project.id === target.projectId) ? (
+                <option value={target.projectId}>当前项目暂不可用</option>
+              ) : null}
               {projects.map((project) => (
                 <option key={project.id} value={project.id}>{project.name} ({project.slug})</option>
               ))}
@@ -253,21 +263,30 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
             data-agent-starter-slot={active === 'starter' ? 'true' : undefined}
             className={active === 'starter' ? undefined : 'hidden'}
           >
-            <AgentStarterTab
+            {setupError ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} /> : <AgentStarterTab
               active={active === 'starter'}
               cdsPrompt={prompt}
               projectId={targetKind === 'existing' ? effectiveProjectId : ''}
               onOpenMarketplace={() => setActive('marketplace')}
-            />
+            />}
           </div>
           {active === 'init' ? <ProjectInitTab /> : null}
-          {active === 'connect' ? <ConnectTab prompt={prompt} loading={projectsLoading} onCopied={() => { explicitSelection.current = true; }} /> : null}
+          {active === 'connect' ? setupError
+            ? <ProjectScopeError message={setupError} onRetry={onReloadProjects} />
+            : <ConnectTab prompt={prompt} loading={projectsLoading} onCopied={() => { explicitSelection.current = true; }} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
           {active === 'marketplace' ? <MarketplaceTab /> : null}
         </div>
       </DialogContent>
     </Dialog>
   );
+}
+
+function ProjectScopeError({ message, onRetry }: { message: string; onRetry?: () => void }): JSX.Element {
+  return <div role="alert" className="space-y-3 rounded-md border border-[hsl(var(--hairline))] p-3 text-sm">
+    <p>{message}</p>
+    {onRetry ? <Button variant="outline" onClick={onRetry}>重新读取项目</Button> : null}
+  </div>;
 }
 
 function ConnectTab({ prompt, loading, onCopied }: { prompt: string; loading: boolean; onCopied: () => void }): JSX.Element {

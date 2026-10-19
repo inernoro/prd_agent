@@ -48,6 +48,26 @@ describe('CDS Agent 接入口令', () => {
     }
   });
 
+  it('系统任务即使发现 CDS Self 项目也不能降为项目授权', () => {
+    const target = resolveAgentConnectTarget({ tab: 'connect', selection: { kind: 'system' }, effectiveProjectId: 'cds-self' });
+    expect(target).toEqual({ kind: 'system' });
+    const prompt = buildCdsAgentPrompt({ cdsOrigin: 'https://cds.example', target, context: createAgentMissionContext('auth') });
+    expect(prompt).toContain('target=system');
+    expect(prompt).not.toContain('project=');
+  });
+
+  it('页面指定的项目不在可见列表时保留目标，不改成第一项或新建项目', () => {
+    const projects = [{ id: 'other', name: '其他项目', slug: 'other' }];
+    for (const context of [
+      resolveAgentPageContext({ pathname: '/branches/unavailable' }),
+      resolveAgentPageContext({ pathname: '/release-center', search: '?project=unavailable' }),
+    ]) {
+      expect(chooseAgentProjectId(projects, context)).toBe('');
+      expect(initialAgentConnectSelection(projects, context)).toEqual({ kind: 'project', projectId: 'unavailable' });
+      expect(initialAgentConnectSelection([], context)).toEqual({ kind: 'project', projectId: 'unavailable' });
+    }
+  });
+
   it('每个任务只携带所需技能引用，不再复制全部能力目录与操作手册', () => {
     for (const contextId of Object.keys(AGENT_MISSION_DEFINITIONS) as Array<keyof typeof AGENT_MISSION_DEFINITIONS>) {
       const context = createAgentMissionContext(contextId, 'proj-a');

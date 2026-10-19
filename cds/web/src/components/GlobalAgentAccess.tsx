@@ -42,6 +42,8 @@ export function GlobalAgentAccess(): JSX.Element {
   const [open, setOpen] = useState(false);
   const [requestedContextId, setRequestedContextId] = useState<AgentPageContextId | undefined>(undefined);
   const [projects, setProjects] = useState<AgentProjectOption[] | null>(null);
+  const [projectsError, setProjectsError] = useState('');
+  const [projectsRequest, setProjectsRequest] = useState(0);
   const currentLocation = typeof window === 'undefined'
     ? routerLocation
     : {
@@ -66,9 +68,12 @@ export function GlobalAgentAccess(): JSX.Element {
     if (!open) return undefined;
     const ctrl = new AbortController();
     setProjects(null);
+    setProjectsError('');
     apiRequest<AgentProjectsResponse>('/api/projects', { signal: ctrl.signal })
       .then((data) => {
-        setProjects((data.projects || []).map((project) => ({
+        if (ctrl.signal.aborted) return;
+        if (!Array.isArray(data.projects)) throw new Error('Invalid projects response');
+        setProjects(data.projects.map((project) => ({
           id: project.id,
           name: project.aliasName || project.name || project.slug || project.id,
           slug: project.slug || project.id,
@@ -79,11 +84,12 @@ export function GlobalAgentAccess(): JSX.Element {
         })));
       })
       .catch((err: unknown) => {
-        if ((err as DOMException)?.name === 'AbortError') return;
+        if (ctrl.signal.aborted || (err as DOMException)?.name === 'AbortError') return;
         setProjects([]);
+        setProjectsError('项目范围暂时无法确认，请重新读取；尚未生成接入口令。');
       });
     return () => ctrl.abort();
-  }, [open]);
+  }, [open, projectsRequest]);
 
   useEffect(() => {
     setRequestedContextId(undefined);
@@ -120,6 +126,8 @@ export function GlobalAgentAccess(): JSX.Element {
         onOpenChange={handleOpenChange}
         projects={projects || []}
         projectsLoading={projects === null}
+        projectsError={projectsError}
+        onReloadProjects={() => setProjectsRequest((value) => value + 1)}
         context={context}
       />
     </>

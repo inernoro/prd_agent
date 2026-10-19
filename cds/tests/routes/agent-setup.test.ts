@@ -58,7 +58,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const response = await fetch(`${origin}/api/agent/setup.json?target=existing&project=does-not-exist&skills=preview-url`);
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], cliVersion: '0.17.1', authentication: 'existing-page-approval' });
+    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.2', cliVersion: '0.17.2', authentication: 'existing-page-approval' });
     expect(body.installedSkills).toHaveLength(5);
     expect(body.project).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();

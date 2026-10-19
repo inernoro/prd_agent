@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -259,9 +259,15 @@ def _auth_headers() -> dict[str, str]:
     return h
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _request(method: str, path: str, body: Any = None, timeout: int = 15,
              extra_headers: dict[str, str] | None = None,
-             fatal_network_errors: bool = True) -> tuple[int, Any, dict[str, str]]:
+             fatal_network_errors: bool = True,
+             follow_redirects: bool = True) -> tuple[int, Any, dict[str, str]]:
     """Low-level HTTP: returns (status, parsed_json_or_text, headers).
 
     每个请求都带 X-CdsCli-Version 头，服务端如响应 X-Cds-Cli-Latest 就
@@ -282,7 +288,8 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, method=method, data=data, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        open_request = urllib.request.urlopen if follow_redirects else urllib.request.build_opener(_NoRedirectHandler()).open
+        with open_request(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             parsed: Any = raw
             try:
@@ -709,6 +716,12 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         die("接入自检未通过：" + action, code=2,
             extra={"data": {"connected": False, "checks": checks}})
 
+    def request(path: str) -> tuple[int, Any, dict[str, str]]:
+        response = _request("GET", path, timeout=10, fatal_network_errors=False, follow_redirects=False)
+        if response[0] in (301, 302, 303, 307, 308):
+            fail("host", "unexpected_redirect", "目标接口发生重定向，已停止继续发送凭据；先核对 CDS 主机与代理配置，不重新授权。")
+        return response
+
     summary = _credential_summary()
     if summary["conflicts"]:
         fail("credentials", "credential_conflict", "先解决环境与仓库的凭据来源冲突，不要重新授权。")
@@ -742,7 +755,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     checks.append({"stage": "skills", "passed": True, "loadOnly": selected})
 
     print("接入自检：核对服务端协议与版本。", file=sys.stderr)
-    status, manifest, _ = _request("GET", "/api/agent/setup.json", timeout=10, fatal_network_errors=False)
+    status, manifest, _ = request("/api/agent/setup.json")
     if status != 200 or not isinstance(manifest, dict) or manifest.get("version") != "cds-agent-setup.v1":
         fail("protocol", "setup_unavailable", "CDS 接入协议不可用，请确认服务版本和网络。")
     remote_version = manifest.get("cliVersion")
@@ -753,7 +766,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     checks.append({"stage": "version", "passed": True, "local": VERSION, "remote": remote_version})
 
     print("接入自检：验证凭据与目标的真实只读访问。", file=sys.stderr)
-    status, identity, _ = _request("GET", "/api/credentials/self-check", timeout=10, fatal_network_errors=False)
+    status, identity, _ = request("/api/credentials/self-check")
     if status != 200 or not isinstance(identity, dict):
         fail("authorization", "check_unavailable", "凭据自检不可用，请确认网络后重试。")
     if identity.get("status") != "active":
@@ -775,7 +788,7 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("authorization", "system_scope_required", "当前凭据不能证明系统访问范围，请由人类在 CDS 页面处理。")
     checks.append({"stage": "authorization", "passed": True, "kind": identity.get("kind")})
     path = "/api/projects/" + urllib.parse.quote(project, safe="") if project else "/api/config"
-    status, body, _ = _request("GET", path, timeout=10, fatal_network_errors=False)
+    status, body, _ = request(path)
     if status != 200 or not isinstance(body, dict):
         fail("access", "access_denied" if status in (401, 403) else "target_unavailable",
              "目标只读访问未通过，请确认目标存在且当前凭据具有权限。")

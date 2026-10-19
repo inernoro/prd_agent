@@ -28,9 +28,10 @@ class SetupCheckTests(unittest.TestCase):
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "SKILL.md").write_text(f"---\nname: {skill}\ndescription: test\n---\n")
         self.requests = []
+        self.redirects = {}
         self.status = "active"
         self.kind = "project"
-        self.version = "0.17.1"
+        self.version = "0.17.2"
         self.project_status = 200
         self.returned_project = "proj-a"
         test = self
@@ -41,6 +42,11 @@ class SetupCheckTests(unittest.TestCase):
 
             def do_GET(self):
                 test.requests.append((self.path, self.headers.get("X-AI-Access-Key")))
+                if self.path in test.redirects:
+                    self.send_response(302)
+                    self.send_header("Location", test.redirects[self.path])
+                    self.end_headers()
+                    return
                 status = 200
                 if self.path == "/api/agent/setup.json":
                     body = {"version": "cds-agent-setup.v1", "cliVersion": test.version}
@@ -109,6 +115,47 @@ class SetupCheckTests(unittest.TestCase):
     def test_host_mismatch_sends_no_credentials(self):
         self.assert_failure("host_mismatch", host="https://other.example")
         self.assertEqual(self.requests, [])
+
+    def test_redirects_at_any_check_stage_never_forward_credentials_or_claim_connected(self):
+        forwarded = []
+        test = self
+
+        class Receiver(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                forwarded.append((self.path, self.headers.get("X-AI-Access-Key") == SECRET))
+                if self.path.endswith("setup.json"):
+                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version}
+                elif self.path.endswith("self-check"):
+                    body = {"kind": "project", "status": "active", "projectId": "proj-a"}
+                else:
+                    body = {"project": {"id": "proj-a"}}
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(body).encode())
+
+        receiver = ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
+        thread = threading.Thread(target=receiver.serve_forever, daemon=True)
+        thread.start()
+        try:
+            for stage, route in enumerate(("/api/agent/setup.json", "/api/credentials/self-check", "/api/projects/proj-a"), 1):
+                with self.subTest(route=route):
+                    self.requests.clear()
+                    forwarded.clear()
+                    self.redirects = {route: f"http://127.0.0.1:{receiver.server_port}{route}"}
+                    result, payload = self.run_check()
+                    self.assertEqual(forwarded, [])
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse(payload["data"]["connected"])
+                    self.assertEqual(payload["data"]["checks"][-1]["reason"], "unexpected_redirect")
+                    self.assertEqual(len(self.requests), stage)
+        finally:
+            receiver.shutdown()
+            receiver.server_close()
+            thread.join()
 
     def test_equivalent_source_origins_do_not_block_setup_or_strict_inspect(self):
         for local, explicit in (

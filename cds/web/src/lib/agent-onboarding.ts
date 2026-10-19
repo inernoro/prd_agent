@@ -124,11 +124,24 @@ export type AgentConnectSelection =
   | { kind: 'new' }
   | { kind: 'project'; projectId: string };
 
+function agentPageProjectReference(context: AgentPageContext): string | undefined {
+  if (context.scope !== 'project') return undefined;
+  const query = new URLSearchParams(context.pagePath.split('?')[1]?.split('#')[0] || '');
+  if (query.has('project')) return query.get('project')!;
+  if (query.has('projectId')) return query.get('projectId')!;
+  const match = context.pagePath.match(/^\/(?:branches|settings|agent-requests)\/([^/?#]+)/);
+  if (!match) return undefined;
+  try { return decodeURIComponent(match[1]); } catch { return match[1]; }
+}
+
 export function initialAgentConnectSelection(projects: AgentProjectIdentity[], context: AgentPageContext): AgentConnectSelection {
   // Project onboarding must still be able to start without an existing project or key.
   if (context.id === 'projects' || context.id === 'project-onboarding') return { kind: 'new' };
   if (getAgentMissionScope(context.id) === 'system') return { kind: 'system' };
   const projectId = chooseAgentProjectId(projects, context);
+  const reference = agentPageProjectReference(context);
+  // Preserve an unavailable page target so the dialog can stop and ask for an explicit choice.
+  if (reference !== undefined) return { kind: 'project', projectId: projectId || reference };
   return projectId ? { kind: 'project', projectId } : { kind: 'new' };
 }
 
@@ -150,8 +163,8 @@ export function resolveAgentConnectTarget(input: {
     ? ({ kind: 'new' } as const)
     : input.selection;
   if (selection.kind === 'new') return { kind: 'new' };
-  if (input.effectiveProjectId) return { kind: 'existing', projectId: input.effectiveProjectId };
-  return { kind: 'system' };
+  if (selection.kind === 'system') return { kind: 'system' };
+  return { kind: 'existing', projectId: selection.projectId };
 }
 
 export function requestAgentAccess(contextId?: AgentPageContextId): void {
@@ -167,19 +180,9 @@ export function chooseAgentProjectId(
 ): string {
   if (projects.length === 0) return '';
   if (context?.scope === 'project') {
-    const query = new URLSearchParams(context.pagePath.split('?')[1]?.split('#')[0] || '');
-    const queryProjectId = query.get('project') || query.get('projectId');
-    if (queryProjectId) {
-      const queryProject = projects.find((project) =>
-        project.id === queryProjectId || project.slug === queryProjectId
-      );
-      if (queryProject) return queryProject.id;
-    }
-    const match = context.pagePath.match(/^\/(?:branches|settings|agent-requests)\/([^/?#]+)/);
-    if (match) {
-      const projectId = decodeURIComponent(match[1]);
-      const currentProject = projects.find((project) => project.id === projectId || project.slug === projectId);
-      if (currentProject) return currentProject.id;
+    const reference = agentPageProjectReference(context);
+    if (reference !== undefined) {
+      return projects.find((project) => project.id === reference || project.slug === reference)?.id || '';
     }
   }
   if (context?.scope === 'system') {
