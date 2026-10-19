@@ -31,7 +31,7 @@ class SetupCheckTests(unittest.TestCase):
         self.redirects = {}
         self.status = "active"
         self.kind = "project"
-        self.version = "0.17.2"
+        self.version = "0.17.3"
         self.project_status = 200
         self.returned_project = "proj-a"
         test = self
@@ -114,6 +114,32 @@ class SetupCheckTests(unittest.TestCase):
 
     def test_host_mismatch_sends_no_credentials(self):
         self.assert_failure("host_mismatch", host="https://other.example")
+        self.assertEqual(self.requests, [])
+
+    def test_non_http_host_cannot_read_a_local_file_through_health(self):
+        local_secret = "local_file_content_must_not_be_printed"
+        local = self.root / "local-host"
+        local.mkdir()
+        (local / "healthz").write_text(local_secret)
+        result, payload = self.run_cli("health", credential_env={"CDS_HOST": local.as_uri()})
+        self.assertNotIn(local_secret, result.stdout + result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(self.requests, [])
+
+    def test_invalid_host_schemes_authority_and_ports_stop_before_network(self):
+        for host in (
+            f"ftp://127.0.0.1:{self.server.server_port}",
+            f"gopher://127.0.0.1:{self.server.server_port}",
+            f"httpx://127.0.0.1:{self.server.server_port}",
+            f"http://user:password@127.0.0.1:{self.server.server_port}",
+            "http://127.0.0.1:bad", "http://127.0.0.1:65536", "http://",
+        ):
+            with self.subTest(host=host):
+                result, payload = self.run_cli("health", credential_env={"CDS_HOST": host})
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(payload["ok"])
+                self.assertIn("HTTP/HTTPS", payload["error"])
         self.assertEqual(self.requests, [])
 
     def test_redirects_at_any_check_stage_never_forward_credentials_or_claim_connected(self):

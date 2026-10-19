@@ -3,7 +3,7 @@ import { AGENT_MISSION_DEFINITIONS, getAgentCapabilitiesForMission, type AgentPa
 /** Public bootstrap contract shared by the dashboard and server. No credentials or project data. */
 export type AgentRoleId = 'pm' | 'owner' | 'domain-expert' | 'dev' | 'qa';
 export const AGENT_SETUP_VERSION = 'cds-agent-setup.v1';
-export const AGENT_SETUP_MIN_CLI_VERSION = '0.17.2';
+export const AGENT_SETUP_MIN_CLI_VERSION = '0.17.3';
 export const AGENT_SETUP_PATH = '/api/agent/setup.md';
 export const AGENT_SETUP_MANIFEST_PATH = '/api/agent/setup.json';
 export const CDS_SKILL_KEYS = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'] as const;

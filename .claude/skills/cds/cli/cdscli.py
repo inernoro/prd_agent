@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.2"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.3"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -210,7 +210,14 @@ def _cds_base() -> str:
             or host.startswith("172.")
         )
         host = ("http://" if is_local else "https://") + host
-    parsed = urllib.parse.urlsplit(host)
+    try:
+        parsed = urllib.parse.urlsplit(host)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None):
+            raise ValueError("invalid CDS host")
+        parsed.port  # Reject malformed or out-of-range ports before opening a URL.
+    except ValueError:
+        die("CDS_HOST 必须使用有效的 HTTP/HTTPS 主机地址，且不能包含用户名或密码。", code=1)
     return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
 
 
