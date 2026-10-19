@@ -590,6 +590,7 @@ export class JanitorService {
   /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
   private firstSweepHandle: NodeJS.Timeout | null = null;
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
+  private deploymentSourceCursor: string | undefined;
   /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
   private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
@@ -1165,8 +1166,10 @@ export class JanitorService {
         report.deploymentSources = await reclaimDeploymentSources({ base: this.worktreeBase,
           projectIds: [...this.stateService.getProjects().map(p => p.id),
             ...this.stateService.getDeletedProjectWorktreeBuckets().map(p => p.projectId)],
-          branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs, nowMs: this.clock.now() });
+          branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
+          nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
         const sources = report.deploymentSources;
+        if (sources.lastAttemptedPath) this.deploymentSourceCursor = sources.lastAttemptedPath;
         if (sources.scanned || sources.failed.length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
         for (const f of sources.failed) report.errors.push(`deployment source: ${f.path}: ${f.error}`);
         report.orphanWorktrees = await this.runOrphanWorktreeReconcile();

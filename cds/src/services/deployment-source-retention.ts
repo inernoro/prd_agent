@@ -8,6 +8,7 @@ import { worktreePathActivity, sameWorktreeDirectoryIdentity, WorktreeClaimHeldE
 export interface DeploymentSourceRetentionReport {
   scanned: number; attempted: number; removed: string[]; held: Record<string, string>;
   failed: Array<{ path: string; error: string }>; deferred: number;
+  lastAttemptedPath?: string;
 }
 const related = (a: string, b: string) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -16,7 +17,7 @@ const BUSY = new Set(['building', 'starting', 'stopping', 'restarting', 'prepari
 /** Only detached UUID leaves are eligible; the ordinary orphan collector never owns these buckets. */
 export async function reclaimDeploymentSources(input: {
   base: string; projectIds: string[]; branches: () => BranchEntry[];
-  files: OrphanWorktreeFs; nowMs: number; maxRemovals?: number; minAgeMs?: number;
+  files: OrphanWorktreeFs; nowMs: number; maxRemovals?: number; minAgeMs?: number; afterPath?: string;
 }): Promise<DeploymentSourceRetentionReport> {
   const report: DeploymentSourceRetentionReport = { scanned: 0, attempted: 0, removed: [], held: {}, failed: [], deferred: 0 };
   const max = input.maxRemovals ?? 20, minAge = input.minAgeMs ?? 2 * 3600_000;
@@ -58,7 +59,11 @@ export async function reclaimDeploymentSources(input: {
   if (!candidates.length) return report;
   const mounted = await input.files.listMountedHostPaths();
   if (mounted === null) { report.held[input.base] = '容器挂载枚举未完整确认，本轮不回收部署源码'; return report; }
-  for (const {dir, identity} of candidates.sort((a,b) => a.mtime - b.mtime)) {
+  candidates.sort((a,b) => a.mtime - b.mtime || a.dir.localeCompare(b.dir));
+  // Continue after the previous round's dispatch so retained data cannot starve later clean leaves.
+  const previous = candidates.findIndex(c => c.dir === input.afterPath);
+  const ordered = previous < 0 ? candidates : [...candidates.slice(previous + 1), ...candidates.slice(0, previous + 1)];
+  for (const {dir, identity} of ordered) {
     if (isMounted(dir, mounted)) { report.held[dir] = '运行或停止的容器仍挂载该目录'; continue; }
     if (report.attempted >= max) { report.deferred++; continue; }
     const activity = worktreePathActivity.tryAcquire([dir]);
@@ -71,6 +76,7 @@ export async function reclaimDeploymentSources(input: {
       if (freshMounts === null || isMounted(dir, freshMounts) || isClaimed(dir)
         || !current || !sameWorktreeDirectoryIdentity(identity, current)) { report.held[dir] = '临删挂载、归属或目录身份未确认'; continue; }
       report.attempted++;
+      report.lastAttemptedPath = dir;
       const error = await input.files.removeDir(dir, { identity, allowedBase: input.base, entryOnly: false,
         sourceOnly: true, beforeStart: () => {
           if (isClaimed(dir) || !activity.markDestructive()) throw new WorktreeClaimHeldError();

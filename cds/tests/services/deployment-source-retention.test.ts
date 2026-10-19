@@ -57,7 +57,7 @@ async function sourceFixture() {
  const make=async()=>{const s=await f.service.prepareDeploymentSource('main',canonical,f.sha);const old=new Date(Date.now()-4*3600_000);await fs.utimes(s.sourcePath,old,old);return s.sourcePath;};
  const remove=async(dir:string,options:any)=>{options.beforeStart();const status=await removeOwnedDirectory({...options,dir});if(status==='held')throw new WorktreeClaimHeldError();return null;};
  const files={...defaultOrphanWorktreeFs,listMountedHostPaths:async()=>[] as string[]|null,removeDir:remove};
- const sweep=()=>reclaimDeploymentSources({base,projectIds:['proj'],branches:()=>[branch],files,nowMs:Date.now()});
+ const sweep=(afterPath?:string)=>reclaimDeploymentSources({base,projectIds:['proj'],branches:()=>[branch],files,nowMs:Date.now(),afterPath});
  return{...f,base,canonical,branch,make,files,sweep};
 }
 describe('safe detached source retention on real Git and files',()=>{
@@ -105,6 +105,17 @@ describe('safe detached source retention on real Git and files',()=>{
   let attempts=0;f.files.removeDir=async()=>{attempts++;throw new WorktreeClaimHeldError();};
   const report=await f.sweep();expect(attempts).toBe(20);expect(report.attempted).toBe(20);
   expect(report.deferred).toBe(1);expect(report.removed).toEqual([]);
+ });
+ it('hourly Janitor advances past held leaves across bounded sweeps',async()=>{
+  const f=await sourceFixture();const first=await f.make();
+  for(let i=0;i<20;i++)await fs.mkdir(path.join(path.dirname(first),randomUUID()));
+  f.files.statDirMtimeMs=async()=>0;
+  const seen=new Set<string>();f.files.removeDir=async dir=>{seen.add(dir);throw new WorktreeClaimHeldError();};
+  const state=new StateService(path.join(f.root,'state.json'));
+  state.addProject({id:'proj',slug:'proj',name:'Test',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}as any);state.addBranch(f.branch);
+  const janitor=new JanitorService(state,{enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,dockerPrune:false,imageRetention:false},f.base,undefined,()=>null,undefined,undefined,f.files);
+  expect((await janitor.sweep()).deploymentSources?.attempted).toBe(20);expect(seen.size).toBe(20);
+  expect((await janitor.sweep()).deploymentSources?.attempted).toBe(20);expect(seen.size).toBe(21);
  });
  it('rejects a parent swapped to a foreign directory inside the same base before identity capture',async()=>{
   const f=await sourceFixture();const dir=await f.make(),bucket=path.dirname(dir);
