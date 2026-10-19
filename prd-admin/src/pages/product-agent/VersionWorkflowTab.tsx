@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
+import { CheckCircle2, Download, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
   listInitiations, listProductMembers, listVersionApplicationProducts, listReleases, listRequirements,
@@ -48,18 +48,15 @@ import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
 import type { VersionRegistrationMessageParseResult } from '@/services/real/versionRegistration';
 import { VersionCopyActions } from './VersionCopyActions';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
+import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { downloadListCsv } from './listExport';
+import { initiationExportConfig, releaseExportConfig, VERSION_WORKFLOW_STATUS_LABEL as STATUS_LABEL } from './versionWorkflowExport';
 
 type MainTab = 'release' | 'initiation';
 type RecordScope = 'mine' | 'all';
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
-const STATUS_LABEL: Record<string, string> = {
-  draft: '草稿', review_pending: 'Agent 评审中', review_failed: '评审未通过',
-  decision_pending: '待确认评审方式', owner_pending: '待负责人同意', approved: '已取得立项号',
-  announcement_pending: '待填写上线公告', released: '已上线',
-};
 
-export function VersionWorkflowTab({ productId }: { productId: string }) {
-  const navigate = useNavigate();
+export function VersionWorkflowTab({ productId, isAdmin = false }: { productId: string; isAdmin?: boolean }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const currentUserId = useAuthStore((state) => state.user?.userId);
   const [tab, setTab] = useState<MainTab>(searchParams.get('versionTab') === 'initiation' ? 'initiation' : 'release');
@@ -69,7 +66,8 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [members, setMembers] = useState<ProductMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadedProductId, setLoadedProductId] = useState('');
-  const [dialog, setDialog] = useState<'initiation' | 'release' | null>(null);
+  const [dialog, setDialog] = useState<'initiation' | 'release' | 'temporary' | null>(null);
+  const [importKind, setImportKind] = useState<MainTab | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
@@ -77,7 +75,11 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
-  const [productName, setProductName] = useState('');
+  const [applicationProduct, setApplicationProduct] = useState<VersionApplicationProduct | null>(null);
+  const productName = applicationProduct?.name ?? '';
+  const memberNames = useMemo(() => new Map(members.map((member) => [member.userId, member.displayName])), [members]);
+  const internalExport = initiationExportConfig(productId, productName, memberNames);
+  const formalExport = releaseExportConfig(productId, productName, memberNames, requirements);
 
   useEffect(() => {
     if (searchParams.get('versionAction') !== 'apply' || searchParams.get('versionTab') !== 'initiation') return;
@@ -91,9 +93,12 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
   }, [searchParams, setSearchParams]);
 
   useEffect(() => {
+    let active = true;
+    setApplicationProduct(null);
     void getVersionApplicationProduct(productId).then((res) => {
-      if (res.success) setProductName(res.data.name);
+      if (active && res.success) setApplicationProduct(res.data);
     });
+    return () => { active = false; };
   }, [productId]);
 
   useEffect(() => {
@@ -152,8 +157,10 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
         <div className="flex flex-wrap items-center gap-2">
+          {isAdmin && applicationProduct && <Secondary onClick={() => setImportKind('release')}><Upload size={14} />导入历史正式版本</Secondary>}
+          <Secondary disabled={loading || visibleReleases.length === 0} onClick={() => downloadListCsv(formalExport.filename, formalExport.headers, visibleReleases.map(formalExport.mapRow))}><Download size={14} />导出正式版本</Secondary>
           <Primary onClick={() => setDialog('release')}><Plus size={14} />申领正式版本号</Primary>
-          <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]">临时优化需求</button>
+          <button onClick={() => setDialog('temporary')} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-amber)]">临时优化需求</button>
           <span className="group relative"><HelpCircle size={15} className="cursor-help text-token-muted" />
             <span className="surface-tone-dark invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-token-subtle bg-[#181a20] p-3 text-xs leading-5 text-token-secondary shadow-xl group-hover:visible">
               月度常规计划外、紧急且工作量较小的优化。产品工作量原则上不超过 3 天，研发不超过 5 天；无需 T 号，按小版本自动审批。
@@ -167,7 +174,9 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && applicationProduct && <Secondary onClick={() => setImportKind('initiation')}><Upload size={14} />导入历史内部版本</Secondary>}
+          <Secondary disabled={loading || visibleInitiations.length === 0} onClick={() => downloadListCsv(internalExport.filename, internalExport.headers, visibleInitiations.map(internalExport.mapRow))}><Download size={14} />导出内部版本</Secondary>
           <Primary onClick={() => setDialog('initiation')}><Plus size={14} />申领内部版本号</Primary>
         </div>
       </div>
@@ -184,7 +193,8 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
       />
     </>}
     {dialog === 'initiation' && <InitiationWizard productId={productId} requirements={requirements} members={members} onClose={() => setDialog(null)} onChanged={reload} />}
-    {dialog === 'release' && <ReleaseApplicationDialog productId={productId} onClose={() => setDialog(null)} onChanged={reload} />}
+    {(dialog === 'release' || dialog === 'temporary') && <ReleaseApplicationDialog productId={productId} temporary={dialog === 'temporary'} onClose={() => setDialog(null)} onChanged={reload} />}
+    {importKind && isAdmin && applicationProduct && <VersionWorkflowImportDialog kind={importKind} products={[applicationProduct]} fixedProductId={productId} onClose={() => setImportKind(null)} onImported={async () => { setImportKind(null); await reload(); }} />}
     {retrySeed && (
       <InitiationWizard
         productId={productId}
@@ -633,11 +643,7 @@ function InitiationTable({ productId, productName, items, members, currentUserId
   const navigate = useNavigate();
   const names = useMemo(() => new Map(members.map((m) => [m.userId, m.displayName])), [members]);
   const openDetail = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, {
-    filename: `initiations-${productId}.csv`,
-    headers: ['立项号', '方案', '版本类别', '状态'],
-    mapRow: (i) => [i.tCode ?? '', i.planName, SCALE_LABEL[i.versionType], STATUS_LABEL[i.status] ?? i.status],
-  });
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, initiationExportConfig(productId, productName, names));
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
@@ -726,11 +732,7 @@ function ReleaseTable({ productId, productName, items, requirements, members, on
   }, [items]);
   const openRelease = (id: string) => navigate(`/product-agent/p/${productId}/release/${id}`);
   const openInitiation = (id: string) => navigate(`/product-agent/p/${productId}/initiation/${id}`);
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, {
-    filename: `releases-${productId}.csv`,
-    headers: ['正式版本号', '内部版本号', '方案', '状态'],
-    mapRow: (i) => [i.vCode, i.tCode ?? '临时优化', i.planName, STATUS_LABEL[i.status] ?? i.status],
-  });
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId, productName, names, requirements));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
     <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '预计培训时间', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>

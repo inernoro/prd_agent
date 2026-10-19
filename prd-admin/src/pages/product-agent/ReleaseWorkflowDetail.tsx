@@ -1114,10 +1114,11 @@ function MemberChecks({ members, selected, onChange }: {
   );
 }
 
-export function ReleaseApplicationDialog({ productId, onClose, onChanged }: {
+export function ReleaseApplicationDialog({ productId, onClose, onChanged, temporary = false }: {
   productId: string;
   onClose: () => void;
   onChanged?: () => void | Promise<void>;
+  temporary?: boolean;
 }) {
   const [issued, setIssued] = useState<{ release: ProductRelease; autoCopied: boolean } | null>(null);
   const close = () => {
@@ -1127,7 +1128,7 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged }: {
   return <Dialog
     open
     onOpenChange={(open) => { if (!open) close(); }}
-    title={issued ? '正式版本申领结果' : '申领正式版本号'}
+    title={issued ? '正式版本申领结果' : temporary ? '临时优化需求上线' : '申领正式版本号'}
     maxWidth={960}
     contentStyle={{ height: 'min(780px, calc(100dvh - 64px))', maxHeight: 'calc(100dvh - 64px)' }}
     content={<div style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -1139,7 +1140,7 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged }: {
         productId={productId}
         releaseId={issued?.release.id ?? 'new'}
         isNew={!issued}
-        temporary={false}
+        temporary={temporary}
         onClose={close}
         onCreated={(release, autoCopied) => setIssued({ release, autoCopied })}
       />

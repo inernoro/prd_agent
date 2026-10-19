@@ -218,7 +218,7 @@ export function SingleProductView() {
         </div>
       ) : (
         <SectionShell title={SECTION_TITLE[active]}>
-          {active === 'versions' && <VersionsTab productId={product.id} />}
+          {active === 'versions' && <VersionsTab productId={product.id} isAdmin={isAdmin} />}
           {active === 'reports' && <ReportsTab productId={product.id} />}
           {active === 'defects' && <DefectsTab productId={product.id} />}
           {active === 'team' && <ProductTeamTab productId={product.id} />}
@@ -310,8 +310,8 @@ function TodoRow({ kind, color, no, title, state, onClick }: { kind: string; col
 }
 
 // ── 版本 tab（含大版本升级申请）──
-function VersionsTab({ productId }: { productId: string }) {
-  return <VersionWorkflowTab productId={productId} />;
+function VersionsTab({ productId, isAdmin }: { productId: string; isAdmin: boolean }) {
+  return <VersionWorkflowTab productId={productId} isAdmin={isAdmin} />;
 }
 
 export function LegacyVersionsTab({ productId }: { productId: string }) {

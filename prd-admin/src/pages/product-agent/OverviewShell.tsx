@@ -20,6 +20,7 @@ import {
   Share2,
   Settings,
   Upload,
+  Download,
   ArrowLeft,
   Search,
   Plus,
@@ -41,6 +42,7 @@ import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import { FeatureCatalogTab } from './FeatureCatalogTab';
 import { OverviewDataTable, TruncateCell } from './overviewDataTable';
 import { SelectionActionBar, useOverviewTableSelection } from './selectableList';
+import { downloadListCsv } from './listExport';
 import './product-cards.css';
 import {
   getOverviewStats,
@@ -431,10 +433,10 @@ const GRADE_BADGE = (g: string) => (
 const SEVERITY_BADGE = (label: string) => (
   <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{label}</span>
 );
-function AdminImportButton({ onClick }: { onClick: () => void }) {
+function AdminImportButton({ onClick, label = '导入历史数据' }: { onClick: () => void; label?: string }) {
   return (
     <button onClick={onClick} className="flex items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/20">
-      <Upload size={13} /> 导入历史数据
+      <Upload size={13} /> {label}
     </button>
   );
 }
@@ -863,10 +865,10 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
-    filename: 'overview-releases.csv',
+  const exportConfig = {
+    filename: '正式版本-V-总览.csv',
     headers: ['系统', '产品', 'V号', 'T号', '项目类别', '版本类别', '方案', '需求来源', '部门', '负责人', '组员', '上线日期', '预计培训时间', '状态'],
-    mapRow: (r) => [
+    mapRow: (r: OverviewReleaseRow) => [
       r.systemName ?? '',
       resolveVersionProductLabel(r, r.productName),
       r.vCode,
@@ -882,7 +884,8 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
       formatVersionTrainingTime(r.plannedTrainingAt),
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
     ],
-  });
+  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, exportConfig);
 
   if (loading) return <MapSectionLoader text="正在加载正式版本…" />;
   return (
@@ -890,7 +893,10 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
       <TableToolbar
         keyword={keyword}
         setKeyword={setKeyword}
-        extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
+        extra={<>
+          {isAdmin && <AdminImportButton label="导入历史正式版本" onClick={() => setShowImport(true)} />}
+          <button type="button" disabled={rows.length === 0} onClick={() => downloadListCsv(exportConfig.filename, exportConfig.headers, rows.map(exportConfig.mapRow))} title="导出当前筛选结果" className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-secondary hover-bg-soft disabled:opacity-40"><Download size={13} />导出正式版本</button>
+        </>}
       />
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-token-muted">没有正式版本</div> : (
@@ -949,10 +955,10 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
   }, [keyword]);
   useEffect(() => { void reload(); }, [reload]);
 
-  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, {
-    filename: 'overview-initiations.csv',
+  const exportConfig = {
+    filename: '内部版本-T-总览.csv',
     headers: ['系统', '产品', '项目类别', 'T号', '版本类别', '方案', '需求来源', '部门', '负责人', '计划立项时间', '开发状态', 'Agent评审', '状态'],
-    mapRow: (r) => [
+    mapRow: (r: OverviewInitiationRow) => [
       r.systemName ?? '',
       resolveVersionProductLabel(r, r.productName),
       overviewProjectTypeLabel(r.projectType, r.customerSource),
@@ -967,7 +973,8 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
       formatInitiationReviewScore(r),
       WORKFLOW_STATUS_LABEL[r.status] ?? r.status,
     ],
-  });
+  };
+  const { selection, exportSelected, tableSelection } = useOverviewTableSelection(rows, exportConfig);
 
   if (loading) return <MapSectionLoader text="正在加载内部版本…" />;
   return (
@@ -975,7 +982,10 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
       <TableToolbar
         keyword={keyword}
         setKeyword={setKeyword}
-        extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
+        extra={<>
+          {isAdmin && <AdminImportButton label="导入历史内部版本" onClick={() => setShowImport(true)} />}
+          <button type="button" disabled={rows.length === 0} onClick={() => downloadListCsv(exportConfig.filename, exportConfig.headers, rows.map(exportConfig.mapRow))} title="导出当前筛选结果" className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-secondary hover-bg-soft disabled:opacity-40"><Download size={13} />导出内部版本</button>
+        </>}
       />
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       {rows.length === 0 ? <div className="py-12 text-center text-sm text-token-muted">没有内部版本</div> : (
