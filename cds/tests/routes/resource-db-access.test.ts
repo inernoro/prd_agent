@@ -142,6 +142,7 @@ describe('resource database access', () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
     server = null;
@@ -157,6 +158,39 @@ describe('resource database access', () => {
     await new Promise<void>(resolve=>{server=harness.app.listen(0,'127.0.0.1',resolve);});
     const result=await request(server!,'POST','/api/branches/main-branch/resources/infra%3Amysql-pass/database-passes',{allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});
     expect(result.status).toBe(200);expect(target).toHaveBeenCalledWith(expect.objectContaining({adminUser:'root',adminPassword:''}));
+  });
+  it.each(['main-branch','legacy-branch'])('旧 TCP 入口未关闭前不签发通行证，包含同库其他分支：%s',async legacyBranch=>{
+    const h=makeHarness();tmpDir=h.tmpDir;
+    h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{MONGO_INITDB_ROOT_USERNAME:'root',MONGO_INITDB_ROOT_PASSWORD:'private'},volumes:[]});
+    if(legacyBranch!=='main-branch')h.stateService.addBranch({...h.stateService.getBranch('main-branch')!,id:legacyBranch,branch:'legacy'});
+    h.stateService.upsertResourceExternalAccess({projectId:'prd-agent',branchId:legacyBranch,resourceId:'infra:mongo-pass',kind:'tcp',enabled:true,proxyContainerName:'old-mongo-proxy',targetHost:'shared-mongo-pass',targetPort:27017,allowlist:['203.0.113.1/32'],expiresAt:new Date(Date.now()+3600000).toISOString()});
+    h.shell.addResponsePattern(/^docker rm -f /,()=>({stdout:'',stderr:'',exitCode:0}));
+    const prepare=vi.spyOn(DatabasePassService.prototype,'prepare').mockResolvedValue({id:'prepared'} as any);
+    await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    const endpoint='/api/branches/main-branch/resources/infra%3Amongo-pass/database-passes',headers={'x-test-cookie-auth':'1'};
+    const denied=await request(server!,'POST',endpoint,{allowlist:['192.0.2.1/32']},headers);expect(denied.status).toBe(409);expect(denied.body.error).toContain('旧版 TCP');expect(prepare).not.toHaveBeenCalled();
+    const closed=await request(server!,'PUT','/api/branches/'+legacyBranch+'/resources/infra%3Amongo-pass/external-access',{enabled:false},headers);expect(closed.status).toBe(200);
+    expect((await request(server!,'POST',endpoint,{allowlist:['192.0.2.1/32']},headers)).status).toBe(200);expect(prepare).toHaveBeenCalledOnce();
+  });
+  it('资源 ID 或项目不同但代理指向同一数据库时仍拒绝签发',async()=>{
+    const h=makeHarness();tmpDir=h.tmpDir;h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{},volumes:[]});
+    h.stateService.upsertResourceExternalAccess({projectId:'other',branchId:'other',resourceId:'infra:old-name',kind:'tcp',enabled:true,targetHost:'shared-mongo-pass',targetPort:27017,proxyContainerName:'old-proxy',allowlist:['203.0.113.1/32']});
+    const prepare=vi.spyOn(DatabasePassService.prototype,'prepare').mockResolvedValue({id:'prepared'} as any);await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    expect((await request(server!,'POST','/api/branches/main-branch/resources/infra%3Amongo-pass/database-passes',{allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'})).status).toBe(409);expect(prepare).not.toHaveBeenCalled();
+  });
+  it('关闭通行证开关后，有待回收账号的实例仍不能打开旧 TCP 入口',async()=>{
+    const h=makeHarness();tmpDir=h.tmpDir;vi.stubEnv('CDS_DATABASE_PASS_ENABLED','0');vi.stubEnv('CDS_RESOURCE_TCP_ENABLED','1');vi.stubEnv('CDS_RESOURCE_TCP_HOST','192.0.2.20');vi.stubEnv('CDS_RESOURCE_TCP_BIND_IP','192.0.2.20');
+    h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{},volumes:[]});
+    const pending=vi.spyOn(DatabasePassService.prototype,'hasUnreclaimedPassesForTarget').mockReturnValue(true);await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    const result=await request(server!,'PUT','/api/branches/main-branch/resources/infra%3Amongo-pass/external-access',{enabled:true,ttlMinutes:30,allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});
+    expect(result.status).toBe(409);expect(result.body.error).toContain('待回收');expect(pending).toHaveBeenCalledWith({runtime:'mongodb',port:27018},{projectId:'prd-agent',resourceId:'infra:mongo-pass',shared:false});expect(h.shell.commands.some(c=>c.startsWith('docker run -d'))).toBe(false);
+  });
+  it('通行证准备与共享实例其他分支的旧入口更新互斥，开关变化也不能并发绕过',async()=>{
+    const h=makeHarness();tmpDir=h.tmpDir;vi.stubEnv('CDS_DATABASE_PASS_ENABLED','0');vi.stubEnv('CDS_RESOURCE_TCP_ENABLED','1');vi.stubEnv('CDS_RESOURCE_TCP_HOST','192.0.2.20');vi.stubEnv('CDS_RESOURCE_TCP_BIND_IP','192.0.2.20');
+    h.stateService.addInfraService({id:'mongo-pass',projectId:'prd-agent',name:'mongo-pass',dockerImage:'mongo:7',containerPort:27017,hostPort:27018,containerName:'shared-mongo-pass',status:'running',dbName:'qa',env:{},volumes:[]});h.stateService.addBranch({...h.stateService.getBranch('main-branch')!,id:'other-branch',branch:'other'});
+    let release:()=>void=()=>{};const wait=new Promise<void>(resolve=>{release=resolve;});const prepare=vi.spyOn(DatabasePassService.prototype,'prepare').mockImplementation(async()=>{await wait;return {id:'prepared'} as any;});await new Promise<void>(resolve=>{server=h.app.listen(0,'127.0.0.1',resolve);});
+    const preparing=request(server!,'POST','/api/branches/main-branch/resources/infra%3Amongo-pass/database-passes',{allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});
+    try{await vi.waitFor(()=>expect(prepare).toHaveBeenCalledOnce());const concurrent=await request(server!,'PUT','/api/branches/other-branch/resources/infra%3Amongo-pass/external-access',{enabled:true,ttlMinutes:30,allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});expect(concurrent.status).toBe(409);expect(concurrent.body.error).toContain('正在更新');expect(h.shell.commands.some(c=>c.startsWith('docker run -d'))).toBe(false);}finally{release();await preparing;}
   });
   it('selects an existing business MongoDB database when the configured default is missing', async () => {
     const harness = makeHarness();

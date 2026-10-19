@@ -9478,6 +9478,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  const databaseIngressMutations = new Set<string>();
+  function databaseIngressKey(resource: UnifiedBranchResource): string {
+    const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+    return JSON.stringify([resourceRuntimeKey(resource.runtime), resourceContainerName(resource) || `port:${service.hostPort}`, service.containerPort || resource.containerPort]);
+  }
+  function assertNoLegacyDatabaseIngress(scope: Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>, resource: UnifiedBranchResource): void {
+    const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+    const host = resourceContainerName(resource), port = service.containerPort || resource.containerPort;
+    const shared = !service.projectId;
+    if (stateService.getAllResourceExternalAccess().some(policy => policy.kind === 'tcp'
+      && (policy.enabled || policy.proxyContainerName || policy.firewallChain)
+      && ((policy.resourceId === scope.resourceId && (policy.projectId === scope.projectId || shared || !policy.targetHost))
+        || (!!host && policy.targetHost === host && policy.targetPort === port)))) {
+      throw new Error('共享数据库的旧版 TCP 入口尚未确认关闭。请先关闭相关分支的旧入口，再申请通行证；已删除分支的残留策略需管理员清理。');
+    }
+  }
+
   async function databasePassTarget(scope: Pick<DatabasePass, 'projectId'|'branchId'|'resourceId'>): Promise<DatabasePassTarget> {
     const branch=stateService.getBranch(scope.branchId);
     if(!branch || (branch.projectId||'default')!==scope.projectId)throw new Error('通行证目标项目或分支已不存在');
@@ -9502,7 +9519,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const user=(req as Request & {cdsUser?:{id:string}}).cdsUser;
     const owner=user?.id?`human:${user.id}`:isHumanSystemOwner(req)?'human:system-owner':'';
     if(!owner){res.status(403).json({error:'请由已授权的项目管理员登录后签发通行证。'});return null;}
-    return {scope:{projectId:context.projectId,branchId:context.branch.id,resourceId:context.resourceId},owner};
+    return {scope:{projectId:context.projectId,branchId:context.branch.id,resourceId:context.resourceId},owner,resource:context.resource};
   }
   const passRoute='/branches/:id/resources/:resourceId/database-passes';
   router.get(passRoute,async(req,res)=>{
@@ -9511,16 +9528,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
   });
   router.post(passRoute,async(req,res)=>{
     try{const context=await databasePassContext(req,res);if(!context)return;
-      const allowlist=normalizeIpv4Allowlist(req.body?.allowlist ?? [databasePassClientIp(req)]);
-      res.json({pass:await databasePasses.prepare(context.scope,context.owner,allowlist,req.body?.ttlMinutes===undefined?30:Number(req.body.ttlMinutes))});}
+      const key=databaseIngressKey(context.resource);
+      if(databaseIngressMutations.has(key))throw new Error('数据库入口策略正在更新，请稍后重试。');
+      databaseIngressMutations.add(key);
+      try{
+        assertNoLegacyDatabaseIngress(context.scope,context.resource);
+        const allowlist=normalizeIpv4Allowlist(req.body?.allowlist ?? [databasePassClientIp(req)]);
+        res.json({pass:await databasePasses.prepare(context.scope,context.owner,allowlist,req.body?.ttlMinutes===undefined?30:Number(req.body.ttlMinutes))});
+      }finally{databaseIngressMutations.delete(key);}}
     catch(error){res.status(409).json({error:maskTextSecrets((error as Error).message,[])});}
   });
   router.post(passRoute+'/:passId/activate',async(req,res)=>{
-    try{const context=await databasePassContext(req,res);if(!context)return;res.json({pass:await databasePasses.activate(req.params.passId,context.owner,context.scope)});}
+    try{const context=await databasePassContext(req,res);if(!context)return;assertNoLegacyDatabaseIngress(context.scope,context.resource);res.json({pass:await databasePasses.activate(req.params.passId,context.owner,context.scope)});}
     catch(error){res.status(409).json({error:maskTextSecrets((error as Error).message,[])});}
   });
   router.get(passRoute+'/:passId/credentials',async(req,res)=>{
-    try{const context=await databasePassContext(req,res);if(!context)return;res.setHeader('Cache-Control','no-store');res.json(await databasePasses.credentials(req.params.passId,context.owner,context.scope));}
+    try{const context=await databasePassContext(req,res);if(!context)return;assertNoLegacyDatabaseIngress(context.scope,context.resource);res.setHeader('Cache-Control','no-store');res.json(await databasePasses.credentials(req.params.passId,context.owner,context.scope));}
     catch{res.status(409).json({error:'通行证已失效或当前用户不能复制该凭据。'});}
   });
   router.delete(passRoute+'/:passId',async(req,res)=>{
@@ -9586,10 +9609,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       ? 'external-policy-admin'
       : 'external-temporary-access';
     if (!requireResourcePermission(req, res, externalAction, branch, resource)) return;
+    const databaseRuntime=resourceRuntimeKey(resource.runtime);
+    const databaseKey=resource.source==='infra'&&['mysql','postgres','mongodb'].includes(databaseRuntime)?databaseIngressKey(resource):undefined;
+    if(databaseKey&&databaseIngressMutations.has(databaseKey)){res.status(409).json({error:'数据库入口策略正在更新，请稍后重试。'});return;}
     const mutationKey = externalMutationKey(projectId, branch.id, resourceId);
     if (resourceExternalMutations.has(mutationKey)) { res.status(409).json({ error: '该资源的访问策略正在更新，请稍后重试。' }); return; }
     resourceExternalMutations.add(mutationKey);
+    if(databaseKey)databaseIngressMutations.add(databaseKey);
     try {
+      if(enabled&&databaseKey){
+        const service=getUnifiedResourceInternalRaw(resource) as InfraService;
+        if(databasePasses.hasUnreclaimedPassesForTarget({runtime:databaseRuntime as DatabasePassTarget['runtime'],port:service.hostPort},{projectId,resourceId,shared:!service.projectId})){
+          res.status(409).json({error:'此数据库仍有待回收的通行证，请先撤销并确认账号回收，再启用旧版 TCP 入口。'});return;
+        }
+      }
       const previewHost = resourcePublicHost();
       const currentPolicy = stateService.getResourceExternalAccess(projectId, branch.id, resourceId);
       let runtime: Partial<ResourceExternalAccessPolicy> = {};
@@ -9664,7 +9697,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       const nextResources = await getBranchResourceSnapshot(branch);
       res.json({ policy, resource: nextResources.find((item) => item.id === resourceId) || null });
-    } finally { resourceExternalMutations.delete(mutationKey); }
+    } finally { resourceExternalMutations.delete(mutationKey);
+      if(databaseKey)databaseIngressMutations.delete(databaseKey); }
   });
 
   router.get('/branches/:id/resources/:resourceId/connection-string', async (req, res) => {

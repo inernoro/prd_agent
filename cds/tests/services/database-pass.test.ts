@@ -20,6 +20,11 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     const service=new DatabasePassService(dir,target);
     const first=await service.prepare(scope,'human:one',['192.0.2.10/32']);
     const second=await service.prepare(scope,'human:one',['192.0.2.10/32']);
+    expect(service.hasUnreclaimedPassesForTarget({runtime:'postgres',port:12345},{projectId:'other',resourceId:'infra:other',shared:false})).toBe(true);
+    expect(service.hasUnreclaimedPassesForTarget({runtime:'postgres',port:23456},{projectId:'qa',resourceId:scope.resourceId,shared:false})).toBe(true);
+    expect(service.hasUnreclaimedPassesForTarget({runtime:'mysql',port:23456},{projectId:'other',resourceId:'infra:other',shared:false})).toBe(false);
+    expect(service.hasUnreclaimedPassesForTarget({runtime:'postgres',port:23456},{projectId:'other',resourceId:scope.resourceId,shared:true})).toBe(true);
+    expect(service.hasUnreclaimedPassesForTarget({runtime:'postgres',port:23456},{projectId:'other',resourceId:scope.resourceId,shared:false})).toBe(false);
     expect(first.ttlMinutes).toBe(30);expect(first.username).not.toBe(second.username);
     const credential=await service.credentials(first.id,'human:one',scope);
     expect(credential.password.length).toBeGreaterThan(24);expect(credential.port).toBeGreaterThan(0);expect(credential.tlsRequired).toBe(true);
@@ -27,6 +32,7 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     expect(fs.readFileSync(path.join(dir,'audit.jsonl'),'utf8')).not.toContain(credential.password);
     expect(mocks.gateway).toHaveBeenCalledTimes(2);expect(mocks.activate).not.toHaveBeenCalled();expect(first).not.toHaveProperty('secret');
     await service.revoke(first.id,'human:one',scope);await service.revoke(second.id,'human:one',scope);
+    expect(service.hasUnreclaimedPassesForTarget({runtime:'postgres',port:12345},{projectId:'qa',resourceId:scope.resourceId,shared:false})).toBe(false);
   });
   it('成功回收清除临时口令、管理员快照和CA，活动记录仍保留所需凭据',async()=>{
     const service=new DatabasePassService(dir,target),first=await service.prepare(scope,'one',['192.0.2.10/32']),second=await service.prepare(scope,'one',['192.0.2.10/32']);
@@ -152,7 +158,7 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32']);
     const recovered=new DatabasePassService(dir,target);expect((await recovered.list(scope,'one'))[0].status).toBe('revoked');expect(mocks.activate).not.toHaveBeenCalled();
     mocks.account.mockResolvedValue(undefined);const fresh=await service.prepare(scope,'one',['192.0.2.10/32']);await service.activate(fresh.id,'one',scope);
-    mocks.account.mockRejectedValue(new Error('offline'));const revoked=await service.revoke(fresh.id,'one',scope);expect(revoked.status).toBe('cleanup-failed');expect(mocks.close).toHaveBeenCalled();
+    mocks.account.mockRejectedValue(new Error('offline'));const revoked=await service.revoke(fresh.id,'one',scope);expect(revoked.status).toBe('cleanup-failed');expect(mocks.close).toHaveBeenCalled();expect(service.hasUnreclaimedPassesForTarget({runtime:'postgres',port:12345},{projectId:'qa',resourceId:scope.resourceId,shared:false})).toBe(true);
     expect(pass.id).not.toBe(fresh.id);
   });
 });

@@ -96,6 +96,12 @@ export class DatabasePassService {
   }
   private async sweep(){this.auditLog.flush();for(const pass of this.passes)if((!['revoked','expired'].includes(pass.status)&&Date.parse(pass.expiresAt)<=Date.now())||pass.status==='cleanup-failed')await this.revokeInternal(pass,'通行证到期');}
   private safe(pass:DatabasePass){const {secret,cleanupTarget,...publicPass}=pass;return {...publicPass,host:this.capability().host,permission:'read-only',review:'既有资源权限检查通过'};}
+  hasUnreclaimedPassesForTarget(target: Pick<DatabasePassTarget, 'runtime'|'port'>, resource: { projectId:string; resourceId:string; shared:boolean }): boolean {
+    return this.passes.some(pass => !['revoked','expired'].includes(pass.status) && (
+      (pass.runtime === target.runtime && pass.targetPort === target.port)
+      || (pass.resourceId === resource.resourceId && (pass.projectId === resource.projectId || resource.shared))
+    ));
+  }
   async list(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;await this.sweep();return this.passes.filter(p=>p.owner===owner&&p.projectId===scope.projectId&&p.branchId===scope.branchId&&p.resourceId===scope.resourceId).map(p=>this.safe(p));}
   private find(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){const pass=this.passes.find(p=>p.id===id&&p.owner===owner&&p.projectId===scope.projectId&&p.branchId===scope.branchId&&p.resourceId===scope.resourceId);if(!pass)throw new Error('通行证不存在或不属于当前用户和资源');return pass;}
   async prepare(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string,allowlist:string[],ttlMinutes=30){
