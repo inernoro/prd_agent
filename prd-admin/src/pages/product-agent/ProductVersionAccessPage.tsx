@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, GitBranch } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
@@ -21,6 +21,10 @@ function useFullProductPermission() {
 /** 同一 URL 下，独立申领用户只渲染版本页，不装载单产品的其它模块。 */
 export function ProductVersionProductRoute() {
   const fullProductAccess = useFullProductPermission();
+  const [searchParams] = useSearchParams();
+  if (fullProductAccess && searchParams.get('tab') === 'requirements') {
+    return <Navigate to="/product-agent?section=requirements" replace />;
+  }
   return fullProductAccess ? <SingleProductView /> : <VersionOnlyProductPage />;
 }
 

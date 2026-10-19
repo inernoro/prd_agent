@@ -123,6 +123,10 @@ export function SingleProductView() {
   const tabParam = searchParams.get('tab');
   const active: Section = (tabParam && SECTION_KEYS.has(tabParam as Section)) ? (tabParam as Section) : 'overview';
   const setActive = (key: Section) => {
+    if (key === 'requirements') {
+      navigate('/product-agent?section=requirements');
+      return;
+    }
     setSearchParams((prev) => {
       const next = new URLSearchParams(prev);
       next.set('tab', key);

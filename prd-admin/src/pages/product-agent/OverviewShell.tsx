@@ -89,7 +89,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
   const permissions = useAuthStore((state) => state.permissions ?? []);
   const isRoot = useAuthStore((state) => state.isRoot);
   const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
-  const canUseReview = permissions.includes('review-agent.use') || permissions.includes('super');
+  const canUseReview = hasEffectivePermission(permissions, 'review-agent.use', isRoot);
   const canViewLegacyVersions = canUseProduct || hasEffectivePermission(permissions, 'review-agent.use', isRoot)
     || hasEffectivePermission(permissions, 'product-agent.version-apply', isRoot);
   // 与 SingleProductView 一致：分区由 URL ?section= 派生，避免 state 与地址栏不同步
