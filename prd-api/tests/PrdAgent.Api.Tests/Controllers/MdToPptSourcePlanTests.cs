@@ -25,6 +25,73 @@ public class MdToPptSourcePlanTests
     private static string Slots(MdToPptSourcePlan.PagePlan page) => string.Join("", page.Blocks.Select(x => $"<div data-mdppt-source=\"{x.Id}\">\n  </div>"));
 
     [Fact]
+    public void UploadedAttachment_IsFrozenAsSource_WithoutTreatingInstructionAsSource()
+    {
+        const string attachment = "# 发布条件\n\n- 回滚前必须保留通知记录与负责人。\n- 5% 只是金丝雀示例，不是强制值。";
+        var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
+        Assert.Contains(plan.Blocks, block => block.Markdown.Contains("通知记录与负责人", StringComparison.Ordinal));
+        Assert.Contains(plan.Blocks, block => block.Markdown.Contains("不是强制值", StringComparison.Ordinal));
+        Assert.DoesNotContain(plan.Blocks, block => block.Markdown.Contains("请做20页", StringComparison.Ordinal));
+        var catalog = plan.SerializeCatalog();
+        Assert.Equal(plan.Fingerprint, MdToPptSourcePlan.RestoreCatalog(catalog).Fingerprint);
+    }
+
+    [Fact]
+    public void AutoPageCapacity_CanExceedTwenty_AndExplicitUnderCapacityIsRejected()
+    {
+        var attachment = string.Join("\n\n", Enumerable.Range(1, 48).Select(index =>
+            $"## 条件 {index}\n\n" + new string('甲', 330) + $"，限定语 {index} 必须保留。"));
+        var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
+        Assert.InRange(plan.RecommendedPageCount(attachment.Length), 23, 30);
+        Assert.True(plan.MinimumPageCount(attachment.Length) > 10);
+        Assert.InRange(MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
+            plan), 23, 30);
+        var error = Assert.Throws<MdToPptSourcePlanException>(() => MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "严格生成 10 页演示稿", AttachmentText = attachment },
+            plan));
+        Assert.Equal("outline_capacity_exceeded", error.Code);
+    }
+
+    [Fact]
+    public void ManualEditOverlay_PreservesVisibleTextChange_AndRejectsUnknownHiddenOrScriptChanges()
+    {
+        var plan = MdToPptSourcePlan.Create("# 条件\n\n通知负责人。", Array.Empty<DesignKnowledgeSnapshot>());
+        var pages = plan.Bind(new[]
+        {
+            new MdToPptOutlinePageDto { Title = "条件", SourceBlockIds = plan.Blocks.Select(block => block.Id).ToList() },
+        }, 1);
+        var frozen = plan.SerializeBound(pages);
+        var parent = "<html><body><section class=\"slide\">" + string.Join("", pages[0].Blocks.Select(block =>
+            $"<div data-mdppt-source=\"{block.Id}\">{block.Html}</div>")) + "</section><script>next()</script></body></html>";
+        var proposal = parent.Replace("通知负责人。", "通知值班负责人。", StringComparison.Ordinal);
+        var updated = MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, proposal, out var overlayHash);
+        Assert.Matches("^[a-f0-9]{64}$", overlayHash);
+        var updatedBlock = Assert.Single(
+            Assert.Single(MdToPptSourcePlan.RestoreBound(updated)).Blocks,
+            block => block.Markdown.Contains("通知值班负责人。", StringComparison.Ordinal));
+        Assert.Contains("通知值班负责人。", updatedBlock.Markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("通知负责人。", updatedBlock.Markdown, StringComparison.Ordinal);
+
+        var nonSourceEdit = parent.Replace("class=\"slide\"", "class=\"slide revised\"", StringComparison.Ordinal);
+        var unchanged = MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, nonSourceEdit, out var unchangedOverlayHash);
+        Assert.Equal(
+            Assert.Single(MdToPptSourcePlan.RestoreBound(frozen)).Blocks.Select(block => block.Markdown),
+            Assert.Single(MdToPptSourcePlan.RestoreBound(unchanged)).Blocks.Select(block => block.Markdown));
+        Assert.Matches("^[a-f0-9]{64}$", unchangedOverlayHash);
+
+        var unknown = proposal.Replace("data-mdppt-source=\"", "data-mdppt-source=\"forged-", StringComparison.Ordinal);
+        Assert.Equal("manual_edit_source_slot_invalid",
+            Assert.Throws<MdToPptSourcePlanException>(() => MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, unknown, out _)).Code);
+        var hidden = proposal.Replace("<div data-mdppt-source", "<div hidden data-mdppt-source", StringComparison.Ordinal);
+        Assert.Equal("manual_edit_source_hidden",
+            Assert.Throws<MdToPptSourcePlanException>(() => MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, hidden, out _)).Code);
+        var script = proposal.Replace("next()", "steal()", StringComparison.Ordinal);
+        Assert.Equal("manual_edit_script_changed",
+            Assert.Throws<MdToPptSourcePlanException>(() => MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, script, out _)).Code);
+    }
+
+    [Fact]
     public void FrozenCatalog_HasStableVersionedIdentityAndNoOverlappingListOrTableRows()
     {
         const string source = "# 服务\n\n- 安静阅读：免费，不提供线上报名。\n- 图书交换：每次最多带3本。\n- 邻里共读：每场最多12人。\n\n| 日期 | 名额 |\n|---|---|\n| 周六 | 12 |\n| 周日 | 10 |\n";
@@ -245,12 +312,17 @@ public class MdToPptSourcePlanTests
         var broker = File.ReadAllText(Path.Combine(
             directory.FullName,
             "prd-api/src/PrdAgent.Api/Services/DesignArtifactWorkspaceBroker.cs"));
+        var designArtifactsController = File.ReadAllText(Path.Combine(
+            directory.FullName,
+            "prd-api/src/PrdAgent.Api/Controllers/Api/DesignArtifactsController.cs"));
 
         Assert.Contains("PresentationInput = new DesignArtifactPresentationInput", service);
         Assert.Contains("SourceContent = input.SourceContent", service);
         Assert.Contains("SourceContentHash = sourceHash", service);
         Assert.Contains("OutlineJson = input.OutlineJson", service);
         Assert.Contains("OutlineHash = outlineHash", service);
+        Assert.Contains("SourcePlanJson = input.SourcePlanJson", service);
+        Assert.Contains("SourcePlanHash = input.SourcePlanHash", service);
         Assert.Contains("TargetPages = input.TargetPages", service);
         Assert.Contains("ParentPackageHash = input.ParentPackageHash", service);
         Assert.Contains("ManualEditHtml = manualEditHtml", service);
@@ -258,8 +330,10 @@ public class MdToPptSourcePlanTests
         Assert.Contains("FileName = \"presentation-source.md\"", service);
         Assert.Contains("\"source/presentation.md\"", broker);
         Assert.Contains("\"brief/outline.json\"", broker);
+        Assert.Contains("\"brief/source-plan.json\"", broker);
         Assert.Contains("requiredSlideIndexes = Enumerable.Range(1, run.PresentationInput.TargetPages)", broker);
         Assert.Contains("\"proposal/manual-edit.html\"", broker);
+        Assert.Contains("PresentationInput = source.PresentationInput", designArtifactsController);
     }
 
     [Theory]

@@ -1121,6 +1121,34 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.DoesNotContain(package.Files, file => file.Path == "proposal/manual-edit.html");
     }
 
+    [Fact]
+    public void PresentationSourcePlan_IsASeparateServerOwnedWorkspaceFile()
+    {
+        var run = BuildRun();
+        const string plan = "{\"SchemaVersion\":\"map-mdppt-source-plan-v2\",\"Fingerprint\":\"frozen\",\"Blocks\":[],\"Pages\":[]}";
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 24,
+            SourceContent = "只包含用户需求，不包含附件正文",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("只包含用户需求，不包含附件正文")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+            SourcePlanJson = plan,
+            SourcePlanHash = Hash(Encoding.UTF8.GetBytes(plan)),
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var planFile = Assert.Single(package.Files, file => file.Path == "brief/source-plan.json");
+        Assert.Equal(plan, Encoding.UTF8.GetString(Convert.FromBase64String(planFile.ContentBase64)));
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+        var contract = task.RootElement.GetProperty("presentationContract").GetProperty("sourcePlan");
+        Assert.Equal("brief/source-plan.json", contract.GetProperty("path").GetString());
+        Assert.Equal(run.PresentationInput.SourcePlanHash, contract.GetProperty("contentHash").GetString());
+    }
+
     [Theory]
     [InlineData("在主标题下方新增一行短句“只出现一次的验收标记”", "只出现一次的验收标记")]
     [InlineData("请添加文案「唯一发布标记」到页面底部", "唯一发布标记")]

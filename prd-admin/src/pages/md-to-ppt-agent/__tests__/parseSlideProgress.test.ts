@@ -73,11 +73,24 @@ describe('estimatePages', () => {
     expect(parseExplicitPages('1 prompt 示例')).toBeNull();
   });
 
-  it('只从用户需求识别显式页数，附件和知识内容只参与长度估算', () => {
+  it('只从用户需求识别显式页数，自动页数交给服务端按冻结来源容量计算', () => {
     const reference = '附件共 2 页\n### 6.1 PR 的大小与标题\n' + '资料'.repeat(8000);
-    expect(resolveOutlineTargetPages('请把附件整理成演示稿', reference)).toBe(20);
+    expect(resolveOutlineTargetPages('请把附件整理成演示稿', reference)).toBeUndefined();
     expect(resolveOutlineTargetPages('请生成 20 页演示稿', '附件共 2 页')).toBe(20);
     expect(resolveOutlineTargetPages('请生成 20p 演示稿', '附件共 2 页')).toBe(20);
+  });
+
+  it('大纲、确认与生成请求都把附件作为独立字段发送，不拼回普通需求 content', () => {
+    const page = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
+    const service = readFileSync(new URL('../../../services/real/mdToPptService.ts', import.meta.url), 'utf8');
+    const outlineRequestStart = page.indexOf('const cleanup = streamMdToPptOutline({');
+    const outlineRequestEnd = page.indexOf('onKnowledgeResolved:', outlineRequestStart);
+    const outlineRequest = page.slice(outlineRequestStart, outlineRequestEnd);
+    expect(outlineRequest).toContain('content: userText');
+    expect(outlineRequest).toContain('attachmentText: attachmentText || undefined');
+    expect(outlineRequest).not.toContain('[userText, attachmentText]');
+    expect(page).toContain('attachmentText: attachmentText || undefined');
+    expect(service.match(/attachmentText: options\.attachmentText/g)).toHaveLength(3);
   });
 });
 

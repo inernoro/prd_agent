@@ -23,12 +23,15 @@ public sealed class DesignArtifactLlmRequestPolicy
 /// </summary>
 public sealed class DesignArtifactPresentationInput
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public int TargetPages { get; set; }
     public string SourceContent { get; set; } = string.Empty;
     public string SourceContentHash { get; set; } = string.Empty;
     public string OutlineJson { get; set; } = string.Empty;
     public string OutlineHash { get; set; } = string.Empty;
+    /// <summary>服务端冻结的资料块、页绑定与有限用户编辑覆盖；不是提示词，也不从普通 Content 猜测来源。</summary>
+    public string? SourcePlanJson { get; set; }
+    public string? SourcePlanHash { get; set; }
     public string Theme { get; set; } = string.Empty;
     public string? ParentRunId { get; set; }
     public string? ParentPackageHash { get; set; }

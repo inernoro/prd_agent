@@ -103,6 +103,7 @@ export interface PresentationContract {
   outlineHash: string;
   theme: string;
   requiredSlideIndexes: number[];
+  sourcePlan?: { path: string; contentHash: string };
 }
 
 /**
@@ -183,7 +184,7 @@ export function parsePresentationContract(value: unknown): PresentationContract 
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json presentationContract must be an object');
   }
   const record = value as Record<string, unknown>;
-  if (record.schemaVersion !== 'map-html-ppt-contract-v1' || record.version !== 1) {
+  if (record.schemaVersion !== 'map-html-ppt-contract-v1' || (record.version !== 1 && record.version !== 2)) {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json presentationContract version is invalid');
   }
   const targetPages = Number(record.targetPages);
@@ -200,12 +201,24 @@ export function parsePresentationContract(value: unknown): PresentationContract 
     }
     return raw;
   };
+  let sourcePlan: PresentationContract['sourcePlan'];
+  if (record.sourcePlan !== undefined) {
+    if (!record.sourcePlan || typeof record.sourcePlan !== 'object' || Array.isArray(record.sourcePlan)) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json presentationContract sourcePlan is invalid');
+    }
+    const plan = record.sourcePlan as Record<string, unknown>;
+    if (plan.path !== 'brief/source-plan.json' || typeof plan.contentHash !== 'string' || !/^[a-f0-9]{64}$/.test(plan.contentHash)) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json presentationContract sourcePlan is invalid');
+    }
+    sourcePlan = { path: plan.path, contentHash: plan.contentHash };
+  }
   return {
     targetPages,
     sourceContentHash: digest('sourceContentHash'),
     outlineHash: digest('outlineHash'),
     theme: typeof record.theme === 'string' ? record.theme.slice(0, 120) : '',
     requiredSlideIndexes: indexes as number[],
+    sourcePlan,
   };
 }
 
@@ -389,6 +402,9 @@ export function buildPlatformRules(input: {
       'Every slide must expose a stable slide index and real visible content. Desktop keyboard controls and visible controls must work. At 390px, users must be able to reach every slide using a visible, operable control; the slide body must not be clipped, forced into narrow vertical text, or hidden by fixed navigation.',
       'At 390px, prefer a readable vertical layout with natural scrolling when content needs more height. Never scale a desktop canvas down with transform or zoom to make it fit; effective rendered body text must remain at least 12px and fixed controls must not cover slide content.',
       'Treat the outline and source document as factual constraints. Preserve the subject of every percentage, threshold, date, example, and qualifier. Examples describe possibilities and must never be rewritten as mandatory policy. Do not invent facts or silently omit a frozen outline page.',
+      presentation.sourcePlan
+        ? 'The server-owned source plan in /workspace/brief/source-plan.json assigns immutable source block IDs to slides. Place every assigned block exactly once as an empty visible <div data-mdppt-source="block-id"></div>. Do not rewrite, duplicate, hide, or fill these slots: the runtime materializes the frozen source before preview and every quality gate.'
+        : 'No server source-slot plan is present; preserve the frozen source document without inventing or omitting facts.',
       'Use OpenDesign design-system resources for hierarchy, type, spacing, color, and motion. Pages must vary by content purpose while remaining one coherent deck. Do not reuse one narrow card layout for every slide and do not shrink text to hide overflow.',
       'All generated interaction code is presentation-local. It must not read cookies, localStorage, sessionStorage, parent-window state, MAP access tokens, or same-origin application APIs. It may only operate on this artifact DOM and its packaged relative assets.',
       CSS_GENERATED_TEXT_RULE,
@@ -430,6 +446,9 @@ export function buildReviewMessage(input: { reviewPass: number; editingExistingP
     'Traverse every slide and every interactive navigation state at desktop and 390px. Correct clipping, horizontal overflow, narrow vertical text, unreadable tables, broken controls, missing slide indexes, and low contrast. Do not hide failures by shrinking type or removing required content.',
     'At 390px inspect the effective size after transforms and zoom, not only the declared font-size. Natural vertical scrolling is valid when every word and control remains reachable; fixed controls covering text and scaled-down desktop canvases are not.',
     'Compare every slide with /workspace/brief/outline.json and /workspace/source/presentation.md. Preserve factual subjects and qualifiers, preserve example semantics as non-binding, and ensure every frozen outline page appears exactly once.',
+    presentation.sourcePlan
+      ? 'Verify every source-plan block has one visible empty data-mdppt-source slot on its assigned slide. Never edit slot contents directly or move source text outside its slot.'
+      : '',
     CSS_GENERATED_TEXT_RULE,
     editingExistingPage
       ? 'Use targeted edits and preserve unrelated slides, package assets, and working interactions.'

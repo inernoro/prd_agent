@@ -17,7 +17,9 @@ public sealed record HtmlPptOpenDesignInput(
     string? ParentRunId = null,
     string? ParentPackageHash = null,
     string? StyleInstruction = null,
-    string? ManualEditHtml = null);
+    string? ManualEditHtml = null,
+    string? SourcePlanJson = null,
+    string? SourcePlanHash = null);
 
 public interface IHtmlPptOpenDesignRunService
 {
@@ -124,6 +126,8 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
                 SourceContentHash = sourceHash,
                 OutlineJson = input.OutlineJson,
                 OutlineHash = outlineHash,
+                SourcePlanJson = input.SourcePlanJson,
+                SourcePlanHash = input.SourcePlanHash,
                 Theme = input.Theme.Trim(),
                 ParentRunId = input.ParentRunId,
                 ParentPackageHash = input.ParentPackageHash,

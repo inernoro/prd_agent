@@ -107,8 +107,12 @@ interface ChatMessage {
     用户的每次手工编辑即时落进它并持久化（刷新回来还在这个状态），
     点「确认生成」前可以停留任意久。 */
 interface OutlineDraft {
-  /** 用户原始内容 + 附件 + 知识库（生成时的主上下文，调整大纲时保持不变） */
+  /** 兼容历史恢复的展示文本；新任务不得据此猜测指令与资料角色。 */
   sourceText: string;
+  /** 用户需求指令。 */
+  instructionText?: string;
+  /** 仅来自明确文件选择器的资料正文。 */
+  attachmentText?: string;
   summary: string;
   totalPages: number;
   outline: OutlineSlide[];
@@ -443,10 +447,10 @@ export function estimatePages(content: string, extraChars = 0): number {
  * 附件与知识内容只参与篇幅估算，不得把资料里的章节号、页码或“共20页”当成指令。
  * extraChars 用于补回从 sessionStorage 恢复、已剥离正文的知识条目篇幅。
  */
-export function resolveOutlineTargetPages(userRequest: string, referenceContent: string, extraChars = 0): number {
+export function resolveOutlineTargetPages(userRequest: string, _referenceContent: string, _extraChars = 0): number | undefined {
   const explicit = parseExplicitPages(userRequest);
   if (explicit) return explicit;
-  return estimatePagesByLength([userRequest, referenceContent].filter(Boolean).join('\n\n'), extraChars);
+  return undefined;
 }
 
 function genId(): string {
@@ -2087,7 +2091,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
-    let saved: { id: string; msgId: string; sourceText: string } | null = null;
+    let saved: { id: string; msgId: string; sourceText: string; instructionText?: string; attachmentText?: string } | null = null;
     try {
       const raw = sessionStorage.getItem(OUTLINE_RUN_KEY);
       if (raw) saved = JSON.parse(raw);
@@ -2116,6 +2120,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             const outline = (d.outline ?? []).filter(Boolean);
             setOutlineDraft({
               sourceText: saved!.sourceText,
+              instructionText: saved!.instructionText,
+              attachmentText: saved!.attachmentText,
               summary: d.summary ?? '',
               totalPages: outline.length || (d.totalPages ?? 0),
               outline,
@@ -2342,7 +2348,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       kbRefs: KbRef[],
       targetPagesOverride?: number,
       sourceTextOverride?: string,
-      adjustMode?: boolean
+      adjustMode?: boolean,
+      attachmentTextOverride?: string,
     ) => {
       if (!mountedRef.current) return;
       setIsProcessing(true);
@@ -2356,7 +2363,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       }
       setDiagLines([]);
 
-      const attachmentText = attachments.map((a) => `## 附件：${a.name}\n\n${a.content}`).join('\n\n');
+      const attachmentText = attachmentTextOverride
+        ?? attachments.map((a) => `## 附件：${a.name}\n\n${a.content}`).join('\n\n');
       const kbContext = kbRefs.map((r) => `## 知识库「${r.storeName}」>「${r.entryTitle}」\n\n${r.content}`).join('\n\n');
 
       // 历史摘要：只取最近 3 轮用户消息
@@ -2433,7 +2441,15 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setMessages((prev) => prev.map((message) => (
             message.id === assistantMsg.id ? { ...message, runId: id } : message
           )));
-          try { sessionStorage.setItem(OUTLINE_RUN_KEY, JSON.stringify({ id, msgId: assistantMsg.id, sourceText })); } catch { /* quota */ }
+          try {
+            sessionStorage.setItem(OUTLINE_RUN_KEY, JSON.stringify({
+              id,
+              msgId: assistantMsg.id,
+              sourceText,
+              instructionText: userText,
+              attachmentText,
+            }));
+          } catch { /* quota */ }
         },
         onMeta: (meta) => {
           metaSeen = true;
@@ -2444,8 +2460,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             setArtifactPhase('idle');
             setOutlineDraft({
               sourceText,
+              instructionText: userText,
+              attachmentText,
               summary: meta.summary,
-              totalPages: meta.totalPages || targetPages,
+              totalPages: meta.totalPages || targetPages || 8,
               outline: [],
               outlineRunId: serverOutlineRunId || undefined,
               clarify: meta.clarify?.slice(0, 3),
@@ -2550,7 +2568,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   // ─── Convert 核心（大纲编辑器「确认生成」与旧版气泡共用）
   const launchConvert = useCallback(
     (
-      fullContent: string,
+      instructionContent: string,
+      attachmentText: string,
       pages: number | null,
       outlinePages?: OutlineSlide[],
       summary?: string,
@@ -2638,7 +2657,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       };
 
       const cleanup = streamMdToPptConvert({
-        content: fullContent,
+        content: instructionContent,
+        attachmentText: attachmentText || undefined,
         theme,
         templateId: templateId ?? undefined,
         slideCount: pages ?? undefined,
@@ -2844,18 +2864,16 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const confirmOutlineDraft = useCallback(() => {
     const draft = outlineDraft;
     if (!draft || isProcessing) return;
-    const fullContent =
-      draft.sourceText +
-      serializeClarifyAnswers(draft) +
-      `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${serializeOutline(draft.outline)}`;
+    const instructionContent = (draft.instructionText ?? draft.sourceText) + serializeClarifyAnswers(draft);
     launchConvert(
-      fullContent,
+      instructionContent,
+      draft.attachmentText ?? '',
       draft.totalPages || draft.outline.length || null,
       draft.outline,
       draft.summary,
       draft.outlineRunId,
     );
-  }, [outlineDraft, isProcessing, serializeClarifyAnswers, serializeOutline, launchConvert]);
+  }, [outlineDraft, isProcessing, serializeClarifyAnswers, launchConvert]);
 
   // ─── 旧版气泡确认（兼容历史会话里带内嵌大纲的消息）
   const startConvert = useCallback(
@@ -2867,19 +2885,16 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const attachmentText = (userMsg?.attachments ?? [])
         .map((a) => `## 附件：${a.name}\n\n${a.content}`)
         .join('\n\n');
-      const outlineText = serializeOutline(outlineMsg.outline ?? []);
-      const fullContent =
-        [userContent, attachmentText].filter(Boolean).join('\n\n---\n\n').trim() +
-        (outlineText ? `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${outlineText}` : '');
       launchConvert(
-        fullContent,
+        userContent,
+        attachmentText,
         outlineMsg.totalPages ?? outlineMsg.outline?.length ?? null,
         outlineMsg.outline,
         outlineMsg.summary,
         outlineMsg.runId,
       );
     },
-    [isProcessing, messages, serializeOutline, launchConvert]
+    [isProcessing, messages, launchConvert]
   );
 
   // ─── 让 AI 调整大纲（以右侧工作稿为基底：尊重用户手工编辑，页数守护）
@@ -2888,7 +2903,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const draft = outlineDraft;
       if (!draft || isProcessing) return;
       void requestOutline(
-        draft.sourceText +
+        (draft.instructionText ?? draft.sourceText) +
           serializeClarifyAnswers(draft) +
           '\n\n当前大纲（用户可能已手工编辑，请在此基础上调整）：\n' +
           serializeOutline(draft.outline) +
@@ -2903,7 +2918,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         [], activeKnowledgeRefs,
         draft.totalPages || draft.outline.length,
         draft.sourceText,
-        true
+        true,
+        draft.attachmentText,
       );
     },
     [outlineDraft, isProcessing, activeKnowledgeRefs, requestOutline, serializeClarifyAnswers, serializeOutline]
@@ -3435,13 +3451,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     if (isProcessing) return;
     setStylePanelOpen(false);
     if (outlineDraft) {
-      const fullContent =
-        outlineDraft.sourceText +
-        serializeClarifyAnswers(outlineDraft) +
-        `\n\n---\n\n## 大纲结构（请严格按此页数和标题生成）\n\n${serializeOutline(outlineDraft.outline)}`;
+      const instructionContent = (outlineDraft.instructionText ?? outlineDraft.sourceText)
+        + serializeClarifyAnswers(outlineDraft);
       pushMsg({ role: 'user', content: '重新生成整份 PPT' });
       launchConvert(
-        fullContent,
+        instructionContent,
+        outlineDraft.attachmentText ?? '',
         outlineDraft.totalPages || outlineDraft.outline.length || null,
         outlineDraft.outline,
         outlineDraft.summary,
@@ -3459,7 +3474,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       return;
     }
     handleReset();
-  }, [isProcessing, outlineDraft, serializeClarifyAnswers, serializeOutline, pushMsg, launchConvert, lastUserPrompt, handleReset]);
+  }, [isProcessing, outlineDraft, serializeClarifyAnswers, pushMsg, launchConvert, lastUserPrompt, handleReset]);
 
   const isStreaming = artifactPhase === 'generating' || artifactPhase === 'patching';
   const startedPageIndexes = useMemo(() => getStartedPageIndexes(diagLines), [diagLines]);

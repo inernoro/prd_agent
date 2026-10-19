@@ -2014,6 +2014,90 @@ public sealed class DesignArtifactLifecycleServiceTests
     }
 
     [Fact]
+    public void RestartedHtmlPptCompatibilityRun_ShouldKeepFrozenSourcePlan_AndFallbackForLegacyInput()
+    {
+        var now = DateTime.UtcNow;
+        var frozenSourcePlan = "{\"schemaVersion\":\"map-mdppt-source-plan-v2\",\"pages\":[]}";
+        var frozenSourcePlanHash = new string('s', 64);
+        var outline = "{\"outline\":[]}";
+        var outlineHash = new string('o', 64);
+        var source = new DesignArtifactRun
+        {
+            Id = "source-html-ppt-v2",
+            UserId = "owner-user",
+            ArtifactType = DesignArtifactTypes.HtmlPpt,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            PresentationInput = new DesignArtifactPresentationInput
+            {
+                TargetPages = 24,
+                SourceContent = "冻结来源",
+                SourceContentHash = new string('c', 64),
+                OutlineJson = outline,
+                OutlineHash = outlineHash,
+                SourcePlanJson = frozenSourcePlan,
+                SourcePlanHash = frozenSourcePlanHash,
+                Theme = "storytelling",
+            },
+        };
+        var restarted = new DesignArtifactRun
+        {
+            Id = "restarted-html-ppt-v2",
+            UserId = source.UserId,
+            ArtifactType = source.ArtifactType,
+            Operation = source.Operation,
+            Runtime = source.Runtime,
+            PresentationInput = source.PresentationInput,
+        };
+
+        var method = typeof(DesignArtifactsController).GetMethod(
+            "BuildRestartedPresentationCompatibilityRun",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(method);
+
+        var compatibility = Assert.IsType<MdToPptRun>(method.Invoke(null, [source, restarted, now]));
+        Assert.Equal(frozenSourcePlan, compatibility.SourcePlanJson);
+        Assert.Equal(frozenSourcePlanHash, compatibility.SourcePlanHash);
+        Assert.Equal(24, compatibility.SourcePlanPageCount);
+        Assert.Equal(frozenSourcePlan, source.PresentationInput.SourcePlanJson);
+        Assert.Equal(frozenSourcePlanHash, source.PresentationInput.SourcePlanHash);
+
+        var legacySource = new DesignArtifactRun
+        {
+            Id = "source-html-ppt-legacy",
+            UserId = source.UserId,
+            ArtifactType = DesignArtifactTypes.HtmlPpt,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            PresentationInput = new DesignArtifactPresentationInput
+            {
+                TargetPages = 20,
+                SourceContent = "历史冻结来源",
+                SourceContentHash = new string('l', 64),
+                OutlineJson = outline,
+                OutlineHash = outlineHash,
+                Theme = "storytelling",
+            },
+        };
+        var legacyRestarted = new DesignArtifactRun
+        {
+            Id = "restarted-html-ppt-legacy",
+            UserId = legacySource.UserId,
+            ArtifactType = legacySource.ArtifactType,
+            Operation = legacySource.Operation,
+            Runtime = legacySource.Runtime,
+            PresentationInput = legacySource.PresentationInput,
+        };
+
+        var legacyCompatibility = Assert.IsType<MdToPptRun>(
+            method.Invoke(null, [legacySource, legacyRestarted, now]));
+        Assert.Equal(outline, legacyCompatibility.SourcePlanJson);
+        Assert.Equal(outlineHash, legacyCompatibility.SourcePlanHash);
+        Assert.Null(legacySource.PresentationInput.SourcePlanJson);
+        Assert.Null(legacySource.PresentationInput.SourcePlanHash);
+    }
+
+    [Fact]
     [Trait("Category", TestCategories.Integration)]
     public async Task RestartRun_ShouldBeIdempotent_AndKeepInterruptedSourceUnchanged()
     {

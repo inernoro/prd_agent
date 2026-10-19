@@ -16,6 +16,7 @@ namespace PrdAgent.Api.Services.MdToPpt;
 internal sealed class MdToPptSourcePlan
 {
     internal const int Version = 1;
+    internal const string SchemaVersion = "map-mdppt-source-plan-v2";
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().DisableHtml().Build();
     /// <summary>
     /// Id 是内容寻址身份（sb- + sha256），Alias 是同一个块给模型看的短代号（b1、b2…）。
@@ -25,6 +26,11 @@ internal sealed class MdToPptSourcePlan
     /// </summary>
     internal sealed record SourceBlock(string Id, string Alias, string Markdown, string Html, IReadOnlyList<string> Labels);
     internal sealed record PagePlan(IReadOnlyList<SourceBlock> Blocks, string Hash, string DisplayTitle);
+    private sealed record FrozenCatalog(string SchemaVersion, string Fingerprint, IReadOnlyList<SourceBlock> Blocks,
+        IReadOnlyList<FrozenPage>? Pages = null, FrozenOverlay? UserEditOverlay = null);
+    private sealed record FrozenPage(int Index, string Hash, string DisplayTitle, IReadOnlyList<SourceBlock> Blocks);
+    private sealed record FrozenOverlay(string ParentPlanHash, string ProposalHash, IReadOnlyList<FrozenOverlayChange> Changes);
+    private sealed record FrozenOverlayChange(string BlockId, string BeforeHash, string AfterHash);
     internal IReadOnlyList<SourceBlock> Blocks { get; }
     internal string Fingerprint { get; }
     private MdToPptSourcePlan(IReadOnlyList<SourceBlock> blocks)
@@ -96,6 +102,190 @@ internal sealed class MdToPptSourcePlan
         return new MdToPptSourcePlan(blocks.AsReadOnly());
     }
 
+    internal static MdToPptSourcePlan Create(string? attachmentText, IReadOnlyList<DesignKnowledgeSnapshot> knowledge)
+    {
+        var sources = new List<DesignKnowledgeSnapshot>();
+        if (!string.IsNullOrWhiteSpace(attachmentText))
+        {
+            var content = attachmentText.Trim();
+            var hash = Hash(content);
+            sources.Add(new DesignKnowledgeSnapshot
+            {
+                StoreId = "user-attachment",
+                EntryId = $"attachment-{hash[..16]}",
+                Title = "用户明确上传的资料",
+                Content = content,
+                ContentHash = hash,
+            });
+        }
+        sources.AddRange(knowledge);
+        return Create(sources);
+    }
+
+    internal string SerializeCatalog() => JsonSerializer.Serialize(
+        new FrozenCatalog(SchemaVersion, Fingerprint, Blocks));
+
+    internal string SerializeBound(IReadOnlyList<PagePlan> pages) => JsonSerializer.Serialize(
+        new FrozenCatalog(SchemaVersion, Fingerprint, Blocks,
+            pages.Select((page, index) => new FrozenPage(index + 1, page.Hash, page.DisplayTitle, page.Blocks)).ToList()));
+
+    internal static MdToPptSourcePlan RestoreCatalog(string json)
+    {
+        FrozenCatalog? frozen;
+        try { frozen = JsonSerializer.Deserialize<FrozenCatalog>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
+        catch (JsonException) { throw Invalid("source_plan_invalid", "冻结来源目录无法读取，请重新上传资料并生成大纲"); }
+        if (frozen == null || frozen.SchemaVersion != SchemaVersion || frozen.Blocks.Count == 0)
+            throw Invalid("source_plan_invalid", "冻结来源目录版本无效，请重新上传资料并生成大纲");
+        var plan = new MdToPptSourcePlan(frozen.Blocks.ToList().AsReadOnly());
+        if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(plan.Fingerprint), Encoding.UTF8.GetBytes(frozen.Fingerprint)))
+            throw Invalid("source_plan_binding_mismatch", "冻结来源目录校验失败，请重新上传资料并生成大纲");
+        return plan;
+    }
+
+    internal static IReadOnlyList<PagePlan> RestoreBound(string json)
+    {
+        var frozen = JsonSerializer.Deserialize<FrozenCatalog>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            ?? throw Invalid("source_plan_invalid", "冻结来源计划无法读取，请重新生成大纲");
+        var plan = RestoreCatalog(json);
+        if (frozen.Pages is not { Count: > 0 })
+            throw Invalid("source_plan_missing", "冻结来源尚未绑定到页面，请重新确认大纲");
+        var lookup = plan.BlockLookup();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var pages = new List<PagePlan>();
+        foreach (var page in frozen.Pages.OrderBy(x => x.Index))
+        {
+            var blocks = page.Blocks.Select(block => lookup.TryGetValue(block.Id, out var actual) ? actual : null).ToList();
+            if (blocks.Any(x => x == null) || blocks.Any(block => !seen.Add(block!.Id)))
+                throw Invalid("source_plan_binding_mismatch", "冻结来源页绑定校验失败，请重新生成大纲");
+            var actualBlocks = blocks.Select(x => x!).ToList().AsReadOnly();
+            var expectedHash = Hash(plan.Fingerprint + "\n" + JsonSerializer.Serialize(new
+            {
+                displayTitle = page.DisplayTitle,
+                ids = actualBlocks.Select(x => x.Id),
+            }));
+            if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(expectedHash), Encoding.UTF8.GetBytes(page.Hash)))
+                throw Invalid("source_plan_binding_mismatch", "冻结来源页哈希校验失败，请重新生成大纲");
+            pages.Add(new PagePlan(actualBlocks, page.Hash, page.DisplayTitle));
+        }
+        if (seen.Count != plan.Blocks.Count)
+            throw Invalid("source_plan_incomplete", "冻结来源页遗漏内容，请重新生成大纲");
+        return pages.AsReadOnly();
+    }
+
+    internal static string ApplyManualEditOverlay(
+        string sourcePlanJson,
+        string parentHtml,
+        string proposalHtml,
+        out string overlayHash)
+    {
+        var frozen = JsonSerializer.Deserialize<FrozenCatalog>(sourcePlanJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+            ?? throw Invalid("source_plan_invalid", "冻结来源计划无法读取，手动草稿未保存");
+        var bound = RestoreBound(sourcePlanJson);
+        var blocks = frozen.Blocks.ToDictionary(block => block.Id, StringComparer.Ordinal);
+        var parentSlots = ExtractSlots(parentHtml);
+        var proposalSlots = ExtractSlots(proposalHtml);
+        if (parentSlots.Count != blocks.Count || proposalSlots.Count != blocks.Count
+            || !parentSlots.Keys.Order().SequenceEqual(blocks.Keys.Order(), StringComparer.Ordinal)
+            || !proposalSlots.Keys.Order().SequenceEqual(blocks.Keys.Order(), StringComparer.Ordinal))
+            throw Invalid("manual_edit_source_slot_invalid", "手动草稿缺少、重复或新增了来源内容块；原版本与草稿均已保留");
+        if (!ScriptFingerprint(parentHtml).SequenceEqual(ScriptFingerprint(proposalHtml), StringComparer.Ordinal))
+            throw Invalid("manual_edit_script_changed", "手动草稿修改了脚本或执行结构；原版本与草稿均已保留");
+
+        var changes = new List<FrozenOverlayChange>();
+        foreach (var block in frozen.Blocks)
+        {
+            var before = parentSlots[block.Id];
+            var after = proposalSlots[block.Id];
+            if (before == after) continue;
+            var beforeRoot = Parse(before);
+            var afterRoot = Parse(after);
+            if (beforeRoot == null || afterRoot == null
+                || afterRoot.Descendants().Any(element => element.Name.LocalName is "script" or "style" or "iframe" or "template")
+                || afterRoot.DescendantsAndSelf().Any(HasHiddenAncestor)
+                || StructureFingerprint(beforeRoot) != StructureFingerprint(afterRoot))
+                throw Invalid("manual_edit_source_structure_changed", "来源正文只支持可见文字修改，结构或隐藏状态变化未保存；原版本与草稿均已保留");
+            var nextHtml = InnerHtml(afterRoot);
+            if (string.IsNullOrWhiteSpace(afterRoot.Value))
+                throw Invalid("manual_edit_source_empty", "来源正文不能被清空；原版本与草稿均已保留");
+            blocks[block.Id] = block with { Markdown = afterRoot.Value.Trim(), Html = nextHtml };
+            changes.Add(new FrozenOverlayChange(block.Id, Hash(before), Hash(after)));
+        }
+
+        var nextBlocks = frozen.Blocks.Select(block => blocks[block.Id]).ToList().AsReadOnly();
+        var nextPages = bound.Select((page, index) => new FrozenPage(
+            index + 1,
+            page.Hash,
+            page.DisplayTitle,
+            page.Blocks.Select(block => blocks[block.Id]).ToList().AsReadOnly())).ToList();
+        var parentPlanHash = Hash(sourcePlanJson);
+        var proposalHash = Hash(proposalHtml);
+        overlayHash = Hash(JsonSerializer.Serialize(new { parentPlanHash, proposalHash, changes }));
+        return JsonSerializer.Serialize(new FrozenCatalog(
+            SchemaVersion,
+            frozen.Fingerprint,
+            nextBlocks,
+            nextPages,
+            new FrozenOverlay(parentPlanHash, proposalHash, changes)));
+    }
+
+    private static Dictionary<string, string> ExtractSlots(string html)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        var opening = new Regex("<div\\b(?<attrs>[^>]*\\bdata-mdppt-source\\s*=\\s*(?<quote>[\\\"'])(?<id>[^\\\"']+)\\k<quote>[^>]*)>", RegexOptions.IgnoreCase);
+        foreach (Match match in opening.Matches(html))
+        {
+            var attrs = match.Groups["attrs"].Value;
+            if (Regex.IsMatch(attrs, "(?:hidden|aria-hidden\\s*=\\s*[\\\"']true|display\\s*:\\s*none|visibility\\s*:\\s*hidden)", RegexOptions.IgnoreCase))
+                throw Invalid("manual_edit_source_hidden", "来源正文不能被隐藏；原版本与草稿均已保留");
+            var depth = 1;
+            var cursor = match.Index + match.Length;
+            var tags = new Regex("</?div\\b[^>]*>", RegexOptions.IgnoreCase);
+            Match? close = null;
+            foreach (Match tag in tags.Matches(html, cursor))
+            {
+                depth += tag.Value.StartsWith("</", StringComparison.Ordinal) ? -1 : 1;
+                if (depth != 0) continue;
+                close = tag;
+                break;
+            }
+            if (close == null) throw Invalid("manual_edit_source_slot_invalid", "来源内容块结构不完整；原版本与草稿均已保留");
+            var id = match.Groups["id"].Value;
+            if (!result.TryAdd(id, html.Substring(cursor, close.Index - cursor)))
+                throw Invalid("manual_edit_source_slot_invalid", "来源内容块重复；原版本与草稿均已保留");
+        }
+        return result;
+    }
+
+    private static IReadOnlyList<string> ScriptFingerprint(string html) => Regex.Matches(
+        html,
+        "<script\\b[^>]*>[\\s\\S]*?</script>",
+        RegexOptions.IgnoreCase).Select(match => Hash(match.Value)).ToList();
+
+    private static string StructureFingerprint(XElement root)
+    {
+        var structure = root.DescendantsAndSelf().Select(element => new
+        {
+            name = element.Name.LocalName,
+            attributes = element.Attributes().OrderBy(attribute => attribute.Name.LocalName)
+                .Select(attribute => new { name = attribute.Name.LocalName, attribute.Value }),
+        });
+        return Hash(JsonSerializer.Serialize(structure));
+    }
+
+    internal int RecommendedPageCount(int contentLength)
+    {
+        var byLength = (int)Math.Ceiling(Math.Max(contentLength, Blocks.Sum(x => x.Markdown.Length)) / 700d);
+        var byBlocks = (int)Math.Ceiling(Blocks.Count / 4d);
+        return Math.Clamp(Math.Max(4, Math.Max(byLength, byBlocks)), 4, 30);
+    }
+
+    internal int MinimumPageCount(int contentLength)
+    {
+        var byLength = (int)Math.Ceiling(Math.Max(contentLength, Blocks.Sum(x => x.Markdown.Length)) / 900d);
+        var byBlocks = (int)Math.Ceiling(Blocks.Count / 6d);
+        return Math.Clamp(Math.Max(1, Math.Max(byLength, byBlocks)), 1, 30);
+    }
+
     private static string RenderMarkdown(string raw, Block block)
     {
         // Markdig 会将紧跟非管道尾注的表格整体降为段落。只对已由 Markdig
@@ -140,9 +330,12 @@ internal sealed class MdToPptSourcePlan
         var lookup = BlockLookup();
         var pageOfBlock = new Dictionary<string, MdToPptOutlinePageDto>(StringComparer.Ordinal);
         foreach (var page in pages)
-            foreach (var id in page?.SourceBlockIds ?? new List<string>())
+        {
+            if (page == null) continue;
+            foreach (var id in page.SourceBlockIds ?? new List<string>())
                 if (id != null && lookup.TryGetValue(id, out var claimed))
                     pageOfBlock.TryAdd(claimed.Id, page);
+        }
         if (pageOfBlock.Count == 0 || pageOfBlock.Count == Blocks.Count) return;
 
         MdToPptOutlinePageDto? previous = null;

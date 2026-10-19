@@ -13,7 +13,7 @@ import {
 } from '../src/artifact/public-package.js';
 import { hardenSelfContainedHtml } from '../src/quality/gate.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
-import { DesignTaskExecutor } from '../src/executor.js';
+import { DesignTaskExecutor, materializePresentationSourcePlan } from '../src/executor.js';
 import {
   auth,
   buildPackage,
@@ -37,6 +37,33 @@ afterEach(async () => {
   await map?.close();
   harness = undefined;
   map = undefined;
+});
+
+describe('presentation frozen source materialization', () => {
+  it('materializes the exact server-owned bytes before quality and rejects missing, duplicate, unknown, or modified slots', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-plan-'));
+    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
+    const id = `sb-${'a'.repeat(64)}`;
+    const plan = JSON.stringify({
+      SchemaVersion: 'map-mdppt-source-plan-v2',
+      Fingerprint: 'frozen',
+      Blocks: [{ Id: id, Html: '<p>5% 只是示例，不是强制值。</p>' }],
+      Pages: [{ Index: 1, Hash: 'page', DisplayTitle: '发布策略', Blocks: [{ Id: id }] }],
+    });
+    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
+    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
+      presentationContract: { sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
+    }));
+    const draft = `<html><body><div class="reveal"><div class="slides"><section><div data-mdppt-source="${id}"></div></section></div></div></body></html>`;
+    expect(materializePresentationSourcePlan(root, draft)).toContain('<p>5% 只是示例，不是强制值。</p>');
+    expect(() => materializePresentationSourcePlan(root, draft.replace('</section>', `<div data-mdppt-source="${id}"></div></section>`)))
+      .toThrow(/exactly one visible slot/);
+    expect(() => materializePresentationSourcePlan(root, draft.replace(id, `sb-${'b'.repeat(64)}`)))
+      .toThrow(/exactly one visible slot/);
+    expect(() => materializePresentationSourcePlan(root, draft.replace('></div>', '>改写</div>')))
+      .toThrow(/modified outside the frozen source contract/);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
 });
 
 type TaskRequest = ReturnType<typeof taskRequest>;

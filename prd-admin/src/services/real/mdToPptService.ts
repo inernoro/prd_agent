@@ -289,6 +289,7 @@ export type MdToPptEngine = 'map' | 'agent';
 
 export interface MdToPptConvertRequest {
   content: string;
+  attachmentText?: string;
   slideCount?: number;
   theme?: string;
   sourceSurface?: 'html-ppt' | 'knowledge-base';
@@ -457,6 +458,8 @@ async function readSseStream(
 
 export interface MdToPptConvertSseOptions {
   content: string;
+  /** 仅来自明确文件选择器的冻结资料正文；不得与普通需求 content 混合。 */
+  attachmentText?: string;
   slideCount?: number;
   theme?: string;
   /** 自定义模板 ID（优先于 theme 生效，后端取模板风格规范作为生成参照） */
@@ -513,6 +516,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
             headers: buildSseHeaders(),
             body: JSON.stringify({
               content: options.content,
+              attachmentText: options.attachmentText,
               outlinePages: options.outlinePages,
               summary: options.summary,
             }),
@@ -530,6 +534,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
         headers: buildSseHeaders(),
         body: JSON.stringify({
           content: options.content,
+          attachmentText: options.attachmentText,
           slideCount: options.slideCount,
           theme: options.theme,
           templateId: options.templateId,

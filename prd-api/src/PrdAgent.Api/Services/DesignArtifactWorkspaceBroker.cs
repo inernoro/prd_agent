@@ -1113,6 +1113,7 @@ public static class DesignArtifactWorkspaceContract
                     run.PresentationInput.TargetPages,
                     run.PresentationInput.SourceContentHash,
                     run.PresentationInput.OutlineHash,
+                    run.PresentationInput.SourcePlanHash,
                     run.PresentationInput.Theme,
                     run.PresentationInput.ParentRunId,
                     run.PresentationInput.ParentPackageHash,
@@ -1193,6 +1194,14 @@ public static class DesignArtifactWorkspaceContract
                 run.PresentationInput.TargetPages,
                 run.PresentationInput.SourceContentHash,
                 run.PresentationInput.OutlineHash,
+                sourcePlan = string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanHash)
+                    ? null
+                    : new
+                    {
+                        schemaVersion = "map-mdppt-source-plan-v2",
+                        path = "brief/source-plan.json",
+                        contentHash = run.PresentationInput.SourcePlanHash,
+                    },
                 run.PresentationInput.Theme,
                 manualEditProposal = string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtmlHash)
                     ? null
@@ -1221,6 +1230,8 @@ public static class DesignArtifactWorkspaceContract
             // explicit null remain accepted by the runtime compatibility check.
             if (string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtmlHash))
                 presentationContract.Remove("manualEditProposal");
+            if (string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanHash))
+                presentationContract.Remove("sourcePlan");
             completeTask["presentationContract"] = presentationContract;
             task = JsonSerializer.SerializeToUtf8Bytes(completeTask, JsonOptions);
         }
@@ -1314,6 +1325,13 @@ public static class DesignArtifactWorkspaceContract
                 "brief/outline.json",
                 "application/json",
                 Encoding.UTF8.GetBytes(run.PresentationInput.OutlineJson)));
+            if (!string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanJson))
+            {
+                files.Add(ToFile(
+                    "brief/source-plan.json",
+                    "application/json",
+                    Encoding.UTF8.GetBytes(run.PresentationInput.SourcePlanJson)));
+            }
             if (!string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtml))
             {
                 files.Add(ToFile(

@@ -79,6 +79,58 @@ import {
   type WorkspaceTransferRequest,
 } from './workspace/transfer.js';
 
+interface FrozenPptSourceBlock { Id: string; Html: string }
+interface FrozenPptSourcePlan { SchemaVersion: string; Blocks: FrozenPptSourceBlock[]; Pages: Array<{ Blocks: FrozenPptSourceBlock[] }> }
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function materializePresentationSourcePlan(workspaceDir: string, html: string): string {
+  const planPath = path.join(workspaceDir, 'brief', 'source-plan.json');
+  if (!fs.existsSync(planPath)) return html;
+  const planBytes = readRegularFileNoFollow(planPath, 8 * 1024 * 1024);
+  const task = JSON.parse(readRegularFileNoFollow(path.join(workspaceDir, 'brief', 'task.json'), 1024 * 1024).toString('utf8')) as {
+    presentationContract?: { sourcePlan?: { path?: string; contentHash?: string } };
+  };
+  const declared = task.presentationContract?.sourcePlan;
+  if (declared?.path !== 'brief/source-plan.json' || declared.contentHash !== sha256(planBytes)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json does not match its frozen contract');
+  }
+  let plan: FrozenPptSourcePlan;
+  try {
+    plan = JSON.parse(planBytes.toString('utf8')) as FrozenPptSourcePlan;
+  } catch {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json is not valid JSON');
+  }
+  if (plan.SchemaVersion !== 'map-mdppt-source-plan-v2' || !Array.isArray(plan.Blocks)
+      || !Array.isArray(plan.Pages) || plan.Pages.length === 0) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json contract is invalid');
+  }
+  const expected = new Map(plan.Blocks.map((block) => [block.Id, block.Html]));
+  if (expected.size !== plan.Blocks.length || [...expected].some(([id, body]) => !/^sb-[a-f0-9]{64}$/.test(id) || typeof body !== 'string')) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source blocks are invalid');
+  }
+  let materialized = html;
+  for (const [id, body] of expected) {
+    const idPattern = escapeRegex(id);
+    const slots = [...materialized.matchAll(new RegExp(`<div\\s+data-mdppt-source=["']${idPattern}["']\\s*>([\\s\\S]*?)<\\/div>`, 'gi'))];
+    if (slots.length !== 1) {
+      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `Source block ${id} must have exactly one visible slot`);
+    }
+    const current = slots[0][1];
+    if (current.trim() && current !== body) {
+      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `Source block ${id} was modified outside the frozen source contract`);
+    }
+    materialized = materialized.replace(slots[0][0], `<div data-mdppt-source="${id}">${body}</div>`);
+  }
+  const allIds = [...materialized.matchAll(/data-mdppt-source=["']([^"']+)["']/gi)].map((match) => match[1]);
+  if (allIds.length !== expected.size || allIds.some((id) => !expected.has(id))) {
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'Presentation contains unknown or duplicate source slots');
+  }
+  return materialized;
+}
+
 function traceableDeterministicQualityRejection(
   error: AgentWorkspaceRuntimeError,
   issueCode: string,
@@ -643,8 +695,24 @@ export class DesignTaskExecutor {
           );
         }
         try {
-          hardenedHtml = checkArtifactQuality(
+          const materializedHtml = materializePresentationSourcePlan(
+            this.options.paths.workspaceDir,
             outputHtml.toString('utf8'),
+          );
+          if (materializedHtml !== outputHtml.toString('utf8')) {
+            const materialized = Buffer.from(materializedHtml, 'utf8');
+            indexFile = {
+              ...indexFile,
+              contentBase64: materialized.toString('base64'),
+              size: materialized.length,
+              sha256: sha256(materialized),
+            };
+            collectedFiles = collectedFiles.map((file) => file.path === 'index.html' ? indexFile! : file);
+            fs.writeFileSync(currentIndexPath, materialized);
+            this.chownForEngine(currentIndexPath);
+          }
+          hardenedHtml = checkArtifactQuality(
+            materializedHtml,
             collectedFiles.map((file) => file.path),
           );
           assertRequiredFactualCoverage(
@@ -926,8 +994,12 @@ export class DesignTaskExecutor {
             runOutcome.deliverableValidation || 'OpenDesign rejected its browser quality repair deliverable',
           );
         }
-        hardenedHtml = checkArtifactQuality(
+        const materializedRepairHtml = materializePresentationSourcePlan(
+          this.options.paths.workspaceDir,
           repairedBytes.toString('utf8'),
+        );
+        hardenedHtml = checkArtifactQuality(
+          materializedRepairHtml,
           collectedFiles.map((file) => file.path),
         );
         assertRequiredFactualCoverage(
@@ -1298,8 +1370,14 @@ export class DesignTaskExecutor {
         }
         if (!stat.isFile()) return;
         if (stat.size <= 0 || stat.size > PREVIEW_MAX_BYTES) return;
-        const html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
+        let html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
         if (!html.trim()) return;
+        try {
+          html = materializePresentationSourcePlan(this.options.paths.workspaceDir, html);
+        } catch (error) {
+          if (error instanceof AgentWorkspaceRuntimeError && error.code === 'design_output_quality_rejected') return;
+          throw error;
+        }
         // 文件监听可能在同一毫秒内收到两版同字节数内容；只看 mtime/size 会吞掉真实变化。
         // 以正文摘要作为修订判据，轮询与 watch 共用同一条完整性口径。
         const fingerprint = sha256(Buffer.from(html, 'utf8'));
