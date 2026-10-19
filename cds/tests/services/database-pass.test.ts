@@ -58,11 +58,12 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     const stored=JSON.parse(fs.readFileSync(path.join(dir,'passes.json'),'utf8'))[0];expect(stored).not.toHaveProperty('secret');expect(stored).not.toHaveProperty('cleanupTarget');
   });
   it('放行使用复制的原地址；单次期限从激活开始，并回收账号',async()=>{
+    const scheduled=vi.spyOn(globalThis,'setTimeout'),cleared=vi.spyOn(globalThis,'clearTimeout');
     const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32'],1);
-    const activated=await service.activate(pass.id,'one',scope);
+    const activated=await service.activate(pass.id,'one',scope);const expiryTimer=scheduled.mock.results.at(-1)!.value;
     expect(mocks.gateway.mock.calls[0][0]).toMatchObject({port:0,startInactive:true});expect(activated.port).toBe(pass.port);expect(mocks.activate).toHaveBeenCalledOnce();
     expect(Date.parse(activated.expiresAt)-Date.parse(activated.activatedAt!)).toBe(60000);
-    await service.revoke(pass.id,'one',scope);
+    await service.revoke(pass.id,'one',scope);expect(cleared).toHaveBeenCalledWith(expiryTimer);
     expect(mocks.close).toHaveBeenCalled();expect(mocks.account.mock.calls.at(-1)?.[2]).toBe(false);
     await expect(service.credentials(pass.id,'one',scope)).rejects.toThrow('失效');
   });

@@ -34,6 +34,7 @@ export class DatabasePassService {
   private passes: DatabasePass[]=[];
   private gateways=new Map<string,{port:number;activate:()=>void;close:()=>void}>();
   private operations=new Map<string,Promise<unknown>>();
+  private expiryTimers=new Map<string,ReturnType<typeof setTimeout>>();
   private vaultError=false;
   private issuanceReservations=0;
   private ready: Promise<void>;
@@ -147,7 +148,7 @@ export class DatabasePassService {
       pass.port=gateway.port;pass.activatedAt=new Date(activatedAt).toISOString();pass.expiresAt=new Date(activatedAt+pass.ttlMinutes*60_000).toISOString();pass.status='active';
       try{this.persist();this.audit(pass,'activated',{port:pass.port,expiresAt:pass.expiresAt});gateway.activate();}
       catch(error){await this.reclaim(pass,'审计或持久化失败');throw error;}
-      const timer=setTimeout(()=>{void this.revokeInternal(pass,'通行证到期').catch(()=>{});},Math.max(0,Date.parse(pass.expiresAt)-Date.now()));timer.unref();
+      const timer=setTimeout(()=>{void this.revokeInternal(pass,'通行证到期').catch(()=>{});},Math.max(0,Date.parse(pass.expiresAt)-Date.now()));timer.unref();this.expiryTimers.set(id,timer);
       return this.safe(pass);
     });
   }
@@ -175,6 +176,7 @@ export class DatabasePassService {
   }
   private revokeInternal(pass:DatabasePass,reason:string){return this.withPassLock(pass.id,()=>this.reclaim(pass,reason));}
   private async reclaim(pass:DatabasePass,reason:string){
+    const timer=this.expiryTimers.get(pass.id);if(timer)clearTimeout(timer);this.expiryTimers.delete(pass.id);
     const gateway=this.gateways.get(pass.id);gateway?.close();this.gateways.delete(pass.id);
     if(['revoked','expired'].includes(pass.status))return;
     pass.status='cleanup-failed';pass.reason=reason;
