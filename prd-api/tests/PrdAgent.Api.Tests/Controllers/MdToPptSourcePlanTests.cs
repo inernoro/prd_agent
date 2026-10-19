@@ -24,6 +24,21 @@ public class MdToPptSourcePlanTests
 
     private static string Slots(MdToPptSourcePlan.PagePlan page) => string.Join("", page.Blocks.Select(x => $"<div data-mdppt-source=\"{x.Id}\">\n  </div>"));
 
+    private static string CapacityFixture(int payloadBlocks = 136)
+    {
+        var blocks = new List<string>();
+        for (var index = 1; index <= 58; index++)
+        {
+            blocks.Add($"## 条件组 {index}");
+            blocks.Add($"条件组 {index} 的负责人、通知记录与限定语必须完整保留。");
+        }
+        for (var index = 59; index <= payloadBlocks; index++)
+            blocks.Add($"独立事实 {index} 的适用对象与限制条件必须完整保留。");
+        for (var index = 1; index <= 15; index++)
+            blocks.Add("---");
+        return string.Join("\n\n", blocks);
+    }
+
     [Fact]
     public void UploadedAttachment_IsFrozenAsSource_WithoutTreatingInstructionAsSource()
     {
@@ -37,20 +52,67 @@ public class MdToPptSourcePlanTests
     }
 
     [Fact]
-    public void AutoPageCapacity_CanExceedTwenty_AndExplicitUnderCapacityIsRejected()
+    public void AutoPageCapacity_UsesPayloadBlocksWithoutDroppingHeadingsOrSeparators()
     {
-        var attachment = string.Join("\n\n", Enumerable.Range(1, 48).Select(index =>
-            $"## 条件 {index}\n\n" + new string('甲', 330) + $"，限定语 {index} 必须保留。"));
+        var attachment = CapacityFixture();
         var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
-        Assert.InRange(plan.RecommendedPageCount(attachment.Length), 23, 30);
-        Assert.True(plan.MinimumPageCount(attachment.Length) > 10);
-        Assert.InRange(MdToPptController.ResolveTargetPages(
+        Assert.Equal(209, plan.Blocks.Count);
+        Assert.Equal(58, plan.Blocks.Count(block => block.Markdown.StartsWith("## 条件组", StringComparison.Ordinal)));
+        Assert.Equal(15, plan.Blocks.Count(block => block.Markdown.Trim() == "---"));
+        Assert.Equal(136, plan.PayloadBlockCount);
+        Assert.Equal(23, plan.MinimumPageCount(attachment.Length));
+        Assert.Equal(34, plan.RecommendedPageCount(attachment.Length));
+        var bound = plan.Bind(Enumerable.Range(0, 34).Select(pageIndex => new MdToPptOutlinePageDto
+        {
+            Title = $"第 {pageIndex + 1} 页",
+            SourceBlockIds = plan.Blocks.Where((_, blockIndex) => blockIndex % 34 == pageIndex)
+                .Select(block => block.Id).ToList(),
+        }).ToList(), 34);
+        Assert.Equal(209, bound.SelectMany(page => page.Blocks).Select(block => block.Id).Distinct().Count());
+        Assert.Equal(58, bound.SelectMany(page => page.Blocks).Count(block => block.Markdown.StartsWith("## 条件组", StringComparison.Ordinal)));
+        Assert.Equal(15, bound.SelectMany(page => page.Blocks).Count(block => block.Markdown.Trim() == "---"));
+        Assert.Equal(34, MdToPptController.ResolveTargetPages(
             new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
-            plan), 23, 30);
+            plan));
         var error = Assert.Throws<MdToPptSourcePlanException>(() => MdToPptController.ResolveTargetPages(
-            new MdToPptOutlineRequest { Content = "严格生成 10 页演示稿", AttachmentText = attachment },
+            new MdToPptOutlineRequest { Content = "严格生成 22 页演示稿", AttachmentText = attachment },
             plan));
         Assert.Equal("outline_capacity_exceeded", error.Code);
+
+        Assert.Equal(23, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "严格生成 23 页演示稿", AttachmentText = attachment },
+            plan));
+        Assert.Equal("outline_page_limit_exceeded", Assert.Throws<MdToPptSourcePlanException>(() =>
+            MdToPptController.ResolveTargetPages(
+                new MdToPptOutlineRequest { Content = "严格生成 41 页演示稿", AttachmentText = attachment },
+                plan)).Code);
+    }
+
+    [Fact]
+    public void AutoPageCapacity_RejectsDocumentsThatCannotFitWithinFortyReadablePages()
+    {
+        var attachment = CapacityFixture(payloadBlocks: 164);
+        var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
+        Assert.Equal(41, plan.RecommendedPageCount(attachment.Length));
+        Assert.Equal("outline_page_limit_exceeded", Assert.Throws<MdToPptSourcePlanException>(() =>
+            MdToPptController.ResolveTargetPages(
+                new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
+                plan)).Code);
+    }
+
+    [Fact]
+    public void ThirtyFourPageOutlineAndSinglePagePatch_StayWithinTheValidatedContract()
+    {
+        var outline = new
+        {
+            totalPages = 34,
+            outline = Enumerable.Range(1, 34).Select(index => new { title = $"第 {index} 页" }).ToArray(),
+        };
+        var normalized = MdToPptController.NormalizeOutlinePayload(JsonSerializer.Serialize(outline), 34);
+        Assert.Equal(34, normalized["outline"]!.AsArray().Count);
+        MdToPptController.EnsureOutlinePageCount(34, 34, 34);
+        Assert.Equal(34, MdToPptController.ResolvePatchSlideIndex(null, "修改第 34 页标题"));
+        Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "修改第 41 页标题"));
     }
 
     [Fact]
@@ -422,7 +484,7 @@ public class MdToPptOutlineSourcePlanContractTests
     public void BothOutlineEndpoints_AppendTheContractToTheirSystemPrompt()
     {
         var source = ControllerSource();
-        var appends = Regex.Matches(source, @"if\s*\(sourcePlan\s*!=\s*null\)\s*systemPrompt\s*\+=\s*SourcePlanOutlineContract\(sourcePlan\.Blocks\.Count,\s*ResolveTargetPages\(req\)\)\s*;").Count;
+        var appends = Regex.Matches(source, @"if\s*\(sourcePlan\s*!=\s*null\)\s*systemPrompt\s*\+=\s*SourcePlanOutlineContract\(sourcePlan\.Blocks\.Count,\s*targetPages\)\s*;").Count;
 
         // /outline（整块 JSON）与 /outline-stream（JSONL）各一处；少一处就有一条入口
         // 仍然发不出 sourceBlockIds，而它不会让任何现有用例变红。页数也要传进去，

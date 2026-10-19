@@ -846,18 +846,29 @@ public class MdToPptController : ControllerBase
     {
         var contentLength = sourcePlan?.Blocks.Sum(block => block.Markdown.Length)
             ?? (req.AttachmentText?.Trim().Length ?? 0);
-        var explicitPages = req.TargetPages is > 0
-            ? Math.Clamp(req.TargetPages.Value, 1, 30)
+        var explicitPages = req.TargetPages.HasValue
+            ? req.TargetPages.Value
             : ParseExplicitPageCount(req.Content);
         if (explicitPages.HasValue)
         {
+            EnsurePageLimit(explicitPages.Value);
             if (sourcePlan != null && explicitPages.Value < sourcePlan.MinimumPageCount(contentLength))
                 throw new MdToPptSourcePlanException(
                     "outline_capacity_exceeded",
                     $"{explicitPages.Value} 页不足以完整承载已选资料，请增加页数或使用自动页数；原资料未被删减");
             return explicitPages.Value;
         }
-        return sourcePlan?.RecommendedPageCount(contentLength) ?? 8;
+        var recommended = sourcePlan?.RecommendedPageCount(contentLength) ?? 8;
+        EnsurePageLimit(recommended);
+        return recommended;
+    }
+
+    private static void EnsurePageLimit(int pages)
+    {
+        if (pages is >= 1 and <= MdToPptSourcePlan.MaximumPageCount) return;
+        throw new MdToPptSourcePlanException(
+            "outline_page_limit_exceeded",
+            $"当前资料需要的页数超出 {MdToPptSourcePlan.MaximumPageCount} 页上限，请拆分资料后重新生成；原资料未被删减");
     }
 
     internal static int? ParseExplicitPageCount(string? text)
@@ -878,7 +889,7 @@ public class MdToPptController : ControllerBase
     /// </summary>
     internal static int? ResolvePatchSlideIndex(int? requestedIndex, string? instruction)
     {
-        if (requestedIndex is >= 1 and <= 30) return requestedIndex;
+        if (requestedIndex is >= 1 and <= MdToPptSourcePlan.MaximumPageCount) return requestedIndex;
         if (string.IsNullOrWhiteSpace(instruction)) return null;
 
         // 自然语言只在“恰好一个页面 + 内容精修”时归一成单页替换。删除、移动、交换、
@@ -906,7 +917,7 @@ public class MdToPptController : ControllerBase
         var match = matches[0];
         var raw = match.Groups[1].Value;
         var parsed = int.TryParse(raw, out var numeric) ? numeric : ParseChineseSmallNumber(raw);
-        return parsed is >= 1 and <= 30 ? parsed : null;
+        return parsed is >= 1 and <= MdToPptSourcePlan.MaximumPageCount ? parsed : null;
     }
 
     private static int? ParseChineseSmallNumber(string raw)
@@ -991,10 +1002,11 @@ public class MdToPptController : ControllerBase
 
     internal static JsonObject NormalizeOutlinePayload(string rawJson, int targetPages)
     {
+        EnsurePageLimit(targetPages);
         var root = JsonNode.Parse(rawJson) as JsonObject ?? throw new JsonException("outline root must be object");
         var outline = root["outline"] as JsonArray ?? new JsonArray();
         var normalized = new JsonArray();
-        foreach (var item in outline.Take(Math.Clamp(targetPages, 1, 30)))
+        foreach (var item in outline.Take(targetPages))
         {
             if (item is JsonObject obj) normalized.Add(obj.DeepClone());
         }
@@ -1011,12 +1023,12 @@ public class MdToPptController : ControllerBase
 
     internal static void EnsureOutlinePageCount(int? reportedPages, int actualPages, int targetPages)
     {
-        var expectedPages = Math.Clamp(targetPages, 1, 30);
-        if (reportedPages == expectedPages && actualPages == expectedPages) return;
+        EnsurePageLimit(targetPages);
+        if (reportedPages == targetPages && actualPages == targetPages) return;
 
         throw new MdToPptOutlineContractException(
             OutlinePageCountMismatchCode,
-            $"大纲页数不完整：目标 {expectedPages} 页，实际生成 {actualPages} 页。请重试，线上内容没有变化");
+            $"大纲页数不完整：目标 {targetPages} 页，实际生成 {actualPages} 页。请重试，线上内容没有变化");
     }
 
     // ─────────────────────────────────────────────

@@ -17,6 +17,7 @@ internal sealed class MdToPptSourcePlan
 {
     internal const int Version = 1;
     internal const string SchemaVersion = "map-mdppt-source-plan-v2";
+    internal const int MaximumPageCount = 40;
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().DisableHtml().Build();
     /// <summary>
     /// Id 是内容寻址身份（sb- + sha256），Alias 是同一个块给模型看的短代号（b1、b2…）。
@@ -32,6 +33,7 @@ internal sealed class MdToPptSourcePlan
     private sealed record FrozenOverlay(string ParentPlanHash, string ProposalHash, IReadOnlyList<FrozenOverlayChange> Changes);
     private sealed record FrozenOverlayChange(string BlockId, string BeforeHash, string AfterHash);
     internal IReadOnlyList<SourceBlock> Blocks { get; }
+    internal int PayloadBlockCount => Blocks.Count(ConsumesPageCapacity);
     internal string Fingerprint { get; }
     private MdToPptSourcePlan(IReadOnlyList<SourceBlock> blocks)
     {
@@ -275,15 +277,24 @@ internal sealed class MdToPptSourcePlan
     internal int RecommendedPageCount(int contentLength)
     {
         var byLength = (int)Math.Ceiling(Math.Max(contentLength, Blocks.Sum(x => x.Markdown.Length)) / 700d);
-        var byBlocks = (int)Math.Ceiling(Blocks.Count / 4d);
-        return Math.Clamp(Math.Max(4, Math.Max(byLength, byBlocks)), 4, 30);
+        var byBlocks = (int)Math.Ceiling(PayloadBlockCount / 4d);
+        return Math.Max(4, Math.Max(byLength, byBlocks));
     }
 
     internal int MinimumPageCount(int contentLength)
     {
         var byLength = (int)Math.Ceiling(Math.Max(contentLength, Blocks.Sum(x => x.Markdown.Length)) / 900d);
-        var byBlocks = (int)Math.Ceiling(Blocks.Count / 6d);
-        return Math.Clamp(Math.Max(1, Math.Max(byLength, byBlocks)), 1, 30);
+        var byBlocks = (int)Math.Ceiling(PayloadBlockCount / 6d);
+        return Math.Max(1, Math.Max(byLength, byBlocks));
+    }
+
+    private static bool ConsumesPageCapacity(SourceBlock block)
+    {
+        var document = Markdown.Parse(block.Markdown, Pipeline);
+        var authoredBlocks = document
+            .Where(item => item is not LinkReferenceDefinitionGroup)
+            .ToList();
+        return authoredBlocks.Count != 1 || authoredBlocks[0] is not (HeadingBlock or ThematicBreakBlock);
     }
 
     private static string RenderMarkdown(string raw, Block block)

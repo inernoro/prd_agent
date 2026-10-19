@@ -405,7 +405,7 @@ export function parseExplicitPages(content: string): number | null {
     // 它们都不是用户要求的演示稿页数。P 单位也不得吞掉 PR/prompt 这类单词前缀。
     if (/(?:第|\d\s*\.)\s*$/u.test(prefix)) continue;
     const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
-    if (parsed && parsed > 0) return Math.max(1, Math.min(30, parsed));
+    if (parsed && parsed > 0) return parsed;
   }
   return null;
 }
@@ -424,7 +424,7 @@ export function resolveNaturalPatchSlideIndex(instruction: string): number | nul
   if (structural.test(instruction)) return null;
   const raw = matches[0][1];
   const parsed = /^\d+$/.test(raw) ? Number(raw) : parseChineseSmallNumber(raw);
-  return parsed && parsed >= 1 && parsed <= 30 ? parsed : null;
+  return parsed && parsed >= 1 && parsed <= 40 ? parsed : null;
 }
 
 // 按显式页数优先，其次按内容长度估算页数（约 700 字/页，夹在 4~20 页）

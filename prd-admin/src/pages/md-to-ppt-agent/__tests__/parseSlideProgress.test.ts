@@ -78,6 +78,8 @@ describe('estimatePages', () => {
     expect(resolveOutlineTargetPages('请把附件整理成演示稿', reference)).toBeUndefined();
     expect(resolveOutlineTargetPages('请生成 20 页演示稿', '附件共 2 页')).toBe(20);
     expect(resolveOutlineTargetPages('请生成 20p 演示稿', '附件共 2 页')).toBe(20);
+    expect(resolveOutlineTargetPages('请生成 34 页演示稿', reference)).toBe(34);
+    expect(resolveOutlineTargetPages('请生成 41 页演示稿', reference)).toBe(41);
   });
 
   it('大纲、确认与生成请求都把附件作为独立字段发送，不拼回普通需求 content', () => {
@@ -242,6 +244,8 @@ describe('自然语言单页精修识别', () => {
     expect(resolveNaturalPatchSlideIndex('把第 3 页移到最后')).toBeNull();
     expect(resolveNaturalPatchSlideIndex('把第 3 页和封面交换')).toBeNull();
     expect(resolveNaturalPatchSlideIndex('将第 3 页与下一页对调')).toBeNull();
+    expect(resolveNaturalPatchSlideIndex('增加第 34 页标题字号')).toBe(34);
+    expect(resolveNaturalPatchSlideIndex('增加第 41 页标题字号')).toBeNull();
   });
 
   it('将自然语言解析的页码传给服务端，不退化为整稿精修', () => {
