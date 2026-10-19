@@ -20,7 +20,7 @@ import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
 import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
-import { WorktreeService } from '../services/worktree.js';
+import { WorktreeService, deploymentNeedsSourceCheckout, hasDeploymentSource } from '../services/worktree.js';
 import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktree-path-activity.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
 import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
@@ -13453,8 +13453,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha);
-      const deploymentSourceEntry = 'sourcePath' in pullResult
+        : deploymentNeedsSourceCheckout(profiles.map(p => resolveEffectiveProfile(p, inputBranch())))
+        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha)
+        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, requestCommitSha);
+      const deploymentSourceEntry = hasDeploymentSource(pullResult)
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
       logEvent({
@@ -13984,7 +13986,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               containerService,
               serverEventLogStore,
               entry,
-              sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
+              sourceCheckout: hasDeploymentSource(pullResult) ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
               profile: effectiveProfile,
               artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha || deploymentInput.targetCommitSha,
               service: svc,
@@ -14815,8 +14817,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha);
-      const deploymentSourceEntry = 'sourcePath' in pullResult
+        : deploymentNeedsSourceCheckout([resolveEffectiveProfile(profile, inputBranch())])
+        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha)
+        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, profileRequestCommitSha);
+      const deploymentSourceEntry = hasDeploymentSource(pullResult)
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
@@ -15041,7 +15045,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           containerService,
           serverEventLogStore,
           entry,
-          sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
+          sourceCheckout: hasDeploymentSource(pullResult) ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
           profile: effectiveProfile,
           artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha || deploymentInput.targetCommitSha,
           service: svc,

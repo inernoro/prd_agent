@@ -3461,6 +3461,21 @@ describe('Branch Routes', () => {
     });
   });
 
+  it.each(['/deploy', '/deploy/api'])('pure image %s resolves its target without creating a detached source tree', async endpoint => {
+    const sha = 'b'.repeat(40);
+    stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API',
+      dockerImage: `ghcr.io/acme/api:sha-${sha}`, prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 });
+    stateService.addBranch({ id: 'image-without-source', projectId: 'default', branch: 'feature/image-only',
+      worktreePath: path.join(tmpDir, 'worktrees', 'image-without-source'), status: 'idle', services: {}, createdAt: new Date().toISOString() });
+    mock.addResponsePatternFirst(/git rev-parse/, () => ({ stdout: sha, stderr: '', exitCode: 0 }));
+    readyArtifactFixture();
+    const response = await request(server, 'POST', `/api/branches/image-without-source${endpoint}`, { commitSha: sha });
+    expect((await waitForAcceptedRun(response)).status).toBe('running');
+    expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
+    expect(mock.commands.filter(command => command.includes('git worktree add --detach'))).toEqual([]);
+    expect(fs.existsSync(WorktreeService.deploymentSourceRootFor(stateService.getBranch('image-without-source')!.worktreePath))).toBe(false);
+  });
+
   describe('immutable deployment version reuse', () => {
     it('creates a reusable version and redeploys the same commit without pulling source again', async () => {
       const commitSha = '1234567890abcdef1234567890abcdef12345678';
