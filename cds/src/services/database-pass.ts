@@ -137,5 +137,5 @@ export class DatabasePassService {
     }catch{try{this.audit(pass,'account-cleanup-failed',{reason});}catch{/* already closed */}}
   }
   async revoke(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){await this.ready;const pass=this.find(id,owner,scope);await this.revokeInternal(pass,'用户撤销');return this.safe(pass);}
-  async events(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;this.auditLog.flush();return this.auditLog.read().filter(e=>e.owner===owner&&e.projectId===scope.projectId&&e.branchId===scope.branchId&&e.resourceId===scope.resourceId).slice(-200).reverse();}
+  async events(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;this.auditLog.flush();return this.auditLog.read().filter(e=>e.auditWarning===true||(e.owner===owner&&e.projectId===scope.projectId&&e.branchId===scope.branchId&&e.resourceId===scope.resourceId)).slice(-200).reverse();}
 }

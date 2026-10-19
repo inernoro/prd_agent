@@ -48,6 +48,16 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     await service.activate(first.id,'one',scope);expect(mocks.gateway).toHaveBeenCalledTimes(2);
     await service.revoke(first.id,'one',scope);await service.revoke(second.id,'one',scope);
   });
+  it('审计尾行不完整仍可列出现有通行证、显示警告并撤销；原始坏行保留',async()=>{
+    const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32']);
+    await service.activate(pass.id,'one',scope);
+    fs.appendFileSync(path.join(dir,'audit.jsonl'),'\u007b"event":"torn');
+    expect((await service.list(scope,'one'))[0].id).toBe(pass.id);
+    expect(await service.events(scope,'one')).toContainEqual(expect.objectContaining({event:'audit-record-damaged'}));
+    expect((await service.revoke(pass.id,'one',scope)).status).toBe('revoked');
+    expect(await service.events(scope,'one')).toContainEqual(expect.objectContaining({event:'account-reclaimed'}));
+    expect(fs.readFileSync(path.join(dir,'audit.jsonl'),'utf8')).toContain('\u007b"event":"torn\n');
+  });
   it('签发记录损坏时停止新签发，不覆盖原始记录或影响控制面启动',async()=>{
     fs.writeFileSync(path.join(dir,'passes.json'),'{broken');
     const service=new DatabasePassService(dir,target);

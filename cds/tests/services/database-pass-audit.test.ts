@@ -23,3 +23,15 @@ it('rotates audit history within three bounded files and retains recent lifecycl
     const records=audit.read();expect(records.at(-1)?.index).toBe(399);expect(records.length).toBeLessThan(400);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
+it('preserves a torn tail, reports bounded damage and appends subsequent records on their own line',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cds-audit-torn-')),file=path.join(dir,'audit.jsonl');
+  const prefix='{"event":"activated","passId":"one"}\n{"event":"account-rec';fs.writeFileSync(file,prefix,{mode:0o600});
+  const audit=new DatabasePassAudit(dir);
+  try{
+    expect(audit.read()).toEqual([expect.objectContaining({event:'activated'}),expect.objectContaining({event:'audit-record-damaged',count:1})]);
+    expect(fs.readFileSync(file,'utf8')).toBe(prefix);
+    audit.write({event:'account-reclaimed',passId:'one'});
+    expect(fs.readFileSync(file,'utf8').startsWith(prefix+'\n')).toBe(true);
+    expect(audit.read()).toEqual([expect.objectContaining({event:'activated'}),expect.objectContaining({event:'account-reclaimed'}),expect.objectContaining({event:'audit-record-damaged',count:1})]);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
