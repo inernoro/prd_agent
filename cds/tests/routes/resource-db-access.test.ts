@@ -106,6 +106,7 @@ function makeHarness(): {
   };
   stateService.addBranch(branch);
   const shell = new MockShellExecutor();
+  shell.addResponsePattern(/docker inspect --format '\{"id":/, () => ({ stdout: JSON.stringify({ id: 'a'.repeat(64), running: true }), stderr: '', exitCode: 0 }));
   const sqlExecutor = vi.fn<typeof executeSqlConsole>().mockResolvedValue(sqlResult());
   const worktreeService = new WorktreeService(shell);
   const containerService = new ContainerService(shell, config, {
@@ -901,6 +902,41 @@ describe('resource database access', () => {
     expect(done!.body.request.result.details.output).toContain('1 row affected');
     expect(harness.sqlExecutor).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['mysql', 'mongodb'].flatMap(runtime => ['database', 'port', 'password', 'container', 'runtime', 'service'].map(change => ({ runtime, change }))))(
+    'rejects stale $runtime approval after $change changes, without executing', async ({ runtime, change }) => {
+      const h = makeHarness(); tmpDir = h.tmpDir;
+      const mongo = runtime === 'mongodb';
+      const service = { id: 'approval-target', projectId: 'prd-agent', name: 'approval target', dockerImage: mongo ? 'mongo:7' : 'mysql:8', containerPort: mongo ? 27017 : 3306, hostPort: 23000, containerName: 'qa-approval', status: 'running' as const, dbName: 'qa', createdAt: '2026-10-19T00:00:00.000Z', env: mongo ? { MONGO_INITDB_ROOT_USERNAME: 'admin', MONGO_INITDB_ROOT_PASSWORD: 'private-original', MONGO_INITDB_DATABASE: 'qa' } : { MYSQL_ROOT_PASSWORD: 'private-original', MYSQL_DATABASE: 'qa' }, volumes: [] };
+      h.stateService.addInfraService(service);
+      h.app.use('/api', createOperatorConsoleRouter({ stateService: h.stateService, shell: h.shell, repoRoot: h.tmpDir }));
+      await new Promise<void>((resolve) => { server = h.app.listen(0, '127.0.0.1', resolve); });
+      const args = { projectId: 'prd-agent', branchId: 'main-branch', resourceId: 'infra:approval-target', ...(mongo ? { write: { collection: 'items', action: 'insertOne', document: { _id: change } } } : { sql: `UPDATE items SET qty=2 /* ${change} */` }), databaseTarget: { binding: 'forged' } };
+      const endpoint = '/api/cds-system/operator/request';
+      const pending = await request(server!, 'POST', endpoint, { opId: mongo ? 'database.mongo' : 'database.sql', args }, { 'x-test-project-key': '1' });
+      expect(pending.body.request.status).toBe('pending');
+      expect(pending.body.request.args.databaseTarget.containerId).toBe('a'.repeat(64));
+      expect(JSON.stringify(pending.body.request)).not.toContain('private-original');
+      expect(pending.body.request.args.databaseTarget.binding).not.toBe('forged');
+      if (change === 'database') h.stateService.updateInfraService(service.id, { dbName: 'new_database', env: mongo ? { ...service.env, MONGO_INITDB_DATABASE: 'new_database' } : { ...service.env, MYSQL_DATABASE: 'new_database' } });
+      if (change === 'port') h.stateService.updateInfraService(service.id, { hostPort: 23001 });
+      if (change === 'password') h.stateService.updateInfraService(service.id, { env: mongo ? { ...service.env, MONGO_INITDB_ROOT_PASSWORD: 'rotated-private' } : { ...service.env, MYSQL_ROOT_PASSWORD: 'rotated-private' } });
+      if (change === 'container') h.shell.addResponsePatternFirst(/docker inspect --format '\{"id":/, () => ({ stdout: JSON.stringify({ id: 'b'.repeat(64), running: true }), stderr: '', exitCode: 0 }));
+      if (change === 'runtime') h.stateService.updateInfraService(service.id, { dockerImage: mongo ? 'mysql:8' : 'postgres:17' });
+      if (change === 'service') h.stateService.updateInfraService(service.id, { createdAt: '2026-10-19T00:01:00.000Z' });
+      const id = pending.body.request.id;
+      await request(server!, 'POST', `/api/cds-system/operator/requests/${id}/approve`, { scope: 'once' }, { 'x-test-cookie-auth': '1' });
+      let done;
+      for (let i = 0; i < 50; i++) {
+        done = await request(server!, 'GET', `/api/cds-system/operator/requests/${id}`, undefined, { 'x-test-cookie-auth': '1' });
+        if (done.body.request.status === 'failed') break;
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
+      expect(done!.body.request.status).toBe('failed');
+      expect(h.sqlExecutor).not.toHaveBeenCalled();
+      expect(h.shell.commands.filter(command => command.includes('insertOne'))).toHaveLength(0);
+    },
+  );
 
   it('项目 Agent 不能读取或创建全局迁移，所有者可读取', async () => {
     const harness = makeHarness(); tmpDir = harness.tmpDir;

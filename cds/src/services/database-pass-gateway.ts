@@ -46,10 +46,17 @@ export async function openDatabasePassGateway(input: {
       : undefined;
     if(input.target.runtime==='mongodb') {relayMongoPass(client,{port:input.target.port,database:input.target.database,username:input.username,remember,denied});return;}
     let greeting=Buffer.alloc(0);
+    let gssRefused=false;
     client.setTimeout(5000,()=>client.destroy());
     const sslRequest=(chunk:Buffer)=>{
       greeting=Buffer.concat([greeting,chunk]);
       if(greeting.length<8)return;
+      if(greeting.readUInt32BE(0)!==8){client.destroy();return;}
+      if(greeting.readUInt32BE(4)===80877104&&!gssRefused){
+        gssRefused=true;greeting=greeting.subarray(8);client.write('N');
+        if(greeting.length===0)return;
+        if(greeting.length<8)return;
+      }
       client.removeListener('data',sslRequest);
       if(greeting.length!==8 || greeting.readUInt32BE(0)!==8 || greeting.readUInt32BE(4)!==80877103){client.destroy();return;}
       client.write('S');

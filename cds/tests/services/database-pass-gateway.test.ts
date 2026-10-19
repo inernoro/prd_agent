@@ -56,3 +56,19 @@ it('relays native MySQL TLS with CA verification, rejects other users and identi
     const wrong=await login('root');await expect(firstFrame(wrong,mysqlFrameLength,65536)).rejects.toThrow();expect(forwardedLogins).toBe(1);
   }finally{gateway.close();for(const s of backendSockets)s.destroy();await new Promise<void>(resolve=>upstream.close(()=>resolve()));fs.rmSync(dir,{recursive:true,force:true});}
 },15000);
+
+it('declines PostgreSQL GSSENC then requires TLS before forwarding a bound startup',async()=>{
+ const tls=await import('node:tls');const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cds-pass-pg-gss-'));const certs=databasePassCertificates(dir,'127.0.0.1');
+ let receivedResolve:(packet:Buffer)=>void=()=>{};const received=new Promise<Buffer>(resolve=>{receivedResolve=resolve;});const backendSockets=new Set<net.Socket>();
+ const upstream=net.createServer(socket=>{backendSockets.add(socket);socket.on('error',()=>{});socket.once('close',()=>backendSockets.delete(socket));socket.once('data',packet=>{receivedResolve(packet);socket.end();});});
+ await new Promise<void>(resolve=>upstream.listen(0,'127.0.0.1',resolve));
+ const gateway=await openDatabasePassGateway({target:{runtime:'postgres',port:(upstream.address() as net.AddressInfo).port,database:'qa',adminUser:'unused',adminPassword:'unused'},username:'temp',bindIp:'127.0.0.1',port:0,allowlist:['127.0.0.1/32'],...certs,audit:()=>{}});
+ const request=(code:number)=>{const packet=Buffer.alloc(8);packet.writeUInt32BE(8);packet.writeUInt32BE(code,4);return packet;};
+ const client=net.connect(gateway.port,'127.0.0.1');client.on('error',()=>{});const byte=()=>new Promise<string>((resolve,reject)=>{client.once('data',data=>resolve(data.toString()));client.once('error',reject);});
+ try{
+  let reply=byte();client.write(request(80877104).subarray(0,3));client.write(request(80877104).subarray(3));expect(await reply).toBe('N');
+  reply=byte();client.write(request(80877103));expect(await reply).toBe('S');
+  const secure=tls.connect({socket:client,ca:certs.cert,checkServerIdentity:(_host,cert)=>tls.checkServerIdentity('127.0.0.1',cert)});secure.on('error',()=>{});await new Promise<void>((resolve,reject)=>{secure.once('secureConnect',resolve);secure.once('error',reject);});
+  const body=Buffer.from('user\0temp\0database\0qa\0\0'),head=Buffer.alloc(8);head.writeUInt32BE(body.length+8);head.writeUInt32BE(196608,4);const startup=Buffer.concat([head,body]);secure.write(startup);expect(await received).toEqual(startup);secure.destroy();
+ }finally{client.destroy();gateway.close();for(const socket of backendSockets)socket.destroy();await new Promise<void>(resolve=>upstream.close(()=>resolve()));fs.rmSync(dir,{recursive:true,force:true});}
+},10000);

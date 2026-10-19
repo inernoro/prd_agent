@@ -99,6 +99,8 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
   if (!pending) return null;
   const meta = DANGER_META[pending.opDanger] ?? DANGER_META.safe;
+  const target = pending.args?.databaseTarget as { runtime?: string; database?: string; port?: number; containerId?: string } | undefined;
+  const visibleArgs = pending.args && Object.fromEntries(Object.entries(pending.args).filter(([key]) => key !== 'databaseTarget'));
 
   return (
     <Dialog open={!!pending} onOpenChange={(open) => { if (!open) setPending(null); }}>
@@ -146,11 +148,14 @@ export function OperatorApprovalModal(): JSX.Element | null {
             <div className="text-xs text-muted-foreground">
               <code className="font-mono">{pending.opId}</code>
             </div>
-            {pending.args && Object.keys(pending.args).length > 0 ? (
-              <details className="mt-2" open={pending.opId === 'database.sql' ? true : undefined}>
+            {target ? <p className="mt-2 break-words text-xs" role="note">
+              审批目标：{target.runtime} · {target.database} · 端口 {target.port} · 实例 {target.containerId?.slice(0, 12)}
+            </p> : null}
+            {visibleArgs && Object.keys(visibleArgs).length > 0 ? (
+              <details className="mt-2" open={pending.opId.startsWith('database.') ? true : undefined}>
                 <summary className="cursor-pointer text-xs text-foreground/70">参数</summary>
                 <pre className="mt-1 max-h-40 whitespace-pre-wrap break-words overflow-auto rounded bg-background/50 p-2 text-[0.625rem]">
-                  {JSON.stringify(pending.args, null, 2)}
+                  {JSON.stringify(visibleArgs, null, 2)}
                 </pre>
               </details>
             ) : null}

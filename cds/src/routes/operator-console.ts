@@ -262,7 +262,7 @@ export function createOperatorConsoleRouter(deps: {
           details: { exitCode: r.exitCode, stdout: r.stdout, stderr: r.stderr },
         };
       } else {
-        result = await op.run(ctx, args);
+        result = await op.run(ctx, op.prepareArgs ? await op.prepareArgs(args) : args);
       }
       const durationMs = Date.now() - startedAt;
       send('done', { opId: op.id, durationMs, ...result });

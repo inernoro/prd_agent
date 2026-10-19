@@ -69,6 +69,7 @@ import { normalizeReadOnlyStatement, normalizeConsoleWrite } from '../services/s
 import { SqlConsoleExecutionError, type SqlConsoleResult } from '../services/sql-console-results.js';
 import { executeSqlConsole, type SqlConsoleOptions } from '../services/sql-console-executor.js';
 import { RESOURCE_TCP_PROXY_SCRIPT, resourceTcpAccessConfig } from '../services/resource-tcp-access.js';
+import { databaseApprovalBinding } from '../services/database-approval-binding.js';
 import { operatorOpRegistry } from '../services/operator-console.js';
 import { explainMissingTable, foreignSchemaRefusal } from '../services/db-error-explain.js';
 import {
@@ -7015,9 +7016,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return read.exitCode === 0 && read.stdout.includes('BEGIN CERTIFICATE') ? read.stdout : undefined;
   }
 
-  async function runSqlDataQuery(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000, readOnly = true): Promise<DbDataQueryResult> {
+  async function runSqlDataQuery(runtime: SqlDataRuntime, service: InfraService, branch: BranchEntry, sql: string, timeoutMs = 30_000, readOnly = true, boundCredentials?: ReturnType<typeof mysqlClientCredentials>): Promise<DbDataQueryResult> {
     if (service.status !== 'running') throw new Error('数据库服务当前未运行，请启动后重试。');
-    const creds = runtime === 'postgres' ? postgresClientCredentials(service, branch) : mysqlClientCredentials(service, branch);
+    const creds = boundCredentials || (runtime === 'postgres' ? postgresClientCredentials(service, branch) : mysqlClientCredentials(service, branch));
     if (!creds.database || !/^[a-zA-Z0-9_]+$/.test(creds.database)) throw new Error('数据库名不合法，未执行 SQL。');
     try {
       const mysqlCa = runtime === 'mysql' ? await mysqlResourceCa(service.containerName || '') : undefined;
@@ -7178,11 +7179,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return { user, password, database, authDatabase: authSourceDb, secrets: [password] };
   }
 
-  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000, expectJson = true): Promise<unknown> {
+  async function runMongoJson(service: InfraService, branch: BranchEntry, script: string, databaseOverride?: string, timeoutMs = 30_000, expectJson = true, boundCredentials?: ReturnType<typeof mongoCredentials>): Promise<unknown> {
     if (service.status !== 'running') {
       throw new Error(`MongoDB 服务当前未运行（status=${service.status}）`);
     }
-    const creds = mongoCredentials(service, branch, databaseOverride);
+    const creds = boundCredentials || mongoCredentials(service, branch, databaseOverride);
     const invocation = buildSecureMongoDockerInvocation(
       service.containerName || '',
       'mongosh',
@@ -9871,6 +9872,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // Resolve before approval and again immediately before execution. Resource IDs,
+  // names and ports can be reused; the running Docker ID and credentials cannot.
+  async function resolveDatabaseApproval(args: Record<string, unknown> | undefined, mongo: boolean) {
+    if (isPreviewInstance()) throw new Error('预览实例不能执行数据库审批操作。');
+    const branch = stateService.getBranch(String(args?.branchId || ''));
+    if (!branch || !args?.projectId || branch.projectId !== args.projectId) throw new Error('项目与分支不匹配，未执行数据库操作。');
+    const resource = (await getBranchResourceSnapshot(branch)).find((item) => item.id === args?.resourceId);
+    if (!resource || resource.source !== 'infra' || resource.kind !== 'database') throw new Error('数据库资源不存在，未执行操作。');
+    const runtime = resourceRuntimeKey(resource.runtime);
+    if (mongo ? runtime !== 'mongodb' : runtime !== 'mysql' && runtime !== 'postgres') throw new Error('数据库类型与审批通道不匹配。');
+    const service = structuredClone(getUnifiedResourceInternalRaw(resource) as InfraService);
+    const frozenBranch = structuredClone(branch);
+    if (service.status !== 'running' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName || '')) throw new Error('数据库实例未运行，请启动后重新申请。');
+    const write = mongo ? buildMongoStructuredWrite(mongoJsonObject(args?.write, 'write'), mongoDatabaseForBranch(service, frozenBranch)) : null;
+    const sql = mongo ? '' : normalizeConsoleWrite(String(args?.sql || ''), runtime as SqlDataRuntime);
+    const credentials = mongo ? mongoCredentials(service, frozenBranch, write!.database)
+      : runtime === 'postgres' ? postgresClientCredentials(service, frozenBranch) : mysqlClientCredentials(service, frozenBranch);
+    const inspected = await shell.exec(`docker inspect --format '{"id":{{json .Id}},"running":{{json .State.Running}}}' ${routeShellQuote(service.containerName!)}`, { timeout: 5000 });
+    let container: { id?: string; running?: boolean } = {};
+    try { container = JSON.parse(inspected.stdout); } catch { /* fail closed */ }
+    if (inspected.exitCode !== 0 || container.running !== true || !/^[a-f0-9]{64}$/.test(container.id || '')) throw new Error('无法确认数据库实例身份，请重新申请。');
+    const identity = { version: 1, runtime, database: credentials.database, port: service.hostPort,
+      projectId: branch.projectId, branchId: branch.id, resourceId: resource.id,
+      serviceId: service.id, serviceCreatedAt: service.createdAt || '', containerId: container.id!,
+      user: credentials.user, authDatabase: 'authDatabase' in credentials ? credentials.authDatabase : '' };
+    const target = { ...identity, binding: databaseApprovalBinding(path.join(stateService.getCacheBase(), 'database-passes'), identity, credentials.password) };
+    return { branch: frozenBranch, resource, service, runtime, sql, write, credentials, target };
+  }
+
+  async function prepareDatabaseApproval(args: Record<string, unknown> | undefined, mongo: boolean): Promise<Record<string, unknown>> {
+    const resolved = await resolveDatabaseApproval(args, mongo);
+    return { ...args, databaseTarget: resolved.target };
+  }
+
+  function assertDatabaseApprovalTarget(approved: unknown, current: unknown): void {
+    if (!approved || JSON.stringify(approved) !== JSON.stringify(current)) {
+      throw new Error('数据库目标或连接凭据已变化，本次未执行。请重新提交并审批。');
+    }
+  }
+
   operatorOpRegistry.register({
     id: 'database.sql',
     name: '执行项目数据库 SQL',
@@ -9878,18 +9919,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     danger: 'destructive',
     confirmText: '确认执行数据库 SQL',
     estimatedSeconds: 10,
+    prepareArgs: (args) => prepareDatabaseApproval(args, false),
     run: async ({ actor, log }, args) => {
-      const branch = stateService.getBranch(String(args?.branchId || ''));
-      if (!branch || !args?.projectId || branch.projectId !== args.projectId) throw new Error('项目与分支不匹配，未执行 SQL。');
-      const resource = (await getBranchResourceSnapshot(branch)).find((item) => item.id === args?.resourceId);
-      if (!resource || resource.source !== 'infra' || resource.kind !== 'database') throw new Error('数据库资源不存在，未执行 SQL。');
-      const runtime = resourceRuntimeKey(resource.runtime);
-      if (runtime !== 'mysql' && runtime !== 'postgres') throw new Error('此通道当前支持 MySQL / PostgreSQL。');
-      const sql = normalizeConsoleWrite(String(args?.sql || ''), runtime);
-      const service = getUnifiedResourceInternalRaw(resource) as InfraService;
+      const resolved = await resolveDatabaseApproval(args, false);
+      assertDatabaseApprovalTarget(args?.databaseTarget, resolved.target);
+      const { branch, resource, service, sql, credentials } = resolved;
+      const runtime = resolved.runtime as SqlDataRuntime;
       log('info', `在 ${resource.displayName} 执行已批准的 SQL`);
       try {
-        const result = await runSqlDataQuery(runtime, service, branch, sql, 120_000, false);
+        const result = await runSqlDataQuery(runtime, service, branch, sql, 120_000, false, credentials);
         stateService.recordDestructiveOp({ type: 'purge-database', projectId: branch.projectId, summary: `已批准数据库 SQL：${resource.displayName}`, triggeredBy: actor });
         stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'success', note: '执行已批准的数据库 SQL' });
         stateService.save();
@@ -9909,16 +9947,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     danger: 'destructive',
     confirmText: '确认执行 MongoDB 写入',
     estimatedSeconds: 10,
+    prepareArgs: (args) => prepareDatabaseApproval(args, true),
     run: async ({ actor, log }, args) => {
-      const branch = stateService.getBranch(String(args?.branchId || ''));
-      if (!branch || !args?.projectId || branch.projectId !== args.projectId) throw new Error('项目与分支不匹配，未执行 MongoDB 写入。');
-      const resource = (await getBranchResourceSnapshot(branch)).find((item) => item.id === args?.resourceId);
-      if (!resource || resource.source !== 'infra' || resource.kind !== 'database' || resourceRuntimeKey(resource.runtime) !== 'mongodb') throw new Error('MongoDB 资源不存在，未执行写入。');
-      const service = getUnifiedResourceInternalRaw(resource) as InfraService;
-      const { action, database, collection, script } = buildMongoStructuredWrite(mongoJsonObject(args?.write, 'write'), mongoDatabaseForBranch(service, branch));
+      const resolved = await resolveDatabaseApproval(args, true);
+      assertDatabaseApprovalTarget(args?.databaseTarget, resolved.target);
+      const { branch, resource, service } = resolved;
+      const { action, database, collection, script } = resolved.write!;
+      // Pin Docker exec to the immutable ID, never a recycled container name.
+      service.containerName = resolved.target.containerId;
       log('info', `在 ${resource.displayName} 执行已批准的 ${action}：${database}.${collection}`);
       try {
-        const result = await runMongoJson(service, branch, script, database);
+        const result = await runMongoJson(service, branch, script, database, 30_000, true, resolved.credentials as ReturnType<typeof mongoCredentials>);
         stateService.recordDestructiveOp({ type: 'purge-database', projectId: branch.projectId, summary: `已批准 MongoDB ${action}：${database}.${collection}`, triggeredBy: actor });
         stateService.appendActivityLog(branch.projectId || 'default', { type: 'resource-data-query', branchId: branch.id, branchName: branch.branch, actor, resourceId: resource.id, resourceName: resource.displayName, result: 'success', note: `已批准 MongoDB ${action}：${database}.${collection}` });
         stateService.save();

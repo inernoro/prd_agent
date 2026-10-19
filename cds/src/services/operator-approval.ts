@@ -45,7 +45,7 @@ function argsHashFor(args: Record<string, unknown> | undefined): string {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
     return Object.fromEntries(Object.keys(value).sort().map((key) => [key, value[key]]));
   });
-  return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
+  return createHash('sha256').update(canonical).digest('hex');
 }
 
 export type RequestStatus =
@@ -171,11 +171,19 @@ export class OperatorApprovalService {
       status: 'pending',
       logs: [],
     };
+    try {
+      if (op.prepareArgs) req.args = await op.prepareArgs(opts.args);
+    } catch (error) {
+      req.status = 'rejected';
+      req.error = (error as Error).message;
+      this.persist(req);
+      return req;
+    }
     this.persist(req);
 
     // 检查 session 自动通过 — 2026-05-28 session key 加 argsHash,防止
     // "批一条 dmesg 等于授权 7 天任意 root 命令" 的 High 级漏洞。
-    const argsHash = argsHashFor(opts.args);
+    const argsHash = argsHashFor(req.args);
     const sessionKey = `${opts.callerKey}::${op.id}::${argsHash}`;
     const session = this.sessions.get(sessionKey);
     if (session && session.expiresAt > Date.now()) {
