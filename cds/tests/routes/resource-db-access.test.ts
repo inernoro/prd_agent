@@ -874,6 +874,19 @@ describe('resource database access', () => {
     expect((await request(server!, 'GET', '/api/data-migrations', undefined, { 'x-test-cookie-auth': '1' })).status).toBe(200);
   });
 
+  it('静态机器Key、Agent会话和伪造peer标记都不能覆盖恢复；合法所有者仍进入目标校验',async()=>{
+    const harness=makeHarness();tmpDir=harness.tmpDir;
+    await new Promise<void>(resolve=>{server=harness.app.listen(0,'127.0.0.1',resolve);});
+    for(const headers of [{},{'x-test-project-key':'1'},{'x-test-ai-session':'1'},{'x-cds-peer-call':'1'}]){
+      const response=await request(server!,'POST','/api/data-migrations/local-restore?projectId=prd-agent',{},headers);
+      expect(response.status).toBe(403);expect(response.body.error).toBe('migration_restore_approval_required');
+    }
+    expect(harness.shell.commands).toHaveLength(0);
+    const owner=await request(server!,'POST','/api/data-migrations/local-restore?projectId=prd-agent',{}, {'x-test-cookie-auth':'1'});
+    expect(owner.status).toBe(409);expect(owner.body.error).toContain('没有可供迁移');
+    expect(harness.shell.commands).toHaveLength(0);
+  });
+
   it('MongoDB Agent 具体写入只在本次批准后执行，错误项目和自批不能越权', async () => {
     const harness = makeHarness(); tmpDir = harness.tmpDir;
     harness.stateService.addInfraService({ id: 'mongo-approval', projectId: 'prd-agent', name: 'Mongo approval', dockerImage: 'mongo:7', containerPort: 27017, hostPort: 27017, containerName: 'qa-mongo', status: 'running', dbName: 'qa', env: { MONGO_INITDB_ROOT_USERNAME: 'admin', MONGO_INITDB_ROOT_PASSWORD: 'pw', MONGO_INITDB_DATABASE: 'qa' }, volumes: [] });

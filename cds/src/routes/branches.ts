@@ -22565,11 +22565,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
   // 全局迁移任务/远端连接含跨项目能力，必须由所有者操作；peer 数据面沿用明确项目资源绑定。
   router.use('/data-migrations', (req, res, next) => {
-    if (req.path === '/local-restore' && (req as any).cdsProjectKey) {
-      res.status(403).json({ error: 'migration_restore_approval_required', message: '项目 Agent 不能直接覆盖恢复数据库，请由系统所有者审查并执行迁移。' });
+    if (req.path === '/local-restore' && !isHumanSystemOwner(req)) {
+      res.status(403).json({ error: 'migration_restore_approval_required', message: '数据库覆盖恢复需要目标系统所有者授权。请由目标所有者发起拉取迁移；常规机器 Key（含 peer 标记）不能直接上传覆盖。' });
       return;
     }
-    if (['/local-dump', '/local-restore'].includes(req.path) || isHumanSystemOwner(req)) { next(); return; }
+    if (req.path === '/local-dump' || isHumanSystemOwner(req)) { next(); return; }
     res.status(403).json({ error: 'migration_owner_required', message: '迁移管理仅系统所有者可用；Agent 请先通过数据库具体操作审批入口。' });
   });
 
