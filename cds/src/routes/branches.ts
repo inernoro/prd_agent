@@ -6229,7 +6229,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch, projectId, sourceBranchId } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string };
+      const { branch, projectId, sourceBranchId, inheritSourceModes } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string; inheritSourceModes?: boolean };
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -6356,7 +6356,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
-      // 先套项目模板(保底),再用来源分支快照覆盖(拷贝赢模板)——之后两分支各自独立。
+      // 深拷贝来源配置；项目极速默认优先，复制模式例外须显式授权。已有分支不受影响。
       applyProjectDefaultDeployModes(
         entry,
         targetProject.defaultDeployModes,
@@ -6378,6 +6378,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.derivedFromBranchId = sourceBranch.id;
         entry.derivedFromBranchName = sourceBranch.branch;
         entry.derivedAt = new Date().toISOString();
+        if (inheritSourceModes !== true) {
+          const profiles = stateService.getBuildProfilesForProject(effectiveProjectId);
+          const expressDefaults = Object.fromEntries(profiles.flatMap(profile => {
+            const mode = targetProject.defaultDeployModes?.[profile.id];
+            return mode && isPrebuiltMode(profile, mode) ? [[profile.id, mode]] : [];
+          }));
+          applyProjectDefaultDeployModes(entry, expressDefaults, profiles);
+        }
       }
       await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
         await worktreeService.create(branchRepoRoot, branch, worktreePath);

@@ -2254,6 +2254,26 @@ describe('Branch Routes', () => {
         expect(source.extraProfiles?.[0].env?.MODE).toBe('standalone');
       });
 
+      it.each([undefined, false, true])('派生保留项目极速默认，只有显式例外才继承源码模式: %s', async inheritSourceModes => {
+        await seedSourceWithConfig('source-exception');
+        stateService.updateBuildProfile('api', { activeDeployMode: 'express', deployModes: {
+          express: { label: '极速版', prebuilt: true, command: '' },
+          source: { label: '源码版', prebuilt: false, command: 'run' },
+        } });
+        stateService.updateProject('default', { defaultDeployModes: { api: 'express' } });
+        stateService.getBranch('source-exception')!.profileOverrides!.api!.activeDeployMode = 'source';
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'derived-express', sourceBranchId: 'source-exception',
+          ...(inheritSourceModes === undefined ? {} : { inheritSourceModes }),
+        });
+        expect(res.status).toBe(201);
+        const created = stateService.getBranch('derived-express')!;
+        expect(created.profileOverrides?.api?.activeDeployMode).toBe(inheritSourceModes === true ? 'source' : 'express');
+        expect(created.profileOverrides?.api?.env?.KEY).toBe('from-source');
+        expect(created.extraProfiles?.map(p => p.id)).toEqual(['nacos']);
+        expect(stateService.getBranch('source-exception')!.profileOverrides!.api!.activeDeployMode).toBe('source');
+      });
+
       it('POST /branches sourceBranchId 校验:不存在 400,跨项目 400,且不留孤儿分支', async () => {
         const now = new Date().toISOString();
         const missing = await request(server, 'POST', '/api/branches', { branch: 'd1', sourceBranchId: 'ghost' });
