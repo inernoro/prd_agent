@@ -71,7 +71,7 @@ export function VersionWorkflowTab({ productId, isAdmin = false }: { productId: 
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('mine');
-  const [releaseOwnerId, setReleaseOwnerId] = useState(currentUserId ?? '');
+  const [releaseOwnerId, setReleaseOwnerId] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
@@ -101,15 +101,11 @@ export function VersionWorkflowTab({ productId, isAdmin = false }: { productId: 
     return () => { active = false; };
   }, [productId]);
 
-  useEffect(() => {
-    if (currentUserId && !releaseOwnerId) setReleaseOwnerId(currentUserId);
-  }, [currentUserId, releaseOwnerId]);
-
   const reload = useCallback(async () => {
     setLoading(true);
     const [i, r, req, mem] = await Promise.all([
       listInitiations(productId, recordScope),
-      listReleases(productId, releaseOwnerId === currentUserId ? 'mine' : 'all', releaseOwnerId),
+      listReleases(productId, 'all', releaseOwnerId || undefined),
       listRequirements(productId),
       listProductMembers(productId),
     ]);
@@ -119,7 +115,7 @@ export function VersionWorkflowTab({ productId, isAdmin = false }: { productId: 
     if (mem.success) setMembers(mem.data.members);
     setLoadedProductId(productId);
     setLoading(false);
-  }, [currentUserId, productId, recordScope, releaseOwnerId]);
+  }, [productId, recordScope, releaseOwnerId]);
 
   useEffect(() => { void reload(); }, [reload]);
   const filteredInitiations = useMemo(
@@ -168,7 +164,7 @@ export function VersionWorkflowTab({ productId, isAdmin = false }: { productId: 
           </span>
         </div>
       </div>
-      <ReleaseTable productId={productId} productName={productName} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} readOnly={releaseOwnerId !== currentUserId} />
+      <ReleaseTable productId={productId} productName={productName} items={visibleReleases} requirements={requirements} members={members} onChanged={reload} currentUserId={currentUserId} />
     </> : <>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <RecordToolbar query={query} onQueryChange={setQuery} scope={recordScope} onScopeChange={setRecordScope}
@@ -704,10 +700,10 @@ function InitiationTable({ productId, productName, items, members, currentUserId
   );
 }
 
-function ReleaseTable({ productId, productName, items, requirements, members, onChanged, readOnly }: {
+function ReleaseTable({ productId, productName, items, requirements, members, onChanged, currentUserId }: {
   productId: string;
   productName: string;
-  items: ProductRelease[]; requirements: Requirement[]; members: ProductMember[]; onChanged: () => Promise<void>; readOnly: boolean;
+  items: ProductRelease[]; requirements: Requirement[]; members: ProductMember[]; onChanged: () => Promise<void>; currentUserId?: string;
 }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState<string | null>(null);
@@ -753,8 +749,8 @@ function ReleaseTable({ productId, productName, items, requirements, members, on
       <Td>{item.plannedTrainingAt ? new Date(item.plannedTrainingAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '-'}</Td>
       <Td>{formatBool(item.isGlobalOpen)}</Td>
       <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => reqNames.get(id) ?? id).join('、') || '-'}</Td>
-      <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? !readOnly && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
-        : readOnly ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
+      <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? item.ownerId === currentUserId && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
+        : item.ownerId !== currentUserId ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
     </tr>)}{items.length === 0 && <Empty cols={18}>暂无上线记录</Empty>}
@@ -812,7 +808,7 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
     </div>
     {onOwnerChange
       ? <div className="h-8 w-52">
-          <UserSearchSelect value={ownerId ?? ''} onChange={onOwnerChange} placeholder="产品负责人" showAllOption={false} uiSize="sm" />
+          <UserSearchSelect value={ownerId ?? ''} onChange={onOwnerChange} placeholder="全部负责人" showAllOption allOptionLabel="全部负责人" uiSize="sm" />
         </div>
       : <select
           aria-label="记录范围"
