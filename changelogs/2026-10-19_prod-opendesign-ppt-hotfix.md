@@ -8,3 +8,4 @@
 | fix | prd-api | 持久化并输出 OpenDesign 演示稿真实阶段、预览与短期网关累计调用次数 |
 | fix | prd-admin | 生成中展示真实演示稿初稿，区分页数与总进度并阻止未通过质量检查的草稿发布 |
 | fix | prd-admin | 修复手机窄屏下演示稿精修建议挤出下载与发布操作的问题 |
+| fix | design-runtime | 修复 SemVer 次版本标签被数量事实门误判为次数声明的问题 |

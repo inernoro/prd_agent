@@ -984,6 +984,26 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     },
   );
 
+  it('does not reinterpret a SemVer component label as a count when its number is in an adjacent element', () => {
+    const evidence = [
+      '采用语义化版本（Semantic Versioning）：MAJOR.MINOR.PATCH。',
+      'MINOR（次版本号）：向下兼容的功能新增，例如 1.0.0 → 1.1.0。',
+    ].join('\n');
+    expect(() => hardenSelfContainedHtml(
+      '<!doctype html><html><body><section><article><b>1</b><strong>主版本</strong><p>不兼容的接口修改</p></article><article><b>2</b><strong>次版本</strong><p>向下兼容的功能新增</p></article><article><b>0</b><strong>修订号</strong><p>向下兼容的问题修复</p></article></section></body></html>',
+      evidence,
+    )).not.toThrow();
+
+    for (const claim of ['2次发布', '3次发布', '2次回滚']) {
+      expect(() => hardenSelfContainedHtml(
+        `<!doctype html><html><body><p>本轮完成${claim}。</p></body></html>`,
+        evidence,
+      )).toThrowError(expect.objectContaining({
+        code: 'design_output_quality_rejected',
+      }));
+    }
+  });
+
   it.each(['0周', '5周'])('still rejects an actual unsupported duration beside a clock: %s', (duration) => {
     expect(() => hardenSelfContainedHtml(
       `<!doctype html><html><body>周二至周五：14:00—19:00 活动持续${duration}。</body></html>`,
