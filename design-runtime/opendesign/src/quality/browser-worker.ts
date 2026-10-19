@@ -140,7 +140,13 @@ async function measurePage(
       }
       return false;
     };
-    const main = document.querySelector('main, [role="main"]');
+    const revealSlides = [...document.querySelectorAll('.reveal .slides > section')];
+    const presentationSlides = revealSlides.length > 0
+      ? revealSlides
+      : [...document.querySelectorAll('[data-slide-index]')];
+    const main = slideIndex
+      ? presentationSlides[slideIndex - 1] ?? null
+      : document.querySelector('main, [role="main"]');
     if (!main || !visible(main) || clipped(main)) {
       issues.push(issue('main_content_clipped', {
         present: Boolean(main),

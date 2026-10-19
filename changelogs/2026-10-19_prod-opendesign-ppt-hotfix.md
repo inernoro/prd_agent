@@ -4,3 +4,4 @@
 | fix | llmgw | 补齐 Responses 用量末帧、推理与缓存 token 计费语义，并明确实际与估算金额标签 |
 | test | platform | 增加生成、编辑、恢复、质量门、多文件产物、计费和移动端行为的代表性回归 |
 | fix | design-runtime | 固定可获得的 Alpine Chromium 版本，并在镜像构建时以降权用户验证桌面与移动双视口 |
+| fix | design-runtime | 浏览器质量门以当前演示页作为主内容检测对象，避免无 main 标签的 Reveal 成品被误拒，同时继续拦截真实移动端小字与固定控件遮挡 |

@@ -89,6 +89,19 @@ describe('isolated Chromium quality measurements', () => {
     expect(codes).toContain('empty_link');
   }, 30_000);
 
+  it('does not treat Reveal sections as main content for ordinary web pages', async () => {
+    const sample = workspace(`<!doctype html><html><head><style>
+      body{margin:0;color:#111;background:#fff}.reveal .slides>section{display:block;min-height:600px}
+    </style></head><body><div class="reveal"><div class="slides">
+      <section><h1>A web page still needs an explicit main landmark</h1></section>
+    </div></div></body></html>`);
+
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+    const codes = result.measurements.flatMap((measurement) => measurement.issues.map((issue) => issue.issueCode));
+
+    expect(codes).toContain('main_content_clipped');
+  }, 30_000);
+
   it('checks every presentation slide and rejects transform-shrunk mobile text', async () => {
     const sample = presentationWorkspace(`<!doctype html><html><head><style>
       body{margin:0;color:#111;background:#fff}.reveal .slides>section{display:none}.reveal .slides>section.active{display:block}
@@ -122,5 +135,55 @@ describe('isolated Chromium quality measurements', () => {
     const mobile = result.measurements.find((measurement) => measurement.viewport === 'mobile' && measurement.slideIndex === 1)!;
     expect(mobile.issues.map((issue) => issue.issueCode)).toContain('presentation_fixed_overlay_obscures_content');
     expect(mobile.issues.map((issue) => issue.issueCode)).not.toContain('main_content_clipped');
+  }, 30_000);
+
+  it('uses each Reveal slide as presentation main content without hiding real mobile defects', async () => {
+    const slides = Array.from({ length: 20 }, (_, index) => {
+      const number = index + 1;
+      const className = [number === 1 ? 'active' : '', [4, 5, 16, 19].includes(number) ? 'overlap' : '']
+        .filter(Boolean)
+        .join(' ');
+      const body = number === 1
+        ? '<p class="small">Readable content must not be transform-shrunk.</p>'
+        : `<p>Slide ${number} keeps its content reachable.</p>`;
+      return `<section class="${className}"><h1>Slide ${number}</h1>${body}</section>`;
+    }).join('');
+    const sample = presentationWorkspace(`<!doctype html><html><head><style>
+      body{margin:0;color:#111;background:#fff}.reveal .slides>section{display:none;position:relative;min-height:844px}
+      .reveal .slides>section.active{display:block}.small{font-size:11px}.overlap p{position:absolute;bottom:0;height:72px;margin:0}
+      .controls{position:fixed;left:0;right:0;bottom:0;height:72px;background:#fff}
+    </style></head><body><div class="reveal"><div class="slides">${slides}</div></div>
+      <nav class="controls" aria-label="Slide navigation"><button type="button">Next</button></nav><script>
+      const slides=[...document.querySelectorAll('.slides>section')];
+      window.Reveal={slide(i){slides.forEach((s,n)=>s.classList.toggle('active',n===i));this.i=i},getIndices(){return {h:this.i||0}}};
+    </script></body></html>`, 20);
+
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+    const issues = result.measurements.flatMap((measurement) => measurement.issues);
+
+    expect(result.measurements).toHaveLength(40);
+    expect(issues.map((issue) => issue.issueCode)).not.toContain('main_content_clipped');
+    expect(issues.map((issue) => issue.issueCode)).toContain('presentation_text_too_small');
+    expect(issues.map((issue) => issue.issueCode)).toContain('presentation_fixed_overlay_obscures_content');
+  }, 30_000);
+
+  it('rejects a presentation when the expected current slide disappears after navigation', async () => {
+    const sample = presentationWorkspace(`<!doctype html><html><head><style>
+      body{margin:0;color:#111;background:#fff}.reveal .slides>section{display:none;min-height:600px}
+      .reveal .slides>section.active{display:block}
+    </style></head><body><div class="reveal"><div class="slides">
+      <section class="active"><h1>Only the first slide remains</h1></section>
+      <section><h1>The second slide is removed during navigation</h1></section>
+    </div></div><div id="unrelated"><h1>Unrelated visible body content</h1></div><script>
+      const slides=[...document.querySelectorAll('.slides>section')];
+      window.Reveal={slide(i){this.i=i;if(i===1)slides[1].remove()},getIndices(){return {h:this.i||0}}};
+    </script></body></html>`, 2);
+
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+    const secondSlideIssues = result.measurements
+      .filter((measurement) => measurement.slideIndex === 2)
+      .flatMap((measurement) => measurement.issues.map((issue) => issue.issueCode));
+
+    expect(secondSlideIssues).toContain('main_content_clipped');
   }, 30_000);
 });
