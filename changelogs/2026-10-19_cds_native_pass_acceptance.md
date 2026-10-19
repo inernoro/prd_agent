@@ -13,3 +13,4 @@
 | fix | cds | 加密保留原账号回收目标，支持端口变化和分支删除后的清理，无法确认原目标时保持重试；并发申请同步预占全局名额 |
 | fix | cds | 本机覆盖恢复始终要求目标所有者授权，拒绝静态机器 Key、Agent 会话和伪造 peer 标记；跨 CDS 保留所有者发起的目标拉取方式 |
 | fix | cds | 批量 SQL 逐条检查语句头，拒绝后续未知命令与 PostgreSQL 文件 COPY、lo_import/lo_export，保留正常事务与多结果执行 |
+| fix | cds | 为全部 CDS Node slim 运行镜像及源码启动路径声明 OpenSSL 依赖，CI 在预览运行镜像内实际生成并校验证书 |

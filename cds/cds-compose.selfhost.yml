@@ -93,6 +93,7 @@ services:
     # 逼一次干净全装。正常情况（软链在）探测秒过、仍走快速增量，不牺牲常态速度。
     command: >-
       cd cds &&
+      (command -v openssl >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*)) &&
       corepack enable &&
       corepack prepare pnpm@10.28.2 --activate &&
       pnpm config set store-dir /pnpm/store &&

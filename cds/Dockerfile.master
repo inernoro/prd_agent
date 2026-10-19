@@ -62,6 +62,7 @@ RUN apt-get update \
       docker.io \
       git \
       ca-certificates \
+      openssl \
       curl \
  && rm -rf /var/lib/apt/lists/*
 
