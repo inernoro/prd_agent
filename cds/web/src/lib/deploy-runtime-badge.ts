@@ -26,6 +26,15 @@ export function isFullyPrebuilt(runtime: RuntimeBadgeInput | undefined): boolean
   return runtime?.actualPrebuiltCoverage === 'all';
 }
 
+/** 分支卡文字与图标共用同一份运行事实。 */
+export function branchRuntimePresentation(branch: { status: string; deployRuntime?: RuntimeBadgeInput }) {
+  const badge = branchRuntimeBadge(branch);
+  const iconProps = badge && (badge.lightning || badge.kind === 'pending')
+    ? { partial: badge.lightning === 'blue', pending: badge.kind === 'pending', label: badge.label }
+    : null;
+  return { badge, iconProps };
+}
+
 export function branchRuntimeBadge(branch: { status: string; deployRuntime?: RuntimeBadgeInput }): RuntimeBadge | null {
   const runtime = branch.deployRuntime;
   if (!runtime) return null;

@@ -28,6 +28,7 @@ import type {
   UserCredential,
   ProjectGrant,
   AccessRequest,
+  IdentityConnection,
   CustomEnvStore,
   ConfigSnapshot,
   DestructiveOperationLog,
@@ -3771,6 +3772,24 @@ export class StateService {
   }
 
   // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
+
+  getIdentityConnections(): IdentityConnection[] {
+    return this.state.identityConnections || [];
+  }
+
+  addIdentityConnection(item: IdentityConnection): void {
+    const now = Date.now();
+    this.state.identityConnections = (this.state.identityConnections || []).filter(r => Date.parse(r.expiresAt) > now);
+    this.state.identityConnections.push(item);
+    this.save();
+  }
+
+  updateIdentityConnection(id: string, updates: Partial<IdentityConnection>): void {
+    const item = this.getIdentityConnections().find(r => r.id === id);
+    if (!item) throw new Error('接入申请不存在');
+    Object.assign(item, updates);
+    this.save();
+  }
 
   addAccessRequest(item: AccessRequest): void {
     if (!this.state.accessRequests) this.state.accessRequests = [];

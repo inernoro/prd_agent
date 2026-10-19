@@ -144,7 +144,8 @@ describe('actual own HTTP pending-to-run durable binding', () => {
   for (const route of ['/api/branches/owned/deploy', '/api/branches/owned/deploy/api']) {
     it('records actual pull boundary with open/failed facts and no guessed CI duration: ' + route, async () => {
       const p = await pending(route); let entered = false; let release!: () => void;
-      const pull = vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockImplementationOnce(() => new Promise((_resolve, reject) => {
+      vi.spyOn(WorktreeService.prototype, 'needsDatabaseInitializationSource').mockResolvedValue(false);
+      const pull = vi.spyOn(WorktreeService.prototype, 'resolveDeploymentCommit').mockImplementationOnce(() => new Promise((_resolve, reject) => {
         entered = true; release = () => reject(Error('OWNED_PULL_ERROR_NO_SECRETS'));
       }));
       const response = post(token(p), { commitSha: 'b'.repeat(40) }, route);
@@ -168,7 +169,8 @@ describe('actual own HTTP pending-to-run durable binding', () => {
     });
     it('records exact artifact admission at its actual held Docker query: ' + route, async () => {
       const p = await pending(route); let entered = false; let release!: () => void;
-      const pull = vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7), sourcePath: root } as any);
+      vi.spyOn(WorktreeService.prototype, 'needsDatabaseInitializationSource').mockResolvedValue(false);
+      const pull = vi.spyOn(WorktreeService.prototype, 'resolveDeploymentCommit').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7), sourcePath: root } as any);
       const original = shell.exec.bind(shell);
       const exec = vi.spyOn(shell, 'exec').mockImplementation((command, opts) => command.startsWith('docker version')
         ? new Promise(resolve => { entered = true; release = () => resolve({ stdout: '', stderr: 'OWNED_DOCKER_ERROR', exitCode: 1 }); })

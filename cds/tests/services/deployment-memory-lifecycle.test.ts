@@ -112,7 +112,7 @@ describe('部署内存预约生命周期', () => {
     const source = ts.createSourceFile('index.ts', readFileSync(path.resolve('src/index.ts'), 'utf8'), ts.ScriptTarget.Latest);
     let predicate: string | undefined;
     const visit = (node: ts.Node) => {
-      if (ts.isPropertyAssignment(node) && node.name.getText(source) === 'creationSettled') predicate = node.initializer.getText(source);
+      if (!predicate && ts.isPropertyAssignment(node) && node.name.getText(source) === 'creationSettled') predicate = node.initializer.getText(source);
       ts.forEachChild(node, visit);
     };
     visit(source); expect(predicate).toBeTruthy();
@@ -150,6 +150,44 @@ describe('部署内存预约生命周期', () => {
     expect(mock.commands).toHaveLength(64);
     expect(result.released).toHaveLength(64);
     expect(result.retained).toEqual(['cds-b1-api-64']);
+  });
+
+  it('冷恢复前64个仍在运行时，下一轮必须核到已结束的尾部预约', async () => {
+    const entry = branch(); entry.services = {};
+    for (let index = 0; index < 65; index++) entry.services[`api-${index}`] = {
+      ...runtime, profileId: `api-${index}`, containerName: `cds-b1-api-${index}`,
+      containerId: (index + 1).toString(16).padStart(64, '0') };
+    restoreDeploymentMemoryReservations([entry], () => []);
+    mock.addResponsePattern(/docker inspect/, match => match.input!.includes(entry.services['api-64'].containerId!)
+      ? absent() : inspection(true));
+    const options = { creationSettled: () => true, recoveredOnly: true };
+    await service.reconcileDeploymentMemoryReservations([entry], options);
+    const second = await service.reconcileDeploymentMemoryReservations([entry], options);
+    expect(second.released).toEqual(['cds-b1-api-64']);
+    expect(deploymentPhaseBudget.memorySnapshot()).toHaveLength(64);
+    expect(mock.commands).toHaveLength(128);
+  });
+
+  it('实际宿主Docker对已知CID返回no such object时释放原冷预约', async () => {
+    const entry = branch(); restoreDeploymentMemoryReservations([entry], () => [profile]);
+    mock.addResponsePattern(/docker inspect/, () => ({ stdout: '', exitCode: 1,
+      stderr: `error: no such object: ${runtime.containerId}` }));
+    const result = await service.reconcileDeploymentMemoryReservations([entry], {
+      recoveredOnly: true, creationSettled: () => true });
+    expect(result.released).toEqual([runtime.containerName]);
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([]);
+  });
+
+  it.each([false, true])('冷续扫不得释放同名称后来预约（先有冷预约=%s）', async restored => {
+    const entry = branch();
+    if (restored) restoreDeploymentMemoryReservations([entry], () => [profile]);
+    deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 768, owner);
+    mock.addResponsePattern(/docker inspect/, absent);
+    const options = { creationSettled: () => true, recoveredOnly: true };
+    const result = await service.reconcileDeploymentMemoryReservations([entry], options);
+    expect(result.released).toEqual([]);
+    expect(mock.commands).toEqual([]);
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ memoryMB: 768, owner })]);
   });
 
   it('总读取预算15秒且单次不超过剩余预算，耗尽后预约保持未知', async () => {

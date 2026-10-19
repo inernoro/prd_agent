@@ -11,6 +11,7 @@ import { BranchOperationCoordinator, pendingDeployBody, pendingDeployRoute } fro
 import { internalPendingReplayAuth } from '../../src/services/internal-pending-replay-auth.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { beginSelfUpdateDrain, endSelfUpdateDrain } from '../../src/services/deploy-drain.js';
 import type { CdsConfig } from '../../src/types.js';
 
 // 原 server/github gate/单服务部署路由与协调器；未启动 Docker，不代替原生完整应用演练。
@@ -38,6 +39,7 @@ describe('原服务器 GitHub 模式排队重派', () => {
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   });
   afterEach(async () => {
+    endSelfUpdateDrain();
     server?.closeAllConnections(); if (server) await new Promise<void>(resolve => server.close(() => resolve()));
     coordinator?.clearForTest(); await flushAllJsonStateStores(); vi.restoreAllMocks(); vi.unstubAllEnvs();
     fs.rmSync(root, { recursive: true, force: true });
@@ -54,6 +56,25 @@ describe('原服务器 GitHub 模式排队重派', () => {
     }
     return coordinator.completeAll(active.lease!, 'completed')[0];
   }
+  it('自更新等待时保留已受理重派，新部署明确拒绝；不会丢掉排队意图', async () => {
+    await app.locals.cdsAuthService.bootstrapFirstLocalUser({ username: 'fixture-owner', password: 'fixture-private-password' });
+    const login = await fetch(base + '/api/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'fixture-owner', password: 'fixture-private-password' }) });
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const pending = claim(); const route = pendingDeployRoute(pending);
+    beginSelfUpdateDrain(Date.now(), 60_000);
+    const fresh = await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json', cookie }, body: '{}' });
+    expect(fresh.status).toBe(503); expect((await fresh.json()).error).toBe('self_update_draining');
+    const replay = await fetch(base + route, { method: 'POST',
+      headers: internalPendingReplayAuth.headersFor(base + route, pending, 'p'), body: JSON.stringify(pendingDeployBody(pending)) });
+    expect(replay.status).toBe(503); expect((await replay.json()).error).toBe('self_update_draining');
+    expect(coordinator.getClaimedPendingReplay(pendingDeployBody(pending).pendingReplay as any)).toBeDefined();
+    endSelfUpdateDrain();
+    const resumed = await fetch(base + route, { method: 'POST',
+      headers: internalPendingReplayAuth.headersFor(base + route, pending, 'p'), body: JSON.stringify(pendingDeployBody(pending)) });
+    expect(resumed.status).toBe(404); expect((await resumed.json()).error).toContain('构建配置');
+    expect(coordinator.getClaimedPendingReplay(pendingDeployBody(pending).pendingReplay as any)).toBeDefined();
+  });
   it('没有用户 cookie 的有效重派进入真实路由；普通内部标记仍 401', async () => {
     const pending = claim(); const route = pendingDeployRoute(pending), body = JSON.stringify(pendingDeployBody(pending));
     const denied = await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json', 'x-cds-internal': '1' }, body });

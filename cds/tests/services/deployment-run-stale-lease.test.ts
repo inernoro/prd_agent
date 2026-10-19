@@ -226,6 +226,45 @@ describe('部署心跳过期后的精确租约回收', () => {
     expect(routes).toContain('operationGeneration: options.operationGeneration');
   });
 
+  it('实际装配每分钟续扫冷预约、不重入，并在退出后保留未确认责任', async () => {
+    const source = fs.readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
+    const begin = source.indexOf('let memoryReconciliationRunning = false;');
+    const end = source.indexOf('deploymentMemoryReconciler.unref?.();', begin);
+    expect(begin).toBeGreaterThan(0); expect(end).toBeGreaterThan(begin);
+    let finish!: (result: { released: string[] }) => void;
+    const pending = new Promise<{ released: string[] }>(resolve => { finish = resolve; });
+    const reconcile = vi.fn().mockReturnValueOnce(pending).mockResolvedValue({ released: [] });
+    let entries = [{ id: 'local', executorId: undefined }, { id: 'remote', executorId: 'node-2' }];
+    const state = { getAllBranches: () => entries };
+    vi.useFakeTimers();
+    let wiring: { timer: ReturnType<typeof setInterval>; stop: () => void } | undefined;
+    try {
+      wiring = new Function('stateService', 'config', 'isRemoteExecutorOwned', 'containerService', 'shutdownInProgress',
+        source.slice(begin, end) + 'deploymentMemoryReconciler.unref?.(); return { timer: deploymentMemoryReconciler, stop: () => { shutdownInProgress = true; } };')(
+        state, { mode: 'master' }, (id: string | undefined) => Boolean(id),
+        { reconcileDeploymentMemoryReservations: reconcile }, false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(reconcile.mock.calls[0][0]).toEqual([entries[0]]);
+      expect(reconcile.mock.calls[0][1].recoveredOnly).toBe(true);
+      expect(reconcile.mock.calls[0][1].creationSettled({}, { containerId: undefined })).toBe(false);
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      entries = [{ id: 'fresh-local', executorId: undefined }];
+      finish({ released: [] }); await Promise.resolve(); await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      expect(reconcile.mock.calls[1][0]).toEqual(entries);
+      const predicate = reconcile.mock.calls[1][1].creationSettled;
+      expect(predicate({}, { containerId: 'a'.repeat(64) })).toBe(true);
+      wiring!.stop();
+      expect(predicate({}, { containerId: 'a'.repeat(64) })).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(reconcile).toHaveBeenCalledTimes(2);
+      expect(source).toContain('clearInterval(deploymentMemoryReconciler)');
+    } finally { if (wiring) clearInterval(wiring.timer); vi.useRealTimers(); }
+  });
+
   it('启动装配在受理请求前仅盘点本执行节点，不把远端缺席当作本机释放依据', () => {
     const source = fs.readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
     expect(source).toContain("config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId)");

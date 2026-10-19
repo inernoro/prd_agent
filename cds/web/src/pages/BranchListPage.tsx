@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { branchRuntimeBadge, isFullyPrebuilt } from '../lib/deploy-runtime-badge';
+import { branchRuntimePresentation, isFullyPrebuilt } from '../lib/deploy-runtime-badge';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -37,7 +37,6 @@ import {
   X,
   Layers,
   XCircle,
-  Zap,
   FolderInput,
   Pin,
   Users,
@@ -67,6 +66,7 @@ import { BranchGroupSuggestions, EMPTY_SUGGESTION_DRAFT, type BranchGroupSuggest
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { PrebuiltRuntimeIcon } from '@/components/branch/PrebuiltRuntimeIcon';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 
@@ -5103,12 +5103,12 @@ function BranchSearchDropdown({
             value={configSourceBranchId ?? ''}
             onChange={(event) => onChangeConfigSource(event.target.value || null)}
             className="min-w-0 flex-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
-            title="新建分支时从来源分支快照拷贝分支级配置;默认走项目模板(不派生)"
+            title="默认使用项目模板。派生会复制环境与额外服务，但保留项目极速默认；源码模式例外需创建后手动设置。额外服务仍可能使分支显示部分极速。"
           >
             <option value="">项目模板(默认,不派生)</option>
             {sourceCandidates.map((branch) => (
               <option key={branch.id} value={branch.id}>
-                派生自 {branch.branch}
+                派生自 {branch.branch}（保留项目极速默认）
               </option>
             ))}
           </select>
@@ -6389,7 +6389,7 @@ const BranchCard = memo(function BranchCard({
   const phaseBarSource: BranchCardPhase | null = buildPhase || failedPhase || (finishing && outcome ? outcome.phase : null);
   const timeBadge = branchTimeBadge(branch, now, busySince);
   const origin = branchOriginBadge(branch);
-  const runtime = branchRuntimeBadge(branch);
+  const { badge: runtime, iconProps: runtimeIconProps } = branchRuntimePresentation(branch);
   const runtimeIconClass = runtime?.lightning === 'yellow'
     ? 'text-express-all'
     : runtime?.lightning === 'blue'
@@ -6678,10 +6678,10 @@ const BranchCard = memo(function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
-            {runtime?.prebuilt ? (
-              <Zap
-                className={`h-4 w-4 ${runtimeIconClass} ${isInterim ? 'animate-pulse' : ''}`}
-                aria-label={runtime.label}
+            {runtimeIconProps ? (
+              <PrebuiltRuntimeIcon
+                {...runtimeIconProps}
+                className={isInterim ? 'animate-pulse' : ''}
               />
             ) : runtime ? (
               <Rocket

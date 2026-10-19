@@ -215,6 +215,7 @@ export interface UserViewState {
 export type UptimeAlertEventType = 'uptime.target.down' | 'uptime.target.recovered';
 
 export interface UptimeAlertEventData {
+  urgency?: 'urgent' | 'normal';
   businessName?: string;
   finding?: string;
   assessment?: 'observation-unavailable' | 'check-failed';
@@ -1922,13 +1923,17 @@ export class UptimeMonitorService {
   ): void {
     if (!this.deps.onAlert) return;
     try {
+      const facet = this.environmentFacet(record, this.previewBranchLookup());
+      const urgent = type === 'uptime.target.down' && facet.environment === 'production'
+        && facet.observeMode === 'active' && !target.collection && target.monitor?.kind !== 'health-json';
       this.deps.onAlert(type, {
         targetId: target.id,
+        urgency: urgent ? 'urgent' : 'normal',
         businessName: target.projectId === SELF_PROJECT_ID ? '部署平台' : target.projectName,
         finding: record.lastSample?.finding,
         assessment: target.collection ? 'observation-unavailable' : 'check-failed',
         affectedChecks: target.collectionMembers?.length,
-        environmentLabel: this.environmentFacet(record, this.previewBranchLookup()).environmentLabel,
+        environmentLabel: facet.environmentLabel,
         ...(type === 'uptime.target.recovered' && target.source === 'custom'
           ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),
         projectId: target.projectId,

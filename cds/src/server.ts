@@ -27,6 +27,7 @@ import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { SkillProxy } from './services/skill-proxy.js';
+import { createIdentityConnectionsRouter } from './routes/identity-connections.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
 import { createIdentityRouter, resolveUserCredential, userCredentialRouteAllowed } from './routes/identity.js';
@@ -1409,6 +1410,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/pending-imports\/(.+)$/, '查询待导入项目'],
     [/^POST \/pending-imports\/(.+)\/approve$/, '批准导入'],
     [/^POST \/pending-imports\/(.+)\/reject$/, '拒绝导入'],
+    [/^GET \/projects\/[^/]+\/access-status$/, '核对原项目访问恢复状态'],
     [/^POST \/projects\/[^/]+\/access-requests$/, '发起授权申请'],
     [/^GET \/projects\/[^/]+\/access-requests\/[^/]+$/, '轮询授权结果'],
     [/^POST \/bootstrap-access-requests$/, '发起新项目接入申请'],
@@ -1556,6 +1558,10 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (method === 'POST' && path === '/api/identity-connections') return true;
+  if (method === 'GET' && /^\/api\/identity-connections\/[^/]+$/.test(path)) return true;
+  if (method === 'POST' && /^\/api\/identity-connections\/[^/]+\/ack$/.test(path)) return true;
+  if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-status$/.test(path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
@@ -2745,6 +2751,7 @@ export function createServer(deps: ServerDeps): express.Express {
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
       isPendingReplay: pendingReplayGate.isTrusted,
+      isPublicRequest: req => isPublicAccessRequestRoute(req.method, req.path),
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
     }));
@@ -4590,6 +4597,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // 被动授权 — agent 免密发起授权申请 + 用户右下角一键批准签发授权密钥。
   // 注意 发起/轮询两个端点的 public 放行在上面的全局认证中间件里(搜 access-requests)。
+  if (authService) app.use('/api', createIdentityConnectionsRouter({ stateService: deps.stateService, authService }));
   app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
@@ -4662,6 +4670,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
   app.use('/api', (req, res, next) => {
     if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    // Let already accepted, authenticated queued work drain to completion.
+    if (pendingReplayGate.isTrusted(req)) { next(); return; }
     const draining = selfUpdateDrainBlockReason(Date.now());
     if (!draining) { next(); return; }
     res.setHeader('Retry-After', '60');

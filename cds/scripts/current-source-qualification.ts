@@ -21,6 +21,43 @@ const localQueueProductionSourceChanges = ['cds/src/executor/routes.ts', 'cds/sr
 const alarmQueueProductionHead = 'f5ed37799f95967d66b57c95c4d3425a68a3bed8';
 const alarmQueueProductionSources = ['cds/src/index.ts', 'cds/src/routes/alarm-channels.ts', 'cds/src/services/alarm-dispatch.ts', 'cds/src/services/phone-dispatch-queue.ts'];
 const cleanupQualificationProductionHead = '97dee9019981fe99b4a8ebb6cb280db53e56abb1';
+const cleanupPublishedHead = 'a36cd0cfd32fb842ceba34dc2824391bcccdada4';
+const combinedProductionHead = '5d7f3d71311b0805e9b8f081d333d96d180096fc';
+const widgetStreamQualifiedHead = 'e90d801c80f9932e0a827c040bb8b8babd8c8200';
+const widgetTerminalFixHead = '6691622edd78a372f9d8ee5892246bf8f481def2';
+const frozenIntegrationHead = '4c156073c89644c202203ce989dd0d97c60f2be8';
+const diagnosticInstrumentationHead = '63299420f0a060be0e18aa81bcc7591f25ca27fa';
+const receiptEvidenceHead = '01bf9f5bd21c811cd94d34ca2969e9fbb7d45706';
+const memoryRescanHead = 'badfb6009331c8c387fe0d9c0101a2b80cae6baa';
+const latestMaintenanceHead = 'bb8ac00df48554f2f94d343684aace3b377d357c';
+const preColdIntegrationHead = 'ce42946cc2f41ceebcfa217f0d8bf3b029acf692';
+const coldReviewFixBase = 'e81cb20c13145a2f5a953ab70fd4a7f8f0679979';
+const coldReviewFixHead = '5027c9be2fd51089e77cd01813de1a634003d5a8';
+const coldIntegratedQualifiedHead = '2ca6cf71f5871ce0b18581ebc5fa735ebfc09c5d';
+const tutorialMaintenanceHead = 'cd1c7bba9570670b949137215718e59067f1f434';
+const tutorialIntegratedHead = 'cc7e9beff8e116304fc86ba9bb22cd91730aae06';
+const tutorialQualificationFixedHead = '0bb6d4bd44e89faeb8e0d53c9e721acb9fa3ddc6';
+const capacityHintHead = '4bddfd87ab24d21301e6ea052ca8a24206abbe47';
+const structuredColdHead = '7cc15c706f5f751dff9af134201f6c5d1abbd9c3';
+const structuredColdValidatedHead = '4ee6554c57b35720ef8fab0d929b7aacb1e61403';
+const structuredIntegratedHead = 'c48691a282f1133277d6336418352f90bf361b63';
+const cleanupWindowFixBase = 'f2dfcfd95e7610e238b14b8eabd1fd7becd126ef';
+const cleanupWindowFixHead = 'fc8da8e83f447fed9c3529ff9e1aedbbcc28e2bf';
+const cleanupIntegratedHead = '049e1e8307dc94a55e1819066f7dbdf3e8b8a0fd';
+const schedulerTouchHead = '370b0d2ac8c1c70924d0bf9cebe5778a81e01027';
+const markerSummaryHead = 'f233e1844d51d59cbd7e4f90ae0805cd450c2d03';
+const markerSummaryFiles = ['cds/src/forwarder/preview-activity.ts', 'cds/tests/forwarder/preview-activity.test.ts', 'cds/tests/services/scheduler-forwarder-activity.test.ts', 'changelogs/2026-10-15_cds-forwarder-preview-activity.md', 'doc/debt.cds.md'];
+const cleanupWindowFiles = ['cds/src/services/agent-workspace-session-runtime.ts', 'cds/tests/services/agent-workspace-capability-cleanup.test.ts', 'changelogs/2026-10-16_cds-probe-cleanup-expiry.md'];
+const structuredColdSources = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/worktree.ts'];
+const tutorialMaintenanceWebFiles = ['cds/web/public/tutorials/starter-lab/app.js', 'cds/web/public/tutorials/starter-lab/chapters.json', 'cds/web/public/tutorials/starter-lab/index.html', 'cds/web/public/tutorials/starter-lab/media/original-identity-recovery-complete.png', 'cds/web/public/tutorials/starter-lab/media/original-identity-recovery.mp4', 'cds/web/public/tutorials/starter-lab/media/original-identity-recovery.vtt', 'cds/web/public/tutorials/starter-lab/original-identity-recovery-facts.json'];
+const memoryRescanSources = ['cds/src/index.ts', 'cds/src/services/container.ts', 'cds/src/services/deployment-phase-budget.ts'];
+const latestMaintenanceSources = ['cds/src/index.ts', 'cds/src/middleware/github-auth.ts', 'cds/src/routes/access-requests.ts', 'cds/src/routes/identity-connections.ts', 'cds/src/routes/identity.ts', 'cds/src/routes/projects.ts', 'cds/src/routes/user-project-access.ts', 'cds/src/server.ts', 'cds/src/services/access-recovery.ts', 'cds/src/services/alarm-route.ts', 'cds/src/services/phone-dispatch-queue.ts', 'cds/src/services/state.ts', 'cds/src/services/uptime-monitor.ts', 'cds/src/types.ts'];
+const preColdOwnSources = ['cds/src/forwarder-main.ts', 'cds/src/forwarder/control-plane-stream.ts', 'cds/src/forwarder/diagnostic-routes.ts', 'cds/src/forwarder/preview-activity.ts', 'cds/src/forwarder/proxy-handler.ts', 'cds/src/forwarder/types.ts', 'cds/src/index.ts', 'cds/src/services/container.ts', 'cds/src/services/deployment-phase-budget.ts', 'cds/src/services/probe-marker.ts', 'cds/src/services/scheduler.ts', 'cds/src/services/self-check.ts', 'cds/src/widget-script.ts'];
+
+const previewActivityHead = 'd4d4c82f7c0346d5de09d4d4aa11c6d2878be9f9';
+const previewActivitySources = ['cds/src/forwarder-main.ts', 'cds/src/forwarder/diagnostic-routes.ts', 'cds/src/forwarder/preview-activity.ts', 'cds/src/forwarder/proxy-handler.ts', 'cds/src/index.ts', 'cds/src/services/probe-marker.ts', 'cds/src/services/scheduler.ts', 'cds/src/services/self-check.ts'];
+const combinedProductionSources = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/artifact-admission.ts', 'cds/src/services/container.ts', 'cds/src/services/deployment-version.ts', 'cds/src/services/prebuilt-reuse.ts', 'cds/src/services/worktree.ts', 'cds/src/types.ts', 'cds/src/widget-script.ts'];
+const widgetStreamSources = ['cds/src/forwarder-main.ts', 'cds/src/forwarder/control-plane-stream.ts', 'cds/src/forwarder/diagnostic-routes.ts', 'cds/src/forwarder/proxy-handler.ts', 'cds/src/forwarder/types.ts', 'cds/src/index.ts', 'cds/src/services/self-check.ts', 'cds/src/widget-script.ts'];
 const cleanupQualificationProductionSources = ['cds/src/routes/branches.ts', 'cds/src/services/container.ts', 'cds/src/services/service-replacement.ts'];
 const coldRecoverySourceChanges = ['cds/src/executor/routes.ts', 'cds/src/routes/branches.ts', 'cds/src/services/worktree.ts'];
 const cleanupStageSourceChanges = ['cds/src/services/worktree.ts', 'cds/src/services/project-admission-order.ts', 'cds/src/routes/branches.ts', 'cds/src/services/isolated-shell-executor.ts', 'cds/src/services/observation-executor-process.ts', 'cds/src/services/observation-process-group.ts', 'cds/src/services/observation-process.ts', 'cds/src/services/observation-supervisor-process.ts', 'cds/src/services/shell-executor.ts', 'cds/src/services/self-update-checkout.ts', 'cds/src/services/self-update-failure-diagnosis.ts'];
@@ -28,7 +65,7 @@ const cpuStageSourceChanges = ["cds/src/executor/routes.ts", "cds/src/routes/bra
 const memoryStageSourceChanges = ["cds/src/index.ts", "cds/src/infra/state-store/mongo-split-store.ts", "cds/src/services/container.ts", "cds/src/services/orphan-container-reaper.ts", "cds/src/services/resource-usage-sampler.ts", "cds/src/services/scheduler-service-stop.ts", "cds/src/services/scheduler.ts", "cds/src/services/service-replacement.ts", "cds/src/services/service-runtime.ts"];
 
 export function assertCurrentSourceQualification(expectedPreviousSources: readonly string[], report: Record<string, any>, native = true): void {
-  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead], { stdio: 'pipe', timeout: 120000 });
+  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead, widgetStreamQualifiedHead, widgetTerminalFixHead, previewActivityHead, frozenIntegrationHead, diagnosticInstrumentationHead, receiptEvidenceHead, memoryRescanHead, latestMaintenanceHead, preColdIntegrationHead, coldReviewFixBase, coldReviewFixHead, coldIntegratedQualifiedHead, tutorialMaintenanceHead, tutorialIntegratedHead, tutorialQualificationFixedHead, capacityHintHead, structuredColdHead, structuredColdValidatedHead, structuredIntegratedHead, cleanupWindowFixBase, cleanupWindowFixHead, cleanupIntegratedHead, schedulerTouchHead, markerSummaryHead], { stdio: 'pipe', timeout: 120000 });
   const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
     { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
   report.previousQualifiedHead = previousQualifiedHead;
@@ -67,6 +104,138 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
   report.cleanupQualificationProductionHead = cleanupQualificationProductionHead;
   report.cleanupQualificationProductionSources = changedSince(alarmQueueProductionHead, cleanupQualificationProductionHead);
   assert.deepEqual(report.cleanupQualificationProductionSources, cleanupQualificationProductionSources.slice().sort());
-  report.cleanupStageSources = changedSince(cleanupQualificationProductionHead, report.head);
+  report.cleanupStageSources = changedSince(cleanupQualificationProductionHead, cleanupPublishedHead);
   assert.deepEqual(report.cleanupStageSources, cleanupStageSourceChanges.slice().sort());
+  report.cleanupPublishedHead = cleanupPublishedHead;
+  report.combinedProductionHead = combinedProductionHead;
+  report.combinedProductionSources = changedSince(cleanupPublishedHead, combinedProductionHead);
+  assert.deepEqual(report.combinedProductionSources, combinedProductionSources.slice().sort());
+  report.widgetStreamQualifiedHead = widgetStreamQualifiedHead;
+  report.widgetStreamSources = changedSince(combinedProductionHead, widgetStreamQualifiedHead);
+  assert.deepEqual(report.widgetStreamSources, widgetStreamSources.slice().sort());
+  report.widgetTerminalFixHead = widgetTerminalFixHead;
+  report.widgetTerminalFixSources = changedSince(widgetStreamQualifiedHead, widgetTerminalFixHead);
+  assert.deepEqual(report.widgetTerminalFixSources, ['cds/src/widget-script.ts']);
+  report.previewActivityHead = previewActivityHead;
+  report.previewActivitySources = changedSince(combinedProductionHead, previewActivityHead);
+  assert.deepEqual(report.previewActivitySources, previewActivitySources.slice().sort());
+  report.finalStreamIntegrationSources = changedSince(previewActivityHead, frozenIntegrationHead);
+  assert.deepEqual(report.finalStreamIntegrationSources, widgetStreamSources.slice().sort());
+  // Actions是浅检出；直接读取本次普通整合提交的原始父记录，不把浅边界误判为丢失继承。
+  report.finalIntegrationParents = execFileSync('/usr/bin/git', ['cat-file', '-p', frozenIntegrationHead], { encoding: 'utf8' })
+    .split('\n\n')[0].split('\n').filter(line => line.startsWith('parent ')).map(line => line.slice(7)).sort();
+  assert.deepEqual(report.finalIntegrationParents, [widgetTerminalFixHead, previewActivityHead].sort());
+  report.frozenIntegrationHead = frozenIntegrationHead;
+  report.diagnosticFollowupSources = changedSince(frozenIntegrationHead, diagnosticInstrumentationHead);
+  assert.deepEqual(report.diagnosticFollowupSources, []);
+  report.diagnosticInstrumentationHead = diagnosticInstrumentationHead;
+  report.diagnosticInstrumentationParents = execFileSync('/usr/bin/git', ['cat-file', '-p', diagnosticInstrumentationHead], { encoding: 'utf8' })
+    .split('\n\n')[0].split('\n').filter(line => line.startsWith('parent ')).map(line => line.slice(7));
+  assert.deepEqual(report.diagnosticInstrumentationParents, [frozenIntegrationHead]);
+  const parents = (head: string): string[] => execFileSync('/usr/bin/git', ['cat-file', '-p', head], { encoding: 'utf8' })
+    .split('\n\n')[0].split('\n').filter(line => line.startsWith('parent ')).map(line => line.slice(7)).sort();
+  report.receiptEvidenceHead = receiptEvidenceHead;
+  report.receiptEvidenceSources = changedSince(diagnosticInstrumentationHead, receiptEvidenceHead);
+  assert.deepEqual(report.receiptEvidenceSources, []);
+  report.receiptEvidenceParents = parents(receiptEvidenceHead);
+  assert.deepEqual(report.receiptEvidenceParents, [diagnosticInstrumentationHead]);
+  report.memoryRescanHead = memoryRescanHead;
+  report.memoryRescanSources = changedSince(receiptEvidenceHead, memoryRescanHead);
+  assert.deepEqual(report.memoryRescanSources, memoryRescanSources.slice().sort());
+  report.memoryRescanParents = parents(memoryRescanHead);
+  assert.deepEqual(report.memoryRescanParents, [receiptEvidenceHead]);
+  report.latestMaintenanceHead = latestMaintenanceHead;
+  report.latestMaintenanceSources = changedSince(combinedProductionHead, latestMaintenanceHead);
+  assert.deepEqual(report.latestMaintenanceSources, latestMaintenanceSources.slice().sort());
+  report.preColdIntegrationHead = preColdIntegrationHead;
+  report.preColdOwnSources = changedSince(latestMaintenanceHead, preColdIntegrationHead);
+  assert.deepEqual(report.preColdOwnSources, preColdOwnSources.slice().sort());
+  report.preColdIntegrationParents = parents(preColdIntegrationHead);
+  assert.deepEqual(report.preColdIntegrationParents, [memoryRescanHead, latestMaintenanceHead].sort());
+  report.coldReviewFixBase = coldReviewFixBase;
+  report.coldReviewFixHead = coldReviewFixHead;
+  report.coldReviewFixSources = changedSince(coldReviewFixBase, coldReviewFixHead);
+  assert.deepEqual(report.coldReviewFixSources, ['cds/src/services/worktree.ts']);
+  report.coldReviewFixParents = parents(coldReviewFixHead);
+  assert.deepEqual(report.coldReviewFixParents, [coldReviewFixBase]);
+  report.currentColdIntegrationSources = changedSince(preColdIntegrationHead, coldIntegratedQualifiedHead);
+  assert.deepEqual(report.currentColdIntegrationSources, ['cds/src/services/worktree.ts']);
+  report.coldIntegratedParents = parents(coldIntegratedQualifiedHead);
+  assert.deepEqual(report.coldIntegratedParents, [preColdIntegrationHead, coldReviewFixHead].sort());
+  report.tutorialMaintenanceSources = changedSince(latestMaintenanceHead, tutorialMaintenanceHead);
+  assert.deepEqual(report.tutorialMaintenanceSources, []);
+  report.currentSourcesAfterCold = changedSince(coldIntegratedQualifiedHead, tutorialIntegratedHead);
+  assert.deepEqual(report.currentSourcesAfterCold, []);
+  const changedWeb = (base: string, head: string): string[] => execFileSync('/usr/bin/git',
+    ['diff', '--name-only', base, head, '--', ':(top)cds/web'], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  report.tutorialMaintenanceWebFiles = changedWeb(latestMaintenanceHead, tutorialMaintenanceHead);
+  assert.deepEqual(report.tutorialMaintenanceWebFiles, tutorialMaintenanceWebFiles.slice().sort());
+  report.currentWebAfterCold = changedWeb(coldIntegratedQualifiedHead, tutorialIntegratedHead);
+  assert.deepEqual(report.currentWebAfterCold, tutorialMaintenanceWebFiles.slice().sort());
+  report.tutorialIntegratedParents = parents(tutorialIntegratedHead);
+  assert.deepEqual(report.tutorialIntegratedParents, [coldIntegratedQualifiedHead, tutorialMaintenanceHead].sort());
+  assert.deepEqual(changedSince(tutorialIntegratedHead, tutorialQualificationFixedHead), []);
+  assert.deepEqual(changedWeb(tutorialIntegratedHead, tutorialQualificationFixedHead), []);
+  report.tutorialQualificationParents = parents(tutorialQualificationFixedHead);
+  assert.deepEqual(report.tutorialQualificationParents, [tutorialIntegratedHead]);
+  report.currentCapacityHintSources = changedSince(tutorialQualificationFixedHead, capacityHintHead);
+  assert.deepEqual(report.currentCapacityHintSources, ['cds/src/routes/branches.ts']);
+  assert.deepEqual(changedWeb(tutorialQualificationFixedHead, capacityHintHead), []);
+  report.capacityHintParents = parents(capacityHintHead);
+  assert.deepEqual(report.capacityHintParents, [tutorialQualificationFixedHead]);
+  report.structuredColdSources = changedSince(coldReviewFixHead, structuredColdHead);
+  assert.deepEqual(report.structuredColdSources, structuredColdSources.slice().sort());
+  report.structuredColdParents = parents(structuredColdHead);
+  assert.deepEqual(report.structuredColdParents, [coldReviewFixHead]);
+  report.fixtureOnlySources = changedSince(structuredColdHead, structuredColdValidatedHead);
+  assert.deepEqual(report.fixtureOnlySources, []);
+  report.fixtureOnlyFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', structuredColdHead,
+    structuredColdValidatedHead], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.fixtureOnlyFiles, ['cds/tests/routes/github-webhook.test.ts', 'changelogs/2026-10-16_cds-github-http-fixture.md']);
+  report.structuredColdValidatedParents = parents(structuredColdValidatedHead);
+  assert.deepEqual(report.structuredColdValidatedParents, [structuredColdHead]);
+  report.finalStructuredIntegrationSources = changedSince(capacityHintHead, structuredIntegratedHead);
+  assert.deepEqual(report.finalStructuredIntegrationSources, structuredColdSources.slice().sort());
+  assert.deepEqual(changedWeb(capacityHintHead, structuredIntegratedHead), []);
+  report.structuredIntegratedParents = parents(structuredIntegratedHead);
+  assert.deepEqual(report.structuredIntegratedParents, [capacityHintHead, structuredColdValidatedHead].sort());
+  report.cleanupWindowFixSources = changedSince(cleanupWindowFixBase, cleanupWindowFixHead);
+  assert.deepEqual(report.cleanupWindowFixSources, ['cds/src/services/agent-workspace-session-runtime.ts']);
+  report.cleanupWindowFixFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', cleanupWindowFixBase,
+    cleanupWindowFixHead], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.cleanupWindowFixFiles, cleanupWindowFiles.slice().sort());
+  report.cleanupWindowFixParents = parents(cleanupWindowFixHead);
+  assert.deepEqual(report.cleanupWindowFixParents, [cleanupWindowFixBase]);
+  report.currentCleanupSources = changedSince(structuredIntegratedHead, cleanupIntegratedHead);
+  assert.deepEqual(report.currentCleanupSources, ['cds/src/services/agent-workspace-session-runtime.ts']);
+  assert.deepEqual(changedWeb(structuredIntegratedHead, cleanupIntegratedHead), []);
+  report.currentCleanupFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', structuredIntegratedHead,
+    cleanupIntegratedHead], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.currentCleanupFiles, [...cleanupWindowFiles, 'cds/scripts/current-source-qualification.ts'].sort());
+  report.cleanupIntegratedParents = parents(cleanupIntegratedHead);
+  assert.deepEqual(report.cleanupIntegratedParents, [structuredIntegratedHead]);
+  report.schedulerTouchSources = changedSince(cleanupIntegratedHead, schedulerTouchHead);
+  assert.deepEqual(report.schedulerTouchSources, ['cds/src/services/scheduler.ts']);
+  assert.deepEqual(changedWeb(cleanupIntegratedHead, schedulerTouchHead), []);
+  report.schedulerTouchFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', cleanupIntegratedHead,
+    schedulerTouchHead], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.schedulerTouchFiles, ['cds/scripts/current-source-qualification.ts',
+    'cds/src/services/scheduler.ts', 'cds/tests/infra/mongo-split-store.test.ts',
+    'changelogs/2026-10-16_cds-scheduler-touch-scope.md'].sort());
+  report.schedulerTouchParents = parents(schedulerTouchHead);
+  assert.deepEqual(report.schedulerTouchParents, [cleanupIntegratedHead]);
+  report.markerSummarySources = changedSince(previewActivityHead, markerSummaryHead);
+  assert.deepEqual(report.markerSummarySources, ['cds/src/forwarder/preview-activity.ts']);
+  report.markerSummaryFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', previewActivityHead,
+    markerSummaryHead], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.markerSummaryFiles, markerSummaryFiles.slice().sort());
+  assert.deepEqual(parents(markerSummaryHead), [previewActivityHead]);
+  report.currentMarkerSources = changedSince(schedulerTouchHead, report.head);
+  assert.deepEqual(report.currentMarkerSources, ['cds/src/forwarder/preview-activity.ts']);
+  assert.deepEqual(changedWeb(schedulerTouchHead, report.head), []);
+  report.currentMarkerFiles = execFileSync('/usr/bin/git', ['diff', '--name-only', schedulerTouchHead,
+    report.head], { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(report.currentMarkerFiles, [...markerSummaryFiles, 'cds/scripts/current-source-qualification.ts'].sort());
+  report.currentParents = parents(report.head);
+  assert.deepEqual(report.currentParents, [schedulerTouchHead, markerSummaryHead].sort());
 }

@@ -69,9 +69,10 @@ describe('actual owned whole/Profile CI timing observation', () => {
   for (const route of ['/api/branches/owned/deploy', '/api/branches/owned/deploy/api']) {
     for (const scenario of ['live', 'terminal', 'project-rebind'] as const) {
       it('keeps exact owned CI facts and nonblocking artifact admission: '+scenario+' '+route, async () => {
+        vi.spyOn(WorktreeService.prototype, 'needsDatabaseInitializationSource').mockResolvedValue(false);
         const p = await pending(route); let entered = false; let releaseArtifact!: () => void; let releaseProvider!: (value: any) => void;
         ciFetch.mockImplementation(() => new Promise(resolve => { releaseProvider = resolve; }));
-        const pull = vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7), sourcePath: root } as any);
+        const pull = vi.spyOn(WorktreeService.prototype, 'resolveDeploymentCommit').mockResolvedValueOnce({ head: 'b'.repeat(40), afterFull: 'b'.repeat(40), after: 'b'.repeat(7), sourcePath: root } as any);
         const original = shell.exec.bind(shell);
         const exec = vi.spyOn(shell, 'exec').mockImplementation((command, opts) => command.startsWith('docker version')
           ? new Promise(resolve => { entered = true; releaseArtifact = () => resolve({ stdout: '', stderr: 'OWNED_DOCKER_ERROR', exitCode: 1 }); }) : original(command, opts));

@@ -19,6 +19,7 @@
  */
 
 import http from 'node:http';
+import { ControlPlaneStreams, type WidgetStreamRecoveryOptions } from './control-plane-stream.js';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from '../services/hosted-site-preview-log-policy.js';
 import zlib from 'node:zlib';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -28,6 +29,7 @@ import { buildWidgetScript } from '../widget-script.js';
 import { hasWidgetMarkupPrefix, hasWidgetResponseBody, isSupportedWidgetEncoding } from '../services/widget-response-shape.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
 import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
+import { PreviewActivityCollector, type PreviewActivitySnapshot } from './preview-activity.js';
 import {
   classifyHttpRequestKind,
   createBodyCapture,
@@ -41,6 +43,7 @@ import {
 } from '../services/http-log-store.js';
 
 export interface ProxyHandlerOptions {
+  widgetStreamRecovery?: WidgetStreamRecoveryOptions;
   /** upstream 连接超时 ms,默认 5000(connect 5s 无应答 → 504) */
   upstreamTimeoutMs?: number;
   /** 等候页文案 */
@@ -148,8 +151,11 @@ export class ProxyHandler {
   private agent: http.Agent;
   private opts: ResolvedProxyOptions;
   private stats = new StatsCollector();
+  private readonly widgetStreams: ControlPlaneStreams;
+  private readonly previewActivity = new PreviewActivityCollector();
 
   constructor(opts: ProxyHandlerOptions = {}) {
+    this.widgetStreams = new ControlPlaneStreams(opts.widgetStreamRecovery);
     this.opts = {
       upstreamTimeoutMs: opts.upstreamTimeoutMs ?? 5000,
       waitingPageHtml: opts.waitingPageHtml ?? DEFAULT_WAITING_HTML,
@@ -183,6 +189,7 @@ export class ProxyHandler {
     // 不污染 req 共享对象。Cursor Bugbot Low:之前 mutate req.url 让 forward 日志
     // 显示 strip 后的 path,debug 时无法关联客户端原请求。
     const originalUrl = req.url ?? '/';
+    const sourceBranchId = route?.branchId;
     let outgoingPath = originalUrl;
     let extraHeaders: Record<string, string> | null = null;
 
@@ -311,6 +318,7 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
+    this.previewActivity.record(route.branchId, req.headers);
     const requestKind = classifyHttpRequestKind({
       layer: 'forwarder',
       method: req.method || 'GET',
@@ -356,8 +364,9 @@ export class ProxyHandler {
       response: { bodyPreview?: string; bodyBytes?: number } = {},
       outcome?: 'ok' | 'client-error' | 'server-error' | 'upstream-error' | 'timeout',
       error?: { code?: string; message?: string },
+      complete = true,
     ) => {
-      completeActiveRequest();
+      if (complete) completeActiveRequest();
       this.opts.httpLogStore?.record({
         layer: 'forwarder',
         requestKind,
@@ -437,6 +446,28 @@ export class ProxyHandler {
     // Host 做 detectBranch,看到 127.0.0.1:port 会找不到分支。
     if (!route.preserveHost) {
       fwdHeaders['host'] = `${upstreamHost}:${upstreamPort}`;
+    }
+
+    // 仅已解析到分支的两条挂件只读流；未知来源、普通 API 和业务流沿用原契约。
+    if (sourceBranchId && req.method === 'GET'
+      && String(req.headers.accept || '').includes('text/event-stream')
+      && /^\/_cds\/api\/(?:branches\/stream|activity-stream)(?:\?|$)/.test(originalUrl)) {
+      let failed = false;
+      return this.widgetStreams.serve(req, res, {
+        host: upstreamHost, port: upstreamPort, path: outgoingPath,
+        headers: { ...fwdHeaders, 'accept-encoding': 'identity' }, agent: this.agent,
+        unavailable: code => {
+          failed = true;
+          this.opts.logger?.warn?.(`[forward] widget stream upstream unavailable: ${code}`);
+          // 传输层恢复不抹去真实上游失败；持久日志供常设自检消费。
+          logHttp(503, {}, 'upstream-error', { code, message: 'widget control plane stream unavailable' }, false);
+        },
+        completed: status => {
+          completeActiveRequest();
+          if (!failed) logHttp(status);
+          this.stats.record(host, failed ? 503 : status, Date.now() - t0);
+        },
+      });
     }
 
     return new Promise<void>((resolve) => {
@@ -837,8 +868,12 @@ export class ProxyHandler {
     });
   }
 
-  getStats(): ProxyStats {
-    return this.stats.snapshot();
+  getStats(): ProxyStats & { previewActivity: PreviewActivitySnapshot } {
+    return { ...this.stats.snapshot(), widgetStreams: this.widgetStreams.snapshot(), previewActivity: this.previewActivity.snapshot() };
+  }
+
+  reconcilePreviewActivityRoutes(routes: readonly RouteRecord[]): void {
+    this.previewActivity.retainBranches(new Set(routes.map(route => route.branchId).filter((id): id is string => typeof id === 'string')));
   }
 
   getActiveRequests(filter: HttpActiveRequestFilter = {}): ActiveHttpRequestRecord[] {
@@ -1035,6 +1070,7 @@ export class ProxyHandler {
 
   /** 关闭 keepalive agent(测试 / shutdown 用)。 */
   destroy(): void {
+    this.widgetStreams.destroy();
     try {
       this.agent.destroy();
     } catch {

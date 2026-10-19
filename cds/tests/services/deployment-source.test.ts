@@ -42,8 +42,9 @@ describe('真实Git部署源码隔离', () => {
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 
-  it('LRU回收分支工作树后从仓库根重建并继续准备部署源码', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-source-cold-'));
+  it.each(['missing-worktree', 'missing-git', 'corrupt-git', 'external-missing', 'missing-without-capability', 'escaped-managed'] as const)(
+    'LRU冷恢复仅重建缺失工作树并保留现存登记目录：%s', async scenario => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cds-source-cold-')));
     const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
@@ -61,16 +62,42 @@ describe('真实Git部署源码隔离', () => {
       git(['commit', '-m', '冷分支恢复'], repo);
       git(['push', '-u', 'origin', 'main'], repo);
       const sha = git(['rev-parse', 'HEAD'], repo);
-      const current = path.join(root, 'worktrees', 'main');
+      const worktreeBase = path.join(root, 'worktrees');
+      const projectId = scenario === 'escaped-managed' ? '..' : 'default';
+      const current = scenario === 'external-missing' ? path.join(root, 'external', 'main')
+        : WorktreeService.worktreePathFor(worktreeBase, projectId, 'main');
+      const recovery = { kind: 'managed-missing' as const, worktreeBase, projectId, branchId: 'main' };
       const shell = new ShellExecutor();
-      const service = new WorktreeService({ exec: (command, options) => shell.exec(command, {
+      const commands: string[] = [];
+      const service = new WorktreeService({ exec: (command, options) => { commands.push(command); return shell.exec(command, {
         ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
-      }) });
+      }); } });
       await service.create(repo, 'main', current);
 
+      if (scenario === 'missing-git' || scenario === 'corrupt-git') {
+        const marker = path.join(current, 'marker.txt'); fs.writeFileSync(marker, '必须保留的挂载源码');
+        fs.unlinkSync(path.join(current, '.git'));
+        if (scenario === 'corrupt-git') fs.writeFileSync(path.join(current, '.git'), '损坏的登记文件');
+        expect(git(['worktree', 'list', '--porcelain'], repo)).toContain(`worktree ${fs.realpathSync(current)}\n`);
+        commands.length = 0;
+        const failure = await service.prepareDeploymentSource(repo, 'main', current, sha, recovery).then(() => undefined, error => error);
+        expect(fs.readFileSync(marker, 'utf8')).toBe('必须保留的挂载源码');
+        expect(failure).toMatchObject({ code: 'deployment-worktree-unavailable' });
+        expect(failure.message).not.toContain(current);
+        expect(commands.some(command => /^(rm -rf|git worktree (add|prune))/.test(command))).toBe(false);
+        return;
+      }
       // 模拟 LRU 冷停：目录已被回收，Git 仍可能保留陈旧登记。
       fs.rmSync(current, { recursive: true, force: true });
-      const prepared = await service.prepareDeploymentSource(repo, 'main', current, sha);
+      if (scenario === 'external-missing' || scenario === 'missing-without-capability' || scenario === 'escaped-managed') {
+        commands.length = 0;
+        await expect(service.prepareDeploymentSource(repo, 'main', current, sha,
+          scenario === 'missing-without-capability' ? undefined : recovery)).rejects.toMatchObject({ code: 'deployment-worktree-unavailable' });
+        expect(fs.existsSync(current)).toBe(false);
+        expect(commands.some(command => /^(rm -rf|git worktree (add|prune))/.test(command))).toBe(false);
+        return;
+      }
+      const prepared = await service.prepareDeploymentSource(repo, 'main', current, sha, recovery);
 
       expect(prepared.afterFull).toBe(sha);
       expect(git(['rev-parse', '--is-inside-work-tree'], current)).toBe('true');
@@ -121,6 +148,7 @@ describe('真实Git部署源码隔离', () => {
         git(['push', '-u', 'origin', 'main'], repo);
         const sha = git(['rev-parse', 'HEAD'], repo), base = path.join(root, 'worktrees');
         const flat = path.join(base, 'main'), alias = WorktreeService.worktreePathFor(base, undefined, 'main');
+        const recovery = { kind: 'managed-missing' as const, worktreeBase: base, branchId: 'main' };
         const shell = new ShellExecutor();
         const service = new WorktreeService({ exec: (command, options) => shell.exec(command, {
           ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' },
@@ -151,7 +179,7 @@ describe('真实Git部署源码隔离', () => {
         if (scenario === 'unregistered') git(['worktree', 'prune'], repo);
         const originalLink = fs.readlinkSync(alias);
         if (scenario === 'broken-owned' || scenario === 'live-owned') {
-          const prepared = await service.prepareDeploymentSource(repo, 'main', alias, sha);
+          const prepared = await service.prepareDeploymentSource(repo, 'main', alias, sha, recovery);
           expect(prepared.afterFull).toBe(sha);
           expect(fs.readFileSync(path.join(prepared.sourcePath, 'version.txt'), 'utf8')).toBe('legacy-recovery');
           expect(fs.lstatSync(alias).isSymbolicLink()).toBe(scenario === 'live-owned');
@@ -159,7 +187,7 @@ describe('真实Git部署源码隔离', () => {
           if (scenario === 'broken-owned') expect(fs.existsSync(flat)).toBe(false);
           else expect(fs.readlinkSync(alias)).toBe(originalLink);
         } else {
-          await expect(service.prepareDeploymentSource(repo, 'main', alias, sha))
+          await expect(service.prepareDeploymentSource(repo, 'main', alias, sha, recovery))
             .rejects.toMatchObject({ code: 'deployment-worktree-unavailable' });
           expect(fs.readlinkSync(alias)).toBe(originalLink);
           if (scenario === 'live-unusable') expect(fs.readFileSync(path.join(flat, 'marker.txt'), 'utf8')).toBe('不能删除的活目录');

@@ -4,6 +4,7 @@ import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor
 
 import { AppShell, Crumb, TopBar, Workspace, canManageSystemSettings, type ShellAuthStatus } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
+import { ButtonSizeProvider } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
@@ -393,6 +394,7 @@ export function CdsSettingsPage(): JSX.Element {
             </TabsList>
 
             <div className="cds-settings-content min-w-0">
+              <ButtonSizeProvider value="sm">
               <div className="cds-settings-section-body">
               <Suspense fallback={<SettingsTabFallback />}>
                 <TabsContent value="overview">
@@ -476,7 +478,7 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="maintenance">
                   {activeTab === 'maintenance' ? (
-                    <div className="space-y-5">
+                    <div className="space-y-3">
                       <MaintenanceTab onToast={setToast} />
                       <DisclosurePanel title="镜像与外观" subtitle="镜像加速和浏览器标签设置">
                         <MirrorTab />
@@ -495,6 +497,7 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
               </Suspense>
               </div>
+              </ButtonSizeProvider>
             </div>
           </div>
         </Tabs>

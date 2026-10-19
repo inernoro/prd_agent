@@ -121,6 +121,8 @@
     --bad-soft: 0 45% 12%;
     --info: 199 95% 74%;
     --info-soft: 199 45% 11%;
+    --express-full: 48 96% 60%;
+    --express-partial: 217 90% 75%;
     /* 服务关系图：角色徽标与线色（双主题各自成立，组件里只许 hsl(var(--...)) 引用） */
     --role-web: 158 64% 52%;
     --role-api: 199 95% 74%;
@@ -238,6 +240,8 @@
     --bad-soft: 0 85% 96%;
     --info: 201 98% 39%;
     --info-soft: 199 85% 95%;
+    --express-full: 48 96% 28%;
+    --express-partial: 217 80% 40%;
     /* 服务关系图：角色徽标与线色（白天用更深的同色系保证对比） */
     --role-web: 160 84% 34%;
     --role-api: 201 98% 39%;
@@ -647,9 +651,17 @@
       z-index: 20;
       display: flex !important;
       flex-direction: row !important;
-      gap: 0.5rem;
+      align-items: center;
+      align-self: start;
+      gap: 0.25rem;
+      min-height: 0;
       max-width: 100%;
       overflow-x: auto;
+      overflow-y: hidden;
+      border-bottom: 1px solid hsl(var(--hairline));
+      background: hsl(var(--surface-base));
+      padding: 0.375rem 0.75rem;
+      scroll-padding-inline: 0.75rem;
       overscroll-behavior-x: contain;
       scrollbar-width: none;
       -webkit-overflow-scrolling: touch;
@@ -675,12 +687,13 @@
     .cds-settings-nav-trigger {
       width: auto !important;
       min-width: max-content;
-      min-height: 2.5rem !important;
+      height: 2.75rem;
+      min-height: 2.75rem !important;
       flex: 0 0 auto;
       gap: 0.5rem !important;
       white-space: nowrap;
-      border: 1px solid hsl(var(--hairline));
-      background: hsl(var(--surface-sunken) / 0.56);
+      border: 0;
+      background: transparent;
       padding-inline: 0.75rem !important;
       font-size: 0.8125rem !important;
     }
@@ -3878,6 +3891,11 @@
   /* 窄屏保持既有的横向 tab 条兜底（mobile-layout-fallback），
      所以 rail 的竖排样式整条收在 min-width: 901px 里。 */
   @media (max-width: 900px) {
+    /* 导航只占自身高度，剩余空间交给内容；隐式 auto 行会把横排标签拉成高卡片。 */
+    .cds-settings-layout {
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
     .cds-settings-rail-head {
       display: none;
     }
@@ -3898,14 +3916,14 @@
     justify-content: space-between;
     gap: 1.5rem;
     border-bottom: 1px solid hsl(var(--hairline));
-    padding: 1.25rem 1.5rem 1rem;
+    padding: 1rem 1.25rem .75rem;
   }
 
   .cds-settings-section-body {
     min-height: 0;
     flex: 1 1 auto;
     overflow-y: auto;
-    padding: 1.25rem 1.5rem 2.5rem;
+    padding: 1rem 1.25rem 1.5rem;
   }
 
   /*
@@ -3915,7 +3933,7 @@
    */
   @media (max-width: 900px) {
     .cds-settings-section-body {
-      padding: 1rem 0 2rem;
+      padding: .5rem 0 1.5rem;
     }
   }
 
@@ -3926,7 +3944,7 @@
   .cds-settings-columns {
     display: grid;
     align-items: start;
-    gap: 1.5rem;
+    gap: 1rem;
     grid-template-columns: minmax(0, 1fr);
   }
 

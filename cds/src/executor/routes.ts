@@ -316,19 +316,13 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         pullResult = { head: targetCommit, after: targetCommit.slice(0, 7), afterFull: targetCommit, sourcePath: entry.worktreePath };
         sendEvent('step', { step: 'artifact-target', status: 'done', title: `本次直接部署已核验产物 ${targetCommit.slice(0, 7)}`, artifactCommitSha: targetCommit });
       } else {
-        // 产物部署未建工作树；首次明确切源码时只为既有内部工作树路径创建，不处理外部路径。
-        if (entry.worktreePath === WorktreeService.worktreePathFor(config.worktreeBase, entry.projectId || resolvedProjectId, branchId)) {
-          let missing = false;
-          try { await access(path.join(entry.worktreePath, '.git')); } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') missing = true; else throw error; }
-          assertCurrent();
-          if (missing) { await worktreeService.create(config.repoRoot, entry.branch, entry.worktreePath); assertCurrent(); }
-        }
         sendEvent('step', { step: 'pull', status: 'running', title: '正在拉取最新代码...' });
         pullResult = await worktreeService.prepareDeploymentSource(
           config.repoRoot,
           entry.branch,
           entry.worktreePath,
           admission?.targetCommitSha || commitSha,
+          { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId || resolvedProjectId, branchId: entry.id },
         );
         assertCurrent();
         sendEvent('step', { step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`,

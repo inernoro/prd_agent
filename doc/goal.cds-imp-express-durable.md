@@ -1,6 +1,6 @@
 # CDS 与 IMP 极速长效联合目标 Brief
 
-版本：v2.16；日期：2026-10-15；状态：active。
+版本：v2.24；日期：2026-10-19；状态：active。
 
 Goal: 完成共享CDS的可响应、可恢复极速交付，并使IMP完整服务实际极速；原生目标已创建，无用户未指定的预算。
 Target brief: 本文件，两仓库同副本；逐项任务与实施状态见 `plan.cds-imp-express-durable.md/json`，独立验收账本在仓库外。
@@ -84,18 +84,42 @@ JSON持久化在慢IO期间只保留一个在途不可变快照、至多一个�
 
 ## Goal State
 
+- Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合目标；原49条与八分支验收仍未完成。
+- 当前阶段：environment-preparation / verification；2026-10-19用户恢复完整目标，先核mycds容量及日志轮转，再1→2→8完整部署；不关闭原联合目标。
+- 执行坐标：`worktree=/Users/inernoro/.codex/worktrees/cds-express-round3-20261019/prd_agent；branch=codex/cds-express-round3-20261019；HEAD=06b2ca88c146dd989c791ec75faf98d4665eb8e4；MERGE_HEAD=ba7a1ace5cc88a5ca6e8bee2194867e3e79f4c0b；target=待本地merge commit绑定，runtime源码patch47020ea87d2b4c2cb3adacd2e5dd2a2bc4a89c1786ac82c149171c3fe82ac8b0；origin/main=72fefb16fe4d894bdc118cc6864c14f8279ca6f0（本地缓存，不冒最新远端）；ahead/behind=原远端验收分支06b2已只读确认，本次仅快进push；environment=mycds C01，现有共享CDS ba7只读保护；database=仅新cds_owned_c01_20261019状态库，历史业务库禁止操作；tenant=N/A平台；role=root唯一写入/两末尾只读；route=待精确CI产物启动后从CDS权威返回，不猜预览域名；auth=新隔离身份与既有SSH，凭据不入证据；external_ids=本轮CI待push生成，旧PR1721已闭，只作必要前置历史`
+- 写入所有权：`owner=/root当前新集成工作树/Users/inernoro/.codex/worktrees/cds-express-round3-20261019/prd_agent，branch=codex/cds-express-round3-20261019，HEAD=06b2ca88c146dd989c791ec75faf98d4665eb8e4，MERGE_HEAD=ba7a1ace5cc88a5ca6e8bee2194867e3e79f4c0b，6处冲突已合并待测试，原目标文档双副本同步；other_tabs=两末尾只读仓外证据，既有IMP私有分支其他任务仍可并行，不能混淆影响窗口；handoff_checkpoint=/Users/inernoro/.codex/visualizations/2026/10/19/cds-source-retention-main/published-ba7/receipt.json；旧两目标工作树只同步本brief/plan，不将旧代码推入新PR；原两运维未跟踪文件保留`
+- 范围账本：`goal-core=原49条、至少8分支真实并发、新推送CI、无SHA拉最新及黄闪电/性能恢复/长期观察；required-prerequisite=本轮PR1721纯镜像免重复源码、安全回收/公平游标、派生极速默认和图标语义，继承线上dc630/d6/9ea；environment-recovery=只通过既有CLI更新共享CDS控制面，无IMP部署/历史库操作/全盘删除；successor-or-non-goal=历史数据迁移、Git对象GC、他人任务不接管；现有Nginx轮转已被用户明确纳入，先mycds可逆演练，共享稳定入口必须保护`
+- 已确认范围 / 非目标：不隐藏辅助服务分母、不伪造黄闪电、不修改IMP_TARGET_SHA绕过应用数据安全保护。普通新IMP分支保留13项项目express默认；来源模式只在显式inheritSourceModes=true继承，额外服务仍计入，缺CI能力的新项目不凭空宣称极速。
+- 当前实现事实：source PR9f完整9847绿、代码/安全精确审查completed无发现、5线程resolved，PR已squash合并72fefb16，postmerge主CI/CDSCI成功。生产先在dc630上移植任务净补丁，再完整继承d6安全取消和9ea历史界面修复；最终ba7线上。198d完整695文件10155pass/19skip；最终ba7后端/测试/依赖逐字不变，新增UI差异另133文件1712pass/1skip、web类型/构建/UI29通过，不能说ba7重新跑过整套。精确ba7制品CI和BranchImage均success。自更新真实prebuilt，约5.1秒预重启/2.061秒取产物，无宿主编译。新PID3431694/start2026-10-19T10:47:25.529Z，后端/Web fullSHA均ba7，restart completed/bundleStale=false/degraded=null。发布前后119容器（IMP85）身份、启动、重启、镜像、挂载摘要零变化，forwarder PID4144873不变；过渡CDS502保留，随后三实际页面及7个实际assets200，IMP页面/资源哈希与发布前一致。
+- 证据纪元：`target_sha=source9f398a41dad7048c500a689aaff9f4860b0f008a/releaseba7a1ace5cc88a5ca6e8bee2194867e3e79f4c0b；tested_sha=source9f整套、198d整套、ba7同字节后端加新增UI1712与精确制品CI，来源边界已冻结；deployed_sha=ba7a1ace5cc88a5ca6e8bee2194867e3e79f4c0b；environment=共享既有项目/数据；observed_at=发布保护窗口2026-10-19T10:46:30Z至10:51:25Z，后续其他项目活动另列不归本操作；收口凭据=published-ba7/receipt.json及两末尾v17/post-publication-ba7；旧B03/8branch/48h只作历史`
+- 当前阻塞或环境限制：首轮Janitor扫描409/尝试20/回收20/保留27/延期362/errors0，最终409→389、原18个根数据标记对应目录均保留且dev/ino不变；磁盘90%→88%，可用约35.2→40.8GiB。未删分支/镜像，空间变化仍不按全部字节独占归因。不存在分支的安全负向探测正常404而非507，无建分支/部署run/容器，证明磁盘闸门已可通过。现有Nginx尚无在线日志上限；历史数据、Git对象与旧验收环境仍保留，不能宣称磁盘永久根治。真实双主题仍非全黄，早图3error/idle，后图2error/1其他任务部署/idle；已有目标SHA不匹配和应用健康问题未解决，119容器不变不替代API业务健康。原49正式/八并发/新push完整/无SHA完整/长期48h均不继承本PR通过。
+- 涌现决定：不新增业务规则或重复台账；保留用户黄全量/蓝部分/待生效灰时钟语义、完整分母和历史数据；明确极速免重复UUID不等于无需Git对象/必要初始化源码。Nginx与历史数据边界在既有CDS债务台账跟踪。
+- 下一动作与完成条件：在现有mycds自有隔离环境继续原逐项验收，先恢复当前真实坐标/资源与原分支映射，再完成13角色/8并发、新push与无SHA最新链路；不干扰他人正在进行的IMP部署，不改历史库。全黄与真实完整链路、性能/恢复/长期门槛未收齐前，原目标保持active；不将本次必要前置完成改称整体完成。
+
+- 本轮续接纪元：`observed_at=2026-10-19T12:40:45.329828+00:00；environment=mycds真实hostname，30GiB内存/可用约1.8GiB，8GiB交换近满，根盘14%/1.5TB空闲；database=历史库禁止操作，仅本目标既有隔离库保留；runtime=本目标B02 exact2daf30b367a92dc4642346858e163150dd0aca2a22758eed73fc66f218c6b1d5，6GiB/PID2048，旧B03在共享62宿主不得冒称mycds；auth=既有SSH/官方身份，secret不输出；target_sha=待mycds新候选冻结，历史06b2不冒最新；tested_sha=历史06b2与ba7前置各按原来源保留；deployed_sha=mycds当前待原生回读；external_ids=原8CI仅历史，本轮真实执行前另绑定`
+- 本轮新增实现与证据：mycds原生50m×3 canary写入160MB实际三文件、最终marker在；gateway运行CID0253b9e5349eb918684ac6b99936abcd9242676392978414c7fb3b24266ae787实际50m×3。仅logging配置变化，141保护容器身份/启动/镜像/挂载零变化，入口HTTP200；旧日志私密封存。共享Nginx仍不变，不能声称其轮转完成。资源冷置问题已向用户询问，其他任务服务未停。
+- 本轮资源与保护：mycds约100容器，多数非IMP测试分支；稳定IMP与全部历史数据库保护。自有B02约1.1GiB，另一旧A01属于500任务不擅自停。不能降低八支/13角色分母或把资源闸门拒绝算通过。原49正式通过仍0。
+
+- 续接最新进度：用户明确允许冷置mycds闲置PRD测试分支，18支81原CID已实停并保留；验收后必须恢复原运行CID/镜像/配置，不可重部署为新提交。main/今日活跃分支、另案A01、稳定IMP和历史库保留。首cool假冷、后explicit stop和一次传输502/530/SSH超时原件保留。mycds内存可用约22GiB以上。
+- 当前隔离坐标：mycds C01 outerCID6a011c2ee4bcac117dd28f15389e1aaba450fd44a3c4acafd74815ceeb57339f；innerDaemon=e28661e9-6857-4b62-b17c-9fa0396a4be1；root=/root/cds-imp-express-owned-20261019-c01；6CPU/8GiB/PID12288、祖先swap.max=0，仅单支校准预算，不能继承为八支容量通过。新Mongo CID364fec01626e6eba9701c7399bc6c41f7b7a5f72cfd4cdb9b20acea21f6e582f、全新状态库cds_owned_c01_20261019与私密身份，未复制旧状态/数据库。6个基础镜像Config/RootFS比对一致；CI原始32文件传输及96镜像校验装载进行中，应用0/CDS未启动，不算部署通过。
+- 当前代码与验证（2026-10-19T13:20:58Z）：集成06b原目标和线上ba7并解决6处冲突；target_worktree=/Users/inernoro/.codex/worktrees/cds-express-round3-20261019/prd_agent。末尾发现真实BranchCard文字/图标事实来源不一致，已统一branchRuntimePresentation，3条SSR先红后绿、前端全量140文件1813pass/1skip、类型/构建绿，末尾v22限域复核关闭；非线上视觉。上次全量因在途修改造成混合纪元764passfiles/1failfile3tests，保留不转绿；本次固定源码patch47020ea87d2b4c2cb3adacd2e5dd2a2bc4a89c1786ac82c149171c3fe82ac8b0，131文件逐字未变，完整765文件11479pass/19skip，606.10秒exit0，1历史obsolete snapshot保留。29项UI审计也通过。准备按原授权修复分支commit/push取得精确预构建CI；尚未部署该候选。当前3份brief/plan状态元数据另按Goal State与diff门禁验证，不把元数据刷新冒充应用源码整套重跑。
+- 长期验证：已建立同线程hourly只读heartbeat id=cds，保持无变化静默，禁止部署/停止/清理/历史库操作。A01-A11首轮全部通过前只采基线，不能启动48小时计时。mycds实际轮转已验证；共享Nginx仍未限量。正式49通过仍0，八真实并发/新推送CI完整/不指定SHA最新/全黄/48h均未完成。证据根 /Users/inernoro/.codex/visualizations/2026/10/19/cds-imp-express-round3-main；末尾v22 /Users/inernoro/.codex/visualizations/2026/10/19/cds-source-retention-tail/runtime-presentation-close-v22。
+- 当前证据观察时间：2026-10-19T13:12:50.492555+00:00；下一步固定候选全量终态、精确CI产物，C01独立依赖连接与1→2校准，满足保护预算再八支完整104角色。不得用旧B03、纯配置或归档镜像冒充本次运行。
+
+## 历史 Goal State（2026-10-15，不能传播当前通过）
+
 - Goal ID / 名称：CDS-IMP-EXPRESS-DURABLE-20261010 / CDS与IMP极速长效联合修复
-- 当前阶段：publishing；共享5d7集成及受理双持久化守卫已修，最终全量通过，提交并push自有CDS分支后等待精确官方预构建。
-- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=CDS:codex/cds-express-durable-20261010,IMP:codex/imp-express-durable-20261010；HEAD=CDS:77c555131972a01561c2dae1be603c5400696ac9,IMP:666e0cf2bd18e66cd965fa0b791ce3f4c1d90347；origin/main=CDS:f42255b11efc5c1d82b56f86684d283722089699,IMP:455e34391；origin/test=IMP:196e9912b；ahead/behind=CDS对main270/257,MERGE_HEAD:5d7f3d71311b0805e9b8f081d333d96d180096fc,owned dirty；environment=B03隔离dockerd CID3295c1a9927fd46fe9beae63c4f7199b1e9892d3bcf1252ef7589c59f0ed2ab6,B02历史9046且八idle；database=B03尚无数据库,禁止复用共享业务库；tenant=N/A平台；role=主写入/末尾独立；route=B03 loopback32768/32769未起CDS,共享miduo.org只读；auth=B03尚未配置,全局CLI explicit-env只读；external_ids=8新CI见round2-main/eight-new-push-prepared.json及ci-observation-02,export38723237723`
-- 写入所有权：`owner=/root两自有工作树、原8IMP refs及既有自有镜像运输ref、B01封存/B02/B03；other_tabs=原mdimp/canonical/他人任务只读,两个末尾只写仓外；handoff_checkpoint=round2-main/merge-before-*及各resolver记录,全部源变更未固定提交`
+- 当前阶段：external-wait；retry02资源准入未通过，7样本最后host13.545GiB<20；无在途业务部署，目标active。
+- 执行坐标：`worktree=CDS:/Users/inernoro/.codex/worktrees/cds-express-durable-20261010/prd_agent,IMP:/Users/inernoro/.codex/worktrees/imp-express-durable-20261010/mdimp；branch=两仓codex/cds-express-durable-20261010和codex/imp-express-durable-20261010；HEAD=CDS:06b2ca88c146dd989c791ec75faf98d4665eb8e4,IMP:8d350af08016233d2cb5d55bf15c6c3d76a05e6a；origin/main=CDS:f42255b11efc5c1d82b56f86684d283722089699最后本地对照,IMP:455e34391；ahead/behind=CDS339/1对该main,对自有远端0/0,IMP持有本地helper；environment=B03私有daemon14ec807b,主8879/Forwarder9434,原8Git与96image私有运输；database=全新私有Mongo cds_owned_b03_20261015,32独立业务schema已建立；tenant=N/A平台；role=主唯一写入/末尾只读；route=outerloopback32768/32769,共享miduo.org只读；auth=B03新静态身份+新密钥,不复制旧态；external_ids=Prebuilt38732079952/BranchImage38732080045均success,IMP8CI见ci-observation02`
+- 写入所有权：`owner=/root两自有工作树、原8IMP refs、自有运输ref/B03；other_tabs=原mdimp/canonical/他人目标只读,两末尾仅仓外证据；handoff_checkpoint=round2-main/round2-checkpoint-v217.json,06b2已push,后续仅两份计划/brief本地dirty,cds/.cds-cache为原未跟踪不纳入`
 - 范围账本：`goal-core=原49条及8并发/新push/无SHA实际latest；required-prerequisite=继承共享5d7不回退、鉴权CI镜像运输、完整13角色及隔离依赖；environment-recovery=B03仅自有DinD准备/1与2校准,无共享库写入；successor-or-non-goal=业务CL重写、生产XXL作业、他人目标收口`
 - 已确认范围 / 非目标：不缩小13角色分母,不改变业务CL合同,不修改稳定IMP。
-- 当前实现事实：原8分支真实新B推送及8CI/72jobs成功；96原CI镜像已在B03按原配置ID/RootFS逐条核验并镜像到私有registry，原GHCR不可匿名拉取，镜像运输不冒充公网GHCR鉴权验收。38合并冲突已全部解决并暂存，未提交/推送；B03只有registry，无CDS/应用/数据库。新无SHA真实Git B目标冻结/随后origin C且仍准备B的本地HTTP两用例通过。PD7同目标绕journal ACK、PD8 drain后漏State失败补偿共5红，修后150绿；PD9派发撤销后旧回调错误重排1红，生产durable派发现要求原精确sent对象，修后相关151绿。
-- 本批实现检查点：第三全量755文件11294测试通过、6文件19测试跳过及1旧obsolete；此后新增PD7/8/9守卫，最新5文件151测试及backend类型0，最终固定源全量755文件11302测试通过、6文件19测试跳过、1旧obsolete，163.67秒。web类型/构建/UI审计已通过且源未再改。原失败日志全部保留。
-- 证据纪元：`target_sha=CDS:N/A未固定合并源77c555+5d7f+owned,IMP新B逐支见round2-main；tested_sha=N/A仅当前file-hash；deployed_sha=B03:N/A,B02:9046历史,canonical:5d7最后只读观察；environment=B03私有daemon+registry；observed_at=2026-10-15T11:59:50.001981+00:00`
-- 当前阻塞或环境限制：合并提交与官方预构建待取得；B03尚无新CDS、依赖与8真实运行。需重新取得实时资源/保护基线后先1/2完整13角色校准，不以准备态放行8负载；公网403、mdimp-test历史crash和app03 scheduler停态分别保留，禁止以容器存在替代业务健康。
+- 当前实现事实：八原分支新push及72CI jobs成功；96原始CI镜像内容与私有运输独立核对。首个真实body={}部署dr_43f3952a54dff3a8659382a0已从旧A解析并拉到B，但新隔离AES配置64字节违反应用32要求，唯一API退出；只停本A01，原run cancelled，不算全13通过。隔离配置已修全部104角色32字节/连接别名本run（A01 raw437字段bad0独立复核），A01已explicit恢复旧A/远端B供retry02。采集器五类确定缺陷已限域修复并尾部源码关闭，PythonAST/JScheck通过，未冒充实际collector通过。冷缓存准备已原生精确移除96验收镜像config及唯一失败API容器，私有registry、32库、六依赖与失败全inspect/log证据保留，无force/宿主prune。自有占用降约2.4GiB，但13:25:38宿主可用13.545GiB仍低20启动门槛；7样本窗口均未通过，故第二部署没发。13:21现网当前16HTTP源站fence+200，其他owner构建状态变化保留，不推B03因果。目标active/external-wait，共享CDS未更、稳定IMP未写；八并发/完整13/视觉/正式49仍未通过。
+- 本批实现检查点：固定06b2与1428源hash、最终755/11302绿；PD7/8五红、PD9原请求重排与State终态各一红，最终6文件162绿。独立v217限定复核闭合，不称独立重跑。官方06b2两CI均success；B03 runtime独立receipt c58f26证明源码/产物/进程/实际Mongo吻合，不继承13/8业务通过。
+- 证据纪元：`target_sha=CDS:06b2ca88c146dd989c791ec75faf98d4665eb8e4,IMP新B逐支见round2-main；tested_sha=CDS06b2 local1428hash/full+officialCI,IMP8实际BranchImage fullB；deployed_sha=B03:06b2官方载体,B02:9046历史,canonical:N/A本批未更新,更新前需重新核实当前修复；environment=B03全新控制Mongo/项目/源码镜像；observed_at=2026-10-15T13:28:12.883111+00:00`
+- 当前阻塞或环境限制：10:42生产另前进9ea(仅MaintenanceTab12行和changelog说明)，再次完整继承；ba7 backend/tests/依赖与198d全量一致，133web文件1712项/1skip、web类型构建和UI29再验证通过，V17保留性关闭；新精确制品39239585586在跑，历史198d制品不沿用。第二次单支启动需freshhost>=20GiB且保护源站按本刻SSOT重冻；当前资源窗口持续15→13.5GiB，不能为验收挤占稳定IMP。原49门槛及八并发/31任务/100SSE/黄闪电双主题/公网/48h/一周保持未执行或未闭合；原run取消/legacy候选字段缺失不伪装inmemorydrain证明，重试只走官方协调准入。
 - 涌现决定：不新增机制台账；真实外部动作分别记录意图,未知维持failclosed；原公网/并发/长期门槛不降低。
-- 下一动作与完成条件：最终全量→固定代码并push自有CDS修复分支→精确CI预构建→B03全新隔离依赖/源码目标源→1/2完整图容量校准→8无SHA官方并发实际pull B/31任务/100SSE→独立逐项及视觉→优先真实门槛全绿后共享CDS更新与复验；原49/公网/48h/一周门槛不减。
+- 下一动作与完成条件：资源恢复>=20GiB时先查同一宿主余量与当前官方保护清单、确认retry02没有started/accepted/run再触发ONE POST{}；原13全角色实物/metadata/进程/health与worker回调→2重叠/容量→8真并发/队列/视觉→所有优先真实门槛全绿后继承当前共享修订自更新。不得duplicate首run、清库、改共享或conditional关闭。
 - 当前八支报告：普通项目报告ID 044c9030493242c591584167130103ba，conditional/L2；35原JPEG上传并GET字节核验、正文POST/GET raw SHA256均为64f9edb28d742e3f62c14fe97c79d59c8ebd0d9722c8e92609150b6b77bfb2b9。八支598次source gate周期样本全0/0；不是新push、冷镜像拉取或无SHA最新pull链路验收。报告UI已由末尾从真实侧栏进入并逐35图/35锚点通过，回执9fa7fcd95956a718f21d4a93f39633ca6d642ae1fa12b67c05dd2cb333f6a038；原49正式pass0。
 - 保护面终态：99原宿主容器身份/运行/启动时间/重启计数未变；其他两个测试分支10旧ID已严格NoSuch且各有同名新ID running/无OOM，不猜操作者或原因。mycds原基线仅3个mdimp基础设施容器且3/3不变；容器状态不替代稳定IMP业务健康；本任务未写共享CDS或稳定IMP。
 - 终止/接替结论：active
@@ -738,3 +762,8 @@ v1.92 CDS51fee＋IMP0078独立失败资源批次已冻结，final-v2 SHA256 cc11
 
 
 2026-10-15 v2.16发布前固定源：最终755文件11302测试通过，6文件19测试原跳过，1原obsolete；backend类型0，web类型/构建/UI审计已通过且源未再改。PD9实际HTTP observer→原State终态ACK→journal删除补1真红后6文件162绿，重载为同进程JSON不冒新OS。末尾v217固定原范围源码+日志限定复核闭合；96镜像及96registry实际manifest独立匹配。B03仍仅registry，formal49=0；提交/push后只先B03官方精确预构建，不共享自更新。
+
+
+## v2.17 原生隔离版本与容量恢复检查点
+
+官方06b2已push并实际B03运行，主/Forwarder/405后端/266前端/新Mongo-split由独立尾逐项核实。当前没有IMP业务部署或正式49通过。两台既有宿主容量和其他任务都动态变化，预算16准入原fresh检查失败；只收紧自有准备硬限到8，初次叶cgroup取证错误保留，实际祖先另核。不调他人服务或共享CDS，不以CI/镜像准备代替真实8并发/无SHA链通过。原A历史CI实际成功URL用于官方claim构造旧元数据，远端真实B与源码transport独立核验，夹具准备不是部署结果。

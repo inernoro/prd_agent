@@ -67,7 +67,7 @@ export class DeploymentPhaseBudget {
   private readonly waiting = new Map<DeploymentPhase, Request[]>();
   private readonly projectOrders = new Map<DeploymentPhase, ProjectAdmissionOrder>();
   private readonly memoryReservations = new Map<string, { memoryMB: number; pids: number; owner: DeploymentPhaseOwner;
-    startup?: { check?: () => void } }>();
+    startup?: { check?: () => void }; recovered?: boolean }>();
   private timer?: NodeJS.Timeout;
   private readonly limits: Record<DeploymentPhase, number>;
   constructor(private readonly availableMemoryMB: () => number = () => memoryProvider(),
@@ -86,8 +86,8 @@ export class DeploymentPhaseBudget {
   }
 
   releaseMemory(key: string): void { this.memoryReservations.delete(key); this.pump(); }
-  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64): void {
-    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
+  reserveKnownMemory(key: string, memoryMB: number, owner: DeploymentPhaseOwner, pids = 64, recovered = false): void {
+    this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner, recovered });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, { memoryMB, pids, owner }]) => ({ key, memoryMB, pids, owner })); }
 
@@ -115,10 +115,14 @@ export class DeploymentPhaseBudget {
   }
 
   /** 真实盘点只释放同一份已终结预约；读取期间的新预约或在途创建不能被旧回执清掉。 */
-  async reconcileMemoryReservations(unused: (key: string, owner: DeploymentPhaseOwner) => Promise<boolean>): Promise<{ released: string[]; retained: string[] }> {
+  async reconcileMemoryReservations(unused: (key: string, owner: DeploymentPhaseOwner) => Promise<boolean>,
+    options: { recoveredOnly?: boolean; afterKey?: string } = {}): Promise<{ released: string[]; retained: string[] }> {
     const released: string[] = [], retained: string[] = [];
     const activeStart = (key: string) => [...(this.active.get('start') || [])].some(request => request.reservationKey === key);
-    for (const [key, reservation] of [...this.memoryReservations]) {
+    const candidates = [...this.memoryReservations].filter(([, reservation]) => !options.recoveredOnly || reservation.recovered);
+    const after = candidates.findIndex(([key]) => key === options.afterKey);
+    const ordered = after < 0 ? candidates : [...candidates.slice(after + 1), ...candidates.slice(0, after + 1)];
+    for (const [key, reservation] of ordered) {
       let confirmed = false;
       if (!activeStart(key)) {
         try { confirmed = await unused(key, { ...reservation.owner }); } catch { /* 未确认仍保留 */ }
@@ -224,7 +228,7 @@ export function restoreDeploymentMemoryReservations(branches: readonly BranchEnt
       const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
       if (incomplete) deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, hints.get(service.profileId) || 512,
-        { projectId: branch.projectId, branchId: branch.id, profileId: service.profileId });
+        { projectId: branch.projectId, branchId: branch.id, profileId: service.profileId }, 64, true);
     }
   }
 }

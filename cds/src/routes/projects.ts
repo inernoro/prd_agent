@@ -1690,11 +1690,14 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         req as unknown as { cdsPrincipal?: { principalId: string } }
       ).cdsPrincipal?.principalId;
       const grants = principalId ? stateService.getProjectGrants() : [];
+      const credentialId = (req as unknown as { cdsPrincipal?: { credentialId: string } }).cdsPrincipal?.credentialId;
+      const projectIds = stateService.getUserCredentials().find(c => c.id === credentialId)?.projectIds;
       const projects = stateService
         .getProjects()
         .filter((project) => canHumanAccessProject(req, stateService, project.id))
         .filter((project) => !projectScope || project.id === projectScope)
-        .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id));
+        .filter((project) => !principalId || hasActiveGrant(grants, principalId, project.id))
+        .filter((project) => !projectIds || projectIds.includes(project.id));
       const usageMap = resourceUsageLookup();
       // SECURITY P1 (2026-05-09): mask customEnv/defaultEnv for non-owners.
       // Static AI_ACCESS_KEY / cdsg_ global key callers get key names but
@@ -2820,6 +2823,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   //   409 { error: 'duplicate', field }
   //   500 { error: 'docker', message } — docker create failed
   router.post('/projects', async (req, res) => {
+    const userCredentialId = (req as unknown as { cdsPrincipal?: { credentialId: string } }).cdsPrincipal?.credentialId;
+    if (stateService.getUserCredentials().find(c => c.id === userCredentialId)?.projectIds) {
+      res.status(403).json({ error: 'recovery_credential_project_only', message: '恢复凭据只能连接已核对的原项目，不能创建项目。' }); return;
+    }
     // 建项目授权判定。注意:单项目作用域的 cdsg_ key 现在也会 stamp cdsProjectKey
     // (作为 cdsp_ 别名继承逐路由防护,见 server.ts stampSingleProjectScope),所以这里
     // **必须先看 cdsAccess**:凡带 cdsAccess 的一律按 access.canCreateProjects 判定,

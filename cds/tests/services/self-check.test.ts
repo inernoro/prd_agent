@@ -64,7 +64,7 @@ function healthyDeps(overrides: Partial<SelfCheckDeps> = {}): SelfCheckDeps {
     processStartedAt: () => NOW - 2 * HOUR,
     diskUsage: () => ({ totalBytes: 100, freeBytes: 60 }),
     dockerPing: async () => ({ ok: true, ms: 120, detail: '27.1.1' }),
-    httpStats: async () => ({ requests: 400, serverErrors: 2, branchesP95Ms: 380, branchesRequests: 10 }),
+    httpStats: async () => ({ requests: 400, serverErrors: 2, branchesP95Ms: 380, branchesRequests: 10, widgetStreamFailures: 0 }),
     liveAlarmChannels: () => 1,
     selfStatus: () => ({ ready: true, bundleStale: false, headSha: 'abc1234', currentBranch: 'main' }),
     storeBackend: () => 'mongo-split',
@@ -74,8 +74,20 @@ function healthyDeps(overrides: Partial<SelfCheckDeps> = {}): SelfCheckDeps {
 
 const URL_ = selfCheckUrl(7000);
 
+it('流恢复的200不抵消原上游失败，声明六小时常设监控且未知日志不能报零', async () => {
+  const doc = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 5, serverErrors: 0,
+    branchesP95Ms: 1, branchesRequests: 5, widgetStreamFailures: 1 }) }));
+  expect(doc.checks['api.widget-stream-failures-6h']).toMatchObject({ status: 'fail', observedValue: 1 });
+  const { monitors, rejected } = discoverMonitors(doc, URL_);
+  expect(rejected).toEqual([]);
+  expect(monitors.find(m => m.componentId === 'api.widget-stream-failures-6h')).toMatchObject({ intervalSeconds: 21600, failuresToAlarm: 1 });
+  const missing = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 5, serverErrors: 0,
+    branchesP95Ms: 1, branchesRequests: 5 }) }));
+  expect(missing.checks['api.widget-stream-failures-6h']).toMatchObject({ status: 'warn', observedValue: null });
+});
+
 describe('协议一致性：自检文档喂给 CDS 自己的解析器', () => {
-  it('13 条监控一条不落、零拒收，且全部落在 production', async () => {
+  it('14 条监控一条不落、零拒收，且全部落在 production', async () => {
     const doc = await buildSelfCheck(healthyDeps());
     const { monitors, rejected } = discoverMonitors(doc, URL_);
     expect(rejected).toEqual([]);
@@ -83,6 +95,7 @@ describe('协议一致性：自检文档喂给 CDS 自己的解析器', () => {
       'alarm.live-channels',
       'api.branches-p95-ms',
       'api.error-rate-30m',
+      'api.widget-stream-failures-6h',
       'build.oldest-wait-minutes',
       'build.queue-waiting',
       'deploy.failure-rate-24h',
@@ -96,7 +109,7 @@ describe('协议一致性：自检文档喂给 CDS 自己的解析器', () => {
     ]);
     for (const m of monitors) {
       expect(m.environment, m.componentId).toBe('production');
-      expect(m.intervalSeconds, m.componentId).toBe(300);
+      expect(m.intervalSeconds, m.componentId).toBe(m.componentId === 'api.widget-stream-failures-6h' ? 21600 : 300);
     }
   });
 

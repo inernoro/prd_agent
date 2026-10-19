@@ -894,8 +894,8 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
 
   return (
     <div>
-      <Section title="CDS 更新" description="拉取最新代码后按影响范围选择极速版、零停机、热路径或源码构建。失败时旧版本继续运行,不会让服务下线。">
-        <div className="space-y-5">
+      <Section title="CDS 更新" description="选择分支后更新，系统自动选择更新方式。失败时旧版本继续运行。">
+        <div className="space-y-3">
           <SelfUpdateStatusPanel
             state={selfStatus}
             onRefresh={() => void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ })}
@@ -906,26 +906,20 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
           {branchState.status === 'ok' ? (
             <div className="grid gap-4">
-              <div className="rounded-md border border-border bg-card px-4 py-4">
-                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <GitBranch className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">更新控制</span>
-                      <CodePill>
-                        {branchState.data.detached
-                          ? `游离提交 ${branchState.data.commitHash || '-'}`
-                          : branchState.data.current || '-'}
-                      </CodePill>
-                    </div>
-                    <div className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-                      选择目标分支后更新；默认使用后端推荐的稳定分支。若目标 SHA 有 CI 预构建产物，应走极速版路径，跳过本机编译；否则按影响范围自动选择零停机、热路径或源码构建。
-                    </div>
+              <div className="cds-update-controls rounded-md border border-border bg-card p-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <GitBranch className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-sm font-medium">更新控制</span>
+                    <CodePill>
+                      {branchState.data.detached
+                        ? `游离提交 ${branchState.data.commitHash || '-'}`
+                        : branchState.data.current || '-'}
+                    </CodePill>
                   </div>
-                  <Button type="button" variant="outline" onClick={() => void loadBranches()}>
-                    <RefreshCw />
-                    刷新分支
-                  </Button>
+                  <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                    默认推荐稳定分支；更新前会再次确认。
+                  </div>
                 </div>
 
                 {branchState.data.detached ? (
@@ -942,18 +936,19 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                 {/* 2026-05-04 重构:单 input combobox 取代「搜索框 + 经典 select」双控件。
                     用户输入 = selectedBranch(无歧义),回车/点击候选 = 确认选中。
                     候选下拉显示更新时间 + cds-touched 标识(是否动了 cds/ 目录)。 */}
-                <div className="mt-4">
-                  <label className="block space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">目标分支</span>
-                      {visibleBranches.length > 1 ? (
-                        <span className="text-[0.6875rem] text-muted-foreground">
-                          {visibleBranches.length} 个候选 · 按更新时间倒序
-                        </span>
-                      ) : null}
-                    </div>
-                    <div ref={pickerWrapRef} className="relative">
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="cds-update-target-branch" className="text-xs font-medium">目标分支</label>
+                    {visibleBranches.length > 1 ? (
+                      <span className="text-[0.6875rem] text-muted-foreground">
+                        {visibleBranches.length} 个候选 · 按更新时间倒序
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <div ref={pickerWrapRef} className="relative min-w-0 flex-1">
                       <input
+                        id="cds-update-target-branch"
                         ref={inputRef}
                         type="text"
                         value={selectedBranch}
@@ -990,7 +985,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                             setPickerOpen(false);
                           }
                         }}
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 font-mono text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                        className="h-8 w-full rounded-md border border-input bg-background px-2.5 font-mono text-xs outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                         placeholder="输入或选择分支(main / release / codex/...)"
                         autoComplete="off"
                         spellCheck={false}
@@ -1077,10 +1072,14 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                         </div>
                       ) : null}
                     </div>
-                  </label>
+                    <Button type="button" size="sm" variant="outline" className="shrink-0" onClick={() => void loadBranches()}>
+                      <RefreshCw />
+                      刷新分支
+                    </Button>
+                  </div>
                 </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
+                <div className="mt-3 flex flex-wrap gap-2">
                   <ConfirmAction
                     title="更新并重启"
                     description="拉取最新代码,自动校验依赖与编译,通过后重启 CDS。失败时旧版本继续运行。"
@@ -1781,7 +1780,7 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
                           <span className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs ${selfUpdateModeClass(mode)}`}>
                             {selfUpdateModeLabel(mode)}
                           </span>
-                        ) : <span className="text-xs text-muted-foreground">未标记</span>}
+                        ) : <span className="text-xs text-muted-foreground">{isRestartCancelled(rec) ? '未执行重启' : '未标记'}</span>}
                       </td>
                       <td className="px-3 py-2 align-middle text-xs text-muted-foreground">
                         {selfUpdateTriggerLabel(rec.trigger)}
@@ -1833,7 +1832,9 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
             <div>
               <div className="mb-1.5 text-xs font-medium text-muted-foreground">更新路径</div>
               <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
-                {selfUpdateModeDescription(selected.updateMode || (selected.noOp ? 'noOp' : undefined))}
+                {isRestartCancelled(selected)
+                  ? '等待其他项目操作超时，本次重启已取消，其他项目继续运行。'
+                  : selfUpdateModeDescription(selected.updateMode || (selected.noOp ? 'noOp' : undefined))}
               </div>
             </div>
             {selected.timings ? <SelfUpdateStageBar timings={selected.timings} totalMs={selected.durationMs} /> : null}
@@ -1947,10 +1948,14 @@ function selfUpdateStatusClass(status: SelfUpdateRecord['status']): string {
   }
 }
 
+function isRestartCancelled(record: SelfUpdateRecord): boolean {
+  return record.status === 'aborted' && record.failure?.stage === 'restart-drain';
+}
+
 function selfUpdateStatusLabel(status: SelfUpdateRecord['status']): string {
   switch (status) {
     case 'success': return '成功';
-    case 'aborted': return '中止(校验未过)';
+    case 'aborted': return '已中止';
     case 'deferred': return '已延后';
     case 'failed':  return '失败';
   }

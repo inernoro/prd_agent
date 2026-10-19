@@ -77,6 +77,8 @@ import {
 } from './services/external-port-audit.js';
 import { ProxyService, resolveBranchUpstream } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
+import { readForwarderPreviewActivity } from './forwarder/preview-activity.js';
+import { isTrustedProbeFingerprint } from './services/probe-marker.js';
 import { JanitorService, defaultDiskUsage, createJanitorDockerAdapters } from './services/janitor.js';
 import { readDiskUsage } from './services/disk-usage-worker.js';
 import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
@@ -178,7 +180,7 @@ import { channelConfigured, classifyAlert, routeAlarm, renderAlarmMessage } from
 import { sendAlarm, configurePhoneDispatch } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
-import { buildSelfCheck, readSelfCheckRuntimeStatus, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { buildSelfCheck, readSelfCheckRuntimeStatus, readHttpSelfCheckStats, wireSchedulerPreviewActivitySelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
 import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from './services/self-status-cache.js';
 import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
@@ -2107,18 +2109,22 @@ try {
 // See doc/guide.cds.env.md §3 and doc/design.cds.fu-02-auth-store-mongo.md.
 let activeAuthStore: import('./infra/auth-store/memory-store.js').AuthStore | undefined;
 const activeHttpLogStore = httpLogStoreFromEnv();
+let activeHttpLogStoreReady = false;
 if (activeHttpLogStore) {
   try {
     await activeHttpLogStore.init();
+    activeHttpLogStoreReady = true;
     console.log('  [http-log] persistent request logging enabled (collection=cds_http_logs)');
   } catch (err) {
     console.warn(`  [http-log] init failed, persistent request logging disabled: ${(err as Error).message}`);
   }
 }
 const localServerEventLogStore = serverEventLogStoreFromEnv();
+let localServerEventLogReady = false;
 if (localServerEventLogStore) {
   try {
     await localServerEventLogStore.init();
+    localServerEventLogReady = true;
     console.log('  [server-event-log] persistent diagnostics enabled (collection=cds_server_events)');
   } catch (err) {
     console.warn(`  [server-event-log] init failed, persistent diagnostics disabled: ${(err as Error).message}`);
@@ -2497,6 +2503,7 @@ const localMemoryBranches = stateService.getAllBranches().filter(branch =>
   config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
 restoreDeploymentMemoryReservations(localMemoryBranches, branch => stateService.getEffectiveProfilesForBranch(branch));
 const memoryRecovery = await containerService.reconcileDeploymentMemoryReservations(localMemoryBranches, {
+  recoveredOnly: true,
   // 旧CLI结束不等于daemon创建结束；无不可变CID时不能凭一次缺席释放未知创建责任。
   creationSettled: (_owner, runtime) => Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
 });
@@ -2747,6 +2754,23 @@ const resourceShutdownTasks = new Set<() => Promise<void>>();
 let dashboardHttpServer: http.Server | null = null;
 let workerHttpServer: http.Server | null = null;
 let shutdownInProgress = false;
+// 首轮盘点有读取上限。后台仅续扫原冷恢复预约，不把新操作的额度当历史尾项释放。
+let memoryReconciliationRunning = false;
+const deploymentMemoryReconciler = setInterval(() => {
+  if (shutdownInProgress || memoryReconciliationRunning) return;
+  memoryReconciliationRunning = true;
+  const localBranches = stateService.getAllBranches().filter(branch =>
+    config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
+  void containerService.reconcileDeploymentMemoryReservations(localBranches, {
+    recoveredOnly: true,
+    creationSettled: (_owner, runtime) => !shutdownInProgress && Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
+  }).then(result => {
+    if (result.released.length) console.log(`[deployment-memory] 后台已核实释放 ${result.released.length} 项历史预约`);
+  }).catch(() => console.warn('[deployment-memory] 后台盘点未确认，保留历史预约'))
+    .finally(() => { memoryReconciliationRunning = false; });
+}, 60_000);
+deploymentMemoryReconciler.unref?.();
+
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
@@ -2788,6 +2812,12 @@ let shutdownInProgress = false;
   }
 }
 const schedulerService = new SchedulerService(stateService, config.scheduler);
+let previewActivitySelfCheck: SelfCheckDeps['previewActivity'];
+if (process.env.CDS_USE_FORWARDER === '1' || process.env.CDS_FORWARDER_PORT) {
+  const diagnosticsPort = Number.parseInt(process.env.CDS_FORWARDER_PORT || '9090', 10);
+  schedulerService.setPreviewActivitySource(() => readForwarderPreviewActivity(diagnosticsPort), isTrustedProbeFingerprint);
+  previewActivitySelfCheck = wireSchedulerPreviewActivitySelfCheck(schedulerService, activeServerEventLogStore, () => localServerEventLogReady);
+}
 schedulerService.setRuntimePresenceProvider(getObservedRunningContainerNames);
 schedulerService.setOperationProtection(slug => branchOperationCoordinator.getActiveOperations(slug)
   .some(operation => operation.request.kind !== 'scheduler-cooling'));
@@ -4675,6 +4705,7 @@ async function shutdown(signal: string): Promise<void> {
   // Stop capability producers immediately, while observation and reserved cleanup
   // slots remain available; cancelling a CLI alone cannot revoke daemon creation.
   const resourceShutdown = Promise.allSettled([...resourceShutdownTasks].map(close => close()));
+  clearInterval(deploymentMemoryReconciler);
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);
@@ -6157,6 +6188,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           ? crypto.createHash('sha256').update(JSON.stringify([data.projectId, data.environmentLabel, data.probeUrl])).digest('hex')
           : data.targetId,
         targetId: data.targetId,
+        urgency: data.urgency,
         kind: classifyAlert(type, data.source),
         businessName: data.businessName, finding: data.finding, assessment: data.assessment, affectedChecks: data.affectedChecks, environmentLabel: data.environmentLabel,
         projectId: data.projectId,
@@ -6268,6 +6300,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    */
   const selfCheckDeps: SelfCheckDeps = {
     now: () => Date.now(),
+    ...(previewActivitySelfCheck ? { previewActivity: previewActivitySelfCheck } : {}),
     deploymentRuns: () => stateService.getDeploymentRuns(),
     unresolvedWebhookDispatches: () => unresolvedWebhookDispatches(stateService.getAllBranches()),
     webhookDeliveries: (limit) => stateService.getGithubWebhookDeliveries(limit),
@@ -6298,25 +6331,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         return { ok: false, ms: Date.now() - startedAt, detail: (err as Error).message };
       }
     },
-    httpStats: async (sinceMs) => {
-      const store = activeHttpLogStore;
-      if (!store?.findRecent) return null;
-      // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
-      // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
-      const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
-      const branches = rows
-        .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
-        .map((r) => r.durationMs)
-        .filter((ms) => Number.isFinite(ms));
-      const sorted = [...branches].sort((a, b) => a - b);
-      const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
-      return {
-        requests: rows.length,
-        serverErrors: rows.filter((r) => r.status >= 500).length,
-        branchesP95Ms: p95,
-        branchesRequests: branches.length,
-      };
-    },
+    httpStats: (sinceMs) => readHttpSelfCheckStats(activeHttpLogStore, activeHttpLogStoreReady, sinceMs),
     // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
     liveAlarmChannels: () => countLiveAlarmChannels(
       stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),
@@ -6325,7 +6340,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache),
     storeBackend: () => stateService.getBackingStore().kind,
   };
-  // 13 条监控各自打一次这个端点，一轮就是 13 次 docker version + 13 次 Mongo 查询。
+  // 多条监控各自打一次这个端点；同轮共享结果，避免重复 Docker 和 Mongo 查询。
   // 短缓存让同一轮里的探测共用一份文档：15 秒内的重复请求拿同一个 promise。
   const SELF_CHECK_CACHE_MS = 15_000;
   let selfCheckCache: { at: number; doc: Promise<Awaited<ReturnType<typeof buildSelfCheck>>> } | null = null;
@@ -6349,7 +6364,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       res.status(200).json(doc);
     } catch (err) {
       // 自检本身炸了（比如 Mongo 抖一下）回 503，让发现器按「端点打不通」处理——已登记的
-      // 13 条监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
+      // 原监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
       // 一条声明都没有」，把全部自监控当场下线（Codex #1543 P1）。
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
       res.status(503).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message });

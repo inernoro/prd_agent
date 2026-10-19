@@ -1694,6 +1694,11 @@ services:
     image: nginx:1.27-alpine
     container_name: ${NGINX_CONTAINER}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     network_mode: host
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro

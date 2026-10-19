@@ -100,6 +100,7 @@ export interface ReplicaResolveContext {
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */
 export interface ProxyStats {
+  widgetStreams?: { active: number; recovering: number; upstreamFailures: number };
   totalRequests: number;
   requestsByHost: Record<string, number>;
   statusCounts: Record<string, number>;

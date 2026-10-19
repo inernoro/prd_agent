@@ -62,6 +62,7 @@ export function buildWidgetScript(
     .cds-ai-badge-dot{width:6px;height:6px;border-radius:50%;background:#60a5fa;box-shadow:0 0 6px #60a5fa;animation:cds-blink 1.5s ease-in-out infinite}
     #cds-widget{--cds-safe-top:env(safe-area-inset-top,0px);--cds-safe-right:env(safe-area-inset-right,0px);--cds-safe-bottom:env(safe-area-inset-bottom,0px);--cds-safe-left:env(safe-area-inset-left,0px);position:fixed;left:12px;bottom:12px;z-index:99999;font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;color:#e2e8f0;user-select:none;font-size:12px}
     #cds-widget *{box-sizing:border-box}
+    #cds-widget:not([data-cds-connection="connected"]) .cds-badge{background:rgba(130,95,25,.9);border-color:rgba(240,136,62,.5)}
     #cds-widget .cds-badge{position:relative;display:inline-flex;flex-direction:column;align-items:stretch;padding:5px 10px;border-radius:8px;background:rgba(35,134,54,0.85);backdrop-filter:blur(8px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 2px 8px rgba(0,0,0,0.25);cursor:grab;line-height:1;overflow:hidden;transition:background .22s ease,border-color .22s ease,box-shadow .22s ease}
     #cds-widget .cds-badge:active{cursor:grabbing}
     #cds-widget .cds-badge::before{content:'';position:absolute;inset:0;pointer-events:none;opacity:0}
@@ -206,6 +207,7 @@ export function buildWidgetScript(
   var deployProfileId=null;
   var profiles=[];
   var branchStatus='';
+  var branchConnectionState='connecting';
   var commitSha='${safeSha}';
   var commitMsg='';
   var branchTags=[];
@@ -221,7 +223,9 @@ export function buildWidgetScript(
   var titlePrefix='';
   var titleObserver=null;
   var branchEventSource=null;
+  var branchStreamRetryTimer=null;
   var branchInfoFetchTimer=null;
+  var branchInfoFetchSequence=0;
   var syncClearTimer=null;
   var syncState={
     visible:false,
@@ -292,6 +296,7 @@ export function buildWidgetScript(
 
   // Connect to activity stream for AI occupation detection
   function initAiStream(){
+    if(!BRIDGE_ENABLED)return;
     var es;
     try{es=new EventSource(API+'/activity-stream');}catch(e){return;}
     es.onmessage=function(msg){
@@ -455,9 +460,31 @@ export function buildWidgetScript(
   }
 
   function initBranchStream(){
-    try{branchEventSource=new EventSource(API+'/branches/stream');}catch(e){return;}
+    branchInfoFetchSequence++;
+    if(branchStreamRetryTimer){clearTimeout(branchStreamRetryTimer);branchStreamRetryTimer=null;}
+    if(branchEventSource)branchEventSource.close();
+    var source;
+    try{source=new EventSource(API+'/branches/stream');}catch(e){branchEventSource=null;return;}
+    branchEventSource=source;
+    source.addEventListener('cds.transport',function(msg){
+      if(branchEventSource!==source)return;
+      try{
+        var transport=JSON.parse(msg.data);
+        if(transport.state!=='connected')branchInfoFetchSequence++;
+        if(transport.state==='connected')branchConnectionState='refreshing';
+        else if(transport.state==='forbidden'||transport.state==='unavailable')branchConnectionState=transport.state;
+        else if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
+        render();
+      }catch(e){}
+    });
+    // 快照只作为重连提示；业务终态仍由受权限约束的GET补读，不把全分支快照当列表权威。
+    source.addEventListener('snapshot',function(){
+      if(branchEventSource!==source)return;
+      queueBranchInfoRefresh(0);
+    });
 
-    branchEventSource.addEventListener('branch.created',function(msg){
+    source.addEventListener('branch.created',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         var branch=evt&&evt.branch;
@@ -473,7 +500,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.updated',function(msg){
+    source.addEventListener('branch.updated',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -488,7 +516,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.status',function(msg){
+    source.addEventListener('branch.status',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -499,7 +528,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.deploy-step',function(msg){
+    source.addEventListener('branch.deploy-step',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -507,7 +537,8 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.addEventListener('branch.removed',function(msg){
+    source.addEventListener('branch.removed',function(msg){
+      if(branchEventSource!==source)return;
       try{
         var evt=JSON.parse(msg.data);
         if(!evt||evt.branchId!==BRANCH_ID)return;
@@ -515,9 +546,17 @@ export function buildWidgetScript(
       }catch(e){}
     });
 
-    branchEventSource.onerror=function(){
-      if(branchEventSource)branchEventSource.close();
-      setTimeout(initBranchStream,3000);
+    source.onerror=function(){
+      if(branchEventSource!==source)return;
+      if(branchConnectionState!=='forbidden'&&branchConnectionState!=='unavailable')branchConnectionState='reconnecting';
+      render();
+      branchInfoFetchSequence++;
+      source.close();
+      if(branchStreamRetryTimer)return;
+      branchStreamRetryTimer=setTimeout(function(){
+        branchStreamRetryTimer=null;
+        if(branchEventSource===source)initBranchStream();
+      },3000);
     };
   }
 
@@ -673,6 +712,9 @@ export function buildWidgetScript(
     // 用户会以为什么都没发生；同步结束（visible 归位）后下一次渲染自然回到紧凑态。
     var compactNow=compact&&!expanded&&!syncState.visible;
     root.setAttribute('data-cds-layout',compactNow?'compact':'full');
+    root.setAttribute('data-cds-connection',branchConnectionState);
+    var connectionLabel=branchConnectionState==='connected'?'':branchConnectionState==='forbidden'?'状态读取无权限':branchConnectionState==='unavailable'?'状态暂不可用':branchConnectionState==='refreshing'?'正在核对状态':'状态重连中';
+    if(connectionLabel)h+='<div role="status" style="color:#f0883e;font-size:11px;padding:3px 0">'+connectionLabel+'，当前信息可能过期</div>';
 
     if(compactNow){
       // 紧凑态：一颗 36px 圆钮 + 角标短 sha，不再有整行分支名、模式 chip 和两颗按钮。
@@ -710,10 +752,10 @@ export function buildWidgetScript(
           h+='<span class="cds-sync-rail"><span style="width:'+Math.max(0,Math.min(100,Math.round(syncState.progress)))+'%"></span></span>';
           h+='</div>';
         }
-        var statusColor=branchStatus==='running'?'#3fb950':branchStatus==='error'||branchStatus==='stopped'?'#f85149':'#f0883e';
-        var statusBlink=branchStatus==='running'?' cds-status-blink':'';
+        var statusColor=connectionLabel?'#8b949e':branchStatus==='running'?'#3fb950':branchStatus==='error'||branchStatus==='stopped'?'#f85149':'#f0883e';
+        var statusBlink=!connectionLabel&&branchStatus==='running'?' cds-status-blink':'';
         h+='<div class="cds-status-row">';
-        h+='<span style="font-size:11px;color:#8b949e">状态: </span>';
+        h+='<span style="font-size:11px;color:#8b949e">'+(connectionLabel?'上次状态: ':'状态: ')+'</span>';
         h+='<span class="cds-status-dot'+statusBlink+'" style="background:'+statusColor+'"></span>';
         h+='<span style="font-size:11px;color:'+statusColor+';font-style:italic;font-weight:600">'+branchStatus+'</span>';
         if(commitSha)h+='<span class="cds-commit-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
@@ -979,7 +1021,8 @@ export function buildWidgetScript(
 
   // ── CDS API calls ──
   function fetchBranchInfo(){
-    fetch(API+'/branches').then(function(r){return r.ok?r.json():{};}).then(function(branchRes){
+    var refreshSequence=++branchInfoFetchSequence;
+    fetch(API+'/branches').then(function(r){if(!r.ok)throw new Error('branch read unavailable');return r.json();}).then(function(branchRes){
       var branchList=(branchRes&&branchRes.branches)||[];
       var found=null;
       for(var i=0;i<branchList.length;i++){
@@ -987,10 +1030,12 @@ export function buildWidgetScript(
       }
       var profileUrl=API+'/build-profiles';
       if(found&&found.projectId)profileUrl+='?project='+encodeURIComponent(found.projectId);
-      return fetch(profileUrl).then(function(r){return r.ok?r.json():{};}).then(function(profileRes){
+      return fetch(profileUrl).then(function(r){if(!r.ok)throw new Error('profile read unavailable');return r.json();}).then(function(profileRes){
         return {branchRes:branchRes,profileRes:profileRes,found:found};
       });
     }).then(function(res){
+      if(refreshSequence!==branchInfoFetchSequence)return;
+      branchConnectionState='connected';
       var branchRes=res.branchRes||{};
       var profileRes=res.profileRes||{};
       var found=res.found||null;
@@ -1029,8 +1074,8 @@ export function buildWidgetScript(
         render();
       }
     }).catch(function(){
-      branchStatus='';
-      profiles=[];
+      if(refreshSequence!==branchInfoFetchSequence)return;
+      branchConnectionState='unavailable';
       render();
     });
   }
