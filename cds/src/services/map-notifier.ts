@@ -40,6 +40,7 @@ export interface MapNotifierConfig {
 }
 
 export interface MapNotifierAlert {
+  urgency?: 'urgent' | 'normal';
   businessName?: string;
   finding?: string;
   identity?: AlarmIdentity;
@@ -116,7 +117,7 @@ export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificati
     source: 'uptime-alert',
     title: message.title,
     message: message.body,
-    level: down ? 'warning' : 'info',
+    level: down ? alert.urgency === 'urgent' && alert.assessment !== 'observation-unavailable' ? 'error' : 'warning' : 'info',
     section: 'admin',
     dedupKey: `uptime:${alert.identity ? `${alert.identity.observer.id}:${alert.identity.subject.id}:` : ''}${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
     ...(alert.boardUrl ? { actionLabel: '查看问题与处理建议', actionUrl: alert.boardUrl } : alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),

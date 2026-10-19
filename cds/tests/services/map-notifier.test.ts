@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import crypto from 'node:crypto';
+import { createServer } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,6 +138,12 @@ describe('通知载荷', () => {
     expect(p.message).not.toContain('下一步');
   });
 
+  it('生产主动故障保留严重级别，采集异常与恢复不提权', () => {
+    expect(buildNotificationPayload({ ...base, type: 'uptime.target.down', urgency: 'urgent' }).level).toBe('error');
+    expect(buildNotificationPayload({ ...base, type: 'uptime.target.down', urgency: 'urgent', assessment: 'observation-unavailable' }).level).toBe('warning');
+    expect(buildNotificationPayload({ ...base, type: 'uptime.target.recovered', urgency: 'urgent' }).level).toBe('info');
+  });
+
   it('幂等键区分方向与时刻：同一次翻转可去重，不同次翻转不被合并', () => {
     const down = buildNotificationPayload({ ...base, type: 'uptime.target.down' });
     const again = buildNotificationPayload({ ...base, type: 'uptime.target.down' });
@@ -202,6 +209,7 @@ describe('接线守卫', () => {
     // 写死 `mapNotifier?.send` 的旧判据当场变红——它锁的是实现写法不是行为
     // （predicate-and-wiring-discipline 形状 4a）。
     expect(block).toContain('sendLegacyAlarm(');
+    expect(block).toContain('urgency: data.urgency');
     const sender = indexSource.slice(indexSource.indexOf('const sendLegacyAlarm'), indexSource.indexOf('const alarmBoardUrl'));
     expect(sender).toContain('resolveMapNotifier()');
     expect(sender).toContain('notifier.send(alert)');
@@ -211,6 +219,31 @@ describe('接线守卫', () => {
     expect(indexSource).toContain('[map-notifier] 未配置');
     expect(indexSource).toContain('不会有人被通知');
   });
+});
+
+it('MAP 通道实际 HTTP 载荷保留严重资格，演练和采集异常不能借此提权', async () => {
+  const { sendAlarm } = await import('../../src/services/alarm-dispatch.js');
+  const received: string[] = [];
+  const server = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    received.push(JSON.parse(body).level);
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}');
+  });
+  server.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const channel = { id: 'map-fixture', name: 'MAP', enabled: true, kind: 'map' as const, projects: [], events: [] as [], createdAt: 0, updatedAt: 0,
+    map: { endpoint: `http://127.0.0.1:${(server.address() as {port: number}).port}/events`, keyId: 'fixture', username: 'fixture', privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() } };
+  const event = { kind: 'business-down' as const, projectId: 'fixture', targetName: '业务访问', urgency: 'urgent' as const,
+    message: '未响应', consecutiveFailures: 3, detectedAt: '2026-10-19T00:00:00Z' };
+  try {
+    expect((await sendAlarm(channel, event)).ok).toBe(true);
+    expect((await sendAlarm(channel, { ...event, assessment: 'observation-unavailable' })).ok).toBe(true);
+    expect((await sendAlarm(channel, { ...event, drill: true })).ok).toBe(true);
+    expect((await sendAlarm(channel, { ...event, kind: 'business-recovered' })).ok).toBe(true);
+    expect(received).toEqual(['error', 'warning', 'warning', 'info']);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
 

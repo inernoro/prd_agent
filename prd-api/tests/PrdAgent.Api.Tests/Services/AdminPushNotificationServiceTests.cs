@@ -200,8 +200,10 @@ public sealed class AdminPushNotificationServiceTests
         Assert.Equal(4, http.Requests.Count); // 随机通知编号、服务重建不能让同根因重新插队。
     }
 
-    [Fact]
-    public async Task UrgentStorm_UsesFiveBatchesPerWindow_AndRetainsEveryPendingIncident()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task UrgentStorm_UsesFiveBatchesPerWindow_AndRetainsEveryPendingIncident(bool stableKeys)
     {
         await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
         await SeedChannelAsync(testDb.Context);
@@ -211,7 +213,7 @@ public sealed class AdminPushNotificationServiceTests
         for (var i = 0; i < 60; i++)
         {
             await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
-                Key = "root-" + i, Source = "stable-smoke", TargetUserId = "u1", Level = "error", Title = "独立故障 " + i,
+                Key = stableKeys ? "root-" + i : null, Source = stableKeys ? "stable-smoke" : "workflow-agent", TargetUserId = "u1", Level = "error", Title = "独立故障 " + i,
                 CreatedAt = clock.GetUtcNow().UtcDateTime,
             });
             await service.DispatchPendingAsync(default);
@@ -223,6 +225,30 @@ public sealed class AdminPushNotificationServiceTests
         Assert.Equal(6, http.Requests.Count);
         var receipts = await testDb.Context.AdminPushDeliveryLogs.Find(_ => true).ToListAsync();
         Assert.Equal(60, receipts.SelectMany(r => r.CoveredNotificationIds).Distinct().Count());
+    }
+
+    [Fact]
+    public async Task KeylessWorkflowFaults_RemainIndependent_AfterNormalBudgetIsExhausted()
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await SeedChannelAsync(testDb.Context);
+        var clock = new PushTestClock(); var http = new RecordingHttpClientFactory();
+        AdminPushNotificationService Service() => new(testDb.Context, http, new AllowAllUrlValidator(), TestConfiguration,
+            NullLogger<AdminPushNotificationService>.Instance, clock);
+        async Task Add(string id, string level) => await testDb.Context.AdminNotifications.InsertOneAsync(new AdminNotification {
+            Id = id, Source = "workflow-agent", TargetUserId = "u1", Level = level, Title = id,
+            CreatedAt = clock.GetUtcNow().UtcDateTime.AddSeconds(-20),
+        });
+        await Add("ordinary-a", "warning"); await Service().DispatchPendingAsync(default);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await Add("ordinary-b", "warning"); await Service().DispatchPendingAsync(default);
+        await Add("workflow-a", "error"); await Service().DispatchPendingAsync(default);
+        Assert.Equal(3, http.Requests.Count);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await Add("workflow-b", "error"); await Service().DispatchPendingAsync(default);
+        Assert.Equal(4, http.Requests.Count);
+        await Service().DispatchPendingAsync(default);
+        Assert.Equal(4, http.Requests.Count); // 重启派发器不重复投递同一持久化通知。
     }
 
     [Fact]
