@@ -1,4 +1,5 @@
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
@@ -15787,6 +15788,42 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // 变更时用）；/restart 只对已构建好的容器做 docker restart（没 bug、只是
   // 服务被停了，直接拉起来，秒级，不动代码）。复用 containerService
   // .restartServiceInPlace（docker restart + 存活探测）。
+  router.post('/branches/:id/recover-runtime', async (req, res) => {
+    const entry = stateService.getBranch(req.params.id);
+    if (!entry) { res.status(404).json({ error: '分支不存在' }); return; }
+    const mismatch = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+    if (entry.executorId) { res.status(409).json({ error: '远端执行器恢复请在所属执行器执行' }); return; }
+    const { expectedCommitSha, expectedContainers } = req.body || {};
+    if (typeof expectedCommitSha !== 'string' || !expectedContainers || typeof expectedContainers !== 'object' || Array.isArray(expectedContainers)) {
+      res.status(400).json({ error: '必须提供完整提交和逐服务完整容器身份' }); return;
+    }
+    const lease = beginBranchOperation(req, res, entry, { kind: 'restart', source: 'api.recover-runtime', reason: '验证并恢复同批当前容器；保留数据库与历史部署结果' });
+    if (branchOperationCoordinator && !lease) return;
+    let outcome: 'completed' | 'failed' | 'cancelled' = 'failed';
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no' });
+    res.flushHeaders();
+    const heartbeat = setInterval(() => { if (!res.writableEnded) res.write(': heartbeat\n\n'); }, 5000);
+    try {
+      const profiles = stateService.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry));
+      const result = await recoverBranchRuntime({ entry, profiles, state: stateService, container: containerService,
+        expectedCommitSha, expectedContainers,
+        // 项目声明的应用刷新连接；分支额外数据库/缓存/存储保留进程和数据。
+        restartProfiles: stateService.getBuildProfilesForProject(entry.projectId || 'default').map(p => p.id).filter(id => Boolean(entry.services[id])),
+        assertCurrent: step => assertBranchOperationCurrent(lease, step),
+        onProgress: message => sendSSE(res, 'progress', { message }),
+      });
+      outcome = 'completed';
+      stateService.appendActivityLog(entry.projectId, { type: 'restart', branchId: entry.id, branchName: entry.branch,
+        actor: resolveActorFromRequest(req), note: '当前容器归属、独占网络与逐服务就绪均已验证；恢复入口，不改写旧失败运行' });
+      stateService.save();
+      sendSSE(res, 'complete', { ...result, commitSha: expectedCommitSha, operationId: lease?.operationId });
+    } catch (error) {
+      outcome = error instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
+      sendSSE(res, 'error', { message: (error as Error).message, operationStatus: outcome });
+    } finally { clearInterval(heartbeat); completeBranchOperation(lease, outcome); res.end(); }
+  });
+
   router.post('/branches/:id/restart', async (req, res) => {
     const { id } = req.params;
     const entry = stateService.getBranch(id);

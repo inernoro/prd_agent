@@ -7348,6 +7348,28 @@ describe('Branch Routes', () => {
 
   // ── 轻量重启 + 分支系统日志（2026-05-18）──
 
+  describe('POST /api/branches/:id/recover-runtime', () => {
+    it('不存在和缺少精确身份时拒绝，不能触发宿主命令', async () => {
+      expect((await request(server, 'POST', '/api/branches/nope/recover-runtime')).status).toBe(404);
+      stateService.addBranch({ id: 'recover', branch: 'recover', projectId: 'default', worktreePath: '/tmp/wt/recover',
+        services: {}, status: 'error', createdAt: new Date().toISOString() });
+      mock.commands.length = 0;
+      expect((await request(server, 'POST', '/api/branches/recover/recover-runtime', {})).status).toBe(400);
+      expect(mock.commands).toEqual([]);
+    });
+
+    it('过期提交保留失败状态，恢复租约正常收尾且不执行 Docker', async () => {
+      stateService.addBranch({ id: 'recover', branch: 'recover', projectId: 'default', worktreePath: '/tmp/wt/recover',
+        githubCommitSha: 'a'.repeat(40), services: {}, status: 'error', errorMessage: 'original failure', createdAt: new Date().toISOString() });
+      mock.commands.length = 0;
+      const response = await request(server, 'POST', '/api/branches/recover/recover-runtime', { expectedCommitSha: 'b'.repeat(40), expectedContainers: {} });
+      expect(String(response.body)).toContain('恢复目标提交已变化');
+      expect(stateService.getBranch('recover')?.errorMessage).toBe('original failure');
+      expect(mock.commands).toEqual([]);
+      expect(operationEvents.some(event => event.branchId === 'recover' && event.action === 'branch.operation.failed')).toBe(true);
+    });
+  });
+
   describe('POST /api/branches/:id/restart', () => {
     it('404 when branch does not exist', async () => {
       const res = await request(server, 'POST', '/api/branches/nope/restart');
