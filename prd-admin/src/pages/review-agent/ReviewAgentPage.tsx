@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, Users, Settings2, Bell, ListOrdered, BookOpenCheck } from 'lucide-react';
+import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, ChevronDown, CheckCircle, XCircle, Clock, Users, Settings2, Bell, ListOrdered, BookOpenCheck } from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getMyReviewSubmissions } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
@@ -23,7 +25,7 @@ function getStatusDisplay(item: ReviewSubmission): { label: string; color: strin
 type FilterTab = 'all' | 'passed' | 'notPassed' | 'error';
 
 const FILTER_TABS: { key: FilterTab; label: string }[] = [
-  { key: 'all', label: '全部提交' },
+  { key: 'all', label: '全部状态' },
   { key: 'passed', label: '已通过' },
   { key: 'notPassed', label: '未通过' },
   { key: 'error', label: '失败' },
@@ -76,92 +78,81 @@ export function ReviewAgentPage() {
     <>
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b border-token-subtle px-4 py-4 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
             <h1 className="text-base font-semibold text-token-primary">方案评审</h1>
             <p className="mt-0.5 text-xs text-token-muted">上传产品方案，AI 多维度评审打分</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-              {!reviewNav.inProductManagement && (
-                <>
-                  {canUseProduct && <button onClick={() => navigate('/product-agent?section=versions')} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft" title="在产品管理的内部与正式版本页申领">
-                    <BookOpenCheck className="w-3.5 h-3.5" />到产品管理申领版本号
-                  </button>}
-                  <button onClick={() => navigate(reviewNav.assessments)} className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft" title="上传 Excel 需求表并进行优先级评估">
-                    <ListOrdered className="w-3.5 h-3.5" />需求评估
-                  </button>
-                </>
-              )}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
               <TipsEntryButton compact />
-              {canManage && (
-                <>
-                  <button
-                    onClick={() => setWebhookModalOpen(true)}
-                    className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft transition-colors"
-                    title="Webhook 通知配置"
-                  >
-                    <Bell className="w-3.5 h-3.5" />
-                    通知配置
-                  </button>
-                  <button
-                    onClick={() => setDimsModalOpen(true)}
-                    className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft transition-colors"
-                    title="评审维度配置"
-                  >
-                    <Settings2 className="w-3.5 h-3.5" />
-                    维度配置
-                  </button>
-                </>
-              )}
               {canViewAll && (
-                <button
-                  onClick={() => navigate(reviewNav.all)}
-                  className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-secondary hover-bg-soft transition-colors"
-                >
+                <Button size="sm" variant="ghost" onClick={() => navigate(reviewNav.all)}>
                   <Users className="w-3.5 h-3.5" />
                   全部提交
-                </button>
+                </Button>
               )}
-              <button
-                onClick={() => navigate(reviewNav.submit)}
-                className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-sm font-medium text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/60 transition-colors"
-              >
+              {canManage && (
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <Button size="sm" aria-label="评审设置"><Settings2 className="h-3.5 w-3.5" />评审设置<ChevronDown className="h-3.5 w-3.5 text-token-muted" /></Button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content align="end" sideOffset={6} className="surface-popover z-50 min-w-40 rounded-lg border border-token-subtle p-1 shadow-lg">
+                      <DropdownMenu.Item onSelect={() => setWebhookModalOpen(true)} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-token-secondary outline-none focus:bg-[var(--bg-secondary)] focus:text-token-primary"><Bell className="h-3.5 w-3.5" />通知配置</DropdownMenu.Item>
+                      <DropdownMenu.Item onSelect={() => setDimsModalOpen(true)} className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm text-token-secondary outline-none focus:bg-[var(--bg-secondary)] focus:text-token-primary"><Settings2 className="h-3.5 w-3.5" />维度配置</DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+              )}
+              <Button size="sm" variant="primary" onClick={() => navigate(reviewNav.submit)}>
                 <Plus className="w-4 h-4" />
                 提交方案
-              </button>
+              </Button>
             </div>
           </div>
+          {!reviewNav.inProductManagement && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-token-subtle pt-3">
+              {canUseProduct && <Button size="sm" variant="ghost" onClick={() => navigate('/product-agent?section=versions')} title="在产品管理的内部与正式版本页申领"><BookOpenCheck className="h-3.5 w-3.5" />到产品管理申领版本号</Button>}
+              <Button size="sm" variant="ghost" onClick={() => navigate(reviewNav.assessments)} title="上传 Excel 需求表并进行优先级评估"><ListOrdered className="h-3.5 w-3.5" />需求评估</Button>
+            </div>
+          )}
         </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6" style={{ overscrollBehavior: 'contain' }}>
       {/* 筛选 Tab + 搜索 */}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap border-b border-token-subtle">
+      <div className="flex shrink-0 flex-col gap-3 border-b border-token-subtle px-4 py-3 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
+          <h2 className="shrink-0 text-sm font-medium text-token-primary">我的提交</h2>
+          <div className="flex flex-wrap gap-1 rounded-lg bg-token-nested p-1" aria-label="提交状态筛选">
           {FILTER_TABS.map(tab => (
             <button
               key={tab.key}
+              type="button"
+              aria-pressed={activeTab === tab.key}
               onClick={() => handleTabChange(tab.key)}
-              className={`border-b-2 px-3 py-2 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-500/60 ${
+              className={`rounded-md px-3 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-500/60 ${
                 activeTab === tab.key
-                  ? 'border-cyan-400 text-[color:var(--accent-fg-blue)]'
-                  : 'border-transparent text-token-muted hover-text-primary'
+                  ? 'surface-action font-medium text-token-primary'
+                  : 'text-token-muted hover-text-primary'
               }`}
             >
               {tab.label}
             </button>
           ))}
+          </div>
         </div>
-        <div className="relative w-full sm:w-72">
+        <div className="relative w-full lg:w-64 lg:shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-token-muted" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="搜索方案标题..."
+            aria-label="搜索方案标题"
             className="w-full rounded-lg border border-token-subtle bg-token-nested py-2 pl-9 pr-4 text-sm text-token-primary placeholder-token-muted outline-none focus:border-cyan-500/40 transition-colors"
           />
         </div>
       </div>
 
+      <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6" style={{ overscrollBehavior: 'contain' }}>
       {/* 提交列表 */}
       <div>
         {loading ? (
