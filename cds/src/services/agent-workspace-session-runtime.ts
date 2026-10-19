@@ -2255,7 +2255,7 @@ export class AgentWorkspaceSessionRuntime {
         const expiration = ['deadline', 'cancelled'].includes(code || '')
           || code === 'workspace_probe_cleanup_unconfirmed' && Date.now() >= originalDeadline;
         if (!lease.creationAcknowledged || lease.kind === 'storage-volume' || !expiration
-          || !(beginConfirmation() || confirmationStarted && Date.now() < deadline)) throw error;
+          || !(Date.now() < deadline || beginConfirmation())) throw error;
         await delay(Math.min(this.probeCleanupPollMs, Math.max(1, deadline - Date.now())));
         continue;
       }
