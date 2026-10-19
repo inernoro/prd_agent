@@ -20,7 +20,7 @@ import { Router, type Request, type Response } from 'express';
 import { StateService } from '../services/state.js';
 import { recordContainerSample, queryContainerSeries } from '../services/container-metrics-history.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
-import { WorktreeService } from '../services/worktree.js';
+import { WorktreeService, deploymentNeedsSourceCheckout, hasDeploymentSource } from '../services/worktree.js';
 import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktree-path-activity.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
 import { admittedArtifactProfile, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
@@ -6216,7 +6216,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches', async (req, res) => {
     try {
-      const { branch, projectId, sourceBranchId } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string };
+      const { branch, projectId, sourceBranchId, inheritSourceModes } = req.body as { branch?: string; projectId?: string; sourceBranchId?: string; inheritSourceModes?: boolean };
       if (!branch) {
         res.status(400).json({ error: '分支名称不能为空' });
         return;
@@ -6343,7 +6343,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         status: 'idle',
         createdAt: new Date().toISOString(),
       };
-      // 先套项目模板(保底),再用来源分支快照覆盖(拷贝赢模板)——之后两分支各自独立。
+      // 深拷贝来源配置；项目极速默认优先，复制模式例外须显式授权。已有分支不受影响。
       applyProjectDefaultDeployModes(
         entry,
         targetProject.defaultDeployModes,
@@ -6365,6 +6365,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         entry.derivedFromBranchId = sourceBranch.id;
         entry.derivedFromBranchName = sourceBranch.branch;
         entry.derivedAt = new Date().toISOString();
+        if (inheritSourceModes !== true) {
+          const profiles = stateService.getBuildProfilesForProject(effectiveProjectId);
+          const expressDefaults = Object.fromEntries(profiles.flatMap(profile => {
+            const mode = targetProject.defaultDeployModes?.[profile.id];
+            return mode && isPrebuiltMode(profile, mode) ? [[profile.id, mode]] : [];
+          }));
+          applyProjectDefaultDeployModes(entry, expressDefaults, profiles);
+        }
       }
       await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
         await worktreeService.create(branchRepoRoot, branch, worktreePath);
@@ -13449,18 +13457,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
           : `分支: \`${entry.branch}\`\n阶段: 准备独立部署源码`,
         force: true,
       });
-      const pullResult = selectedDeploymentVersion
+      let pullResult = selectedDeploymentVersion
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(
-          stateService.getProjectRepoRoot(entry.projectId, config.repoRoot),
-          entry.branch,
-          entry.worktreePath,
-          requestCommitSha,
-          { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id },
-        );
-      const deploymentSourceEntry = 'sourcePath' in pullResult
+        : deploymentNeedsSourceCheckout(profiles.map(p => resolveEffectiveProfile(p, inputBranch())))
+        ? await worktreeService.prepareDeploymentSource(stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), entry.branch, entry.worktreePath, requestCommitSha, { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id })
+        : await worktreeService.resolveDeploymentCommit(stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), entry.branch, entry.worktreePath, requestCommitSha, { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id });
+      // Automatic database initialization reads repository files even for image-only services.
+      // Inspect the resolved target tree, never the mutable canonical checkout, before skipping source.
+      if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)
+        && await worktreeService.needsDatabaseInitializationSource(entry.worktreePath, pullResult.afterFull,
+          profiles.map(p => resolveEffectiveProfile(p, inputBranch()).workDir || '.'))) {
+        pullResult = await worktreeService.prepareDeploymentSource(stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), entry.branch, entry.worktreePath, pullResult.afterFull, { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id });
+      }
+      const deploymentSourceEntry = hasDeploymentSource(pullResult)
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
       logEvent({
@@ -13692,6 +13703,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           detail: { versionId: selectedDeploymentVersion.id },
           timestamp: new Date().toISOString(),
         });
+      } else if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)) {
+        logEvent({ step: 'database-init', status: 'done', title: '目标提交无数据库初始化文件，跳过宿主源码扫描',
+          timestamp: new Date().toISOString() });
       } else {
         await runDatabaseInitializationForDeploy({
           entry: deploymentSourceEntry,
@@ -13990,7 +14004,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               containerService,
               serverEventLogStore,
               entry,
-              sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
+              sourceCheckout: hasDeploymentSource(pullResult) ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
               profile: effectiveProfile,
               artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha || deploymentInput.targetCommitSha,
               service: svc,
@@ -14832,14 +14846,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
       const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
-        : await worktreeService.prepareDeploymentSource(
-          stateService.getProjectRepoRoot(entry.projectId, config.repoRoot),
-          entry.branch,
-          entry.worktreePath,
-          profileRequestCommitSha,
-          { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id },
-        );
-      const deploymentSourceEntry = 'sourcePath' in pullResult
+        : deploymentNeedsSourceCheckout([resolveEffectiveProfile(profile, inputBranch())])
+        ? await worktreeService.prepareDeploymentSource(stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), entry.branch, entry.worktreePath, profileRequestCommitSha, { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id })
+        : await worktreeService.resolveDeploymentCommit(stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), entry.branch, entry.worktreePath, profileRequestCommitSha, { kind: 'managed-missing', worktreeBase: config.worktreeBase, projectId: entry.projectId, branchId: entry.id });
+      const deploymentSourceEntry = hasDeploymentSource(pullResult)
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
@@ -15063,7 +15073,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           containerService,
           serverEventLogStore,
           entry,
-          sourceCheckout: 'sourcePath' in pullResult ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
+          sourceCheckout: hasDeploymentSource(pullResult) ? { path: pullResult.sourcePath, commitSha: pullResult.afterFull } : undefined,
           profile: effectiveProfile,
           artifactCommitSha: deploymentInput.artifactAdmission?.targetCommitSha || deploymentInput.targetCommitSha,
           service: svc,
