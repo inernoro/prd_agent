@@ -23,7 +23,6 @@ import {
   Upload,
   Download,
   ArrowLeft,
-  Search,
   Plus,
   ClipboardCheck,
   ListOrdered,
@@ -369,52 +368,6 @@ function EmptyChart({ text }: { text: string }) {
 
 // ════════════════════════ 跨产品数据表 ════════════════════════
 
-function TableToolbar({
-  keyword,
-  setKeyword,
-  filterLabel,
-  filters,
-  filterValue,
-  setFilterValue,
-  extra,
-}: {
-  keyword: string;
-  setKeyword: (v: string) => void;
-  filterLabel?: string;
-  filters?: { value: string; label: string }[];
-  filterValue?: string;
-  setFilterValue?: (v: string) => void;
-  extra?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center gap-2 mb-3 flex-wrap">
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle">
-        <Search size={14} className="text-token-muted" />
-        <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索标题 / 编号" className="bg-transparent text-sm text-token-primary outline-none w-44" />
-      </div>
-      {filters && setFilterValue && (
-        <>
-          <button
-            onClick={() => setFilterValue('')}
-            className={`px-2.5 py-1 rounded-md text-xs border ${!filterValue ? 'bg-token-nested text-token-primary border-token-subtle' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-          >
-            {filterLabel ?? '全部'}
-          </button>
-          {filters.map((f) => (
-            <button
-              key={f.value}
-              onClick={() => setFilterValue(f.value)}
-              className={`px-2.5 py-1 rounded-md text-xs border ${filterValue === f.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-            >
-              {f.label}
-            </button>
-          ))}
-        </>
-      )}
-      {extra && <div className="ml-auto flex items-center gap-2">{extra}</div>}
-    </div>
-  );
-}
 
 /** 「我负责的」过滤开关。 */
 function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) => void }) {

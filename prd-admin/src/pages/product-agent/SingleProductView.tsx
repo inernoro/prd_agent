@@ -473,17 +473,6 @@ function DefectsTab({ productId }: { productId: string }) {
 
 // ════════════════════════ 复用小组件 ════════════════════════
 
-function NewButton({ label, onClick, disabled }: { label: string; onClick: () => void; disabled?: boolean }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className="self-start flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-[color:var(--accent-fg-blue)] border border-cyan-500/30 hover:bg-cyan-500/25 text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-    >
-      <Plus size={15} /> {label}
-    </button>
-  );
-}
 
 
 function QuickAdd({
