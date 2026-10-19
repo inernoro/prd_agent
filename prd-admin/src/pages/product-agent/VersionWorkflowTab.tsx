@@ -244,7 +244,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   const [ownerName, setOwnerName] = useState(seed?.ownerName ?? '');
   const [projectMembers, setProjectMembers] = useState((seed?.projectMemberNames ?? []).join('、'));
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
-  const [needUiDesign, setNeedUiDesign] = useState(seed?.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no');
+  const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed?.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no');
   const [developmentStatus, setDevelopmentStatus] = useState(seed?.developmentStatus ?? '');
   const [remark, setRemark] = useState(seed?.remark ?? '');
