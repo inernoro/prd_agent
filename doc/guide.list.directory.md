@@ -177,6 +177,7 @@
 - [MAP 验收报告与证据交互 · 指南](./guide.acceptance.report-evidence.md) `guide.acceptance.report-evidence`
 - [AI 百宝箱 (AI Toolbox) · 指南](./guide.ai-toolbox.ops.md) `guide.ai-toolbox.ops`
 - [AI 竞技场使用 · 指南](./guide.arena.md) `guide.arena`
+- [同批运行容器恢复 · 指南](./guide.cds.runtime-recovery.md) `guide.cds.runtime-recovery`
 - [CDS Agent 管理员 · 指南](./guide.cds.agent.admin.md) `guide.cds.agent.admin`
 - [CDS Agent 上手助手 · 指南](./guide.cds.agent-onboarding-harness.md) `guide.cds.agent-onboarding-harness`
 - [CDS Agent 代码审查上手指南 · 指南](./guide.cds.agent.code-review-quickstart.md) `guide.cds.agent.code-review-quickstart`
