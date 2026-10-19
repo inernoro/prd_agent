@@ -44,3 +44,12 @@ it('skips rows whose metadata exceeded the cap without inventing modification he
  connections(q=>{q.emit('fields',[{name:'x'.repeat(300000)}]);q.emit('result',['discard'],0);q.emit('result',{affectedRows:1},1);q.emit('fields',[{name:'kept'}]);q.emit('result',['2'],2);q.emit('end');});
  const result=await executeSqlConsole(options);expect(result).toMatchObject({truncated:true,columns:['kept'],rows:[['2']]});expect(result.resultSets).toHaveLength(1);expect(result.output).toContain('1 row affected');expect(result.output).not.toContain('undefined');
 });
+
+it('releases mysql2 native aggregate arrays at each streaming metadata boundary',async()=>{
+ connections(q=>{const state=q as any;state._fields=[];state._rows=[];state._resultIndex=0;
+  for(let i=0;i<1000;i++){const fields=[{name:'column'.repeat(200)}];state._fields.push(fields);state._rows.push([]);state._resultIndex=state._fields.length-1;q.emit('fields',fields);q.emit('result',['value'],state._resultIndex);}
+  expect(state._fields).toHaveLength(1);expect(state._rows).toHaveLength(1);q.emit('end');
+ });
+ const result=await executeSqlConsole(options);expect(result.truncated).toBe(true);expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(256*1024);
+ expect(mocks.create.mock.calls[1][0]).toMatchObject({disableEval:true});
+});

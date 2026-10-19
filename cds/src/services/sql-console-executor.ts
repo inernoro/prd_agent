@@ -81,7 +81,7 @@ async function executeMysql(options: SqlConsoleOptions, collector: SqlResultColl
     ...tls,
     host: '127.0.0.1', port: options.port, user: options.user,
     password: options.password, database: options.database,
-    charset: 'utf8mb4', multipleStatements: true, rowsAsArray: true,
+    charset: 'utf8mb4', multipleStatements: true, rowsAsArray: true, disableEval: true,
     supportBigNumbers: true, bigNumberStrings: true, dateStrings: true,
     // Preserve JSON and numeric text instead of parsing it through JS numbers/objects.
     typeCast: (field, next) => field.type === 'JSON' ? field.string('utf8') : ['DECIMAL', 'NEWDECIMAL', 'LONGLONG', 'LONG', 'INT24', 'SHORT', 'TINY', 'FLOAT', 'DOUBLE'].includes(field.type) ? field.string() : next(),
@@ -108,6 +108,10 @@ async function executeMysql(options: SqlConsoleOptions, collector: SqlResultColl
     }, options.timeoutMs);
     const query = connection.query({ sql });
     query.on('fields', (fields: FieldPacket[] | undefined) => {
+      // Callback-free mysql2 streams still accumulate native result arrays. Only
+      // the current parser fields are needed; reset native aggregate slots/indices
+      // at each boundary (our protocol collector never relies on native indices).
+      Object.assign(query, { _fields: [fields], _rows: [[]], _resultIndex: 0 });
       current=collect&&fields?collector.fields(fields.map(field=>field.name)):undefined;
     });
     query.on('result', (row: unknown) => {
