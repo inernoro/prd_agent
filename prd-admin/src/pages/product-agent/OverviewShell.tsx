@@ -29,6 +29,8 @@ import {
 } from 'lucide-react';
 import { EChart } from '@/components/charts/EChart';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { toProductOptions } from './comboboxOptions';
 import { ProductAgentLayout, SectionShell, type NavItem } from './ProductAgentLayout';
 import { ProductsSection } from './ProductsSection';
 import { CustomerModule } from './CustomerModule';
@@ -810,20 +812,18 @@ function VersionOverviewSection({ isAdmin, products, canViewLegacy }: { isAdmin:
           <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
           <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</OverviewSubTab>
         </div>
-        <form className="mb-1 flex flex-wrap items-center gap-2" onSubmit={(event) => {
-          event.preventDefault();
-          if (!selectedProductId) return;
-          if (tab === 'release') setReleaseProductId(selectedProductId);
-          else navigate(`/product-agent/p/${selectedProductId}?tab=versions&versionTab=initiation&versionAction=apply`);
-        }}>
-          <select required value={selectedProductId} onChange={(event) => setSelectedProductId(event.target.value)} aria-label="选择要申领版本的产品" className="rounded-md border border-token-subtle bg-token-nested px-2 py-1.5 text-xs text-token-primary">
-            <option value="">选择产品</option>
-            {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
-          </select>
-          <button type="submit" className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25">
+        <div className="mb-1 flex flex-wrap items-center gap-2">
+          <div role="group" aria-label="选择要申领版本的产品" className="w-56">
+            <ItemSearchSelect value={selectedProductId} onChange={setSelectedProductId} options={toProductOptions(products)} placeholder="输入产品名称或编号搜索" clearOptionLabel="选择产品" uiSize="sm" countUnit="个产品" />
+          </div>
+          <button type="button" disabled={!selectedProductId} onClick={() => {
+            if (!selectedProductId) return;
+            if (tab === 'release') setReleaseProductId(selectedProductId);
+            else navigate(`/product-agent/p/${selectedProductId}?tab=versions&versionTab=initiation&versionAction=apply`);
+          }} className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25 disabled:opacity-40">
             <Plus size={14} />{tab === 'release' ? '申领正式版本号' : '申领内部版本号'}
           </button>
-        </form>
+        </div>
       </div>
       <div className="mb-4 flex flex-wrap gap-2 text-xs">
         {viewOptions.map(([key, label]) => (
