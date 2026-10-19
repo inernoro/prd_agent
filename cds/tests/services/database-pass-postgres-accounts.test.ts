@@ -45,7 +45,7 @@ it('refuses inherited PUBLIC SELECT on unaudited views and removes the generated
 it('rejects effective EXECUTE on connection-capable or untrusted routines and removes the role',async()=>{
  const {clients,log}=harness({}, {connector:true});await expect(changeDatabasePassAccount(target,account,true)).rejects.toThrow('外部连接');
  const check=clients[0].query.mock.calls.find(([sql])=>sql.includes('has_function_privilege'));
- expect(check?.[0]).toContain("d.classid='pg_proc'::regclass");expect(check?.[0]).toContain('NOT l.lanpltrusted');
+ expect(check?.[0]).toContain("d.classid='pg_proc'::regclass");expect(check?.[0]).toContain('NOT l.lanpltrusted');expect(check?.[0]).toContain("has_server_privilege($1,oid,'USAGE')");expect(check?.[0]).toContain("has_foreign_data_wrapper_privilege($1,oid,'USAGE')");
  expect(check?.[1][0]).toBe(account.username);expect(check?.[1][2]).toContain('dblink');
  expect(log).toContain('qa_deleted:DROP ROLE "'+account.username+'"');expect(log.some(sql=>sql.includes('GRANT SELECT'))).toBe(false);
 });
