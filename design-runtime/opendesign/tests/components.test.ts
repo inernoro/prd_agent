@@ -435,8 +435,16 @@ describe('wiring guards', () => {
 
   it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
     const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toContain('apk add --no-cache chromium=152.0.7977.82-r0');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_VERSION=155.0.8059.39');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_RELEASE=0');
+    expect(dockerfile).toContain('apk add --no-cache chromium="${DESIGN_RUNTIME_CHROMIUM_VERSION}-r${DESIGN_RUNTIME_CHROMIUM_RELEASE}"');
     expect(dockerfile).toContain('DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser');
+    expect(dockerfile).toContain('su open-design -s /bin/sh');
+    expect(dockerfile).toContain('scripts/image-browser-smoke.mjs');
+    const smoke = fs.readFileSync(path.join(SERVICE_ROOT, 'scripts/image-browser-smoke.mjs'), 'utf8');
+    expect(smoke).toContain("browser.version() !== expectedVersion");
+    expect(smoke).toContain("{ name: 'desktop', width: 1440, height: 900 }");
+    expect(smoke).toContain("{ name: 'mobile', width: 390, height: 844 }");
     expect(dockerfile).toContain('mkdir -p /home/open-design');
     expect(dockerfile).toContain('chown open-design:open-design /home/open-design');
     expect(dockerfile).toContain('chmod 0700 /home/open-design');
