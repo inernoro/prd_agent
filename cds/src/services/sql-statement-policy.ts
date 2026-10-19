@@ -106,6 +106,8 @@ export type SqlDialect = 'mysql' | 'postgres';
 export interface SqlScanOptions {
   /** 抹掉字符串字面量的内容（引号保留）。 */
   maskLiterals?: boolean;
+  /** Scan both standard and backslash-escaped strings on the read path; server modes vary. */
+  backslashEscapes?: boolean;
   /**
    * 语句所属方言。**不传 = 不知道 = 按「`#` 不是注释」处理**。
    *
@@ -137,7 +139,7 @@ export function stripSqlComments(sql: string, options: SqlScanOptions = {}): str
     if (quote) {
       const inLiteral = maskLiterals && ch !== quote;
       out += inLiteral ? ' ' : ch;
-      if (ch === '\\') { out += maskLiterals ? ' ' : (next ?? ''); i += 1; continue; }
+      if (ch === '\\' && options.backslashEscapes !== false) { out += maskLiterals ? ' ' : (next ?? ''); i += 1; continue; }
       if (ch === quote) quote = null;
       continue;
     }
@@ -148,7 +150,9 @@ export function stripSqlComments(sql: string, options: SqlScanOptions = {}): str
       out += ' ';
       continue;
     }
-    if ((ch === '-' && next === '-') || (ch === '#' && hashStartsComment)) {
+    // MySQL requires whitespace/control after --; otherwise it is subtraction, not a comment.
+    const dashComment = ch === '-' && next === '-' && (options.dialect === 'postgres' || /[\x00-\x20]/.test(sql[i + 2] ?? '\uffff'));
+    if (dashComment || (ch === '#' && hashStartsComment)) {
       const end = sql.indexOf('\n', i);
       i = end === -1 ? sql.length : end;
       out += ' ';
@@ -239,20 +243,19 @@ export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): s
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertNoHostEscape(body, dialect);
   if (/\/\*!/.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');
-  // 只读脚本逐条检查准入，执行仍由一个客户端连接完成。
-  if (isSqlScript(body, dialect)) {
-    if (/\/\*!/.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');
-    const statements = stripSqlComments(body, { maskLiterals: true, dialect }).split(';').filter((part) => part.trim());
-    for (const statement of statements) normalizeReadOnlyStatement(statement, dialect);
-    assertNoHostEscape(body, dialect);
-    return body;
-  }
-  const { head, kind } = classifySqlStatement(body, dialect);
-  if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
-  if (CONNECTION_SCOPED_HEADS.includes(head)) throw connectionScopedError(head);
-  if (isLockingRead(body, dialect)) throw lockingReadError();
-  if (kind !== 'read') {
-    throw new Error(`只读通道只接受 ${READ_STATEMENT_HEADS.join(' / ').toUpperCase()}；"${head || body.slice(0, 12)}" 属于写操作，请走写 SQL 通道。`);
+  // Server string modes vary (Postgres standard strings, MySQL NO_BACKSLASH_ESCAPES).
+  // Every interpretation must remain read-only; never let a masked quote hide COMMIT.
+  for (const backslashEscapes of [true, false]) {
+    const code=stripSqlComments(body,{maskLiterals:true,dialect,backslashEscapes});
+    const statements=code.split(';').filter(part=>part.trim());
+    if(!statements.length)throw new Error('SQL 不能为空');
+    for(const statement of statements){
+      const {head,kind}=classifySqlStatement(statement,dialect);
+      if(TRANSACTION_CONTROL_HEADS.includes(head))throw transactionControlError();
+      if(CONNECTION_SCOPED_HEADS.includes(head))throw connectionScopedError(head);
+      if(isLockingRead(statement,dialect))throw lockingReadError();
+      if(kind!=='read')throw new Error(`只读通道只接受 ${READ_STATEMENT_HEADS.join(' / ').toUpperCase()}；"${head || statement.slice(0,12)}" 属于写操作，请走写 SQL 通道。`);
+    }
   }
   assertNoHostEscape(body, dialect);
   return body;

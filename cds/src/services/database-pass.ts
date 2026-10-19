@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { DatabasePassAudit } from './database-pass-audit.js';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -34,8 +35,9 @@ export class DatabasePassService {
   private vaultError=false;
   private ready: Promise<void>;
   private readonly file: string;
+  private readonly auditLog: DatabasePassAudit;
   constructor(private directory:string, private target:(pass:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>)=>Promise<DatabasePassTarget>) {
-    this.file=path.join(directory,'passes.json');
+    this.file=path.join(directory,'passes.json');this.auditLog=new DatabasePassAudit(directory);
     if(fs.existsSync(this.file)){
       try{const stored=JSON.parse(fs.readFileSync(this.file,'utf8'));if(!Array.isArray(stored))throw new Error('invalid vault');this.passes=stored;}
       catch{this.vaultError=true;} // Preserve damaged evidence and disable issuance without taking down the control panel.
@@ -63,12 +65,10 @@ export class DatabasePassService {
     const dir=fs.openSync(this.directory,'r');try{fs.fsyncSync(dir);}finally{fs.closeSync(dir);}
   }
   private audit(pass:DatabasePass,event:string,details:Record<string,unknown>={}) {
-    fs.mkdirSync(this.directory,{recursive:true,mode:0o700});
-    const fd=fs.openSync(path.join(this.directory,'audit.jsonl'),'a',0o600);
-    try {fs.writeSync(fd,JSON.stringify({ts:new Date().toISOString(),passId:pass.id,projectId:pass.projectId,branchId:pass.branchId,resourceId:pass.resourceId,owner:pass.owner,username:pass.username,database:pass.database,event,...details})+'\n');fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+    this.auditLog.write({ts:new Date().toISOString(),passId:pass.id,projectId:pass.projectId,branchId:pass.branchId,resourceId:pass.resourceId,owner:pass.owner,username:pass.username,database:pass.database,event,...details});
   }
   private async recover(){for(const pass of this.passes)if(!['revoked','expired'].includes(pass.status))await this.revokeInternal(pass,'控制面重启，原通行证不自动续期');}
-  private async sweep(){for(const pass of this.passes)if((!['revoked','expired'].includes(pass.status)&&Date.parse(pass.expiresAt)<=Date.now())||pass.status==='cleanup-failed')await this.revokeInternal(pass,'通行证到期');}
+  private async sweep(){this.auditLog.flush();for(const pass of this.passes)if((!['revoked','expired'].includes(pass.status)&&Date.parse(pass.expiresAt)<=Date.now())||pass.status==='cleanup-failed')await this.revokeInternal(pass,'通行证到期');}
   private safe(pass:DatabasePass){const {secret,...publicPass}=pass;return {...publicPass,host:this.capability().host,permission:'read-only',review:'既有资源权限检查通过'};}
   async list(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;await this.sweep();return this.passes.filter(p=>p.owner===owner&&p.projectId===scope.projectId&&p.branchId===scope.branchId&&p.resourceId===scope.resourceId).map(p=>this.safe(p));}
   private find(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){const pass=this.passes.find(p=>p.id===id&&p.owner===owner&&p.projectId===scope.projectId&&p.branchId===scope.branchId&&p.resourceId===scope.resourceId);if(!pass)throw new Error('通行证不存在或不属于当前用户和资源');return pass;}
@@ -91,7 +91,7 @@ export class DatabasePassService {
       const certs=this.certificates();
       const gateway=await openDatabasePassGateway({target,username:pass.username,bindIp:resourceTcpAccessConfig().bindIp,port:0,allowlist:pass.allowlist,...certs,startInactive:true,audit:(event,details)=>this.audit(pass,event,details)});
       this.gateways.set(id,gateway);pass.port=gateway.port;
-      if(pass.runtime!=='mysql')pass.tlsCa=certs.cert.toString();
+      pass.tlsCa=certs.cert.toString();
       pass.status='prepared';this.persist();this.audit(pass,'account-prepared');return this.safe(pass);
     } catch {await this.reclaim(pass,'签发失败');throw new Error('签发未完成，入口未放行。请检查数据库账号管理权限、TLS和审计存储后重试。');}
     });
@@ -101,7 +101,7 @@ export class DatabasePassService {
   async credentials(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){
     await this.ready;await this.sweep();const pass=this.find(id,owner,scope);
     if(!['prepared','active'].includes(pass.status))throw new Error('通行证已失效，不能复制凭据');
-    const target=await this.boundTarget(pass),ca=pass.runtime==='mysql'?target.mysqlCa:pass.tlsCa;
+    await this.boundTarget(pass);const ca=pass.tlsCa;
     if(!ca)throw new Error('TLS证书尚未就绪');
     this.audit(pass,'credentials-copied');
     return {username:pass.username,password:unsealToken(pass.secret),database:pass.database,host:this.capability().host,port:pass.port||null,tlsRequired:true,tlsCa:ca,authSource:pass.runtime==='mongodb'?pass.database:undefined,expiresAt:pass.status==='active'?pass.expiresAt:null};
@@ -137,5 +137,5 @@ export class DatabasePassService {
     }catch{try{this.audit(pass,'account-cleanup-failed',{reason});}catch{/* already closed */}}
   }
   async revoke(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){await this.ready;const pass=this.find(id,owner,scope);await this.revokeInternal(pass,'用户撤销');return this.safe(pass);}
-  async events(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;const file=path.join(this.directory,'audit.jsonl');if(!fs.existsSync(file))return [];return fs.readFileSync(file,'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)).filter(e=>e.owner===owner&&e.projectId===scope.projectId&&e.branchId===scope.branchId&&e.resourceId===scope.resourceId).slice(-200).reverse();}
+  async events(scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>,owner:string){await this.ready;this.auditLog.flush();return this.auditLog.read().filter(e=>e.owner===owner&&e.projectId===scope.projectId&&e.branchId===scope.branchId&&e.resourceId===scope.resourceId).slice(-200).reverse();}
 }

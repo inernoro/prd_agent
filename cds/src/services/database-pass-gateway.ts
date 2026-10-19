@@ -1,5 +1,7 @@
 import net, { type Socket } from 'node:net';
 import tls from 'node:tls';
+import { relayMysqlPass } from './database-pass-mysql.js';
+import { relayMongoPass } from './database-pass-mongo.js';
 import type { DatabasePassTarget } from './database-pass-accounts.js';
 
 /** PostgreSQL's decrypted startup packet must bind both database and generated user. */
@@ -29,16 +31,20 @@ export async function openDatabasePassGateway(input: {
   const accept = (client: Socket) => {
     const ip=(client.remoteAddress || '').replace(/^::ffff:/,'');
     try {
-      if(closed || !active || !block.check(ip,'ipv4')) { input.audit('connection-denied',{ip,reason:!active?'通行证尚未放行':'IP不在白名单'});client.destroy();return; }
+      if(closed || !active || sockets.size>=128 || !block.check(ip,'ipv4')) { input.audit('connection-denied',{ip,reason:!active?'通行证尚未放行':'IP不在白名单'});client.destroy();return; }
       input.audit('connection-accepted',{ip});
     } catch { client.destroy();return; } // An unavailable audit sink must not permit a new connection.
     remember(client);
     client.once('close',()=>{ try{input.audit('connection-closed',{ip});}catch{/* network is already closed */} });
-    if(input.target.runtime==='mysql') { pipe(client);return; } // Native MySQL TLS is required by its generated account.
+    const denied=()=>{try{input.audit('authentication-denied',{ip,reason:'账号或数据库与通行证不匹配，或客户端协议不受支持'});}finally{client.destroy();}};
+    if(input.target.runtime==='mysql') {
+      client.setTimeout(10000,()=>client.destroy());
+      void relayMysqlPass(client,{target:input.target,username:input.username,key:input.key,cert:input.cert,remember,denied}).catch(()=>client.destroy());return;
+    }
     const encrypted = input.target.runtime==='postgres'
       ? (socket: Socket) => new tls.TLSSocket(socket,{isServer:true,secureContext:tls.createSecureContext({key:input.key,cert:input.cert,minVersion:'TLSv1.2'})})
       : undefined;
-    if(input.target.runtime==='mongodb') { pipe(client);return; } // client is the TLS socket returned by tls.createServer.
+    if(input.target.runtime==='mongodb') {relayMongoPass(client,{port:input.target.port,database:input.target.database,username:input.username,remember,denied});return;}
     let greeting=Buffer.alloc(0);
     client.setTimeout(5000,()=>client.destroy());
     const sslRequest=(chunk:Buffer)=>{
@@ -54,7 +60,7 @@ export async function openDatabasePassGateway(input: {
         if(startup.length>8192){secured.destroy();return;}
         if(startup.length<4 || startup.length<startup.readUInt32BE(0))return;
         secured.removeListener('data',onStartup);
-        if(!postgresPassStartup(startup,input.target.database,input.username)){secured.destroy();return;}
+        if(!postgresPassStartup(startup,input.target.database,input.username)){denied();secured.destroy();return;}
         secured.setTimeout(0);client.setTimeout(0);pipe(secured,startup);
       };
       secured.on('data',onStartup);

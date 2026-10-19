@@ -78,8 +78,11 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
   const db = new MongoClient(`mongodb://127.0.0.1:${target.port}/?directConnection=true`, { auth: { username: target.adminUser, password: target.adminPassword }, authSource: 'admin', serverSelectionTimeoutMS: 5000 });
   try{await db.connect();}catch(error){await db.close().catch(()=>{});throw error;}
   try {
-    if (create) await db.db(target.database).command({ createUser: account.username, pwd: account.password, roles: [{ role: 'read', db: target.database }] });
-    else {
+    if (create) {
+      const config=await db.db('admin').command({getCmdLineOpts:1});
+      if(config.parsed?.security?.authorization!=='enabled'&&!config.parsed?.security?.keyFile)throw new Error('MongoDB必须启用身份认证，才能签发只读通行证');
+      await db.db(target.database).command({ createUser: account.username, pwd: account.password, roles: [{ role: 'read', db: target.database }] });
+    } else {
       try { await db.db(target.database).command({ dropUser: account.username }); }
       catch (error) { if ((error as { code?: number }).code !== 11) throw error; }
       // The gateway closes both sockets before revocation. dropUser invalidates the account;

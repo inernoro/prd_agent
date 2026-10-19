@@ -5793,7 +5793,8 @@ function stripSqlCommentsAndLiterals(sql: string, hashStartsComment = false): st
       out += ' ';
       continue;
     }
-    if ((ch === '-' && next === '-') || (ch === '#' && hashStartsComment)) {
+    const dashComment = ch === '-' && next === '-' && (!hashStartsComment || /[\x00-\x20]/.test(sql[i + 2] ?? '\uffff'));
+    if (dashComment || (ch === '#' && hashStartsComment)) {
       const end = sql.indexOf('\n', i);
       i = end === -1 ? sql.length : end;
       out += ' ';
