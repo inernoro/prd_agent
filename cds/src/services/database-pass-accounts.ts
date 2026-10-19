@@ -28,8 +28,10 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
       if (create) {
         // A database-wide SELECT also authorizes SECURITY DEFINER views, which may
         // expose other databases. Snapshot only current base tables, never views.
-        const [tables] = await db.query<any[]>("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME", [target.database]);
+        const [tables] = await db.query<any[]>("SELECT TABLE_NAME, ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA=? AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME", [target.database]);
         if (!tables.length) throw new Error('此库没有可授权的基本表，暂不能签发只读通行证；视图需要单独权限审查。');
+        const localEngines=new Set(['INNODB','MYISAM','MEMORY','ARIA','CSV','ARCHIVE']);
+        if(tables.some(table=>!localEngines.has(String(table.ENGINE||'').toUpperCase())))throw new Error('此库含未经审查的远程或自定义存储引擎表，暂不能签发隔离只读账号。');
         const quote = (value: string) => '`' + value.replaceAll('`','``') + '`';
         await db.query('CREATE USER ?@\'%\' IDENTIFIED BY ? REQUIRE SSL WITH MAX_USER_CONNECTIONS 10', [account.username, account.password]);
         try {
@@ -69,6 +71,11 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
         try {
           const publicWrite=await db.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND c.relkind IN ('r','p','v','m','f') AND has_table_privilege($1,c.oid,'INSERT,UPDATE,DELETE,TRUNCATE') UNION ALL SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' AND nspname<>'information_schema' AND has_schema_privilege($1,oid,'CREATE') UNION ALL SELECT 1 WHERE has_database_privilege($1,current_database(),'CREATE') LIMIT 1",[account.username]);
           if(publicWrite.rowCount)throw new Error('数据库PUBLIC权限允许写入，不能签发隔离只读账号');
+          // Invoker routines can still make outbound connections using supplied
+          // credentials. Check effective EXECUTE, extension membership (even renamed
+          // routines), and untrusted languages before handing out any credential.
+          const connectors=await db.query("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang LEFT JOIN pg_depend d ON d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.refclassid='pg_extension'::regclass AND d.deptype='e' LEFT JOIN pg_extension e ON e.oid=d.refobjid WHERE has_function_privilege($1,p.oid,'EXECUTE') AND (e.extname::text=ANY($3::text[]) OR right(e.extname::text,4)='_fdw' OR ((n.nspname NOT IN ('pg_catalog','information_schema') OR e.oid IS NOT NULL) AND NOT l.lanpltrusted AND l.lanname<>'internal' AND NOT (l.lanname='c' AND COALESCE(e.extname::text,'')=ANY($2::text[])))) LIMIT 1",[account.username,['plpgsql','pgcrypto','uuid-ossp','hstore','citext','ltree','pg_trgm','unaccent','fuzzystrmatch','btree_gin','btree_gist'],['dblink','http','pg_net']]);
+          if(connectors.rowCount)throw new Error('此库开放了外部连接或未经审查的本地代码函数，请管理员收紧 EXECUTE 权限后再申请只读通行证。');
           const inheritedViews=await db.query("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema' AND c.relkind IN ('v','m') AND has_table_privilege($1,c.oid,'SELECT') LIMIT 1",[account.username]);
           if(inheritedViews.rowCount)throw new Error('数据库 PUBLIC 权限允许读取未经审查的视图，暂不能签发隔离只读账号。');
           await db.query(`GRANT CONNECT ON DATABASE ${ident(target.database)} TO ${ident(account.username)}`);

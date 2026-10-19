@@ -5,10 +5,10 @@ import { changeDatabasePassAccount } from '../../src/services/database-pass-acco
 const target={runtime:'postgres' as const,port:5432,database:'qa_deleted',adminUser:'admin',adminPassword:'private'};
 const account={username:'cdsp_0123456789abcdef0123',password:'temporary'};
 const dbError=(code:string)=>Object.assign(new Error('connection failed'),{code});
-function harness(failures:Record<string,string>={}, catalog:{schema?:string;table?:string;inheritedView?:boolean}={}){
+function harness(failures:Record<string,string>={}, catalog:{schema?:string;table?:string;inheritedView?:boolean;connector?:boolean}={}){
  const clients:Array<{database:string;connect:ReturnType<typeof vi.fn>;query:ReturnType<typeof vi.fn>;end:ReturnType<typeof vi.fn>}>=[];const log:string[]=[];
  mocks.create.mockImplementation(({database}:{database:string})=>{
-  const client={database,connect:vi.fn(async()=>{log.push('connect:'+database);if(failures[database])throw dbError(failures[database]);}),query:vi.fn(async(sql:string)=>{log.push(database+':'+sql);if(sql.startsWith('SELECT oid, nspname'))return {rowCount:1,rows:[{oid:42,nspname:catalog.schema||'public'}]};if(sql.startsWith('SELECT relname'))return {rowCount:1,rows:[{relname:catalog.table||'items'}]};if(sql.includes("c.relkind IN ('v','m')"))return {rowCount:catalog.inheritedView?1:0,rows:catalog.inheritedView?[{}]:[]};if(sql.includes('FROM pg_roles'))return {rowCount:1,rows:[{}]};if(sql.includes('quote_literal'))return {rowCount:1,rows:[{value:"'temporary'"}]};return {rowCount:0,rows:[]};}),end:vi.fn(async()=>{})};clients.push(client);return client;
+  const client={database,connect:vi.fn(async()=>{log.push('connect:'+database);if(failures[database])throw dbError(failures[database]);}),query:vi.fn(async(sql:string)=>{log.push(database+':'+sql);if(sql.includes('has_function_privilege'))return {rowCount:catalog.connector?1:0,rows:catalog.connector?[{}]:[]};if(sql.startsWith('SELECT oid, nspname'))return {rowCount:1,rows:[{oid:42,nspname:catalog.schema||'public'}]};if(sql.startsWith('SELECT relname'))return {rowCount:1,rows:[{relname:catalog.table||'items'}]};if(sql.includes("c.relkind IN ('v','m')"))return {rowCount:catalog.inheritedView?1:0,rows:catalog.inheritedView?[{}]:[]};if(sql.includes('FROM pg_roles'))return {rowCount:1,rows:[{}]};if(sql.includes('quote_literal'))return {rowCount:1,rows:[{value:"'temporary'"}]};return {rowCount:0,rows:[]};}),end:vi.fn(async()=>{})};clients.push(client);return client;
  });return {clients,log};
 }
 beforeEach(()=>{vi.stubEnv('CDS_PREVIEW_INSTANCE','0');mocks.create.mockReset();});afterEach(()=>vi.unstubAllEnvs());
@@ -39,5 +39,13 @@ it('grants PostgreSQL base tables individually, excluding ordinary/materialized/
 });
 it('refuses inherited PUBLIC SELECT on unaudited views and removes the generated role',async()=>{
  const {log}=harness({}, {inheritedView:true});await expect(changeDatabasePassAccount(target,account,true)).rejects.toThrow('未经审查的视图');
+ expect(log).toContain('qa_deleted:DROP ROLE "'+account.username+'"');expect(log.some(sql=>sql.includes('GRANT SELECT'))).toBe(false);
+});
+
+it('rejects effective EXECUTE on connection-capable or untrusted routines and removes the role',async()=>{
+ const {clients,log}=harness({}, {connector:true});await expect(changeDatabasePassAccount(target,account,true)).rejects.toThrow('外部连接');
+ const check=clients[0].query.mock.calls.find(([sql])=>sql.includes('has_function_privilege'));
+ expect(check?.[0]).toContain("d.classid='pg_proc'::regclass");expect(check?.[0]).toContain('NOT l.lanpltrusted');
+ expect(check?.[1][0]).toBe(account.username);expect(check?.[1][2]).toContain('dblink');
  expect(log).toContain('qa_deleted:DROP ROLE "'+account.username+'"');expect(log.some(sql=>sql.includes('GRANT SELECT'))).toBe(false);
 });

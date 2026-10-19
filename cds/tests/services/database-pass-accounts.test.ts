@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 const mocks=vi.hoisted(()=>({connect:vi.fn(),query:vi.fn(),end:vi.fn()}));
 vi.mock('mysql2/promise',()=>({default:{createConnection:mocks.connect}}));
 import { changeDatabasePassAccount } from '../../src/services/database-pass-accounts.js';
-beforeEach(()=>{vi.stubEnv('CDS_PREVIEW_INSTANCE','0');mocks.query.mockReset().mockImplementation(async(sql:string)=>sql.includes('information_schema.TABLES')?[[{TABLE_NAME:'items'}]]:[[]]);mocks.end.mockReset().mockResolvedValue(undefined);mocks.connect.mockReset().mockResolvedValue({query:mocks.query,end:mocks.end});});
+beforeEach(()=>{vi.stubEnv('CDS_PREVIEW_INSTANCE','0');mocks.query.mockReset().mockImplementation(async(sql:string)=>sql.includes('information_schema.TABLES')?[[{TABLE_NAME:'items',ENGINE:'InnoDB'}]]:[[]]);mocks.end.mockReset().mockResolvedValue(undefined);mocks.connect.mockReset().mockResolvedValue({query:mocks.query,end:mocks.end});});
 afterEach(()=>vi.unstubAllEnvs());
 it('verifies the configured MySQL CA without requiring its server certificate to name loopback',async()=>{
   await changeDatabasePassAccount({runtime:'mysql',port:3306,database:'qa',adminUser:'root',adminPassword:'private',mysqlCa:'configured CA'}, {username:'cdsp_0123456789abcdef0123',password:'temporary'},true);
@@ -25,7 +25,7 @@ it('accepts an explicitly resolved empty administrator password without substitu
 });
 
 it('grants only enumerated base tables with escaped identifiers, never database-wide SELECT or views',async()=>{
-  mocks.query.mockImplementation(async(sql:string)=>sql.includes('information_schema.TABLES')?[[{TABLE_NAME:'items'},{TABLE_NAME:'odd`table'}]]:[[]]);
+  mocks.query.mockImplementation(async(sql:string)=>sql.includes('information_schema.TABLES')?[[{TABLE_NAME:'items',ENGINE:'InnoDB'},{TABLE_NAME:'odd`table',ENGINE:'InnoDB'}]]:[[]]);
   await changeDatabasePassAccount({runtime:'mysql',port:3306,database:'qa',adminUser:'root',adminPassword:'private',mysqlCa:'CA'}, {username:'cdsp_0123456789abcdef0123',password:'temporary'},true);
   expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("TABLE_TYPE='BASE TABLE'"),['qa']);
   const grants=mocks.query.mock.calls.filter(([sql])=>sql.startsWith('GRANT'));
@@ -39,10 +39,16 @@ it('refuses view-only or empty databases before creating an unusable account',as
 });
 it('drops its generated account if any base-table grant fails',async()=>{
   mocks.query.mockImplementation(async(sql:string)=>{
-    if(sql.includes('information_schema.TABLES'))return [[{TABLE_NAME:'items'}]];
+    if(sql.includes('information_schema.TABLES'))return [[{TABLE_NAME:'items',ENGINE:'InnoDB'}]];
     if(sql.startsWith('GRANT'))throw new Error('table changed');
     return [[]];
   });
   await expect(changeDatabasePassAccount({runtime:'mysql',port:3306,database:'qa',adminUser:'root',adminPassword:'private',mysqlCa:'CA'}, {username:'cdsp_0123456789abcdef0123',password:'temporary'},true)).rejects.toThrow('table changed');
   expect(mocks.query).toHaveBeenCalledWith("DROP USER IF EXISTS ?@'%'",['cdsp_0123456789abcdef0123']);
+});
+
+it.each(['FEDERATED','CONNECT','SPIDER','MRG_MYISAM','unknown'])('refuses unaudited %s storage engines before account creation',async engine=>{
+ mocks.query.mockImplementation(async(sql:string)=>sql.includes('information_schema.TABLES')?[[{TABLE_NAME:'remote',ENGINE:engine}]]:[[]]);
+ await expect(changeDatabasePassAccount({runtime:'mysql',port:3306,database:'qa',adminUser:'root',adminPassword:'private',mysqlCa:'CA'}, {username:'cdsp_0123456789abcdef0123',password:'temporary'},true)).rejects.toThrow('存储引擎');
+ expect(mocks.query.mock.calls.some(([sql])=>sql.startsWith('CREATE USER'))).toBe(false);
 });
