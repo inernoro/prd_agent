@@ -5,7 +5,7 @@ import path from 'node:path';
 import { DatabasePassService, databasePassClientIp } from '../../src/services/database-pass.js';
 import { postgresPassStartup } from '../../src/services/database-pass-gateway.js';
 
-const mocks=vi.hoisted(()=>({account:vi.fn(),gateway:vi.fn(),close:vi.fn()}));
+const mocks=vi.hoisted(()=>({account:vi.fn(),gateway:vi.fn(),close:vi.fn(),activate:vi.fn()}));
 vi.mock('../../src/services/database-pass-accounts.js',()=>({changeDatabasePassAccount:mocks.account}));
 vi.mock('../../src/services/database-pass-gateway.js',async original=>({...await original<object>(),openDatabasePassGateway:mocks.gateway}));
 vi.mock('../../src/services/resource-tcp-access.js',()=>({resourceTcpAccessConfig:()=>({enabled:true,host:'192.0.2.20',bindIp:'127.0.0.1'})}));
@@ -14,7 +14,7 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
   let dir:string;
   const scope={projectId:'qa',branchId:'qa-main',resourceId:'infra:pg'};
   const target=async()=>({runtime:'postgres' as const,port:12345,database:'qa_items',adminUser:'admin',adminPassword:'not-exported'});
-  beforeEach(()=>{dir=fs.mkdtempSync(path.join(os.tmpdir(),'cds-pass-'));vi.stubEnv('CDS_DATABASE_PASS_ENABLED','1');vi.stubEnv('CDS_SECRET_KEY','test-key-for-encrypted-pass-storage');vi.stubEnv('CDS_PREVIEW_INSTANCE','0');mocks.account.mockReset().mockResolvedValue(undefined);mocks.close.mockReset();mocks.gateway.mockReset().mockResolvedValue({port:43210,close:mocks.close});});
+  beforeEach(()=>{dir=fs.mkdtempSync(path.join(os.tmpdir(),'cds-pass-'));vi.stubEnv('CDS_DATABASE_PASS_ENABLED','1');vi.stubEnv('CDS_SECRET_KEY','test-key-for-encrypted-pass-storage');vi.stubEnv('CDS_PREVIEW_INSTANCE','0');mocks.account.mockReset().mockResolvedValue(undefined);mocks.close.mockReset();mocks.activate.mockReset();mocks.gateway.mockReset().mockResolvedValue({port:43210,activate:mocks.activate,close:mocks.close});});
   afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();fs.rmSync(dir,{recursive:true,force:true});});
   it('默认30分钟、每证独立账号、加密落盘；复制不提前放行',async()=>{
     const service=new DatabasePassService(dir,target);
@@ -25,17 +25,28 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     expect(credential.password.length).toBeGreaterThan(24);expect(credential.port).toBeGreaterThan(0);expect(credential.tlsRequired).toBe(true);
     expect(fs.readFileSync(path.join(dir,'passes.json'),'utf8')).not.toContain(credential.password);
     expect(fs.readFileSync(path.join(dir,'audit.jsonl'),'utf8')).not.toContain(credential.password);
-    expect(mocks.gateway).not.toHaveBeenCalled();expect(first).not.toHaveProperty('secret');
+    expect(mocks.gateway).toHaveBeenCalledTimes(2);expect(mocks.activate).not.toHaveBeenCalled();expect(first).not.toHaveProperty('secret');
     await service.revoke(first.id,'human:one',scope);await service.revoke(second.id,'human:one',scope);
   });
   it('放行使用复制的原地址；单次期限从激活开始，并回收账号',async()=>{
     const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32'],1);
     const activated=await service.activate(pass.id,'one',scope);
-    expect(mocks.gateway.mock.calls[0][0].port).toBe(pass.port);
+    expect(mocks.gateway.mock.calls[0][0]).toMatchObject({port:0,startInactive:true});expect(activated.port).toBe(pass.port);expect(mocks.activate).toHaveBeenCalledOnce();
     expect(Date.parse(activated.expiresAt)-Date.parse(activated.activatedAt!)).toBe(60000);
     await service.revoke(pass.id,'one',scope);
     expect(mocks.close).toHaveBeenCalled();expect(mocks.account.mock.calls.at(-1)?.[2]).toBe(false);
     await expect(service.credentials(pass.id,'one',scope)).rejects.toThrow('失效');
+  });
+  it('新证书轮换不会改变已复制通行证的CA或重新绑定端口',async()=>{
+    const service=new DatabasePassService(dir,target),first=await service.prepare(scope,'one',['192.0.2.10/32']);
+    const before=await service.credentials(first.id,'one',scope);
+    fs.rmSync(path.join(dir,'tls'),{recursive:true});
+    const second=await service.prepare(scope,'one',['192.0.2.10/32']);
+    const after=await service.credentials(first.id,'one',scope);
+    expect(after.tlsCa).toBe(before.tlsCa);expect(after.port).toBe(before.port);
+    expect((await service.credentials(second.id,'one',scope)).tlsCa).not.toBe(before.tlsCa);
+    await service.activate(first.id,'one',scope);expect(mocks.gateway).toHaveBeenCalledTimes(2);
+    await service.revoke(first.id,'one',scope);await service.revoke(second.id,'one',scope);
   });
   it('签发记录损坏时停止新签发，不覆盖原始记录或影响控制面启动',async()=>{
     fs.writeFileSync(path.join(dir,'passes.json'),'{broken');
@@ -56,15 +67,12 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     await preparation;expect((await revocation).status).toBe('revoked');
     expect((await service.list(scope,'one'))[0].status).toBe('revoked');
     expect(mocks.account.mock.calls.map(call=>call[2])).toEqual([true,false]);
-    expect(mocks.gateway).not.toHaveBeenCalled();
+    expect(mocks.activate).not.toHaveBeenCalled();
   });
   it('撤销与放行并发时，撤销等待放行完成并关闭刚建立的入口',async()=>{
     const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32']);
-    let finish:()=>void=()=>{};
-    let started:()=>void=()=>{};const opening=new Promise<void>(resolve=>{started=resolve;});
-    mocks.gateway.mockImplementation(()=>{started();return new Promise(resolve=>{finish=()=>resolve({port:pass.port,close:mocks.close});});});
-    const activation=service.activate(pass.id,'one',scope);await opening;
-    const revocation=service.revoke(pass.id,'one',scope);finish();
+    const activation=service.activate(pass.id,'one',scope);
+    const revocation=service.revoke(pass.id,'one',scope);
     await activation;expect((await revocation).status).toBe('revoked');
     expect(mocks.close).toHaveBeenCalledOnce();expect(mocks.account.mock.calls.at(-1)?.[2]).toBe(false);
     await expect(service.activate(pass.id,'one',scope)).rejects.toThrow('失效');
@@ -98,11 +106,11 @@ describe('数据库通行证：权限、审计、复制与到期回收',()=>{
     fs.rmSync(path.join(dir,'audit.jsonl'),{recursive:true});
     mocks.account.mockImplementation(async(_target,_account,create)=>{if(create)fs.mkdirSync(path.join(dir,'passes.json.tmp'));});
     await expect(service.prepare(scope,'one',['192.0.2.10/32'])).rejects.toThrow();
-    expect(mocks.account.mock.calls.at(-1)?.[2]).toBe(false);expect(mocks.gateway).not.toHaveBeenCalled();
+    expect(mocks.account.mock.calls.at(-1)?.[2]).toBe(false);expect(mocks.activate).not.toHaveBeenCalled();expect(mocks.close).toHaveBeenCalled();
   });
   it('控制面重启不自动重开旧证；清理失败状态不冒充回收成功',async()=>{
     const service=new DatabasePassService(dir,target),pass=await service.prepare(scope,'one',['192.0.2.10/32']);
-    const recovered=new DatabasePassService(dir,target);expect((await recovered.list(scope,'one'))[0].status).toBe('revoked');expect(mocks.gateway).not.toHaveBeenCalled();
+    const recovered=new DatabasePassService(dir,target);expect((await recovered.list(scope,'one'))[0].status).toBe('revoked');expect(mocks.activate).not.toHaveBeenCalled();
     mocks.account.mockResolvedValue(undefined);const fresh=await service.prepare(scope,'one',['192.0.2.10/32']);await service.activate(fresh.id,'one',scope);
     mocks.account.mockRejectedValue(new Error('offline'));const revoked=await service.revoke(fresh.id,'one',scope);expect(revoked.status).toBe('cleanup-failed');expect(mocks.close).toHaveBeenCalled();
     expect(pass.id).not.toBe(fresh.id);

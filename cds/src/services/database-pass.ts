@@ -1,21 +1,20 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { isIP } from 'node:net';
-import net from 'node:net';
 import { sealToken, unsealToken, isSealedSecret, isSealingEnabled, type SealedSecret } from '../infra/secret-seal.js';
 import { isPreviewInstance } from './preview-instance.js';
 import { resourceTcpAccessConfig } from './resource-tcp-access.js';
 import { changeDatabasePassAccount, type DatabasePassTarget } from './database-pass-accounts.js';
 import { openDatabasePassGateway } from './database-pass-gateway.js';
+import { databasePassCertificates } from './database-pass-certificates.js';
 
 export interface DatabasePass {
   id: string; projectId: string; branchId: string; resourceId: string; owner: string;
   username: string; database: string; runtime: DatabasePassTarget['runtime']; targetPort: number;
   allowlist: string[]; ttlMinutes: number; status: 'preparing'|'prepared'|'active'|'revoked'|'expired'|'cleanup-failed';
   createdAt: string; expiresAt: string; activatedAt?: string; port?: number;
-  secret: SealedSecret; reason?: string;
+  secret: SealedSecret; reason?: string; tlsCa?: string;
 }
 
 /** Only the authenticated peer, or explicitly trusted local reverse proxy, can supply the default IP. */
@@ -30,7 +29,7 @@ export function databasePassClientIp(req: { socket: { remoteAddress?: string }; 
 
 export class DatabasePassService {
   private passes: DatabasePass[]=[];
-  private gateways=new Map<string,{close:()=>void}>();
+  private gateways=new Map<string,{port:number;activate:()=>void;close:()=>void}>();
   private operations=new Map<string,Promise<unknown>>();
   private vaultError=false;
   private ready: Promise<void>;
@@ -88,30 +87,21 @@ export class DatabasePassService {
     try {
       this.audit(pass,'review-approved',{permission:'read-only',allowlist,ttlMinutes});
       await changeDatabasePassAccount(target,{username:pass.username,password},true);
-      // Choose the address before copying; activation reuses this exact port or fails closed.
-      const reservation=net.createServer();
-      await new Promise<void>((resolve,reject)=>{reservation.once('error',reject);reservation.listen(0,resourceTcpAccessConfig().bindIp,resolve);});
-      pass.port=(reservation.address() as net.AddressInfo).port;
-      await new Promise<void>(resolve=>reservation.close(()=>resolve()));
+      // Keep the actual listener owned until activation; inactive gateways never proxy to the database.
+      const certs=this.certificates();
+      const gateway=await openDatabasePassGateway({target,username:pass.username,bindIp:resourceTcpAccessConfig().bindIp,port:0,allowlist:pass.allowlist,...certs,startInactive:true,audit:(event,details)=>this.audit(pass,event,details)});
+      this.gateways.set(id,gateway);pass.port=gateway.port;
+      if(pass.runtime!=='mysql')pass.tlsCa=certs.cert.toString();
       pass.status='prepared';this.persist();this.audit(pass,'account-prepared');return this.safe(pass);
     } catch {await this.reclaim(pass,'签发失败');throw new Error('签发未完成，入口未放行。请检查数据库账号管理权限、TLS和审计存储后重试。');}
     });
   }
-  private certificates(){
-    const directory=path.join(this.directory,'tls');fs.mkdirSync(directory,{recursive:true,mode:0o700});
-    const key=path.join(directory,'key.pem'),cert=path.join(directory,'cert.pem');
-    if(!fs.existsSync(key)||!fs.existsSync(cert)){
-      const host=this.capability().host;
-      execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-days','365','-subj','/CN=CDS temporary database gateway','-addext','subjectAltName=IP:'+host,'-keyout',key,'-out',cert],{stdio:'ignore'});
-      fs.chmodSync(key,0o600);
-    }
-    return {key:fs.readFileSync(key),cert:fs.readFileSync(cert)};
-  }
+  private certificates(){return databasePassCertificates(path.join(this.directory,'tls'),this.capability().host);}
   private async boundTarget(pass:DatabasePass){const target=await this.target(pass);if(target.port!==pass.targetPort||target.database!==pass.database||target.runtime!==pass.runtime)throw new Error('数据库资源身份发生变化，原通行证不可继续使用；入口关闭后需核对原库账号回收');return target;}
   async credentials(id:string,owner:string,scope:Pick<DatabasePass,'projectId'|'branchId'|'resourceId'>){
     await this.ready;await this.sweep();const pass=this.find(id,owner,scope);
     if(!['prepared','active'].includes(pass.status))throw new Error('通行证已失效，不能复制凭据');
-    const target=await this.boundTarget(pass),ca=pass.runtime==='mysql'?target.mysqlCa:this.certificates().cert.toString();
+    const target=await this.boundTarget(pass),ca=pass.runtime==='mysql'?target.mysqlCa:pass.tlsCa;
     if(!ca)throw new Error('TLS证书尚未就绪');
     this.audit(pass,'credentials-copied');
     return {username:pass.username,password:unsealToken(pass.secret),database:pass.database,host:this.capability().host,port:pass.port||null,tlsRequired:true,tlsCa:ca,authSource:pass.runtime==='mongodb'?pass.database:undefined,expiresAt:pass.status==='active'?pass.expiresAt:null};
@@ -121,12 +111,13 @@ export class DatabasePassService {
       if(pass.status==='active')return this.safe(pass);
       if(pass.status!=='prepared'||Date.parse(pass.expiresAt)<=Date.now())throw new Error('通行证已失效，请重新申请');
       if(!this.capability().enabled)throw new Error('实例直连配置已关闭');
-      const target=await this.boundTarget(pass),tcp=resourceTcpAccessConfig(),certs=this.certificates();
+      await this.boundTarget(pass);
+      const gateway=this.gateways.get(id);
+      if(!gateway)throw new Error('预留入口已失效，请撤销后重新申请');
       this.audit(pass,'activation-approved',{allowlist:pass.allowlist,ttlMinutes:pass.ttlMinutes});
-      const gateway=await openDatabasePassGateway({target,username:pass.username,bindIp:tcp.bindIp,port:pass.port!,allowlist:pass.allowlist,...certs,audit:(event,details)=>this.audit(pass,event,details)});
       const activatedAt=Date.now();
-      this.gateways.set(id,gateway);pass.port=gateway.port;pass.activatedAt=new Date(activatedAt).toISOString();pass.expiresAt=new Date(activatedAt+pass.ttlMinutes*60_000).toISOString();pass.status='active';
-      try{this.persist();this.audit(pass,'activated',{port:pass.port,expiresAt:pass.expiresAt});}
+      pass.port=gateway.port;pass.activatedAt=new Date(activatedAt).toISOString();pass.expiresAt=new Date(activatedAt+pass.ttlMinutes*60_000).toISOString();pass.status='active';
+      try{this.persist();this.audit(pass,'activated',{port:pass.port,expiresAt:pass.expiresAt});gateway.activate();}
       catch(error){await this.reclaim(pass,'审计或持久化失败');throw error;}
       const timer=setTimeout(()=>{void this.revokeInternal(pass,'通行证到期').catch(()=>{});},Math.max(0,Date.parse(pass.expiresAt)-Date.now()));timer.unref();
       return this.safe(pass);

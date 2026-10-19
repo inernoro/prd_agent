@@ -21,8 +21,9 @@ export async function changeDatabasePassAccount(target: DatabasePassTarget, acco
   if (!target.port || !target.database || !target.adminUser || !target.adminPassword) throw new Error('资源缺少临时账号管理配置');
   if (target.runtime === 'mysql') {
     if(create && !target.mysqlCa)throw new Error('MySQL尚未提供TLS CA证书，不能签发直连通行证');
-    // Prove an actual certificate-verified TLS handshake. have_ssl was removed in MySQL 8.4.
-    const db = await mysql.createConnection({ host: '127.0.0.1', port: target.port, user: target.adminUser, password: target.adminPassword, connectTimeout: 5000, ...(create?{ssl:{ca:target.mysqlCa,rejectUnauthorized:true}}:{}) });
+    // The target is fixed to loopback. Verify its configured CA, matching mysql --ssl-mode=VERIFY_CA;
+    // auto-generated MySQL certificates need not contain 127.0.0.1. Never disable CA verification.
+    const db = await mysql.createConnection({ host: '127.0.0.1', port: target.port, user: target.adminUser, password: target.adminPassword, connectTimeout: 5000, ...(create?{ssl:{ca:target.mysqlCa,rejectUnauthorized:true,verifyIdentity:false}}:{}) });
     try {
       if (create) {
         await db.query('CREATE USER ?@\'%\' IDENTIFIED BY ? REQUIRE SSL WITH MAX_USER_CONNECTIONS 10', [account.username, account.password]);

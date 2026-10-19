@@ -13,7 +13,7 @@ interface Overview {
   currentIp:string;passes:Pass[];events:Array<{ts:string;passId:string;event:string;ip?:string;reason?:string}>;
 }
 const statusNames:Record<string,string>={prepared:'待放行',active:'已放行',expired:'已到期并回收',revoked:'已撤销并回收','cleanup-failed':'入口关闭，账号回收重试中',preparing:'准备中'};
-const eventNames:Record<string,string>={'review-approved':'范围审查通过','account-prepared':'独立账号已准备','credentials-copied':'复制凭据','activation-approved':'放行审查通过',activated:'入口已放行','connection-accepted':'网络连接通过白名单','connection-denied':'非白名单连接被拒','connection-closed':'连接已断开','account-reclaimed':'账号已回收','account-cleanup-failed':'账号回收待重试'};
+const eventNames:Record<string,string>={'review-approved':'范围审查通过','account-prepared':'独立账号已准备','credentials-copied':'复制凭据','activation-approved':'放行审查通过',activated:'入口已放行','connection-accepted':'网络连接通过白名单','connection-denied':'网络连接被拒','connection-closed':'连接已断开','account-reclaimed':'账号已回收','account-cleanup-failed':'账号回收待重试'};
 
 export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId:string;resourceId:string;allowed:boolean;onCopy:(value:string)=>Promise<void>}):JSX.Element {
   const base=`/api/branches/${encodeURIComponent(branchId)}/resources/${encodeURIComponent(resourceId)}/database-passes`;

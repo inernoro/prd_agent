@@ -13,13 +13,14 @@ export function postgresPassStartup(packet: Buffer, database: string, username: 
 
 export async function openDatabasePassGateway(input: {
   target: DatabasePassTarget; username: string; bindIp: string; port: number; allowlist: string[];
-  key: Buffer; cert: Buffer; audit: (event: string, details: Record<string, unknown>) => void;
-}): Promise<{ port: number; close: () => void }> {
+  key: Buffer; cert: Buffer; startInactive?: boolean; audit: (event: string, details: Record<string, unknown>) => void;
+}): Promise<{ port: number; activate: () => void; close: () => void }> {
   const block = new net.BlockList();
   for (const cidr of input.allowlist) { const [ip,bits]=cidr.split('/'); block.addSubnet(ip,Number(bits),'ipv4'); }
   const sockets = new Set<Socket>();
   const remember = (socket: Socket) => { sockets.add(socket); socket.once('close',()=>sockets.delete(socket)); socket.on('error',()=>socket.destroy()); return socket; };
   let closed = false;
+  let active = !input.startInactive;
   const pipe = (client: Socket, first?: Buffer) => {
     const upstream = remember(net.connect({host:'127.0.0.1',port:input.target.port}));
     upstream.once('connect',()=>{ if(first)upstream.write(first); client.pipe(upstream);upstream.pipe(client); });
@@ -28,7 +29,7 @@ export async function openDatabasePassGateway(input: {
   const accept = (client: Socket) => {
     const ip=(client.remoteAddress || '').replace(/^::ffff:/,'');
     try {
-      if(closed || !block.check(ip,'ipv4')) { input.audit('connection-denied',{ip});client.destroy();return; }
+      if(closed || !active || !block.check(ip,'ipv4')) { input.audit('connection-denied',{ip,reason:!active?'通行证尚未放行':'IP不在白名单'});client.destroy();return; }
       input.audit('connection-accepted',{ip});
     } catch { client.destroy();return; } // An unavailable audit sink must not permit a new connection.
     remember(client);
@@ -67,9 +68,9 @@ export async function openDatabasePassGateway(input: {
   if(input.target.runtime==='mongodb')server.on('connection',(socket:Socket)=>{
     // Include incomplete TLS handshakes in expiry cleanup and reject non-allowlisted peers early.
     remember(socket);const ip=(socket.remoteAddress||'').replace(/^::ffff:/,'');
-    if(closed||!block.check(ip,'ipv4')){try{input.audit('connection-denied',{ip});}catch{/* fail closed */}finally{socket.destroy();}}
+    if(closed||!active||!block.check(ip,'ipv4')){try{input.audit('connection-denied',{ip,reason:!active?'通行证尚未放行':'IP不在白名单'});}catch{/* fail closed */}finally{socket.destroy();}}
   });
   server.on('tlsClientError',()=>{});
   await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(input.port,input.bindIp,()=>{server.removeListener('error',reject);resolve();});});
-  return {port:(server.address() as net.AddressInfo).port,close:()=>{closed=true;server.close();for(const socket of sockets)socket.destroy();}};
+  return {port:(server.address() as net.AddressInfo).port,activate:()=>{if(closed)throw new Error('通行证入口已关闭');active=true;},close:()=>{closed=true;server.close();for(const socket of sockets)socket.destroy();}};
 }
