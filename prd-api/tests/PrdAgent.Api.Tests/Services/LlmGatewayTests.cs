@@ -3276,8 +3276,10 @@ public class LlmGatewayTests
         Assert.Empty(resolver.FailedOfferingIds);
     }
 
-    [Fact]
-    public async Task SendRawWithResolutionAsync_WhenQuotaIsExhaustedWith429_ShouldRecordHealthFailure()
+    [Theory]
+    [InlineData(429, "{\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You exceeded your current quota\"}}")]
+    [InlineData(403, "{\"error\":{\"message\":\"user quota is not enough\"}}")]
+    public async Task SendRawWithResolutionAsync_WhenQuotaIsExhausted_ShouldRecordHealthFailure(int statusCode, string errorBody)
     {
         var resolution = new GatewayModelResolution
         {
@@ -3295,8 +3297,7 @@ public class LlmGatewayTests
             ApiUrl = "https://provider-a.example.com",
             ApiKey = "sk-a",
         };
-        var http = new SequenceHttpClientFactory(
-            (429, "{\"error\":{\"type\":\"insufficient_quota\",\"message\":\"You exceeded your current quota\"}}"));
+        var http = new SequenceHttpClientFactory((statusCode, errorBody));
         var resolver = new TrackingModelResolver();
         var gateway = new LlmGateway(resolver, http, new TestLogger<LlmGateway>());
 
@@ -3313,6 +3314,7 @@ public class LlmGatewayTests
         }, resolution);
 
         Assert.False(response.Success);
+        Assert.Equal("LLM_QUOTA_EXCEEDED", response.ErrorCode);
         Assert.Empty(resolver.UnavailableOfferingIds);
         Assert.Equal(["offering-quota-exhausted"], resolver.FailedOfferingIds);
     }
