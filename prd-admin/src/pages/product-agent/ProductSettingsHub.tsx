@@ -8,7 +8,6 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
 import {
   ShieldCheck,
   Boxes,
@@ -25,8 +24,8 @@ import {
 } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
+import { Tabs } from '@/components/ui/Tabs';
 import { toast } from '@/lib/toast';
-import { useAuthStore } from '@/stores/authStore';
 import {
   listProducts, upsertGradeOption, deleteGradeOption,
   getConsultKnowledge, getConsultKnowledgeEntry, addConsultKnowledge,
@@ -38,7 +37,6 @@ import {
   DescTemplateManager,
   CategoryManager,
   RequirementTypeManager,
-  ApplicationAdminManager,
 } from './SettingsSection';
 import { WorkflowEditor } from './WorkflowTemplateSection';
 import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
@@ -47,7 +45,7 @@ import { useGradeOptions } from './gradeOptions';
 type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb';
 
 const CATS: { key: SettingsCat; label: string; icon: typeof ShieldCheck; desc: string }[] = [
-  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '按角色分配产品管理内部各页面的访问权限' },
+  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '菜单权限、功能权限与角色权限' },
   { key: 'product', label: '产品', icon: Boxes, desc: '产品类型与产品管理员指派' },
   { key: 'requirement', label: '需求', icon: ListChecks, desc: '需求的表单、流程、类型、优先级与严重程度' },
   { key: 'feature', label: '功能', icon: Puzzle, desc: '功能的表单、流程、优先级与严重程度' },
@@ -108,35 +106,20 @@ export function ProductSettingsHub() {
 
 // ════════════════════════ 权限 ════════════════════════
 
+const PERMISSION_TABS = [
+  { key: 'menu', label: '菜单权限' },
+  { key: 'function', label: '功能权限' },
+  { key: 'role', label: '角色权限' },
+];
+
 function PermissionPanel() {
-  const permissions = useAuthStore((state) => state.permissions ?? []);
-  const canConfigureRoles = permissions.includes('super') || (permissions.includes('users.read') && permissions.includes('authz.manage'));
+  const [tab, setTab] = useState('menu');
   return (
-    <div className="flex flex-col gap-5">
-      <div className="rounded-xl border border-token-subtle bg-token-nested p-4">
-        <div className="text-sm font-medium text-token-primary">评审菜单权限</div>
-        <div className="mt-2 space-y-1 text-xs leading-5 text-token-secondary">
-          <p>进入产品管理需要“产品管理 - 进入”；在产品管理内看到“评审”菜单，还需要“产品管理 - 评审”。</p>
-          <p>“查看全部”控制全部评审记录；“配置”控制通知配置和维度配置；“申诉受理”单独授权。</p>
-        </div>
-        {canConfigureRoles ? (
-          <Link to="/users" className="mt-3 inline-flex rounded-md border border-token-subtle px-3 py-1.5 text-xs text-token-primary hover-bg-soft">
-            前往用户权限配置
-          </Link>
-        ) : (
-          <p className="mt-2 text-xs text-token-muted">如需调整菜单可见范围，请联系权限管理员。</p>
-        )}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-token-subtle pb-3">
+        <Tabs items={PERMISSION_TABS} activeKey={tab} onChange={setTab} className="flex-wrap" />
       </div>
-      <div className="rounded-xl border border-dashed border-token-subtle bg-token-nested p-4">
-        <div className="text-sm font-medium text-token-primary">按角色分配页面权限</div>
-        <div className="mt-1 text-xs leading-5 text-token-muted">
-          根据用户角色分配产品管理内部各页面（概览 / 产品 / 需求 / 功能 / 缺陷 / 客户 / 设置等）的访问权限。该细粒度授权矩阵建设中，将在后续版本上线；当前页面访问沿用 product-agent.use / manage / admin 三级权限。
-        </div>
-      </div>
-      <div>
-        <div className="mb-2 text-sm font-medium text-token-primary">历史数据导入权限</div>
-        <ApplicationAdminManager />
-      </div>
+      <div key={tab} className="min-h-0 flex-1" aria-label={PERMISSION_TABS.find((item) => item.key === tab)?.label} />
     </div>
   );
 }
