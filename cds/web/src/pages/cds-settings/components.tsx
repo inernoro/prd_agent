@@ -18,14 +18,14 @@ export function Section({
   tone?: 'default' | 'danger';
 }): JSX.Element {
   return (
-    <section className="border-b border-border pb-8 last:border-b-0">
+    <section className="border-b border-border pb-5 last:border-b-0 last:pb-0">
       <h2 className={tone === 'danger' ? 'text-lg font-semibold text-destructive' : 'text-lg font-semibold'}>
         {title}
       </h2>
       {description ? (
-        <div className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</div>
+        <div className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">{description}</div>
       ) : null}
-      <div className="mt-5">{children}</div>
+      <div className="mt-3">{children}</div>
     </section>
   );
 }

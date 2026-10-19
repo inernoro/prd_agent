@@ -180,6 +180,14 @@ async function checkLayout(page, label, anchor) {
         }
       : null;
     const scopeEl = scopeSelector ? document.querySelector(scopeSelector) : null;
+    const updateControls = document.querySelector('.cds-update-controls');
+    const branchInput = updateControls?.querySelector('[role="combobox"]');
+    const branchRefresh = updateControls && Array.from(updateControls.querySelectorAll('button'))
+      .find((button) => button.textContent?.trim() === '刷新分支');
+    const compactUpdateControls = branchInput && branchRefresh ? {
+      input: branchInput.getBoundingClientRect().toJSON(),
+      refresh: branchRefresh.getBoundingClientRect().toJSON(),
+    } : null;
     return {
       url: location.href,
       bodyText,
@@ -188,6 +196,7 @@ async function checkLayout(page, label, anchor) {
       squeezed: squeezed.slice(0, 10),
       covered: covered.slice(0, 10),
       compactSettingsNav,
+      compactUpdateControls,
       scopeFound: scopeSelector ? !!scopeEl : null,
       scopeText: scopeEl ? (scopeEl.innerText || '') : '',
     };
@@ -229,6 +238,13 @@ async function checkLayout(page, label, anchor) {
   if (result.compactSettingsNav) {
     assertOk(result.compactSettingsNav.height <= 64, `${label}: 设置导航被拉成高卡片，占用正文空间`, result.compactSettingsNav);
     assertOk(result.compactSettingsNav.maxTabHeight <= 48, `${label}: 设置标签应保持紧凑单行`, result.compactSettingsNav);
+  }
+  if (result.compactUpdateControls) {
+    const { input, refresh } = result.compactUpdateControls;
+    assertOk(Math.abs(input.y - refresh.y) <= 2 && refresh.x >= input.right,
+      `${label}: 刷新分支应与分支输入框同排，不能拉成整行`, result.compactUpdateControls);
+    assertOk(refresh.width < 140 && Math.abs(input.height - refresh.height) <= 2,
+      `${label}: 分支输入框和刷新按钮应等高且紧凑`, result.compactUpdateControls);
   }
   console.log(`PASS ${label} ${result.url}`);
 }
