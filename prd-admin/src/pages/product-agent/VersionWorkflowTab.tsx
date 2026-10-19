@@ -241,12 +241,9 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   const [planUrl, setPlanUrl] = useState(seed?.planUrl ?? '');
   const [requirementDescription, setRequirementDescription] = useState(seed?.requirementDescription ?? '');
   const [departmentName, setDepartmentName] = useState(seed?.departmentName ?? '');
-  const [ownerName, setOwnerName] = useState(seed?.ownerName ?? '');
-  const [projectMembers, setProjectMembers] = useState((seed?.projectMemberNames ?? []).join('、'));
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed?.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no');
-  const [developmentStatus, setDevelopmentStatus] = useState(seed?.developmentStatus ?? '');
   const [remark, setRemark] = useState(seed?.remark ?? '');
   const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewSubmissionId ?? '');
   const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string }>>([]);
@@ -356,12 +353,12 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     planUrl: planUrl.trim() || undefined,
     requirementDescription: requirementDescription.trim() || undefined,
     departmentName: departmentName.trim() || undefined,
-    ownerName: ownerName.trim() || undefined,
-    projectMemberNames: projectMembers.split(/[、,，;；]/).map((name) => name.trim()).filter(Boolean),
+    ownerName: item?.ownerName ?? undefined,
+    projectMemberNames: item?.projectMemberNames,
     plannedProjectAt: plannedProjectAt ? new Date(`${plannedProjectAt}T00:00:00+08:00`).toISOString() : undefined,
     needUiDesign: needUiDesign === 'yes',
     isAiPoc: isAiPoc === 'yes',
-    developmentStatus: developmentStatus.trim() || undefined,
+    developmentStatus: item?.developmentStatus,
     remark: remark.trim() || undefined,
     reviewSubmissionId: reviewSubmissionId || undefined,
     versionType,
@@ -515,12 +512,9 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     if (parsed.planUrl) setPlanUrl(parsed.planUrl);
     if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
     if (parsed.departmentName) setDepartmentName(parsed.departmentName);
-    if (parsed.ownerName) setOwnerName(parsed.ownerName);
-    if (parsed.projectMemberNames?.length) setProjectMembers(parsed.projectMemberNames.join('、'));
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
     if (parsed.needUiDesign != null) setNeedUiDesign(parsed.needUiDesign ? 'yes' : 'no');
     if (parsed.isAiPoc != null) setIsAiPoc(parsed.isAiPoc ? 'yes' : 'no');
-    if (parsed.developmentStatus) setDevelopmentStatus(parsed.developmentStatus);
     if (parsed.remark) setRemark(parsed.remark);
   };
 
@@ -559,9 +553,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
       <Field label="是否需要 UI 设计 *"><Select value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
       <Field label="是否属于 AI POC 项目 *"><Select value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
       <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
-      <Field label="产品负责人"><Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} /></Field>
-      <Field label="项目组成员"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="用顿号或逗号分隔" /></Field>
-      <Field label="开发状态"><Input value={developmentStatus} onChange={(e) => setDevelopmentStatus(e.target.value)} /></Field>
       <Field label="项目需求描述" full><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
       <Field label="备注" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
       <Field label="关联需求" full>
