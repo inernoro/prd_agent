@@ -45,7 +45,7 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
   return (
     <div
       data-testid="next-step-bar"
-      className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-token-subtle bg-token-nested"
+      className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-token-subtle bg-token-nested max-sm:flex-wrap"
       style={{ minHeight: 34 }}
     >
       <span className="text-[10px] text-[var(--text-tertiary)] shrink-0">下一步</span>
@@ -63,7 +63,7 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
         </button>
       ))}
 
-      <div className="ml-auto flex items-center gap-2 shrink-0">
+      <div className="ml-auto flex items-center gap-2 shrink-0 max-sm:ml-0 max-sm:basis-full max-sm:justify-end">
         {/* 下载 HTML */}
         <button
           type="button"

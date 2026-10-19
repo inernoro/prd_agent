@@ -196,6 +196,30 @@ describe('OpenDesign 运行态可见信息', () => {
   });
 });
 
+describe('NextStepBar 移动端布局', () => {
+  it('窄屏允许建议换行，并让下载与发布动作独占一行且右对齐', () => {
+    const html = renderToStaticMarkup(createElement(NextStepBar, {
+      onPublish: () => undefined,
+      publishBusy: false,
+      publishDisabled: true,
+      publishDisabledReason: '质量检查尚未完成',
+      published: false,
+      onDownload: () => undefined,
+      onSeedPatch: () => undefined,
+    }));
+
+    expect(html).toMatch(/data-testid="next-step-bar"[^>]*class="[^"]*max-sm:flex-wrap[^"]*"/);
+    expect(html).toMatch(/class="[^"]*max-sm:basis-full[^"]*max-sm:justify-end[^"]*"/);
+    expect(html).toContain('标题更有冲击力');
+    expect(html).toContain('配色更商务');
+    expect(html).toContain('加一页总结');
+    expect(html).toContain('下载 HTML');
+    expect(html).toContain('发布为网页');
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('质量检查尚未完成');
+  });
+});
+
 describe('自然语言单页精修识别', () => {
   it('与后端保守路由保持一致', () => {
     expect(resolveNaturalPatchSlideIndex('增加第 3 页标题字号')).toBe(3);
