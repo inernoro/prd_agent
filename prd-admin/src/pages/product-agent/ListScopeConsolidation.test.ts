@@ -16,7 +16,10 @@ describe('shared requirement and version lists', () => {
   it('removes the separate personal-only requirement list', () => {
     expect(singleProduct).not.toContain('function RequirementsTab(');
     expect(singleProduct).not.toContain('function RequirementDataTable(');
-    expect(overview).toContain('const [mine, setMine] = useState(false)');
+    expect(overview).not.toContain('MineToggle');
+    expect(overview).not.toContain('setMine');
+    expect(overview).not.toContain('我负责的');
+    expect(overview).toContain('await getOverviewRequirements()');
     expect(overview).toContain('aria-label="按产品筛选需求"');
     expect(overview).toContain('clearOptionLabel="全部产品"');
   });

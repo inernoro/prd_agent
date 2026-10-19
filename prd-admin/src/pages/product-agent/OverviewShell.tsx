@@ -180,7 +180,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
         </SectionShell>
       )}
       {active === 'requirements' && (
-        <SectionShell title="需求" desc="全部产品的需求汇总；可用「我负责的」缩小范围，点击进入详情">
+        <SectionShell title="需求" desc="全部产品的需求汇总；可按产品和处理人筛选，点击进入详情">
           <RequirementsTable isAdmin={isAdmin} products={products} canUseReview={canUseReview} productsError={productsError} onRetryProducts={() => void loadProducts()} />
         </SectionShell>
       )}
@@ -369,18 +369,6 @@ function EmptyChart({ text }: { text: string }) {
 // ════════════════════════ 跨产品数据表 ════════════════════════
 
 
-/** 「我负责的」过滤开关。 */
-function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) => void }) {
-  return (
-    <button
-      onClick={() => setMine(!mine)}
-      className={`px-2.5 py-1 rounded-md text-xs border ${mine ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
-    >
-      我负责的
-    </button>
-  );
-}
-
 const GRADE_BADGE = (g: string) => (
   <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g}</span>
 );
@@ -412,7 +400,6 @@ function RequirementsTable({
   const { productId, setProductId } = useProductListScope();
   const [rows, setRows] = useState<OverviewRequirementRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mine, setMine] = useState(false);
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState('');
@@ -480,12 +467,12 @@ function RequirementsTable({
     const sequence = ++requestSequence.current;
     setLoading(true);
     setError('');
-    const res = await getOverviewRequirements({ mine: mine || undefined });
+    const res = await getOverviewRequirements();
     if (sequence !== requestSequence.current) return;
     if (res.success) setRows(res.data.items);
     else setError(res.error?.message ?? '需求加载失败，请重试。');
     setLoading(false);
-  }, [mine]);
+  }, []);
   useEffect(() => {
     void reload();
     return () => { requestSequence.current += 1; };
@@ -518,7 +505,6 @@ function RequirementsTable({
               <ListOrdered size={13} />需求评估
             </button>
           )}
-          <MineToggle mine={mine} setMine={setMine} />
           <button type="button" disabled={!productId} title={productId ? '在所选产品中新建需求' : '请先选择需求所属产品'} onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-primary hover-bg-soft disabled:opacity-40"><Plus size={13} />新建需求</button>
           <button type="button" disabled={loading || Boolean(error) || filtered.length === 0} onClick={() => downloadListCsv('需求-筛选结果.csv', ['ID', '标题', '产品', '分级', '状态', '处理人'], filtered.map((row) => [row.requirementNo, row.title, row.productName, row.grade, row.stateLabel ?? resolveRequirementStateLabel(row.currentState) ?? '', row.assigneeName ?? '']))} className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2.5 py-1 text-xs text-token-secondary hover-bg-soft disabled:opacity-40"><Download size={13} />导出需求</button>
           {isAdmin && <AdminImportButton onClick={() => setShowImport(true)} />}
@@ -530,7 +516,7 @@ function RequirementsTable({
       <SelectionActionBar mode="entity" entityType="requirement" selection={selection} onDone={reload} onExport={exportSelected} />
       {filtered.length === 0 ? (
         <div className="text-center text-token-muted text-sm py-12">
-          {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}
+          {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}
         </div>
       ) : (
         <OverviewDataTable
