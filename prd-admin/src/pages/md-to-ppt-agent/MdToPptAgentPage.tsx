@@ -803,6 +803,68 @@ export function looksLikeDeck(html: string): boolean {
   return anchored || reveal;
 }
 
+/** 只统计作者定义的顶层页面，嵌套装饰节点与普通网页 section 不冒充 PPT 页数。 */
+export function countDeckPages(html: string): number {
+  if (!html) return 0;
+  const anchored = findBalancedSlideBlocks(html);
+  if (anchored.length > 0) return anchored.length;
+  return findRevealPageBlocks(html).length;
+}
+
+export function mergeRuntimeModelCallCount(current: number, observed: number): number {
+  return Math.max(0, current, Number.isFinite(observed) ? observed : 0);
+}
+
+export function PptRuntimeProgressHeader({
+  stageText,
+  elapsedSec,
+  draftDetail,
+  model,
+  runtimeModelCallCount,
+  processProgress,
+  hasPreview,
+}: {
+  stageText: string;
+  elapsedSec: number;
+  draftDetail?: string;
+  model?: string;
+  runtimeModelCallCount: number;
+  processProgress: number;
+  hasPreview: boolean;
+}) {
+  const progress = Math.min(99, Math.max(0, processProgress));
+  return (
+    <>
+      <div className="shrink-0 flex items-center gap-3" data-testid="ppt-runtime-progress">
+        <MapSpinner size={16} />
+        <div className="min-w-0">
+          <p className="text-sm text-[var(--text-secondary)] truncate">{stageText}</p>
+          <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5 tabular-nums">
+            已等待 {elapsedSec}s
+            {draftDetail ? ` · ${draftDetail}` : ''}
+            {model && <span className="font-mono"> · {model}</span>}
+            {runtimeModelCallCount > 0 && <span> · 模型调用 {runtimeModelCallCount} 次</span>}
+          </p>
+        </div>
+      </div>
+      <div
+        className="shrink-0 w-full rounded-full bg-token-nested overflow-hidden"
+        style={{ height: 3 }}
+        role="progressbar"
+        aria-label="整体设计进度"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+      >
+        <div
+          className="h-full rounded-full bg-[var(--accent-primary-solid)] transition-all duration-700"
+          style={{ width: `${Math.max(progress, hasPreview ? 4 : 0)}%` }}
+        />
+      </div>
+    </>
+  );
+}
+
 // ─── 安全 iframe 渲染（P1 安全债偿还）─────────────────────────────────────────
 //
 // 旧方案：sandbox="allow-scripts allow-same-origin" + nav-guard 注入
@@ -1575,9 +1637,19 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const [publishedUrl, setPublishedUrl] = useState('');
   const [isPublishing, setIsPublishing] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
-  const [artifactPhase, setArtifactPhase] = useState<'idle' | 'outlining' | 'generating' | 'patching' | 'done'>('idle');
+  const [artifactPhase, setArtifactPhase] = useState<'idle' | 'outlining' | 'generating' | 'patching' | 'done' | 'error'>('idle');
+  const [artifactProgress, setArtifactProgress] = useState(0);
+  const [artifactPhaseMessage, setArtifactPhaseMessage] = useState('');
+  const [runtimeModelCallCount, setRuntimeModelCallCount] = useState(0);
   const [diagLines, setDiagLines] = useState<MdToPptDiagEvent[]>([]);
   const [modelInfo, setModelInfo] = useState<{ model: string; platform: string } | null>(null);
+  const hasRuntimePreviewRef = useRef(false);
+  const canPublish = artifactPhase === 'done' && Boolean(activeRunId);
+  const publishDisabledReason = canPublish
+    ? undefined
+    : artifactPhase === 'error'
+      ? '这份初稿没有通过质量检查，不能发布；请重新生成或恢复已完成版本'
+      : '演示稿完成质量检查后才能发布';
 
   const runtimeRouteLabel = 'OpenDesign 设计打磨';
 
@@ -1700,6 +1772,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       return [];
     }
   }, [generatedHtml]);
+  const previewPageDocs = deckThumbDocs;
+  const previewPageCount = countDeckPages(generatedHtml);
 
   // ─── 思考过程流（推理模型先想后写：deepseek-v3.2 实测思考可占总耗时 90%，
   //     正文集中尾部爆发。思考期间产物无片段可渲染，就渲染思考本身——它就是此刻的产物）
@@ -1967,7 +2041,13 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       } else if (run.status === 'error') {
         const parent = await recoverPatchParentRun(run);
         if (cancelled) return;
-        if (parent) {
+        if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+          hasRuntimePreviewRef.current = true;
+          setGeneratedHtml(run.latestPreviewHtml);
+          setArtifactSiteUrl('');
+          setActiveRunId(run.id);
+          setArtifactPhase('error');
+        } else if (parent) {
           setGeneratedHtml(parent.html);
           setArtifactSiteUrl(parent.siteUrl ?? '');
           setActiveRunId(parent.id);
@@ -1980,6 +2060,14 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         // 计时基准 = 服务端 run.createdAt（服务器权威性：刷新后显示真实已等待时长）
         genStartAtRef.current = new Date(run.createdAt).getTime();
         setArtifactPhase('generating');
+        if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+          hasRuntimePreviewRef.current = true;
+          setGeneratedHtml(run.latestPreviewHtml);
+          setArtifactSiteUrl('');
+        }
+        setArtifactProgress(Math.max(0, run.progress ?? 0));
+        setArtifactPhaseMessage(run.phaseMessage ?? '');
+        setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, run.runtimeModelCallCount ?? 0));
         timer = window.setTimeout(poll, 3000);
       }
     };
@@ -2471,6 +2559,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       if (isProcessing || !mountedRef.current) return;
       setIsProcessing(true);
       setArtifactPhase('generating');
+      setArtifactProgress(0);
+      setArtifactPhaseMessage('');
+      setRuntimeModelCallCount(0);
+      hasRuntimePreviewRef.current = false;
       setPublishedUrl('');
       setArtifactSiteUrl('');
       setFeedbackMode(false);
@@ -2516,6 +2608,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             return;
           }
           if (run.status === 'error') {
+            if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+              hasRuntimePreviewRef.current = true;
+              setGeneratedHtml(run.latestPreviewHtml);
+              setArtifactSiteUrl('');
+            }
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === genMsg.id
@@ -2524,9 +2621,17 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               )
             );
             setIsProcessing(false);
-            setArtifactPhase('idle');
+            setArtifactPhase(run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml) ? 'error' : 'idle');
             return;
           }
+          if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+            hasRuntimePreviewRef.current = true;
+            setGeneratedHtml(run.latestPreviewHtml);
+            setArtifactSiteUrl('');
+          }
+          setArtifactProgress(Math.max(0, run.progress ?? 0));
+          setArtifactPhaseMessage(run.phaseMessage ?? '');
+          setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, run.runtimeModelCallCount ?? 0));
           window.setTimeout(() => void tick(), 3000);
         };
         void tick();
@@ -2595,12 +2700,16 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
         onPhase: (phase) => {
+          setArtifactProgress(phase.progress);
+          setArtifactPhaseMessage(phase.message);
+          setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, phase.runtimeModelCallCount));
           setMessages((prev) => prev.map((message) => message.id === genMsg.id
             ? { ...message, content: phase.message || `正在打磨演示稿（${phase.progress}%）` }
             : message));
         },
         onPreview: (preview) => {
           if (!mountedRef.current || !looksLikeDeck(preview.html)) return;
+          hasRuntimePreviewRef.current = true;
           setGeneratedHtml(preview.html);
           setArtifactSiteUrl('');
           setArtifactPhase('generating');
@@ -2617,10 +2726,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               )
             );
             setIsProcessing(false);
-            setArtifactPhase('idle');
+            setArtifactPhase(hasRuntimePreviewRef.current ? 'error' : 'idle');
             return;
           }
           setGeneratedHtml(html);
+          hasRuntimePreviewRef.current = true;
           setArtifactSiteUrl(result.siteUrl ?? '');
           setArtifactPhase('done');
           setIsProcessing(false);
@@ -2681,6 +2791,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 );
                 return;
               }
+              if (run?.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+                hasRuntimePreviewRef.current = true;
+                setGeneratedHtml(run.latestPreviewHtml);
+                setArtifactSiteUrl('');
+              }
             }
             setMessages((prev) =>
               prev.map((m) =>
@@ -2690,7 +2805,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               )
             );
             setIsProcessing(false);
-            setArtifactPhase('idle');
+            setArtifactPhase(hasRuntimePreviewRef.current ? 'error' : 'idle');
           })();
         },
       });
@@ -2818,6 +2933,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       setIsProcessing(true);
       patchParentRef.current = { runId: sourceRunId, siteUrl: sourceSiteUrl };
       setArtifactPhase('patching');
+      setArtifactProgress(0);
+      setArtifactPhaseMessage('');
+      setRuntimeModelCallCount(0);
+      hasRuntimePreviewRef.current = false;
       resetStreamPreview();
       const effectiveSlideIndex = slideIndex ?? resolveNaturalPatchSlideIndex(instruction);
       const isSinglePage = effectiveSlideIndex != null;
@@ -2851,6 +2970,9 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         onThinking: handleThinkingDelta,
         onDelta: handleStreamDelta,
         onPhase: (phase) => {
+          setArtifactProgress(phase.progress);
+          setArtifactPhaseMessage(phase.message);
+          setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, phase.runtimeModelCallCount));
           setMessages((prev) => prev.map((message) => message.id === patchMsg.id
             ? { ...message, content: phase.message || `正在修改演示稿（${phase.progress}%）` }
             : message));
@@ -2859,6 +2981,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           if (!mountedRef.current || !looksLikeDeck(preview.html)) return;
           // 手动草稿在任务成功前始终留在隔离编辑器中；预览事件不能覆盖用户尚未落成的修改。
           if (manualEditHtml) return;
+          hasRuntimePreviewRef.current = true;
           setGeneratedHtml(preview.html);
           setArtifactSiteUrl('');
         },
@@ -2880,6 +3003,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             return;
           }
           setGeneratedHtml(html);
+          hasRuntimePreviewRef.current = true;
           setArtifactSiteUrl(result.siteUrl ?? '');
           if (manualEditHtml) {
             editedHtmlRef.current = '';
@@ -2907,7 +3031,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             )
           );
           setIsProcessing(false);
-          setArtifactPhase('done');
+          setArtifactPhase(hasRuntimePreviewRef.current && !manualEditHtml ? 'error' : 'done');
           setPatchingSlide(null);
           setActiveRunId(sourceRunId);
           setArtifactSiteUrl(sourceSiteUrl);
@@ -3200,6 +3324,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     const base = latestHtml();
     const sourceRunId = activeRunId;
     if (!base) return;
+    if (!canPublish) {
+      toast.warning('暂不能发布', publishDisabledReason ?? '演示稿完成质量检查后才能发布。');
+      return;
+    }
     if (!looksLikeDeck(base)) {
       toast.error('无法发布', '当前 PPT 内容不完整，请保留现有版本并重新生成或精修。');
       return;
@@ -3234,7 +3362,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     } else {
       toast.error('发布失败', result.error || '请稍后重试，当前版本未被覆盖。');
     }
-  }, [latestHtml, activeRunId, editMode, destinationTeamId]);
+  }, [latestHtml, activeRunId, editMode, destinationTeamId, canPublish, publishDisabledReason]);
 
   // ─── Abort
   const handleAbort = useCallback(() => {
@@ -3265,6 +3393,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     setPublishedUrl('');
     setIsProcessing(false);
     setArtifactPhase('idle');
+    setArtifactProgress(0);
+    setArtifactPhaseMessage('');
+    setRuntimeModelCallCount(0);
+    hasRuntimePreviewRef.current = false;
     setPendingAttachments([]);
     setPendingKbRefs([]);
     setActiveKnowledgeRefs([]);
@@ -3380,7 +3512,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               </button>
               <button
                 onClick={() => void handlePublish()}
-                disabled={isPublishing}
+                disabled={isPublishing || !canPublish}
+                title={publishDisabledReason}
                 className="flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/20 border border-blue-500/25 disabled:opacity-50"
               >
                 {isPublishing ? <MapSpinner size={11} /> : <Globe size={11} />}
@@ -4556,17 +4689,20 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 第一页出来之前用骨架幻灯 + 代码流尾巴 + Agent 环境准备过渡，全程无静止空等。 */}
           {(artifactPhase === 'generating' || (artifactPhase === 'patching' && patchingSlide == null)) && (() => {
             const pagesMode = pagesTotal > 0;
-            const doneCount = pagesMode ? pagesDoneIdxs.length : slideProgress.titles.length;
+            const doneCount = pagesMode ? pagesDoneIdxs.length : Math.max(slideProgress.titles.length, previewPageCount);
             const building = pagesMode ? doneCount < pagesTotal : slideProgress.building;
             const totalSlots = pagesMode
               ? pagesTotal
               : Math.max(expectedPages ?? 0, doneCount + (building ? 1 : 0));
-            const effLiveDoc = pagesMode ? pagesLiveDoc : liveDoc;
-            const effLiveIdx = pagesMode ? pagesLiveIdx : liveIdx;
+            const previewLiveIdx = liveSlideSel != null && previewPageDocs[liveSlideSel]
+              ? liveSlideSel
+              : Math.max(0, previewPageDocs.length - 1);
+            const effLiveDoc = pagesMode ? pagesLiveDoc : liveDoc || previewPageDocs[previewLiveIdx] || '';
+            const effLiveIdx = pagesMode ? pagesLiveIdx : liveDoc ? liveIdx : previewLiveIdx;
             const agentPrepared =
               modelInfo != null ||
               diagLines.some((d) => d.stage === 'send' || d.stage === 'first_event' || d.stage === 'first_text_delta');
-            const stageText = pagesMode
+            const stageText = artifactPhaseMessage || (pagesMode
               ? doneCount === 0
                 ? `${pagesTotal} 路页面生成器并行绘制中（每页独立设计）...`
                 : doneCount < pagesTotal
@@ -4584,26 +4720,29 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     : doneCount >= (expectedPages ?? Infinity)
                       ? '全部页面已生成，正在收尾排版...'
                       : `已完成 ${doneCount} 页，正在排版后续页面...`
-                  : genStageMsg(elapsedSec, artifactPhase === 'patching');
-            const pct = totalSlots > 0 ? Math.min(99, Math.round((doneCount / totalSlots) * 100)) : 0;
+                  : genStageMsg(elapsedSec, artifactPhase === 'patching'));
+            const draftDetail = pagesMode
+              ? `${doneCount}/${pagesTotal} 页初稿`
+              : previewPageCount > 0
+                ? `已形成 ${previewPageCount}/${totalSlots || previewPageCount} 页真实初稿`
+                : streamPreview.length > 0
+                  ? `已接收 ${streamPreview.length.toLocaleString()} 字符`
+                  : thinkingPreview.length > 0
+                    ? `已思考 ${thinkingPreview.length.toLocaleString()} 字`
+                    : undefined;
             return (
               <div className="flex-1 flex flex-col gap-2.5 px-4 py-3" style={{ minHeight: 0 }}>
-                {/* 状态行 */}
                 <div className="shrink-0 flex items-center gap-3">
-                  <MapSpinner size={16} />
-                  <div className="min-w-0">
-                    <p className="text-sm text-[var(--text-secondary)] truncate">{stageText}</p>
-                    <p className="text-[11px] text-[var(--text-tertiary)] mt-0.5 tabular-nums">
-                      已等待 {elapsedSec}s
-                      {pagesMode
-                        ? ` · ${doneCount}/${pagesTotal} 页完成`
-                        : streamPreview.length > 0
-                          ? ` · 已接收 ${streamPreview.length.toLocaleString()} 字符`
-                          : thinkingPreview.length > 0
-                            ? ` · 已思考 ${thinkingPreview.length.toLocaleString()} 字`
-                            : ''}
-                      {modelInfo && <span className="font-mono"> · {modelInfo.model}</span>}
-                    </p>
+                  <div className="min-w-0 flex-1">
+                    <PptRuntimeProgressHeader
+                      stageText={stageText}
+                      elapsedSec={elapsedSec}
+                      draftDetail={draftDetail}
+                      model={modelInfo?.model}
+                      runtimeModelCallCount={runtimeModelCallCount}
+                      processProgress={artifactProgress}
+                      hasPreview={Boolean(effLiveDoc)}
+                    />
                   </div>
                   {totalSlots > 0 && (
                     <span className="ml-auto shrink-0 text-[11px] tabular-nums text-[var(--text-tertiary)]">
@@ -4611,16 +4750,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     </span>
                   )}
                 </div>
-
-                {/* 总进度条 */}
-                {totalSlots > 0 && (
-                  <div className="shrink-0 w-full rounded-full bg-token-nested overflow-hidden" style={{ height: 3 }}>
-                    <div
-                      className="h-full rounded-full bg-purple-400/80 transition-all duration-700"
-                      style={{ width: `${Math.max(pct, streamPreview.length > 0 ? 4 : 0)}%` }}
-                    />
-                  </div>
-                )}
 
                 <div className="shrink-0 flex flex-wrap items-center gap-1.5">
                   {[
@@ -4720,7 +4849,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                       const isDone = pagesMode ? pagesDone[i] != null : i < doneCount;
                       const isCurrent = pagesMode ? !isDone && building : i === doneCount && building;
                       const isViewing = effLiveDoc !== '' && i === effLiveIdx;
-                      const thumb = pagesMode ? pageThumbDocs[i] : undefined;
+                      const thumb = pagesMode ? pageThumbDocs[i] : previewPageDocs[i];
                       const title = (pagesMode ? outlineDraft?.outline[i]?.title : slideProgress.titles[i]) || '';
                       return (
                         <button
@@ -4791,9 +4920,15 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
           {/* Done: iframe preview（单页重绘进行中也走这里——保持整份 deck 可见，只遮目标页） */}
           {(artifactPhase === 'done'
+            || artifactPhase === 'error'
             || (artifactPhase === 'idle' && generatedHtml)
             || (artifactPhase === 'patching' && patchingSlide != null)) && generatedHtml && (
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
+              {artifactPhase === 'error' && (
+                <div className="shrink-0 border-b border-amber-400/25 bg-amber-500/10 px-3 py-2 text-[11px] text-[color:var(--accent-fg-amber)]" role="status">
+                  这是真实生成的只读初稿，但没有通过发布前质量检查。原版本未被覆盖；请重新生成或从历史记录恢复已完成版本。
+                </div>
+              )}
               {/* Toolbar */}
               <div
                 data-testid="ppt-preview-toolbar"
@@ -4833,7 +4968,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     <button
                       type="button"
                       onClick={() => setStylePanelOpen((v) => !v)}
-                      disabled={isStreaming}
+                      disabled={isStreaming || artifactPhase !== 'done'}
                       title="换风格：展开后选择模板，确认后 AI 会整体重绘"
                       className={[
                         'flex min-h-11 min-w-11 items-center gap-1.5 px-3 py-1 rounded-md text-[11px] border disabled:opacity-40',
@@ -4960,7 +5095,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                       setDirtyEdits(false);
                       setEditMode(true);
                     }}
-                    disabled={isStreaming}
+                    disabled={isStreaming || artifactPhase !== 'done'}
                     data-testid="manual-edit-button"
                     title={editMode
                       ? '把当前草稿作为冻结修改提案交给 OpenDesign，并在质量检查通过后形成新版本'
@@ -4978,7 +5113,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   <button
                     type="button"
                     onClick={() => setFeedbackMode((v) => !v)}
-                    disabled={isStreaming || editMode}
+                    disabled={isStreaming || editMode || artifactPhase !== 'done'}
                     title="圈选反馈：拖框圈出要修改的区域，写一句要求，自动组装成精修指令"
                     className={[
                       'flex min-h-11 min-w-11 items-center gap-1 px-3 py-1 rounded-md text-[11px] border disabled:opacity-40',
@@ -4993,7 +5128,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   <button
                     type="button"
                     onClick={redrawCurrentPage}
-                    disabled={isStreaming || editMode || !slidePos}
+                    disabled={isStreaming || editMode || !slidePos || artifactPhase !== 'done'}
                     data-testid="redraw-page-button"
                     title="对当前页整页重绘：修复溢出、挤压、排版问题，内容保持不变，其余页不动"
                     className="flex min-h-11 min-w-11 items-center gap-1 px-3 py-1 rounded-md text-[11px] border bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle disabled:opacity-40"
@@ -5069,6 +5204,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 <NextStepBar
                   onPublish={() => void handlePublish()}
                   publishBusy={isPublishing}
+                  publishDisabled={!canPublish}
+                  publishDisabledReason={publishDisabledReason}
                   published={!!publishedUrl}
                   onDownload={handleDownload}
                   onSeedPatch={(t) => {

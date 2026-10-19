@@ -226,6 +226,59 @@ public sealed class OpenDesignServiceArtifactExecutorTests
     }
 
     [Fact]
+    public async Task EveryBoundedStatusStage_RefreshesTheExistingGrantUsageWithoutChangingTheRunContract()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Sse(
+            Event(1, "status", new JsonObject { ["status"] = "running", ["reason"] = "open_design_running" }),
+            Event(2, "status", new JsonObject { ["status"] = "running", ["reason"] = "workspace_collecting" }),
+            Event(3, "done", new JsonObject { ["artifactRef"] = "ref-1" })));
+        var grants = new Mock<IDesignArtifactGatewayGrantService>(MockBehavior.Strict);
+        grants.SetupSequence(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(1, "model-1", "platform-1"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(18, "model-1", "platform-1"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(33, "model-1", "platform-1"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(33, "model-1", "platform-1"));
+        grants.Setup(x => x.RevokeAsync("grant-id", CancellationToken.None)).Returns(Task.CompletedTask);
+        var executor = BuildExecutor(service, BuildBroker().Object, gatewayGrants: grants.Object);
+
+        var chunks = await CollectAsync(executor, BuildRun());
+
+        chunks.ShouldContain(chunk => chunk.Type == "phase");
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        grants.Verify(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None), Times.Exactly(4));
+        grants.Verify(x => x.RevokeAsync("grant-id", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    public async Task StatusUsageObservationFailure_DoesNotTurnTheExistingWebPageRunIntoAnExecutionFailure()
+    {
+        var service = new FakeDesignService();
+        service.OnSubmit(_ => Json(HttpStatusCode.Accepted, new JsonObject { ["task"] = TaskView("running") }));
+        service.OnEvents(_ => Sse(
+            Event(1, "status", new JsonObject { ["status"] = "running", ["reason"] = "workspace_collecting" }),
+            Event(2, "done", new JsonObject { ["artifactRef"] = "ref-1" })));
+        var grants = new Mock<IDesignArtifactGatewayGrantService>(MockBehavior.Strict);
+        grants.SetupSequence(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None))
+            .ThrowsAsync(new InvalidOperationException("synthetic status observation failure"))
+            .ReturnsAsync(new DesignArtifactGatewayGrantUsage(3, "model-1", "platform-1"))
+            .ThrowsAsync(new InvalidOperationException("synthetic final observation failure"));
+        grants.Setup(x => x.RevokeAsync("grant-id", CancellationToken.None)).Returns(Task.CompletedTask);
+        var executor = BuildExecutor(service, BuildBroker().Object, gatewayGrants: grants.Object);
+        var run = BuildRun();
+
+        var chunks = await CollectAsync(executor, run);
+
+        run.ArtifactType.ShouldBe(DesignArtifactTypes.WebPage);
+        chunks.ShouldContain(chunk => chunk.Type == "phase");
+        chunks.ShouldContain(chunk => chunk.Type == "delta");
+        chunks.ShouldNotContain(chunk => chunk.Type == "error");
+        grants.Verify(x => x.ObserveAsync("grant-id", It.IsAny<DesignArtifactRun>(), CancellationToken.None), Times.Exactly(3));
+        grants.Verify(x => x.RevokeAsync("grant-id", CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
     public async Task ExecutorBusy_ShowsAQueueLineWaitsTheAdvisedSecondsAndResubmitsTheSameAttempt()
     {
         var service = new FakeDesignService();

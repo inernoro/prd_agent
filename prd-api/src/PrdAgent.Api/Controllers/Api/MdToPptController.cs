@@ -42,6 +42,14 @@ public class MdToPptController : ControllerBase
     internal const string OutlinePageCountMismatchCode = "outline_page_count_mismatch";
     private const int MaxManualEditHtmlBytes = 4 * 1024 * 1024;
 
+    internal sealed record OpenDesignRuntimeSnapshot(
+        int Progress,
+        string? PhaseCode,
+        string? Phase,
+        int RuntimeModelCallCount,
+        int? LatestPreviewRevision,
+        string? LatestPreviewHtml);
+
     /// <summary>
     /// 知识驱动大纲的输出契约补丁：两条大纲提示词的格式示例都不含 sourceBlockIds，
     /// 而 MdToPptSourcePlan.Bind 要求每页必填。把契约钉进 system 段（模型真正照抄的那一份），
@@ -1639,6 +1647,13 @@ public class MdToPptController : ControllerBase
             .Find(x => x.Id == id && x.UserId == userId)
             .FirstOrDefaultAsync();
         if (run == null) return NotFound(new { error = "运行记录不存在" });
+        var designArtifact = await _db.DesignArtifactRuns.Find(item =>
+                item.DeploymentSlug == DeploymentScope.Current
+                && item.Id == id
+                && item.UserId == userId
+                && item.ArtifactType == DesignArtifactTypes.HtmlPpt)
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
+        var runtimeSnapshot = designArtifact == null ? null : BuildOpenDesignRuntimeSnapshot(designArtifact);
         if (run.Status == "done"
             && IsRunnableDeckDocument(run.Html)
             && !string.Equals(run.Runtime, DesignArtifactRuntimes.OpenDesign, StringComparison.Ordinal))
@@ -1703,6 +1718,12 @@ public class MdToPptController : ControllerBase
             resolvedPlatforms = run.ResolvedPlatforms,
             degraded = run.Degraded,
             total = run.Total,
+            progress = runtimeSnapshot?.Progress,
+            phaseCode = runtimeSnapshot?.PhaseCode,
+            phaseMessage = runtimeSnapshot?.Phase,
+            runtimeModelCallCount = runtimeSnapshot?.RuntimeModelCallCount,
+            latestPreviewRevision = runtimeSnapshot?.LatestPreviewRevision,
+            latestPreviewHtml = runtimeSnapshot?.LatestPreviewHtml,
             createdAt = run.CreatedAt,
             updatedAt = run.UpdatedAt,
         });
@@ -3852,6 +3873,7 @@ public class MdToPptController : ControllerBase
     private async Task StreamOpenDesignPptRunAsync(string runId)
     {
         var lastProgress = -1;
+        var lastRuntimeModelCallCount = -1;
         var lastPreviewRevision = -1;
         string? lastModel = null;
         while (!HttpContext.RequestAborted.IsCancellationRequested)
@@ -3866,14 +3888,18 @@ public class MdToPptController : ControllerBase
                 await WriteEventAsync("error", new { message = "演示稿任务记录不存在，请重新发起" });
                 return;
             }
-            if (artifact.Progress != lastProgress)
+            var runtimeSnapshot = BuildOpenDesignRuntimeSnapshot(artifact);
+            if (runtimeSnapshot.Progress != lastProgress
+                || runtimeSnapshot.RuntimeModelCallCount != lastRuntimeModelCallCount)
             {
-                lastProgress = artifact.Progress;
+                lastProgress = runtimeSnapshot.Progress;
+                lastRuntimeModelCallCount = runtimeSnapshot.RuntimeModelCallCount;
                 await WriteEventAsync("phase", new
                 {
-                    phaseCode = artifact.PhaseCode,
-                    progress = artifact.Progress,
-                    message = artifact.Phase,
+                    phaseCode = runtimeSnapshot.PhaseCode,
+                    progress = runtimeSnapshot.Progress,
+                    message = runtimeSnapshot.Phase,
+                    runtimeModelCallCount = runtimeSnapshot.RuntimeModelCallCount,
                 });
             }
             if (!string.IsNullOrWhiteSpace(artifact.ResolvedModel)
@@ -3932,6 +3958,14 @@ public class MdToPptController : ControllerBase
             }
         }
     }
+
+    internal static OpenDesignRuntimeSnapshot BuildOpenDesignRuntimeSnapshot(DesignArtifactRun artifact) => new(
+        artifact.Progress,
+        artifact.PhaseCode,
+        artifact.Phase,
+        Math.Max(0, artifact.RuntimeModelCallCount),
+        artifact.LatestPreviewRevision,
+        artifact.LatestPreviewHtml);
 
     // ─────────────────────────────────────────────
     // SSE 工具方法

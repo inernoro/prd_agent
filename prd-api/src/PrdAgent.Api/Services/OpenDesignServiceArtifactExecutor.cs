@@ -348,8 +348,11 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                     afterSeq = Math.Max(afterSeq, evt.Seq);
                     sawEvent = true;
                     consecutiveFailures = 0;
-                    if (evt.Type == OpenDesignEventTranslator.Done
-                        || evt.Type == OpenDesignEventTranslator.Status && observedModel is null)
+                    // 每个有限阶段事件都从短期 grant 的 CallCount 同步一次真实累计调用数。
+                    // 不能只在首次识别模型时观察：一个 OpenDesign 任务会在后续审查与修复阶段
+                    // 继续调用模型，首次快照通常只有 1。status 只由运行时阶段迁移产生，数量有界；
+                    // text_delta/preview 不触发查询，避免随高频内容事件放大网关读取。
+                    if (evt.Type is OpenDesignEventTranslator.Done or OpenDesignEventTranslator.Status)
                     {
                         var usage = await ObserveGrantUsageAsync(
                             workspace.ModelGrantId,

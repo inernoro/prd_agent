@@ -335,6 +335,13 @@ export interface MdToPptDiagEvent {
   [key: string]: unknown;
 }
 
+export interface MdToPptPhaseEvent {
+  phaseCode: string;
+  progress: number;
+  message: string;
+  runtimeModelCallCount: number;
+}
+
 // ============ SSE helpers ============
 
 function buildSseHeaders(): Record<string, string> {
@@ -358,7 +365,7 @@ async function readSseStream(
     onDiag?: (data: MdToPptDiagEvent) => void;
     onThinking?: (text: string) => void;
     onDelta?: (text: string) => void;
-    onPhase?: (data: { phaseCode: string; progress: number; message: string }) => void;
+    onPhase?: (data: MdToPptPhaseEvent) => void;
     onPreview?: (data: { html: string; revision: number }) => void;
     onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
     onPage?: (data: { index: number; total: number; html: string; done: number }) => void;
@@ -411,6 +418,7 @@ async function readSseStream(
               phaseCode: (data.phaseCode as string) ?? '',
               progress: (data.progress as number) ?? 0,
               message: (data.message as string) ?? '',
+              runtimeModelCallCount: Math.max(0, (data.runtimeModelCallCount as number) ?? 0),
             });
           } else if (currentEvent === 'preview') {
             handlers.onPreview?.({
@@ -475,7 +483,7 @@ export interface MdToPptConvertSseOptions {
   /** 推理模型思考过程增量（先想后写的模型，等待期展示思考内容） */
   onThinking?: (text: string) => void;
   onDelta?: (text: string) => void;
-  onPhase?: (data: { phaseCode: string; progress: number; message: string }) => void;
+  onPhase?: (data: MdToPptPhaseEvent) => void;
   onPreview?: (data: { html: string; revision: number }) => void;
   /** degraded：退化为裸要点/范本兜底的页数；total：总页数（>0 时说明本次未全程走 Agent 设计） */
   onDone?: (result: { html: string; degraded?: number; total?: number; siteUrl?: string; siteId?: string; revisionId?: string }) => void;
@@ -612,7 +620,7 @@ export interface MdToPptPatchSseOptions {
   /** 推理模型思考过程增量 */
   onThinking?: (text: string) => void;
   onDelta?: (text: string) => void;
-  onPhase?: (data: { phaseCode: string; progress: number; message: string }) => void;
+  onPhase?: (data: MdToPptPhaseEvent) => void;
   onPreview?: (data: { html: string; revision: number }) => void;
   onDone?: (result: { html: string; siteUrl?: string; siteId?: string; revisionId?: string }) => void;
   onError?: (message: string) => void;
@@ -756,6 +764,12 @@ export interface MdToPptRunDetail {
   degraded?: number;
   /** 总页数（与 degraded 配对还原「共 N 页其中 X 页降级」文案） */
   total?: number;
+  progress?: number | null;
+  phaseCode?: string | null;
+  phaseMessage?: string | null;
+  runtimeModelCallCount?: number | null;
+  latestPreviewRevision?: number | null;
+  latestPreviewHtml?: string | null;
   createdAt: string;
   updatedAt: string;
 }

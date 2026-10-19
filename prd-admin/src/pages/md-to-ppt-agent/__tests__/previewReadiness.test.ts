@@ -103,4 +103,18 @@ describe('PPT 文档导航就绪合同', () => {
     expect(source).not.toContain('persistMdToPptLocalEdit(');
     expect(source).toContain("{editMode ? (dirtyEdits ? '保存并检查' : '退出编辑') : '编辑内容'}");
   });
+
+  it('生成态展示 OpenDesign 真实预览并以服务端进度和模型调用次数为准', () => {
+    expect(source).toContain('const previewPageCount = countDeckPages(generatedHtml)');
+    expect(source).toContain('const effLiveDoc = pagesMode ? pagesLiveDoc : liveDoc || previewPageDocs[previewLiveIdx] ||');
+    expect(source).toContain('setArtifactProgress(phase.progress)');
+    expect(source).toContain('setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, phase.runtimeModelCallCount))');
+    expect(source).toContain('模型调用 {runtimeModelCallCount} 次');
+  });
+
+  it('质量拒绝后保留预览但不能从前端发起发布', () => {
+    expect(source).toContain("const canPublish = artifactPhase === 'done' && Boolean(activeRunId)");
+    expect(source).toContain('publishDisabled={!canPublish}');
+    expect(source).toContain('disabled={isPublishing || !canPublish}');
+  });
 });

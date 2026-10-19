@@ -50,6 +50,46 @@ public class MdToPptPipelineRegressionTests
         payload.GetProperty("total").GetInt32().ShouldBe(20);
     }
 
+    [Fact]
+    public void OpenDesignRuntimeSnapshot_ExposesOnlyPersistedProgressPreviewAndCallCount()
+    {
+        var artifact = new DesignArtifactRun
+        {
+            Progress = 82,
+            PhaseCode = "repairing-quality",
+            Phase = "正在修复质量问题",
+            RuntimeModelCallCount = 33,
+            LatestPreviewRevision = 7,
+            LatestPreviewHtml = "<!doctype html><html><body>preview</body></html>",
+        };
+
+        var snapshot = MdToPptController.BuildOpenDesignRuntimeSnapshot(artifact);
+
+        snapshot.Progress.ShouldBe(82);
+        snapshot.PhaseCode.ShouldBe("repairing-quality");
+        snapshot.Phase.ShouldBe("正在修复质量问题");
+        snapshot.RuntimeModelCallCount.ShouldBe(33);
+        snapshot.LatestPreviewRevision.ShouldBe(7);
+        snapshot.LatestPreviewHtml.ShouldNotBeNull();
+        snapshot.LatestPreviewHtml.ShouldContain("preview");
+    }
+
+    [Fact]
+    public void Publish_RequiresTheCompletedSourceRunAndItsBoundHtmlHash()
+    {
+        var source = File.ReadAllText(ControllerPath());
+        var start = source.IndexOf("public async Task<IActionResult> Publish(", StringComparison.Ordinal);
+        var end = source.IndexOf("[HttpGet(\"runs/{id}\")]", start, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        end.ShouldBeGreaterThan(start);
+        var endpoint = source[start..end];
+
+        endpoint.ShouldContain("sourceRun.Status != \"done\"");
+        endpoint.ShouldContain("ppt_run_not_ready");
+        endpoint.ShouldContain("HtmlMatchesHash(req.HtmlContent, sourceHash)");
+        endpoint.ShouldContain("ppt_html_mismatch");
+    }
+
     [Theory]
     [InlineData("public async Task Convert(", "[HttpPost(\"patch\")]")]
     [InlineData("public async Task Patch(", "[HttpPost(\"publish\")]")]

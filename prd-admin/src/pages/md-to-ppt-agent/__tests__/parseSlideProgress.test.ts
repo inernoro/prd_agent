@@ -1,18 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import {
   buildLiveSlideDoc,
+  countDeckPages,
   estimatePages,
   extractCompletedSections,
   extractHeadAssets,
   looksLikeDeck,
+  mergeRuntimeModelCallCount,
   parseExplicitPages,
   parseSlideProgress,
+  PptRuntimeProgressHeader,
   resolveOutlineTargetPages,
   resolveNaturalPatchSlideIndex,
   recoverPatchParentRun,
   resolveRecoveredDeckState,
 } from '../MdToPptAgentPage';
+import { NextStepBar } from '../NextStepBar';
 import type { MdToPptRunDetail } from '@/services/real/mdToPptService';
 
 // 守护「生成等待面板逐页点亮」：从流式 HTML 里解析已闭合 <section> 的页标题，
@@ -117,6 +123,76 @@ describe('looksLikeDeck', () => {
     expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>标题</h1></section><section></section></div></div>${padding}</body></html>`)).toBe(false);
     expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><section><h1>${padding}</h1></section><section></section></section></div></div></body></html>`)).toBe(false);
     expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide">&#32;&#32;</section>${padding}</body></html>`)).toBe(false);
+  });
+});
+
+describe('countDeckPages', () => {
+  it('counts only top-level authored pages from OpenDesign previews', () => {
+    expect(countDeckPages('<div class="reveal"><div class="slides"><section>A</section><section>B</section></div></div>')).toBe(2);
+    expect(countDeckPages('<div class="deck"><section class="slide"><div class="slide">nested</div></section><section class="slide">B</section></div>')).toBe(2);
+    expect(countDeckPages('<main><section>A</section></main>')).toBe(0);
+  });
+});
+
+describe('OpenDesign 运行态可见信息', () => {
+  it('用捕获的阶段与预览事实渲染真实组件，页数、流程进度和模型调用次数互不冒充', () => {
+    const captured = {
+      phaseMessage: '正在修复质量问题',
+      progress: 82,
+      runtimeModelCallCount: 33,
+      previewHtml: '<div class="reveal"><div class="slides">' + '<section>正文</section>'.repeat(20) + '</div></div>',
+    };
+    const previewPages = countDeckPages(captured.previewHtml);
+    const html = renderToStaticMarkup(createElement(PptRuntimeProgressHeader, {
+      stageText: captured.phaseMessage,
+      elapsedSec: 465,
+      draftDetail: `已形成 ${previewPages}/20 页真实初稿`,
+      model: 'default-chat-curated',
+      runtimeModelCallCount: captured.runtimeModelCallCount,
+      processProgress: captured.progress,
+      hasPreview: true,
+    }));
+
+    expect(html).toContain('正在修复质量问题');
+    expect(html).toContain('已形成 20/20 页真实初稿');
+    expect(html).toContain('模型调用 33 次');
+    expect(html).toContain('aria-valuenow="82"');
+    expect(html).toContain('width:82%');
+
+    const fixtureOutput = process.env.PPT_RUNTIME_FIXTURE_OUTPUT;
+    if (fixtureOutput) {
+      const panel = renderToStaticMarkup(createElement('main', { 'data-provenance': 'captured-runtime-fields-only' },
+        createElement(PptRuntimeProgressHeader, {
+          stageText: captured.phaseMessage,
+          elapsedSec: 465,
+          draftDetail: `已形成 ${previewPages}/20 页真实初稿`,
+          model: 'default-chat-curated',
+          runtimeModelCallCount: captured.runtimeModelCallCount,
+          processProgress: captured.progress,
+          hasPreview: true,
+        }),
+        createElement('iframe', {
+          title: 'OpenDesign 捕获预览',
+          sandbox: 'allow-scripts',
+          srcDoc: captured.previewHtml,
+        }),
+        createElement(NextStepBar, {
+          onPublish: () => undefined,
+          publishBusy: false,
+          publishDisabled: true,
+          publishDisabledReason: '质量检查尚未通过，当前初稿只能预览，不能发布。',
+          published: false,
+          onDownload: () => undefined,
+          onSeedPatch: () => undefined,
+        }),
+      ));
+      writeFileSync(fixtureOutput, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PPT 捕获事件组件夹具</title><style>:root{color-scheme:dark;--text-secondary:#d6d8de;--text-tertiary:#9ba1ad;--accent-primary-solid:#b0523a}body{margin:0;padding:24px;background:#0d0f14;color:#f4f4f5;font-family:system-ui}main{max-width:960px;margin:auto;display:grid;gap:16px;padding:16px;border:1px solid #343946;border-radius:14px;background:#171a21}.flex{display:flex}.items-center{align-items:center}.gap-2{gap:.5rem}.gap-3{gap:.75rem}.min-w-0{min-width:0}.shrink-0{flex-shrink:0}.ml-auto{margin-left:auto}.w-full{width:100%}.h-full{height:100%}.rounded-full{border-radius:999px}.overflow-hidden{overflow:hidden}.bg-token-nested{background:#262b35}.text-sm{font-size:.875rem}.text-\\[11px\\],.text-\\[10px\\]{font-size:11px}.mt-0\\.5{margin-top:2px}.tabular-nums{font-variant-numeric:tabular-nums}.font-mono{font-family:monospace}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}iframe{display:block;width:100%;height:330px;border:1px solid #343946;border-radius:12px}button{font:inherit;color:inherit}</style></head><body>${panel}</body></html>`, 'utf8');
+    }
+  });
+
+  it('乱序阶段事件不会让累计调用次数回退', () => {
+    const observed = [1, 18, 33, 20];
+    expect(observed.reduce(mergeRuntimeModelCallCount, 0)).toBe(33);
   });
 });
 
