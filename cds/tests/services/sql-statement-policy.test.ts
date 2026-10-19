@@ -346,3 +346,24 @@ describe('write scripts under resource string modes',()=>{
     expect(()=>normalizeConsoleWrite(prefix+String.raw`COPY demo TO/**/'/tmp/p'; SELECT 'x'`,'postgres')).toThrow();
   });
 });
+
+
+describe('executable comments cannot bypass write admission', () => {
+  for (const marker of ['/*!', '/*!80000', '/*M!', '/*m!100000']) {
+    it(`rejects ${marker} in single writes and batches before stripping`, () => {
+      for (const suffix of ['SHUTDOWN', 'SET GLOBAL read_only=0', 'CREATE USER other']) {
+        for (const sql of [`UPDATE demo SET n=1; ${marker} ${suffix} */`, `UPDATE demo SET n=1 ${marker} ${suffix} */`, `UPDATE demo SET n=1 ${marker}; ${suffix} */`]) {
+          expect(() => normalizeConsoleWrite(sql, 'mysql')).toThrow(/可执行注释/);
+          expect(() => normalizeWriteStatement(sql, 'mysql')).toThrow();
+        }
+      }
+    });
+  }
+  it('preserves quoted comment text, ordinary comments and PostgreSQL comments', () => {
+    for (const sql of ["UPDATE demo SET note='/*! SHUTDOWN */'; UPDATE demo SET n=2", 'UPDATE demo SET n=1 /* ordinary comment */; UPDATE demo SET n=2']) {
+      expect(normalizeConsoleWrite(sql, 'mysql')).toBe(sql);
+    }
+    expect(normalizeConsoleWrite('UPDATE demo SET n=1; /*! ordinary PG comment */ SELECT 1', 'postgres')).toContain('SELECT 1');
+    expect(() => normalizeConsoleWrite(String.raw`UPDATE demo SET note='a\'; /*! SHUTDOWN */ SELECT 'x'`, 'mysql')).toThrow(/可执行注释/);
+  });
+});

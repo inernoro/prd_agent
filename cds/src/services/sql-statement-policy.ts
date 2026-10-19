@@ -110,6 +110,8 @@ export type SqlDialect = 'mysql' | 'postgres';
 export interface SqlScanOptions {
   /** 抹掉字符串字面量的内容（引号保留）。 */
   maskLiterals?: boolean;
+  /** Reject MySQL/MariaDB code-bearing comments before stripping them. */
+  rejectExecutableComments?: boolean;
   /** Scan both standard and backslash-escaped strings; server modes vary. */
   backslashEscapes?: boolean;
   /**
@@ -156,6 +158,9 @@ export function stripSqlComments(sql: string, options: SqlScanOptions = {}): str
     }
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
     if (ch === '/' && next === '*') {
+      if (options.rejectExecutableComments && options.dialect !== 'postgres' && /^(?:!|M!)/i.test(sql.slice(i + 2, i + 4))) {
+        throw new Error('工作台不接受 MySQL/MariaDB 可执行注释，请展开成普通 SQL 后重试。');
+      }
       let cursor=i+2,depth=1;
       while(cursor<sql.length && depth){
         if(options.dialect === 'postgres' && sql[cursor]==='/'&&sql[cursor+1]==='*'){depth++;cursor+=2;}
@@ -258,7 +263,7 @@ export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): s
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertNoHostEscape(body, dialect);
-  if (/\/\*(?:!|M!)/i.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');
+  if (/\/\*(?:!|M!)/i.test(body)) throw new Error('工作台不接受可执行注释，请展开成普通 SQL 后重试。');
   // Server string modes vary (Postgres standard strings, MySQL NO_BACKSLASH_ESCAPES).
   // Every interpretation must remain read-only; never let a masked quote hide COMMIT.
   for (const backslashEscapes of [true, false]) {
@@ -277,6 +282,12 @@ export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): s
   return body;
 }
 
+function assertNoExecutableWriteComments(sql: string, dialect?: SqlDialect): void {
+  for (const backslashEscapes of [true, false]) {
+    stripSqlComments(sql, { dialect, backslashEscapes, rejectExecutableComments: true });
+  }
+}
+
 /**
  * 写路径：语句头必须在写白名单里（只读语句不该走这条，避免绕过读路径的关键字检查）。
  */
@@ -284,6 +295,7 @@ export function normalizeWriteStatement(sql: string, dialect?: SqlDialect): stri
   const body = normalizeStatementBody(sql);
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
+  assertNoExecutableWriteComments(body, dialect);
   assertSingleStatement(body, '写 SQL ', dialect);
   const { head, kind } = classifySqlStatement(body, dialect);
   if (TRANSACTION_CONTROL_HEADS.includes(head)) throw transactionControlError();
@@ -310,6 +322,7 @@ export function normalizeConsoleWrite(sql: string, dialect?: SqlDialect): string
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 100_000) throw new Error('SQL 过长（上限 100KB）');
   assertNoHostEscape(body, dialect);
+  assertNoExecutableWriteComments(body, dialect);
   if (!isSqlScript(body, dialect)) return normalizeWriteStatement(body, dialect);
   // The script can itself SET sql_mode/standard_conforming_strings. Every possible
   // interpretation must admit every statement; never trust just the leading UPDATE.
