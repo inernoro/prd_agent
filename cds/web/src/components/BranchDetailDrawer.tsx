@@ -5786,12 +5786,22 @@ function stripSqlCommentsAndLiterals(sql: string, hashStartsComment = false): st
       if (ch === quote) quote = null;
       continue;
     }
+    if (!hashStartsComment && ch === '$' && !/[A-Za-z0-9_$\u0080-\uffff]/.test(sql[i-1] || ' ')) {
+      const tag=sql.slice(i).match(/^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/)?.[0];
+      if(tag){
+        const close=sql.indexOf(tag,i+tag.length),end=close<0?sql.length:close+tag.length;
+        out += true ? "'"+' '.repeat(end-i)+"'" : sql.slice(i,end);i=end-1;continue;
+      }
+    }
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
     if (ch === '/' && next === '*') {
-      const end = sql.indexOf('*/', i + 2);
-      i = end === -1 ? sql.length : end + 1;
-      out += ' ';
-      continue;
+      let cursor=i+2,depth=1;
+      while(cursor<sql.length && depth){
+        if(!hashStartsComment && sql[cursor]==='/'&&sql[cursor+1]==='*'){depth++;cursor+=2;}
+        else if(sql[cursor]==='*'&&sql[cursor+1]==='/'){depth--;cursor+=2;}
+        else cursor++;
+      }
+      i=cursor-1;out+=' ';continue;
     }
     const dashComment = ch === '-' && next === '-' && (!hashStartsComment || /[\x00-\x20]/.test(sql[i + 2] ?? '\uffff'));
     if (dashComment || (ch === '#' && hashStartsComment)) {

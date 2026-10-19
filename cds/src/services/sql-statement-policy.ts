@@ -143,12 +143,22 @@ export function stripSqlComments(sql: string, options: SqlScanOptions = {}): str
       if (ch === quote) quote = null;
       continue;
     }
+    if (options.dialect === 'postgres' && ch === '$' && !/[A-Za-z0-9_$\u0080-\uffff]/.test(sql[i-1] || ' ')) {
+      const tag=sql.slice(i).match(/^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/)?.[0];
+      if(tag){
+        const close=sql.indexOf(tag,i+tag.length),end=close<0?sql.length:close+tag.length;
+        out += maskLiterals ? "'"+' '.repeat(end-i)+"'" : sql.slice(i,end);i=end-1;continue;
+      }
+    }
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
     if (ch === '/' && next === '*') {
-      const end = sql.indexOf('*/', i + 2);
-      i = end === -1 ? sql.length : end + 1;
-      out += ' ';
-      continue;
+      let cursor=i+2,depth=1;
+      while(cursor<sql.length && depth){
+        if(options.dialect === 'postgres' && sql[cursor]==='/'&&sql[cursor+1]==='*'){depth++;cursor+=2;}
+        else if(sql[cursor]==='*'&&sql[cursor+1]==='/'){depth--;cursor+=2;}
+        else cursor++;
+      }
+      i=cursor-1;out+=' ';continue;
     }
     // MySQL requires whitespace/control after --; otherwise it is subtraction, not a comment.
     const dashComment = ch === '-' && next === '-' && (options.dialect === 'postgres' || /[\x00-\x20]/.test(sql[i + 2] ?? '\uffff'));
@@ -242,7 +252,7 @@ export function normalizeReadOnlyStatement(sql: string, dialect?: SqlDialect): s
   if (!body) throw new Error('SQL 不能为空');
   if (body.length > 20_000) throw new Error('SQL 过长（上限 20KB）');
   assertNoHostEscape(body, dialect);
-  if (/\/\*!/.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');
+  if (/\/\*(?:!|M!)/i.test(body)) throw new Error('只读通道不接受可执行注释，请走写 SQL 通道。');
   // Server string modes vary (Postgres standard strings, MySQL NO_BACKSLASH_ESCAPES).
   // Every interpretation must remain read-only; never let a masked quote hide COMMIT.
   for (const backslashEscapes of [true, false]) {

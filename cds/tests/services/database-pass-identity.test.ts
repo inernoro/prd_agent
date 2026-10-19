@@ -46,3 +46,12 @@ it('read validation also rejects transaction escapes under standard string serve
     expect(()=>normalizeReadOnlyStatement("SELECT 'x\\'; COMMIT; UPDATE items SET value=1; --'",dialect)).toThrow();
   }
 });
+it('read queries reject MariaDB executable comments, including version-prefixed and single-statement forms',()=>{
+  for(const sql of ['SELECT 1; /*M! COMMIT */; /*M! UPDATE items SET value=1 */','SELECT 1 /*M! INTO @x */','SELECT 1; /*M!100100 COMMIT */; /*M!100100 DELETE FROM items */'])expect(()=>normalizeReadOnlyStatement(sql,'mysql')).toThrow(/可执行注释/);
+  expect(()=>normalizeReadOnlyStatement('SELECT 1 /* ordinary comment */; SELECT 2','mysql')).not.toThrow();
+});
+it('PostgreSQL nested comments and dollar-quoted strings cannot conceal following transaction controls',()=>{
+  for(const sql of ["SELECT $$'$$; COMMIT; UPDATE items SET value=1; --'", "SELECT 1 /* outer /* inner */ ' */; COMMIT; UPDATE items SET value=1; --'", 'SELECT a$$ FROM items; COMMIT; UPDATE items SET value=1; SELECT $$$$'])expect(()=>normalizeReadOnlyStatement(sql,'postgres')).toThrow();
+  expect(()=>normalizeReadOnlyStatement("SELECT $tag$-- ' ; UPDATE demo$tag$; SELECT 2",'postgres')).not.toThrow();
+  expect(()=>normalizeReadOnlyStatement('SELECT 1 /* outer /* nested */ still a comment */; SELECT 2','postgres')).not.toThrow();
+});

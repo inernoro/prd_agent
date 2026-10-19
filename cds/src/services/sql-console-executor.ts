@@ -64,7 +64,7 @@ async function executeMysql(options: SqlConsoleOptions, collector: SqlResultColl
     connectTimeout: Math.min(options.timeoutMs, 10_000),
   });
   const run = (sql: string, collect: boolean) => new Promise<void>((resolve, reject) => {
-    let current: SqlConsoleResultSet | undefined;
+    let current:SqlConsoleResultSet|undefined;
     let stopping = false;
     const timer = setTimeout(async () => {
       stopping = true;
@@ -84,12 +84,15 @@ async function executeMysql(options: SqlConsoleOptions, collector: SqlResultColl
     }, options.timeoutMs);
     const query = connection.query({ sql });
     query.on('fields', (fields: FieldPacket[] | undefined) => {
-      current = collect && fields ? collector.fields(fields.map(field => field.name)) : undefined;
+      current=collect&&fields?collector.fields(fields.map(field=>field.name)):undefined;
     });
     query.on('result', (row: unknown) => {
       if (!collect) return;
-      if (current) collector.row(current, row as unknown[]);
+      // mysql2 typings advertise indices on metadata/headers, but some versions omit them.
+      // rowsAsArray is the stable boundary; a DML header is never a table row.
+      if (Array.isArray(row) && current) collector.row(current,row);
       else {
+        current=undefined;
         const header = row as ResultSetHeader;
         collector.record(`Query OK, ${header.affectedRows} row affected${header.info ? ` (${header.info})` : ''}`);
       }

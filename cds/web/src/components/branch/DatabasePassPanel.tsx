@@ -75,7 +75,7 @@ export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId
       </div>
     </div>:null}
     {notice&&!terminal?<p className="text-xs leading-5" role="status">{notice}</p>:null}
-    {overview?.events.some(e=>e.event==='audit-record-damaged')?<p className="rounded border border-amber-500/30 bg-amber-500/10 p-2 text-xs" role="alert">部分审计记录不完整，原始文件已保留，请管理员核对；仍可查看和撤销现有通行证。</p>:null}
+    {overview?.events.some(e=>e.event==='audit-record-damaged')?<p className="rounded border border-warn/30 bg-warn/10 p-2 text-xs" role="alert">部分审计记录不完整，原始文件已保留，请管理员核对；仍可查看和撤销现有通行证。</p>:null}
     {loadError?<p className="rounded border border-destructive/30 bg-destructive/10 p-2 text-xs" role="alert">{loadError}</p>:null}
     {error?<p className="rounded border border-destructive/30 bg-destructive/10 p-2 text-xs" role="alert">{error}</p>:null}
     {overview?.events.length?<details className="text-xs"><summary className="cursor-pointer">审计记录（{overview.events.length}）</summary><div className="mt-2 max-h-44 space-y-1 overflow-auto font-mono">{overview.events.slice(0,30).map((event,index)=><div key={event.ts+index}>{new Date(event.ts).toLocaleTimeString()} · {eventNames[event.event]||event.event}{event.ip?` · ${event.ip}`:''}{event.count?` · ${event.count} 次`:''}</div>)}</div></details>:null}
