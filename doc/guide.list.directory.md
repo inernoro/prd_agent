@@ -150,6 +150,7 @@
 - [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
 - [周报管理 Agent (Report Agent) · 设计](./design.report-agent.md) `design.report-agent`
+- [周报管理 Agent · 月报 · 设计](./design.report-agent.monthly.md) `design.report-agent.monthly`
 - [产品评审员技术 · 设计](./design.review-agent.md) `design.review-agent`
 - [苹果快捷指令集成 · 设计](./design.shortcuts-agent.apple.md) `design.shortcuts-agent.apple`
 - [海鲜市场技能开放接口设计 (Skill Marketplace Open API) · 设计](./design.skill.marketplace-open-api.md) `design.skill.marketplace-open-api`

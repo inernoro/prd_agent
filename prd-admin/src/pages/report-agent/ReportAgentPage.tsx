@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Users, Settings, RefreshCw, CalendarCheck } from 'lucide-react';
+import { FileText, Users, Settings, RefreshCw, CalendarCheck, CalendarRange } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { GlassCard } from '@/components/design/GlassCard';
 import { TabBar } from '@/components/design/TabBar';
@@ -10,6 +10,7 @@ import { ReportMainView } from './components/ReportMainView';
 import { TeamDashboard } from './components/TeamDashboard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { DailyLogInline } from './components/DailyLogInline';
+import { MonthlyReportListView } from './monthly/MonthlyReportListView';
 import { ZoomControl, ZOOM_SCALE, type ZoomLevel } from './components/ZoomControl';
 import { ThemeControl } from './components/ThemeControl';
 import { getMyDefaultTab } from '@/services';
@@ -140,6 +141,7 @@ export default function ReportAgentPage() {
     const items = [
       { key: 'dailyLog', label: '日常记录', icon: <CalendarCheck size={14} /> },
       { key: 'report', label: '周报', icon: <FileText size={14} /> },
+      { key: 'monthly', label: '月报', icon: <CalendarRange size={14} /> },
     ];
     if (hasTeamWorkspace) {
       items.push({ key: 'team', label: '团队', icon: <Users size={14} /> });
@@ -195,6 +197,7 @@ export default function ReportAgentPage() {
       >
         {currentTab === 'dailyLog' && <DailyLogInline />}
         {currentTab === 'report' && <ReportMainView />}
+        {currentTab === 'monthly' && <MonthlyReportListView />}
         {currentTab === 'team' && <TeamDashboard />}
         {currentTab === 'settings' && <SettingsPanel />}
       </div>

@@ -216,6 +216,7 @@ public static class DataSyncScope
             new DataSyncCollection("report_commits", System.Array.Empty<string>()),
             new DataSyncCollection("report_data_sources", new[] { "EncryptedAccessToken" }),
             new DataSyncCollection("report_likes", System.Array.Empty<string>()),
+            new DataSyncCollection("report_monthly_reports", System.Array.Empty<string>()),
             new DataSyncCollection("report_personal_sources", new[] { "EncryptedToken" }),
             new DataSyncCollection("report_team_summaries", System.Array.Empty<string>()),
             new DataSyncCollection("report_templates", System.Array.Empty<string>()),

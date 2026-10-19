@@ -1076,6 +1076,19 @@ db.report_weekly_reports.createIndex(
   { name: "idx_weekly_reports_user_period" }
 )
 
+// collection: report_monthly_reports
+// (UserId, TeamId, Year, Month) 唯一，防止重复月报
+db.report_monthly_reports.createIndex(
+  { "UserId": 1, "TeamId": 1, "Year": 1, "Month": 1 },
+  { name: "uniq_monthly_reports_user_team_month", unique: true }
+)
+
+// 按团队 + 年月查团队月报
+db.report_monthly_reports.createIndex(
+  { "TeamId": 1, "Year": 1, "Month": 1 },
+  { name: "idx_monthly_reports_team_month" }
+)
+
 // collection: report_daily_logs
 // (UserId, Date) 唯一，一天一条
 db.report_daily_logs.createIndex(
