@@ -1,0 +1,176 @@
+{
+  "checkedAt": "2026-10-14T09:33:45.033539+00:00",
+  "verdict": "pass",
+  "scope": "已有管理登录和仓库权限下的三案例桌面/CLI功能流程；教程资源随后按同功能代码发布",
+  "functionalAcceptanceCommit": "0ad65ae3db114c4abf372b7721ef62a53fced681",
+  "releaseLineage": {
+    "previousLiveCommit": "6e92dea1b787ba0d2f28184450e038fcd0514fd9",
+    "mergedMainCommit": "4e2ed3cd6ddc700e6209a9925734097b1d16e4f8",
+    "bothPreservedAsAncestors": true
+  },
+  "authorization": {
+    "projectId": "882975cccbb5",
+    "projectName": "小步清单 · 授权专项复验（2026-10-14）",
+    "gitRepoUrl": "https://github.com/inernoro/cds-onboarding-receipt-lab.git",
+    "credentialMode": "0600",
+    "gitIgnored": true,
+    "bootstrapKeyAbsent": true,
+    "credentialFileUnchangedOnReuse": true,
+    "assertions": [
+      {
+        "assertion": "独立新进程静默复用 1",
+        "passed": true
+      },
+      {
+        "assertion": "独立新进程静默复用 2",
+        "passed": true
+      },
+      {
+        "assertion": "跨项目拒绝",
+        "passed": true,
+        "httpStatus": 403
+      },
+      {
+        "assertion": "再次创建拒绝",
+        "passed": true,
+        "httpStatus": 403
+      }
+    ]
+  },
+  "authorizationCodeProvenance": {
+    "firstApprovalCommit": "301a9ecb0edc955d79125d08754ebeba7e3948c4",
+    "latestFunctionalCommit": "0ad65ae3db114c4abf372b7721ef62a53fced681",
+    "authorizationFilesByteIdentical": true,
+    "latestScopedKeyReuseRetested": true
+  },
+  "oneTimePermissionRevocation": {
+    "id": "58717a6e",
+    "label": "一次性新项目接入 (申请 f947180d236e · Codex 新人闭环复验)",
+    "status": "revoked",
+    "revokedAt": "2026-10-14T07:04:24.466Z"
+  },
+  "failedCandidate": {
+    "commit": "e1f7315295103eb36c8fa9a41444667d0eb74ccc",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38539845701",
+    "passed": true,
+    "imageSkipped": true,
+    "sameAStillRunning": true,
+    "noNewDeploymentRun": true,
+    "fourTasksUnchanged": true
+  },
+  "recoveredCandidate": {
+    "commit": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
+    "versionId": "dv_b33d73bf7045ebfad60e3b43",
+    "runId": "dr_08f5caeef3838893cc60f2ac",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38540259943",
+    "automaticWebhookDeployment": true,
+    "manualDrawerRefreshUsed": false
+  },
+  "rollback": {
+    "id": "small-steps-closure-main",
+    "status": "running",
+    "runningCommitSha": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
+    "targetCommitSha": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
+    "ciImageStatus": "ready",
+    "ciTargetSha": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
+    "currentVersionId": "dv_f4a58820a3f95a66b2f65eda",
+    "lastDeploymentRunId": "dr_b67a153b2f4a9f3441595746",
+    "previewUrl": "https://main-small-steps-closure.miduo.org",
+    "passed": true,
+    "runningA": true,
+    "targetRemainsF": true,
+    "fourTaskIdsTitlesAndDoneUnchanged": true,
+    "sameVerifiedVersionSelected": true,
+    "newRunId": "dr_b67a153b2f4a9f3441595746"
+  },
+  "rollbackArtifactQualification": {
+    "sourceCommit": "83dfdf3a1d4c45353e29af204e300d9b773274ed",
+    "ciUrl": "https://github.com/inernoro/cds-small-steps-closure-lab/actions/runs/38530592009",
+    "oldImageNotOverwritten": true,
+    "sameSourceNewVerifiedArtifact": true,
+    "oldImageByteIdentityNotClaimed": true,
+    "selectedVersionId": "dv_f4a58820a3f95a66b2f65eda"
+  },
+  "originalCase": {
+    "projectId": "6fa7d576d84d",
+    "runningCommit": "9be5fd0f68f36fe726034cf28aa743981c9a2e0e",
+    "threePriorTasksPreserved": true,
+    "volumeIncident": {
+      "originalNamedVolumeRestored": true,
+      "priorTaskCount": 3,
+      "allDone": true,
+      "priorAuditTaskPresent": true,
+      "dataOverwritten": false,
+      "note": "中途空列表保留；恢复原卷后公网核对既有任务，后续再次部署以本次恢复快照逐 ID 比较"
+    }
+  },
+  "caseRepositories": [
+    {
+      "role": "基础练习",
+      "github": "https://github.com/inernoro/cds-small-steps-lab",
+      "cds": "https://cds.miduo.org/branches/6fa7d576d84d",
+      "chapters": [
+        2,
+        5
+      ]
+    },
+    {
+      "role": "恢复演练",
+      "github": "https://github.com/inernoro/cds-small-steps-closure-lab",
+      "cds": "https://cds.miduo.org/branches/8e3b69770497",
+      "chapter": 6
+    },
+    {
+      "role": "授权专项",
+      "github": "https://github.com/inernoro/cds-onboarding-receipt-lab",
+      "cds": "https://cds.miduo.org/branches/882975cccbb5",
+      "historicalCds": "https://cds.miduo.org/branches/c6b1b78ef4d0",
+      "applicationDeployed": false
+    }
+  ],
+  "receiptDismissal": "当前标签页会话内保存；跨页面及刷新保持，新标签页可能重新显示；其他项目不显示完成浮卡",
+  "tests": {
+    "passed": 9797,
+    "skipped": 19,
+    "command": "pnpm --dir cds test --maxWorkers=2 --minWorkers=1 --retry=1",
+    "frontendLint": "占位脚本，不能当作实际 ESLint 校验",
+    "initialFailuresRetained": "固定摘要兼容断言及历史版本核验输入问题已修正；完整重跑绿色"
+  },
+  "downloads": [
+    {
+      "file": "small-steps-source.zip",
+      "sourceCommit": "9be5fd0f68f36fe726034cf28aa743981c9a2e0e",
+      "sha256": "2e62a4481b3db2def7692cbc605125dc899abb900f99a7e1b8815f4df7e5f760",
+      "root": "small-steps/",
+      "credentialFiles": 0,
+      "fileCount": 15
+    },
+    {
+      "file": "closure-source.zip",
+      "sourceCommit": "ec8b8f9fd15bc5df503ca86ead57b322c968f3e7",
+      "sha256": "fa7c0445bdbf9dca4e6e708b8b2d5b71d0cb367b8b5da3c11c36ffeda0009cd0",
+      "root": "仓库根目录",
+      "credentialFiles": 0,
+      "fileCount": 76
+    }
+  ],
+  "video": {
+    "seconds": 50.87,
+    "segments": 12,
+    "frames": 85,
+    "bytes": 584731,
+    "kind": "真实浏览器帧，按实际顺序剪去等待；无音轨、无界面重绘；排查失败段另存本地",
+    "path": "media/postmerge-walkthrough.mp4",
+    "sha256": "715be8444a1a6b0f95ef2e2fe1c60ae01b08f233e867bf5acba09afe3155fdc4"
+  },
+  "reportFolderUrl": "https://cds.miduo.org/reports?project=f9e8b956d3dd&folder=ddb0fcc29d6b47a3ac2f7e8837ee5495",
+  "limits": [
+    "首次开通账号、普通新用户权限分配和 GitHub 首次安装授权未覆盖",
+    "丢失或撤销凭据后的恢复未覆盖",
+    "申报目标未技术绑定仓库，当前实际创建目标已核对",
+    "单服务、专属卷和兼容数据格式；无多服务或破坏性数据库迁移验收",
+    "存量错误卷路径与跨项目卷隔离没有做全局迁移",
+    "无真实移动触控证据；只交付桌面/CLI功能范围",
+    "CLI等待批准超时的申请状态与用户错误提示仍需完善；48小时性能认证另属任务"
+  ]
+}

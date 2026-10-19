@@ -28,6 +28,7 @@ import express, { Router } from 'express';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes, createHash } from 'node:crypto';
 import { StateService } from '../services/state.js';
+import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { hasActiveGrant } from '../services/identity.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
@@ -39,7 +40,10 @@ import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parse
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
-import { repoNameFromGitRef } from '../services/preview-slug.js';
+import { repoNameFromGitRef, projectReservedIdentifiers, projectResourceNamespace } from '../services/preview-slug.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { occupiedHostOwners, projectBranchPublishedHosts, projectBranchPublishedServiceHosts } from '../services/preview-entrypoints.js';
+import { projectIdentityActorFromRequest, projectIdentityResponse, projectIdentityVersion, publicIdentityRecord } from '../services/project-identity-history.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { isMachineCaller } from '../services/machine-caller.js';
@@ -73,7 +77,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, Project, ProjectAgentProfile, CdsConfig, AgentKey, AgentKeyAccess, BuildProfile, InfraService } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { workloadCgroupFlags } from '../services/workload-cgroup.js';
-import { isHumanSystemOwner } from '../services/human-auth.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
 import { canHumanAccessProject, isScopedHuman } from '../services/human-project-access.js';
 
 type OnboardingRuntime = NonNullable<Project['onboardingRuntime']>;
@@ -538,6 +542,7 @@ interface RepoSiblingRef {
 }
 
 interface ProjectSummary extends Project, ProjectStats {
+  identityVersion: string;
   /** 2026-06-23：项目级实时资源占用（CPU/内存/构建频次），由采样器周期写入。 */
   resourceUsage?: ProjectResourceUsage | null;
   /**
@@ -561,7 +566,7 @@ interface ProjectSummary extends Project, ProjectStats {
 function toSummary(project: Project, stats: ProjectStats, usage?: ProjectResourceUsage | null): ProjectSummary {
   // 分组只走专门的 /branch-groups 接口：项目列表被许多不相干的选择器、页面拉取，带上整份规则与钉入
   // 会让多项目列表膨胀到几 MB（Codex P2，PR #1647）。
-  const { branchGroups: _branchGroups, ...rest } = project;
+  const { branchGroups: _branchGroups, ...rest } = projectIdentityResponse(project);
   return { ...rest, ...stats, resourceUsage: usage ?? null };
 }
 
@@ -617,7 +622,7 @@ function maskProjectSummary<T extends ProjectSummary>(req: unknown, summary: T):
     // Members need card/workbench metadata, not the persisted Project object.
     // A finite projection also keeps future credential fields private by default.
     const keys = [
-      'id', 'slug', 'name', 'aliasName', 'aliasSlug', 'description', 'kind', 'legacyFlag',
+      'id', 'slug', 'name', 'aliasName', 'identityVersion', 'description', 'kind', 'legacyFlag',
       'createdAt', 'updatedAt', 'deliveryMode', 'gitRepoUrl', 'githubRepoFullName',
       'gitDefaultBranch', 'defaultBranch', 'cloneStatus', 'resourceChipDisplay',
       'paused', 'pausedAt', 'pauseReason', 'branchCount', 'runningBranchCount',
@@ -898,7 +903,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
   function nextAutoProfileId(project: Project, handle: string): string {
     const allIds = new Set(stateService.getBuildProfiles().map((p) => p.id));
-    const slug = profileIdSlug(project.slug || project.name || project.id);
+    const slug = profileIdSlug(projectResourceNamespace(project));
     const shortId = profileIdSlug(project.id).slice(0, 12) || 'project';
     const candidates = [handle, `${slug}-${handle}`, `${shortId}-${handle}`];
     for (const candidate of candidates) {
@@ -938,7 +943,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   function recommendedInfraVolumes(project: Project, infraId: string, image: string): InfraService['volumes'] {
     const paths = recommendedVolumePathsForImage(image);
     if (!paths) return [];
-    const prefix = project.legacyFlag ? infraId : `${project.slug.slice(0, 12)}-${infraId}`;
+    const prefix = project.legacyFlag ? infraId : `${projectResourceNamespace(project).slice(0, 12)}-${infraId}`;
     return paths.map((containerPath, idx) => ({
       name: `cds-${prefix}-data${idx === 0 ? '' : `-${idx + 1}`}`,
       containerPath,
@@ -1022,7 +1027,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (!preset) continue;
       const containerName = project.legacyFlag
         ? `cds-infra-${instanceId}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${instanceId}`;
+        : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${instanceId}`;
       const service: InfraService = {
         id: instanceId,
         basePresetId: req.presetId,
@@ -1249,7 +1254,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return false;
     }
 
-    const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
+    const idSuffix = project.legacyFlag ? '' : `-${projectResourceNamespace(project)}`;
 
     const repoRoot = nodePath.resolve(project.repoPath || nodePath.dirname(composePath));
     const composeRoot = nodePath.dirname(nodePath.resolve(composePath));
@@ -1366,7 +1371,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       if (existingInfraIds.has(def.id)) continue;
       const containerName = project.legacyFlag
         ? `cds-infra-${def.id}`
-        : `cds-infra-${project.slug.slice(0, 12)}-${def.id}`;
+        : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${def.id}`;
       const service: InfraService = {
         id: def.id,
         projectId: project.id,
@@ -2765,6 +2770,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
   });
 
   // PR_C.4: 项目活动日志（供 UI 渲染时间线 / 浮窗）。
+  router.get('/projects/:id/identity-history', (req, res) => {
+    if (!isAuthenticatedHuman(req) || isMachineCaller(req)) {
+      res.status(403).json({ error: 'human_required', message: '请使用已登录的人类账号查看项目设置记录。' }); return;
+    }
+    const project = stateService.getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: 'project_not_found' }); return; }
+    const mismatch = assertProjectAccess(req as unknown as { cdsProjectKey?: { projectId: string; keyId: string } }, project.id);
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body); return; }
+    if (!canHumanAccessProject(req, stateService, project.id)) {
+      res.status(403).json({ error: 'project_forbidden', message: '没有权限查看此项目的设置记录。' }); return;
+    }
+    const entries = [...(project.identityHistory || [])].reverse();
+    const before = typeof req.query.before === 'string' ? req.query.before : '';
+    const cursor = before ? entries.findIndex((entry) => entry.id === before) : -1;
+    if (before && cursor < 0) { res.status(400).json({ error: 'invalid_cursor', message: '记录位置已失效，请刷新后重试。' }); return; }
+    const page = entries.slice(cursor + 1, cursor + 51);
+    res.json({ records: page.map(publicIdentityRecord), nextCursor: cursor + 51 < entries.length ? page.at(-1)?.id : null,
+      coverage: project.identityHistory?.[0]?.kind === 'created' ? 'since-creation' : 'since-baseline' });
+  });
+
   // limit 默认 50，最大 200（与 ring buffer 上限一致，避免一次拉爆）。
   router.get('/projects/:id/activity-logs', (req, res) => {
     const project = stateService.getProject(req.params.id);
@@ -2839,6 +2864,11 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       onboardingServices: Array<Partial<OnboardingService> & { enabled?: boolean }>;
     }>;
 
+    if (Object.hasOwn(body, 'aliasSlug') || Object.hasOwn(body, 'previewIdentifier')) {
+      res.status(400).json({ error: 'obsolete_project_slug_field', field: 'slug',
+        message: '项目只保留一个 slug。请刷新设置页面，或改为提交 slug 字段。' });
+      return;
+    }
     // — Validation —
     const name = (body.name || '').trim();
     if (!name) {
@@ -2992,7 +3022,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // named prd_agent). Capped at 99 attempts so a corrupted state
     // can't hang the request.
     const existingProjects = stateService.getProjects();
-    const takenSlugs = new Set(existingProjects.map((p) => p.slug));
+    const takenSlugs = new Set(existingProjects.flatMap((p) => projectReservedIdentifiers(p)));
     let slug = baseSlug;
     if (takenSlugs.has(slug)) {
       if (slugProvidedExplicitly) {
@@ -3126,7 +3156,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
 
     try {
-      stateService.addProject(newProject);
+      stateService.addProject(newProject, { ...projectIdentityActorFromRequest(req),
+        slugSource: slugProvidedExplicitly ? 'explicit' : repoSlugFromGitUrl ? 'repository' : 'name' });
     } catch (err) {
       // Rollback the network we just created. Best-effort — we log the
       // rollback result but still return the original save error so the
@@ -3245,6 +3276,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const callerKey = stateService.getGlobalAgentKeys().find((entry) => entry.id === callerAccess.keyId);
       if (callerKey?.oneTime && issuedProjectKey) {
         stateService.revokeGlobalAgentKey(callerAccess.keyId);
+        const accessRequest = stateService.listAccessRequests().find((item) =>
+          item.kind === 'bootstrap' && item.status === 'approved' && item.issuedKeyId === callerAccess.keyId);
+        if (accessRequest) {
+          stateService.updateAccessRequest(accessRequest.id, {
+            createdProject: { id: newProject.id, name: newProject.name, createdAt: newProject.createdAt },
+          });
+          cdsEventsBus.publish('access-request.progress', {
+            requestId: accessRequest.id, stage: 'project-created', projectId: newProject.id,
+          });
+        }
       }
     }
 
@@ -3376,13 +3417,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
 
   // PUT /api/projects/:id — patch mutable project fields.
   //
-  // P4 Part 13 (Project Settings page). Accepts {name, description,
-  // gitRepoUrl} and delegates to StateService.updateProject which
-  // bumps updatedAt + persists. Immutable fields (id, slug, kind,
-  // legacyFlag, dockerNetwork, createdAt) are intentionally not
-  // patchable through this endpoint — changing slug would break the
-  // URL routing and changing dockerNetwork would orphan containers.
-  router.put('/projects/:id', (req, res) => {
+  // 名称、唯一 slug 和仓库来源的实际变化保存独立记录。
+  // slug 可修改，历史入口与既有资源保持兼容；id、kind、legacyFlag、
+  // dockerNetwork、createdAt 仍不可编辑，避免失去已有资源的归属。
+  router.put('/projects/:id', async (req, res) => {
     const project = stateService.getProject(req.params.id);
     if (!project) {
       res.status(404).json({
@@ -3403,7 +3441,8 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     const body = (req.body || {}) as Partial<{
       name: string;
       aliasName: string;
-      aliasSlug: string;
+      slug: string;
+      expectedIdentityVersion: string;
       description: string;
       gitRepoUrl: string;
       autoSmokeEnabled: boolean;
@@ -3429,6 +3468,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       };
     }>;
 
+    if (body.expectedIdentityVersion !== undefined &&
+        body.expectedIdentityVersion !== projectIdentityVersion(project)) {
+      res.status(409).json({ error: 'settings_changed', message: '项目设置已被其他操作修改。请刷新页面，核对最新值后重新保存。' });
+      return;
+    }
+    if (Object.hasOwn(body, 'aliasSlug') || Object.hasOwn(body, 'previewIdentifier')) {
+      res.status(400).json({ error: 'obsolete_project_slug_field', field: 'slug',
+        message: '项目只保留一个 slug。请刷新设置页面，或改为提交 slug 字段。' });
+      return;
+    }
     // Validate name when supplied
     if (body.name !== undefined) {
       const trimmed = String(body.name).trim();
@@ -3459,49 +3508,44 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
 
-    // Validate aliasSlug when supplied. Empty string = clear. Non-empty
-    // must pass SLUG_REGEX AND not collide with any project's slug /
-    // aliasSlug (including the current project's own slug — that would
-    // be redundant and confusing).
-    if (body.aliasSlug !== undefined) {
-      const trimmed = String(body.aliasSlug).trim().toLowerCase();
-      if (trimmed !== '') {
-        if (!SLUG_REGEX.test(trimmed)) {
-          res.status(400).json({
-            error: 'validation',
-            field: 'aliasSlug',
-            message: '别名 slug 只能包含小写字母、数字和短横线，且不能以短横线开头或结尾',
-          });
-          return;
-        }
-        if (trimmed === project.slug) {
-          res.status(400).json({
-            error: 'validation',
-            field: 'aliasSlug',
-            message: '别名 slug 不能与项目原 slug 相同',
-          });
-          return;
-        }
-        // Walk every OTHER project and check both slug and aliasSlug.
-        const collision = stateService
-          .getProjects()
-          .find(
-            (p) =>
-              p.id !== project.id &&
-              (p.slug === trimmed || p.aliasSlug === trimmed),
-          );
-        if (collision) {
-          res.status(409).json({
-            error: 'duplicate',
-            field: 'aliasSlug',
-            message: `别名 slug '${trimmed}' 已被项目 '${collision.name}' 占用`,
-          });
-          return;
+    if (body.slug !== undefined) {
+      const slug = typeof body.slug === 'string' ? body.slug.trim().toLowerCase() : '';
+      if (!slug || !SLUG_REGEX.test(slug) || (slug !== project.slug && slug.length > 50)) {
+        res.status(400).json({ error: 'validation', field: 'slug', message: '请填写有效的项目 slug：最多 50 个小写字母、数字或短横线，不能以短横线开头或结尾。' });
+        return;
+      }
+      const collision = stateService.getProjects().find((p) => p.id !== project.id && projectReservedIdentifiers(p).includes(slug));
+      if (collision) {
+        res.status(409).json({ error: 'duplicate', field: 'slug', message: `项目 slug「${slug}」已被项目「${collision.name}」使用或保留，请换一个。` });
+        return;
+      }
+      if (slug !== project.slug) {
+        const roots = config?.rootDomains?.length ? config.rootDomains : (config?.previewDomain ? [config.previewDomain] : []);
+        const branches = stateService.getAllBranches();
+        for (const branch of branches.filter(entry => entry.projectId === project.id)) {
+          const profiles = stateService.getEffectiveProfilesForBranch(branch);
+          const before = new Set(projectBranchPublishedHosts(branch, project, profiles, roots));
+          const others = branches.filter(entry => entry.id !== branch.id);
+          const occupied = occupiedHostOwners(branches, roots);
+          for (const other of others) {
+            for (const host of projectBranchPublishedHosts(other, stateService.getProject(other.projectId), stateService.getEffectiveProfilesForBranch(other), roots)) {
+              if (!occupied.has(host)) occupied.set(host, other.id);
+            }
+          }
+          const nextProject = { ...project, slug };
+          const serviceHosts = new Set(projectBranchPublishedServiceHosts(branch, nextProject, profiles, roots));
+          const conflict = projectBranchPublishedHosts(branch, nextProject, profiles, roots)
+            .find(host => !before.has(host) && occupied.has(host) && (occupied.get(host) !== branch.id || serviceHosts.has(host)));
+          if (conflict) {
+            res.status(409).json({ error: 'preview_host_conflict', field: 'slug',
+              message: '此项目 slug 会与已有分支入口冲突，设置没有保存。请换一个 slug。' });
+            return;
+          }
         }
       }
     }
 
-    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'aliasSlug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltOnly' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
+    const patch: Partial<Pick<Project, 'name' | 'aliasName' | 'slug' | 'description' | 'gitRepoUrl' | 'autoSmokeEnabled' | 'agentPrebuiltOnly' | 'resourceChipDisplay' | 'githubEventPolicy' | 'githubBotPushFilterEnabled' | 'defaultDeployModes' | 'autoPublishAfterMinutes' | 'autoStopAfterMinutes' | 'deployReadinessFloorSeconds' | 'inheritGlobalEnv'>> = {};
     if (body.inheritGlobalEnv !== undefined) {
       if (typeof body.inheritGlobalEnv !== 'boolean') {
         res.status(400).json({
@@ -3630,27 +3674,46 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       patch.deployReadinessFloorSeconds = Math.floor(num);
     }
     if (body.name !== undefined) patch.name = String(body.name).trim();
-    // For alias fields an empty string explicitly clears them so the UI
-    // can revert to showing `name` / `slug`. updateProject() serialises
-    // undefined fields out via spread, so we pass undefined (not '') to
-    // remove the key entirely — keeps state.json tidy.
+    // 空显示别名恢复项目名称；项目 slug 不再存在第二份覆盖字段。
     if (body.aliasName !== undefined) {
       const trimmed = String(body.aliasName).trim();
       patch.aliasName = trimmed === '' ? undefined : trimmed;
     }
-    if (body.aliasSlug !== undefined) {
-      const trimmed = String(body.aliasSlug).trim().toLowerCase();
-      patch.aliasSlug = trimmed === '' ? undefined : trimmed;
-    }
+    if (body.slug !== undefined) patch.slug = body.slug.trim().toLowerCase();
     if (body.description !== undefined) patch.description = String(body.description).trim();
     if (body.gitRepoUrl !== undefined) patch.gitRepoUrl = String(body.gitRepoUrl).trim();
 
+    const beforeSave = structuredClone(project);
+    let writtenProject: Project | undefined;
+    let applied: Project | undefined;
+    let flushResult: BoundedFlushResult = 'failed';
     try {
-      stateService.updateProject(project.id, patch);
+      try {
+        stateService.updateProject(project.id, patch, projectIdentityActorFromRequest(req));
+      } finally {
+        // save 可在安装新对象之后同步抛错，异常路径也必须取得本次恢复依据。
+        writtenProject = stateService.getProject(project.id);
+        applied = writtenProject ? { ...writtenProject } : undefined;
+      }
+      flushResult = await waitForFlushWithTimeout(() => stateService.flush(), 5000);
     } catch (err) {
-      res.status(500).json({
-        error: 'state_save_failed',
-        message: (err as Error).message,
+      console.error(`[project-settings] 项目 ${project.id} 保存失败`, err);
+    }
+    if (flushResult !== 'flushed') {
+      let reverted = false;
+      let restoreConfirmed = false;
+      try {
+        if (writtenProject && applied) {
+          reverted = stateService.restoreProjectSettingsUpdate(project.id, beforeSave, applied, Object.keys(patch) as Array<keyof Project>, writtenProject);
+          restoreConfirmed = await waitForFlushWithTimeout(() => stateService.flush(), 5000) === 'flushed';
+        }
+      } catch (err) {
+        console.error(`[project-settings] 项目 ${project.id} 恢复写入未确认`, err);
+      }
+      res.status(503).json({ error: 'state_save_pending', restored: reverted && restoreConfirmed,
+        message: restoreConfirmed
+          ? reverted ? '设置没有保存，已恢复保存前的版本。请稍后重试。' : '本次保存未确认，期间收到的最新修改已保留。请重新加载后核对。'
+          : '设置保存及恢复写入尚未确认，存储版本暂时不确定。请等待存储恢复后核对，暂时不要重复修改。',
       });
       return;
     }
@@ -3681,16 +3744,18 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(mismatch.status).json(mismatch.body);
       return;
     }
-    const defaults = project.defaultDeployModes || {};
-    if (Object.keys(defaults).length === 0) {
+    // 从没保存过默认（undefined）才拒绝；保存成空表是合法的「全部跟随构建配置基线」。
+    if (!project.defaultDeployModes) {
       res.status(400).json({ error: 'no_defaults', message: '项目未设置默认运行模式,请先在项目设置选好默认模式再对齐' });
       return;
     }
+    const defaults = project.defaultDeployModes;
     const profiles = stateService.getBuildProfilesForProject(project.id);
     // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
-    // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。
+    // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。表里没有的 profile 对齐后
+    // 回到基线，基线是源码同样算（coverAllProfiles）。
     if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
-      const violations = findNonPrebuiltDefaultModes(profiles, defaults);
+      const violations = findNonPrebuiltDefaultModes(profiles, defaults, { coverAllProfiles: true });
       if (violations.length > 0) {
         res.status(409).json(buildPrebuiltGateRejection(project, profiles, violations, { operation: 'project-default' }));
         return;
@@ -3709,8 +3774,17 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       const modes: Record<string, string> = {};
       let modeChanged = false;
       for (const profile of profiles) {
-        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) continue;
         const ov = branch.profileOverrides?.[profile.id];
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
+          // 2026-10-08：表里没有 = 「跟随构建配置」。新分支不会拷这一项，所以对齐也要把分支覆盖里
+          // 残留的模式清掉、回到基线；只跳过会让页面写着「跟随（极速版）」而存量分支仍停在 dev。
+          if (!ov || ov.activeDeployMode === undefined) continue;
+          const { activeDeployMode: _dropped, ...rest } = ov;
+          stateService.setBranchProfileOverride(branch.id, profile.id, rest);
+          modes[profile.id] = profile.activeDeployMode || '';
+          modeChanged = true;
+          continue;
+        }
         if (!ov) continue;
         stateService.setBranchProfileOverride(branch.id, profile.id, ov);
         modes[profile.id] = ov.activeDeployMode || '';

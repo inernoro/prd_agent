@@ -22,11 +22,11 @@
  */
 
 import crypto from 'node:crypto';
-import { DNS_LABEL_MAX_LENGTH } from './preview-slug.js';
+import { DNS_LABEL_MAX_LENGTH, projectHistoricalSlugs, type PreviewProjectIdentity } from './preview-slug.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { StateService } from './state.js';
-import type { BranchEntry } from '../types.js';
+import type { BranchEntry, BuildProfile } from '../types.js';
 import type { PublishedEntrypointsEnv } from './env-provenance.js';
 
 /** 容器 env 里承载「本分支主入口」的 key。 */
@@ -264,6 +264,52 @@ export function occupiedHostOwners(
     for (const domain of b.customDomains ?? []) claim(domain, b.id);
   }
   return owners;
+}
+
+/** 发布器与项目改名校验共用新旧入口的枚举口径。 */
+export function projectBranchPreviewSlugs(entry: Pick<BranchEntry, 'branch' | 'projectId'>, project: PreviewProjectIdentity | undefined): string[] {
+  return [...new Set([
+    buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug,
+    ...projectHistoricalSlugs(project).map(slug => buildPreviewUrlForProject('', entry.branch, { ...project, slug }, entry.projectId).previewSlug),
+  ].filter(Boolean))];
+}
+
+/** 成员直达子域的现有DNS编码；发布器保留同名再导出。 */
+export function dnsSafeProfile(id: string): string {
+  const cleaned = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+  if (cleaned === id) return cleaned;
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
+  return `${cleaned}-${h.toString(36)}`;
+}
+
+export function replicaMemberLabel(previewSlug: string, profileId: string, memberId: string): string {
+  return `${previewSlug}-${dnsSafeProfile(profileId)}-${memberId}`;
+}
+
+export function projectBranchPublishedServiceHosts(entry: BranchEntry, project: PreviewProjectIdentity | undefined, profiles: BuildProfile[], roots: readonly string[]): string[] {
+  const labels = new Set<string>();
+  const profileIds = new Set(profiles.map(profile => profile.id));
+  for (const slug of projectBranchPreviewSlugs(entry, project)) {
+    for (const profile of profiles) {
+      const subdomain = resolveEffectiveProfile(profile, entry).subdomain;
+      if (subdomain) for (const label of publishedServiceLabels(slug, subdomain)) labels.add(label);
+    }
+    for (const replica of Object.values(entry.replicaSets ?? {})) {
+      if (!replica.enabled || !profileIds.has(replica.profileId)) continue;
+      for (const member of replica.members) {
+        if (member.status !== 'running' || typeof member.hostPort !== 'number' || member.hostPort <= 0) continue;
+        const label = replicaMemberLabel(slug, replica.profileId, member.id);
+        if (isPublishableNamedLabel(label)) labels.add(label);
+      }
+    }
+  }
+  return [...labels].flatMap(label => roots.map(root => `${label}.${root}`.trim().toLowerCase()));
+}
+
+export function projectBranchPublishedHosts(entry: BranchEntry, project: PreviewProjectIdentity | undefined, profiles: BuildProfile[], roots: readonly string[]): string[] {
+  const primaryHosts = projectBranchPreviewSlugs(entry, project).flatMap(slug => roots.map(root => `${slug}.${root}`.trim().toLowerCase()));
+  return [...new Set([...primaryHosts, ...projectBranchPublishedServiceHosts(entry, project, profiles, roots)])];
 }
 
 /**

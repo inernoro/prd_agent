@@ -34,8 +34,11 @@ import { decideSelfMonitorAlarm, type SelfMonitorAlarmState } from './self-monit
  */
 
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
+import { isSelfCheckEndpoint, SELF_PROJECT_ID } from './self-monitoring-bootstrap.js';
 import http from 'node:http';
 import path from 'node:path';
+import { writeUptimeHistory } from './uptime-history-write.js';
 import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
 import { normalizeReleaseEnvironment, type ReleaseEnvironment } from './release-environment.js';
 import {
@@ -49,6 +52,7 @@ import {
   describeMonitorProbe,
   matchPreviewHost,
   probeCustomMonitor,
+  probeHealthJsonBatch,
   type ProjectPreviewHost,
 } from './uptime-custom-monitor.js';
 // 故障归因到发布的时间窗判定只有这一处，发布中心将来要展示同款关联必须复用它。
@@ -115,6 +119,8 @@ export function probeSourceOfId(id: string): ProbeSource {
 export interface ProbeTarget {
   /** 分支目标为 `${branchId}::${profileId}`，发布目标为 `release@${targetId}`，自定义为 `monitor@${id}`；URL 里需 encodeURIComponent */
   id: string;
+  /** 同源自检的采集通道，子指标共享一次请求。 */
+  collection?: boolean;
   source: ProbeSource;
   branchId: string;
   projectId: string;
@@ -166,6 +172,10 @@ export interface ProbeTarget {
    * 经 forwarder / TLS / 路由整条链路，与真人打开预览是同一条路。
    */
   userViewUrl?: string;
+}
+
+function isSelfMetric(target: ProbeTarget): boolean {
+  return target.projectId === SELF_PROJECT_ID && target.monitor?.kind === 'health-json' && isSelfCheckEndpoint(target.url || '');
 }
 
 /**
@@ -268,6 +278,9 @@ interface UptimeStoreFile {
   savedAt: number;
   targets: UptimeTargetRecord[];
 }
+
+type ImmediateProbeResult = { ok: true; sample: UptimeSample; status: UptimeStatus }
+  | { ok: false; skipped: string } | null;
 
 export interface UptimeMonitorConfig {
   enabled: boolean;
@@ -954,6 +967,8 @@ export interface UptimeTargetSummary {
   timeoutMs: number;
   /** 自定义监控的定义 id（source=custom 时有），前端据此编辑 / 暂停 / 删除 */
   monitorId?: string;
+  /** 结构化检查语义；仅摘要展示，不包含地址凭据或请求头。 */
+  healthCheck?: { componentId: string; field: string; op: string; value: string };
   /** 自定义监控的标签 */
   tags?: string[];
   /** 这条业务是否出现在项目的公开面板上（第一屏那行「N 条业务对外」靠它数） */
@@ -1171,6 +1186,11 @@ export class UptimeMonitorService {
   private watchdogResets = 0;
   private probeDeadlineHits = 0;
   private customLaneRunning = false;
+  private persistDirty = false;
+  private persistTask: Promise<void> | null = null;
+  private persistError: Error | null = null;
+  private stopping = false;
+  private activeProbes = new Set<Promise<unknown>>();
 
   constructor(
     private readonly deps: {
@@ -1216,6 +1236,7 @@ export class UptimeMonitorService {
   start(): void {
     if (!this.deps.config.enabled) return;
     if (this.timer) return;
+    this.stopping = false;
     this.startedAt = this.now();
     this.timer = setInterval(() => {
       void this.runCycle().catch((err) => {
@@ -1229,12 +1250,15 @@ export class UptimeMonitorService {
     });
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
+    this.stopping = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
     }
+    await Promise.allSettled([...this.activeProbes]);
     this.persist();
+    await this.flush();
   }
 
   /**
@@ -1309,7 +1333,25 @@ export class UptimeMonitorService {
     });
   }
 
-  async runCycle(): Promise<void> {
+  runCycle(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    return this.trackProbe(this.confirmProbeHistory(this.runCycleOnce()));
+  }
+
+  private async confirmProbeHistory<T>(probe: Promise<T>): Promise<T> {
+    const result = await probe;
+    // 保留原普通探测的返回契约：成功写入已可冷读，失败仍只警告、不误判目标。
+    await this.flush().catch(() => {});
+    return result;
+  }
+
+  private trackProbe<T>(probe: Promise<T>): Promise<T> {
+    this.activeProbes.add(probe);
+    void probe.then(() => this.activeProbes.delete(probe), () => this.activeProbes.delete(probe));
+    return probe;
+  }
+
+  private async runCycleOnce(): Promise<void> {
     if (this.cycleRunning) {
       // 看门狗：上一轮开始已久却没结束 → 视为卡死，强制复位再跑本轮。
       const startedAgo = this.cycleStartedAt === null ? 0 : this.now() - this.cycleStartedAt;
@@ -1369,7 +1411,11 @@ export class UptimeMonitorService {
       // 下一轮照常探分支 / 生产，只是自定义目标跳过这一轮。
       const builtinTargets = activeTargets.filter((t) => t.source !== 'custom');
       const customTargets = activeTargets.filter((t) => t.source === 'custom');
-      customLane = this.runCustomLane(customTargets);
+      const dueSelfUrls = new Set(customTargets.filter(t => t.collection || isSelfMetric(t)).map(t => t.url));
+      for (const t of targets) {
+        if (t.active && dueSelfUrls.has(t.url) && (t.collection || isSelfMetric(t)) && !customTargets.some(m => m.id === t.id)) customTargets.push(t);
+      }
+      customLane = this.trackProbe(this.runCustomLane(customTargets));
 
       // 轮次预算（Codex PR #1514 第四轮 P1）：用户视角与直连探测都是按并发分批
       // 串行 await 的，全站预览域名同时超时（网关挂了）时 100 条分支的用户视角
@@ -1439,8 +1485,29 @@ export class UptimeMonitorService {
     this.customLaneRunning = true;
     let probed = 0;
     try {
-      for (let i = 0; i < targets.length; i += PROBE_CONCURRENCY) {
-        const chunk = targets.slice(i, i + PROBE_CONCURRENCY);
+      // 采集通道与子指标共享一次请求，一次接口故障只产生一个事件。
+      const handled = new Set<string>();
+      for (const collector of targets.filter(t => t.collection)) {
+        const members = targets.filter(t => isSelfMetric(t) && t.url === collector.url && t.active);
+        if (!members.length) continue;
+        const result = await probeHealthJsonBatch(members.map(t => t.monitor!), collector.timeoutMs || this.deps.config.timeoutMs);
+        const at = this.now();
+        this.applySample(collector, { ...result.collection, t: at });
+        handled.add(collector.id);
+        members.forEach((target, index) => {
+          const outcome = result.members[index];
+          if (outcome.observation) {
+            try { this.deps.state.recordMonitorObservation?.(target.monitor!.id, outcome.observation); }
+            catch { this.deps.logger?.warn?.('[uptime] 自检观测证据写入失败'); }
+          }
+          this.applySample(target, { ...outcome, t: at });
+          handled.add(target.id);
+        });
+        probed += members.length + 1;
+      }
+      const remaining = targets.filter(t => !handled.has(t.id) && !t.collection);
+      for (let i = 0; i < remaining.length; i += PROBE_CONCURRENCY) {
+        const chunk = remaining.slice(i, i + PROBE_CONCURRENCY);
         const results = await Promise.all(chunk.map((target) => this.probeOne(target)));
         for (const { target, outcome, thrown } of results) {
           this.applySample(target, { ...outcome, t: this.now() }, { allowDegrade: !thrown });
@@ -1456,7 +1523,7 @@ export class UptimeMonitorService {
 
   /** 本轮探测清单（三类来源合并）。runCycle 与 probeNow 共用，避免两处各拼一份。 */
   private selectTargets(): ProbeTarget[] {
-    return selectAllProbeTargets(
+    const targets = selectAllProbeTargets(
       this.deps.state.getAllBranches(),
       this.deps.state.getReleaseTargets?.() || [],
       this.deps.config.excludePatterns || [],
@@ -1469,6 +1536,17 @@ export class UptimeMonitorService {
         getPreviewUrl: this.deps.state.getPreviewUrl?.bind(this.deps.state),
       },
     );
+    const groups = new Map<string, ProbeTarget[]>();
+    for (const t of targets) if (isSelfMetric(t)) groups.set(t.url!, [...(groups.get(t.url!) || []), t]);
+    for (const [url, members] of groups) {
+      const first = members[0];
+      const id = `self-collection-${createHash('sha256').update(url).digest('hex').slice(0, 16)}`;
+      targets.push({ ...first, id: `monitor@${id}`, profileId: id, monitor: undefined, collection: true,
+        name: 'CDS · 自检数据获取', active: members.some(t => t.active), excluded: members.every(t => t.excluded),
+        intervalMs: Math.min(...members.map(t => t.intervalMs || this.deps.config.intervalMs)),
+        probeDescription: `统一读取 ${members.length} 项自检；读取失败不代表各项业务故障` });
+    }
+    return targets;
   }
 
   /**
@@ -1676,14 +1754,26 @@ export class UptimeMonitorService {
    * 都照常生效——它只是把「等下一轮」变成「现在」，不是另一套判定。
    * 返回 null = 目标不存在；skipped = 目标此刻不该探（暂停 / 排除），原因随附。
    */
-  async probeNow(targetId: string): Promise<
-    | { ok: true; sample: UptimeSample; status: UptimeStatus }
-    | { ok: false; skipped: string }
-    | null
-  > {
+  probeNow(targetId: string): Promise<ImmediateProbeResult> {
+    if (this.stopping) return Promise.resolve({ ok: false, skipped: '服务正在停止，请稍后重试' });
+    return this.trackProbe(this.confirmProbeHistory(this.probeNowOnce(targetId)));
+  }
+
+  private async probeNowOnce(targetId: string): Promise<ImmediateProbeResult> {
     const target = this.selectTargets().find((t) => t.id === targetId);
     if (!target) return null;
     const now = this.now();
+    if ((target.collection || isSelfMetric(target)) && target.active) {
+      if (this.customLaneRunning) return { ok: false, skipped: '自检正在读取，请稍后刷新' };
+      const related = this.selectTargets().filter(t => t.url === target.url && (t.collection || isSelfMetric(t)));
+      for (const t of related) {
+        const row = this.records.get(t.id) || emptyRecord(t, now);
+        this.syncRecordIdentity(row, t); this.records.set(t.id, row);
+      }
+      await this.runCustomLane(related.filter(t => t.active));
+      const row = this.records.get(target.id)!;
+      return row.lastSample ? { ok: true, sample: row.lastSample, status: row.status } : { ok: false, skipped: '自检正在读取，请稍后刷新' };
+    }
     const record = this.records.get(target.id) || emptyRecord(target, now);
     this.syncRecordIdentity(record, target);
     this.records.set(target.id, record);
@@ -1774,12 +1864,13 @@ export class UptimeMonitorService {
   }
 
   /** 投递成功后记下通道，失败/演练不会让后续恢复通知获得发送资格。 */
-  markAlarmDelivered(targetId: string, channelId: string, detectedAt: string): void {
+  async markAlarmDelivered(targetId: string, channelId: string, detectedAt: string): Promise<void> {
     const record = this.records.get(targetId);
     if (!record?.notification?.open || record.notification.lastDownAttemptAt !== Date.parse(detectedAt)) return;
     const channels = record.notification.acceptedChannels ??= [];
     if (!channels.includes(channelId)) channels.push(channelId);
     this.persist();
+    await this.flush();
   }
 
   /** 把状态翻转转发给接线方（未接线时静默，见构造参数 onAlert 注释）。 */
@@ -1913,7 +2004,7 @@ export class UptimeMonitorService {
         profileId: record.profileId,
         probeKind: record.probeKind,
         probeUrl: record.probeUrl,
-        status: record.status,
+        status: record.lastSample?.noData && record.status !== 'down' && record.status !== 'paused' ? 'unknown' : record.status,
         pausedReason: record.pausedReason,
         excluded: Boolean(record.excluded),
         degraded: Boolean(record.degraded),
@@ -2028,7 +2119,7 @@ export class UptimeMonitorService {
   }
 
   /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
-  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation' | 'publicVisible'> {
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation' | 'publicVisible' | 'healthCheck'> {
     const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
     const latest = monitor?.observations?.[0];
     return {
@@ -2036,6 +2127,9 @@ export class UptimeMonitorService {
       tags: monitor?.tags || [],
       enabled: monitor ? monitor.enabled : true,
       publicVisible: Boolean(monitor?.publicVisible),
+      ...(monitor?.kind === 'health-json' && monitor.healthComponentId ? {
+        healthCheck: { componentId: monitor.healthComponentId, field: monitor.healthField || 'observedValue', op: monitor.healthOp || 'eq', value: monitor.healthValue || '' },
+      } : {}),
       // 归属跟着定义走，不另存一份：定义改了（比如管理员接管），面板下一轮就跟上。
       ...(monitor
         ? {
@@ -2146,7 +2240,7 @@ export class UptimeMonitorService {
     return removed;
   }
 
-  // ── 持久化：独立文件 + 原子写，失败静默（监控不能拖垮主流程） ──
+  // ── 持久化：独立文件 + 原子异步写；普通探测不等待，明确flush不吞错 ──
 
   private load(): void {
     const fp = this.deps.config.storePath;
@@ -2169,20 +2263,34 @@ export class UptimeMonitorService {
   }
 
   private persist(): void {
-    const fp = this.deps.config.storePath;
-    if (!fp) return;
-    const payload: UptimeStoreFile = {
-      version: 1,
-      savedAt: this.now(),
-      targets: [...this.records.values()],
-    };
-    try {
-      fs.mkdirSync(path.dirname(fp), { recursive: true });
-      const tmp = `${fp}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(payload));
-      fs.renameSync(tmp, fp);
-    } catch (err) {
+    if (!this.deps.config.storePath) return;
+    this.persistDirty = true;
+    this.beginPersist();
+  }
+
+  private beginPersist(): void {
+    if (this.persistTask) return;
+    this.persistError = null;
+    // 同一tick只开一条链；在途变化只记dirty，不排队保存大对象快照。
+    this.persistTask = Promise.resolve().then(async () => {
+      while (this.persistDirty) {
+        this.persistDirty = false;
+        await writeUptimeHistory(this.deps.config.storePath, this.now(), [...this.records.values()]);
+      }
+    }).catch(err => {
+      this.persistDirty = true;
+      this.persistError = err as Error;
       this.deps.logger?.warn?.(`[uptime] 落盘失败（仅内存保留）: ${(err as Error).message}`);
-    }
+    }).finally(() => {
+      this.persistTask = null;
+      if (this.persistDirty && !this.persistError) this.beginPersist();
+    });
+  }
+
+  /** 确认已请求的历史写入；失败保留dirty，下一次请求或flush可以重试。 */
+  async flush(): Promise<void> {
+    if (this.persistDirty && !this.persistTask) this.beginPersist();
+    while (this.persistTask) await this.persistTask;
+    if (this.persistError) throw this.persistError;
   }
 }

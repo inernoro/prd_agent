@@ -1,10 +1,13 @@
+import { createCoreImageCacheShell, installCoreImageCacheTestRoot } from '../helpers/core-image-cache-shell.js';
+const coreCacheShell = createCoreImageCacheShell();
+installCoreImageCacheTestRoot();
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   AgentWorkspaceRuntimeError,
@@ -155,16 +158,23 @@ describe('source-backed measured fact preservation', () => {
   });
 });
 
+function probeContainerResult(command: string, value = result()): ExecResult {
+  const file = command.match(/--cidfile '([^']+)'/)?.[1];
+  if (file) fs.writeFileSync(file, digest(command) + '\n');
+  return value;
+}
+
 function storageCapabilityResult(command: string): ExecResult | null {
   if (command.startsWith('docker volume create') && command.includes('storage-probe')) {
     return result('probe-volume\n');
   }
   if (command.startsWith('docker run --rm') && command.includes('/cds-storage-probe')) {
-    return result('hard-limit-enforced\n');
+    return probeContainerResult(command, result('hard-limit-enforced\n'));
   }
   if (command.startsWith('docker volume rm ') && command.includes('storage-probe')) {
     return result('removed\n');
   }
+  if (/^docker rm -f '[a-f0-9]{64}'$/.test(command)) return result('removed');
   return null;
 }
 
@@ -199,6 +209,7 @@ class RecordingShell implements IShellExecutor {
   beforeOutputExport?: (outputDir: string, command: string) => void;
 
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
     this.calls.push({ command, options });
     const envFile = command.match(/--env-file '([^']+)'/);
     if (envFile) {
@@ -210,12 +221,12 @@ class RecordingShell implements IShellExecutor {
       });
     }
     if (command.startsWith('docker version')) return result('27.0.0\n');
-    if (command.startsWith('docker image inspect')) return result('sha256:image\n');
+    if (command.startsWith('docker image inspect')) return result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
     if (command.includes('/cds-storage-probe') && this.failStorageCapability) {
-      return result('', 'storage limit was not enforced', 1);
+      return probeContainerResult(command, result('', 'storage limit was not enforced', 1));
     }
     if (command.includes('--entrypoint /bin/sh') && !command.includes('--cap-add CHOWN')) {
-      return result('');
+      return probeContainerResult(command, result(''));
     }
     if (command.startsWith('docker network create')) return result('network-id\n');
     if (command.startsWith('docker volume create')) return result('volume-id\n');
@@ -420,11 +431,20 @@ function buildPackage(
 
 describe('AgentWorkspaceSessionRuntime', () => {
   let rootDir = '';
+  let defaultRootDir = '';
+
+  beforeEach(() => {
+    rootDir = '';
+    defaultRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-runtime-test-'));
+    vi.stubEnv('CDS_AGENT_WORKSPACE_ROOT', defaultRootDir);
+  });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     if (rootDir) fs.rmSync(rootDir, { recursive: true, force: true });
+    fs.rmSync(defaultRootDir, { recursive: true, force: true });
+    vi.unstubAllEnvs();
   });
 
   it.each([[false, true], [true, true], [false, false]])('seeds complete edit resources before execution and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
@@ -3140,19 +3160,100 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ))).toBe(true);
   });
 
+  it('binds runtime and storage probes to one unique, instance-owned capability generation', async () => {
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { instanceId: 'probe-owner', autoPullImage: false });
+    await expect(runtime.capability(true)).resolves.toMatchObject({ available: true });
+    const probes = shell.calls.filter(({ command }) => command.startsWith('docker run --rm') && command.includes('--entrypoint /bin/sh'));
+    expect(probes).toHaveLength(2);
+    const identities = probes.map(({ command }) => {
+      expect(command).toContain("--label 'cds.type=agent-session'");
+      expect(command).toContain("--label 'cds.instance=probe-owner'");
+      const operation = command.match(/--label 'cds.agent.probe.operation=([a-f0-9]{32})'/)?.[1];
+      const name = command.match(/--name '([^']+)'/)?.[1];
+      expect(operation).toMatch(/^[a-f0-9]{32}$/);
+      expect(name).toContain(operation);
+      expect(command).toContain(`cds.agent.session=capability-${operation}`);
+      return { operation, name };
+    });
+    expect(identities[0].operation).toBe(identities[1].operation);
+    expect(identities[0].name).not.toBe(identities[1].name);
+    expect(probes[0].command).toContain("--label 'cds.agent.probe=runtime-validation'");
+    expect(probes[1].command).toContain("--label 'cds.agent.probe=storage-validation'");
+    const volume = shell.calls.find(({ command }) => command.startsWith('docker volume create'))!;
+    expect(volume.command).toContain(`cds.agent.session=capability-${identities[0].operation}`);
+    expect(volume.command).toContain(`cds-od-storage-probe-${digest('probe-owner').slice(0, 8)}-${identities[0].operation}`);
+    // A second runtime for the same instance must not share a pending daemon allocation.
+    await expect(new AgentWorkspaceSessionRuntime(shell, { instanceId: 'probe-owner', autoPullImage: false }).capability(true)).resolves.toMatchObject({ available: true });
+    const secondProbe = shell.calls.filter(({ command }) => command.startsWith('docker run --rm') && command.includes('--entrypoint /bin/sh'))[2];
+    expect(secondProbe.command).not.toContain(`cds.agent.probe.operation=${identities[0].operation}`);
+  });
+
+  it('keeps a timed-out probe attributable for instance-scoped recovery without reclaiming foreign resources', async () => {
+    const calls: string[] = [];
+    let inspectVisible = false;
+    const containers = new Map<string, string>([['foreign', 'other-owner'], ['legacy', '']]);
+    const shell: IShellExecutor = {
+      async exec(command) {
+        const cached = coreCacheShell(command); if (cached) return cached;
+        calls.push(command);
+        if (command.startsWith('docker version')) return result('27.0.0');
+        if (command.startsWith('docker image inspect')) return result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+        if (command.startsWith('docker run --rm')) {
+          const name = command.match(/--name '([^']+)'/)?.[1];
+          const owner = command.match(/--label 'cds.instance=([^']+)'/)?.[1];
+          if (name && owner) containers.set(name, owner);
+          throw new Error('CLI timed out after daemon accepted allocation');
+        }
+        if (command.startsWith('docker inspect')) {
+          const name = command.match(/'([^']+)'$/)![1];
+          if (!inspectVisible || !containers.has(name)) return result('', 'No such object', 1);
+          return result(JSON.stringify({ Id: digest(name), Name: '/' + name, Config: { Labels: {
+            'cds.instance': containers.get(name), 'cds.type': 'agent-session',
+            'cds.agent.probe.operation': name.match(/-([a-f0-9]{32})-runtime-validation$/)![1],
+          } } }));
+        }
+        if (command.startsWith('docker ps -aq')) {
+          expect(command).toContain("--filter 'label=cds.instance=probe-owner'");
+          expect(command).toContain("--filter 'label=cds.type=agent-session'");
+          return result([...containers].filter(([, owner]) => owner === 'probe-owner').map(([name]) => name).join('\n'));
+        }
+        if (command.startsWith('docker network ls -q') || command.startsWith('docker volume ls -q')) return result();
+        if (command.startsWith('docker kill')) return result('', 'container is not running', 1);
+        if (command.startsWith('docker rm -f')) {
+          const identifier = command.match(/'([^']+)'/)![1];
+          for (const name of containers.keys()) if (name === identifier || digest(name) === identifier) containers.delete(name);
+          return result('removed');
+        }
+        throw new Error(`unexpected command: ${command}`);
+      },
+    };
+    const options = { instanceId: 'probe-owner', autoPullImage: false, probeCleanupTimeoutMs: 5, probeCleanupPollMs: 1 };
+    await expect(new AgentWorkspaceSessionRuntime(shell, options).capability(true)).resolves.toMatchObject({ available: false });
+    const probe = calls.find(command => command.startsWith('docker run --rm'))!;
+    expect(probe).toContain("--label 'cds.agent.probe=runtime-validation'");
+    expect(containers.size).toBe(3);
+    inspectVisible = true;
+    // The 5ms fault budget above forces the initial unknown outcome. Recovery
+    // uses the unchanged production bound, including durable receipt I/O.
+    await new AgentWorkspaceSessionRuntime(shell, { instanceId: 'probe-owner', autoPullImage: false }).bootstrapAndVerify();
+    expect([...containers.keys()]).toEqual(['foreign', 'legacy']);
+  });
+
   it('returns a fail-closed cold snapshot without waiting for a slow Docker probe', async () => {
     const dockerVersion = deferred<ExecResult>();
     let dockerProbeStarted = false;
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         const storageResult = storageCapabilityResult(command);
         if (storageResult) return storageResult;
         if (command.startsWith('docker version')) {
           dockerProbeStarted = true;
           return dockerVersion.promise;
         }
-        if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.startsWith('docker image inspect')) return result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3179,14 +3280,15 @@ describe('AgentWorkspaceSessionRuntime', () => {
     let dockerProbeCount = 0;
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         const storageResult = storageCapabilityResult(command);
         if (storageResult) return storageResult;
         if (command.startsWith('docker version')) {
           dockerProbeCount += 1;
           return dockerVersion.promise;
         }
-        if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.startsWith('docker image inspect')) return result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3209,14 +3311,15 @@ describe('AgentWorkspaceSessionRuntime', () => {
     let probeFails = false;
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         const storageResult = storageCapabilityResult(command);
         if (storageResult) return storageResult;
         if (command.startsWith('docker version')) {
           if (probeFails) throw new Error('daemon request timed out');
           return result('27.0.0\n');
         }
-        if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.startsWith('docker image inspect')) return result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3251,19 +3354,20 @@ describe('AgentWorkspaceSessionRuntime', () => {
   });
 
   it('reuses CLI validation for the same image id and revalidates a changed image id', async () => {
-    const imageIds = ['sha256:image-a', 'sha256:image-a', 'sha256:image-b', 'sha256:image-b'];
+    const imageIds = ['sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'];
     let cliProbeCount = 0;
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         const storageResult = storageCapabilityResult(command);
         if (storageResult) return storageResult;
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) return result(`${imageIds.shift()}\n`);
         if (command.includes('--entrypoint /bin/sh')) {
           cliProbeCount += 1;
-          return cliProbeCount === 1
+          return probeContainerResult(command, cliProbeCount === 1
             ? result()
-            : result('', 'required Codex version missing', 1);
+            : result('', 'required Codex version missing', 1));
         }
         throw new Error(`unexpected command: ${command}`);
       },
@@ -3278,27 +3382,42 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(cliProbeCount).toBe(2);
   });
 
-  it('warms the capability snapshot during bootstrap', async () => {
+  it('does not allocate an unused runtime during bootstrap and validates capability on demand', async () => {
     const shell = new RecordingShell();
-    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+    const runtime = new AgentWorkspaceSessionRuntime(shell);
 
-    await runtime.bootstrap();
+    await runtime.bootstrapAndVerify();
     const callsAfterBootstrap = shell.calls.length;
+    expect(shell.calls.every((call) => (
+      call.command.startsWith('docker ps -aq')
+      || call.command.startsWith('docker network ls -q')
+      || call.command.startsWith('docker volume ls -q')
+    ))).toBe(true);
 
     await expect(runtime.capability()).resolves.toEqual({
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      verificationPending: true,
+      reason: 'OpenDesign capability verification is running on this CDS node',
+    });
+    await expect(runtime.capability(true)).resolves.toEqual({
       available: true,
       resourcePolicyEnforcedPerSession: true,
       reason: null,
     });
-    expect(shell.calls).toHaveLength(callsAfterBootstrap);
+    expect(shell.calls.length).toBeGreaterThan(callsAfterBootstrap);
     expect(shell.calls.filter((call) => (
       call.command.includes('--entrypoint /bin/sh') && !call.command.includes('/cds-storage-probe')
     ))).toHaveLength(1);
+    expect(shell.calls.some((call) => (
+      call.command.startsWith('docker run --rm') && call.command.includes('/cds-storage-probe')
+    ))).toBe(true);
   });
 
   it('keeps OpenDesign unavailable when the configured image is not installed', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) return result('', 'No such image', 1);
         throw new Error(`unexpected command: ${command}`);
@@ -3318,18 +3437,19 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const calls: string[] = [];
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         calls.push(command);
         const storageResult = storageCapabilityResult(command);
         if (storageResult) return storageResult;
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) {
-          return installed ? result('sha256:image\n') : result('', 'No such image', 1);
+          return installed ? result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n') : result('', 'No such image', 1);
         }
         if (command.startsWith('docker pull ')) {
           installed = true;
           return result('pulled\n');
         }
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3348,6 +3468,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
   it('reports a safe actionable category when registry authentication blocks image preparation', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) return result('', 'No such image', 1);
         if (command.startsWith('docker pull ')) {
@@ -3371,9 +3492,11 @@ describe('AgentWorkspaceSessionRuntime', () => {
   it('keeps OpenDesign unavailable when the image lacks its Agent CLI or web prototype resources', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
+        const cleanup = storageCapabilityResult(command); if (cleanup) return cleanup;
         if (command.startsWith('docker version')) return result('27.0.0\n');
-        if (command.startsWith('docker image inspect')) return result('sha256:image\n');
-        if (command.includes('--entrypoint /bin/sh')) return result('', 'required Codex version missing', 1);
+        if (command.startsWith('docker image inspect')) return result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command, result('', 'required Codex version missing', 1));
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -3398,6 +3521,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const calls: string[] = [];
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         calls.push(command);
         if (command.startsWith('docker ps -aq')) return result('deadbeef\n');
         if (command.startsWith('docker network ls -q')) return result('network-old\n');
@@ -3437,6 +3561,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     let removalAttempts = 0;
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         calls.push(command);
         if (command.startsWith('docker ps -aq')) return result('deadbeef\n');
         if (command.startsWith('docker network ls -q')) return result('');
@@ -3468,12 +3593,13 @@ describe('AgentWorkspaceSessionRuntime', () => {
   it('keeps the provider unavailable when startup orphan cleanup cannot be proven complete', async () => {
     const shell: IShellExecutor = {
       async exec(command: string): Promise<ExecResult> {
+        const cached = coreCacheShell(command); if (cached) return cached;
         if (command.startsWith('docker ps -aq')) return result('', 'daemon unavailable', 1);
         if (command.startsWith('docker network ls -q')) return result('');
         if (command.startsWith('docker volume ls -q')) return result('');
         if (command.startsWith('docker version')) return result('27.0.0\n');
-        if (command.startsWith('docker image inspect')) return result('sha256:image\n');
-        if (command.includes('--entrypoint /bin/sh')) return result();
+        if (command.startsWith('docker image inspect')) return result('sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+        if (command.includes('--entrypoint /bin/sh')) return probeContainerResult(command);
         throw new Error(`unexpected command: ${command}`);
       },
     };

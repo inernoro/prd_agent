@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from '../services/preview-slug.js';
 // 项目基础设施重新同步路由 (2026-05-29)
 //
 // 用户反馈:"我想重新初始化这个项目, 比如彻底重装这个数据库啊, 基础设施什么的,
@@ -368,7 +369,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
         if (!yamlSvc) continue;
         const containerName = project.legacyFlag
           ? `cds-infra-${yamlSvc.id}`
-          : `cds-infra-${(project.slug || projectId).slice(0, 12)}-${yamlSvc.id}`;
+          : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${yamlSvc.id}`;
         const service: InfraService = {
           id: yamlSvc.id,
           projectId,

@@ -81,7 +81,7 @@ describe('buildPreviewUrlForProject', () => {
     const result = buildPreviewUrlForProject(
       'miduo.org',
       'cursor/frontend-agent-1685',
-      { id: 'default', slug: 'workspace', aliasSlug: 'prd-agent' },
+      { id: 'default', slug: 'prd-agent' },
       'default',
     );
 
@@ -89,7 +89,7 @@ describe('buildPreviewUrlForProject', () => {
     expect(result.previewSlug).toBe('frontend-agent-1685-cursor-prd-agent');
     expect(result.projectIdentity).toEqual({
       slug: 'prd-agent',
-      source: 'aliasSlug',
+      source: 'slug',
       degraded: false,
     });
   });
@@ -98,7 +98,7 @@ describe('buildPreviewUrlForProject', () => {
     const result = buildPreviewUrlForProject(
       '',
       'cursor/frontend-agent-1685',
-      { id: 'default', slug: 'workspace', aliasSlug: 'prd-agent' },
+      { id: 'default', slug: 'prd-agent' },
       'default',
     );
 

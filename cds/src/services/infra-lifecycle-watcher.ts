@@ -8,14 +8,16 @@
 // infra 容器（名称前缀 cds-infra-）的生命周期事件落入内存环形缓冲 + 服务器
 // 事件日志。关键取证信号：
 //   - `oom` 事件出现        → cgroup 级 OOM kill（容器内存上限触发）
-//   - `die` exitCode=137 且无 oom → 外部 SIGKILL（宿主 OOM killer / systemd-oomd / 人为）
+//   - `die` exitCode=137 无可靠关联 → 原因待核实，不能凭缺失事件排除 OOM
 //   - `die` 其他 exitCode   → 进程自身退出（panic / ENOSPC / bug）
-import { spawn, type ChildProcess } from 'node:child_process';
+import { DockerObservationEventStream } from './docker-observation-event-stream.js';
+import type { ObservationStreamExecutor } from './observation-stream-executor.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 
 export interface InfraLifecycleEvent {
   ts: string;
   containerName: string;
+  containerId?: string;
   event: string;
   exitCode?: string;
   signal?: string;
@@ -28,6 +30,11 @@ const RING_LIMIT = 400;
  * 外部 SIGKILL 误归因成 OOM。
  */
 const OOM_CORRELATION_WINDOW_MS = 10_000;
+// 不依赖名称或固定 hex 格式；只保留 Docker 提供的有界实际身份。
+function boundedContainerId(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value, 'utf8') <= 128
+    ? value : undefined;
+}
 
 // 模块级单例访问点：路由层（infra-data）零依赖注入即可读事件
 let activeWatcher: InfraLifecycleWatcher | null = null;
@@ -49,28 +56,37 @@ export function setReplicaMemberDeathListener(fn: ReplicaMemberDeathListener | n
 }
 
 export class InfraLifecycleWatcher {
-  private proc: ChildProcess | null = null;
+  private readonly eventStream?: DockerObservationEventStream;
+  private started = false;
   private events: InfraLifecycleEvent[] = [];
-  /** 容器名 → 最近一次 oom 事件时间戳（用于把紧随其后的 die/137 正确归因）。 */
+  /** 实际容器 ID → 本次进程代次最近的 OOM；严格受 RING_LIMIT 约束。 */
   private recentOom = new Map<string, number>();
-  private stopped = false;
-
-  constructor(private readonly deps: { serverEventLogStore?: ServerEventLogSink | null } = {}) {}
-
-  start(): void {
-    this.stopped = false;
-    activeWatcher = this;
-    this.spawnWatcher();
+  constructor(private readonly deps: { serverEventLogStore?: ServerEventLogSink | null; streams?: ObservationStreamExecutor } = {}) {
+    if (deps.streams) this.eventStream = new DockerObservationEventStream(deps.streams,
+      ['events', '--format', '{{json .}}', '--filter', 'type=container', ...['oom', 'die', 'kill', 'start', 'restart'].flatMap(event => ['--filter', `event=${event}`])],
+      line => this.ingest(line),
+      reason => {
+        // 断流、丢行或处理未确认后，缺口中可能发生过同 ID 重启。
+        // 没有连续观测证据，不能沿用缺口前的 OOM 归因。
+        this.recentOom.clear();
+        this.deps.serverEventLogStore?.record({ category: 'container', severity: 'warn', source: 'infra-lifecycle-watcher', action: 'infra.monitor.warning', message: reason });
+      });
   }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+  start(): void {
+    activeWatcher = this;
+    if (this.started) return;
+    this.started = true;
+    this.recentOom.clear();
+    if (!this.eventStream) {
+      this.deps.serverEventLogStore?.record({ category: 'container', severity: 'warn', source: 'infra-lifecycle-watcher', action: 'infra.monitor.unavailable', message: '事件读取执行器未配置，无法确认基础设施事件。' });
+      return;
     }
-    try { this.proc?.kill('SIGTERM'); } catch { /* noop */ }
-    this.proc = null;
+    this.eventStream.start();
+  }
+  stop(): Promise<void> {
+    this.started = false;
+    this.recentOom.clear();
+    return this.eventStream?.stop() ?? Promise.resolve();
   }
 
   /** 指定容器（或全部 infra）的近期生命周期事件，新→旧。 */
@@ -81,57 +97,12 @@ export class InfraLifecycleWatcher {
     return [...list].reverse();
   }
 
-  private spawnWatcher(): void {
-    if (this.stopped) return;
-    const proc = spawn('docker', [
-      'events',
-      '--format', '{{json .}}',
-      '--filter', 'type=container',
-      '--filter', 'event=oom',
-      '--filter', 'event=die',
-      '--filter', 'event=kill',
-      '--filter', 'event=start',
-      '--filter', 'event=restart',
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
-    this.proc = proc;
-    let buf = '';
-    proc.stdout?.on('data', (chunk: Buffer) => {
-      buf += chunk.toString();
-      let idx = buf.indexOf('\n');
-      while (idx >= 0) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (line) this.ingest(line);
-        idx = buf.indexOf('\n');
-      }
-      if (buf.length > 64 * 1024) buf = '';
-    });
-    // docker daemon 重启 / 网络抖动导致 events 流断开时自愈重连。
-    // error 与 close 必须汇入**同一个**带闸的重连定时器（Codex P2）：spawn 失败时
-    // Node 会先 error 后 close 各触发一次，双定时器会各起一条常驻 events 流——
-    // 反复失败还会成倍繁殖 watcher，生命周期记录/死亡回调全部翻倍。
-    proc.on('close', () => this.scheduleReconnect(5_000));
-    proc.on('error', () => this.scheduleReconnect(30_000));
-  }
-
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-  /** 单一重连闸：已排定则不重复排（首个触发者的延迟生效）。 */
-  private scheduleReconnect(delayMs: number): void {
-    this.proc = null;
-    if (this.stopped || this.reconnectTimer) return;
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      if (!this.stopped) this.spawnWatcher();
-    }, delayMs);
-    this.reconnectTimer.unref?.();
-  }
-
   private ingest(line: string): void {
-    let parsed: { status?: string; Action?: string; time?: number; Actor?: { Attributes?: Record<string, string> } };
+    let parsed: { status?: string; Action?: string; time?: number; id?: unknown; Actor?: { ID?: unknown; Attributes?: Record<string, string> } };
     try {
       parsed = JSON.parse(line);
     } catch {
+      this.recentOom.clear();
       return;
     }
     const name = parsed.Actor?.Attributes?.name || '';
@@ -141,40 +112,44 @@ export class InfraLifecycleWatcher {
     const isInfra = name.startsWith('cds-infra-');
     const isReplicaMember = name.startsWith('cds-') && /-res-\d+$/.test(name);
     if (!isInfra && !isReplicaMember) return;
+    const containerId = boundedContainerId(parsed.Actor?.ID) ?? boundedContainerId(parsed.id);
     const event: InfraLifecycleEvent = {
       ts: parsed.time ? new Date(parsed.time * 1000).toISOString() : new Date().toISOString(),
       containerName: name,
+      ...(containerId ? { containerId } : {}),
       event: parsed.Action || parsed.status || 'unknown',
       exitCode: parsed.Actor?.Attributes?.exitCode,
       signal: parsed.Actor?.Attributes?.signal,
     };
     this.events.push(event);
     if (this.events.length > RING_LIMIT) this.events = this.events.slice(-RING_LIMIT);
+    const now = Date.parse(event.ts);
+    for (const [id, at] of this.recentOom) {
+      if (now - at > OOM_CORRELATION_WINDOW_MS) this.recentOom.delete(id);
+    }
+    // 容器重启后即使 ID 不变，旧进程的 OOM 也不能归因给新进程。
+    if (containerId && (event.event === 'start' || event.event === 'restart')) this.recentOom.delete(containerId);
     // 死亡/OOM 类事件同步落服务器事件日志（可跨重启追溯）
     if (event.event === 'oom' || event.event === 'die') {
       // cgroup OOM 的真实序列是 `oom` 紧跟一条 exitCode=137 的 `die`（Codex 第二十七轮 P2）。
       // 此前两条各判各的：第一条判 cgroup OOM、第二条判「外部 SIGKILL，容器无 oom 事件」——
       // 同一次死亡留下两条互相矛盾的证据，而这正是本取证器唯一要回答的问题。
-      // 这里记住每个容器最近一次 oom 的时间，die/137 落在窗口内即归因 cgroup OOM。
-      const now = Date.parse(event.ts) || Date.now();
-      if (event.event === 'oom') {
-        this.recentOom.set(name, now);
-        if (this.recentOom.size > RING_LIMIT) {
-          for (const [k, t] of this.recentOom) {
-            if (now - t > OOM_CORRELATION_WINDOW_MS) this.recentOom.delete(k);
-          }
-        }
+      // 同 ID 且未跨 start/restart 的近期证据才能关联；淘汰表示未知。
+      if (event.event === 'oom' && containerId) {
+        this.recentOom.delete(containerId);
+        if (this.recentOom.size >= RING_LIMIT) this.recentOom.delete(this.recentOom.keys().next().value!);
+        this.recentOom.set(containerId, now);
       }
-      const oomAt = this.recentOom.get(name);
+      const oomAt = containerId ? this.recentOom.get(containerId) : undefined;
       const oomCorrelated = typeof oomAt === 'number' && now - oomAt >= 0 && now - oomAt <= OOM_CORRELATION_WINDOW_MS;
       const verdict = event.event === 'oom'
         ? 'cgroup OOM kill'
         : event.exitCode === '137'
           ? (oomCorrelated
             ? 'cgroup OOM kill（同容器刚收到 oom 事件，exitCode=137 是其后续 die）'
-            : '外部 SIGKILL（宿主 OOM killer / oomd / 人为，容器无 oom 事件）')
+            : 'SIGKILL（exitCode=137，原因待核实：未保留同容器同进程代次的近期 OOM 关联证据）')
           : `进程自身退出（exitCode=${event.exitCode ?? '?'}）`;
-      if (event.event === 'die' && oomCorrelated) this.recentOom.delete(name);
+      if (event.event === 'die' && containerId) this.recentOom.delete(containerId);
       this.deps.serverEventLogStore?.record({
         category: 'container',
         severity: event.event === 'oom' || event.exitCode === '137' ? 'error' : 'warn',

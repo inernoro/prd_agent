@@ -55,6 +55,7 @@ import { DbIsolationTab } from '@/pages/project-settings/DbIsolationTab';
 import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
+import { ProjectIdentityHistory } from '@/components/project/ProjectIdentityHistory';
 import { BuildScopeDialog } from '@/components/project/BuildScopeDialog';
 
 interface ProjectSummary {
@@ -62,7 +63,7 @@ interface ProjectSummary {
   slug: string;
   name: string;
   aliasName?: string;
-  aliasSlug?: string;
+  identityVersion?: string;
   /** 项目声明的 Agent 角色（GET /api/projects 带出）；未声明时缺省。 */
   agentProfile?: { role: string; experience: string; cardTitle?: string };
   resourceChipDisplay?: ResourceChipDisplay;
@@ -128,7 +129,32 @@ function normalizeResourceChipDisplay(display?: ResourceChipDisplay): Required<R
 interface BuildProfileSummary {
   id: string;
   name: string;
-  deployModes?: Record<string, { label?: string }>;
+  /** 构建配置自己的基线模式：新分支默认里「跟随构建配置」用的就是它 */
+  activeDeployMode?: string;
+  deployModes?: Record<string, { label?: string; prebuilt?: boolean }>;
+}
+
+/**
+ * 新分支默认运行模式下拉里的「跟随构建配置」（2026-10-08）。
+ *
+ * defaultDeployModes 里「键不存在」与「键为空串」是两回事：缺键 = 新分支沿用构建配置的基线模式；
+ * 空串会被原样拷进分支覆盖 = 强制源码，哪怕基线是极速版。这一页以前保存时给**每个**服务都写，
+ * 没选过的写成空串、下拉里还叫「源码默认」——mdimp 六个基线是极速版的服务就这样在每条新分支里
+ * 被悄悄改成了源码编译。现在没选过的服务一律不写，下拉里明示基线是什么。
+ */
+const FOLLOW_PROFILE_BASELINE = '__follow_profile_baseline__';
+
+function defaultModeSelection(saved: Record<string, string>, profileId: string): string {
+  return Object.prototype.hasOwnProperty.call(saved, profileId) ? saved[profileId] : FOLLOW_PROFILE_BASELINE;
+}
+
+function profileModeLabel(profile: BuildProfileSummary, modeId: string | undefined): string {
+  if (!modeId) return '热加载 / 源码';
+  return profile.deployModes?.[modeId]?.label || modeId;
+}
+
+function isPrebuiltModeOf(profile: BuildProfileSummary, modeId: string | undefined): boolean {
+  return Boolean(modeId && profile.deployModes?.[modeId]?.prebuilt);
 }
 
 interface BuildProfilesResponse {
@@ -893,7 +919,7 @@ function RuntimeDefaultsTab({
       ...Object.keys(savedModes),
       ...Object.keys(modes),
     ]);
-    for (const k of keys) if ((modes[k] || '') !== (savedModes[k] || '')) return true;
+    for (const k of keys) if (defaultModeSelection(modes, k) !== defaultModeSelection(savedModes, k)) return true;
     return false;
   })();
 
@@ -937,9 +963,10 @@ function RuntimeDefaultsTab({
     setSaving(true);
     setError('');
     try {
+      // 只写用户显式选过的服务；「跟随构建配置」的不写键，新分支直接用构建配置基线。
       const cleaned: Record<string, string> = {};
       for (const profile of profiles) {
-        cleaned[profile.id] = modes[profile.id] || '';
+        if (Object.prototype.hasOwnProperty.call(modes, profile.id)) cleaned[profile.id] = modes[profile.id];
       }
       const result = await apiRequest<ProjectSaveResponse>(`/api/projects/${encodeURIComponent(projectId)}`, {
         method: 'PUT',
@@ -958,7 +985,7 @@ function RuntimeDefaultsTab({
     <div className="space-y-6">
       <Section
         title="新分支默认运行模式"
-        description="这里只是项目模板。保存后不会改任何已有分支；新分支创建时会复制成该分支自己的容器覆盖。"
+        description="这里只是项目模板。保存后不会改任何已有分支；新分支创建时会复制成该分支自己的容器覆盖。「跟随构建配置」的服务不复制，新分支直接用构建配置里的模式。"
       >
         {loading ? <LoadingBlock label="加载构建配置" /> : null}
         {error ? <ErrorBlock message={error} /> : null}
@@ -970,20 +997,40 @@ function RuntimeDefaultsTab({
         <div className="space-y-3">
           {profiles.map((profile) => {
             const entries = Object.entries(profile.deployModes || {});
+            const selection = defaultModeSelection(modes, profile.id);
+            const baselineLabel = profileModeLabel(profile, profile.activeDeployMode);
+            // 构建配置基线是极速版，这里却显式选了非极速版：新分支会改走宿主编译，必须让人看见
+            const overridesPrebuiltBaseline = selection !== FOLLOW_PROFILE_BASELINE
+              && isPrebuiltModeOf(profile, profile.activeDeployMode)
+              && !isPrebuiltModeOf(profile, selection || undefined);
             return (
               <div key={profile.id} className="flex flex-wrap items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{profile.name || profile.id}</div>
                   <div className="mt-1 font-mono text-xs text-muted-foreground">{profile.id}</div>
+                  {overridesPrebuiltBaseline ? (
+                    <div className="mt-1 text-xs text-warn">
+                      构建配置基线是{baselineLabel}，这里选了{profileModeLabel(profile, selection || undefined)}：新分支会改在 CDS 宿主上编译
+                    </div>
+                  ) : null}
                 </div>
                 <select
                   className="h-9 min-w-[11.25rem] rounded-md border border-input bg-background px-3 text-sm"
-                  value={modes[profile.id] || ''}
-                  onChange={(event) => setModes((current) => ({ ...current, [profile.id]: event.target.value }))}
+                  value={selection}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setModes((current) => {
+                      const next = { ...current };
+                      if (value === FOLLOW_PROFILE_BASELINE) delete next[profile.id];
+                      else next[profile.id] = value;
+                      return next;
+                    });
+                  }}
                   disabled={entries.length === 0}
                   title="只作为新分支模板，不影响已有分支"
                 >
-                  <option value="">热加载 / 源码默认</option>
+                  <option value={FOLLOW_PROFILE_BASELINE}>跟随构建配置（{baselineLabel}）</option>
+                  <option value="">热加载 / 源码</option>
                   {entries.map(([modeId, mode]) => (
                     <option key={modeId} value={modeId}>
                       {mode.label || modeId}
@@ -1226,7 +1273,7 @@ function AutoLifecycleSection({
   );
 }
 
-function GeneralTab({
+export function GeneralTab({
   project,
   projectId,
   onSaved,
@@ -1239,7 +1286,8 @@ function GeneralTab({
 }): JSX.Element {
   const [name, setName] = useState(project.name || '');
   const [aliasName, setAliasName] = useState(project.aliasName || '');
-  const [aliasSlug, setAliasSlug] = useState(project.aliasSlug || '');
+  const savedSlug = project.slug;
+  const [slug, setSlug] = useState(savedSlug);
   const [description, setDescription] = useState(project.description || '');
   const [gitRepoUrl, setGitRepoUrl] = useState(project.gitRepoUrl || '');
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
@@ -1277,7 +1325,7 @@ function GeneralTab({
   useEffect(() => {
     setName(project.name || '');
     setAliasName(project.aliasName || '');
-    setAliasSlug(project.aliasSlug || '');
+    setSlug(project.slug);
     setDescription(project.description || '');
     setGitRepoUrl(project.gitRepoUrl || '');
     setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
@@ -1304,7 +1352,8 @@ function GeneralTab({
         body: {
           name: trimmedName,
           aliasName: aliasName.trim(),
-          aliasSlug: aliasSlug.trim(),
+          slug: slug.trim(),
+          expectedIdentityVersion: project.identityVersion,
           description: description.trim(),
           gitRepoUrl: gitRepoUrl.trim(),
           autoSmokeEnabled,
@@ -1334,7 +1383,7 @@ function GeneralTab({
     <div className="space-y-8">
       <Section
         title="项目基础信息"
-        description="这些字段只影响项目展示、仓库来源和项目级自动冒烟测试，不会改写项目 ID 或 Docker 网络。"
+        description="修改展示名称、项目 slug 和仓库来源；保存前可核对变化，保存后可查看记录。"
       >
         {/*
          * 方向 A：表单列锁可读宽度（620px），右列放这一组设置的「当前生效 /
@@ -1347,26 +1396,33 @@ function GeneralTab({
             <span className="text-sm font-medium">项目名称</span>
             <input className={inputClass} value={name} onChange={(event) => setName(event.target.value)} maxLength={60} />
           </label>
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">显示别名</span>
-            <input
-              className={inputClass}
-              value={aliasName}
-              onChange={(event) => setAliasName(event.target.value)}
-              maxLength={60}
-              placeholder="留空则使用项目名称"
-            />
-          </label>
-          <label className="block space-y-1.5">
-            <span className="text-sm font-medium">别名 slug</span>
-            <input
-              className={monoInputClass}
-              value={aliasSlug}
-              onChange={(event) => setAliasSlug(event.target.value.toLowerCase())}
-              maxLength={50}
-              placeholder="留空则使用项目原 slug"
-            />
-          </label>
+          <div className="rounded-lg border border-border bg-muted/20 p-4 space-y-3">
+            <label className="block space-y-1.5">
+              <span className="text-sm font-medium">项目 slug</span>
+              <input className={monoInputClass} value={slug}
+                onChange={(event) => setSlug(event.target.value.toLowerCase())}
+                maxLength={Math.max(50, project.slug.length)} required aria-describedby="project-slug-help" />
+            </label>
+            <p id="project-slug-help" className="text-xs text-muted-foreground break-all">
+              当前使用：<span className="font-mono text-foreground">{savedSlug}</span>。
+              用于各分支预览地址的项目部分，修改项目名称或仓库不会自动改变它。
+            </p>
+            {slug.trim() !== savedSlug ? (
+              <p className="text-xs text-warn break-all" role="status">
+                保存后使用：{slug.trim() || '请填写标识'}。将影响该项目已有和未来分支的预览地址；已分享的链接可能受影响。
+              </p>
+            ) : null}
+          </div>
+          <details className="rounded-lg border border-border p-3 text-xs text-muted-foreground">
+            <summary className="cursor-pointer">高级显示设置</summary>
+            <div className="mt-3 space-y-3">
+              <label className="block space-y-1.5">
+                <span>显示名称覆盖（可选）</span>
+                <input className={inputClass} value={aliasName} onChange={(event) => setAliasName(event.target.value)}
+                  maxLength={60} placeholder={name || '使用项目名称'} />
+              </label>
+            </div>
+          </details>
           <label className="block space-y-1.5">
             <span className="text-sm font-medium">描述</span>
             <textarea
@@ -1466,7 +1522,7 @@ function GeneralTab({
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-muted-foreground">项目 slug</dt>
-                  <dd className="truncate font-mono">{project.slug}</dd>
+                  <dd className="break-all font-mono">{savedSlug}</dd>
                 </div>
                 <div className="flex items-baseline justify-between gap-3">
                   <dt className="text-muted-foreground">Docker 网络</dt>
@@ -1487,23 +1543,28 @@ function GeneralTab({
                 改动影响
               </div>
               <p className="text-xs leading-relaxed">
-                改名只影响展示。项目 ID、slug 前缀和已存在分支的预览域名不会变，旧地址继续可用。
+                修改项目名称只影响展示；修改项目 slug 会改变预览入口。项目 ID 与 Docker 网络保持稳定。
               </p>
             </div>
           </aside>
         </div>
       </Section>
 
-      <Section title="项目标识">
+      <ProjectIdentityHistory projectId={projectId} version={project.identityVersion} />
+
+      <details className="rounded-lg border border-border p-4">
+        <summary className="cursor-pointer text-sm text-muted-foreground">技术信息</summary>
+      <Section title="内部项目标识">
         <div className="grid max-w-4xl gap-3 md:grid-cols-2">
           <InfoRow label="项目 ID" value={project.id} action={<CopyButton onClick={() => void copyProjectId()} />} />
-          <InfoRow label="项目 slug" value={project.slug} />
           <InfoRow label="Docker 网络" value={project.dockerNetwork || '暂无'} />
           <InfoRow label="项目类型" value={project.kind || 'git'} />
           <InfoRow label="创建时间" value={formatDate(project.createdAt)} />
           <InfoRow label="最近更新" value={formatDate(project.updatedAt)} />
         </div>
       </Section>
+
+      </details>
 
       <Section title="GitHub 关联">
         <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
@@ -1787,14 +1848,8 @@ function GithubProjectTab({
   async function unlinkRepo(): Promise<void> {
     setUnlinking(true);
     try {
-      await apiRequest(`/api/projects/${encodeURIComponent(project.id)}/github/link`, { method: 'DELETE' });
-      onSaved({
-        ...project,
-        githubInstallationId: undefined,
-        githubRepoFullName: undefined,
-        githubAutoDeploy: undefined,
-        githubLinkedAt: undefined,
-      });
+      const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(project.id)}/github/link`, { method: 'DELETE' });
+      onSaved(result.project);
       setUnlinkOpen(false);
       onToast('GitHub 仓库绑定已解除');
     } catch (err) {

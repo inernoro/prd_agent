@@ -9,21 +9,55 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { createHash } from 'node:crypto';
+import { listenLoopbackFixture, getHttpFixtureTrace } from '../helpers/loopback-http-fixture.js';
+import { execFileSync } from 'node:child_process';
 import { createTopologyRouter } from '../../src/routes/topology.js';
 import { StateService } from '../../src/services/state.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
-function request(server: http.Server, method: string, urlPath: string, body?: unknown): Promise<{ status: number; body: any }> {
+let diagnosticRecords = 0;
+function recordHttpTrace(record: Record<string, unknown>): void {
+  const dir = process.env.CDS_REGRESSION_EVIDENCE_DIR;
+  if (!dir || !path.isAbsolute(dir) || diagnosticRecords++ >= 128) return;
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.appendFileSync(path.join(dir, `topology-${process.pid}.jsonl`), JSON.stringify(record) + '\n', { mode: 0o600 });
+}
+
+async function request(server: http.Server, method: string, urlPath: string, body?: unknown): Promise<{ status: number; body: any }> {
+  if (!server.listening) await new Promise<void>((resolve, reject) => {
+    server.once('listening', resolve); server.once('error', reject);
+  });
   return new Promise((resolve, reject) => {
     const addr = server.address() as { port: number };
+    const trace = getHttpFixtureTrace(server);
+    let connection: Record<string, unknown> = {};
     const payload = body !== undefined ? JSON.stringify(body) : undefined;
-    const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
+    const req = http.request({ hostname: '127.0.0.1', port: addr.port, path: urlPath, method, agent: false,
       headers: { 'Content-Type': 'application/json', ...(payload ? { 'Content-Length': Buffer.byteLength(payload) } : {}) } },
     (res) => {
       let raw = '';
       res.on('data', (c: Buffer) => (raw += c.toString()));
-      res.on('end', () => { try { resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }); } catch { resolve({ status: res.statusCode!, body: raw }); } });
+      res.on('end', () => {
+        const mismatch = !!trace && res.headers['x-cds-fixture-id'] !== trace.id;
+        let listeners = '';
+        if (mismatch) {
+          try { listeners = execFileSync('lsof', ['-nP', '-a', `-iTCP:${addr.port}`, '-sTCP:LISTEN', '-Fpcftn'],
+            { encoding: 'utf8', timeout: 2000, maxBuffer: 64 * 1024 }).trim(); } catch {}
+        }
+        const record = { at: new Date().toISOString(), method, urlPath, expected: trace, connection,
+          response: { status: res.statusCode, fixtureId: res.headers['x-cds-fixture-id'], fixturePid: res.headers['x-cds-fixture-pid'],
+            contentType: res.headers['content-type'], bytes: Buffer.byteLength(raw), sha256: createHash('sha256').update(raw).digest('hex'),
+            ...(res.statusCode === 404 && urlPath === '/api/compose/lint' ? { raw: raw.slice(0, 4096) } : {}) }, mismatch, listeners };
+        recordHttpTrace(record);
+        if (mismatch) console.error(JSON.stringify({ httpFixtureIdentityMismatch: true, expected: trace, connection,
+          status: res.statusCode, actualFixtureId: res.headers['x-cds-fixture-id'], actualFixturePid: res.headers['x-cds-fixture-pid'], listeners }));
+        if (mismatch) { reject(new Error('HTTP响应不属于当前私有监听夹具')); return; }
+        try { resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }); } catch { resolve({ status: res.statusCode!, body: raw }); }
+      });
     });
+    req.on('socket', socket => { socket.on('connect', () => { connection = { localAddress: socket.localAddress,
+      localPort: socket.localPort, remoteAddress: socket.remoteAddress, remotePort: socket.remotePort, remoteFamily: socket.remoteFamily }; }); });
     req.on('error', reject);
     if (payload) req.write(payload);
     req.end();
@@ -66,7 +100,7 @@ describe('topology router', () => {
       stateService,
       assertProjectAccess: (_req, projectId) => (denyProject === projectId ? { status: 403, body: { error: 'forbidden' } } : null),
     }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
   });
   afterEach(async () => {
     await flushAllJsonStateStores();
@@ -105,7 +139,7 @@ describe('topology router', () => {
         { _id: 'r2', host: 'main-demo.miduo.org', pathPrefix: '/api/', upstreamPort: 9102, weight: 100, branchId: 'proj-main', profileId: 'api' },
       ],
     }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const res = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=main-demo.miduo.org&path=/api/x');
       expect(res.status).toBe(200);
@@ -139,7 +173,7 @@ describe('topology router', () => {
         { _id: 'r3', host: 'main-demo-llmgw.miduo.org', pathPrefix: '/', upstreamPort: 9103, weight: 100, branchId: 'proj-main', profileId: 'llmgw' },
       ],
     }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const named = await request(srv, 'GET', '/api/branches/proj-main/route-lookup?host=main-demo-llmgw.miduo.org&path=/gw/v1/x');
       expect(named.status).toBe(200);
@@ -166,7 +200,7 @@ describe('topology router', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const res = await request(srv, 'GET', '/api/branches/md-main/references');
       expect(res.status).toBe(200);
@@ -215,7 +249,7 @@ describe('topology router', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const embedded = await request(srv, 'PUT', '/api/branches/md-main/references/LLMGW_V1', { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'feat/x' });
       expect(embedded.status, JSON.stringify(embedded.body)).toBe(200);
@@ -257,7 +291,7 @@ describe('topology router', () => {
     app.use(express.json());
     // 模拟只对 mdimp 项目授权的项目级凭据
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: (_r, pid) => (pid === 'p-md' ? null : { status: 403, body: { error: 'forbidden' } }), envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const refs = await request(srv, 'GET', '/api/branches/md-main/references');
       expect(refs.status).toBe(200);
@@ -295,7 +329,7 @@ describe('topology router', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: () => null, envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' }, isRemoteExecutorBranch: (b) => b.id === 'md-remote' }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const body = { profileId: 'cb-web', projectRef: 'prd-agent', serviceId: 'llmgw-serve', branchRef: 'main' };
       const pinned = await request(srv, 'PUT', '/api/branches/md-pinned/references/LLMGW_BASE', body);
@@ -322,7 +356,7 @@ describe('topology router', () => {
     const app = express();
     app.use(express.json());
     app.use('/api', createTopologyRouter({ stateService, assertProjectAccess: (_r, pid) => (pid === 'p-empty' ? { status: 403, body: { error: 'forbidden' } } : null), envConfig: { jwtIssuer: 'cds', previewHost: 'miduo.org' } }));
-    const srv = app.listen(0);
+    const srv = listenLoopbackFixture(app);
     try {
       const res = await request(srv, 'GET', '/api/overview/topology');
       expect(res.status).toBe(200);

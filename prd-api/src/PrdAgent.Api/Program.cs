@@ -583,6 +583,9 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReportAgent.ReportAutoGe
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportWebhookService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportNotificationService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.TeamSummaryService>();
+// Report Agent 月报：周报/月报共用的互动服务 + 访问者身份解析
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportInteractionService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ReportViewerResolver>();
 // Report Agent v2.0: 工作流管道 + 个人数据源
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWorkflowExecutionService, PrdAgent.Api.Services.ReportAgent.WorkflowExecutionService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.ArtifactStatsParser>();

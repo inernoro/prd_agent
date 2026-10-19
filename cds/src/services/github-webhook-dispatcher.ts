@@ -1,3 +1,4 @@
+import { projectResourceNamespace } from './preview-slug.js';
 /**
  * GitHubWebhookDispatcher — processes an already-verified GitHub webhook
  * and translates it into CDS state changes.
@@ -18,7 +19,8 @@
  */
 
 import type { StateService } from './state.js';
-import type { WorktreeService } from './worktree.js';
+import { WorktreeService } from './worktree.js';
+import { worktreePathActivity } from './worktree-path-activity.js';
 import type { IShellExecutor, CdsConfig, BranchEntry, Project } from '../types.js';
 import type { GitHubAppClient } from './github-app-client.js';
 import { branchEvents, nowIso } from './branch-events.js';
@@ -653,13 +655,13 @@ export class GitHubWebhookDispatcher {
       ciWorkflowConclusion: cached.conclusion,
       ciWorkflowRunUrl: cached.htmlUrl,
       ciWaitingSince: '',
-      ciImageError: `CI 构建未成功（${cached.conclusion}）。可在分支详情切回源码编译重试。`,
+      ciImageError: `CI 构建未成功（${cached.conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
     });
     this.deps.stateService.save();
     this.emitCiStatus(branchId, projectId, 'failed', commitSha, cached.htmlUrl);
     return {
       action: 'ci-image-failed',
-      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,可在分支详情切回源码编译`,
+      message: `极速版分支 '${branchId}' 的 CI 构建未成功（${cached.conclusion}）,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -903,7 +905,7 @@ export class GitHubWebhookDispatcher {
     project: Project,
   ): Promise<WebhookDispatchResult> {
     const slugified = StateServiceClass.slugify(event.ref);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Prefer the canonical id, but fall back to a (projectId, branch)
     // lookup so a branch created under the previous legacyFlag formula
     // is still found after the flag was flipped.
@@ -1007,7 +1009,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
       const names = projects.map((p) => `'${p.name}'`).join('、');
@@ -1075,7 +1077,7 @@ export class GitHubWebhookDispatcher {
    * 只处理 `completed` + 来自预构建镜像工作流（branch-image.yml）的 run,按
    * head_sha 找到「等待中」的极速版分支:
    *   - success → 置 ready + 返回 deployRequest（路由层触发 docker pull + 部署）
-   *   - 其它   → 置 failed（前端提示可切回源码编译,不自动回退）
+   *   - 其它   → 置 failed（前端提示修复后重试 CI,不自动回退）
    */
   private async handleWorkflowRun(event: GitHubWorkflowRunEvent, dryRun: boolean): Promise<WebhookDispatchResult> {
     const run = event.workflow_run;
@@ -1184,7 +1186,7 @@ export class GitHubWebhookDispatcher {
       };
     }
 
-    // 失败 / cancelled / timed_out — 不自动回退,等用户手动切回源码编译。
+    // 失败 / cancelled / timed_out — 不自动回退,等待修复后重试 CI。
     if (!dryRun) {
       this.deps.stateService.updateBranchGithubMeta(branchId, {
         ciImageStatus: 'failed',
@@ -1194,14 +1196,14 @@ export class GitHubWebhookDispatcher {
         // 真 CI 失败有了归因（conclusion + run 链接），停掉看门狗计时并写明原因,
         // 区别于「超时无 run」的看门狗失败。
         ciWaitingSince: '',
-        ciImageError: `CI 构建未成功（${conclusion}）。可在分支详情切回源码编译重试。`,
+        ciImageError: `CI 构建未成功（${conclusion}）。请查看 CI 日志，修复后重新运行 CI；通过后再部署。`,
       });
       this.deps.stateService.save();
       this.emitCiStatus(branchId, target.projectId, 'failed', headSha, run.html_url);
     }
     return {
       action: 'ci-image-failed',
-      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,可在分支详情切回源码编译`,
+      message: `${dryRun ? '[dry-run] ' : ''}CI 构建未成功（${conclusion}），极速版分支 '${branchId}' 保持等待,请查看 CI 日志并修复后重试`,
       branchId,
     };
   }
@@ -1259,7 +1261,7 @@ export class GitHubWebhookDispatcher {
       };
     }
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     // Fall back to a (projectId, branch) lookup so a legacyFlag flip
     // doesn't hide an existing entry stored under the old id.
     const entry =
@@ -1340,7 +1342,7 @@ export class GitHubWebhookDispatcher {
         const baseRef = pr.base?.ref;
         if (baseRef && baseRef !== branchName) {
           const baseSlug = StateServiceClass.slugify(baseRef);
-          const baseCanonicalId = project.legacyFlag ? baseSlug : `${project.slug}-${baseSlug}`;
+          const baseCanonicalId = project.legacyFlag ? baseSlug : `${projectResourceNamespace(project)}-${baseSlug}`;
           const baseEntry =
             this.deps.stateService.getBranch(baseCanonicalId) ??
             this.deps.stateService.findBranchByProjectAndName(project.id, baseRef);
@@ -1570,7 +1572,7 @@ export class GitHubWebhookDispatcher {
     // otherwise a single push would spawn a phantom duplicate (bug: same
     // repo's `main` appearing as both `main` and `<slug>-main`).
     const slugified = StateServiceClass.slugify(branchName);
-    const canonicalId = project.legacyFlag ? slugified : `${project.slug}-${slugified}`;
+    const canonicalId = project.legacyFlag ? slugified : `${projectResourceNamespace(project)}-${slugified}`;
     let entry =
       this.deps.stateService.getBranch(canonicalId) ??
       this.deps.stateService.findBranchByProjectAndName(project.id, branchName);
@@ -1688,26 +1690,29 @@ export class GitHubWebhookDispatcher {
         branchId,
       );
       await this.deps.shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
-      try {
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-      } catch (err) {
-        // A push for a branch our local clone hasn't fetched yet can fail
-        // because `git worktree add` refuses unknown refs. Try a fetch and
-        // retry once; give up if that also fails.
-        await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
-        await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
-        void err;
-      }
-      entry = {
-        id: branchId,
-        projectId: project.id,
-        branch: branchName,
-        worktreePath,
-        services: {},
-        status: 'idle',
-        createdAt: new Date().toISOString(),
-      };
-      this.deps.stateService.addBranch(entry);
+      entry = await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
+        try {
+          await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+        } catch (err) {
+          // A push for a branch our local clone hasn't fetched yet can fail
+          // because `git worktree add` refuses unknown refs. Try a fetch and
+          // retry once; give up if that also fails.
+          await this.deps.shell.exec(`git fetch origin "${branchName}":"${branchName}"`, { cwd: repoRoot }).catch(() => {});
+          await this.deps.worktreeService.create(repoRoot, branchName, worktreePath);
+          void err;
+        }
+        const entry: BranchEntry = {
+          id: branchId,
+          projectId: project.id,
+          branch: branchName,
+          worktreePath,
+          services: {},
+          status: 'idle',
+          createdAt: new Date().toISOString(),
+        };
+        this.deps.stateService.addBranch(entry);
+        return entry;
+      });
       created = true;
     }
 
@@ -1815,7 +1820,7 @@ export class GitHubWebhookDispatcher {
         repoFullName, branchName, commitSha, project.githubInstallationId ?? event.installation?.id,
       );
       if (workflowPresence === 'missing') {
-        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow，或在构建配置中把分支切回源码编译模式。';
+        const missingError = '仓库该提交下不存在 .github/workflows/branch-image.yml，极速版镜像不会被 CI 构建。请为仓库添加该 workflow 并推送，待 CI 检查通过后再部署。';
         this.deps.stateService.updateBranchGithubMeta(branchId, {
           ciImageStatus: 'failed',
           ciTargetSha: commitSha,
@@ -1927,7 +1932,7 @@ export class GitHubWebhookDispatcher {
             githubInstallationId: undefined,
             githubAutoDeploy: undefined,
             githubLinkedAt: undefined,
-          });
+          }, { actor: 'system:github-webhook' });
         }
       }
     }

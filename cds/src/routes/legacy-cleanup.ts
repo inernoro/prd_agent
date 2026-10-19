@@ -23,9 +23,12 @@
 import { Router } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
+import { projectIdentityActorFromRequest } from '../services/project-identity-history.js';
+import { projectReservedIdentifiers } from '../services/preview-slug.js';
 
 const LEGACY_PROJECT_ID = 'default';
 const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$|^[a-z]$/;
@@ -211,8 +214,8 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
       res.status(400).json({ error: 'newId 只能包含小写字母、数字、短横线，且不能以短横线开头/结尾' });
       return;
     }
-    if ((stateService.getProjects?.() || []).some(p => p.id === normalizedId)) {
-      res.status(409).json({ error: `项目 id "${normalizedId}" 已存在` });
+    if ((stateService.getProjects?.() || []).some(p => p.id !== LEGACY_PROJECT_ID && projectReservedIdentifiers(p).includes(normalizedId))) {
+      res.status(409).json({ error: `项目标识 "${normalizedId}" 已被占用，请选择其他标识` });
       return;
     }
 
@@ -254,9 +257,11 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     const defaultProj = projects.find(p => p.id === LEGACY_PROJECT_ID);
     if (defaultProj) {
       defaultProj.id = normalizedId;
-      if (newName && typeof newName === 'string') defaultProj.name = newName.trim();
       // 清 legacyFlag —— 迁移后不再是 legacy
       defaultProj.legacyFlag = false;
+      if (newName && typeof newName === 'string') {
+        stateService.updateProject(normalizedId, { name: newName.trim() }, projectIdentityActorFromRequest(req));
+      }
     } else {
       // 没有 Project 记录但有资源（pre-P4），直接新建一个最小记录
       stateService.addProject?.({
@@ -284,30 +289,32 @@ export function createLegacyCleanupRouter(deps: LegacyCleanupRouterDeps): Router
     const oldDir = path.posix.join(worktreeBase, LEGACY_PROJECT_ID);
     const newDir = path.posix.join(worktreeBase, normalizedId);
     let worktreeMoveResult = 'skipped (目录不存在)';
-    if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
-      try {
-        // 先尝试重命名（同文件系统原子）
-        fs.renameSync(oldDir, newDir);
-        worktreeMoveResult = 'renamed';
-        // 同时重写 state 里的 branch.worktreePath
-        for (const b of stateService.getAllBranches()) {
-          if (b.worktreePath && b.worktreePath.startsWith(oldDir + '/')) {
-            b.worktreePath = b.worktreePath.replace(oldDir + '/', newDir + '/');
+    await worktreePathActivity.withClaim([oldDir, newDir], async () => {
+      if (fs.existsSync(oldDir) && !fs.existsSync(newDir)) {
+        try {
+          // 先尝试重命名（同文件系统原子）
+          fs.renameSync(oldDir, newDir);
+          worktreeMoveResult = 'renamed';
+          // 同时重写 state 里的 branch.worktreePath
+          for (const b of stateService.getAllBranches()) {
+            if (b.worktreePath && b.worktreePath.startsWith(oldDir + '/')) {
+              stateService.setBranchWorktreePath(b.id, b.worktreePath.replace(oldDir + '/', newDir + '/'));
+            }
+          }
+          stateService.save();
+        } catch (err) {
+          // 跨文件系统或权限问题：退化到 symlink（不阻断迁移）
+          try {
+            fs.symlinkSync(oldDir, newDir, 'dir');
+            worktreeMoveResult = 'symlinked (rename failed: ' + (err as Error).message + ')';
+          } catch (err2) {
+            worktreeMoveResult = 'failed: ' + (err2 as Error).message;
           }
         }
-        stateService.save();
-      } catch (err) {
-        // 跨文件系统或权限问题：退化到 symlink（不阻断迁移）
-        try {
-          fs.symlinkSync(oldDir, newDir, 'dir');
-          worktreeMoveResult = 'symlinked (rename failed: ' + (err as Error).message + ')';
-        } catch (err2) {
-          worktreeMoveResult = 'failed: ' + (err2 as Error).message;
-        }
+      } else if (fs.existsSync(newDir)) {
+        worktreeMoveResult = 'skipped (目标已存在)';
       }
-    } else if (fs.existsSync(newDir)) {
-      worktreeMoveResult = 'skipped (目标已存在)';
-    }
+    });
 
     stateService.recordDestructiveOp({
       type: 'other',

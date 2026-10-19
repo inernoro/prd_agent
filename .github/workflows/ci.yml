@@ -733,6 +733,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 停止演练回归读取固定历史基线，浅克隆没有该提交。
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

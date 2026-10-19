@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.16.8
+  version: 0.16.10
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.8 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
+> **版本**：v0.16.10 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"、"数据库操作"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -181,6 +181,10 @@ python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
 判据是 `path:op:value`（op ∈ eq/ne/lt/lte/gt/gte/exists/absent），期望值里带冒号
 不会被截断（`16:9` 是完整的）。刻意不做表达式——自由文本判据一开口，下一轮就会被
 要求加同义词和嵌套。
+
+配置通知身份：`cdscli monitor identity` 查看，`cdscli monitor identity --file <私有JSON文件>` 更新（管理员）。身份配置只存运行状态，真实名称、地址与凭据不得提交仓库。
+
+更新现有通知的独立故障入口：`cdscli monitor incident-page --file <私有JSON文件>`。文件包含 channelId 与 incidentPageUrl，保留原接收者和事件订阅；实际地址不写入命令行或仓库。
 
 查通知发送记录：`cdscli monitor notifications --hours 24`（也支持 1 / 168 小时，仅管理员）。按目标、通道、事件类型、小时统计，演练单列；`truncated=true` 时是部分统计。成功表示推送服务已接受，不能当作手机已展示；旧版未留记录的历史不可回填。
 
@@ -472,3 +476,5 @@ prd-agent 的图片/验收报告走后端 `IAssetStorage`，由**项目环境变
 - local 是占位/兜底，容器重建即丢；要持久化预览图片可挂卷到 `ASSETS_LOCAL_DIR` 或直接配 R2。
 
 详见 `.claude/skills/create-visual-test-to-kb/SKILL.md`「报告图片与资产存储」。
+
+自更新 SSE 未收到完成事件且状态仍为 `not_required` 时，CLI 返回未确认错误，不能把之前的更新状态当作本次成功。先用 `self status` 核对运行版本再决定重试，避免重复重启。

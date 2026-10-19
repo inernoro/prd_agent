@@ -258,6 +258,7 @@ public class MongoDbContext
     public IMongoCollection<ReportTemplate> ReportTemplates => _database.GetCollection<ReportTemplate>("report_templates");
     public IMongoCollection<UserReportTemplatePreference> UserReportTemplatePreferences => _database.GetCollection<UserReportTemplatePreference>("user_report_template_preferences");
     public IMongoCollection<WeeklyReport> WeeklyReports => _database.GetCollection<WeeklyReport>("report_weekly_reports");
+    public IMongoCollection<MonthlyReport> MonthlyReports => _database.GetCollection<MonthlyReport>("report_monthly_reports");
     public IMongoCollection<ReportDailyLog> ReportDailyLogs => _database.GetCollection<ReportDailyLog>("report_daily_logs");
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
@@ -1620,6 +1621,26 @@ public class MongoDbContext
         WeeklyReports.Indexes.CreateOne(new CreateIndexModel<WeeklyReport>(
             Builders<WeeklyReport>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.PeriodEnd),
             new CreateIndexOptions { Name = "idx_weekly_reports_user_period" }));
+
+        // MonthlyReports：(UserId, TeamId, Year, Month) 唯一，防止重复月报
+        try
+        {
+            MonthlyReports.Indexes.CreateOne(new CreateIndexModel<MonthlyReport>(
+                Builders<MonthlyReport>.IndexKeys
+                    .Ascending(x => x.UserId)
+                    .Ascending(x => x.TeamId)
+                    .Ascending(x => x.Year)
+                    .Ascending(x => x.Month),
+                new CreateIndexOptions { Name = "uniq_monthly_reports_user_team_month", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // MonthlyReports：按 TeamId + Year + Month 查询团队月报
+        MonthlyReports.Indexes.CreateOne(new CreateIndexModel<MonthlyReport>(
+            Builders<MonthlyReport>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.Year).Ascending(x => x.Month),
+            new CreateIndexOptions { Name = "idx_monthly_reports_team_month" }));
 
         // ReportDailyLogs：(UserId, Date) 唯一，一天一条
         try

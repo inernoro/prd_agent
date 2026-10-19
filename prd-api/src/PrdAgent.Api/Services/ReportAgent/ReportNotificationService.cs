@@ -197,9 +197,51 @@ public class ReportNotificationService
         }
     }
 
+    #region 月报（来源 monthly-report，点通知直达那份月报）
+
+    private const string MonthlySource = "monthly-report";
+
+    private static string MonthlyActionUrl(string reportId) => $"/report-agent/monthly/{reportId}";
+
+    /// <summary>成员提交月报：通知团队负责人与副负责人（作者本人除外）</summary>
+    public async Task NotifyMonthlyReportSubmittedAsync(MonthlyReport report, IEnumerable<string> leaderUserIds)
+    {
+        foreach (var leaderId in leaderUserIds.Where(id => !string.IsNullOrEmpty(id) && id != report.UserId).Distinct())
+        {
+            await UpsertNotificationAsync(
+                key: $"monthly-report:submitted:{report.Id}:{leaderId}",
+                targetUserId: leaderId,
+                title: "收到新月报",
+                message: $"{report.UserName ?? "团队成员"} 提交了 {report.Year} 年 {report.Month} 月的月报。",
+                level: "info",
+                actionLabel: "查看月报",
+                source: MonthlySource,
+                actionUrl: MonthlyActionUrl(report.Id));
+        }
+    }
+
+    /// <summary>别人评论了我的月报：通知作者（自己评论自己不通知）</summary>
+    public async Task NotifyMonthlyReportCommentedAsync(MonthlyReport report, string commenterUserId, string commenterName, string commentId, string chapterTitle)
+    {
+        if (string.IsNullOrEmpty(report.UserId) || report.UserId == commenterUserId) return;
+
+        await UpsertNotificationAsync(
+            key: $"monthly-report:comment:{commentId}",
+            targetUserId: report.UserId,
+            title: "月报收到新评论",
+            message: $"{commenterName} 评论了你 {report.Year} 年 {report.Month} 月月报的「{chapterTitle}」。",
+            level: "info",
+            actionLabel: "查看评论",
+            source: MonthlySource,
+            actionUrl: MonthlyActionUrl(report.Id));
+    }
+
+    #endregion
+
     private async Task UpsertNotificationAsync(
         string key, string targetUserId, string title, string message,
-        string level, string actionLabel)
+        string level, string actionLabel,
+        string source = Source, string actionUrl = ActionUrl)
     {
         // 幂等：如果 Key 已存在则跳过
         var exists = await _db.AdminNotifications.Find(n => n.Key == key).AnyAsync();
@@ -212,9 +254,9 @@ public class ReportNotificationService
             Title = title,
             Message = message,
             Level = level,
-            Source = Source,
+            Source = source,
             ActionLabel = actionLabel,
-            ActionUrl = ActionUrl,
+            ActionUrl = actionUrl,
             ExpiresAt = DateTime.UtcNow.AddDays(14)
         };
 
