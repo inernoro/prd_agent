@@ -2,7 +2,7 @@ namespace PrdAgent.Api.Services;
 
 public sealed class AdminPushNotificationWorker : BackgroundService
 {
-    private static readonly TimeSpan SweepInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(5);
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly AdminPushDispatchSignal _dispatchSignal;
