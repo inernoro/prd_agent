@@ -30,7 +30,7 @@ class SetupCheckTests(unittest.TestCase):
         self.requests = []
         self.status = "active"
         self.kind = "project"
-        self.version = "0.17.0"
+        self.version = "0.17.1"
         self.project_status = 200
         self.returned_project = "proj-a"
         test = self
@@ -74,14 +74,19 @@ class SetupCheckTests(unittest.TestCase):
         self.thread.join()
         self.tmp.cleanup()
 
-    def run_check(self, *target, host=None):
+    def run_cli(self, *args, credential_env=None):
         env = {key: value for key, value in os.environ.items()
                if key not in ("CDS_HOST", "CDS_PROJECT_ID", "CDS_PROJECT_KEY", "AI_ACCESS_KEY")}
-        result = subprocess.run([sys.executable, str(self.cli), "setup-check", "--host", host or self.host,
-                                 *(target or ("--project", "proj-a")), "--skills", "cds-deploy-pipeline"],
+        env.update(credential_env or {})
+        result = subprocess.run([sys.executable, str(self.cli), *args],
                                 cwd=self.root, env=env, capture_output=True, text=True, timeout=15)
         self.assertNotIn(SECRET, result.stdout + result.stderr)
         return result, json.loads(result.stdout)
+
+    def run_check(self, *target, host=None, credential_env=None):
+        return self.run_cli("setup-check", "--host", host or self.host,
+                            *(target or ("--project", "proj-a")), "--skills", "cds-deploy-pipeline",
+                            credential_env=credential_env)
 
     def assert_failure(self, reason, *target, host=None):
         result, payload = self.run_check(*target, host=host)
@@ -104,6 +109,48 @@ class SetupCheckTests(unittest.TestCase):
     def test_host_mismatch_sends_no_credentials(self):
         self.assert_failure("host_mismatch", host="https://other.example")
         self.assertEqual(self.requests, [])
+
+    def test_equivalent_source_origins_do_not_block_setup_or_strict_inspect(self):
+        for local, explicit in (
+            ("https://cds.example", "https://CDS.EXAMPLE:443"),
+            ("https://cds.example", "HTTPS://CDS.EXAMPLE:443/"),
+            ("http://localhost", "http://LOCALHOST:80/"),
+            ("http://[::1]", "http://[::1]:80"),
+            ("https://cds.example:8443", "https://CDS.EXAMPLE:8443/"),
+            ("cds.example", "https://CDS.EXAMPLE:443"),
+        ):
+            with self.subTest(local=local, explicit=explicit):
+                self.credentials.write_text(json.dumps({"host": local, "projectId": "proj-a", "projectKey": SECRET}))
+                env = {"CDS_HOST": explicit}
+                result, payload = self.run_cli("auth", "inspect", "--strict", credential_env=env)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                self.assertEqual(payload["data"]["conflicts"], [])
+                result, payload = self.run_check(host="https://other.example", credential_env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(payload["data"]["checks"][-1]["reason"], "host_mismatch")
+        self.assertEqual(self.requests, [])
+
+    def test_different_source_origins_still_stop_before_network(self):
+        self.credentials.write_text(json.dumps({"host": "https://cds.example", "projectId": "proj-a", "projectKey": SECRET}))
+        for explicit in ("http://cds.example", "https://cds.example:8443", "https://other.example"):
+            with self.subTest(explicit=explicit):
+                env = {"CDS_HOST": explicit}
+                result, payload = self.run_cli("auth", "inspect", "--strict", credential_env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("host", payload["credentialSummary"]["conflicts"])
+                result, payload = self.run_check(host=explicit, credential_env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(payload["data"]["checks"][-1]["reason"], "credential_conflict")
+        self.assertEqual(self.requests, [])
+
+    def test_equivalent_source_hosts_reuse_credentials_over_real_http(self):
+        host = f"http://localhost:{self.server.server_port}"
+        self.credentials.write_text(json.dumps({"host": host, "projectId": "proj-a", "projectKey": SECRET}))
+        result, payload = self.run_check(host=host, credential_env={"CDS_HOST": host.replace("http://localhost", "HTTP://LOCALHOST")})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertEqual(len(self.requests), 3)
+        self.assertTrue(all(key == SECRET for _, key in self.requests))
 
     def test_project_mismatch_stops_before_network(self):
         self.assert_failure("project_mismatch", "--project", "proj-b")

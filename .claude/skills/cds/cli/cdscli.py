@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -197,7 +197,7 @@ def _cds_base() -> str:
     if not host:
         die("CDS_HOST 未设置。请 export CDS_HOST=cds.miduo.org，"
             "或先跑一次 `cdscli identity save --host <CDS 主机>`", code=1)
-    if not host.startswith("http"):
+    if "://" not in host:
         # 本机/localhost/IP 默认 http(无 TLS),公网域名默认 https
         # 用户可以显式 export CDS_HOST=http://xxx 或 https://xxx 覆盖。
         is_local = (
@@ -210,7 +210,8 @@ def _cds_base() -> str:
             or host.startswith("172.")
         )
         host = ("http://" if is_local else "https://") + host
-    return host.rstrip("/")
+    parsed = urllib.parse.urlsplit(host)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
 
 
 def _safe_identity_env(*names: str, max_length: int) -> str:
@@ -618,12 +619,16 @@ def _credential_summary() -> dict[str, Any]:
         candidate = value.strip().rstrip("/")
         if not candidate:
             return ""
-        if not candidate.startswith(("http://", "https://")):
+        if "://" not in candidate:
             is_local = candidate.startswith((
                 "localhost", "127.", "0.0.0.0", "[::1]", "192.168.", "10.", "172.",
             ))
             candidate = ("http://" if is_local else "https://") + candidate
-        return candidate.lower()
+        try:
+            return _setup_origin(candidate)
+        except (ValueError, TypeError):
+            # Invalid origins remain visible to the target validation stage.
+            return candidate.lower()
 
     if explicit_host and local_host and comparable_host(explicit_host) != comparable_host(local_host):
         conflicts.append("host")
