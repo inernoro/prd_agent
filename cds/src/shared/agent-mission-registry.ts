@@ -78,6 +78,8 @@ export interface AgentMissionDefinition {
   steps: string[];
   checks: string[];
   completion: string[];
+  /** Workflow skills that are required beyond each API capability's preferred skill. */
+  requiredSkills?: readonly CdsAgentSkillDefinition['id'][];
   pagePath: (projectId?: string) => string;
 }
 
@@ -459,6 +461,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   'project-onboarding': {
     id: 'project-onboarding',
+    requiredSkills: ['preview-url'],
     categoryId: 'integrate',
     scope: 'project',
     icon: 'project',
@@ -499,6 +502,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   branches: {
     id: 'branches',
+    requiredSkills: ['preview-url'],
     categoryId: 'deploy',
     scope: 'project',
     icon: 'branch',
@@ -600,6 +604,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   'preview-diagnostics': {
     id: 'preview-diagnostics',
+    requiredSkills: ['preview-url'],
     categoryId: 'deploy',
     scope: 'project',
     icon: 'preview',
@@ -675,6 +680,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   rollback: {
     id: 'rollback',
+    requiredSkills: ['preview-url'],
     categoryId: 'operate',
     scope: 'project',
     icon: 'rollback',

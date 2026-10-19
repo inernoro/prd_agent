@@ -87,7 +87,10 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const response = await fetch(`${origin}/api/agent/setup.json?target=existing&project=proj-a&mission=${mission.id}`);
     expect(response.status).toBe(200);
     const body = await response.json();
-    const required = [...new Set(getAgentCapabilitiesForMission(mission.id).map(item => item.preferredSkill))];
+    const required = [...new Set([
+      ...getAgentCapabilitiesForMission(mission.id).map(item => item.preferredSkill),
+      ...(mission.requiredSkills || []),
+    ])];
     expect(body.skills).toEqual(required);
   });
 
@@ -96,6 +99,16 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const skills = guide.match(/本次只加载这些技能的 SKILL.md：([^。]+)/)![1].split('、');
     expect(skills).toContain('cds');
     expect(skills).toContain(mission === 'release' ? 'cds-release' : 'cds-project-scan');
+  });
+
+  it.each(['project-onboarding', 'branches', 'preview-diagnostics', 'rollback'])('loads the preview URL reader for %s', async mission => {
+    const query = `target=existing&project=proj-a&mission=${mission}&skills=cds`;
+    const manifest = await (await fetch(`${origin}/api/agent/setup.json?${query}`)).json();
+    expect(manifest.skills).toContain('preview-url');
+    for (const stage of ['connect', 'task']) {
+      const guide = await (await fetch(`${origin}/api/agent/setup.md?${query}&stage=${stage}`)).text();
+      expect(guide.match(/本次只加载这些技能的 SKILL.md：([^。]+)/)?.[1].split('、')).toContain('preview-url');
+    }
   });
 
   it.each([

@@ -53,6 +53,7 @@ export function buildAgentTaskGuide(selection: AgentSetupSelection): string {
   return [
     `# ${mission.title}`, `目标：${mission.goal}`, '',
     '只有 setup-check 通过后才能开始。此说明不授予额外权限，项目与系统范围仍由实际接口校验。',
+    `本次只加载这些技能的 SKILL.md：${selection.skills.join('、')}。需要具体接口时再读该技能引用的单份 reference。`,
     '## 执行顺序', ...mission.steps.map((step, i) => `${i + 1}. ${step}`),
     '## 安全边界', ...mission.checks.map((check) => `- ${check}`),
     '## 完成标准', ...mission.completion.map((item) => `- ${item}`),
