@@ -240,7 +240,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
   const [planName, setPlanName] = useState(seed?.planName ?? '');
   const [planUrl, setPlanUrl] = useState(seed?.planUrl ?? '');
   const [requirementDescription, setRequirementDescription] = useState(seed?.requirementDescription ?? '');
-  const [departmentName, setDepartmentName] = useState(seed?.departmentName ?? '');
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed?.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no');
@@ -352,8 +351,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     planName,
     planUrl: planUrl.trim() || undefined,
     requirementDescription: requirementDescription.trim() || undefined,
-    departmentName: departmentName.trim() || undefined,
-    ownerName: item?.ownerName ?? undefined,
     projectMemberNames: item?.projectMemberNames,
     plannedProjectAt: plannedProjectAt ? new Date(`${plannedProjectAt}T00:00:00+08:00`).toISOString() : undefined,
     needUiDesign: needUiDesign === 'yes',
@@ -511,7 +508,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     }
     if (parsed.planUrl) setPlanUrl(parsed.planUrl);
     if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
-    if (parsed.departmentName) setDepartmentName(parsed.departmentName);
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
     if (parsed.needUiDesign != null) setNeedUiDesign(parsed.needUiDesign ? 'yes' : 'no');
     if (parsed.isAiPoc != null) setIsAiPoc(parsed.isAiPoc ? 'yes' : 'no');
@@ -552,7 +548,6 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
       <Field label="计划立项时间 *"><Input type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} /></Field>
       <Field label="是否需要 UI 设计 *"><Select value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
       <Field label="是否属于 AI POC 项目 *"><Select value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
-      <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
       <Field label="项目需求描述" full><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
       <Field label="备注" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
       <Field label="关联需求" full>

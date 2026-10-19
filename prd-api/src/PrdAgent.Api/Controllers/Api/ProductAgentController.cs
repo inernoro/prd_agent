@@ -867,6 +867,7 @@ public class ProductAgentController : ControllerBase
 
         var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
         var departmentName = await ResolveDefaultInitiationDepartmentAsync(userId);
+        var ownerName = await ResolveInitiationApplicantNameAsync(userId);
         ReviewSubmission? passedSource = null;
         ReviewResult? passedResult = null;
         if (!string.IsNullOrWhiteSpace(request.ReviewSubmissionId))
@@ -896,8 +897,8 @@ public class ProductAgentController : ControllerBase
             DemandSource = request.DemandSource?.Trim(),
             PlanName = request.PlanName.Trim(),
             RequirementDescription = request.RequirementDescription?.Trim(),
-            DepartmentName = string.IsNullOrWhiteSpace(request.DepartmentName) ? departmentName : request.DepartmentName.Trim(),
-            OwnerName = request.OwnerName?.Trim(),
+            DepartmentName = departmentName,
+            OwnerName = ownerName,
             ProjectMemberNames = NormalizeVersionMemberNames(request.ProjectMemberNames),
             PlanUrl = string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim(),
             VersionType = NormalizeVersionType(request.VersionType),
@@ -957,6 +958,13 @@ public class ProductAgentController : ControllerBase
 
         var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
 
+        var ownerName = string.IsNullOrWhiteSpace(item.OwnerName)
+            ? await ResolveInitiationApplicantNameAsync(item.CreatedBy)
+            : item.OwnerName;
+        var departmentName = string.IsNullOrWhiteSpace(item.DepartmentName)
+            ? await ResolveDefaultInitiationDepartmentAsync(item.CreatedBy)
+            : item.DepartmentName;
+
         await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
             Builders<ProductInitiation>.Update
                 .Set(x => x.LinkedProductId, linkedProduct.Id)
@@ -967,8 +975,8 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.DemandSource, request.DemandSource?.Trim())
                 .Set(x => x.PlanName, request.PlanName.Trim())
                 .Set(x => x.RequirementDescription, request.RequirementDescription?.Trim())
-                .Set(x => x.DepartmentName, request.DepartmentName?.Trim())
-                .Set(x => x.OwnerName, request.OwnerName?.Trim())
+                .Set(x => x.DepartmentName, departmentName)
+                .Set(x => x.OwnerName, ownerName)
                 .Set(x => x.ProjectMemberNames, NormalizeVersionMemberNames(request.ProjectMemberNames))
                 .Set(x => x.PlanUrl, string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim())
                 .Set(x => x.VersionType, NormalizeVersionType(request.VersionType))
@@ -7436,14 +7444,32 @@ public class ProductAgentController : ControllerBase
         return await GenerateNextTapdStyleDefectIdAsync();
     }
 
+    private async Task<string?> ResolveInitiationApplicantNameAsync(string userId)
+    {
+        var user = await _db.Users.Find(x => x.UserId == userId)
+            .Project(x => new { x.DisplayName, x.MiduoSsoDisplayNameSnapshot, x.Username })
+            .FirstOrDefaultAsync();
+        if (user == null) return null;
+        return new[] { user.DisplayName, user.MiduoSsoDisplayNameSnapshot, user.Username }
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim();
+    }
+
     private async Task<string?> ResolveDefaultInitiationDepartmentAsync(string userId)
     {
         var last = await _db.ProductInitiations
             .Find(x => x.CreatedBy == userId && !x.IsDeleted && x.DepartmentName != null && x.DepartmentName != "")
             .SortByDescending(x => x.CreatedAt)
-            .Project(x => x.DepartmentName)
+            .Project(x => new { x.DepartmentName, x.CreatedAt })
             .FirstOrDefaultAsync();
-        return string.IsNullOrWhiteSpace(last) ? null : last.Trim();
+        var legacy = await _db.VersionRegistrations
+            .Find(x => x.CreatedBy == userId && x.DepartmentName != null && x.DepartmentName != "")
+            .SortByDescending(x => x.CreatedAt)
+            .Project(x => new { x.DepartmentName, x.CreatedAt })
+            .FirstOrDefaultAsync();
+        var departmentName = legacy != null && (last == null || legacy.CreatedAt > last.CreatedAt)
+            ? legacy.DepartmentName
+            : last?.DepartmentName;
+        return string.IsNullOrWhiteSpace(departmentName) ? null : departmentName.Trim();
     }
 
     /// <summary>按关联产品类型写入 legacy 系统/应用列（导入 Excel 兼容）。</summary>
