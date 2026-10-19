@@ -13,3 +13,13 @@ it('fails closed on CA verification failure before issuing or granting an accoun
   await expect(changeDatabasePassAccount({runtime:'mysql',port:3306,database:'qa',adminUser:'root',adminPassword:'private',mysqlCa:'wrong CA'}, {username:'cdsp_0123456789abcdef0123',password:'temporary'},true)).rejects.toThrow('certificate verify failed');
   expect(mocks.query).not.toHaveBeenCalled();
 });
+
+it('uses CA-verified TLS for revoke and expiry cleanup on secure-transport-only servers',async()=>{
+  await changeDatabasePassAccount({runtime:'mysql',port:3306,database:'qa',adminUser:'root',adminPassword:'private',mysqlCa:'configured CA'}, {username:'cdsp_0123456789abcdef0123',password:''},false);
+  expect(mocks.connect).toHaveBeenCalledWith(expect.objectContaining({ssl:{ca:'configured CA',rejectUnauthorized:true,verifyIdentity:false}}));
+  expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('DROP USER'),expect.any(Array));
+});
+it('accepts an explicitly resolved empty administrator password without substituting an application password',async()=>{
+  await changeDatabasePassAccount({runtime:'mysql',port:3306,database:'qa',adminUser:'root',adminPassword:'',mysqlCa:'configured CA'}, {username:'cdsp_0123456789abcdef0123',password:'temporary'},true);
+  expect(mocks.connect).toHaveBeenCalledWith(expect.objectContaining({user:'root',password:''}));
+});

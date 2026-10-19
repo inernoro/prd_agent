@@ -4,6 +4,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { DatabasePassService } from '../../src/services/database-pass.js';
 import { createBranchRouter } from '../../src/routes/branches.js';
 import { createOperatorConsoleRouter } from '../../src/routes/operator-console.js';
 import { StateService } from '../../src/services/state.js';
@@ -140,12 +141,23 @@ describe('resource database access', () => {
   let tmpDir = '';
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await flushAllJsonStateStores();
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
     server = null;
     if (tmpDir && fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it.each([{}, {MYSQL_USER:'application',MYSQL_PASSWORD:'application-secret'}])('issues MySQL passes with explicitly empty root authentication: %j',async extra=>{
+    const harness=makeHarness();tmpDir=harness.tmpDir;
+    harness.stateService.addInfraService({id:'mysql-pass',projectId:'prd-agent',name:'mysql-pass',dockerImage:'mysql:8',containerPort:3306,hostPort:3311,containerName:'mysql-pass',status:'running',dbName:'qa',env:{MYSQL_ALLOW_EMPTY_PASSWORD:'yes',MYSQL_DATABASE:'qa',...extra},volumes:[]});
+    harness.shell.addResponsePattern(/cat \/var\/lib\/mysql\/ca.pem/,()=>({stdout:'-----BEGIN CERTIFICATE-----test',stderr:'',exitCode:0}));
+    const target=vi.fn();
+    vi.spyOn(DatabasePassService.prototype,'prepare').mockImplementation(async function(scope){const resolved=await (this as any).target(scope);target(resolved);return {id:'prepared'} as any;});
+    await new Promise<void>(resolve=>{server=harness.app.listen(0,'127.0.0.1',resolve);});
+    const result=await request(server!,'POST','/api/branches/main-branch/resources/infra%3Amysql-pass/database-passes',{allowlist:['192.0.2.1/32']},{'x-test-cookie-auth':'1'});
+    expect(result.status).toBe(200);expect(target).toHaveBeenCalledWith(expect.objectContaining({adminUser:'root',adminPassword:''}));
+  });
   it('selects an existing business MongoDB database when the configured default is missing', async () => {
     const harness = makeHarness();
     tmpDir = harness.tmpDir;

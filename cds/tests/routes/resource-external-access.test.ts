@@ -309,6 +309,26 @@ describe('resource external TCP access', () => {
     expect(res.status).toBe(200);
     expect(res.body.policy.port).toBe(43111);
     expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('-p 192.0.2.20:43111:15432');
+
+    const endpoint='/api/branches/main-branch/resources/infra%3Amysql-main/external-access';
+    for(const stage of ['firewall','network','container']){
+      // Restore an enabled policy to exercise replacement of an existing live endpoint.
+      stateService.upsertResourceExternalAccess({...res.body.policy,enabled:true});
+      if(stage==='firewall')shell.addResponsePatternFirst(/^iptables -F CDS_EXT_/,()=>({stdout:'',stderr:'permission denied',exitCode:1}));
+      if(stage==='network')shell.addResponsePatternFirst(/^docker network (inspect|create) /,()=>({stdout:'',stderr:'network unavailable',exitCode:1}));
+      if(stage==='container')shell.addResponsePatternFirst(/^docker run -d /,()=>({stdout:'',stderr:'start failed',exitCode:1}));
+      const failed=await request(server!,'PUT',endpoint,{enabled:true,ttlMinutes:30,allowlist:['203.0.113.10']},{'x-test-cookie-auth':'1'});
+      expect(failed.status).toBe(500);
+      expect(stateService.getResourceExternalAccess('prd-agent','main-branch','infra:mysql-main')?.enabled).toBe(false);
+      await flushAllJsonStateStores();
+      const restored=new StateService(path.join(tmpDir,'state.json'),tmpDir);restored.load();
+      expect(restored.getResourceExternalAccess('prd-agent','main-branch','infra:mysql-main')?.enabled).toBe(false);
+      const connection=await request(server!,'GET','/api/branches/main-branch/resources/infra%3Amysql-main/connection-string?scope=external',undefined,{'x-test-cookie-auth':'1'});
+      expect(connection.status).toBe(409);
+      // Undo only this injected error; subsequent failure stages must reach their own boundary.
+      if(stage==='firewall')shell.addResponsePatternFirst(/^iptables -F CDS_EXT_/,()=>({stdout:'',stderr:'',exitCode:0}));
+      if(stage==='network')shell.addResponsePatternFirst(/^docker network (inspect|create) /,()=>({stdout:'',stderr:'',exitCode:0}));
+    }
   });
 
   it('rejects enabling public TCP access without an allowlist', async () => {

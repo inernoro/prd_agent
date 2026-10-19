@@ -9285,6 +9285,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const reusePort = input.currentPolicy?.enabled ? input.currentPolicy.port : undefined;
     const port = await allocateResourceExternalPort(shell, reusePort, reusePort);
     await disableTcpResourceExternalAccess(input.currentPolicy);
+    // The old runtime is gone. Persist that fact before any replacement step can fail.
+    if(input.currentPolicy?.enabled){
+      stateService.upsertResourceExternalAccess({...input.currentPolicy,enabled:false,address:undefined,host:undefined,port:undefined,
+        connectionString:undefined,proxyContainerName:undefined,targetHost:undefined,targetPort:undefined,
+        allowlistEnforced:false,firewallChain:undefined,expiresAt:null,updatedBy:'system:replacing-external-access'});
+      stateService.save();
+    }
     await ensureDockerNetwork(shell, network);
     let firewall: { enforced: boolean; chain?: string };
     try { firewall = await applyResourceExternalFirewall(shell, firewallChain, port, input.allowlist); }
@@ -9463,6 +9470,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const runtime=resourceRuntimeKey(resource.runtime);
     if(!['mysql','postgres','mongodb'].includes(runtime)||service.status!=='running'||!service.hostPort)throw new Error('目标数据库未运行或不支持通行证');
     const env=resolvedInfraEnv(service,branch);
+    const mysqlAdmin=runtime==='mysql'?resolveMysqlAdmin(service,branch):undefined;
+    if(mysqlAdmin&&!mysqlAdmin.available)throw new Error('MySQL未配置可用的root管理员凭据，不能签发通行证');
     let mysqlCa:string|undefined;
     if(runtime==='mysql'){
       const read=await shell.exec(`docker exec ${routeShellQuote(resourceContainerName(resource))} cat /var/lib/mysql/ca.pem`,{timeout:5000});
@@ -9471,7 +9480,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return {runtime:runtime as DatabasePassTarget['runtime'],port:service.hostPort,
       database:runtime==='mongodb'?mongoDatabaseForBranch(service,branch):sqlDataDatabase(runtime as SqlDataRuntime,service,branch),
       adminUser:runtime==='mysql'?'root':runtime==='postgres'?(env.POSTGRES_USER||'postgres'):(env.MONGO_INITDB_ROOT_USERNAME||''),
-      adminPassword:runtime==='mysql'?mysqlRootPassword(service,branch):runtime==='postgres'?(env.POSTGRES_PASSWORD||''):(env.MONGO_INITDB_ROOT_PASSWORD||''),mysqlCa};
+      adminPassword:runtime==='mysql'?mysqlAdmin!.password:runtime==='postgres'?(env.POSTGRES_PASSWORD||''):(env.MONGO_INITDB_ROOT_PASSWORD||''),mysqlCa};
   }
   const databasePasses=new DatabasePassService(path.join(stateService.getCacheBase(),'database-passes'),databasePassTarget);
   async function databasePassContext(req:Request,res:Response){

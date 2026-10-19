@@ -18,12 +18,12 @@ const ident = (v: string) => '"' + v.replaceAll('"', '""') + '"';
 export async function changeDatabasePassAccount(target: DatabasePassTarget, account: DatabasePassAccount, create: boolean): Promise<void> {
   if(isPreviewInstance())throw new Error('隔离预览不签发或管理真实数据库账号');
   if (!/^cdsp_[a-f0-9]{20}$/.test(account.username)) throw new Error('临时账号标识无效');
-  if (!target.port || !target.database || !target.adminUser || !target.adminPassword) throw new Error('资源缺少临时账号管理配置');
+  if (!target.port || !target.database || !target.adminUser || typeof target.adminPassword!=='string') throw new Error('资源缺少临时账号管理配置');
   if (target.runtime === 'mysql') {
     if(create && !target.mysqlCa)throw new Error('MySQL尚未提供TLS CA证书，不能签发直连通行证');
     // The target is fixed to loopback. Verify its configured CA, matching mysql --ssl-mode=VERIFY_CA;
     // auto-generated MySQL certificates need not contain 127.0.0.1. Never disable CA verification.
-    const db = await mysql.createConnection({ host: '127.0.0.1', port: target.port, user: target.adminUser, password: target.adminPassword, connectTimeout: 5000, ...(create?{ssl:{ca:target.mysqlCa,rejectUnauthorized:true,verifyIdentity:false}}:{}) });
+    const db = await mysql.createConnection({ host: '127.0.0.1', port: target.port, user: target.adminUser, password: target.adminPassword, connectTimeout: 5000, ...(target.mysqlCa?{ssl:{ca:target.mysqlCa,rejectUnauthorized:true,verifyIdentity:false}}:{}) });
     try {
       if (create) {
         await db.query('CREATE USER ?@\'%\' IDENTIFIED BY ? REQUIRE SSL WITH MAX_USER_CONNECTIONS 10', [account.username, account.password]);
