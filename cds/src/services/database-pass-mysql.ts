@@ -37,7 +37,7 @@ export async function relayMysqlPass(client: Socket, input: {
   let authenticated=false;
   relayFrames(remote,mysqlFrameLength,()=>16*1024*1024+4,packet=>{
     local.write(packet);
-    if(!authenticated && packet[4]===0){authenticated=true;local.setTimeout(0);remote.setTimeout(0);}
+    if(!authenticated && packet[4]===0){authenticated=true;client.setTimeout(0);local.setTimeout(0);remote.setTimeout(0);}
   });
   relayFrames(local,mysqlFrameLength,()=>authenticated?1024*1024:65536,packet=>{
     if(authenticated && (packet[3]!==0 || packet[4]===0x11 || (packet[4]===2&&packet.subarray(5).toString('utf8')!==input.target.database))){input.denied();local.destroy();return;}

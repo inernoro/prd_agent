@@ -5,3 +5,4 @@
 | fix | cds | MySQL 回收复用 TLS 并正确处理显式空 root 密码；旧外链替换失败时持久化关闭状态，避免返回失效连接信息 |
 | fix | cds | 按 MySQL 方言与字符串模式检查只读脚本；通行证网关绑定三库 TLS、账号和目标库；拒绝连接审计限流汇总并滚动保留 |
 | fix | cds | MongoDB 握手兼容驱动的 none 压缩标记，保留拒绝压缩报文策略；隔离联调中 MySQL 与 MongoDB 均成功读取专用验收库 |
+| fix | cds | 收紧 MongoDB SCRAM 字段及 nonce 边界，禁止认证命令歧义；MySQL 登录成功后清除握手超时，保持客户端空闲连接可用 |

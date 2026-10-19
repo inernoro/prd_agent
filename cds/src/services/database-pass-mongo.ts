@@ -40,10 +40,10 @@ export class MongoPassIdentity {
   private started=false;
   constructor(private database:string,private username:string){}
   private start(body:Record<string,any>,nested=false):boolean {
-    if(body.saslStart!==1 || !['SCRAM-SHA-1','SCRAM-SHA-256'].includes(body.mechanism) || (body[nested?'db':'$db']!==this.database))return false;
+    if(Object.keys(body)[0]!=='saslStart' || body.saslStart!==1 || !['SCRAM-SHA-1','SCRAM-SHA-256'].includes(body.mechanism) || (body[nested?'db':'$db']!==this.database) || (nested&&body.$db!==undefined&&body.$db!==this.database))return false;
     const payload=body.payload?.buffer; if(!payload)return false;
     const text=Buffer.from(payload).toString('utf8');
-    return text.startsWith(`n,,n=${this.username},r=`) && /^[\x21-\x7e]+$/.test(text.substring(`n,,n=${this.username},r=`.length));
+    return text.startsWith(`n,,n=${this.username},r=`) && /^[\x21-\x2b\x2d-\x7e]+$/.test(text.substring(`n,,n=${this.username},r=`.length));
   }
   accept(packet:Buffer):boolean {
     try {

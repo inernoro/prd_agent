@@ -33,6 +33,8 @@ it('MongoDB only authenticates the generated identity and keeps data commands wi
 it('MongoDB rejects duplicate BSON keys, compressed opcodes and hidden numeric-key authentication',()=>{
   const id=new MongoPassIdentity('qa','temp');
   expect(id.accept(message({hello:1,speculativeAuthenticate:{saslStart:1,mechanism:'SCRAM-SHA-256',payload:scram('root'),db:'qa'}}))).toBe(false);
+  expect(id.accept(message({hello:1,speculativeAuthenticate:{authenticate:1,saslStart:1,mechanism:'SCRAM-SHA-256',payload:scram('temp'),db:'qa'}}))).toBe(false);
+  expect(id.accept(message({saslStart:1,mechanism:'SCRAM-SHA-256',payload:scram('temp,r=abc,n=root'),$db:'qa'}))).toBe(false);
   const body=BSON.serialize({hello:1}),dup=Buffer.concat([body.subarray(0,-1),body.subarray(4)]);dup.writeInt32LE(dup.length);
   const header=Buffer.alloc(21);header.writeInt32LE(21+dup.length);header.writeInt32LE(2013,12);
   expect(id.accept(Buffer.concat([header,dup]))).toBe(false);
