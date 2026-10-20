@@ -245,6 +245,9 @@ def main():
     parser.add_argument('--cli', type=Path, default=CLI, help='Local cached HyperFrames CLI; also supports HYPERFRAMES_CLI env')
     a = parser.parse_args()
     ROOT = a.root.resolve(); CLI = a.cli.resolve()
+    pause = ROOT / 'evidence' / 'audio-review-rejection.json'
+    if not a.dry_run and pause.is_file() and json.loads(pause.read_text()).get('rendering_paused'):
+        parser.error('当前中文配音已被用户否决，渲染暂停；更换配音并明确恢复前禁止新增渲染。')
     if not CLI.is_file(): parser.error('本机HyperFrames CLI不存在，不联网替代')
     for name in ('videos', 'logs', 'evidence'):
         (ROOT / name).mkdir(exist_ok=True)

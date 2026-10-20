@@ -13,9 +13,11 @@ P.add_argument('--spec', type=Path, default=Path(__file__).with_name('production
 P.add_argument('--out', type=Path, required=True)
 P.add_argument('--shared-assets', type=Path, required=True)
 P.add_argument('--source-assets', type=Path, help='Relocated original screenshots; defaults to OUT/source-assets')
+P.add_argument('--audio-dir', type=Path, help='Measured official audio; defaults to OUT/official_audio for the current course')
 P.add_argument('--only')
 A = P.parse_args()
 SPEC = json.loads(A.spec.read_text())
+A.audio_dir=A.audio_dir or A.out/('official_audio' if SPEC.get('audio_policy') else 'audio')
 A.out.mkdir(parents=True, exist_ok=True)
 E = html.escape
 PROMPTS = {
@@ -59,7 +61,7 @@ def stamp(t):
 manifest=[]
 for seg in SPEC['segments']:
  if A.only and A.only!=seg['id']:continue
- missing=[s['id'] for s in seg['scenes'] if s.get('voice') and not (A.out/'audio'/(s['id']+'.json')).exists()]
+ missing=[s['id'] for s in seg['scenes'] if s.get('voice') and not (A.audio_dir/(s['id']+'.json')).exists()]
  if missing:raise SystemExit('配音尚未生成：'+', '.join(missing))
  root=A.out/'projects'/seg['id'];assets=root/'assets';assets.mkdir(parents=True,exist_ok=True)
  for name in ['gsap.min.js','handdraw-runtime.js','teacher-pen.png','mono.ttf','wenkai-OFL.txt','sweety-LICENSE.txt']:
@@ -69,12 +71,13 @@ for seg in SPEC['segments']:
   if (template/name).exists():shutil.copy2(template/name,root/name)
  scenes=[];caps=[];sections=[];audios=[];clock=0;input_assets=[]
  for i,source in enumerate(seg['scenes']):
-  s=dict(source);meta=json.loads((A.out/'audio'/(s['id']+'.json')).read_text()) if s.get('voice') else {'seconds':0,'captions':[]}
+  s=dict(source);meta=json.loads((A.audio_dir/(s['id']+'.json')).read_text()) if s.get('voice') else {'seconds':0,'captions':[]}
+  if s.get('voice') and SPEC.get('audio_policy') and meta.get('engine')!='openai-speech':raise SystemExit('旧本地中文配音已拒绝；必须提供官方语音实测音频。')
   s['start']=round(clock,5);s['voice_start']=round(clock+.7,5)
   s['duration']=round(.7+meta['seconds']+s['pause_seconds'],5);clock+=s['duration']
   if s.get('voice'):
    media=Path(meta['audio'])
-   if not media.exists():media=A.out/'audio'/(s['id']+'.wav')
+   if not media.exists():media=A.audio_dir/(s['id']+'.wav')
    shutil.copy2(media,assets/media.name);input_assets.append(media)
    audios.append(f'<audio id="audio-{s["id"]}" src="assets/{media.name}" data-start="{s["voice_start"]}" data-duration="{meta["seconds"]}" data-track-index="20"></audio>')
   for c in meta['captions']:caps.append({'start':s['voice_start']+c['start'],'end':s['voice_start']+c['end'],'text':c['text']})
