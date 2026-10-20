@@ -14,6 +14,38 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import type { BranchOperationRequest } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 import { waitForFlushWithTimeout } from '../../src/services/bounded-flush.js';
+import { MongoSplitStateBackingStore, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
+import { CDS_RESTART_PERMIT_COMMAND, prepareDetachedCdsRestart } from '../../src/services/self-update-handoff.js';
+
+function fakeMongoForRestart(seed?: Map<string, any>[]) {
+  const names = ['globalCollection', 'projectsCollection', 'branchesCollection', 'deploymentRunsCollection',
+    'deploymentVersionsCollection', 'selfUpdateHistoryCollection', 'webhookDeliveriesCollection', 'activityLogsCollection'];
+  const collections = names.map((_, index) => {
+    const docs = structuredClone(seed?.[index] ?? new Map<string, any>());
+    return {
+      docs,
+      async findOne(filter: { _id: string }) { return structuredClone(docs.get(filter._id) ?? null); },
+      find() { return { toArray: async () => structuredClone([...docs.values()]) }; },
+      async replaceOne(filter: { _id: string }, doc: any) { docs.set(filter._id, structuredClone(doc)); },
+      async deleteOne(filter: { _id: string }) { docs.delete(filter._id); },
+      async countDocuments() { return docs.size; },
+      async bulkWrite(operations: any[]) {
+        for (const operation of operations) {
+          if (operation.replaceOne) {
+            docs.set(operation.replaceOne.filter._id, structuredClone(operation.replaceOne.replacement));
+          } else if (operation.deleteOne) {
+            docs.delete(operation.deleteOne.filter._id);
+          }
+        }
+      },
+    };
+  });
+  const handle = {
+    ...Object.fromEntries(names.map((name, index) => [name, () => collections[index]])),
+    async connect() {}, async close() {}, async ping() { return true; },
+  } as unknown as ISplitMongoHandle;
+  return { handle, snapshot: () => collections.map(collection => structuredClone(collection.docs)) };
+}
 
 describe('已受理部署的持久输入与重启恢复', () => {
   let dir: string, file: string, state: StateService;
@@ -213,6 +245,131 @@ describe('已受理部署的持久输入与重启恢复', () => {
   });
 
   it.each([
+    { name: '真实ENOENT', hasPid: false, storage: 'healthy' },
+    { name: '健康延迟保存', hasPid: true, storage: 'delayed' },
+    { name: '最终保存失败', hasPid: true, storage: 'failed' },
+    { name: '最终保存超时', hasPid: true, storage: 'timeout' },
+    { name: '合法旧待办在取消后仍可按原资格续接', hasPid: true, storage: 'failed', preserve: true },
+  ])('真实退出回调前须保存中断终态，不能由测试事后flush补齐Mongo五秒合批：$name', async scenario => {
+    const { hasPid, storage } = scenario, preserve = 'preserve' in scenario && scenario.preserve;
+    // FakeMongo 只实现集合读写；保存、五秒合批、意图校验和恢复全部运行真实实现。
+    const mongo = fakeMongoForRestart(), store = new MongoSplitStateBackingStore(mongo.handle);
+    await store.init(); store.save(structuredClone(state.getState())); await store.flush();
+    state = new StateService(file, undefined, store); state.load();
+    const { run, service, coordinator, blocker } = await accepted();
+    const source = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
+    const start = source.search(/(?:async )?function scheduleDetachedCdsRestart/);
+    const end = source.indexOf('async function flushBranchStateBeforeSuccess', start);
+    const gate = source.match(/^\s*const RESTART_GATE_RELEASE_MS = [^\n]+;/m);
+    const budget = source.match(/const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = (\d+);/);
+    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    expect(gate).not.toBeNull(); expect(budget?.[1]).toBe('1000');
+    const code = ts.transpileModule(`${gate![0]}\n${budget![0]}\n${source.slice(start, end)}\nscheduleDetachedCdsRestart;`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }, reportDiagnostics: true,
+    });
+    expect(code.diagnostics?.filter(item => item.category === ts.DiagnosticCategory.Error)).toEqual([]);
+    const cdsDir = path.join(dir, 'cds'), emptyBin = path.join(dir, 'empty-bin');
+    fs.mkdirSync(cdsDir); fs.mkdirSync(emptyBin);
+    fs.writeFileSync(path.join(cdsDir, 'exec_cds.sh'), 'exit 0\n');
+    const env = { PATH: hasPid ? '/usr/bin:/bin' : emptyBin, TZ: 'UTC', LANG: 'C' };
+    const timers: ReturnType<typeof setTimeout>[] = [], fds: number[] = [], errors: string[] = [];
+    let child: ChildProcess | undefined, closed: Promise<void> | undefined;
+    let atExit: ReturnType<typeof mongo.snapshot> | undefined, exitCode: number | undefined;
+    let observeExit!: () => void;
+    const observedExit = new Promise<void>(resolve => { observeExit = resolve; });
+    const exit = vi.fn((code: number) => { exitCode = code; atExit = mongo.snapshot(); observeExit(); });
+    const schedule = vm.runInNewContext(code.outputText, {
+      config: { repoRoot: dir }, path, stateService: state, waitForFlushWithTimeout, prepareDetachedCdsRestart,
+      process: { env, exit }, console: { warn: vi.fn() },
+      getRestartWait: () => null, setRestartWait: vi.fn(), endSelfUpdateDrain: vi.fn(),
+      branchOperationCoordinator: coordinator, deploymentRunService: service,
+      fs: {
+        mkdirSync: fs.mkdirSync, appendFileSync: fs.appendFileSync,
+        openSync: (target: string, flags: fs.OpenMode) => {
+          expect(path.resolve(target).startsWith(`${dir}${path.sep}`)).toBe(true);
+          const fd = fs.openSync(target, flags); fds.push(fd); return fd;
+        },
+        closeSync: (fd: number) => { fs.closeSync(fd); fds.splice(fds.indexOf(fd), 1); },
+      },
+      setTimeout: (callback: () => void, ms: number) => {
+        const timer = setTimeout(callback, ms); timers.push(timer); return timer;
+      },
+      spawn: (command: string, args: string[], options: SpawnOptions) => {
+        expect(command).toBe('bash'); expect(args).toEqual(['-p', '-c', CDS_RESTART_PERMIT_COMMAND]);
+        expect(options.cwd).toBe(cdsDir); expect(options.env).toEqual(env);
+        child = spawn(command, args, options);
+        closed = new Promise(resolve => child!.once('close', () => resolve()));
+        child.once('error', error => { errors.push((error as NodeJS.ErrnoException).code || error.name); });
+        return child;
+      },
+    }, { timeout: 200 }) as (input: { branchLabel: string; source: string; preserveQueued: boolean }) => Promise<void>;
+    let reopenedStore: MongoSplitStateBackingStore | undefined;
+    let release!: () => void, entered!: () => void;
+    const writeGate = new Promise<void>(resolve => { release = resolve; });
+    const writing = new Promise<void>(resolve => { entered = resolve; });
+    const collection = mongo.handle.deploymentRunsCollection(), originalWrite = collection.bulkWrite.bind(collection);
+    const write = vi.spyOn(collection, 'bulkWrite');
+    const globalWrite = vi.spyOn(mongo.handle.globalCollection(), 'replaceOne');
+    try {
+      expect(await waitForFlushWithTimeout(() => state.flush(), Number(budget![1]))).toBe('flushed');
+      expect(mongo.snapshot()[3].get(run.id)).toMatchObject({ doc: { status: 'queued' }, executionIntent: { runId: run.id } });
+      // 正PID对照也须终止不合格待办；已确认的旧pair仍保持在FakeMongo中。
+      if (hasPid && !preserve) run.operationAdmissionGeneration = 99;
+      if (preserve) {
+        state.getState().nextPortIndex++; state.save([{ kind: 'global' }]);
+        globalWrite.mockImplementationOnce(async () => { entered(); throw new Error('synthetic unrelated global failure'); });
+      } else if (storage !== 'healthy') write.mockImplementationOnce(async (...args) => {
+        entered();
+        if (storage === 'failed') throw new Error('synthetic final Mongo write failure');
+        await writeGate; return originalWrite(...args);
+      });
+      const completion = schedule({ branchLabel: 'owned-exit-boundary', source: 'api.self-update', preserveQueued: true })
+        .then(() => null, error => error as Error);
+      if (storage !== 'healthy') {
+        await writing; expect(exit).not.toHaveBeenCalled();
+        if (storage === 'delayed') release();
+      }
+      const outcome = await completion, shouldExit = storage === 'delayed';
+      // 使用生产安排的真实一秒timer；在process.exit观察点先封存，清理不能改变判据。
+      if (shouldExit) { expect(outcome).toBeNull(); await observedExit; expect(exitCode).toBe(0); }
+      else { expect(outcome?.message).toContain('已取消更新与重启'); expect(exit).not.toHaveBeenCalled(); atExit = mongo.snapshot(); }
+      await closed;
+      expect(Boolean(child?.pid)).toBe(hasPid); expect(errors).toEqual(hasPid ? [] : ['ENOENT']);
+      expect(service.get(run.id)?.status).toBe(preserve ? 'queued' : 'failed');
+      expect(exit).toHaveBeenCalledTimes(shouldExit ? 1 : 0);
+      if (preserve) {
+        await service.waitForAcceptance(run.id);
+        expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
+        expect(coordinator.getActive('b')?.operationId).toBe(blocker.operationId);
+        expect(coordinator.drainReady()).toEqual([]);
+        const ready = coordinator.completeAll(blocker, 'completed');
+        expect(ready).toMatchObject([{ operationId: run.operationId, generation: run.operationGeneration,
+          request: { actor: 'original-agent', commitSha: run.commitSha } }]);
+        expect(coordinator.drainReady()).toEqual([]);
+      } else expect(coordinator.drainReady()).toEqual([]);
+      const durable = atExit![3].get(run.id);
+      reopenedStore = new MongoSplitStateBackingStore(fakeMongoForRestart(atExit).handle);
+      await reopenedStore.init();
+      const reopened = new StateService(path.join(dir, 'reopened.json'), undefined, reopenedStore); reopened.load();
+      const restoredIds = new DeploymentRunService(reopened).restoreQueued(new BranchOperationCoordinator()).map(item => item.id);
+      console.info('[cds-exit-boundary-receipt]', JSON.stringify({ storage: `FakeMongo:${storage}`, exitCode, cancelled: !shouldExit,
+        pidAtExit: child?.pid ?? null, errors, liveStatus: service.get(run.id)?.status,
+        durableStatus: durable.doc.status, intentPresent: Boolean(durable.executionIntent), restoredIds }));
+      const saved = storage === 'healthy' || storage === 'delayed';
+      expect({ status: durable.doc.status, intentPresent: Boolean(durable.executionIntent), restoredIds })
+        .toEqual(saved ? { status: 'failed', intentPresent: false, restoredIds: [] }
+          : { status: 'queued', intentPresent: true, restoredIds: [run.id] });
+    } finally {
+      release(); write.mockRestore(); globalWrite.mockRestore();
+      for (const timer of timers) clearTimeout(timer);
+      await closed;
+      for (const fd of fds) fs.closeSync(fd);
+      // 只在退出快照与恢复判据已封存后清理真实store的合批timer。
+      state.save(); await store.close(); await reopenedStore?.close();
+    }
+  });
+
+  it.each([
     { name: '保存成功且有PID', flush: 'flushed', pid: true, status: 'queued' },
     { name: '保存成功但真实ENOENT无PID', flush: 'flushed', pid: false, status: 'failed' },
     { name: '真实保存失败且有PID', flush: 'failed', pid: true, status: 'failed' },
@@ -221,13 +378,13 @@ describe('已受理部署的持久输入与重启恢复', () => {
     const record = vi.fn();
     const { run, service, coordinator } = await accepted(undefined, { record });
     const source = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
-    const start = source.indexOf('function scheduleDetachedCdsRestart');
+    const start = source.search(/(?:async )?function scheduleDetachedCdsRestart/);
     const end = source.indexOf('async function flushBranchStateBeforeSuccess', start);
     const gate = source.match(/^\s*const RESTART_GATE_RELEASE_MS = [^\n]+;/m);
     const flushBudget = source.match(/const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = (\d+);/);
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     expect(gate).not.toBeNull(); expect(flushBudget).not.toBeNull();
-    const code = ts.transpileModule(`${gate![0]}\n${source.slice(start, end)}\nscheduleDetachedCdsRestart;`, {
+    const code = ts.transpileModule(`${gate![0]}\n${flushBudget![0]}\n${source.slice(start, end)}\nscheduleDetachedCdsRestart;`, {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }, reportDiagnostics: true,
     });
     expect(code.diagnostics?.filter(item => item.category === ts.DiagnosticCategory.Error)).toEqual([]);
@@ -254,6 +411,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
     let close: Promise<{ code: number | null; signal: NodeJS.Signals | null }> | undefined;
     let watchdog: ReturnType<typeof setTimeout> | undefined, timedOut = false, boundaryError: Error | undefined;
     let closeResult: { code: number | null; signal: NodeJS.Signals | null } | undefined, closedFds = 0;
+    const closedFdSet = new Set<number>(), releaseGate = vi.fn(), restartWait = vi.fn(), rollback = vi.fn();
     const ownedPath = (target: string) => {
       if (typeof target !== 'string' || !path.resolve(target).startsWith(`${dir}${path.sep}`)) {
         boundaryError = new Error('restart fixture escaped its owned directory'); throw boundaryError;
@@ -269,17 +427,19 @@ describe('已受理部署的持久输入与重启恢复', () => {
       expect(result).toBe(scenario.flush);
       if (scenario.flush !== 'flushed') await writing;
       const schedule = vm.runInNewContext(code.outputText, {
-        config: { repoRoot: dir }, path, process: { env, exit }, console: { warn: vi.fn() },
-        getRestartWait: () => null, setRestartWait: vi.fn(), endSelfUpdateDrain: vi.fn(),
-        branchOperationCoordinator: coordinator,
+        config: { repoRoot: dir }, path, stateService: state, waitForFlushWithTimeout, prepareDetachedCdsRestart,
+        process: { env, exit }, console: { warn: vi.fn() },
+        getRestartWait: () => null, setRestartWait: restartWait, endSelfUpdateDrain: releaseGate,
+        branchOperationCoordinator: coordinator, deploymentRunService: service,
         fs: {
           mkdirSync: (target: string, options: fs.MakeDirectoryOptions) => { ownedPath(target); return fs.mkdirSync(target, options); },
           appendFileSync: (target: string, data: string) => { ownedPath(target); fs.appendFileSync(target, data); },
           openSync: (target: string, flags: fs.OpenMode) => { ownedPath(target); const fd = fs.openSync(target, flags); fds.push(fd); return fd; },
+          closeSync: (fd: number) => { fs.closeSync(fd); closedFdSet.add(fd); closedFds++; },
         },
         setTimeout: (callback: () => void, ms: number) => { timers.push({ callback, ms }); trace.push(`timer:${ms}`); return { unref() {} }; },
         spawn: (command: string, args: string[], options: SpawnOptions) => {
-          if (command !== 'bash' || JSON.stringify(args) !== JSON.stringify(['./exec_cds.sh', 'daemon'])
+          if (command !== 'bash' || JSON.stringify(args) !== JSON.stringify(['-p', '-c', CDS_RESTART_PERMIT_COMMAND])
             || options.cwd !== cdsDir || JSON.stringify(options.env) !== JSON.stringify(env)) {
             boundaryError = new Error('restart fixture received an unexpected command or environment'); throw boundaryError;
           }
@@ -289,18 +449,27 @@ describe('已受理部署的持久输入与重启恢复', () => {
           watchdog = setTimeout(() => { if (!childClosed) { timedOut = true; child!.kill('SIGKILL'); } }, 2000);
           return child;
         },
-      }, { timeout: 200 }) as (input: { branchLabel: string; source: string; preserveQueued: boolean }) => void;
+      }, { timeout: 200 }) as (input: { branchLabel: string; source: string; preserveQueued: boolean; rollback: () => Promise<void> }) => Promise<void>;
       record.mockClear();
-      schedule({ branchLabel: 'owned-fixture', source: 'api.self-update', preserveQueued: result === 'flushed' });
+      const completion = schedule({ branchLabel: 'owned-fixture', source: 'api.self-update', preserveQueued: result === 'flushed', rollback })
+        .then(() => null, error => error as Error);
       expect(timers).toHaveLength(1); timers.shift()!.callback();
+      const outcome = await completion;
       expect(boundaryError).toBeUndefined(); expect(child).toBeDefined();
       const closed = closeResult = await close!;
       expect(timedOut).toBe(false);
-      if (scenario.pid) { expect(Number.isSafeInteger(pidAtReturn) && pidAtReturn! > 0).toBe(true); expect(closed).toEqual({ code: 0, signal: null }); expect(errors).toEqual([]); }
+      const handedOff = scenario.flush === 'flushed' && scenario.pid;
+      if (scenario.pid) { expect(Number.isSafeInteger(pidAtReturn) && pidAtReturn! > 0).toBe(true); expect(closed).toEqual({ code: handedOff ? 0 : 1, signal: null }); expect(errors).toEqual([]); }
       else { expect(pidAtReturn).toBeUndefined(); expect(errors).toEqual(['ENOENT']); }
-      expect(trace.indexOf('timer:1000')).toBeGreaterThan(-1);
-      expect(trace.indexOf('timer:1000')).toBeLessThan(trace.indexOf('interrupt'));
-      expect(timers.map(timer => timer.ms)).toEqual([1000, 15_000]); expect(exit).not.toHaveBeenCalled();
+      expect(outcome === null).toBe(handedOff); expect(exit).not.toHaveBeenCalled();
+      if (handedOff) {
+        expect(timers).toHaveLength(2); expect(timers[0].ms).toBeGreaterThanOrEqual(0); expect(timers[0].ms).toBeLessThanOrEqual(1000);
+        expect(trace.lastIndexOf(`timer:${timers[0].ms}`)).toBeGreaterThan(trace.indexOf('interrupt'));
+        expect(timers[1].ms).toBe(15_000); expect(rollback).not.toHaveBeenCalled();
+      } else {
+        expect(timers).toEqual([]); expect(rollback).toHaveBeenCalledOnce();
+        expect(releaseGate).toHaveBeenCalledOnce(); expect(restartWait).toHaveBeenLastCalledWith(null);
+      }
       expect(service.get(run.id)?.status).toBe(scenario.status);
       expect(record.mock.calls.some(([event]) => event.operationId === run.operationId && event.action === 'branch.operation.deferred')).toBe(scenario.status === 'queued');
       expect(coordinator.drainReady()).toEqual([]);
@@ -313,9 +482,9 @@ describe('已受理部署的持久输入与重启恢复', () => {
       finally {
         if (watchdog) clearTimeout(watchdog);
         release(); await write.catch(() => {}); rename?.mockRestore(); tap.mockRestore();
-        for (const fd of fds) { fs.closeSync(fd); closedFds++; }
+        for (const fd of fds) if (!closedFdSet.has(fd)) { fs.closeSync(fd); closedFds++; }
         console.info('[cds-owned-restart-receipt]', JSON.stringify({ scenario: scenario.name, flush: scenario.flush,
-          command: 'bash', args: ['./exec_cds.sh', 'daemon'], cwd: cdsDir, envKeys: Object.keys(env), inheritedEnv: false,
+          command: 'bash', args: ['-p', '-c', CDS_RESTART_PERMIT_COMMAND], cwd: cdsDir, envKeys: Object.keys(env), inheritedEnv: false,
           pidAtReturn: pidAtReturn ?? null, errors, close: closeResult, childClosed, timedOut,
           status: service.get(run.id)?.status, intentPresent: Boolean(state.getState().deploymentIntents?.[run.id]),
           timers: timers.map(timer => timer.ms), exitCalls: exit.mock.calls.length, openedFds: fds.length, closedFds }));
@@ -328,9 +497,12 @@ describe('已受理部署的持久输入与重启恢复', () => {
     const index = fs.readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
     expect(index).toContain("'process.shutdown', { normalShutdown: true }");
     expect(routes.match(/preserveQueued: restartFlush === 'flushed'/g)).toHaveLength(3);
-    const launch = routes.slice(routes.indexOf('function scheduleDetachedCdsRestart'), routes.indexOf('async function flushBranchStateBeforeSuccess'));
-    expect(launch.slice(launch.indexOf('if (!spawned)'), launch.indexOf('// 退出先排上'))).not.toContain('normalShutdown');
-    expect(launch.indexOf('setTimeout(() => process.exit(0), 1000)')).toBeLessThan(launch.indexOf('{ normalShutdown: input.preserveQueued === true && hasChildPid }'));
+    const launch = routes.slice(routes.indexOf('async function scheduleDetachedCdsRestart'), routes.indexOf('async function flushBranchStateBeforeSuccess'));
+    expect(launch).toContain('input.preserveQueued === true && permit?.hasChildPid === true');
+    expect(launch.indexOf('stateService.flush()')).toBeGreaterThan(launch.indexOf('interruptAll('));
+    expect(launch.indexOf('await permit.release()')).toBeLessThan(launch.indexOf('process.exit(0)'));
+    expect(routes.match(/await scheduleDetachedCdsRestart\(/g)).toHaveLength(3);
+    expect(routes.match(/rollback: \(\) => checkpoint!\.rollback\(\)/g)).toHaveLength(2);
   });
 
   it.each([undefined, 'api'])('重新加载真实JSON后恢复%s原意图、配置和run；过期心跳不取消合法待办', async (profileId) => {
