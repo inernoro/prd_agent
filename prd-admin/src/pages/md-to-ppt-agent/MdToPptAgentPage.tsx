@@ -869,6 +869,37 @@ export function PptRuntimeProgressHeader({
   );
 }
 
+export function PptRuntimeLivePreview({
+  html,
+  pageNumber,
+  allowScripts,
+}: {
+  html: string;
+  pageNumber: number;
+  allowScripts: boolean;
+}) {
+  if (!html) return null;
+  return (
+    <div
+      data-testid="runtime-live-preview"
+      className="mt-3 overflow-hidden rounded-lg border border-purple-300/20 bg-black/20"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-purple-300/15 px-3 py-2 text-[10px] text-purple-100/85">
+        <span>设计中初稿{pageNumber > 0 ? ` · 第 ${pageNumber} 页` : ''}</span>
+        <span className="shrink-0">尚未通过检查 · 只读</span>
+      </div>
+      <iframe
+        data-testid="runtime-live-preview-frame"
+        srcDoc={html}
+        sandbox={allowScripts ? 'allow-scripts' : ''}
+        title="生成中的演示稿预览（只读）"
+        className="block w-full border-0"
+        style={{ aspectRatio: '16 / 9', minHeight: 180 }}
+      />
+    </div>
+  );
+}
+
 // ─── 安全 iframe 渲染（P1 安全债偿还）─────────────────────────────────────────
 //
 // 旧方案：sandbox="allow-scripts allow-same-origin" + nav-guard 注入
@@ -1778,6 +1809,15 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   }, [generatedHtml]);
   const previewPageDocs = deckThumbDocs;
   const previewPageCount = countDeckPages(generatedHtml);
+  const runtimePreviewPageIndex = liveSlideSel != null && previewPageDocs[liveSlideSel]
+    ? liveSlideSel
+    : Math.max(0, previewPageDocs.length - 1);
+  const runtimeLivePreviewDoc = pagesTotal > 0
+    ? pagesLiveDoc
+    : liveDoc || previewPageDocs[runtimePreviewPageIndex] || '';
+  const runtimeLivePreviewPageIndex = pagesTotal > 0
+    ? pagesLiveIdx
+    : liveDoc ? liveIdx : runtimePreviewPageIndex;
 
   // ─── 思考过程流（推理模型先想后写：deepseek-v3.2 实测思考可占总耗时 90%，
   //     正文集中尾部爆发。思考期间产物无片段可渲染，就渲染思考本身——它就是此刻的产物）
@@ -3768,7 +3808,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-sm font-semibold text-token-primary">
-                    {generatedHtml ? '演示稿已生成' : isStreaming ? '正在生成' : '对话进行中'}
+                    {isStreaming ? '正在生成' : generatedHtml ? '演示稿已生成' : '对话进行中'}
                   </div>
                   <div className="mt-1 text-xs text-token-muted">
                     {isStreaming ? `已运行 ${elapsedSec}s，页面会持续更新` : generatedHtml ? '可继续精修、预览或发布为网页' : '继续输入即可调整方向'}
@@ -3821,6 +3861,11 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   <div className="mt-2 text-[10px] leading-relaxed text-token-muted">
                     8 页会按 4 路并行生成；首批页面返回前，主要耗时在模型生成单页 HTML 和片段校验。
                   </div>
+                  <PptRuntimeLivePreview
+                    html={runtimeLivePreviewDoc}
+                    pageNumber={runtimeLivePreviewPageIndex + 1}
+                    allowScripts={frameAnchored}
+                  />
                 </div>
               )}
             </div>
@@ -4709,11 +4754,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             const totalSlots = pagesMode
               ? pagesTotal
               : Math.max(expectedPages ?? 0, doneCount + (building ? 1 : 0));
-            const previewLiveIdx = liveSlideSel != null && previewPageDocs[liveSlideSel]
-              ? liveSlideSel
-              : Math.max(0, previewPageDocs.length - 1);
-            const effLiveDoc = pagesMode ? pagesLiveDoc : liveDoc || previewPageDocs[previewLiveIdx] || '';
-            const effLiveIdx = pagesMode ? pagesLiveIdx : liveDoc ? liveIdx : previewLiveIdx;
+            const effLiveDoc = runtimeLivePreviewDoc;
+            const effLiveIdx = runtimeLivePreviewPageIndex;
             const agentPrepared =
               modelInfo != null ||
               diagLines.some((d) => d.stage === 'send' || d.stage === 'first_event' || d.stage === 'first_text_delta');

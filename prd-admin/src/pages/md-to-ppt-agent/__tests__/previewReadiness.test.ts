@@ -106,7 +106,12 @@ describe('PPT 文档导航就绪合同', () => {
 
   it('生成态展示 OpenDesign 真实预览并以服务端进度和模型调用次数为准', () => {
     expect(source).toContain('const previewPageCount = countDeckPages(generatedHtml)');
-    expect(source).toContain('const effLiveDoc = pagesMode ? pagesLiveDoc : liveDoc || previewPageDocs[previewLiveIdx] ||');
+    expect(source).toContain('const runtimeLivePreviewDoc = pagesTotal > 0');
+    expect(source).toContain('const effLiveDoc = runtimeLivePreviewDoc');
+    expect(source).toContain('<PptRuntimeLivePreview');
+    expect(source).toContain('html={runtimeLivePreviewDoc}');
+    expect(source).toContain('尚未通过检查 · 只读');
+    expect(source).toContain("{isStreaming ? '正在生成' : generatedHtml ? '演示稿已生成' : '对话进行中'}");
     expect(source).toContain('setArtifactProgress(phase.progress)');
     expect(source).toContain('setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, phase.runtimeModelCallCount))');
     expect(source).toContain('模型调用 {runtimeModelCallCount} 次');

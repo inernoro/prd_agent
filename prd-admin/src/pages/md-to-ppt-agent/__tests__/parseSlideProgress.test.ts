@@ -12,6 +12,7 @@ import {
   mergeRuntimeModelCallCount,
   parseExplicitPages,
   parseSlideProgress,
+  PptRuntimeLivePreview,
   PptRuntimeProgressHeader,
   resolveOutlineTargetPages,
   resolveNaturalPatchSlideIndex,
@@ -150,6 +151,30 @@ describe('countDeckPages', () => {
 });
 
 describe('OpenDesign 运行态可见信息', () => {
+  it('无 legacy 帧时仍把 OpenDesign 运行中 HTML 渲染为只读未验收预览', () => {
+    const previewHtml = '<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>运行中初稿</h1></section></div></div></body></html>';
+    const html = renderToStaticMarkup(createElement(PptRuntimeLivePreview, {
+      html: previewHtml,
+      pageNumber: 1,
+      allowScripts: false,
+    }));
+
+    expect(html).toContain('data-testid="runtime-live-preview"');
+    expect(html).toContain('data-testid="runtime-live-preview-frame"');
+    expect(html).toContain('设计中初稿');
+    expect(html).toContain('尚未通过检查');
+    expect(html).toContain('运行中初稿');
+    expect(html).toContain('sandbox=""');
+  });
+
+  it('尚无 OpenDesign 或 legacy 页面时不伪造预览，继续由骨架承担等待反馈', () => {
+    expect(renderToStaticMarkup(createElement(PptRuntimeLivePreview, {
+      html: '',
+      pageNumber: 0,
+      allowScripts: false,
+    }))).toBe('');
+  });
+
   it('用捕获的阶段与预览事实渲染真实组件，页数、流程进度和模型调用次数互不冒充', () => {
     const captured = {
       phaseMessage: '正在修复质量问题',

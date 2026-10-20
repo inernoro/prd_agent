@@ -20,3 +20,4 @@
 | ci | platform | 固定服务端测试兼容 runner，并回执 Mongo 8.0 与内核版本，保留完整 sln 和 xUnit 门禁 |
 | fix | design-runtime | 区分来源中的命名空间状态标签与真正未完成占位符，并在浏览器质量门拒绝挤入装饰槽的不可读冻结正文 |
 | fix | design-runtime | 由冻结来源计划预置非最终演示稿内容骨架，再交由 OpenDesign 原位设计并保留全部质量门 |
+| fix | prd-admin | 在网页 PPT 生成期间展示 OpenDesign 已产出的只读初稿，并明确标注尚未通过质量检查 |
