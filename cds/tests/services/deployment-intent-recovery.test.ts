@@ -122,14 +122,32 @@ describe('已受理部署的持久输入与重启恢复', () => {
     expect(persisted.deploymentIntents[run.id]).toBeUndefined();
   });
 
-  it.each(['claimed', 'active', 'preparing'])('已派发或执行的%s不保留为可重放待办', async phase => {
+  it.each(['claimed', 'active', 'preparing', 'reserved'])('已派发或执行的%s不保留为可重放待办', async phase => {
     const { run, service, coordinator, blocker } = await accepted();
+    let reservedGeneration = 0;
+    let reservedOperationId = '';
+    if (phase === 'reserved') {
+      const reserved = coordinator.begin({ branchId: 'reserved', kind: 'force-rebuild', trigger: 'manual', continueWith: 'deploy' });
+      reservedGeneration = reserved.generation;
+      reservedOperationId = reserved.operationId;
+      coordinator.completeAll(reserved.lease!, 'completed');
+    }
     const [pending] = coordinator.completeAll(blocker, 'completed');
     expect(pending.operationId).toBe(run.operationId);
     if (phase !== 'claimed') expect(coordinator.begin({ ...pending.request,
       pendingReplay: { operationId: pending.operationId, generation: pending.generation } }).status).toBe('started');
     if (phase === 'preparing') await service.claimQueued(run.id);
     coordinator.interruptAll('normal signal', 'process.shutdown', { normalShutdown: true });
+    expect(coordinator.getActiveOperations()).toEqual([]);
+    expect(coordinator.hasWaitingOperation(pending.operationId, pending.generation)).toBe(false);
+    expect(coordinator.begin({ ...pending.request,
+      pendingReplay: { operationId: pending.operationId, generation: pending.generation } }).status).toBe('rejected');
+    if (phase === 'reserved') {
+      const next = coordinator.begin({ branchId: 'reserved', kind: 'deploy', trigger: 'manual' });
+      expect(next.status).toBe('started');
+      expect(next.generation).toBeGreaterThan(reservedGeneration);
+      expect(next.operationId).not.toBe(reservedOperationId);
+    }
     await state.flush();
     expect(service.get(run.id)?.status).toBe('failed');
     expect(state.getDeploymentIntents()).toEqual([]);
@@ -340,12 +358,16 @@ describe('已受理部署的持久输入与重启恢复', () => {
       if (preserve) {
         await service.waitForAcceptance(run.id);
         expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
-        expect(coordinator.getActive('b')?.operationId).toBe(blocker.operationId);
-        expect(coordinator.drainReady()).toEqual([]);
-        const ready = coordinator.completeAll(blocker, 'completed');
+        expect(coordinator.getActive('b')).toBeUndefined();
+        expect(blocker.isCurrent()).toBe(false);
+        const ready = coordinator.drainReady();
         expect(ready).toMatchObject([{ operationId: run.operationId, generation: run.operationGeneration,
           request: { actor: 'original-agent', commitSha: run.commitSha } }]);
         expect(coordinator.drainReady()).toEqual([]);
+        const next = coordinator.begin({ ...ready[0].request,
+          pendingReplay: { operationId: ready[0].operationId, generation: ready[0].generation } });
+        expect(coordinator.completeAll(blocker, 'completed')).toEqual([]);
+        expect(next.lease?.isCurrent()).toBe(true);
       } else expect(coordinator.drainReady()).toEqual([]);
       const durable = atExit![3].get(run.id);
       reopenedStore = new MongoSplitStateBackingStore(fakeMongoForRestart(atExit).handle);
