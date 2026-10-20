@@ -8,6 +8,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Controllers;
@@ -34,6 +35,12 @@ public sealed class ProductPermissionImportTests
         var after = await fixture.Db.Users.Find(x => x.UserId == "member").FirstAsync();
         Assert.Equal(original.PermAllow, after.PermAllow); Assert.Equal(original.PermDeny, after.PermDeny); Assert.Equal(original.SystemRoleKey, after.SystemRoleKey);
         Assert.Equal(3, await fixture.Db.Users.CountDocumentsAsync(_ => true));
+        var effective = await fixture.Permissions.GetEffectivePermissionsAsync("member", false);
+        Assert.Equal(new[] { "requirements", "review", "versions" }, ProductPermissionRules.Menus.Where(m => effective.Contains(ProductPermissionRules.MenuPrefix + m.Key)).Select(m => m.Key));
+        Assert.Contains("review-agent.manage", effective); Assert.Contains("other.use", effective);
+        Assert.DoesNotContain(ProductPermissionRules.MapAdmin, effective);
+        var admin = await fixture.Permissions.GetEffectivePermissionsAsync("admin", false);
+        Assert.All(ProductPermissionRules.Menus, m => Assert.Contains(ProductPermissionRules.MenuPrefix + m.Key, admin));
     }
 
     [Fact]
@@ -84,7 +91,15 @@ public sealed class ProductPermissionImportTests
     private sealed class Fixture : IAsyncDisposable
     {
         internal MongoDbContext Db { get; }
-        private Fixture(MongoDbContext db) { Db = db; }
+        internal IAdminPermissionService Permissions { get; }
+        private Fixture(MongoDbContext db)
+        {
+            Db = db;
+            var roles = new Mock<ISystemRoleCacheService>();
+            roles.Setup(x => x.GetRoleByKey(It.IsAny<string>())).Returns((string key) => new SystemRole {
+                Key = key, Permissions = new() { AdminPermissionCatalog.Access, AdminPermissionCatalog.ProductAgentUse } });
+            Permissions = new AdminPermissionService(db, roles.Object);
+        }
         internal static async Task<Fixture> Create()
         {
             var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27017";
@@ -98,12 +113,9 @@ public sealed class ProductPermissionImportTests
         }
         internal ProductPermissionsController Controller(string id, bool agentKey = false)
         {
-            var permissionService = new Mock<IAdminPermissionService>();
-            permissionService.Setup(x => x.GetEffectivePermissionsAsync(It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new[] { AdminPermissionCatalog.Access, "product-agent.use", "review-agent.manage", "other.use" });
             var claims = new List<Claim> { new("sub", id) };
             if (agentKey) claims.Add(new("authType", "agent-apikey"));
-            return new ProductPermissionsController(Db, permissionService.Object) { ControllerContext = new() { HttpContext = new DefaultHttpContext { User = new(new ClaimsIdentity(claims, "test")) } } };
+            return new ProductPermissionsController(Db, Permissions) { ControllerContext = new() { HttpContext = new DefaultHttpContext { User = new(new ClaimsIdentity(claims, "test")) } } };
         }
         public async ValueTask DisposeAsync() => await Db.Database.Client.DropDatabaseAsync(Db.Database.DatabaseNamespace.DatabaseName);
     }

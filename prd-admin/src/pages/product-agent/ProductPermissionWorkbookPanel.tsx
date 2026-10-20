@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, Upload, Save } from 'lucide-react';
+import { Download, Upload, Save, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
@@ -55,6 +55,12 @@ export function ProductPermissionWorkbookPanel({ tab }: { tab: ProductPermission
     } catch (cause) { setError(cause instanceof Error ? cause.message : '导入失败，请重新预检。'); setPreview(undefined); }
     finally { setBusy(false); }
   };
+  const refresh = async () => {
+    setBusy(true); setPreview(undefined); setMessage('');
+    try { await reload(); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : '最新配置读取失败，请重试。'); }
+    finally { setBusy(false); }
+  };
   if (!snapshot || !draft) return error ? <div role="alert" className="text-sm text-token-secondary">{error}<Button onClick={() => void reload().catch(() => setError('读取失败，请稍后重试。'))}>重试</Button></div> : <MapSectionLoader text="正在读取产品权限…" />;
   const menu = snapshot.menus.find((item) => item.key === menuKey) ?? snapshot.menus[0];
   const sheet = draft.sheets.find((item) => item.menu === menu.key)!;
@@ -69,6 +75,7 @@ export function ProductPermissionWorkbookPanel({ tab }: { tab: ProductPermission
     <div className="flex flex-wrap items-center justify-between gap-3">
       <p className="max-w-2xl text-xs leading-6 text-token-secondary">每个菜单一个分表，整本覆盖产品管理权限。1为允许，0为禁止。MAP管理员始终拥有全部权限；其他人员均可修改。独立评审智能体不受影响。</p>
       <div className="flex flex-wrap gap-2">
+        <Button size="sm" disabled={busy} title="读取服务端最新配置，放弃当前未保存的修改" onClick={() => void refresh()}><RefreshCw size={14} />读取最新配置</Button>
         <Button size="sm" disabled={busy} onClick={() => downloadPermissionWorkbook(draft, snapshot)}><Download size={14} />导出权限表</Button>
         <Button size="sm" disabled={busy} onClick={() => input.current?.click()}><Upload size={14} />导入权限表</Button>
         <input ref={input} type="file" accept=".xlsx" aria-label="选择产品权限工作簿" className="hidden" onChange={(event) => { void chooseFile(event.target.files?.[0]); event.target.value = ''; }} />

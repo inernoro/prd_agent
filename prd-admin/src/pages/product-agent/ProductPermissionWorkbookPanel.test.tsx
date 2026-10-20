@@ -48,5 +48,8 @@ describe('权限导入真实组件交互', () => {
     expect(book.expectedRevision).toBe('r1'); expect(book.sheets.find((s: {menu:string}) => s.menu === 'requirements').rows[0].visible).toBe(false);
     await click('确认整本覆盖');
     expect(api.commit).toHaveBeenCalledWith(book); expect(host.textContent).toContain('产品权限已整本覆盖');
+    await click('读取最新配置');
+    expect(host.querySelector('[aria-label="覆盖导入预览"]')).toBeNull();
+    expect(api.get).toHaveBeenCalledTimes(3);
   });
 });
