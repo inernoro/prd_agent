@@ -953,6 +953,12 @@ export function BranchDetailDrawer({
   const [branchEnvEditorOpen, setBranchEnvEditorOpen] = useState(false);
   // 手动多出口配置弹窗：入口卡右上角的「配置入口」按钮打开它（不必找 Agent 改 compose）
   const [webEntryConfigOpen, setWebEntryConfigOpen] = useState(false);
+  useEffect(() => {
+    if (!branchId || new URLSearchParams(window.location.search).get('configureAddress') !== '1') return;
+    setWebEntryConfigOpen(true);
+    const params = new URLSearchParams(window.location.search); params.delete('configureAddress');
+    window.history.replaceState(null, '', `${window.location.pathname}${params.size ? `?${params}` : ''}`);
+  }, [branchId]);
   const [systemLogsState, setSystemLogsState] = useState<SystemLogsState>({ status: 'idle' });
   // Phase B — Metrics tab(2026-05-04)
   const [metricsState, setMetricsState] = useState<MetricsState>({ status: 'idle' });

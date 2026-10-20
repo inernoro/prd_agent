@@ -2315,6 +2315,8 @@ export class StateService {
         Project,
         | 'name'
         | 'aliasName'
+        | 'previewAddresses'
+        | 'previewAddressAudit'
         | 'slug'
         | 'description'
         | 'deliveryMode'

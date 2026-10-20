@@ -3756,14 +3756,14 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   useEffect(() => {
     if (resourceOpenQueryConsumedRef.current || state.status !== 'ok') return;
     const request = resourceOpenQueryRef.current;
-    if (!request.branchId || !request.resourceId) return;
+    if (!request.branchId || (!request.resourceId && new URLSearchParams(window.location.search).get('configureAddress') !== '1')) return;
     const branch = state.branches.find((item) => item.id === request.branchId);
     if (!branch) return;
     resourceOpenQueryConsumedRef.current = true;
-    setDetailDrawerResourceFocus({
+    setDetailDrawerResourceFocus(request.resourceId ? {
       resourceId: request.resourceId,
       detailTab: request.detailTab,
-    });
+    } : null);
     setDetailDrawerBranchId(branch.id);
     const params = new URLSearchParams(window.location.search);
     params.delete('openBranch');

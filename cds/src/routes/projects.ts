@@ -1,5 +1,6 @@
 import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { bootstrapRepository } from '../services/bootstrap-target.js';
+import { addressWriteLocked } from '../services/preview-address-settings.js';
 /**
  * Projects API router.
  *
@@ -3510,6 +3511,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         slashCommand?: boolean;
       };
     }>;
+
+    if (body.slug !== undefined && addressWriteLocked(stateService)) {
+      res.status(409).json({ error: 'address_busy', message: '地址设置正在保存，请稍后重新加载后重试。' }); return;
+    }
 
     if (body.expectedIdentityVersion !== undefined &&
         body.expectedIdentityVersion !== projectIdentityVersion(project)) {

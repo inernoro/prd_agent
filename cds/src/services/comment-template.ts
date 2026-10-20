@@ -32,7 +32,7 @@
  * renderer in sync.
  */
 
-import { computePreviewSlug, resolvePreviewProjectIdentity, type PreviewProjectIdentity, type ResolvedPreviewProjectIdentity } from './preview-slug.js';
+import { computePreviewSlug, configuredPreviewSlug, resolvePreviewProjectIdentity, type PreviewProjectIdentity, type ResolvedPreviewProjectIdentity } from './preview-slug.js';
 
 export interface TemplateVariableDef {
   /** `{{name}}` as it appears inside template bodies. */
@@ -184,7 +184,7 @@ export function buildPreviewUrlForProject(
   if (!branch || !projectIdentity.slug) {
     return { url: '', previewSlug: '', projectIdentity };
   }
-  const previewSlug = computePreviewSlug(branch, projectIdentity.slug);
+  const previewSlug = configuredPreviewSlug(branch, project, fallback);
   return {
     url: host ? `https://${previewSlug}.${host}` : '',
     previewSlug,

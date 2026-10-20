@@ -160,7 +160,7 @@ function redactProfile(profile: BuildProfile): BuildProfile {
 }
 
 const PROJECT_KEYS: ReadonlyArray<keyof Project> = [
-  'id', 'slug', 'name', 'aliasName', 'description', 'kind', 'deliveryMode',
+  'id', 'slug', 'name', 'aliasName', 'description', 'kind', 'deliveryMode', 'previewAddresses',
   'inheritGlobalEnv', 'infraIsolation', 'resourceChipDisplay', 'branchGroups', 'gitRepoUrl', 'gitDefaultBranch',
   'cloneStatus', 'dockerNetwork', 'createdAt', 'updatedAt',
 ];

@@ -14,7 +14,7 @@ export function projectIdentityVersion(project: Project): string {
 
 /** 摘要携带版本，完整设置记录只通过独立分页接口读取。 */
 export function projectIdentityResponse(project: Project) {
-  const { identityHistory: _history, ...summary } = project;
+  const { identityHistory: _history, previewAddressAudit: _addressAudit, ...summary } = project;
   return { ...summary, identityVersion: projectIdentityVersion(project) };
 }
 
