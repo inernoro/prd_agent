@@ -51,6 +51,21 @@ describe('部署内存预约生命周期', () => {
     } finally { abort.abort(); (await next)?.(); deploymentPhaseBudget.releaseMemory('new-runtime'); }
   });
 
+  it('候选部署把聚合状态改成building时，不重复预约已发布旧运行，仍保留未就绪候选额度', () => {
+    const entry = branch(); entry.services.api.status = 'building';
+    entry.services.api.servingRuntime = { ...runtime };
+    entry.services.api.pendingRuntime = { ...runtime, containerName: 'new-candidate', containerId: 'b'.repeat(64) };
+    restoreDeploymentMemoryReservations([entry], () => [profile]);
+    expect(deploymentPhaseBudget.memorySnapshot().map(item => item.key)).toEqual(['new-candidate']);
+  });
+
+  it('发布身份没有确认CID时仍保留旧运行的未知责任', () => {
+    const entry = branch(); entry.services.api.status = 'building';
+    entry.services.api.servingRuntime = { ...runtime, containerId: undefined };
+    restoreDeploymentMemoryReservations([entry], () => [profile]);
+    expect(deploymentPhaseBudget.memorySnapshot().map(item => item.key)).toEqual([runtime.containerName]);
+  });
+
   it('按不可变ID停止成功后释放原容器名称预约，不删除容器', async () => {
     deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 512, owner);
     mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
