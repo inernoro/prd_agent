@@ -590,15 +590,19 @@ export function buildWidgetScript(
         if(position==='fixed'||position==='sticky'){add(node);break;}
       }
     });
-    document.querySelectorAll('button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,[role="heading"][aria-level="1"]').forEach(add);
+    // 固定页头和标题同样是业务内容。只认语义元素，不扫描任意文本节点，避免把整页都判成障碍。
+    document.querySelectorAll('button,a[href],input:not([type="hidden"]),textarea,select,[role="button"],[role="tab"],h1,h2,h3,[role="heading"],header,[role="banner"]').forEach(add);
     var view=window.visualViewport,style=window.getComputedStyle(root),r=root.getBoundingClientRect();
     function inset(side){return Math.max(0,parseFloat(style.getPropertyValue('--cds-safe-'+side))||0)+12;}
     var left=(view?view.offsetLeft:0)+inset('left'),top=(view?view.offsetTop:0)+inset('top');
     var right=(view?view.offsetLeft+view.width:window.innerWidth)-inset('right');
     var bottom=(view?view.offsetTop+view.height:window.innerHeight)-inset('bottom');
     var maxX=right-r.width,maxY=bottom-r.height,midX=(left+maxX)/2,midY=(top+maxY)/2;
-    // 有限候选：保留安全原位，其次同高两边、四角和四边中点，不猜某个应用的导航高度。
-    var candidates=[[r.left,r.top],[left,r.top],[maxX,r.top],[left,top],[maxX,top],[left,maxY],[maxX,maxY],[left,midY],[maxX,midY],[midX,top],[midX,maxY]];
+    // 有限候选：先保留原位与四角，再按44px触控步长扫描两侧安全轨，最后才尝试上下中点。
+    // 手机页头标题通常位于顶部正中，不能因为它不是 h1 就优先把徽标塞到标题上。
+    var candidates=[[r.left,r.top],[left,r.top],[maxX,r.top],[left,top],[maxX,top],[left,maxY],[maxX,maxY],[left,midY],[maxX,midY]];
+    for(var railY=top;railY<=maxY;railY+=44){candidates.push([left,railY],[maxX,railY]);}
+    candidates.push([midX,top],[midX,maxY]);
     root.setAttribute('data-cds-placement','blocked');
     for(var i=0;i<candidates.length;i++){
       var x=candidates[i][0],y=candidates[i][1];

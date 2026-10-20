@@ -85,7 +85,7 @@ async function geometry(page: Page) {
   return page.evaluate(() => {
     const root = document.querySelector<HTMLElement>('#cds-widget')!;
     const rect = root.getBoundingClientRect();
-    const hits = [...document.querySelectorAll('#fixture-status, #fixture-cta, h1')].filter(el => {
+    const hits = [...document.querySelectorAll('#fixture-status, #fixture-cta, #fixture-header, h1')].filter(el => {
       const other = el.getBoundingClientRect(); return rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top;
     }).map(el => `${el.tagName.toLowerCase()}#${el.id}`);
     const button = root.querySelector('button')!.getBoundingClientRect();
@@ -194,6 +194,24 @@ try {
     const after = await geometry(page);
     assert.deepEqual([after.x, after.y], [before.x, before.y]);
     assert.equal(after.visible, true);
+  });
+  await check('fixed-header-title-rail-recovery', async page => {
+    await page.evaluate(() => {
+      document.querySelector('h1')!.setAttribute('hidden', '');
+      const root = document.querySelector<HTMLElement>('#cds-widget')!;
+      root.style.left = '173px';
+      root.style.bottom = '608px';
+      const header = document.createElement('header');
+      header.id = 'fixture-header';
+      header.style.cssText = 'position:fixed;left:0;right:0;top:0;height:48px;background:#fff;z-index:70';
+      header.innerHTML = '<button style="position:absolute;left:12px;top:2px;width:44px;height:44px">菜单</button><div style="text-align:center;font:20px sans-serif;line-height:48px">业务标题</div><button style="position:absolute;right:12px;top:2px;width:44px;height:44px">通知</button>';
+      document.body.append(header);
+    });
+    await settle(page);
+    const measured = await geometry(page);
+    assert.equal(measured.overlap, false, '固定页头中的非 h1 标题不能被徽标覆盖');
+    assert.equal(measured.placement, 'clear');
+    assert.notEqual(measured.y, 12, '顶部正中受阻后必须继续搜索两侧安全轨');
   });
 } finally {
   await browser.close();
