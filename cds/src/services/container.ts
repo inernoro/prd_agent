@@ -718,8 +718,16 @@ export class ContainerService {
         || previous.entry.projectId !== entry.projectId || previous.profileId !== service.profileId)) refs.set(runtime.containerName, null);
       else refs.set(runtime.containerName, { entry, profileId: service.profileId, runtime: runtimeRef(runtime) });
     }
-    return deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner) => {
-      const item = refs.get(key);
+    return deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner, containerId) => {
+      let item = refs.get(key);
+      // 冷恢复预约可能比服务记录活得更久：替换/清理会移走旧引用，不能因此永远漏回收。
+      // 只使用预约捕获的不可变CID，不以可复用名称或服务状态推断Docker已终结。
+      if (containerId && item !== null) {
+        const entry = branches.find(branch => branch.id === owner.branchId && branch.projectId === owner.projectId);
+        if (entry && owner.profileId && entry.services[owner.profileId]) item = {
+          entry, profileId: owner.profileId, runtime: { containerName: key, containerId, hostPort: 0 },
+        };
+      }
       if (!item || item.entry.id !== owner.branchId || item.entry.projectId !== owner.projectId
         || item.profileId !== owner.profileId || !options.creationSettled(owner, item.runtime)) return false;
       const remaining = deadline - performance.now();

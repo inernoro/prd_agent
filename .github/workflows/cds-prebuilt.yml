@@ -53,6 +53,10 @@ jobs:
           pnpm -C cds exec tsc --noEmit
           pnpm -C cds/web exec tsc --noEmit
 
+      - name: Verify deployment memory lifecycle before publishing
+        run: |
+          pnpm -C cds exec vitest run tests/services/deployment-memory-lifecycle.test.ts tests/services/deployment-phase-budget.test.ts
+
       - name: Build backend (esbuild → cds/dist)
         run: |
           cd cds
