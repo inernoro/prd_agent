@@ -3437,7 +3437,7 @@ public class LlmGatewayTests
     }
 
     [Fact]
-    public async Task SendRawWithResolutionAsync_WhenMultipartImageArrayKeys_ShouldSendImageArrayFields()
+    public async Task SendRawWithResolutionAsync_WhenMultipartImageKeys_ShouldSendImageArrayFields()
     {
         var resolution = new GatewayModelResolution
         {
@@ -3468,6 +3468,7 @@ public class LlmGatewayTests
             },
             MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
             {
+                ["image"] = ("cover.jpg", ImageInputTestData.Create("image/jpeg"), "image/jpeg"),
                 ["image[0]"] = ("first.png", ImageInputTestData.Create(), "image/png"),
                 ["image[1]"] = ("second.jpg", ImageInputTestData.Create("image/jpeg"), "image/jpeg"),
             },
@@ -3478,7 +3479,7 @@ public class LlmGatewayTests
         var imageArrayCount = CountOccurrences(body, "name=image%5B%5D")
                               + CountOccurrences(body, "name=\"image[]\"")
                               + CountOccurrences(body, "name=image[]");
-        Assert.True(imageArrayCount >= 2, body);
+        Assert.True(imageArrayCount >= 3, body);
         Assert.DoesNotContain("image%5B0%5D", body);
         Assert.DoesNotContain("image%5B1%5D", body);
         Assert.DoesNotContain("name=\"image[0]\"", body);
@@ -3486,12 +3487,13 @@ public class LlmGatewayTests
         var logBody = JsonNode.Parse(logWriter.Start!.RequestBodyRedacted)!.AsObject();
         Assert.Equal("multipart/form-data", logBody["content_type"]!.GetValue<string>());
         Assert.EndsWith("/v1/images/edits", logBody["endpoint_path"]!.GetValue<string>());
-        Assert.Equal(2, logBody["file_count"]!.GetValue<int>());
+        Assert.Equal(3, logBody["file_count"]!.GetValue<int>());
         var loggedFiles = logBody["files"]!.AsArray();
         Assert.All(loggedFiles, file => Assert.Equal("image[]", file!["field"]!.GetValue<string>()));
         Assert.Equal(
             new[]
             {
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ImageInputTestData.Create("image/jpeg"))).ToLowerInvariant(),
                 Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ImageInputTestData.Create())).ToLowerInvariant(),
                 Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ImageInputTestData.Create("image/jpeg"))).ToLowerInvariant(),
             },
