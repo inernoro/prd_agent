@@ -1,6 +1,6 @@
 ---
 name: cds-release
-description: 配置并验收 CDS 正式发布。默认执行项目 Git 中经 CI 验证的 cds-release.sh；CDS 独立脚本仅为明确选择的备选，旧部署类型仅兼容存量。强制项目级 Key、身份、同提交 CI、正文指纹、真实入口与回滚证据。
+description: 当用户要求配置、修改、排查或验收 CDS 正式发布时使用。默认执行项目 Git 中经 CI 验证的 cds-release.sh；CDS 独立脚本仅为明确选择的备选，旧部署类型仅兼容存量。强制项目级 Key、身份、同提交 CI、正文指纹、真实入口与回滚证据。
 ---
 
 # CDS 正式发布配置技能
