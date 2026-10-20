@@ -154,6 +154,7 @@ describe('CDS 可撤销重启交接', () => {
       ['cds/dist/index.js', 'old backend'], ['cds/dist/.build-sha', sha],
       ['cds/web/dist/index.html', '<script src="assets/old.js"></script>'],
       ['cds/web/dist/assets/old.js', 'old chunk'], ['cds/web/dist/.build-sha', sha],
+      ['cds/node_modules/fixture.js', 'old dependency'], ['cds/web/node_modules/fixture.js', 'old web dependency'],
     ]);
     if (hadPrevious) oldFiles.set('cds/web/dist.previous/previous.js', 'older chunk');
     for (const [file, contents] of oldFiles) {

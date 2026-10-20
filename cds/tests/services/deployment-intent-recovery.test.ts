@@ -296,10 +296,12 @@ describe('已受理部署的持久输入与重启恢复', () => {
     let observeExit!: () => void;
     const observedExit = new Promise<void>(resolve => { observeExit = resolve; });
     const exit = vi.fn((code: number) => { exitCode = code; atExit = mongo.snapshot(); observeExit(); });
+    const maintenanceOwner = { restartScheduled: false };
     const schedule = vm.runInNewContext(code.outputText, {
       config: { repoRoot: dir }, path, stateService: state, waitForFlushWithTimeout, prepareDetachedCdsRestart,
       process: { env, exit }, console: { warn: vi.fn() },
       getRestartWait: () => null, setRestartWait: vi.fn(), endSelfUpdateDrain: vi.fn(),
+      releaseSelfMaintenance: vi.fn((owner: object) => owner === maintenanceOwner),
       branchOperationCoordinator: coordinator, deploymentRunService: service,
       fs: {
         mkdirSync: fs.mkdirSync, appendFileSync: fs.appendFileSync,
@@ -320,7 +322,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
         child.once('error', error => { errors.push((error as NodeJS.ErrnoException).code || error.name); });
         return child;
       },
-    }, { timeout: 200 }) as (input: { branchLabel: string; source: string; preserveQueued: boolean }) => Promise<void>;
+    }, { timeout: 200 }) as (input: { branchLabel: string; source: string; maintenanceOwner: typeof maintenanceOwner; preserveQueued: boolean }) => Promise<void>;
     let reopenedStore: MongoSplitStateBackingStore | undefined;
     let release!: () => void, entered!: () => void;
     const writeGate = new Promise<void>(resolve => { release = resolve; });
@@ -341,7 +343,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
         if (storage === 'failed') throw new Error('synthetic final Mongo write failure');
         await writeGate; return originalWrite(...args);
       });
-      const completion = schedule({ branchLabel: 'owned-exit-boundary', source: 'api.self-update', preserveQueued: true })
+      const completion = schedule({ branchLabel: 'owned-exit-boundary', source: 'api.self-update', maintenanceOwner, preserveQueued: true })
         .then(() => null, error => error as Error);
       if (storage !== 'healthy') {
         await writing; expect(exit).not.toHaveBeenCalled();
@@ -434,6 +436,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
     let watchdog: ReturnType<typeof setTimeout> | undefined, timedOut = false, boundaryError: Error | undefined;
     let closeResult: { code: number | null; signal: NodeJS.Signals | null } | undefined, closedFds = 0;
     const closedFdSet = new Set<number>(), releaseGate = vi.fn(), restartWait = vi.fn(), rollback = vi.fn();
+    const maintenanceOwner = { restartScheduled: false };
     const ownedPath = (target: string) => {
       if (typeof target !== 'string' || !path.resolve(target).startsWith(`${dir}${path.sep}`)) {
         boundaryError = new Error('restart fixture escaped its owned directory'); throw boundaryError;
@@ -452,6 +455,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
         config: { repoRoot: dir }, path, stateService: state, waitForFlushWithTimeout, prepareDetachedCdsRestart,
         process: { env, exit }, console: { warn: vi.fn() },
         getRestartWait: () => null, setRestartWait: restartWait, endSelfUpdateDrain: releaseGate,
+        releaseSelfMaintenance: vi.fn((owner: object) => owner === maintenanceOwner),
         branchOperationCoordinator: coordinator, deploymentRunService: service,
         fs: {
           mkdirSync: (target: string, options: fs.MakeDirectoryOptions) => { ownedPath(target); return fs.mkdirSync(target, options); },
@@ -471,9 +475,9 @@ describe('已受理部署的持久输入与重启恢复', () => {
           watchdog = setTimeout(() => { if (!childClosed) { timedOut = true; child!.kill('SIGKILL'); } }, 2000);
           return child;
         },
-      }, { timeout: 200 }) as (input: { branchLabel: string; source: string; preserveQueued: boolean; rollback: () => Promise<void> }) => Promise<void>;
+      }, { timeout: 200 }) as (input: { branchLabel: string; source: string; maintenanceOwner: typeof maintenanceOwner; preserveQueued: boolean; rollback: () => Promise<void> }) => Promise<void>;
       record.mockClear();
-      const completion = schedule({ branchLabel: 'owned-fixture', source: 'api.self-update', preserveQueued: result === 'flushed', rollback })
+      const completion = schedule({ branchLabel: 'owned-fixture', source: 'api.self-update', maintenanceOwner, preserveQueued: result === 'flushed', rollback })
         .then(() => null, error => error as Error);
       expect(timers).toHaveLength(1); timers.shift()!.callback();
       const outcome = await completion;

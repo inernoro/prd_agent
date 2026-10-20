@@ -32,7 +32,7 @@ export function prepareDetachedCdsRestart(spawnProcess: typeof spawn, cwd: strin
   };
 }
 
-/** 独立文件副本包含真实入口、chunk与标记；不使用硬链接或重新签写SHA。 */
+/** 独立副本包含产物及依赖；产物去引用，pnpm符号链保留原链接，不使用硬链接或重签SHA。 */
 export async function createSelfUpdateCheckpoint(shell: IShellExecutor, repoRoot: string,
   replace: (pairs: { currentPath: string; nextPath: string }[]) => void) {
   const options = { cwd: repoRoot, timeout: 30_000 };
@@ -43,9 +43,9 @@ export async function createSelfUpdateCheckpoint(shell: IShellExecutor, repoRoot
   const cdsDir = path.join(repoRoot, 'cds');
   fs.mkdirSync(path.join(cdsDir, '.cds'), { recursive: true });
   const backup = fs.mkdtempSync(path.join(cdsDir, '.cds', 'restart-rollback-'));
-  const copies = ['dist', 'web/dist', 'web/dist.previous'].map((relative, index) => ({
+  const copies = ['dist', 'web/dist', 'web/dist.previous', 'node_modules', 'web/node_modules'].map((relative, index) => ({
     currentPath: path.join(cdsDir, relative), nextPath: path.join(backup, String(index)),
-    existed: fs.existsSync(path.join(cdsDir, relative)),
+    existed: fs.existsSync(path.join(cdsDir, relative)), preserveLinks: relative.endsWith('node_modules'),
   }));
   let finished = false, artifactsRestored = false;
   const commit = () => {
@@ -54,8 +54,8 @@ export async function createSelfUpdateCheckpoint(shell: IShellExecutor, repoRoot
     finished = true;
   };
   try {
-    for (const copy of copies) if (copy.existed) fs.cpSync(copy.currentPath, copy.nextPath, {
-      recursive: true, dereference: true, mode: fs.constants.COPYFILE_FICLONE,
+    for (const copy of copies) if (copy.existed) await fs.promises.cp(copy.currentPath, copy.nextPath, {
+      recursive: true, dereference: !copy.preserveLinks, verbatimSymlinks: copy.preserveLinks, mode: fs.constants.COPYFILE_FICLONE,
     });
   } catch (error) { commit(); throw error; }
   return {
