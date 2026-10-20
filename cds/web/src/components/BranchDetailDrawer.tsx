@@ -2814,6 +2814,7 @@ export function BranchDetailDrawer({
                     }}
                     onCopy={async (value) => {
                       await navigator.clipboard.writeText(value);
+                      onToast?.('已复制');
                     }}
                   />
                 ) : null}
@@ -4412,7 +4413,7 @@ function ResourceConnection({
   }
   return (
     <div className="space-y-3">
-      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={onCopy} /> : null}
+      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={value=>navigator.clipboard.writeText(value)} /> : null}
       {rows.map((row) => (
         <div key={row.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
           <div className="mb-1 text-xs text-muted-foreground">{row.label}</div>
