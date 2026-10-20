@@ -13,6 +13,7 @@ import {
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
 import { classifyQualityRepairReason, hardenSelfContainedHtml } from '../src/quality/gate.js';
+import type { BrowserQualityIssue } from '../src/quality/browser-contract.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
 import { DesignTaskExecutor, materializePresentationSourcePlan } from '../src/executor.js';
 import {
@@ -741,6 +742,19 @@ describe('collecting the deliverable', () => {
   });
 
   it('isolates quality work from generation history and keeps browser repairs in the quality conversation', async () => {
+    const firstSourceId = `sb-${'a'.repeat(64)}`;
+    const secondSourceId = `sb-${'b'.repeat(64)}`;
+    const firstSourceHtml = '<p>Frozen release conditions stay visible while layout is repaired.</p>';
+    const secondSourceHtml = '<p>Frozen rollback steps stay visible while layout is repaired.</p>';
+    const sourcePlan = JSON.stringify({
+      SchemaVersion: 'map-mdppt-source-plan-v2',
+      Fingerprint: 'frozen-browser-repair',
+      Blocks: [
+        { Id: firstSourceId, Html: firstSourceHtml },
+        { Id: secondSourceId, Html: secondSourceHtml },
+      ],
+      Pages: [{ Index: 1, Hash: 'page', DisplayTitle: 'Release contract', Blocks: [{ Id: firstSourceId }, { Id: secondSourceId }] }],
+    });
     const seenAttempts: number[] = [];
     const seenEvidenceDirs: string[] = [];
     harness = await startHarness({ overrides: {
@@ -749,12 +763,28 @@ describe('collecting the deliverable', () => {
           seenAttempts.push(job.repairAttempt);
           seenEvidenceDirs.push(job.evidenceDir);
           fs.mkdirSync(job.evidenceDir, { recursive: true });
+          const materialized = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
+          expect(materialized).toContain(firstSourceHtml);
+          expect(materialized).toContain(secondSourceHtml);
           const measurements = [
             { viewport: 'desktop' as const, width: 1440, height: 900 },
             { viewport: 'mobile' as const, width: 390, height: 844 },
           ].map((viewport) => {
             const screenshotPath = `assets/quality/attempt-${job.repairAttempt}-${viewport.viewport}.png`;
             fs.writeFileSync(path.join(job.evidenceDir, path.basename(screenshotPath)), Buffer.from([137, 80, 78, 71]));
+            const actual: BrowserQualityIssue['actual'] = viewport.viewport === 'mobile'
+              ? { measured: 12 }
+              : {
+                slideIndex: 1,
+                sourceSlotCount: 2,
+                unreadableSourceSlotCount: 2,
+                invisibleSourceSlotCount: 0,
+                clippedSourceSlotCount: 0,
+                overflowingSourceSlotCount: 2,
+                minimumSlotWidth: 3,
+                maximumScrollWidth: 96,
+                maximumScrollHeight: 1952,
+              };
             return {
               ...viewport,
               documentWidth: viewport.width,
@@ -763,12 +793,16 @@ describe('collecting the deliverable', () => {
               visibleCtaCount: 1,
               visibleLandmarkCount: 2,
               issues: job.repairAttempt < 2 ? [{
-                issueCode: viewport.viewport === 'mobile' ? 'mobile_navigation_unusable' as const : 'horizontal_overflow' as const,
+                issueCode: viewport.viewport === 'mobile'
+                  ? 'mobile_navigation_unusable' as const
+                  : 'presentation_source_content_unreadable' as const,
                 severity: 'hard' as const,
                 ruleVersion: 'browser-hard-gate-v1' as const,
                 viewport: viewport.viewport,
-                actual: { measured: 12 },
-                target: 'measured hard target',
+                actual,
+                target: viewport.viewport === 'mobile'
+                  ? 'measured hard target'
+                  : 'every materialized source block fits inside a visible readable box on its assigned slide',
                 element: { tag: 'main', id: 'content' },
               }] : [],
               screenshotPath,
@@ -778,9 +812,30 @@ describe('collecting the deliverable', () => {
         },
       },
     } });
-    const pkg = buildPackage([]);
-    harness.daemon.onRun = ({ workspaceDir }) => {
-      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main id="content"><h1>Launch page</h1></main></body></html>');
+    const pkg = buildPackage([
+      { path: 'brief/source-plan.json', content: sourcePlan, mediaType: 'application/json' },
+    ], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(sourcePlan)) },
+        },
+      },
+    });
+    harness.daemon.onRun = ({ workspaceDir, index, body }) => {
+      if (index === 1) {
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main id="content"><h1>Launch page</h1><div class="source-rail"><div data-mdppt-source="${firstSourceId}"></div><div data-mdppt-source="${secondSourceId}"></div></div></main></body></html>`);
+      }
+      if (index >= 3) {
+        const current = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
+        expect(current).toContain(firstSourceHtml);
+        expect(current).toContain(secondSourceHtml);
+        expect(String(body.message)).toContain('presentation_source_content_unreadable');
+        expect(String(body.message)).toContain('"unreadableSourceSlotCount":2');
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main id="content"><h1>Launch page</h1><div class="source-layout"><div data-mdppt-source="${firstSourceId}">${firstSourceHtml}</div><div data-mdppt-source="${secondSourceId}">${secondSourceHtml}</div></div></main></body></html>`);
+      }
       return { status: 'succeeded' };
     };
     const view = await runToEnd(pkg);
@@ -790,6 +845,8 @@ describe('collecting the deliverable', () => {
     expect(seenEvidenceDirs.every((dir) => !dir.startsWith(harness!.config.odDataDir))).toBe(true);
     expect(harness.daemon.runBodies).toHaveLength(4);
     expect(harness.daemon.runBodies.slice(2).every((body) => String(body.message).includes('isolated browser quality gate'))).toBe(true);
+    expect(String(harness.daemon.runBodies[2].message)).toContain('presentation_source_content_unreadable');
+    expect(String(harness.daemon.runBodies[2].message)).toContain('"unreadableSourceSlotCount":2');
     expect(String(harness.daemon.runBodies[2].message)).not.toContain('previous targeted repair produced no measurable change');
     expect(String(harness.daemon.runBodies[3].message)).toContain('previous targeted repair produced no measurable change');
     expect(String(harness.daemon.runBodies[3].message)).toContain('Do not leave any second hidden nav or [role="navigation"]');

@@ -25,6 +25,7 @@ export type BrowserQualityIssueCode =
   | 'presentation_page_count_mismatch'
   | 'presentation_navigation_unusable'
   | 'presentation_text_too_small'
+  | 'presentation_source_content_unreadable'
   | 'presentation_fixed_overlay_obscures_content';
 
 export interface BrowserElementSummary {
@@ -177,7 +178,9 @@ const BROWSER_MEASUREMENT_KEYS = new Set([
   'linkCount', 'visibleLinkCount', 'hasVisibleToggle', 'tableWidth', 'scrollable',
   'minCellWidth', 'ratio', 'minimum', 'fontSize', 'fontWeight',
   'slideIndex', 'actualPages', 'targetPages', 'canNavigate',
-  'effectiveFontSize', 'minimumFontSize', 'overlapRatio',
+  'effectiveFontSize', 'minimumFontSize', 'overlapRatio', 'sourceSlotCount',
+  'unreadableSourceSlotCount', 'invisibleSourceSlotCount', 'clippedSourceSlotCount',
+  'overflowingSourceSlotCount', 'minimumSlotWidth', 'maximumScrollWidth', 'maximumScrollHeight',
 ]);
 
 function boundedActual(actual: BrowserQualityIssue['actual']): BrowserQualityFailureIssue['actual'] {

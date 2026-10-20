@@ -789,6 +789,30 @@ function extractClaimEntityKeys(segment: string, unit: string): Set<string> {
   return keys;
 }
 
+function maskEvidenceBackedNamespacedDraftTokens(visible: string, evidenceText: string): string {
+  const valuesByNamespace = new Map<string, Set<string>>();
+  const sourceTokens = new Set<string>();
+  for (const match of evidenceText.matchAll(/\b([a-z][a-z0-9_-]*):([a-z][a-z0-9_-]*)\b/gi)) {
+    const namespace = match[1].toLowerCase();
+    const value = match[2].toLowerCase();
+    sourceTokens.add(`${namespace}:${value}`);
+    const values = valuesByNamespace.get(namespace) ?? new Set<string>();
+    values.add(value);
+    valuesByNamespace.set(namespace, values);
+  }
+  return visible.replace(
+    /\b([a-z][a-z0-9_-]*):(todo|tbd)\b(?!\s*[:：])/gi,
+    (token, rawNamespace: string, rawValue: string) => {
+      const namespace = rawNamespace.toLowerCase();
+      const value = rawValue.toLowerCase();
+      const siblings = valuesByNamespace.get(namespace);
+      const isFrozenEnumValue = sourceTokens.has(`${namespace}:${value}`)
+        && Boolean(siblings && [...siblings].some((sibling) => sibling !== 'todo' && sibling !== 'tbd'));
+      return isFrozenEnumValue ? token.replace(new RegExp(`${rawValue}$`, 'i'), 'source-value') : token;
+    },
+  );
+}
+
 function validateArtifactQuality(
   html: string,
   evidenceText: string,
@@ -813,7 +837,8 @@ function validateArtifactQuality(
   if (!visible) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no visible content');
   }
-  if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visible)) {
+  const visibleForPlaceholderCheck = maskEvidenceBackedNamespacedDraftTokens(visible, evidenceText);
+  if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visibleForPlaceholderCheck)) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains visible placeholder or unfinished content');
   }
   // 起始页是一张清空了占位文案的模板，模型一字未改地交回来时，它的可见文字只剩一个版权符号，

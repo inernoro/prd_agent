@@ -18,3 +18,4 @@
 | test | platform | 覆盖任务额度不足零发送、并发共享、路由收紧、长上下文分档、重试、关闭与未绑定业务兼容 |
 | fix | prd-api | 任务额度按冻结来源稳定指纹认领并贯穿转换与手动保存，同时保留 catalog、bound 与编辑 overlay 文档哈希完整性校验 |
 | ci | platform | 固定服务端测试兼容 runner，并回执 Mongo 8.0 与内核版本，保留完整 sln 和 xUnit 门禁 |
+| fix | design-runtime | 区分来源中的命名空间状态标签与真正未完成占位符，并在浏览器质量门拒绝挤入装饰槽的不可读冻结正文 |

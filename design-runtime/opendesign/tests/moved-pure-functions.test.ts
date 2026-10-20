@@ -894,6 +894,28 @@ describe('moved AgentWorkspaceSessionRuntime pure functions', () => {
     )).toContain('客服平均答复30分钟');
   });
 
+  it('distinguishes frozen namespaced status labels from standalone unfinished markers', () => {
+    const source = '状态标签：status:todo、status:in-progress、status:review、status:done。';
+    expect(hardenSelfContainedHtml(
+      '<!doctype html><html><body><p>状态标签：status:todo、status:in-progress、status:review、status:done。</p></body></html>',
+      source,
+    )).toContain('status:todo');
+
+    for (const [visible, evidence] of [
+      ['TODO', source],
+      ['TODO:补充发布说明', source],
+      ['TBD', source],
+      ['状态标签：status:todo', '来源不包含该状态标签'],
+      ['状态标签：说明:todo', '状态标签：说明:todo'],
+      ['内容待补充', source],
+    ]) {
+      expect(() => hardenSelfContainedHtml(
+        `<!doctype html><html><body><p>${visible}</p></body></html>`,
+        evidence,
+      )).toThrowError(expect.objectContaining({ code: 'design_output_quality_rejected' }));
+    }
+  });
+
   it.each([
     ['paragraphs', '<p>周二至周五：14:00—19:00</p><p>周六至周日：09:30—17:30</p>'],
     ['line break', '周二至周五：14:00—19:00<br>周六至周日：09:30—17:30'],

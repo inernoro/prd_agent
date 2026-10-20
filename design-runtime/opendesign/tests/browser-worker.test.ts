@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { runBrowserWorker } from '../src/quality/browser-worker.js';
+import { browserRepairMessage, summarizeAttempt } from '../src/quality/browser-contract.js';
 
 const roots: string[] = [];
 
@@ -118,6 +119,61 @@ describe('isolated Chromium quality measurements', () => {
     const mobileSecond = result.measurements.find((measurement) => measurement.viewport === 'mobile' && measurement.slideIndex === 2)!;
     expect(result.measurements.filter((measurement) => measurement.viewport === 'mobile')).toHaveLength(2);
     expect(mobileSecond.issues.map((issue) => issue.issueCode)).toContain('presentation_text_too_small');
+  }, 30_000);
+
+  it('rejects materialized source text squeezed into decorative slots and keeps readable slots valid', async () => {
+    const sample = presentationWorkspace(`<!doctype html><html><head><style>
+      body{margin:0;color:#111;background:#fff}.reveal .slides>section{display:none;min-height:700px}
+      .reveal .slides>section.active{display:block}.source-rail{position:absolute;right:8px;top:50%}
+      .source-rail.bad>[data-mdppt-source]{width:3px;height:3px}.source-rail.good{position:static;max-width:720px}
+      .source-rail.good>[data-mdppt-source]{width:auto;height:auto;padding:12px}
+      .source-rail.hidden>[data-mdppt-source]{display:none}.source-rail.clipped{position:static;width:120px;height:24px;overflow:hidden}
+      .source-rail.clipped>[data-mdppt-source]{display:block;width:300px;height:60px}
+    </style></head><body><div class="reveal"><div class="slides">
+      <section class="active"><h1>Broken source layout</h1><div class="source-rail bad">
+        <div data-mdppt-source="sb-${'a'.repeat(64)}"><p>Frozen source text must remain completely readable after materialization.</p></div>
+        <div data-mdppt-source="sb-${'b'.repeat(64)}"><p>A second broken source slot must be repaired in the same pass.</p></div>
+      </div></section>
+      <section><h1>Readable source layout</h1><div class="source-rail good">
+        <div data-mdppt-source="sb-${'c'.repeat(64)}"><p>Frozen source text fits its visible content area.</p></div>
+      </div></section>
+      <section><h1>Hidden source layout</h1><div class="source-rail hidden">
+        <div data-mdppt-source="sb-${'d'.repeat(64)}"><p>Frozen source text must not disappear.</p></div>
+      </div></section>
+      <section><h1>Ancestor-clipped source layout</h1><div class="source-rail clipped">
+        <div data-mdppt-source="sb-${'e'.repeat(64)}"><p>Frozen source text must fit inside every clipping ancestor.</p></div>
+      </div></section>
+    </div></div><script>
+      const slides=[...document.querySelectorAll('.slides>section')];
+      window.Reveal={slide(i){slides.forEach((s,n)=>s.classList.toggle('active',n===i));this.i=i},getIndices(){return {h:this.i||0}}};
+    </script></body></html>`, 4);
+
+    const result = await runBrowserWorker({ ...sample, repairAttempt: 0 });
+    const first = result.measurements.filter((measurement) => measurement.slideIndex === 1);
+    const second = result.measurements.filter((measurement) => measurement.slideIndex === 2);
+    const third = result.measurements.filter((measurement) => measurement.slideIndex === 3);
+    const fourth = result.measurements.filter((measurement) => measurement.slideIndex === 4);
+
+    expect(first.every((measurement) => measurement.issues.some((issue) => (
+      issue.issueCode === 'presentation_source_content_unreadable'
+      && issue.actual.sourceSlotCount === 2
+      && issue.actual.unreadableSourceSlotCount === 2
+      && issue.actual.overflowingSourceSlotCount === 2
+    )))).toBe(true);
+    expect(second.every((measurement) => measurement.issues.every(
+      (issue) => issue.issueCode !== 'presentation_source_content_unreadable',
+    ))).toBe(true);
+    expect(third.every((measurement) => measurement.issues.some((issue) => (
+      issue.issueCode === 'presentation_source_content_unreadable'
+      && issue.actual.invisibleSourceSlotCount === 1
+    )))).toBe(true);
+    expect(fourth.every((measurement) => measurement.issues.some((issue) => (
+      issue.issueCode === 'presentation_source_content_unreadable'
+      && issue.actual.clippedSourceSlotCount === 1
+    )))).toBe(true);
+    const repair = browserRepairMessage(summarizeAttempt(0, result.browserVersion, first));
+    expect(repair).toContain('presentation_source_content_unreadable');
+    expect(repair).toContain('"unreadableSourceSlotCount":2');
   }, 30_000);
 
   it('allows vertically scrollable mobile slides but rejects a fixed control covering their text', async () => {

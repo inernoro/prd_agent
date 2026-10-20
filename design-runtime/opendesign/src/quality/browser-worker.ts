@@ -154,6 +154,34 @@ async function measurePage(
         viewportWidth: width,
       }, 'main content is visible and horizontally inside the viewport', main || undefined));
     }
+    if (slideIndex && main) {
+      const sourceSlots = [...main.querySelectorAll<HTMLElement>('[data-mdppt-source]')]
+        .filter((element) => (element.textContent || '').trim().length > 0);
+      const invisibleSourceSlots = sourceSlots.filter((element) => !visible(element));
+      const clippedSourceSlots = sourceSlots.filter((element) => visible(element) && clipped(element));
+      const overflowingSourceSlots = sourceSlots.filter((element) => visible(element) && (
+        element.scrollWidth > element.clientWidth + 1
+        || element.scrollHeight > element.clientHeight + 1
+      ));
+      const unreadableSourceSlots = [...new Set([
+        ...invisibleSourceSlots,
+        ...clippedSourceSlots,
+        ...overflowingSourceSlots,
+      ])];
+      if (unreadableSourceSlots.length > 0) {
+        issues.push(issue('presentation_source_content_unreadable', {
+          slideIndex,
+          sourceSlotCount: sourceSlots.length,
+          unreadableSourceSlotCount: unreadableSourceSlots.length,
+          invisibleSourceSlotCount: invisibleSourceSlots.length,
+          clippedSourceSlotCount: clippedSourceSlots.length,
+          overflowingSourceSlotCount: overflowingSourceSlots.length,
+          minimumSlotWidth: Math.min(...unreadableSourceSlots.map((element) => element.clientWidth)),
+          maximumScrollWidth: Math.max(...unreadableSourceSlots.map((element) => element.scrollWidth)),
+          maximumScrollHeight: Math.max(...unreadableSourceSlots.map((element) => element.scrollHeight)),
+        }, 'every materialized source block fits inside a visible readable box on its assigned slide', unreadableSourceSlots[0]));
+      }
+    }
     const ctaCandidates = [...document.querySelectorAll('a, button, [role="button"]')]
       .filter(visible)
       .filter((element) => {
