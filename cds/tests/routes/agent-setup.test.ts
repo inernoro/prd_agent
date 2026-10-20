@@ -6,7 +6,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { createBootstrapRouter } from '../../src/routes/bootstrap.js';
+import { createBootstrapRouter, upstreamSkillPackCache, UpstreamSkillPackCache } from '../../src/routes/bootstrap.js';
 import { createGithubAuthMiddleware } from '../../src/middleware/github-auth.js';
 import type { AuthService } from '../../src/services/auth-service.js';
 import type { SkillProxy } from '../../src/services/skill-proxy.js';
@@ -62,7 +62,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const response = await fetch(`${origin}/api/agent/setup.json?target=existing&project=does-not-exist&skills=preview-url`);
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.5', cliVersion: '0.17.5', authentication: 'existing-page-approval' });
+    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.5', cliVersion: '0.17.6', authentication: 'existing-page-approval' });
     expect(body.installedSkills).toHaveLength(5);
     expect(body.project).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();
@@ -74,7 +74,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(response.status).toBe(200);
     const archive = Buffer.from(await response.arrayBuffer());
     const manifest = JSON.parse(execFileSync('tar', ['-xzOf', '-', 'skills/cds/cli/cds-skill-manifest.json'], { input: archive, encoding: 'utf8' }));
-    expect(manifest).toMatchObject({ format: 'agent-skills', version: '0.17.5' });
+    expect(manifest).toMatchObject({ format: 'agent-skills', version: '0.17.6' });
     for (const skill of manifest.skills) {
       const content = fs.readFileSync(path.resolve(process.cwd(), '../.claude/skills', skill, 'SKILL.md'));
       expect(manifest.files[`${skill}/SKILL.md`]).toBe(createHash('sha256').update(content).digest('hex'));
@@ -185,6 +185,10 @@ describe('Agent public bootstrap through the real auth gate', () => {
 describe('setup version follows the actual distributed skill bundle', () => {
   const servers: http.Server[] = [];
   const roots: string[] = [];
+  beforeEach(() => {
+    const cache = new UpstreamSkillPackCache();
+    vi.spyOn(upstreamSkillPackCache, 'get').mockImplementation(url => cache.get(url));
+  });
   const listen = async (app: express.Express) => {
     const server = app.listen(0, '127.0.0.1');
     servers.push(server);
@@ -211,6 +215,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
       return new Promise<void>(resolve => server.close(() => resolve()));
     }));
     for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+    vi.restoreAllMocks();
   });
 
   it('reports the version installed from the supported parent-directory layout', async () => {
@@ -228,7 +233,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const version = bundleVersion(Buffer.from(await downloaded.arrayBuffer()));
     const metadata = await (await fetch(`${origin}/api/agent/setup.json`)).json();
     expect(metadata.cliVersion).toBe(version);
-    expect(metadata.cliVersion).toBe('0.17.5');
+    expect(metadata.cliVersion).toBe('0.17.6');
   });
 
   it('reports the cached upstream bundle version instead of an incomplete local CLI', async () => {
@@ -254,7 +259,26 @@ describe('setup version follows the actual distributed skill bundle', () => {
     available = false;
     const metadata = await (await fetch(`${origin}/api/agent/setup.json`)).json();
     expect(metadata.cliVersion).toBe(version);
-    expect(metadata.cliVersion).toBe('0.17.5');
+    expect(metadata.cliVersion).toBe('0.17.6');
     expect(downloads).toBe(1);
+  });
+
+  it('fails discovery when the actual upstream bundle is below the server minimum', async () => {
+    const upstreamRoot = tempRoot();
+    const skills = path.join(upstreamRoot, '.claude/skills');
+    fs.mkdirSync(skills, { recursive: true });
+    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
+      fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(skills, skill), { recursive: true });
+    }
+    const cli = path.join(skills, 'cds/cli/cdscli.py');
+    fs.writeFileSync(path.join(skills, 'cds/upstream-fixture.txt'), 'Distinct upstream fixture content signature');
+    fs.writeFileSync(cli, fs.readFileSync(cli, 'utf8').replace(/^VERSION = ".*"/m, 'VERSION = "0.17.4"'));
+    const upstream = await listen(appFor(upstreamRoot));
+    const origin = await listen(appFor(tempRoot(), upstream));
+    const downloaded = await fetch(`${origin}/api/skills/cds-pack/download`);
+    expect(bundleVersion(Buffer.from(await downloaded.arrayBuffer()))).toBe('0.17.4');
+    const discovery = await fetch(`${origin}/api/agent/setup.json`);
+    expect(discovery.status).toBe(503);
+    expect(await discovery.json()).toMatchObject({ cliVersion: '0.17.4', minCliVersion: '0.17.5' });
   });
 });

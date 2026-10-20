@@ -541,7 +541,12 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     if (req.path.endsWith('.json')) {
       const pack = await resolveSkillPack(req);
       const cliVersion = pack.body ? await readSkillPackCliVersion(pack.body) : null;
-      res.json({
+      const minimum = AGENT_SETUP_MIN_CLI_VERSION.split('.').map(Number);
+      const outdated = cliVersion !== null && cliVersion.split('.').map(Number)
+        .reduce((comparison, part, index) => comparison || part - minimum[index], 0) < 0;
+      // Older clients only compare cliVersion: fail discovery itself when a fallback
+      // archive is below the server minimum, without misreporting its actual version.
+      res.status(outdated ? 503 : 200).json({
         version: AGENT_SETUP_VERSION,
         minCliVersion: AGENT_SETUP_MIN_CLI_VERSION,
         cliVersion,
@@ -549,6 +554,7 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
         installedSkills: CDS_SKILL_KEYS,
         authentication: 'existing-page-approval',
         selfCheck: 'setup-check',
+        ...(outdated ? { error: 'skill_bundle_incompatible', message: '技能包低于本实例最低版本，请先恢复兼容的技能分发，再重新自检。' } : {}),
       });
       return;
     }

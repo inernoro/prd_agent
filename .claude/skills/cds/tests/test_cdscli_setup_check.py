@@ -35,6 +35,7 @@ class SetupCheckTests(unittest.TestCase):
         self.kind = "project"
         self.global_projects = "all"
         self.version = re.search(r'^VERSION = "([^"]+)"', self.cli.read_text(), re.MULTILINE)[1]
+        self.minimum_version = self.version
         self.bundle_manifest = self.cli.with_name("cds-skill-manifest.json")
         self.write_bundle_manifest()
         self.project_status = 200
@@ -54,7 +55,8 @@ class SetupCheckTests(unittest.TestCase):
                     return
                 status = 200
                 if self.path == "/api/agent/setup.json":
-                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version}
+                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version,
+                            "minCliVersion": test.minimum_version}
                 elif self.path == "/api/credentials/self-check":
                     body = {"kind": test.kind, "status": test.status}
                     if test.kind == "global":
@@ -178,7 +180,8 @@ class SetupCheckTests(unittest.TestCase):
             def do_GET(self):
                 forwarded.append((self.path, self.headers.get("X-AI-Access-Key") == SECRET))
                 if self.path.endswith("setup.json"):
-                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version}
+                    body = {"version": "cds-agent-setup.v1", "cliVersion": test.version,
+                            "minCliVersion": test.minimum_version}
                 elif self.path.endswith("self-check"):
                     body = {"kind": "project", "status": "active", "projectId": "proj-a"}
                 else:
@@ -285,6 +288,18 @@ class SetupCheckTests(unittest.TestCase):
         self.version = "99.0.0"
         self.assert_failure("stale_cli")
         self.assertEqual(len(self.requests), 1)
+
+    def test_minimum_version_is_enforced_independently_of_resolved_bundle(self):
+        self.minimum_version = "99.0.0"
+        self.assert_failure("stale_cli")
+        self.assertEqual(len(self.requests), 1)
+
+    def test_unavailable_minimum_version_cannot_claim_connected(self):
+        for minimum in (None, "invalid"):
+            with self.subTest(minimum=minimum):
+                self.minimum_version = minimum
+                self.assert_failure("version_unavailable")
+        self.assertTrue(all(path == "/api/agent/setup.json" for path, _ in self.requests))
 
     def test_missing_bundle_is_distinct_from_authorization(self):
         (self.root / ".agents/skills/preview-url/SKILL.md").unlink()

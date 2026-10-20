@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -796,9 +796,11 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
     if status != 200 or not isinstance(manifest, dict) or manifest.get("version") != "cds-agent-setup.v1":
         fail("protocol", "setup_unavailable", "CDS 接入协议不可用，请确认服务版本和网络。")
     remote_version = manifest.get("cliVersion")
-    if not isinstance(remote_version, str) or not re.fullmatch(r"\d+\.\d+\.\d+", remote_version):
+    minimum_version = manifest.get("minCliVersion")
+    if any(not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value)
+           for value in (remote_version, minimum_version)):
         fail("version", "version_unavailable", "服务端无法确认技能版本，请恢复技能包分发后重试。")
-    if _version_compare(VERSION, remote_version) < 0:
+    if _version_compare(VERSION, remote_version) < 0 or _version_compare(VERSION, minimum_version) < 0:
         fail("version", "stale_cli", "当前 CLI 版本落后，运行 cdscli update 后重新自检。")
     checks.append({"stage": "version", "passed": True, "local": VERSION, "remote": remote_version})
 
