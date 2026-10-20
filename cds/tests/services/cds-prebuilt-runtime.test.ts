@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   prebuiltStagingPaths,
@@ -50,6 +53,61 @@ function makeDeps(
 const ok: PrebuiltExecResult = { stdout: '', stderr: '', exitCode: 0 };
 
 describe('fetchCdsPrebuilt', () => {
+  it('异步清理真实终态前不建目录或拉取，迟到删除不会清掉新产物目录', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-prebuilt-cleanup-await-'));
+    const staging = path.join(root, 'staging');
+    const stale = path.join(staging, 'stale');
+    fs.mkdirSync(staging); fs.writeFileSync(stale, 'previous');
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const cleaning = new Promise<void>(resolve => { entered = resolve; });
+    const events: string[] = [];
+    const { deps, cmds } = makeDeps(cmd => cmd.startsWith('docker create')
+      ? { ...ok, stdout: 'cafe1234beef' } : ok, JSON.stringify({ sha: FULL, schema: 1 }));
+    let cleanup: Promise<void> | undefined;
+    deps.rmrf = target => {
+      cleanup = (async () => {
+        events.push('cleanup-start'); entered(); await gate;
+        await fs.promises.rm(target, { recursive: true, force: true }); events.push('cleanup-terminal');
+      })();
+      return cleanup;
+    };
+    deps.mkdirp = target => { events.push('mkdir'); fs.mkdirSync(target, { recursive: true }); };
+    let outcomeSettled = false;
+    const pending = fetchCdsPrebuilt(deps, REF, FULL, staging).finally(() => { outcomeSettled = true; });
+    try {
+      await cleaning;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect.soft(events).toEqual(['cleanup-start']);
+      expect.soft(cmds).toEqual([]);
+      expect.soft(outcomeSettled).toBe(false);
+      expect(fs.readFileSync(stale, 'utf8')).toBe('previous');
+    } finally {
+      release(); await cleanup;
+      const outcome = await pending;
+      try {
+        expect.soft(outcome.ok).toBe(true);
+        expect.soft(events).toEqual(['cleanup-start', 'cleanup-terminal', 'mkdir', 'mkdir']);
+        expect.soft(fs.existsSync(stale)).toBe(false);
+        expect.soft(fs.statSync(path.join(staging, 'dist'), { throwIfNoEntry: false })?.isDirectory() ?? false).toBe(true);
+        expect.soft(fs.statSync(path.join(staging, 'web-dist'), { throwIfNoEntry: false })?.isDirectory() ?? false).toBe(true);
+        expect(cmds).toContain(`docker create ${REF} ${DOCKER_CREATE_PLACEHOLDER_CMD}`);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    }
+  });
+
+  it('异步清理失败沿原回退合同返回，不启动后续目录或外部命令', async () => {
+    const { deps, cmds } = makeDeps(() => ok, JSON.stringify({ sha: FULL, schema: 1 }));
+    const made: string[] = [];
+    deps.rmrf = async () => { throw new Error('fixture cleanup failed'); };
+    deps.mkdirp = target => { made.push(target); };
+    const outcome = await fetchCdsPrebuilt(deps, REF, FULL, '/tmp/controlled-stage');
+    expect(outcome).toEqual({ ok: false, reason: '预构建拉取异常: fixture cleanup failed' });
+    expect(made).toEqual([]);
+    expect(cmds).toEqual([]);
+  });
+
   it('全程成功 → ok + 解出目录 + manifest', async () => {
     const { deps, cmds } = makeDeps((cmd) => {
       if (cmd.startsWith('docker create')) return { stdout: 'cafe1234beef', stderr: '', exitCode: 0 };
