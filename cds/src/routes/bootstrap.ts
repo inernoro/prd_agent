@@ -18,7 +18,6 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { SkillProxy, SkillProxyError, isSafeSkillKey, readCappedBody } from '../services/skill-proxy.js';
 import { buildAgentSetupGuide, buildAgentTaskGuide } from '../services/agent-setup-guide.js';
-import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { buildCdsSkillManifest } from '../services/cds-skill-manifest.js';
 import { AGENT_SETUP_MIN_CLI_VERSION, AGENT_SETUP_VERSION, CDS_SKILL_KEYS, parseAgentSetupSelection } from '../shared/agent-setup.js';
 
@@ -270,6 +269,32 @@ export const __upstreamPackLimitsForTest = {
 };
 export { UpstreamSkillPackCache };
 
+// Keep metadata tied to the exact cached archive served to installers, including upstream copies.
+const skillPackVersions = new WeakMap<Buffer, Promise<string | null>>();
+function readSkillPackCliVersion(body: Buffer): Promise<string | null> {
+  const cached = skillPackVersions.get(body);
+  if (cached) return cached;
+  const version = (async () => {
+    const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cds-pack-version-'));
+    try {
+      const archive = path.join(tmpDir, 'skills.tar.gz');
+      await fs.promises.writeFile(archive, body);
+      // Read one fixed member to stdout; never extract upstream paths into the filesystem.
+      const { stdout } = await execFileAsync('tar', [
+        '-xzOf', archive, 'skills/cds/cli/cds-skill-manifest.json',
+      ], { timeout: 5_000, maxBuffer: 1024 * 1024 });
+      const value: unknown = JSON.parse(stdout).version;
+      return typeof value === 'string' && /^\d+\.\d+\.\d+$/.test(value) ? value : null;
+    } catch {
+      return null;
+    } finally {
+      await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    }
+  })().catch(() => null);
+  skillPackVersions.set(body, version);
+  return version;
+}
+
 /** shell 单引号转义：把 `'` 换成 `'\''`，杜绝生成脚本被注入。 */
 function shq(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -465,8 +490,37 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     return host ? `${proto}://${host}` : deps.cdsUpstream;
   };
 
+  // Both discovery and installation must select the same complete local/parent or upstream pack.
+  const resolveSkillPack = async (req: import('express').Request) => {
+    const skillsRoot = resolveSkillsRoot(deps.repoRoot);
+    if (skillsRoot) {
+      try {
+        const hit = await cdsSkillPackCache.get(skillsRoot);
+        if (hit) return { body: hit.body, source: hit.cached ? 'local-cached' : 'local' };
+      } catch (err) {
+        console.warn('[bootstrap] 本地打包 CDS 技能失败，尝试回源上游', { error: String(err) });
+      }
+    }
+    const upstream = resolveCdsSkillPackUpstream(resolveOrigin(req), deps.cdsUpstream);
+    if (!upstream) return {
+      status: 503,
+      error: '本实例没有完整的 CDS 技能包，且未配置独立上游',
+      hint: '请配置指向另一套 CDS 的 CDS_UPSTREAM；不得使用本实例公网地址作为上游。',
+    };
+    try {
+      const hit = await upstreamSkillPackCache.get(upstream);
+      return { body: hit.body, source: hit.cached ? 'upstream-cached' : 'upstream' };
+    } catch {
+      return {
+        status: 502,
+        error: '无法获取 CDS 技能包',
+        hint: '本实例没有本地技能目录，上游 CDS 也不可达。方法论技能仍可安装，但操作 CDS 的命令行技能会缺失。',
+      };
+    }
+  };
+
   // Public, read-only discovery. Never looks up projects or issues credentials.
-  router.get(['/agent/setup.md', '/agent/setup.json'], (req, res) => {
+  router.get(['/agent/setup.md', '/agent/setup.json'], async (req, res) => {
     const selection = parseAgentSetupSelection(req.query);
     if (!selection) {
       res.status(400).json({ error: 'invalid_agent_setup', message: '接入目标或技能无效，请从接入 Agent 页面重新复制口令。' });
@@ -485,10 +539,12 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     if (req.path.endsWith('.json')) {
+      const pack = await resolveSkillPack(req);
+      const cliVersion = pack.body ? await readSkillPackCliVersion(pack.body) : null;
       res.json({
         version: AGENT_SETUP_VERSION,
         minCliVersion: AGENT_SETUP_MIN_CLI_VERSION,
-        cliVersion: readBundledCdsCliVersion(deps.repoRoot),
+        cliVersion,
         ...selection,
         installedSkills: CDS_SKILL_KEYS,
         authentication: 'existing-page-approval',
@@ -531,43 +587,15 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
    * 回源到上游公共 CDS 的同名端点。
    */
   router.get('/skills/cds-pack/download', async (req, res) => {
-    const skillsRoot = resolveSkillsRoot(deps.repoRoot);
-    if (skillsRoot) {
-      try {
-        const hit = await cdsSkillPackCache.get(skillsRoot);
-        if (hit) {
-          res.setHeader('Cache-Control', 'no-store');
-          res.setHeader('Content-Disposition', 'attachment; filename="cds-skills.tar.gz"');
-          res.setHeader('X-Skill-Cache', hit.cached ? 'local-cached' : 'local');
-          res.type('application/gzip').send(hit.body);
-          return;
-        }
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[bootstrap] 本地打包 CDS 技能失败，尝试回源上游', { error: String(err) });
-      }
-    }
-
-    const upstream = resolveCdsSkillPackUpstream(resolveOrigin(req), deps.cdsUpstream);
-    if (!upstream) {
-      res.status(503).json({
-        error: '本实例没有完整的 CDS 技能包，且未配置独立上游',
-        hint: '请配置指向另一套 CDS 的 CDS_UPSTREAM；不得使用本实例公网地址作为上游。',
-      });
+    const pack = await resolveSkillPack(req);
+    if (!pack.body) {
+      res.status(pack.status!).json({ error: pack.error, hint: pack.hint });
       return;
     }
-    try {
-      const hit = await upstreamSkillPackCache.get(upstream);
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Content-Disposition', 'attachment; filename="cds-skills.tar.gz"');
-      res.setHeader('X-Skill-Cache', hit.cached ? 'upstream-cached' : 'upstream');
-      res.type('application/gzip').send(hit.body);
-    } catch (err) {
-      res.status(502).json({
-        error: '无法获取 CDS 技能包',
-        hint: '本实例没有本地技能目录，上游 CDS 也不可达。方法论技能仍可安装，但操作 CDS 的命令行技能会缺失。',
-      });
-    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', 'attachment; filename="cds-skills.tar.gz"');
+    res.setHeader('X-Skill-Cache', pack.source!);
+    res.type('application/gzip').send(pack.body);
   });
 
   router.get('/skills/bundles', async (_req, res) => {

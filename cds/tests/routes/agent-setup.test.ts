@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
+import os from 'node:os';
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -177,5 +178,83 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect((await fetch(`${origin}/api/agent/setup.md`, { method: 'POST' })).status).toBe(401);
     expect(isPublicAgentSetupRoute('GET', '/api/agent/setup.md/other')).toBe(false);
     expect(isPublicAgentSetupRoute('DELETE', '/api/agent/setup.json')).toBe(false);
+  });
+});
+
+
+describe('setup version follows the actual distributed skill bundle', () => {
+  const servers: http.Server[] = [];
+  const roots: string[] = [];
+  const listen = async (app: express.Express) => {
+    const server = app.listen(0, '127.0.0.1');
+    servers.push(server);
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    return `http://127.0.0.1:${(server.address() as import('node:net').AddressInfo).port}`;
+  };
+  const appFor = (repoRoot: string, cdsUpstream = '') => {
+    const app = express();
+    app.use('/api', createBootstrapRouter({ repoRoot, cdsUpstream, skillProxy: {} as SkillProxy }));
+    return app;
+  };
+  const tempRoot = () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-setup-source-'));
+    roots.push(root);
+    return root;
+  };
+  const bundleVersion = (body: Buffer) => JSON.parse(execFileSync('tar', [
+    '-xzOf', '-', 'skills/cds/cli/cds-skill-manifest.json',
+  ], { input: body, encoding: 'utf8' })).version;
+
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map(server => {
+      server.closeAllConnections();
+      return new Promise<void>(resolve => server.close(() => resolve()));
+    }));
+    for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reports the version installed from the supported parent-directory layout', async () => {
+    const root = tempRoot();
+    const parentSkills = path.join(root, '.claude/skills');
+    fs.mkdirSync(parentSkills, { recursive: true });
+    for (const skill of ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']) {
+      fs.cpSync(path.resolve(process.cwd(), '../.claude/skills', skill), path.join(parentSkills, skill), { recursive: true });
+    }
+    const child = path.join(root, 'cds');
+    fs.mkdirSync(child);
+    const origin = await listen(appFor(child));
+    const downloaded = await fetch(`${origin}/api/skills/cds-pack/download`);
+    expect(downloaded.status).toBe(200);
+    const version = bundleVersion(Buffer.from(await downloaded.arrayBuffer()));
+    const metadata = await (await fetch(`${origin}/api/agent/setup.json`)).json();
+    expect(metadata.cliVersion).toBe(version);
+    expect(metadata.cliVersion).toBe('0.17.4');
+  });
+
+  it('reports the cached upstream bundle version instead of an incomplete local CLI', async () => {
+    const upstreamApp = express();
+    let available = true;
+    let downloads = 0;
+    upstreamApp.use((req, res, next) => {
+      if (req.path === '/api/skills/cds-pack/download') {
+        downloads++;
+        if (!available) { res.sendStatus(503); return; }
+      }
+      next();
+    });
+    upstreamApp.use(appFor(path.resolve(process.cwd(), '..')));
+    const upstream = await listen(upstreamApp);
+    const root = tempRoot();
+    fs.mkdirSync(path.join(root, '.claude/skills/cds/cli'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude/skills/cds/cli/cdscli.py'), 'VERSION = "0.0.1"\n');
+    const origin = await listen(appFor(root, upstream));
+    const downloaded = await fetch(`${origin}/api/skills/cds-pack/download`);
+    expect(downloaded.status).toBe(200);
+    const version = bundleVersion(Buffer.from(await downloaded.arrayBuffer()));
+    available = false;
+    const metadata = await (await fetch(`${origin}/api/agent/setup.json`)).json();
+    expect(metadata.cliVersion).toBe(version);
+    expect(metadata.cliVersion).toBe('0.17.4');
+    expect(downloads).toBe(1);
   });
 });
