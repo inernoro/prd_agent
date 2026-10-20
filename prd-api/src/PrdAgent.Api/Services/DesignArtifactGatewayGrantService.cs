@@ -73,6 +73,7 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainKey))).ToLowerInvariant();
         var id = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
+        var budgetScope = await ResolveTaskBudgetScopeAsync(run, ct);
         var record = new GatewayRuntimeGrantRecord
         {
             Id = id,
@@ -97,12 +98,51 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
             OutputTokenMode = policy?.OutputTokenMode,
             RequireDeclaredParameters = policy?.RequireDeclaredParameters == true,
             MaxCalls = MaxCallsPerRun,
+            BudgetScopeId = budgetScope?.Id,
+            BudgetMaxOutputTokens = budgetScope?.MaxOutputTokens,
             ExpiresAt = expiresAt,
             CreatedAt = now,
         };
         await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
             .InsertOneAsync(record, cancellationToken: ct);
         return new(id, $"{baseUrl}/gw/v1", plainKey, model, caller, expiresAt);
+    }
+
+    private async Task<GatewayRuntimeBudgetScopeRecord?> ResolveTaskBudgetScopeAsync(
+        DesignArtifactRun run,
+        CancellationToken ct)
+    {
+        if (run.ArtifactType != DesignArtifactTypes.HtmlPpt) return null;
+        var currentId = run.Id;
+        string? rootOutlineRunId = null;
+        for (var depth = 0; depth < 16 && !string.IsNullOrWhiteSpace(currentId); depth++)
+        {
+            var compatibility = await _map.MdToPptRuns
+                .Find(item => item.Id == currentId && item.UserId == run.UserId)
+                .FirstOrDefaultAsync(ct);
+            if (compatibility is null) return null;
+            if (!string.IsNullOrWhiteSpace(compatibility.ParentOutlineRunId))
+            {
+                rootOutlineRunId = compatibility.ParentOutlineRunId.Trim();
+                break;
+            }
+            currentId = compatibility.ParentRunId;
+        }
+        if (string.IsNullOrWhiteSpace(rootOutlineRunId)) return null;
+        var root = await _map.MdToPptRuns.Find(item => item.Id == rootOutlineRunId
+                && item.UserId == run.UserId
+                && item.Op == "outline"
+                && item.Status == "done")
+            .FirstOrDefaultAsync(ct);
+        if (root is null || string.IsNullOrWhiteSpace(root.SourcePlanHash)) return null;
+        var now = DateTime.UtcNow;
+        return await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .Find(item => item.RootOutlineRunId == root.Id
+                          && item.UserId == run.UserId
+                          && item.SourcePlanHash == root.SourcePlanHash
+                          && item.Status == "active"
+                          && item.ExpiresAt > now)
+            .FirstOrDefaultAsync(ct);
     }
 
     public async Task<DesignArtifactGatewayGrantUsage> ObserveAsync(

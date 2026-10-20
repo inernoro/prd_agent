@@ -7,6 +7,33 @@ namespace PrdAgent.Core.LlmGateway;
 /// <summary>原生 HTTP 响应的一段字节；Data 仅在回调期间有效，不包含上游认证头。</summary>
 public sealed record GatewayNativeResponseChunk(int StatusCode, string ContentType, ReadOnlyMemory<byte> Data);
 
+/// <summary>原生请求全部协议与模型上限生效后、真正发送前的可核验预算输入。</summary>
+public record GatewayPhysicalAdmissionContext(
+    string RequestId,
+    int RequestBodyUtf8Bytes,
+    int EffectiveMaxOutputTokens,
+    string LogicalModelPublicId,
+    string Provider,
+    string Model,
+    string? OfferingId);
+
+public sealed record GatewayNativeAdmissionContext(
+    string RequestId,
+    int RequestBodyUtf8Bytes,
+    int EffectiveMaxOutputTokens,
+    string LogicalModelPublicId,
+    string Provider,
+    string Model,
+    string? OfferingId)
+    : GatewayPhysicalAdmissionContext(
+        RequestId,
+        RequestBodyUtf8Bytes,
+        EffectiveMaxOutputTokens,
+        LogicalModelPublicId,
+        Provider,
+        Model,
+        OfferingId);
+
 /// <summary>
 /// LLM Gateway 统一响应模型
 /// </summary>

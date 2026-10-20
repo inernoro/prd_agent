@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -500,18 +501,29 @@ public static class GatewayHttpEndpoints
             {
                 var resolution = await gateway.ResolveModelAsync(request.AppCallerCode, request.ModelType,
                     request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, token);
-                Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null;
+                Func<GatewayNativeAdmissionContext, CancellationToken, Task<GatewayRawResponse?>>? admit = null;
+                IGatewayRuntimeGrantCallCounter? runtimeCounter = null;
                 if (runtimeGrant is not null)
                 {
-                    admit = async admissionToken =>
+                    runtimeCounter = services.GetService<IGatewayRuntimeGrantCallCounter>();
+                    admit = async (context, admissionToken) =>
                     {
-                        var counter = services.GetService<IGatewayRuntimeGrantCallCounter>();
-                        if (counter is null)
+                        if (runtimeCounter is null)
                             return GatewayRawResponse.Fail(
                                 "GATEWAY_RUNTIME_GRANT_ADMISSION_UNAVAILABLE",
                                 "运行时授权计数服务不可用",
                                 StatusCodes.Status503ServiceUnavailable);
-                        var admission = await counter.TryReserveAsync(runtimeGrant, admissionToken);
+                        var admission = await runtimeCounter.TryReserveAsync(
+                            runtimeGrant,
+                            new GatewayRuntimeGrantCallRequest(
+                                context.RequestId,
+                                context.RequestBodyUtf8Bytes,
+                                context.EffectiveMaxOutputTokens,
+                                context.LogicalModelPublicId,
+                                context.Provider,
+                                context.Model,
+                                context.OfferingId),
+                            admissionToken);
                         return admission.Allowed
                             ? null
                             : GatewayRawResponse.Fail(
@@ -543,6 +555,13 @@ public static class GatewayHttpEndpoints
                     catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { disconnected = true; }
                     catch (ObjectDisposedException) { disconnected = true; }
                 }, admit, token);
+                if (runtimeGrant is not null && runtimeCounter is not null)
+                    await runtimeCounter.FinalizeAsync(
+                        runtimeGrant,
+                        requestId,
+                        outcome.TokenUsage,
+                        outcome.ErrorCode ?? (outcome.Success ? "succeeded" : "failed"),
+                        CancellationToken.None);
                 http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
                 if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
                     http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
@@ -1293,18 +1312,78 @@ public static class GatewayHttpEndpoints
                 await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
                 return;
             }
+            var routedRequest = promptPolicy.Request;
+            IGatewayRuntimeGrantCallCounter? taskBudget = null;
+            GatewayTaskBudgetRequest? taskReservation = null;
+            GatewayTaskBudgetPolicy? taskPolicy = null;
+            if (!string.IsNullOrWhiteSpace(routedRequest.Context?.TaskBudgetScopeId))
+            {
+                taskBudget = services.GetService<IGatewayRuntimeGrantCallCounter>();
+                var tenantId = routedRequest.Context?.TenantId ?? string.Empty;
+                var userId = routedRequest.Context?.UserId ?? string.Empty;
+                var runId = routedRequest.Context?.RunId ?? string.Empty;
+                taskPolicy = taskBudget is null ? null : await taskBudget.ResolveTaskPolicyAsync(
+                    routedRequest.Context!.TaskBudgetScopeId!, tenantId, userId, runId,
+                    routedRequest.AppCallerCode, CancellationToken.None);
+                if (taskPolicy is null)
+                {
+                    await WriteCompatErrorAsync(http, "任务额度保护不可用，未发送模型请求",
+                        "budget_error", "GATEWAY_TASK_BUDGET_INACTIVE", 409);
+                    return;
+                }
+                routedRequest = ApplyTaskBudgetOutputCap(routedRequest, taskPolicy.MaxOutputTokens);
+            }
+
             http.Response.Headers.ContentType = "text/event-stream";
             http.Response.Headers.CacheControl = "no-cache";
             http.Response.Headers["X-Accel-Buffering"] = "no";
 
-            var routedRequest = promptPolicy.Request;
             using var _ = OpenContextScope(accessor, routedRequest.Context, routedRequest.ModelType, routedRequest.AppCallerCode);
             GatewayCancellationLease? cancellation = null;
+            GatewayTokenUsage? taskUsage = null;
+            var taskOutcome = "unknown";
             try
             {
                 cancellation = services.GetService<GatewayCancellationRegistry>()?.Register(GetVerifiedTenantId(http), ingress.AppCallerCode, ingress.RequestId);
-                await foreach (var chunk in gateway.StreamAsync(routedRequest, cancellation?.Token ?? CancellationToken.None))
+                var stream = taskPolicy is null
+                    ? gateway.StreamAsync(routedRequest, cancellation?.Token ?? CancellationToken.None)
+                    : gateway.StreamWithAdmissionAsync(
+                        routedRequest,
+                        async (physical, admissionToken) =>
+                        {
+                            taskReservation = new GatewayTaskBudgetRequest(
+                                taskPolicy.ScopeId,
+                                routedRequest.Context?.TenantId ?? string.Empty,
+                                routedRequest.Context?.UserId ?? string.Empty,
+                                routedRequest.Context?.RunId ?? string.Empty,
+                                routedRequest.AppCallerCode,
+                                $"outline:{routedRequest.Context?.RunId}",
+                                physical.RequestId,
+                                physical.RequestBodyUtf8Bytes,
+                                physical.EffectiveMaxOutputTokens,
+                                physical.LogicalModelPublicId,
+                                physical.Provider,
+                                physical.Model,
+                                physical.OfferingId);
+                            var admission = await taskBudget!.TryReserveTaskAsync(taskReservation, admissionToken);
+                            return admission.Allowed
+                                ? null
+                                : GatewayStreamChunk.Fail(
+                                    "任务剩余额度或物理路由校验未通过，未发送模型请求",
+                                    admission.ErrorCode);
+                        },
+                        cancellation?.Token ?? CancellationToken.None);
+                await foreach (var chunk in stream)
                 {
+                    if (chunk.Type == GatewayChunkType.Done)
+                    {
+                        taskUsage = chunk.TokenUsage;
+                        taskOutcome = "succeeded";
+                    }
+                    else if (chunk.Type == GatewayChunkType.Error)
+                    {
+                        taskOutcome = chunk.ErrorCode ?? "failed";
+                    }
                     var data = "data: " + JsonSerializer.Serialize(chunk, jsonOpts) + "\n\n";
                     await http.Response.WriteAsync(data);
                     await http.Response.Body.FlushAsync();
@@ -1317,6 +1396,7 @@ public static class GatewayHttpEndpoints
             }
             catch (OperationCanceledException)
             {
+                taskOutcome = "cancelled-unknown";
                 http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
                 // 只有显式 cancel endpoint 会取消上游；普通客户端断开仍只停止写响应。
             }
@@ -1327,6 +1407,9 @@ public static class GatewayHttpEndpoints
             finally
             {
                 cancellation?.Dispose();
+                if (taskBudget is not null && taskReservation is not null)
+                    await taskBudget.FinalizeTaskAsync(
+                        taskReservation, taskUsage, taskOutcome, CancellationToken.None);
             }
         });
 
@@ -2029,6 +2112,15 @@ public static class GatewayHttpEndpoints
                 body.Remove(field);
         if (grant.OutputTokenMode == "omit")
             foreach (var field in new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }) body.Remove(field);
+        if (grant.BudgetMaxOutputTokens is > 0)
+        {
+            var requested = body["max_output_tokens"] is { } maxOutput
+                            && int.TryParse(maxOutput.ToString(), out var parsed)
+                            && parsed > 0
+                ? parsed
+                : grant.BudgetMaxOutputTokens.Value;
+            body["max_output_tokens"] = Math.Min(requested, grant.BudgetMaxOutputTokens.Value);
+        }
         if (grant.Temperature is { } temperature) body["temperature"] = temperature;
         if (grant.TopP is { } topP) { body.Remove("topP"); body["top_p"] = topP; }
         if (grant.ReasoningMode == "effort")
@@ -2051,6 +2143,32 @@ public static class GatewayHttpEndpoints
             body["pinned_platform_id"] = grant.PinnedPlatformId;
             body["pinned_model_id"] = grant.PinnedModelId;
         }
+    }
+
+    private static GatewayRequest ApplyTaskBudgetOutputCap(GatewayRequest request, int hardCap)
+    {
+        var body = request.GetEffectiveRequestBody().DeepClone().AsObject();
+        var requested = new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }
+            .Select(name => body[name] is { } node && int.TryParse(node.ToString(), out var value) && value > 0
+                ? value
+                : int.MaxValue)
+            .Min();
+        foreach (var name in new[] { "max_completion_tokens", "max_output_tokens" }) body.Remove(name);
+        body["max_tokens"] = Math.Min(requested, hardCap);
+        return new GatewayRequest
+        {
+            AppCallerCode = request.AppCallerCode,
+            ModelType = request.ModelType,
+            ExpectedModel = request.ExpectedModel,
+            PinnedPlatformId = request.PinnedPlatformId,
+            PinnedModelId = request.PinnedModelId,
+            RequestBody = body,
+            Stream = request.Stream,
+            EnablePromptCache = request.EnablePromptCache,
+            TimeoutSeconds = request.TimeoutSeconds,
+            IncludeThinking = request.IncludeThinking,
+            Context = request.Context,
+        };
     }
 
     private static GatewayAuthorizationInputs GetVerifiedAuthorizationInputs(HttpContext context)
@@ -5487,6 +5605,7 @@ public static class GatewayHttpEndpoints
                 ProviderTaskId = source?.ProviderTaskId,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
+                TaskBudgetScopeId = source?.TaskBudgetScopeId,
                 ViewRole = source?.ViewRole,
                 DocumentChars = source?.DocumentChars,
                 DocumentHash = source?.DocumentHash,
@@ -5548,6 +5667,7 @@ public static class GatewayHttpEndpoints
                 ProviderTaskId = source?.ProviderTaskId,
                 GroupId = source?.GroupId,
                 UserId = source?.UserId,
+                TaskBudgetScopeId = source?.TaskBudgetScopeId,
                 ViewRole = source?.ViewRole,
                 DocumentChars = source?.DocumentChars,
                 DocumentHash = source?.DocumentHash,
