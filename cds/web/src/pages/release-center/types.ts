@@ -247,6 +247,7 @@ export interface SiteDraft {
   deployCommand: string;
   healthcheckUrl: string;
   strategyMode: ReleaseExecutionMode;
+  originalStrategy?: ReleaseStrategy;
   scriptFile?: string;
   ciWorkflowFile?: string;
   managedScript?: string;

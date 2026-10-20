@@ -989,6 +989,7 @@ function draftFromTarget(target: ReleaseTarget): SiteDraft {
     deployCommand: ssh?.deployCommand || '',
     healthcheckUrl: ssh?.healthcheckUrl || '',
     strategyMode: strategy.mode,
+    originalStrategy: strategy,
     scriptFile: strategy.scriptFile,
     ciWorkflowFile: strategy.ciWorkflowFile,
     managedScript: strategy.script,

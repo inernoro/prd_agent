@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { emptySiteDraft, releaseModeDefinitions, strategyFromDraft, applyDiscoveredStrategy } from '../../web/src/pages/release-center/SiteWizardDialog';
 import { EnvConfigSection } from '../../web/src/pages/release-center/EnvConfigSection';
-import type { CenterRow } from '../../web/src/pages/release-center/types';
+import type { CenterRow, ReleaseStrategyDiscovery } from '../../web/src/pages/release-center/types';
 
 describe('default project release UI', () => {
   it('offers the project standard file first and an explicit standalone fallback, not stack inference', () => {
@@ -13,9 +13,19 @@ describe('default project release UI', () => {
     expect(releaseModeDefinitions(null, draft).map(item => item.mode)).toEqual(['project-script', 'managed-script']);
     expect(strategyFromDraft(draft)).toEqual({ mode: 'project-script', scriptFile: 'cds-release.sh', ciWorkflowFile: 'ci.yml' });
   });
-  it('preserves a legacy target only while explicitly editing that target', () => {
-    const draft = { ...emptySiteDraft('project'), id: 'existing', strategyMode: 'generated-compose' as const };
-    expect(releaseModeDefinitions(null, draft).map(item => item.mode)).toEqual(['project-script', 'managed-script', 'generated-compose']);
+  it.each(['existing-script','generated-compose','generated-static'] as const)('preserves the opened %s option through unsaved mode changes', mode => {
+    const fields = { ...emptySiteDraft('project'), id: 'existing', strategyMode: mode, deployCommand:'./legacy.sh', composeFile:'legacy.yml', publicDirectory:'/srv/legacy', detectedFrom:['original'] };
+    const draft = {...fields,originalStrategy:strategyFromDraft(fields)};
+    const discovery = {candidates:[{mode,strategy:{mode,command:'./wrong.sh',composeFile:'wrong.yml',publicDirectory:'/wrong'}}]} as ReleaseStrategyDiscovery;
+    const expected = ['project-script', 'managed-script', mode];
+    expect(releaseModeDefinitions(null, draft).map(item => item.mode)).toEqual(expected);
+    for (const next of ['project-script','managed-script'] as const) {
+      const changed = applyDiscoveredStrategy(draft, {mode:next});
+      expect(releaseModeDefinitions(null, changed).map(item => item.mode)).toEqual(expected);
+      const option = releaseModeDefinitions(discovery,changed).find(item=>item.mode===mode)!;
+      const restored = applyDiscoveredStrategy(changed, option.strategy);
+      expect(strategyFromDraft(restored)).toEqual(strategyFromDraft(draft));
+    }
   });
   it('round-trips separately managed script bytes without silently trimming its body', () => {
     const script = '#!/bin/bash\n# separately reviewed\n\n';

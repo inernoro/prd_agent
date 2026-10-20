@@ -382,7 +382,7 @@ export function Field({ label, value, onChange, placeholder }: { label: string; 
 
 export function releaseModeDefinitions(
   discovery: ReleaseStrategyDiscovery | null,
-  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'> & Partial<Pick<SiteDraft, 'id' | 'strategyMode'>>,
+  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'> & Partial<Pick<SiteDraft, 'id' | 'strategyMode' | 'originalStrategy'>>,
 ): ReleaseStrategyCandidate[] {
   const detected = new Map((discovery?.candidates || []).map((candidate) => [candidate.mode, candidate]));
   const fallbacks: ReleaseStrategyCandidate[] = [
@@ -418,13 +418,16 @@ export function releaseModeDefinitions(
       requirements: ['远端安装 Git、Bash、Python 3 与项目构建依赖'],
     },
   ];
-  return fallbacks.filter((item) => item.mode === 'project-script' || item.mode === 'managed-script' || (draft.id && item.mode === draft.strategyMode))
-    .map((fallback) => detected.get(fallback.mode) || fallback);
+  return fallbacks.filter((item) => item.mode === 'project-script' || item.mode === 'managed-script' || (draft.id && item.mode === (draft.originalStrategy?.mode || draft.strategyMode)))
+    .map((fallback) => draft.id && draft.originalStrategy?.mode === fallback.mode
+      ? { ...fallback, strategy: draft.originalStrategy }
+      : detected.get(fallback.mode) || fallback);
 }
 
 export function applyDiscoveredStrategy(draft: SiteDraft, strategy: ReleaseStrategy): SiteDraft {
   return {
     ...draft,
+    originalStrategy: draft.originalStrategy || (draft.id ? strategyFromDraft(draft) : undefined),
     strategyMode: strategy.mode,
     scriptFile: strategy.scriptFile || draft.scriptFile,
     ciWorkflowFile: strategy.ciWorkflowFile || draft.ciWorkflowFile,
