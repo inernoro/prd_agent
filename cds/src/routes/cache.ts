@@ -20,6 +20,9 @@ import type { StateService } from '../services/state.js';
 import type { IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 
+// Security state is durable data even on installations that historically put it under CACHE_BASE.
+const protectedCacheName=(name:string)=>name.toLowerCase()==='database-passes';
+
 export interface CacheRouterDeps {
   stateService: StateService;
   shell: IShellExecutor;
@@ -90,7 +93,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
 
       for (const profile of profiles) {
         for (const mount of profile.cacheMounts || []) {
-          if (mount.kind === 'volume') continue;
+          if (mount.kind === 'volume' || protectedCacheName(path.relative(CACHE_BASE,path.resolve(CACHE_BASE,mount.hostPath)).split(path.sep)[0])) continue;
           let entry = pathToInfo.get(mount.hostPath);
           if (!entry) {
             entry = {
@@ -127,7 +130,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
       if (fs.existsSync(CACHE_BASE)) {
         const entries = fs.readdirSync(CACHE_BASE, { withFileTypes: true });
         for (const ent of entries) {
-          if (!ent.isDirectory()) continue;
+          if (!ent.isDirectory() || protectedCacheName(ent.name)) continue;
           if (profiles.some((profile) => profile.cacheMounts?.some((mount) =>
             mount.kind === 'volume' && mount.hostPath === ent.name))) continue;
           const full = path.join(CACHE_BASE, ent.name);
@@ -268,6 +271,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    */
   router.get('/cache/export', async (req, res) => {
     const name = String(req.query.name || '').trim();
+    if(protectedCacheName(name)){res.status(409).json({error:'数据库通行证包含持久账号回收与审计记录，不属于构建缓存。'});req.resume();return;}
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数（只允许字母数字和连字符）' });
       return;
@@ -316,6 +320,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
     // pipe 时会自动 resume。
     req.pause();
     const name = String(req.query.name || '').trim();
+    if(protectedCacheName(name)){res.status(409).json({error:'数据库通行证包含持久账号回收与审计记录，不属于构建缓存。'});req.resume();return;}
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
       // 按住之后提前返回要把流放开，否则上传方看到的是卡住而不是这条 400。
@@ -327,7 +332,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
     await shell.exec(`mkdir -p "${CACHE_BASE}"`);
 
     const { spawn } = await import('node:child_process');
-    const tar = spawn('tar', ['-xzf', '-', '-C', CACHE_BASE], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const tar = spawn('tar', ['-xzf', '-', '--exclude=database-passes', '-C', CACHE_BASE], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stderrBuf = '';
     tar.stderr.on('data', (chunk: Buffer) => { stderrBuf += chunk.toString(); });
 
@@ -359,6 +364,7 @@ export function createCacheRouter(deps: CacheRouterDeps): Router {
    */
   router.post('/cache/purge', async (req, res) => {
     const name = String(req.query.name || '').trim();
+    if(protectedCacheName(name)){res.status(409).json({error:'数据库通行证包含持久账号回收与审计记录，不属于构建缓存。'});req.resume();return;}
     if (!name || !/^[a-z0-9][a-z0-9-]*$/i.test(name)) {
       res.status(400).json({ error: '缺少或非法的 name 参数' });
       return;

@@ -76,6 +76,7 @@
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
+- [MyCDS 外网通行证 · 设计](./design.cds.public.pass.md) `design.cds.public.pass`
 - [CDS 角色化 Agent 一键上手范型 · 设计](./design.cds.agent-onboarding-harness.md) `design.cds.agent-onboarding-harness`
 - [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`

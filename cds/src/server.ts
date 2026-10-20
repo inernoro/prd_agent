@@ -635,11 +635,21 @@ function isSealedStorageRequest(req: express.Request): boolean {
   return [req.url, req.originalUrl].some((value) => normalizedSealedStoragePath(value) !== null);
 }
 
+function normalizedDatabasePassCredentialPath(value: unknown): string | null {
+  const pathname=String(value||'').split('?')[0].replace(/^\/_cds\/api\//i,'/api/').replace(/\/$/,'');
+  return /^\/api\/branches\/[^/]+\/resources\/[^/]+\/database-passes\/[a-f0-9]{20}\/credentials$/i.test(pathname)?pathname:null;
+}
+function isDatabasePassCredentialRequest(req: express.Request): boolean {
+  return [req.url,req.originalUrl].some(value=>normalizedDatabasePassCredentialPath(value)!==null);
+}
+
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
   if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
+    ?? normalizedDatabasePassCredentialPath(req.url)
+    ?? normalizedDatabasePassCredentialPath(raw)
     ?? '/api/cds-system/sealed-storage';
 }
 
@@ -1982,7 +1992,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
   app.use((req, res, next) => {
-    if (isSealedStorageRequest(req)) {
+    if (isSealedStorageRequest(req) || isDatabasePassCredentialRequest(req)) {
       (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
       (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
@@ -2356,7 +2366,7 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const suppressPreviewBody = isDatabasePassCredentialRequest(req) || [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
     const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     // Observe bytes without subscribing to `data`: a data listener starts the
     // request flowing before async authentication finishes, draining uploads

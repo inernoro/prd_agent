@@ -1,4 +1,8 @@
 import type { ReactNode } from 'react';
+import { databaseFailure, type DatabaseFailure } from '@/lib/databaseFailure';
+import { copyTextToClipboard } from '@/lib/clipboard';
+import { DatabaseExecutionNotice } from '@/components/branch/DatabaseExecutionNotice';
+import { DatabasePassPanel } from '@/components/branch/DatabasePassPanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Braces, CheckCircle2, Clock, Copy, Database, Eye, EyeOff, ExternalLink, GitBranch, GitPullRequest, HelpCircle, Loader2, Maximize2, Play, PowerOff, RefreshCw, Rocket, RotateCw, Search, Settings, Square, Table2, Terminal, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -771,28 +775,6 @@ function failureKeyLogLines(lines: string[], max = 8): string[] {
     }
   });
   return Array.from(new Set(selected)).slice(-max);
-}
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Browser permission policies can reject clipboard writes even on HTTPS.
-      // Fall through to the textarea path so the recovery button still works.
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
 }
 
 /**
@@ -4206,7 +4188,7 @@ function ResourceConsole({
                     }}
                   />
                 ) : null}
-                {detailTab === 'data' ? <ResourceDataPanel resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
+                {detailTab === 'data' ? <ResourceDataPanel key={`${selectedResource.branchId}:${selectedResource.id}:${selectedResource.runtime}`} resource={selectedResource} onWorkbenchDismiss={onWorkbenchDismiss} /> : null}
                 {detailTab === 'backups' ? (
                   <ResourceBackupsPanel
                     resource={selectedResource}
@@ -4300,10 +4282,25 @@ function ResourceConnection({
   const externalAddress = resource.externalUrl || resource.externalAccess?.address || '';
   const externalEnabled = resource.externalAccess?.enabled || resource.access === 'external';
   const dependentApps = resource.consumers || [];
+  const savedAllowlist = (resource.externalAccess?.allowlist || []).join('\n');
   const [allowlistDraft, setAllowlistDraft] = useState((resource.externalAccess?.allowlist || []).join('\n'));
   const [ttlDraft, setTtlDraft] = useState(resource.externalAccess?.expiresAt ? '120' : '120');
   const [connectionBusy, setConnectionBusy] = useState<'external' | 'internal' | null>(null);
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null);
+  const [externalError, setExternalError] = useState('');
+  const [sshTarget, setSshTarget] = useState('');
+  const [sshLocalPort, setSshLocalPort] = useState('13306');
+  const [sshGuide, setSshGuide] = useState<{ sshCommand: string; maskedConnectionString: string; localPort: number } | null>(null);
+  const [sshBusy, setSshBusy] = useState(false);
+  const infraLocalOnly = resource.source === 'infra';
+  const [tcpCapability, setTcpCapability] = useState<{ enabled: boolean; host: string; reason: string; passportEnabled?: boolean } | null>(null);
+  useEffect(() => {
+    setTcpCapability(null);
+    if (!resource.branchId || !infraLocalOnly) return;
+    let cancelled = false;
+    void apiRequest<{ enabled: boolean; host: string; reason: string; passportEnabled?: boolean }>(`/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/external-access`).then((data) => { if (!cancelled) setTcpCapability(data); }).catch(() => { if (!cancelled) setTcpCapability({ enabled: false, host: '', reason: '无法读取直连配置，请刷新后重试。' }); });
+    return () => { cancelled = true; };
+  }, [resource.branchId, resource.id, infraLocalOnly]);
   const canTemporaryExternal = resourcePermissionAllows(permissions, 'external-temporary-access');
   const canResetCredentials = resourcePermissionAllows(permissions, 'credentials-reset');
   const canInjectConnection = resourcePermissionAllows(permissions, 'connection-inject');
@@ -4333,20 +4330,49 @@ function ResourceConnection({
     },
     {
       label: '内部连接串（容器内）',
-      value: resource.connectionString || resource.internalUrl || '-',
+      value: externalEnabled ? resource.internalUrl || '-' : resource.connectionString || resource.internalUrl || '-',
       connectionScope: resource.source === 'infra' ? 'internal' as const : undefined,
       copyLabel: '复制容器内用',
       help: '只给同一 CDS 网络里的应用容器使用；本地电脑、DataGrip、redis-cli 不能直接使用。',
     },
-  ];
+  ].filter((row) => !infraLocalOnly || externalEnabled || !row.label.startsWith('外部'));
   useEffect(() => {
-    setAllowlistDraft((resource.externalAccess?.allowlist || []).join('\n'));
+    setExternalError('');
+    setSshGuide(null);
+    setConnectionMessage(null);
+    setSshLocalPort(resource.runtime === 'PostgreSQL' ? '15432' : resource.runtime === 'MongoDB' ? '27018' : resource.runtime === 'Redis' ? '16379' : '13306');
+    setAllowlistDraft(savedAllowlist);
     setTtlDraft(resource.externalAccess?.expiresAt ? '120' : '120');
-  }, [resource.id, resource.externalAccess?.allowlist, resource.externalAccess?.expiresAt]);
+  }, [resource.id, savedAllowlist, resource.externalAccess?.expiresAt]);
+  async function generateSshGuide(copyString = false): Promise<void> {
+    if (!resource.branchId) return;
+    setSshBusy(true);
+    setExternalError('');
+    setConnectionMessage(null);
+    try {
+      const result = await apiRequest<{ sshCommand: string; maskedConnectionString: string; connectionString: string; localPort: number }>(
+        `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/connection-string?scope=ssh&localPort=${encodeURIComponent(sshLocalPort)}&sshTarget=${encodeURIComponent(sshTarget)}`,
+      );
+      setSshGuide({ sshCommand: result.sshCommand, maskedConnectionString: result.maskedConnectionString, localPort: result.localPort });
+      if (copyString) { await onCopy(result.connectionString); setConnectionMessage('本地连接串已复制。请先在终端保持 SSH 隧道运行，再用数据库客户端连接。'); }
+    } catch (err) {
+      setSshGuide(null);
+      setExternalError(err instanceof ApiError ? err.message : String(err));
+    } finally { setSshBusy(false); }
+  }
+  async function toggleExternal(input: ResourceExternalAccessInput): Promise<void> {
+    setExternalError('');
+    setConnectionMessage(null);
+    if (input.enabled && infraLocalOnly && (!input.allowlist?.length || !Number.isInteger(input.ttlMinutes) || input.ttlMinutes! < 1 || input.ttlMinutes! > 1440)) { setExternalError('请填写至少一个 IPv4/CIDR 白名单，并设置 1–1440 分钟有效期。'); return; }
+    try { await onToggleExternalAccess(input); setConnectionMessage(input.enabled ? '临时直连已开启，只有白名单 IP 可以连接，到期自动断开。' : '临时直连已关闭。'); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
+  }
   async function resetCredentials(): Promise<void> {
     const confirmResourceName = window.prompt(`重置会让 ${resource.displayName} 的旧连接失效。请输入资源名确认：${resource.serviceName}`);
     if (!confirmResourceName) return;
-    await onResetCredentials(confirmResourceName);
+    setExternalError('');
+    try { await onResetCredentials(confirmResourceName); }
+    catch (err) { setExternalError(err instanceof ApiError ? err.message : String(err)); }
   }
   async function copyConnectionString(scope: 'external' | 'internal'): Promise<void> {
     if (!resource.branchId) return;
@@ -4366,6 +4392,7 @@ function ResourceConnection({
   }
   return (
     <div className="space-y-3">
+      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={copyTextToClipboard} /> : null}
       {rows.map((row) => (
         <div key={row.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
           <div className="mb-1 text-xs text-muted-foreground">{row.label}</div>
@@ -4395,11 +4422,35 @@ function ResourceConnection({
         </div>
       ))}
       {connectionMessage ? <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs leading-5 text-muted-foreground">{connectionMessage}</div> : null}
-      <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="font-semibold">外部访问控制</div>
-            <div className="mt-1">数据库默认保持内部访问；开启公网 TCP 访问时必须填写 IP allowlist、临时有效期和凭据重置记录。</div>
+      {externalError ? <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">{externalError}</div> : null}
+      {infraLocalOnly ? (
+        <div className="space-y-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs leading-5">
+          <div className="font-semibold">本地数据库客户端 · SSH 隧道</div>
+          <p className="text-muted-foreground">也可使用已有 SSH 账号把数据库映射到本机；DataGrip、Navicat 等客户端连接本地地址。</p>
+          <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_10rem]">
+            <label className="grid gap-1">SSH 主机或配置别名<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" placeholder="user@server 或 SSH 别名" value={sshTarget} onChange={(event) => { setSshTarget(event.target.value); setSshGuide(null); }} /></label>
+            <label className="grid gap-1">本地端口<input className="h-8 min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-background px-2 font-mono" inputMode="numeric" value={sshLocalPort} onChange={(event) => { setSshLocalPort(event.target.value); setSshGuide(null); }} /></label>
+          </div>
+          <Button type="button" size="sm" variant="outline" disabled={sshBusy || !canInjectConnection} onClick={() => void generateSshGuide()}>
+            {sshBusy ? <Loader2 className="animate-spin" /> : <Terminal />}生成连接说明
+          </Button>
+          {!canInjectConnection ? <p className="text-muted-foreground">{resourcePermissionReason(permissions, 'connection-inject')}</p> : null}
+          {sshGuide ? <div className="space-y-2">
+            <p>1. 在本机终端执行并保持运行；关闭终端即可断开隧道：</p>
+            <pre className="overflow-auto rounded border border-[hsl(var(--hairline))] bg-background p-2 font-mono">{sshGuide.sshCommand}</pre>
+            <Button type="button" size="sm" variant="outline" onClick={() => void onCopy(sshGuide.sshCommand)}><Copy />复制 SSH 命令</Button>
+            <p>2. 客户端地址：127.0.0.1，端口：{sshGuide.localPort}。使用数据库账号密码；也可复制完整连接串。</p>
+            <code className="block break-all font-mono">{sshGuide.maskedConnectionString}</code>
+            <Button type="button" size="sm" variant="outline" disabled={sshBusy} onClick={() => void generateSshGuide(true)}><Copy />复制本地连接串</Button>
+          </div> : null}
+        </div>
+      ) : null}
+      {(!tcpCapability?.passportEnabled || !['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) || externalEnabled) ? <div className="grid gap-2 rounded-md border border-warn/25 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">临时 TCP 直连</div>
+            <div className="mt-1">填写白名单 IP 和有效期后，本地数据库工具可直接连接。到期会断开已有连接并关闭入口，数据库账号密码沿用当前配置。</div>
+            {infraLocalOnly ? <div className="mt-1">{tcpCapability?.enabled ? `直连主机：${tcpCapability.host}；网络需能访问该主机。Cloudflare HTTPS 预览域名不承载数据库 TCP。` : tcpCapability?.reason || '正在读取实例直连配置…'}</div> : null}
             {resource.externalAccess?.expiresAt ? <div className="mt-1 font-mono">有效期至 {resource.externalAccess.expiresAt}</div> : null}
             {resource.externalAccess?.allowlist && resource.externalAccess.allowlist.length > 0 ? (
               <div className="mt-1 font-mono">
@@ -4417,7 +4468,7 @@ function ResourceConnection({
             type="button"
             size="sm"
             variant="outline"
-            disabled={externalBusy || !canTemporaryExternal}
+            disabled={externalBusy || !canTemporaryExternal || (!externalEnabled && infraLocalOnly && !tcpCapability?.enabled)}
             title={!canTemporaryExternal ? resourcePermissionReason(permissions, 'external-temporary-access') : undefined}
             onClick={() => {
               const allowlist = allowlistDraft
@@ -4425,7 +4476,7 @@ function ResourceConnection({
                 .map((item) => item.trim())
                 .filter(Boolean);
               const ttlMinutes = Number(ttlDraft);
-              void onToggleExternalAccess({
+              void toggleExternal({
                 enabled: !externalEnabled,
                 ttlMinutes: !externalEnabled && Number.isFinite(ttlMinutes) && ttlMinutes > 0 ? ttlMinutes : undefined,
                 allowlist,
@@ -4433,32 +4484,34 @@ function ResourceConnection({
             }}
           >
             {externalBusy ? <Loader2 className="animate-spin" /> : externalEnabled ? <PowerOff /> : <ExternalLink />}
-            {externalEnabled ? '关闭公网' : '临时开启'}
+            {externalEnabled ? '关闭直连' : '临时开启'}
           </Button>
         </div>
-        <div className="grid gap-2 md:grid-cols-[8.75rem_minmax(0,1fr)]">
-          <label className="grid gap-1">
-            <span className="text-[0.6875rem] text-warn/80 /80">有效期（分钟）</span>
+        <div className="grid items-start gap-3 md:grid-cols-2">
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="text-[0.6875rem] text-warn/80">有效期（分钟，开启时生效）</span>
             <input
               value={ttlDraft}
               onChange={(event) => setTtlDraft(event.target.value)}
-              className="h-8 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
+              className="h-10 w-full min-w-0 rounded-md border border-warn/30 bg-background px-2 font-mono text-xs outline-none focus:border-warn"
               inputMode="numeric"
               placeholder="120"
+              type="number" min={1} max={1440} step={1}
             />
           </label>
-          <label className="grid gap-1">
-            <span className="text-[0.6875rem] text-warn/80 /80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
+          <label className="flex min-w-0 flex-col gap-1">
+            <span className="text-[0.6875rem] text-warn/80">IP allowlist（必填，每行一个 IPv4/CIDR）</span>
             <textarea
               value={allowlistDraft}
               onChange={(event) => setAllowlistDraft(event.target.value)}
-              className="min-h-[4rem] resize-y rounded-md border border-warn/30 bg-background px-2 py-1.5 font-mono text-xs outline-none focus:border-warn"
+              className="h-10 min-h-10 w-full min-w-0 resize-y rounded-md border border-warn/30 bg-background px-2 py-2.5 font-mono text-xs outline-none focus:border-warn"
               placeholder="203.0.113.10/32"
+              rows={1}
               spellCheck={false}
             />
           </label>
         </div>
-      </div>
+      </div> : null}
       {resource.kind === 'database' ? (
         <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-3 text-xs leading-5">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -4499,8 +4552,12 @@ interface DbTableSummary {
 
 interface DbQueryResult {
   columns: string[];
-  rows: string[][];
+  rows: Array<Array<string | null>>;
   rowCount: number;
+  statement?: string;
+  resultSets?: DbQueryResult[];
+  output?: string;
+  truncated?: boolean;
 }
 
 interface WorkbenchCommandResult {
@@ -4777,7 +4834,7 @@ function CodeEditor({
         <pre
           aria-hidden
           className="pointer-events-none absolute inset-0 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-xs leading-5"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
         >
           {value ? highlightedCode(value, language) : <span className="text-muted-foreground/55">{placeholder || ''}</span>}
         </pre>
@@ -4785,7 +4842,7 @@ function CodeEditor({
           value={value}
           onChange={(event) => onChange(event.target.value)}
           className="relative z-10 w-full resize-y bg-transparent px-3 py-2 font-mono text-xs leading-5 text-transparent caret-foreground outline-none selection:bg-primary/20"
-          style={{ minHeight }}
+          style={{ minHeight: `${minHeight / 16}rem` }}
           spellCheck={false}
           placeholder={placeholder}
         />
@@ -4883,6 +4940,7 @@ function resultModeLabel(mode: WorkbenchResultMode): string {
 }
 
 function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: BranchResource; onWorkbenchDismiss?: () => void }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [databasesState, setDatabasesState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; databases: MongoDatabaseSummary[]; currentDatabase?: string; configuredDatabase?: string; message?: string }>({ status: 'idle', databases: [] });
   const [collectionsState, setCollectionsState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; collections: MongoCollectionSummary[]; database?: string; message?: string }>({ status: 'idle', collections: [] });
@@ -4897,7 +4955,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
   const [writeForm, setWriteForm] = useState<{ action: 'insertOne' | 'updateMany' | 'deleteMany'; collection: string; document: string; filter: string; update: string; confirm: string }>({
     action: 'updateMany', collection: '', document: '{\n  \n}', filter: '{\n  \n}', update: '{\n  "$set": {}\n}', confirm: '',
   });
-  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string }>({ status: 'idle' });
+  const [writeState, setWriteState] = useState<{ status: 'idle' | 'loading' | 'ok' | 'error'; result?: unknown; message?: string; failure?: DatabaseFailure }>({ status: 'idle' });
   const basePath = resource.branchId
     ? `/api/branches/${encodeURIComponent(resource.branchId)}/resources/${encodeURIComponent(resource.id)}/data/mongo`
     : '';
@@ -4924,7 +4982,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
         return nextDatabase;
       });
     } catch (err) {
-      setDatabasesState({ status: 'error', databases: [], message: err instanceof ApiError ? err.message : String(err) });
+      setDatabasesState({ status: 'error', databases: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4942,7 +5000,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setSelectedCollection(nextCollection);
       setCommand(defaultMongoCommand(nextCollection));
     } catch (err) {
-      setCollectionsState({ status: 'error', collections: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCollectionsState({ status: 'error', collections: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4955,7 +5013,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setResultMode('table');
       setSelectedDocumentIndex(0);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
     }
   }, [basePath]);
 
@@ -4991,7 +5049,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       setSelectedDocumentIndex(0);
       if (res.kind === 'output') void loadCollections(selectedDatabase, res.collection || selectedCollection);
     } catch (err) {
-      setCommandState({ status: 'error', documents: [], message: err instanceof ApiError ? err.message : String(err) });
+      setCommandState({ status: 'error', documents: [], message: databaseFailure(err, 'mongo').summary });
       setResultMode('output');
     }
   }
@@ -5022,7 +5080,7 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
       void loadDocuments(selectedDatabase, coll);
       void loadCollections(selectedDatabase, coll);
     } catch (err) {
-      setWriteState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      setWriteState({ status: 'error', failure: databaseFailure(err, 'mongo') });
     }
   }
 
@@ -5051,9 +5109,9 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">数据库 / collection</div>
-                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={resource.displayName}>{resource.displayName} :{resource.port || resource.containerPort || '?'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={databasesState.status === 'loading'} onClick={() => void loadDatabases()}>
                   <RefreshCw className={databasesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5125,8 +5183,8 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
             </div>
           </aside>
 
-          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
-            <section className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-background/30">
+          <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_auto_minmax(0,1fr)]">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
               <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">MongoDB Console<span className="ml-1.5 rounded-sm bg-muted px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">只读</span></div>
@@ -5171,6 +5229,9 @@ function MongoResourceDataPanel({ resource, onWorkbenchDismiss }: { resource: Br
               </div>
             </section>
 
+            <div className="shrink-0" data-testid="mongo-write-feedback">
+              {writeState.status === 'error' ? <DatabaseExecutionNotice failure={writeState.failure || { summary: writeState.message || '写入未完成。', recovery: '请修正填写内容后重试。' }} showDiagnostics={canManageConsole} /> : null}
+            </div>
             <MongoDocumentsView
               state={commandState}
               collection={selectedCollection}
@@ -5258,9 +5319,7 @@ function MongoStructuredWritePanel({
             执行写入
           </Button>
         </div>
-        {state.status === 'error' ? (
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[0.6875rem] text-destructive">{state.message}</div>
-        ) : state.status === 'ok' ? (
+        {state.status === 'ok' ? (
           <pre className="max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-background/40 p-2 font-mono text-[0.6875rem] leading-5">{JSON.stringify(state.result, null, 2)}</pre>
         ) : null}
       </div>
@@ -5669,7 +5728,7 @@ function quoteSqlTableName(resource: BranchResource, table: DbTableSummary): str
   return `\`${table.name.replace(/`/g, '``')}\``;
 }
 
-type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string };
+type DbResultState = { status: 'idle' | 'loading' | 'ok' | 'error'; result?: DbQueryResult; message?: string; failure?: DatabaseFailure; batchWrite?: boolean };
 
 /**
  * 只读语句头。**必须与后端 src/services/sql-statement-policy.ts 的 READ_STATEMENT_HEADS
@@ -5683,7 +5742,7 @@ const READ_STATEMENT_HEADS = ['select', 'show', 'describe', 'desc', 'explain', '
  * 逐字一致**（守卫测试比对两边源码）：两边不一致就会出现「前端当读发过去、后端当写
  * 拒绝」或反过来的死语句。
  */
-const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock)\b/i;
+const WRITE_KEYWORDS_IN_READ_PATH = /\b(insert|update|delete|drop|alter|create|truncate|replace|grant|revoke|call|lock|unlock|into)\b/i;
 
 /**
  * 与后端 stripSqlComments(sql, { maskLiterals: true, dialect }) 同一套扫描：
@@ -5706,14 +5765,25 @@ function stripSqlCommentsAndLiterals(sql: string, hashStartsComment = false): st
       if (ch === quote) quote = null;
       continue;
     }
+    if (!hashStartsComment && ch === '$' && !/[A-Za-z0-9_$\u0080-\uffff]/.test(sql[i-1] || ' ')) {
+      const tag=sql.slice(i).match(/^\$(?:[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*)?\$/)?.[0];
+      if(tag){
+        const close=sql.indexOf(tag,i+tag.length),end=close<0?sql.length:close+tag.length;
+        out += true ? "'"+' '.repeat(end-i)+"'" : sql.slice(i,end);i=end-1;continue;
+      }
+    }
     if (ch === "'" || ch === '"' || ch === '`') { quote = ch; out += ch; continue; }
     if (ch === '/' && next === '*') {
-      const end = sql.indexOf('*/', i + 2);
-      i = end === -1 ? sql.length : end + 1;
-      out += ' ';
-      continue;
+      let cursor=i+2,depth=1;
+      while(cursor<sql.length && depth){
+        if(!hashStartsComment && sql[cursor]==='/'&&sql[cursor+1]==='*'){depth++;cursor+=2;}
+        else if(sql[cursor]==='*'&&sql[cursor+1]==='/'){depth--;cursor+=2;}
+        else cursor++;
+      }
+      i=cursor-1;out+=' ';continue;
     }
-    if ((ch === '-' && next === '-') || (ch === '#' && hashStartsComment)) {
+    const dashComment = ch === '-' && next === '-' && (!hashStartsComment || /[\x00-\x20]/.test(sql[i + 2] ?? '\uffff'));
+    if (dashComment || (ch === '#' && hashStartsComment)) {
       const end = sql.indexOf('\n', i);
       i = end === -1 ? sql.length : end;
       out += ' ';
@@ -5730,7 +5800,9 @@ function sqlCommandIsReadOnly(sql: string, runtime?: string): boolean {
   if (!READ_STATEMENT_HEADS.includes(head)) return false;
   // CTE 后面可以跟 DELETE/UPDATE，头是 with 不代表只读；但字面量/注释里的那些词不算
   // ——判据看代码本身，与后端同一条。`#` 只有 MySQL 才是注释。
-  return !WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'));
+  if (WRITE_KEYWORDS_IN_READ_PATH.test(stripSqlCommentsAndLiterals(body, runtime === 'MySQL'))) return false;
+  if (/\/\*!/.test(body)) return false;
+  return stripSqlCommentsAndLiterals(body, runtime === 'MySQL').split(';').filter((part) => part.trim()).every((part) => READ_STATEMENT_HEADS.includes(part.trim().match(/^([a-z]+)/i)?.[1]?.toLowerCase() || ''));
 }
 
 function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resource: BranchResource; adapter: ResourceWorkbenchAdapter; onWorkbenchDismiss?: () => void }): JSX.Element {
@@ -5741,6 +5813,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   const [sql, setSql] = useState('SELECT 1');
   const [resultState, setResultState] = useState<DbResultState>({ status: 'idle' });
   const [resultMode, setResultMode] = useState<WorkbenchResultMode>('table');
+  const [activeResult, setActiveResult] = useState(0);
   const [initSql, setInitSql] = useState('');
   const [migrationCommand, setMigrationCommand] = useState('');
   const [initBusy, setInitBusy] = useState<'init-sql' | 'migration' | null>(null);
@@ -5753,17 +5826,19 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   const selectedTable = tablesState.tables.find((table) => sqlTableKey(table) === selectedTableKey) || null;
   const sqlReadOnly = sqlCommandIsReadOnly(sql, resource.runtime);
 
-  const loadTables = useCallback(async () => {
+  const loadTables = useCallback(async (autoSelect = true) => {
     if (!basePath) return;
     setTablesState((current) => ({ ...current, status: 'loading', message: undefined }));
     try {
       const res = await apiRequest<{ database?: string; tables: DbTableSummary[] }>(`${basePath}/tables`);
       const tables = res.tables || [];
       setTablesState({ status: 'ok', tables, database: res.database });
-      setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
-      setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      if (autoSelect) {
+        setSelectedTableKey((current) => current || (tables[0] ? sqlTableKey(tables[0]) : ''));
+        setSql((current) => (!current || current === 'SELECT 1') && tables[0] ? `SELECT * FROM ${quoteSqlTableName(resource, tables[0])} LIMIT 50` : current);
+      }
     } catch (err) {
-      setTablesState({ status: 'error', tables: [], message: err instanceof ApiError ? err.message : String(err) });
+      setTablesState({ status: 'error', tables: [], message: databaseFailure(err, 'sql').summary });
     }
   }, [basePath, resource]);
 
@@ -5774,9 +5849,11 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       const schemaQs = table.schema ? `&schema=${encodeURIComponent(table.schema)}` : '';
       const preview = await apiRequest<DbQueryResult>(`${basePath}/preview?table=${encodeURIComponent(table.name)}${schemaQs}&limit=50`);
       setResultState({ status: 'ok', result: preview });
+      setActiveResult(0);
       setResultMode(preview.columns.length > 0 ? 'table' : 'output');
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure });
       setResultMode('output');
     }
   }, [basePath]);
@@ -5788,7 +5865,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
   useEffect(() => {
     if (!selectedTable) return;
     void loadTablePreview(selectedTable);
-  }, [loadTablePreview, selectedTable]);
+  }, [loadTablePreview, selectedTable?.name, selectedTable?.schema]);
 
   async function runInitializationSql(): Promise<void> {
     if (!canManageConsole || !basePath || !initSql.trim()) return;
@@ -5828,6 +5905,8 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
 
   async function runSqlCommand(): Promise<void> {
     if (!basePath || !sql.trim() || (!canManageConsole && !sqlReadOnly)) return;
+    if (resultState.status === 'loading') return;
+    setActiveResult(0);
     setResultState({ status: 'loading' });
     try {
       const readOnly = sqlReadOnly;
@@ -5836,14 +5915,14 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
         body: readOnly ? { sql } : { sql, confirmResourceName: resource.serviceName || resource.displayName },
       });
       setResultState({ status: 'ok', result });
-      setResultMode(result.columns.length > 0 ? 'table' : 'output');
-      if (!readOnly) {
-        void loadTables();
-        if (selectedTable) void loadTablePreview(selectedTable);
-      }
+      setResultMode(result.columns.length > 0 || result.resultSets?.length ? 'table' : 'output');
+      if (!readOnly) void loadTables(false);
     } catch (err) {
-      setResultState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      const partialResult = err instanceof ApiError ? (err.body as { partialResult?: DbQueryResult })?.partialResult : undefined;
+      const failure = databaseFailure(err, 'sql');
+      setResultState({ status: 'error', message: `${failure.summary} ${failure.recovery}`, failure, batchWrite: !sqlReadOnly, result: partialResult });
       setResultMode('output');
+      if (!sqlReadOnly) void loadTables(false);
     }
   }
 
@@ -5852,7 +5931,7 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
       <ResourceWorkbenchLauncher
         resource={resource}
         title={adapter.label}
-        description={`${adapter.treeLabel}，右上执行一条命令，右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
+        description={`${adapter.treeLabel}，右上执行 SQL，多个查询按页签查看，修改结果连续显示；右下查看${adapter.resultModes.map(resultModeLabel).join(' / ')}。`}
         onOpen={() => setWorkbenchOpen(true)}
       />
       <ResourceWorkbenchModal
@@ -5865,9 +5944,9 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
           <aside className="flex min-h-0 flex-col border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/25 lg:border-b-0 lg:border-r">
             <div className="border-b border-[hsl(var(--hairline))] px-3 py-3">
               <div className="flex items-center justify-between gap-2">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold">{adapter.treeLabel}</div>
-                  <div className="mt-0.5 font-mono text-[0.6875rem] text-muted-foreground">{resource.displayName} · {tablesState.database || '-'}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground" title={`${resource.displayName} · ${tablesState.database || '-'}`}>{resource.displayName} · {tablesState.database || '-'}</div>
                 </div>
                 <Button type="button" size="sm" variant="outline" disabled={tablesState.status === 'loading'} onClick={() => void loadTables()}>
                   <RefreshCw className={tablesState.status === 'loading' ? 'animate-spin' : ''} />
@@ -5911,8 +5990,8 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
           </aside>
 
           <main className="flex min-h-0 min-w-0 flex-col lg:grid lg:grid-rows-[15.3125rem_minmax(0,1fr)]">
-            <section className="border-b border-[hsl(var(--hairline))] bg-background/30">
-              <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
+            <section className="flex min-h-0 flex-col overflow-hidden border-b border-[hsl(var(--hairline))] bg-background/30">
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-semibold">{adapter.consoleLabel}</div>
                   <div className="mt-0.5 truncate font-mono text-[0.6875rem] text-muted-foreground">{selectedTable ? `${tablesState.database || '-'}.${selectedTable.schema ? `${selectedTable.schema}.` : ''}${selectedTable.name}` : tablesState.database || '-'}</div>
@@ -5922,8 +6001,10 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   执行
                 </Button>
               </div>
+              <p className="shrink-0 px-3 pt-2 text-[0.6875rem] text-muted-foreground">多条 SQL 使用同一连接执行；查询结果按页签展示，修改结果连续显示。遇错停止，已提交修改不会自动回滚。</p>
               <div
-                className="p-3"
+                className="min-h-0 flex-1 overflow-y-auto p-3"
+                style={{ overscrollBehavior: 'contain' }}
                 onKeyDown={(event) => {
                   if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
                     event.preventDefault();
@@ -5936,18 +6017,43 @@ function SqlResourceDataPanel({ resource, adapter, onWorkbenchDismiss }: { resou
                   value={sql}
                   onChange={setSql}
                   language="sql"
-                  minHeight={158}
+                  minHeight={120}
                   placeholder="SELECT * FROM users LIMIT 50"
                 />
               </div>
             </section>
 
-            <DbResultTable
-              state={resultState}
-              emptyLabel="选择表或执行 SQL 后在这里显示结果。"
-              viewMode={resultMode}
-              onViewModeChange={setResultMode}
-            />
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
+              {resultState.result?.resultSets?.length ? (
+                <div role="tablist" aria-label="SQL 查询结果" className="flex shrink-0 gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] px-3 py-1">
+                  {resultState.result.resultSets.map((item, index) => (
+                    <button key={index} role="tab" aria-selected={activeResult === index} title={item.statement} type="button"
+                      className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === index ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                      onClick={() => { setActiveResult(index); setResultMode('table'); }}>
+                      查询 {index + 1} · {item.rowCount} 行
+                    </button>
+                  ))}
+                  <button role="tab" aria-selected={activeResult === -1} type="button"
+                    className={`h-8 shrink-0 rounded px-3 text-xs ${activeResult === -1 ? 'bg-primary/15 text-foreground' : 'text-muted-foreground hover:bg-accent'}`}
+                    onClick={() => { setActiveResult(-1); setResultMode('output'); }}>执行记录</button>
+                </div>
+              ) : null}
+              {resultState.result?.truncated ? (
+                <div role="status" className="flex shrink-0 flex-wrap items-center gap-2 border-b border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
+                  <span>结果太多，已缩减显示。修改语句可能已执行，请先核对数据，避免重复提交。</span>
+                  <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => { setActiveResult(-1); setResultMode('output'); }}>查看已有执行记录</button>
+                </div>
+              ) : null}
+              {resultState.status === 'error' && resultState.failure ? <DatabaseExecutionNotice failure={resultState.failure} batchWrite={resultState.batchWrite} showDiagnostics={canManageConsole} /> : null}
+              <div className="grid min-h-0 flex-1">
+                <DbResultTable
+                  state={resultState.result?.resultSets?.[activeResult] ? { status: 'ok', result: resultState.result.resultSets[activeResult] } : resultState}
+                  emptyLabel="选择表或执行 SQL 后在这里显示结果。"
+                  viewMode={resultMode}
+                  onViewModeChange={setResultMode}
+                />
+              </div>
+            </div>
           </main>
           {canManageConsole ? <section className="border-t border-[hsl(var(--hairline))] bg-background/30 p-3 lg:col-span-2">
             <details className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 p-3">
@@ -6017,9 +6123,11 @@ function DbResultTable({
     ? state.result.rows.map((row) => Object.fromEntries(state.result!.columns.map((column, index) => [column, row[index] ?? null])))
     : [];
   const outputText = state.status === 'error'
-    ? state.message || '执行失败'
+    ? [state.result?.output, state.message || '执行失败'].filter(Boolean).join('\n\n')
     : state.result
-      ? state.result.columns.length > 0
+      ? state.result.output
+        ? `${state.result.output}${state.result.truncated ? '\n输出已截断。' : ''}`
+        : state.result.columns.length > 0
         ? `返回 ${state.result.rowCount} 行。`
         : `执行完成，返回 ${state.result.rowCount} 行。`
       : emptyLabel;
@@ -6067,7 +6175,7 @@ function DbResultTable({
                 >
                   {state.result!.columns.map((column, columnIndex) => (
                     <td key={`${column}-${columnIndex}`} className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-muted-foreground" title={row[columnIndex] || ''}>
-                      {row[columnIndex] || 'NULL'}
+                      {row[columnIndex] ?? 'NULL'}
                     </td>
                   ))}
                 </tr>

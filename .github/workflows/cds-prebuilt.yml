@@ -98,3 +98,37 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Build & push CDS preview runtime
+        uses: docker/build-push-action@v5
+        with:
+          context: ./cds
+          file: ./cds/Dockerfile.preview
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Smoke CDS preview runtime
+        run: |
+          docker run --rm -i --entrypoint sh \
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }} -e <<'OPENSSL_SMOKE'
+          set -eu
+          openssl_smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$openssl_smoke_dir"' EXIT
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+            -subj '/CN=CDS runtime smoke' -addext 'subjectAltName=IP:127.0.0.1' \
+            -keyout "$openssl_smoke_dir/key.pem" -out "$openssl_smoke_dir/cert.pem" >/dev/null 2>&1
+          openssl x509 -in "$openssl_smoke_dir/cert.pem" -noout -checkend 86400
+          OPENSSL_SMOKE
+          docker run -d --name cds-preview-smoke --memory 768m --cpus 1 \
+            -p 127.0.0.1:19900:9900 \
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}
+          python3 cds/scripts/smoke-preview-runtime.py http://127.0.0.1:19900
+
+      - name: Preview smoke logs
+        if: failure()
+        run: docker logs cds-preview-smoke 2>&1 || true
+
+      - name: Remove preview smoke container
+        if: always()
+        run: docker rm -f cds-preview-smoke 2>/dev/null || true

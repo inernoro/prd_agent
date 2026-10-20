@@ -51,6 +51,29 @@ x-cds-project:
   description: "CDS 预览实例（CDS 托管 CDS）：验收 CDS 自身改动，不执行真实部署"
   repo: https://github.com/inernoro/prd_agent.git
 
+x-cds-env-meta:
+  CDS_PREVIEW_USERNAME:
+    kind: required
+    hint: "预览实例专用用户名，保存在本项目的环境变量中"
+  CDS_PREVIEW_PASSWORD:
+    kind: required
+    hint: "预览实例专用密码，不复用父实例密码"
+
+x-cds-deploy-modes:
+  cds:
+    express:
+      label: "极速版（CI 预构建预览）"
+      image: "ghcr.io/inernoro/prd_agent/cds-preview:sha-${CDS_COMMIT_SHA}"
+      command: "cd /app/cds && node dist/index.js"
+      prebuilt: true
+      containerPort: 9900
+      env:
+        CDS_REPO_ROOT: /app
+        CDS_BIND_HOST: 0.0.0.0
+      buildScope:
+        - "cds/**"
+        - ".github/workflows/cds-prebuilt.yml"
+
 services:
   cds:
     image: node:20-slim
@@ -70,6 +93,7 @@ services:
     # 逼一次干净全装。正常情况（软链在）探测秒过、仍走快速增量，不牺牲常态速度。
     command: >-
       cd cds &&
+      (command -v openssl >/dev/null 2>&1 || (apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*)) &&
       corepack enable &&
       corepack prepare pnpm@10.28.2 --activate &&
       pnpm config set store-dir /pnpm/store &&
