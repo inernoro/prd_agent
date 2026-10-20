@@ -3492,7 +3492,7 @@ describe('Branch Routes', () => {
     readyArtifactFixture();
     const response = await request(server, 'POST', `/api/branches/image-without-source${endpoint}`, { commitSha: sha });
     expect((await waitForAcceptedRun(response)).status).toBe('running');
-    expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
+    expect(mock.commands.some(command => command.includes('git fetch'))).toBe(false);
     expect(mock.commands.filter(command => command.includes('git worktree add --detach'))).toEqual([]);
     expect(fs.existsSync(WorktreeService.deploymentSourceRootFor(stateService.getBranch('image-without-source')!.worktreePath))).toBe(false);
   });
