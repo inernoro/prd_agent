@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ProxyHandler } from '../../src/forwarder/proxy-handler.js';
+import { resolveRoute } from '../../src/forwarder/route-resolver.js';
 import { createDiagnosticRouter } from '../../src/forwarder/diagnostic-routes.js';
 import { RouteWatcher } from '../../src/forwarder/route-watcher.js';
 import { SchedulerService } from '../../src/services/scheduler.js';
@@ -44,6 +46,21 @@ function request(port: number, url: string, headers: Record<string, string> = {}
   });
 }
 
+function upgrade(port: number, url = '/ws', headers: Record<string, string> = {}) {
+  return new Promise<{ status: number; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: url, headers: {
+      host: 'file.example.invalid', connection: 'Upgrade', upgrade: 'websocket',
+      'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', 'sec-websocket-version': '13', ...headers,
+    } });
+    req.once('upgrade', (res, socket) => {
+      socket.destroy();
+      resolve({ status: res.statusCode || 0, headers: res.headers });
+    });
+    req.once('response', res => { res.resume(); resolve({ status: res.statusCode || 0, headers: res.headers }); });
+    req.once('error', reject); req.end();
+  });
+}
+
 async function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-preview-activity-'));
   cleanup.unshift(async () => { await flushAllJsonStateStores(); fs.rmSync(root, { recursive: true, force: true }); });
@@ -68,9 +85,14 @@ async function fixture() {
     if (req.url === '/api/long-generation') release = finish;
     else finish();
   });
+  upstream.on('upgrade', (req, socket) => {
+    arrivals.push(req.headers);
+    const accept = createHash('sha1').update(`${req.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  });
   const upstreamPort = await listen(upstream);
   const logs: string[] = [];
-  const proxy = new ProxyHandler({ upstreamTimeoutMs: 5000, httpLogStore: {
+  const proxy = new ProxyHandler({ upstreamTimeoutMs: 5000, masterPassthroughPort: upstreamPort, httpLogStore: {
     record: record => { logs.push(JSON.stringify(record)); },
     beginActive: record => { logs.push(JSON.stringify(record)); return 'active'; },
     completeActive: () => {},
@@ -83,7 +105,14 @@ async function fixture() {
   app.use((req, res) => { void proxy.handle(req, res, req.headers.host === 'file.example.invalid'
     ? { _id: 'file-route', host: 'file.example.invalid', upstreamPort, branchId: 'file',
       profileId: 'api', weight: 100, healthState: 'running' } : null); });
-  const port = await listen(http.createServer(app));
+  const server = http.createServer(app);
+  server.on('upgrade', (req, socket, head) => {
+    const route = resolveRoute([{ _id: 'file-route', host: 'file.example.invalid', upstreamPort,
+      branchId: 'file', profileId: 'api', weight: 100, healthState: 'running' }],
+    (req.headers.host ?? '').split(':')[0], req.url ?? '/');
+    void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route);
+  });
+  const port = await listen(server);
   const headers = probeRequestHeaders();
   const marker = headers[PROBE_MARKER_HEADER];
   scheduler.setPreviewActivitySource(() => readForwarderPreviewActivity(port), isTrustedProbeFingerprint, now - 1000);
@@ -105,6 +134,52 @@ async function growHostStats(port: number): Promise<void> {
 }
 
 describe('真实forwarder访问到master调度时钟', () => {
+  it.each(['user', 'forged-probe'] as const)('WS-first %s真实101握手按原路由活动保护FILE', async kind => {
+    const f = await fixture();
+    const marker = `${f.marker[0] === 'a' ? 'b' : 'a'}${f.marker.slice(1)}`;
+    const headers: Record<string, string> = kind === 'forged-probe'
+      ? { [PROBE_MARKER_HEADER]: marker, 'x-cds-poll': 'true' } : {};
+    const handshake = await upgrade(f.port, '/ws', headers);
+    expect(handshake.status).toBe(101);
+    expect(handshake.headers['sec-websocket-accept']).toBe('s3pPLMBiTxaQ9kYGzzhZRbK+xOo=');
+    expect(f.arrivals).toHaveLength(1);
+    expect(f.arrivals[0][PROBE_MARKER_HEADER]).toBeUndefined();
+    await f.scheduler.tick();
+    expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('ready');
+    expect(f.cooled).toEqual(['quiet']);
+    const receipt = await request(f.port, '/__forwarder/stats?view=preview-activity');
+    const branch = JSON.parse(receipt.body).previewActivity.branches[0];
+    expect(branch.branchId).toBe('file');
+    const observedAt = kind === 'user' ? branch.userAt : branch.markers[0].at;
+    expect(Date.parse(f.state.getBranch('file')!.lastAccessedAt!)).toBe(observedAt);
+  });
+
+  it('WS真probe只留指纹，既不续用户时间也不把原令牌转给上游', async () => {
+    const f = await fixture();
+    const previous = f.state.getBranch('file')!.lastAccessedAt;
+    expect((await upgrade(f.port, '/ws', f.headers)).status).toBe(101);
+    const receipt = await request(f.port, '/__forwarder/stats?view=preview-activity');
+    expect(receipt.body.includes(f.marker)).toBe(false);
+    expect(JSON.parse(receipt.body).previewActivity.branches).toEqual([{ branchId: 'file',
+      markers: [{ fingerprint: expect.any(String), at: expect.any(Number) }] }]);
+    expect(f.arrivals).toHaveLength(1);
+    expect(f.arrivals[0][PROBE_MARKER_HEADER]).toBeUndefined();
+    await f.scheduler.tick();
+    expect(f.cooled).toEqual(['file']);
+    expect(f.state.getBranch('file')!.lastAccessedAt).toBe(previous);
+  });
+
+  it('未知路由与内置passthrough的Upgrade不造预览用户活动', async () => {
+    const f = await fixture();
+    expect((await upgrade(f.port, '/ws', { host: 'unknown.example.invalid' })).status).toBe(503);
+    expect((await upgrade(f.port, '/_cds/api/stream')).status).toBe(101);
+    expect(f.arrivals).toHaveLength(1);
+    const receipt = await readForwarderPreviewActivity(f.port);
+    expect(receipt).toMatchObject({ branches: [] });
+    await f.scheduler.tick();
+    expect(f.cooled).toEqual(['file']);
+  });
+
   it('长业务响应尚未结束，开始转发的活动已经保护FILE不被LRU误选', async () => {
     const f = await fixture();
     let finished = false;
