@@ -257,8 +257,12 @@ export function addressCollisions(
   }
   for (const { b, oldHosts, primaryHosts, published } of proposed) {
     for (const host of published) {
-      const owner = occupied.get(host) || [...owners.get(host)!].find(id => id !== b.id);
-      if (owner && owner !== b.id && (!oldHosts.has(host) || primaryHosts.includes(host)))
+      const occupiedOwner = occupied.get(host);
+      // An alias on the main application also suppresses a named-service route
+      // owned by that same branch. Only a primary host may share its own alias.
+      const owner = occupiedOwner && (occupiedOwner !== b.id || !primaryHosts.includes(host))
+        ? occupiedOwner : [...owners.get(host)!].find(id => id !== b.id);
+      if (owner && (!oldHosts.has(host) || primaryHosts.includes(host)))
         collision.push({ host, branchId: owner, projectId: state.getBranch(owner)?.projectId, reason: "occupied" });
       else if (primaryHosts.includes(host) && /^(www|cds|admin|dashboard|switch|preview)\./.test(host))
         collision.push({ host, reason: "reserved" });

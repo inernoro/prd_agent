@@ -236,6 +236,25 @@ describe("地址设置真实请求链与隔离", () => {
     state.setBranchSubdomainAliases("foo-main", []);
     expect(() => addBranch("bar", "main")).not.toThrow();
   });
+  it("新分支不能抢占没有地址覆盖的普通服务入口，删除原分支后可创建", () => {
+    state.addBuildProfile({ id: "api-foo", projectId: "foo", name: "api", subdomain: "api", pathPrefixes: ["/api"], containerPort: 8080 } as any);
+    state.addProject({ id: "api", slug: "api", name: "api", kind: "git", legacyFlag: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Project);
+    expect(state.getProject("foo")!.previewAddresses).toBeUndefined();
+    expect(() => addBranch("api", "develop-foo")).toThrow(/地址.*占用/);
+    expect(state.getBranch("api-develop-foo")).toBeUndefined();
+    state.removeBranch("foo-develop");
+    expect(() => addBranch("api", "develop-foo")).not.toThrow();
+  });
+  it.each(["alias", "custom-domain"])("新服务入口不能与本分支已有占位重名（%s）", async (kind) => {
+    state.addBuildProfile({ id: "api-foo", projectId: "foo", name: "api", subdomain: "api", pathPrefixes: ["/api"], containerPort: 8080 } as any);
+    if (kind === "alias") state.setBranchSubdomainAliases("foo-main", ["new-api"]);
+    else state.setBranchCustomDomains("foo-main", ["new-api.preview.test"]);
+    const change = { ...draft, mode: "custom", customSubdomain: "new" };
+    const preview = await request("POST", `${endpoint}/preview`, change);
+    expect(preview.data.collisions.some((c: any) => c.branchId === "foo-main" && c.host === "new-api.preview.test")).toBe(true);
+    expect((await request("PUT", endpoint, { ...change, expectedVersion: version() })).status).toBe(409);
+    expect(state.getProject("foo")!.previewAddresses?.main).toBeUndefined();
+  });
   it("草稿预览不修改任何项目或写审计", async () => {
     const before = JSON.stringify(state.getProjects());
     const result = await request("POST", `${endpoint}/preview`, {

@@ -1277,7 +1277,7 @@ export class StateService {
     );
   }
 
-  /** A new default/named entry cannot take an existing explicitly assigned short address. */
+  /** A new default/named entry cannot take any existing published short address. */
   assertBranchPreviewAddressAvailable(entry: BranchEntry): void {
     const branches = this.getAllBranches();
     const project = this.getProject(entry.projectId);
@@ -1292,11 +1292,9 @@ export class StateService {
     const proposed = new Set(projectBranchPublishedHosts(entry, proposedProject, profiles, ['']));
     for (const owner of branches) {
       const ownerProject = this.getProject(owner.projectId);
-      const explicit = ownerProject?.previewAddresses && Object.hasOwn(ownerProject.previewAddresses, owner.branch)
-        ? ownerProject.previewAddresses[owner.branch] : undefined;
       const claimed = [
-        ...(explicit ? projectBranchPublishedHosts(owner, ownerProject,
-          this.getEffectiveProfilesForBranch(owner).map(p => resolveEffectiveProfile(p, owner)), ['']) : []),
+        ...projectBranchPublishedHosts(owner, ownerProject,
+          this.getEffectiveProfilesForBranch(owner).map(p => resolveEffectiveProfile(p, owner)), ['']),
         ...(owner.subdomainAliases || []).map(alias => `${alias.trim().toLowerCase()}.`),
       ];
       const conflict = claimed.find(host => proposed.has(host));
