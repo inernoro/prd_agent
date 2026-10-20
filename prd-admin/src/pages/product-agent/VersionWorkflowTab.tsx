@@ -355,7 +355,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   planNameRef.current = planName;
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
-  const [isAiPoc, setIsAiPoc] = useState(seed?.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no');
+  const [isAiPoc, setIsAiPoc] = useState(seed ? (seed.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no') : 'yes');
   const [remark, setRemark] = useState(seed?.remark ?? '');
   const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewSubmissionId ?? '');
   const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string }>>([]);
