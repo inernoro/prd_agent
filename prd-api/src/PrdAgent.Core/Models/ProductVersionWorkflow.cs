@@ -12,9 +12,12 @@ public class ProductInitiation
     public string? AppName { get; set; }
     public string ProjectType { get; set; } = "standard";
     public string? CustomerSource { get; set; }
+    public string? DemandSource { get; set; }
     public string PlanName { get; set; } = string.Empty;
     public string? RequirementDescription { get; set; }
     public string? DepartmentName { get; set; }
+    public string? OwnerName { get; set; }
+    public List<string> ProjectMemberNames { get; set; } = new();
     public string? PlanUrl { get; set; }
     public string VersionType { get; set; } = "minor";
     public List<string> RequirementIds { get; set; } = new();
@@ -43,6 +46,8 @@ public class ProductInitiation
     public string? ApprovalComment { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public string SourceType { get; set; } = "system";
+    /// <summary>无编号历史导入行的规范化指纹，重导时用于去重。</summary>
+    public string? ImportFingerprint { get; set; }
     public Dictionary<string, string> LegacyData { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -87,11 +92,21 @@ public class ProductRelease
     public string VersionType { get; set; } = "minor";
     public string? PlanUrl { get; set; }
     public string? DepartmentName { get; set; }
+    public string? DemandSource { get; set; }
+    public string? RequirementDescription { get; set; }
+    public string? OwnerName { get; set; }
+    public List<string> ProjectMemberNames { get; set; } = new();
+    public string? ContractParty { get; set; }
+    public string? Remark { get; set; }
+    public bool? IsGlobalOpen { get; set; }
+    public bool IsManualTCode { get; set; }
     public string? OwnerId { get; set; }
     public string OpenBrandScope { get; set; } = "上线全域开放";
     public List<string> RequirementIds { get; set; } = new();
     public List<string> TeamMemberIds { get; set; } = new();
     public DateTime? PlannedReleaseAt { get; set; }
+    /// <summary>预计培训时长，单位为分钟；不表示日期或时刻。</summary>
+    public int? PlannedTrainingMinutes { get; set; }
     public DateTime? ReleasedAt { get; set; }
     public string? AnnouncementUrl { get; set; }
     public string Status { get; set; } = "announcement_pending";
@@ -114,4 +129,20 @@ public class ReleaseFeatureItem
     /// <summary>变更类型：added / modified / deprecated / unchanged，见 FeatureChangeType</summary>
     public string ChangeType { get; set; } = FeatureChangeType.Unchanged;
     public string? ChangeNote { get; set; }
+}
+
+/// <summary>产品管理版本工作流的不可变导入/当前存档；不改写旧版本登记存档。</summary>
+public class ProductVersionWorkflowSnapshot
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = string.Empty;
+    public string SourceType { get; set; } = "history_import";
+    public string? SourceFileName { get; set; }
+    public int ImportedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public List<ProductInitiation> Initiations { get; set; } = new();
+    public List<ProductRelease> Releases { get; set; } = new();
+    public List<VersionRegistrationImportError> Errors { get; set; } = new();
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

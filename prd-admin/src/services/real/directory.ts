@@ -12,9 +12,9 @@ export interface DirectoryUser {
  * 按昵称/用户名搜索 MAP 用户（走 `/api/teams/search-users`，仅需登录）。
  * 用于选择处理人/干系人等场景——普通成员也能搜，不再误用管理员的 `/api/users` 列表。
  */
-export function searchDirectoryUsers(q?: string, limit = 50) {
+export function searchDirectoryUsers(q?: string, limit = 50, options?: { signal?: AbortSignal; timeoutMs?: number }) {
   const qs = new URLSearchParams();
   if (q && q.trim()) qs.set('q', q.trim());
   qs.set('limit', String(limit));
-  return apiRequest<{ items: DirectoryUser[] }>(`/api/teams/search-users?${qs.toString()}`, { method: 'GET' });
+  return apiRequest<{ items: DirectoryUser[] }>(`/api/teams/search-users?${qs.toString()}`, { method: 'GET', ...options });
 }

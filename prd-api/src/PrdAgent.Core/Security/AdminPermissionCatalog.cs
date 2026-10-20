@@ -316,6 +316,14 @@ public static class AdminPermissionCatalog
     public const string ProductAgentUse = "product-agent.use";
 
     /// <summary>
+    /// 版本号申领：仅访问产品管理的 T/V 申领与其必要评审链路，不包含其它产品管理页面。
+    /// </summary>
+    public const string ProductAgentVersionApply = "product-agent.version-apply";
+
+    /// <summary>仅在 T 号申领中复用其他申请人的已通过评审，不授予通用评审读取权限。</summary>
+    public const string ProductAgentVersionClaimTest = "product-agent.version-claim-test";
+
+    /// <summary>
     /// 产品管理-管理：自定义表单模板与流程定义、删除产品等管理操作
     /// </summary>
     public const string ProductAgentManage = "product-agent.manage";
@@ -497,6 +505,8 @@ public static class AdminPermissionCatalog
         new(PmAgentGlobal, "项目管理-全局总览", "跨全公司项目只读洞察看板（全局掌控视角，仅授予管理层）"),
 
         new(ProductAgentUse, "产品管理", "产品-版本-需求-功能-缺陷-客户全链路串联、知识图谱、知识库挂载"),
+        new(ProductAgentVersionApply, "版本号申领", "独立进入产品管理的内部/正式版本申领，选择全部产品并完成所需方案评审"),
+        new(ProductAgentVersionClaimTest, "申领测试", "T 号申领时可复用所有人的已通过方案；未开启仅可使用本人提交的方案，不跳过评审或来源防重"),
         new(ProductAgentManage, "产品管理-管理", "自定义表单模板与流程定义、删除产品等管理操作"),
         new(ProductAgentAdmin, "产品管理-管理层总览", "跨全部产品的聚合仪表盘/列表 + 全局表单/流程设置（管理层）"),
 

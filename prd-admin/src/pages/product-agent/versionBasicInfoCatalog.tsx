@@ -12,7 +12,15 @@ export function formatVersionBasicDate(value?: string | null) {
   if (!value) return DASH;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return DASH;
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+export function formatVersionTrainingMinutes(value?: number | null) {
+  return value != null && Number.isInteger(value) && value >= 0 ? `${value} 分钟` : DASH;
 }
 
 export function formatVersionBasicBool(value?: boolean | null) {
@@ -68,11 +76,13 @@ export function buildReleaseBasicInfoRows(
   productName?: string | null,
 ): VersionBasicInfoRow[] {
   const legacy = release.legacyData ?? {};
-  const owner = legacy['产品负责人']?.trim() || resolveUserName(release.ownerId);
+  const owner = release.ownerName?.trim() || legacy['产品负责人']?.trim() || resolveUserName(release.ownerId);
   const teamFromIds = release.teamMemberIds
     .map((id) => resolveUserName(id))
     .filter((name) => name && name !== DASH);
-  const teamMembers = teamFromIds.length > 0
+  const teamMembers = (release.projectMemberNames?.length ?? 0) > 0
+    ? release.projectMemberNames!.join('、')
+    : teamFromIds.length > 0
     ? teamFromIds.join('、')
     : legacy['项目组成员']?.trim() || DASH;
 
@@ -90,14 +100,18 @@ export function buildReleaseBasicInfoRows(
     { label: '项目类别', value: projectTypeLabel(release.projectType) },
     { label: '版本类别', value: scaleLabel(release.versionType) },
     { label: '产品立项方案名称', value: release.planName?.trim() || DASH },
+    { label: '需求来源', value: release.demandSource?.trim() || DASH },
+    { label: '项目需求描述', value: multiline(release.requirementDescription) },
     { label: '所属部门', value: release.departmentName?.trim() || DASH },
     { label: '产品负责人', value: owner || DASH },
     { label: '项目组成员', value: teamMembers },
     { label: '方案地址', value: externalLink(release.planUrl) },
     { label: '上线时间', value: formatVersionBasicDate(release.releasedAt ?? release.plannedReleaseAt) },
-    { label: '合同签订方', value: legacy['合同签订方']?.trim() || DASH },
+    { label: '预计培训时长', value: formatVersionTrainingMinutes(release.plannedTrainingMinutes) },
+    { label: '是否全域开放', value: formatVersionBasicBool(release.isGlobalOpen) },
+    { label: '合同签订方', value: release.contractParty?.trim() || legacy['合同签订方']?.trim() || DASH },
     { label: '当前开放品牌', value: release.openBrandScope?.trim() || DASH },
-    { label: '备注', value: multiline(legacy['备注']) },
+    { label: '备注', value: multiline(release.remark ?? legacy['备注']) },
   ];
 }
 
@@ -108,7 +122,7 @@ export function buildInitiationBasicInfoRows(
   productName?: string | null,
 ): VersionBasicInfoRow[] {
   const legacy = initiation.legacyData ?? {};
-  const owner = legacy['产品负责人']?.trim() || resolveUserName(initiation.primaryOwnerId ?? initiation.createdBy);
+  const owner = initiation.ownerName?.trim() || legacy['产品负责人']?.trim() || resolveUserName(initiation.primaryOwnerId ?? initiation.createdBy);
 
   return [
     { label: '产品', value: resolveVersionProductLabel(initiation, productName) },
@@ -116,6 +130,8 @@ export function buildInitiationBasicInfoRows(
     { label: '立项号', value: <span className="font-mono text-cyan-200">{initiation.tCode?.trim() || DASH}</span> },
     { label: '版本类别', value: scaleLabel(initiation.versionType) },
     { label: '产品立项方案名称', value: initiation.planName?.trim() || DASH },
+    { label: '需求来源', value: initiation.demandSource?.trim() || DASH },
+    { label: '项目组成员', value: initiation.projectMemberNames?.join('、') || DASH },
     { label: '项目需求描述', value: multiline(initiation.requirementDescription) },
     { label: '所属部门', value: initiation.departmentName?.trim() || DASH },
     { label: '产品负责人', value: owner || DASH },
@@ -124,6 +140,8 @@ export function buildInitiationBasicInfoRows(
     { label: '第三稿会议时间', value: formatVersionBasicDate(initiation.thirdDraftMeetingAt) },
     { label: '立项时间（三稿通过）', value: formatVersionBasicDate(initiation.projectAt) },
     { label: '是否需要 UI 设计', value: formatVersionBasicBool(initiation.needUiDesign) },
+    { label: '是否属于 AI POC 项目', value: formatVersionBasicBool(initiation.isAiPoc) },
+    { label: '计划立项时间', value: formatVersionBasicDate(initiation.plannedProjectAt) },
     { label: '方案地址', value: externalLink(initiation.planUrl) },
     { label: '开发状态', value: initiation.developmentStatus?.trim() || DASH },
     { label: '备注', value: multiline(initiation.remark ?? legacy['备注']) },

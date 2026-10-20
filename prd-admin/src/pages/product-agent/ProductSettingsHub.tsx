@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { MarkdownViewer } from '@/components/file-preview/MarkdownViewer';
+import { Tabs } from '@/components/ui/Tabs';
 import { toast } from '@/lib/toast';
 import {
   listProducts, upsertGradeOption, deleteGradeOption,
@@ -36,16 +37,16 @@ import {
   DescTemplateManager,
   CategoryManager,
   RequirementTypeManager,
-  ApplicationAdminManager,
 } from './SettingsSection';
 import { WorkflowEditor } from './WorkflowTemplateSection';
 import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 import { useGradeOptions } from './gradeOptions';
+import { ProductPermissionsPanel, type ProductPermissionTab } from './ProductPermissionsPanel';
 
 type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb';
 
 const CATS: { key: SettingsCat; label: string; icon: typeof ShieldCheck; desc: string }[] = [
-  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '按角色分配产品管理内部各页面的访问权限' },
+  { key: 'perm', label: '权限', icon: ShieldCheck, desc: '菜单权限、功能权限与角色权限' },
   { key: 'product', label: '产品', icon: Boxes, desc: '产品类型与产品管理员指派' },
   { key: 'requirement', label: '需求', icon: ListChecks, desc: '需求的表单、流程、类型、优先级与严重程度' },
   { key: 'feature', label: '功能', icon: Puzzle, desc: '功能的表单、流程、优先级与严重程度' },
@@ -106,18 +107,21 @@ export function ProductSettingsHub() {
 
 // ════════════════════════ 权限 ════════════════════════
 
+const PERMISSION_TABS = [
+  { key: 'menu', label: '菜单权限' },
+  { key: 'function', label: '功能权限' },
+  { key: 'role', label: '角色权限' },
+];
+
 function PermissionPanel() {
+  const [tab, setTab] = useState<ProductPermissionTab>('menu');
   return (
-    <div className="flex flex-col gap-5">
-      <div className="rounded-xl border border-dashed border-token-subtle bg-token-nested p-4">
-        <div className="text-sm font-medium text-token-primary">按角色分配页面权限</div>
-        <div className="mt-1 text-xs leading-5 text-token-muted">
-          根据用户角色分配产品管理内部各页面（概览 / 产品 / 需求 / 功能 / 缺陷 / 客户 / 设置等）的访问权限。该细粒度授权矩阵建设中，将在后续版本上线；当前页面访问沿用 product-agent.use / manage / admin 三级权限。
-        </div>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-token-subtle pb-3">
+        <Tabs items={PERMISSION_TABS} activeKey={tab} onChange={(key) => setTab(key as ProductPermissionTab)} className="flex-wrap" />
       </div>
-      <div>
-        <div className="mb-2 text-sm font-medium text-token-primary">历史数据导入权限</div>
-        <ApplicationAdminManager />
+      <div className="min-h-0 flex-1 pt-5" aria-label={PERMISSION_TABS.find((item) => item.key === tab)?.label}>
+        <ProductPermissionsPanel tab={tab} />
       </div>
     </div>
   );

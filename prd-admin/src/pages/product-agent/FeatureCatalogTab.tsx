@@ -10,6 +10,7 @@ import { searchDirectoryUsers } from '@/services';
 import { listFeatures, listReleases } from '@/services/real/productAgent';
 import { useEffectiveWorkflow } from './DynamicForm';
 import { FeatureImportDialog } from './FeatureImportDialog';
+import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import {
   buildFeatureTree,
   collectDefaultExpandedIds,
@@ -116,6 +117,7 @@ export function FeatureCatalogTab({
   const [trackedOnly, setTrackedOnly] = useState(false);
   const [releaseId, setReleaseId] = useState('');
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showReleaseDialog, setShowReleaseDialog] = useState(false);
   const [userNames, setUserNames] = useState<Map<string, string>>(new Map());
   const { workflow } = useEffectiveWorkflow('feature', productId);
 
@@ -369,7 +371,7 @@ export function FeatureCatalogTab({
             {showReleaseLink && (
               <button
                 type="button"
-                onClick={() => navigate(`/product-agent/p/${productId}/release/new`)}
+                onClick={() => setShowReleaseDialog(true)}
                 className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-token-subtle px-3 text-xs text-token-muted hover-bg-soft"
               >
                 申领正式版本号
@@ -449,6 +451,7 @@ export function FeatureCatalogTab({
         </div>
       </div>
 
+      {showReleaseDialog && <ReleaseApplicationDialog productId={productId} onClose={() => setShowReleaseDialog(false)} onChanged={reload} />}
       {showImportDialog && (
         <FeatureImportDialog
           productId={productId}
