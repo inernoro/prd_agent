@@ -139,7 +139,7 @@ beforeEach(async () => {
       stateService: state,
       config: {
         previewDomain: "preview.test",
-        rootDomains: ["preview.test"],
+        rootDomains: ["preview.test", "secondary.test"],
       } as CdsConfig,
       probe,
       getEntries: (entry, root) => [
@@ -303,6 +303,14 @@ describe("地址设置真实请求链与隔离", () => {
     expect(
       (await request("GET", `${endpoint}/audit`)).data.records[0].action,
     ).toBe("rejected");
+  });
+  it("多个根域名的占用提示保留各自真实 host，不改写成相同地址", async () => {
+    const result = await request("POST", endpoint + "/preview", {
+      ...draft, mode:"custom", customSubdomain:"occupied",
+    });
+    expect(result.data.collisions.map((c: {host:string}) => c.host).sort()).toEqual([
+      "occupied.preview.test", "occupied.secondary.test",
+    ]);
   });
   it("被项目授权限制的调用者不能读取占用方项目详情", async () => {
     const result = await request(
