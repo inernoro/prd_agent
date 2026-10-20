@@ -123,7 +123,7 @@ export const menuList: MenuDef[] = [
     appKey: 'product-agent',
     label: '产品管理',
     icon: 'Boxes',
-    permissions: ['product-agent.use', 'product-agent.version-apply', 'product-agent.manage', 'product-agent.admin'],
+    permissions: ['product-agent.use', 'product-agent.version-apply', 'product-agent.version-claim-test', 'product-agent.manage', 'product-agent.admin'],
   },
   {
     appKey: 'review-agent',
@@ -314,6 +314,7 @@ export const allPermissions: PermissionDef[] = [
   { key: 'video-agent.use', label: '视频创作智能体', description: '文章转视频教程生成', category: 'use' },
   { key: 'product-agent.use', label: '产品管理 - 进入', description: '进入产品管理页面', category: 'use' },
   { key: 'product-agent.version-apply', label: '产品管理 - 版本号申领', description: '仅进入内部/正式版本申领，可选择全部产品并完成所需方案评审；不开放其它产品管理页面', category: 'use' },
+  { key: 'product-agent.version-claim-test', label: '申领测试', description: 'T 号申领可选择所有人的已通过方案；关闭时只可选择本人提交的方案，仍遵守一个评审一个 T、一个 T 一个 V', category: 'manage' },
   { key: 'product-agent.manage', label: '产品管理 - 管理', description: '管理产品配置与流程', category: 'manage' },
   { key: 'product-agent.admin', label: '产品管理 - 管理层总览', description: '查看跨产品汇总与全局设置', category: 'manage' },
   { key: 'review-agent.use', label: '产品管理 - 评审', description: '在产品管理内显示评审菜单，提交方案并查看自己的评审结果；需同时授予产品管理 - 进入', category: 'use' },

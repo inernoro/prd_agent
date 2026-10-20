@@ -225,7 +225,7 @@ export function createRelease(productId: string, body: {
   return apiRequest<ProductRelease>(`/api/product/products/${productId}/releases`, { method: 'POST', body });
 }
 export function listProductVersionReviewSources() {
-  return apiRequest<{ items: Array<{ id: string; title: string; fileName: string; completedAt?: string | null }> }>(
+  return apiRequest<{ items: Array<{ id: string; title: string; fileName: string; completedAt?: string | null }>; canUseAllReviews: boolean }>(
     '/api/product/version-workflow/review-sources',
   );
 }

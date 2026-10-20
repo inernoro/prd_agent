@@ -72,6 +72,10 @@ public class ReviewAgentController : ControllerBase
                || permissions.Contains(AdminPermissionCatalog.Super);
     }
 
+    // 申领测试只影响版本申领来源，不并入通用评审查看/管理权限。
+    private bool HasVersionClaimTestPermission() => User.HasClaim("permissions", AdminPermissionCatalog.ProductAgentVersionClaimTest)
+        || User.HasClaim("permissions", AdminPermissionCatalog.Super);
+
     private bool HasManagePermission()
     {
         var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
@@ -2178,16 +2182,14 @@ public class ReviewAgentController : ControllerBase
     public async Task<IActionResult> ListVersionRegistrationReviewSources(CancellationToken ct)
     {
         var userId = GetUserId();
-        var usedSubmissionIds = await _db.VersionRegistrations
-            .Find(x => x.ReviewSubmissionId != null && x.SourceType == VersionRegistrationSourceType.ReviewSubmission)
-            .Project(x => x.ReviewSubmissionId!)
-            .ToListAsync(ct);
+        var usedSubmissionIds = await ProductVersionClaimGuard.UsedReviewIdsAsync(_db);
+        var canUseAllReviews = HasVersionClaimTestPermission();
         var items = await _db.ReviewSubmissions
-            .Find(x => x.SubmitterId == userId && x.Status == ReviewStatuses.Done && x.IsPassed == true && !usedSubmissionIds.Contains(x.Id))
+            .Find(x => (canUseAllReviews || x.SubmitterId == userId) && x.Status == ReviewStatuses.Done && x.IsPassed == true && !usedSubmissionIds.Contains(x.Id))
             .SortByDescending(x => x.CompletedAt)
             .Project(x => new { x.Id, x.Title, x.FileName, x.IsPassed, x.CompletedAt })
             .ToListAsync(ct);
-        return Ok(ApiResponse<object>.Ok(new { items }));
+        return Ok(ApiResponse<object>.Ok(new { items, canUseAllReviews }));
     }
 
     /// <summary>读取公共系统—应用目录；首次使用时按已核对历史表初始化基础目录。</summary>
@@ -2412,14 +2414,14 @@ public class ReviewAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(request.ReviewSubmissionId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择一条已通过的产品评审记录"));
         var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.ReviewSubmissionId.Trim()).FirstOrDefaultAsync(ct);
-        if (submission == null || submission.SubmitterId != userId)
+        if (submission == null || !ProductVersionClaimPolicy.CanUseReview(userId, submission.SubmitterId, HasVersionClaimTestPermission()))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评审记录不存在或不属于当前申请人"));
         if (!CanUsePassedReviewForVersionRegistration(submission))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT,
                 submission.Status != ReviewStatuses.Done
                     ? "评审尚未完成，暂不能申领内部版本号"
                     : "仅评审通过的记录可以申领内部版本号"));
-        if (await _db.VersionRegistrations.Find(x => x.ReviewSubmissionId == submission.Id).AnyAsync(ct))
+        if (await ProductVersionClaimGuard.IsReviewUsedAsync(_db, submission.Id))
             return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "这条评审记录已申领过内部版本号"));
         if (!IsVersionRegistrationProjectType(request.ProjectType))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择项目类别"));
@@ -2464,7 +2466,10 @@ public class ReviewAgentController : ControllerBase
             CreatedBy = userId,
             CreatedByName = GetDisplayName(),
         };
-        await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
+        if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+                ProductVersionClaimPolicy.ReviewKey(submission.Id), "legacy-internal:" + record.Id))
+            return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "该评审方案已被申领或正在申领 T 号，请刷新后查看现有记录，不要重复提交"));
+        await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new { record, copyTemplate = VersionRegistrationCopyTemplate.Build(record) }));
     }
 
@@ -2523,6 +2528,11 @@ public class ReviewAgentController : ControllerBase
             || !request.PlannedReleaseAt.HasValue))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请补齐全域开放、需求来源、方案名称、方案地址、项目组成员和计划上线时间"));
 
+        var tCode = isManualT ? request.TCode!.Trim().ToUpperInvariant() : internalSource!.Code;
+        if (await _db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal
+                && x.ApplicationName == application.Name && x.TCode == tCode).AnyAsync(ct)
+            || await _db.ProductReleases.Find(x => x.AppName == application.Name && x.TCode == tCode).AnyAsync(ct))
+            return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已申领 V 号，请查看现有登记"));
         var record = new VersionRegistration
         {
             Kind = VersionRegistrationKind.Formal,
@@ -2531,7 +2541,7 @@ public class ReviewAgentController : ControllerBase
             SystemName = application.SystemName,
             ApplicationId = application.Id,
             ApplicationName = application.Name,
-            TCode = isManualT ? request.TCode!.Trim().ToUpperInvariant() : internalSource!.Code,
+            TCode = tCode,
             SourceType = isManualT ? VersionRegistrationSourceType.ManualT : VersionRegistrationSourceType.InternalRegistration,
             SourceInternalRegistrationId = internalSource?.Id,
             ProjectType = NormalizeProjectType(projectType),
@@ -2555,7 +2565,10 @@ public class ReviewAgentController : ControllerBase
             CreatedBy = userId,
             CreatedByName = GetDisplayName(),
         };
-        await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: ct);
+        if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+                ProductVersionClaimPolicy.ReleaseKey(application.Name, tCode), "legacy-formal:" + record.Id))
+            return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
+        await _db.VersionRegistrations.InsertOneAsync(record, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new { record, copyTemplate = VersionRegistrationCopyTemplate.Build(record) }));
     }
 

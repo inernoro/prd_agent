@@ -762,34 +762,17 @@ public class ProductAgentController : ControllerBase
             && !HasPermission(AdminPermissionCatalog.ProductAgentVersionApply))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要评审或版本申领权限才能复用已通过的评审记录"));
         var userId = GetUserId();
-        var usedInProduct = await _db.ProductInitiations.Find(x => !x.IsDeleted)
-            .Project(x => new { x.ReviewSubmissionId, x.ReviewAttempts }).ToListAsync();
-        var usedInRegistry = await _db.VersionRegistrations.Find(x => x.ReviewSubmissionId != null)
-            .Project(x => x.ReviewSubmissionId!).ToListAsync();
-        var used = usedInProduct
-            .SelectMany(x => new[] { x.ReviewSubmissionId }.Concat(x.ReviewAttempts?.Select(attempt => attempt.SubmissionId) ?? Enumerable.Empty<string?>()))
-            .Where(id => !string.IsNullOrWhiteSpace(id))
-            .Select(id => id!)
-            .Concat(usedInRegistry).ToHashSet();
-        var items = await _db.ReviewSubmissions.Find(x => x.SubmitterId == userId && x.Status == ReviewStatuses.Done && x.IsPassed == true)
+        var used = await ProductVersionClaimGuard.UsedReviewIdsAsync(_db);
+        var canUseAllReviews = HasPermission(AdminPermissionCatalog.ProductAgentVersionClaimTest);
+        var items = await _db.ReviewSubmissions.Find(x => (canUseAllReviews || x.SubmitterId == userId) && x.Status == ReviewStatuses.Done && x.IsPassed == true)
             .SortByDescending(x => x.CompletedAt)
             .Project(x => new { x.Id, x.Title, x.FileName, x.CompletedAt })
             .ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items = items.Where(x => !used.Contains(x.Id)).ToList() }));
+        return Ok(ApiResponse<object>.Ok(new { items = items.Where(x => !used.Contains(x.Id)).ToList(), canUseAllReviews }));
     }
 
     private async Task<bool> IsVersionReviewSourceUsedAsync(string submissionId, string? excludedInitiationId = null)
-    {
-        var filter = Builders<ProductInitiation>.Filter;
-        var usedInProduct = filter.Eq(x => x.IsDeleted, false)
-            & filter.Or(
-                filter.Eq(x => x.ReviewSubmissionId, submissionId),
-                filter.ElemMatch(x => x.ReviewAttempts, attempt => attempt.SubmissionId == submissionId));
-        if (!string.IsNullOrWhiteSpace(excludedInitiationId))
-            usedInProduct &= filter.Ne(x => x.Id, excludedInitiationId);
-        return await _db.ProductInitiations.Find(usedInProduct).AnyAsync()
-            || await _db.VersionRegistrations.Find(x => x.ReviewSubmissionId == submissionId).AnyAsync();
-    }
+        => await ProductVersionClaimGuard.IsReviewUsedAsync(_db, submissionId, excludedInitiationId);
 
     [HttpPost("version-workflow/parse-message")]
     public async Task<IActionResult> ParseProductVersionMessage([FromBody] ParseVersionRegistrationMessageRequest request)
@@ -904,9 +887,11 @@ public class ProductAgentController : ControllerBase
                 && !HasPermission(AdminPermissionCatalog.ProductAgentVersionApply))
                 return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要评审或版本申领权限才能复用已通过的评审记录"));
             var sourceId = request.ReviewSubmissionId.Trim();
-            passedSource = await _db.ReviewSubmissions.Find(x => x.Id == sourceId && x.SubmitterId == userId).FirstOrDefaultAsync();
-            if (passedSource == null || passedSource.Status != ReviewStatuses.Done || passedSource.IsPassed != true)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择本人已通过的评审记录"));
+            passedSource = await _db.ReviewSubmissions.Find(x => x.Id == sourceId).FirstOrDefaultAsync();
+            if (passedSource == null || !ProductVersionClaimPolicy.CanUseReview(userId, passedSource.SubmitterId,
+                    HasPermission(AdminPermissionCatalog.ProductAgentVersionClaimTest))
+                || passedSource.Status != ReviewStatuses.Done || passedSource.IsPassed != true)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择当前申领权限允许使用的已通过评审记录"));
             if (await IsVersionReviewSourceUsedAsync(sourceId))
                 return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "这条评审记录已用于版本立项"));
             if (!string.IsNullOrWhiteSpace(passedSource.ResultId))
@@ -950,7 +935,10 @@ public class ProductAgentController : ControllerBase
             Status = passedSource == null ? "review_pending" : "decision_pending",
             CreatedBy = userId,
         };
-        await _db.ProductInitiations.InsertOneAsync(item);
+        if (passedSource != null && !await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+                ProductVersionClaimPolicy.ReviewKey(passedSource.Id), "initiation:" + item.Id))
+            return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "该评审方案已被申领或正在申领 T 号，请刷新后查看现有记录，不要重复提交"));
+        await _db.ProductInitiations.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(item));
     }
 
@@ -1030,8 +1018,9 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可更新该立项记录"));
-        var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.SubmissionId && x.SubmitterId == item.CreatedBy).FirstOrDefaultAsync();
-        if (submission == null)
+        var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.SubmissionId).FirstOrDefaultAsync();
+        if (submission == null || !ProductVersionClaimPolicy.CanUseReview(item.CreatedBy, submission.SubmitterId,
+                HasPermission(AdminPermissionCatalog.ProductAgentVersionClaimTest)))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "评审任务不存在或不属于当前申请人"));
         if (await IsVersionReviewSourceUsedAsync(submission.Id, id))
             return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "这条评审记录已用于版本立项"));
@@ -1064,7 +1053,12 @@ public class ProductAgentController : ControllerBase
         };
         if (existingAttemptIndex >= 0) attempts[existingAttemptIndex] = attempt;
         else attempts.Add(attempt);
-        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+        if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+                ProductVersionClaimPolicy.ReviewKey(submission.Id), "initiation:" + item.Id))
+            return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "该评审方案已被申领或正在申领 T 号，请刷新后查看现有记录，不要重复提交"));
+        var synced = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id
+                && (x.Status == "review_pending" || x.Status == "review_failed" || x.Status == "draft" || x.Status == "decision_pending")
+                && (x.TCode == null || x.TCode == ""),
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewSubmissionId, submission.Id)
                 .Set(x => x.ReviewScore, result == null ? null : result.TotalScore)
@@ -1072,6 +1066,8 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.Status, status)
                 .Set(x => x.ReviewAttempts, attempts)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (synced.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已处理，请刷新查看现有记录，不要重复同步评审"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -1108,7 +1104,7 @@ public class ProductAgentController : ControllerBase
             : new List<InitiationMeetingDraftRound>();
 
         var tCode = request.ReviewMeetingRequired ? await GenerateWorkflowCodeAsync("T", item.VersionType) : null;
-        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+        var decision = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && x.Status == "decision_pending" && (x.TCode == null || x.TCode == ""),
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
                 .Set(x => x.ExpectedMeetingAt, request.ExpectedMeetingAt)
@@ -1118,6 +1114,8 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.TCode, tCode)
                 .Set(x => x.Status, request.ReviewMeetingRequired ? "approved" : "owner_pending")
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (decision.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已处理，请刷新查看现有 T 号，不要重复提交"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         if (request.ReviewMeetingRequired)
             await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项评审通过，自动流转到已立项");
@@ -1179,12 +1177,14 @@ public class ProductAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品主负责人可审批"));
 
         var tCode = await GenerateWorkflowCodeAsync("T", item.VersionType);
-        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+        var approval = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && x.Status == "owner_pending" && (x.TCode == null || x.TCode == ""),
             Builders<ProductInitiation>.Update
                 .Set(x => x.TCode, tCode)
                 .Set(x => x.Status, "approved")
                 .Set(x => x.ApprovalComment, request.Comment?.Trim())
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (approval.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已审批，请刷新查看现有 T 号，不要重复提交"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项负责人审批通过，自动流转到已立项");
         return Ok(ApiResponse<object>.Ok(updated));
@@ -1307,7 +1307,7 @@ public class ProductAgentController : ControllerBase
             var usedTCode = hasManualT ? manualTCode : initiation!.TCode;
             if (string.IsNullOrWhiteSpace(usedTCode))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选立项尚未取得 T 号"));
-            var existing = await _db.ProductReleases.Find(x => x.ProductId == productId && x.TCode == usedTCode && !x.IsDeleted).FirstOrDefaultAsync();
+            var existing = await _db.ProductReleases.Find(x => (x.ProductId == productId || x.AppName == (productAppName ?? product.Name)) && x.TCode == usedTCode).FirstOrDefaultAsync();
             if (existing != null)
                 return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", $"该 T 号已申领上线号 {existing.VCode}"));
             var registered = string.IsNullOrWhiteSpace(productAppName) ? null
@@ -1376,7 +1376,10 @@ public class ProductAgentController : ControllerBase
             Status = "announcement_pending",
             CreatedBy = userId,
         };
-        await _db.ProductReleases.InsertOneAsync(item);
+        if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+                ProductVersionClaimPolicy.ReleaseKey(productAppName ?? product.Name, item.TCode!), "release:" + item.Id))
+            return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
+        await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(item));
     }
 

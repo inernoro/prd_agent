@@ -359,6 +359,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [remark, setRemark] = useState(seed?.remark ?? '');
   const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewSubmissionId ?? '');
   const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string }>>([]);
+  const [canUseAllReviews, setCanUseAllReviews] = useState(false);
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
   const [file, setFile] = useState<File | null>(null);
   const [meeting, setMeeting] = useState(false);
@@ -439,7 +440,10 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
 
   useEffect(() => {
     void listProductVersionReviewSources().then((res) => {
-      if (res.success) setReviewSources(res.data.items);
+      if (res.success) {
+        setReviewSources(res.data.items);
+        setCanUseAllReviews(res.data.canUseAllReviews);
+      }
     });
   }, []);
 
@@ -649,6 +653,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
           <option value="">新上传方案并进行 Agent 评审</option>
           {reviewSources.map((source) => <option key={source.id} value={source.id}>{source.title}</option>)}
         </Select>
+        <p className="mt-1.5 text-xs text-token-muted">{canUseAllReviews ? '申领测试已开启：可选择所有人的已通过方案。' : '仅可选择本人提交的已通过方案。'}每个评审方案只能申领一个 T，每个 T 只能申领一个 V。</p>
       </Field>
       <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
       {projectType === 'custom' && <Field label="客户来源 *"><Input value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}

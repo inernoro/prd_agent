@@ -3,6 +3,11 @@ import { allPermissions, getPermissionsByMenu, menuList } from '../authzMenuMapp
 import { NAV_REGISTRY } from '@/app/navRegistry';
 
 describe('产品管理评审菜单权限', () => {
+  it('申领测试可在角色中独立配置，但不会替代版本申领入口权限', () => {
+    expect(getPermissionsByMenu('product-agent').map((permission) => permission.key)).toContain('product-agent.version-claim-test');
+    expect(allPermissions.find((permission) => permission.key === 'product-agent.version-claim-test')?.category).toBe('manage');
+    expect(NAV_REGISTRY.find((route) => route.path === '/product-agent')?.permission).not.toContain('product-agent.version-claim-test');
+  });
   it('分别列出产品管理入口与评审子菜单的可分配权限', () => {
     expect(menuList.find((menu) => menu.appKey === 'product-agent')?.permissions)
       .toContain('product-agent.use');
