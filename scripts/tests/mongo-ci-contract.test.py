@@ -33,7 +33,7 @@ class MongoCiContractTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / WORKFLOW).read_text(encoding="utf-8")
 
-    def executable_run(self, server, name, working_directory=None):
+    def executable_run(self, server, name):
         """只读当前单行/竖线 run 形状，命令注释不能充当执行证据。"""
         steps = re.findall(
             rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - name:|\Z)", server,
@@ -41,8 +41,6 @@ class MongoCiContractTests(unittest.TestCase):
         self.assertEqual(len(steps), 1, name)
         step = steps[0]
         self.assertNotRegex(step, r"(?m)^        (?:if|continue-on-error):")
-        if working_directory is not None:
-            self.assertEqual(re.findall(r"(?m)^        working-directory: (.+)$", step), [working_directory])
         runs = re.findall(r"(?m)^        run: (.+)\n((?:          .*\n|\n)*)", step)
         self.assertEqual(len(runs), 1, name)
         value, body = runs[0]
@@ -106,11 +104,15 @@ class MongoCiContractTests(unittest.TestCase):
         self.assertEqual(self.executable_run(layout, "MongoDB CI compatibility contract"), command)
         self.assertLess(layout.index("uses: actions/checkout@v4"), layout.index(f"run: {command}"))
         self.assertNotIn(f"run: {command}", release)
+        required = block(self.workflow, "server-required", 2)
+        self.assertEqual(re.findall(r"(?m)^    (?:name|needs|if): (.+)$", required),
+                         ["Server Build & Test", "[changes, server-build]", "always()"])
+        self.assertNotRegex(required, r"(?m)^    (?:continue-on-error|services|defaults):")
+        self.assertEqual(self.executable_run(required, "MongoDB CI compatibility contract"), command)
+        self.assertLess(required.index("uses: actions/checkout@v4"), required.index(f"run: {command}"))
         server = block(self.workflow, "server-build", 2)
-        self.assertEqual(re.findall(r"(?m)^    name: (.+)$", server), ["Server Build & Test"])
-        self.assertEqual(self.executable_run(server, "MongoDB CI compatibility contract",
-                                             working_directory="${{ github.workspace }}"), command)
-        self.assertLess(server.index("uses: actions/checkout@v4"), server.index(f"run: {command}"))
+        self.assertEqual(re.findall(r"(?m)^    name: (.+)$", server), ["Server Build & Test (execution)"])
+        self.assertNotIn(f"run: {command}", server)
         server_filters = block(self.workflow, "server", 12)
         for path in (WORKFLOW, GUARD):
             self.assertIn(f"- '{path}'", server_filters)
@@ -141,7 +143,7 @@ class MongoCiContractTests(unittest.TestCase):
         self.assertIsNotNone(source)
         return textwrap.dedent(source.group(1))
 
-    def aggregate_result(self, script, layout_result, release_result="success"):
+    def aggregate_result(self, script, layout_result, release_result="success", overrides=None):
         main = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
         values = {main: "false", "needs.repository-layout.result": layout_result,
                   "needs.release-script-test.result": release_result}
@@ -151,6 +153,7 @@ class MongoCiContractTests(unittest.TestCase):
         for job in ("server-build", "admin-build", "desktop-check", "cds-build",
                     "design-runtime-test", "docs-readability", "acceptance-report-gate"):
             values[f"needs.{job}.result"] = "success"
+        values.update(overrides or {})
         def render(match):
             expression = match.group(1).strip()
             self.assertIn(expression, values)
@@ -175,6 +178,24 @@ class MongoCiContractTests(unittest.TestCase):
         self.assertNotEqual(mutant, script)
         # 摘掉真实最终消费者后，失败会实际漏成 exit0；上面的正常断言必须能抓住它。
         self.assertEqual(self.aggregate_result(mutant, "failure").returncode, 0)
+
+    def test_required_wrapper_shell_rejects_failure_and_illegal_skip(self):
+        required = block(self.workflow, "server-required", 2)
+        self.executable_run(required, "Forward server result")
+        source = re.search(r"(?ms)^      - name: Forward server result\n        run: \|\n(.*)\Z", required)
+        self.assertIsNotNone(source)
+        script = textwrap.dedent(source.group(1))
+        needed = "needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')"
+        accepted = {("success", "true", "success"), ("success", "false", "success"),
+                    ("success", "false", "skipped")}
+        for changes in ("success", "failure", "cancelled", "skipped"):
+            for needs_server in ("true", "false"):
+                for result in ("success", "failure", "cancelled", "skipped"):
+                    with self.subTest(changes=changes, needs_server=needs_server, result=result):
+                        actual = self.aggregate_result(script, "success", overrides={
+                            "needs.changes.result": changes, needed: needs_server, "needs.server-build.result": result})
+                        self.assertEqual(actual.returncode, 0 if (changes, needs_server, result) in accepted else 1,
+                                         actual.stdout + actual.stderr)
 
     def test_guard_process_rejects_real_old_runner_fixture_without_recursion(self):
         with tempfile.TemporaryDirectory(prefix="mongo-ci-contract-") as directory:

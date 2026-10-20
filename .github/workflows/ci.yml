@@ -384,7 +384,7 @@ jobs:
 
   # 后端服务构建和测试
   server-build:
-    name: Server Build & Test
+    name: Server Build & Test (execution)
     needs: changes
     if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     # 临时兼容：24.04 镜像 20261018.339.1 的 Azure 7.0 内核被 Mongo 8.0 拒绝。
@@ -409,10 +409,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: MongoDB CI compatibility contract
-        working-directory: ${{ github.workspace }}
-        run: python3 scripts/tests/mongo-ci-contract.test.py
 
       - name: MongoDB runtime versions
         run: |
@@ -508,6 +504,22 @@ jobs:
           " "$trx" || echo "(failed to parse $trx)"
           done
         shell: bash
+
+  server-required:
+    name: Server Build & Test
+    needs: [changes, server-build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
+      - name: Forward server result
+        run: |
+          [[ "${{ needs.changes.result }}" == success &&
+             ( "${{ needs.server-build.result }}" == success ||
+               ( "${{ needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}" == false &&
+                 "${{ needs.server-build.result }}" == skipped ) ) ]]
 
   # Web 管理后台构建
   admin-build:
