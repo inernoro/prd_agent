@@ -29,6 +29,21 @@ class MongoCiContractTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / WORKFLOW).read_text(encoding="utf-8")
 
+    def executable_run(self, server, name):
+        """只读当前单行/竖线 run 形状，命令注释不能充当执行证据。"""
+        steps = re.findall(
+            rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - name:|\Z)", server,
+        )
+        self.assertEqual(len(steps), 1, name)
+        step = steps[0]
+        self.assertNotRegex(step, r"(?m)^        (?:if|continue-on-error):")
+        runs = re.findall(r"(?m)^        run: (.+)\n((?:          .*\n|\n)*)", step)
+        self.assertEqual(len(runs), 1, name)
+        value, body = runs[0]
+        source = body if value == "|" else value
+        return "\n".join(line.strip() for line in source.splitlines()
+                         if line.strip() and not line.lstrip().startswith("#"))
+
     def assert_server_contract(self, text):
         server = block(text, "server-build", 2)
         self.assertEqual(re.findall(r"(?m)^    runs-on: (.+)$", server), ["ubuntu-22.04"])
@@ -41,15 +56,13 @@ class MongoCiContractTests(unittest.TestCase):
             self.assertIn(required, mongo)
         self.assertIn("MONGODB_TEST_CONNECTION: mongodb://127.0.0.1:27017", server)
         self.assertIn("dotnet-version: ${{ env.DOTNET_VERSION }}", server)
-        self.assertIn("dotnet restore PrdAgent.sln", server)
-        self.assertIn("dotnet build PrdAgent.sln -c Release --no-restore", server)
-        self.assertEqual(re.findall(r'--filter "([^"]+)"', server),
+        self.assertEqual(self.executable_run(server, "Restore dependencies"), "dotnet restore PrdAgent.sln")
+        self.assertEqual(self.executable_run(server, "Build"), "dotnet build PrdAgent.sln -c Release --no-restore")
+        tests = self.executable_run(server, "Run tests (exclude integration and manual tests)")
+        self.assertEqual(re.findall(r'(?m)^--filter "([^"]+)"', tests),
                          ["Category!=Integration&Category!=Manual"])
-        self.assertIn("dotnet test PrdAgent.sln -c Release --no-build --verbosity detailed", server)
-        self.assertIn("set -o pipefail", server)
-        test_step = re.search(r"(?ms)^      - name: Run tests \(exclude integration and manual tests\)\n(.*?)(?=^      - name:)", server)
-        self.assertIsNotNone(test_step)
-        self.assertNotRegex(test_step.group(1), r"(?m)^        (?:if|continue-on-error):")
+        self.assertRegex(tests, r"(?m)^dotnet test PrdAgent[.]sln -c Release --no-build --verbosity detailed(?: |$)")
+        self.assertRegex(tests, r"(?m)^set -o pipefail$")
 
     def test_real_server_job_preserves_database_build_and_test_contract(self):
         self.assert_server_contract(self.workflow)
@@ -59,9 +72,23 @@ class MongoCiContractTests(unittest.TestCase):
                               ("runs-on: ubuntu-22.04", "runs-on: ubuntu-24.04"),
                               ("mongo:8.0", "mongo:7.0"),
                               ("--health-retries 20", "--health-retries 1"),
-                              ("Category!=Integration&Category!=Manual", "FullyQualifiedName~Smoke")):
+                              ("Category!=Integration&Category!=Manual", "FullyQualifiedName~Smoke"),
+                              ("run: dotnet restore PrdAgent.sln", "run: echo # dotnet restore PrdAgent.sln"),
+                              ("run: dotnet build PrdAgent.sln -c Release --no-restore",
+                               "run: echo # dotnet build PrdAgent.sln -c Release --no-restore")):
             with self.subTest(regression=after), self.assertRaises(AssertionError):
                 self.assert_server_contract(self.workflow.replace(before, after))
+
+    def test_commented_test_pipeline_is_rejected(self):
+        pipeline = re.search(
+            r"(?ms)^      - name: Run tests \(exclude integration and manual tests\)\n        run: \|\n(.*?)(?=^        shell:)",
+            self.workflow,
+        )
+        self.assertIsNotNone(pipeline)
+        comments = "".join(f"          # {line.strip()}\n" for line in pipeline.group(1).splitlines())
+        mutant = self.workflow[:pipeline.start(1)] + comments + "          :\n" + self.workflow[pipeline.end(1):]
+        with self.assertRaises(AssertionError):
+            self.assert_server_contract(mutant)
 
     def test_guard_runs_without_mongo_and_both_input_paths_trigger_it(self):
         release = block(self.workflow, "release-script-test", 2)
