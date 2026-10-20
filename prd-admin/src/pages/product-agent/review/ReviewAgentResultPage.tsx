@@ -1,0 +1,922 @@
+// 产品管理专用视图：独立评审智能体保持原样；接口、弹框及流式组件继续复用。
+import { useSmartBack } from '@/hooks/useSmartBack';
+import { useReviewNavigation } from './reviewNavigation';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { ClipboardCheck, ArrowLeft, CheckCircle, XCircle, ChevronDown, ChevronUp, AlertTriangle, User, RefreshCw, Megaphone, History, Upload, Clock as ClockIcon } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
+import { useSseStream } from '@/lib/useSseStream';
+import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
+import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
+import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions, reuploadReviewAfterError, reuploadReviewOnFailure, getReviewSubmissionResults } from '@/services';
+import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services';
+import { reuploadReviewSubmission } from '@/services/real/reviewAgent';
+import { uploadAttachment } from '@/services/real/aiToolbox';
+import { useAuthStore } from '@/stores/authStore';
+import { AppealSubmitDialog } from '@/pages/review-agent/components/AppealSubmitDialog';
+import { AppealHistoryDrawer } from '@/pages/review-agent/components/AppealHistoryDrawer';
+import {
+  normalizeReviewStreamError,
+  shouldAutoStartReviewStream,
+  shouldPollReviewStatus,
+  shouldRecoverAfterReviewStreamClosed,
+} from '@/pages/review-agent/reviewStreamRecovery';
+
+const APPEAL_WINDOW_HOURS = 3;
+
+function canAppealLocal(s: ReviewSubmission | null): boolean {
+  if (!s) return false;
+  if (s.status !== 'Done') return false;
+  if (s.isPassed === true) return false;
+  if (s.appealStatus === 'Pending' || s.appealStatus === 'Approved' || s.appealStatus === 'Rejected') return false;
+  if (!s.completedAt) return false;
+  const deadline = new Date(s.completedAt).getTime() + APPEAL_WINDOW_HOURS * 3600_000;
+  return Date.now() < deadline;
+}
+
+function AppealMiniChip({ status }: { status?: 'Pending' | 'Approved' | 'Rejected' | null }) {
+  if (!status) return null;
+  if (status === 'Pending') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-[color:var(--accent-fg-blue)] border border-blue-500/30">
+        <ClockIcon className="w-2.5 h-2.5" /> 申诉中
+      </span>
+    );
+  }
+  if (status === 'Approved') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/15 text-[color:var(--accent-fg-violet)] border border-violet-500/30">
+        <CheckCircle className="w-2.5 h-2.5" /> 申诉成功
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-rose-900/30 text-[color:var(--accent-fg-danger)] border border-rose-700/40">
+      <XCircle className="w-2.5 h-2.5" /> 申诉驳回
+    </span>
+  );
+}
+
+function CheckboxBadge({ state }: { state: 'yes' | 'no' | 'none' }) {
+  if (state === 'yes') {
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-[color:var(--accent-fg-blue)]">是</span>;
+  }
+  if (state === 'no') {
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">否</span>;
+  }
+  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-muted">未勾</span>;
+}
+
+function verdictLabel(item: DimensionCheckItemResult): { text: string; tone: 'pass' | 'fail-soft' | 'fail-hard' } {
+  if (item.passed) return { text: '完成', tone: 'pass' };
+  if (item.involvedChecked === 'none') return { text: '未勾选', tone: 'fail-soft' };
+  if (item.involvedChecked === 'yes' && item.coverageChecked === 'none') return { text: '涉及未声明', tone: 'fail-soft' };
+  if (item.involvedChecked === 'yes' && item.coverageChecked === 'no') return { text: '自认未包含', tone: 'fail-soft' };
+  if (item.involvedChecked === 'yes' && item.coverageChecked === 'yes' && item.solutionFound === false) {
+    return { text: '勾了但找不到', tone: 'fail-hard' };
+  }
+  return { text: '未完成', tone: 'fail-soft' };
+}
+
+function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
+  const grouped = items.reduce<Record<string, DimensionCheckItemResult[]>>((acc, it) => {
+    const key = it.category || '其他';
+    (acc[key] ||= []).push(it);
+    return acc;
+  }, {});
+  const total = items.length;
+  const passed = items.filter(it => it.passed).length;
+
+  return (
+    <div
+      className="rounded-lg overflow-hidden"
+      style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+    >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-token-subtle">
+        <p className="text-xs text-token-secondary font-medium">全局规则检查清单（读取用户表格勾选 + 反作弊核查）</p>
+        <p className="text-xs tabular-nums text-token-muted">
+          通过 <span className="text-emerald-400">{passed}</span> / {total}
+        </p>
+      </div>
+      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 px-3 py-1.5 border-b border-token-subtle text-[10px] text-token-muted">
+        <div>检查项</div>
+        <div className="text-center">是否涉及</div>
+        <div className="text-center">方案是否包含</div>
+        <div className="text-center">评审判定</div>
+      </div>
+      <div className="divide-y divide-token-subtle">
+        {Object.entries(grouped).map(([cat, list]) => (
+          <div key={cat} className="px-3 py-2">
+            <p className="text-[11px] text-[color:var(--accent-fg-blue)] mb-1.5 font-medium">{cat}</p>
+            <div className="space-y-1">
+              {list.map(item => {
+                const v = verdictLabel(item);
+                const verdictBg = v.tone === 'pass'
+                  ? 'bg-emerald-500/15 text-emerald-300'
+                  : v.tone === 'fail-hard'
+                    ? 'bg-rose-500/20 text-rose-200'
+                    : 'bg-amber-500/15 text-[color:var(--accent-fg-amber)]';
+                return (
+                  <div
+                    key={item.id}
+                    className={`grid grid-cols-[1fr_auto_auto_auto] items-start gap-x-3 gap-y-0.5 rounded px-2 py-1.5 ${v.tone === 'fail-hard' ? 'bg-rose-500/5' : ''}`}
+                  >
+                    <div className="min-w-0">
+                      <p className={`text-xs leading-relaxed ${item.passed ? 'text-token-secondary' : 'text-token-secondary'}`}>
+                        {item.text}
+                      </p>
+                      {item.evidence && (
+                        <p className="text-[11px] text-token-muted mt-0.5 leading-relaxed">{item.evidence}</p>
+                      )}
+                    </div>
+                    <div className="text-center pt-0.5"><CheckboxBadge state={item.involvedChecked} /></div>
+                    <div className="text-center pt-0.5"><CheckboxBadge state={item.coverageChecked} /></div>
+                    <div className="text-center pt-0.5">
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap ${verdictBg}`}>{v.text}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function RawOutputDebug({ result }: { result: ReviewResult }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="mb-4 bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
+      <div className="flex items-start gap-2 mb-2">
+        <AlertTriangle className="w-4 h-4 text-[color:var(--accent-fg-amber)] flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-[color:var(--accent-fg-amber)]">评分解析失败</p>
+          {result.parseError && (
+            <p className="text-xs text-[color:var(--accent-fg-amber)] mt-0.5 font-mono break-all">{result.parseError}</p>
+          )}
+        </div>
+      </div>
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="text-xs text-[color:var(--accent-fg-amber)] hover:text-[color:var(--accent-fg-amber)] transition-colors flex items-center gap-1"
+      >
+        {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        {expanded ? '收起' : '查看'} AI 原始输出（用于诊断）
+      </button>
+      {expanded && (
+        <pre className="mt-3 text-xs text-token-secondary bg-token-nested rounded p-3 overflow-auto max-h-64 whitespace-pre-wrap break-all">
+          {result.fullMarkdown || '（空）'}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+export function ReviewAgentResultPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const reviewNav = useReviewNavigation();
+  // 智能返回：弹栈回真正的上一页；深链直达无历史时兜底回列表
+  const goBack = useSmartBack(reviewNav.reviewHome);
+
+  const [submission, setSubmission] = useState<ReviewSubmission | null>(null);
+  const [result, setResult] = useState<ReviewResult | null>(null);
+  const [dimensionScores, setDimensionScores] = useState<ReviewDimensionScore[]>([]);
+  const [summary, setSummary] = useState('');
+  const [totalScore, setTotalScore] = useState<number | null>(null);
+  const [isPassed, setIsPassed] = useState<boolean | null>(null);
+  const [adjustmentLog, setAdjustmentLog] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [dimConfigs, setDimConfigs] = useState<ReviewDimensionConfig[]>([]);
+  const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
+  const [streaming, setStreaming] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const streamStartedSubmissionRef = useRef<string | null>(null);
+  const [rerunning, setRerunning] = useState(false);
+  const [showAppealDialog, setShowAppealDialog] = useState(false);
+  const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
+  const [reuploading, setReuploading] = useState(false);
+  const [reuploadError, setReuploadError] = useState<string | null>(null);
+  const reuploadInputRef = useRef<HTMLInputElement>(null);
+  const reuploadOnFailureInputRef = useRef<HTMLInputElement>(null);
+  const reuploadAfterErrorInputRef = useRef<HTMLInputElement>(null);
+  const [resultHistory, setResultHistory] = useState<ReviewResult[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const authUser = useAuthStore(s => s.user);
+  const permissions = useAuthStore(s => s.permissions);
+  const currentUserId = authUser?.userId;
+  const isOwner = !!(submission && currentUserId && submission.submitterId === currentUserId);
+  const canResolveAppeal = useMemo(
+    () => permissions.includes('review-agent.appeal-review') || permissions.includes('super'),
+    [permissions]
+  );
+  const canAppeal = isOwner && canAppealLocal(submission);
+  const canReupload = isOwner && submission?.appealStatus === 'Approved';
+  // 未通过救机会：Done + 未通过 + RerunCount=0（每方案仅 1 次）
+  const canReuploadOnFailure = isOwner
+    && submission?.status === 'Done'
+    && submission?.isPassed === false
+    && (submission?.rerunCount ?? 0) === 0;
+  const canReuploadAfterError = isOwner && submission?.status === 'Error';
+  const hasAppealRecord = !!submission?.latestAppealId;
+
+  const loadData = useCallback(async () => {
+    if (!id) return;
+    const res = await getReviewSubmission(id);
+    if (res.success && res.data) {
+      setSubmission(res.data.submission);
+      if (res.data.result) {
+        setResult(res.data.result);
+        setDimensionScores(res.data.result.dimensionScores);
+        setSummary(res.data.result.summary);
+        setTotalScore(res.data.result.totalScore);
+        setIsPassed(res.data.result.isPassed);
+        setAdjustmentLog(res.data.result.adjustmentLog ?? []);
+        // 默认展开所有维度
+        setExpandedDims(new Set(res.data.result.dimensionScores.map((d: { key: string }) => d.key)));
+      }
+    }
+    setLoading(false);
+  }, [id]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  // 加载维度配置（用于显示明细要求）
+  useEffect(() => {
+    getReviewDimensions().then(res => {
+      if (res.success && res.data) setDimConfigs(res.data.dimensions);
+    });
+  }, []);
+
+  const sse = useSseStream<ReviewDimensionScore>({
+    url: '',
+    itemEvent: 'dimension_score',
+    onItem: (item) => {
+      setDimensionScores(prev => {
+        const existing = prev.find(d => d.key === item.key);
+        return existing ? prev.map(d => d.key === item.key ? item : d) : [...prev, item];
+      });
+      // 流式新增维度自动展开
+      setExpandedDims(prev => new Set([...prev, item.key]));
+    },
+    onEvent: {
+      result: (data: unknown) => {
+        const d = data as { totalScore: number; isPassed: boolean; summary: string; adjustmentLog?: string[] };
+        setTotalScore(d.totalScore);
+        setIsPassed(d.isPassed);
+        setSummary(d.summary);
+        if (Array.isArray(d.adjustmentLog)) setAdjustmentLog(d.adjustmentLog);
+      },
+      adjustment_log: (data: unknown) => {
+        const d = data as { entries?: string[] };
+        if (Array.isArray(d.entries)) setAdjustmentLog(d.entries);
+      },
+    },
+    onDone: () => {
+      setStreamError(null);
+      setStreaming(false);
+      void loadData();
+    },
+    onError: (msg) => {
+      console.error('评审流错误:', msg);
+      setStreamError(normalizeReviewStreamError(msg));
+      setStreaming(false);
+      void loadData();
+    },
+  });
+
+  // Queued 只自动发起一次。失败后保留显式重试入口，避免 429 在控制器前发生时
+  // loadData 仍读到 Queued，继而形成无休止的重连与限流循环。
+  useEffect(() => {
+    if (!submission || streaming) return;
+    if (shouldAutoStartReviewStream(
+      submission.status,
+      submission.id,
+      streamStartedSubmissionRef.current,
+    )) {
+      streamStartedSubmissionRef.current = submission.id;
+      setStreamError(null);
+      setStreaming(true);
+      void sse.start({ url: getReviewResultStreamUrl(submission.id) });
+    }
+  }, [submission]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Running 说明服务端任务已经开始。该 SSE 端点不支持重复订阅，因此页面刷新或断流后
+  // 只轮询后端权威状态，不再建立会被拒绝的第二条评审流。
+  useEffect(() => {
+    if (!submission || !shouldPollReviewStatus(submission.status, streaming)) return;
+    const timer = window.setInterval(() => {
+      void loadData();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [submission, streaming, loadData]);
+
+  // 代理空闲超时等场景可能让 SSE 在没有 done/error 事件时自然结束。
+  // Hook 会进入终态，但不会调用页面回调；此处同步释放本地连接态并回读后端权威状态。
+  useEffect(() => {
+    if (!shouldRecoverAfterReviewStreamClosed(streaming, sse.phase)) return;
+    setStreaming(false);
+    void loadData();
+  }, [streaming, sse.phase, loadData]);
+
+  function retryReviewStream() {
+    if (!id || streaming || submission?.status !== 'Queued') return;
+    streamStartedSubmissionRef.current = id;
+    setStreamError(null);
+    setStreaming(true);
+    void sse.start({ url: getReviewResultStreamUrl(id) });
+  }
+
+  async function handleRerun() {
+    if (!id || rerunning) return;
+    setRerunning(true);
+    try {
+      const res = await rerunReviewSubmission(id);
+      if (res.success) {
+        streamStartedSubmissionRef.current = id;
+        setStreamError(null);
+        setResult(null);
+        setDimensionScores([]);
+        setSummary('');
+        setTotalScore(null);
+        setIsPassed(null);
+        setAdjustmentLog([]);
+        setExpandedDims(new Set());
+        setStreaming(true);
+        setSubmission(prev => prev ? { ...prev, status: 'Queued', resultId: undefined } : prev);
+        sse.start({ url: getReviewResultStreamUrl(id!) });
+      }
+    } finally {
+      setRerunning(false);
+    }
+  }
+
+  async function handleReuploadOnFailureFile(file: File) {
+    if (!id || reuploading) return;
+    setReuploading(true);
+    setReuploadError(null);
+    try {
+      const up = await uploadAttachment(file);
+      if (!up.success || !up.data) {
+        setReuploadError(up.error?.message ?? '文件上传失败');
+        return;
+      }
+      const res = await reuploadReviewOnFailure(id, up.data.attachmentId);
+      if (!res.success) {
+        setReuploadError(res.error?.message ?? '替换失败');
+        return;
+      }
+      // 重置本地评审展示，触发新一轮 SSE。RerunCount 在后端 +1，前端同步更新。
+      streamStartedSubmissionRef.current = id;
+      setStreamError(null);
+      setResult(null);
+      setDimensionScores([]);
+      setSummary('');
+      setTotalScore(null);
+      setIsPassed(null);
+      setAdjustmentLog([]);
+      setExpandedDims(new Set());
+      setStreaming(true);
+      setSubmission(prev => prev ? {
+        ...prev,
+        status: 'Queued',
+        resultId: undefined,
+        isPassed: undefined,
+        completedAt: undefined,
+        rerunCount: (prev.rerunCount ?? 0) + 1,
+        attachmentId: up.data!.attachmentId,
+        fileName: file.name,
+      } : prev);
+      sse.start({ url: getReviewResultStreamUrl(id!) });
+    } finally {
+      setReuploading(false);
+      if (reuploadOnFailureInputRef.current) reuploadOnFailureInputRef.current.value = '';
+    }
+  }
+
+  async function handleReuploadAfterErrorFile(file: File) {
+    if (!id || reuploading) return;
+    setReuploading(true);
+    setReuploadError(null);
+    try {
+      const up = await uploadAttachment(file);
+      if (!up.success || !up.data) {
+        setReuploadError(up.error?.message ?? '文件上传失败');
+        return;
+      }
+      const res = await reuploadReviewAfterError(id, up.data.attachmentId);
+      if (!res.success) {
+        setReuploadError(res.error?.message ?? '替换失败');
+        return;
+      }
+      streamStartedSubmissionRef.current = id;
+      setStreamError(null);
+      setResult(null);
+      setDimensionScores([]);
+      setSummary('');
+      setTotalScore(null);
+      setIsPassed(null);
+      setAdjustmentLog([]);
+      setExpandedDims(new Set());
+      setStreaming(true);
+      setSubmission(prev => prev ? {
+        ...prev,
+        status: 'Queued',
+        resultId: undefined,
+        isPassed: undefined,
+        completedAt: undefined,
+        startedAt: undefined,
+        errorMessage: undefined,
+        attachmentId: up.data!.attachmentId,
+        fileName: file.name,
+      } : prev);
+      sse.start({ url: getReviewResultStreamUrl(id!) });
+    } finally {
+      setReuploading(false);
+      if (reuploadAfterErrorInputRef.current) reuploadAfterErrorInputRef.current.value = '';
+    }
+  }
+
+  async function loadResultHistory() {
+    if (!id) return;
+    const res = await getReviewSubmissionResults(id);
+    if (res.success && res.data) setResultHistory(res.data.results);
+  }
+
+  async function handleReuploadFile(file: File) {
+    if (!id || reuploading) return;
+    setReuploading(true);
+    setReuploadError(null);
+    try {
+      const up = await uploadAttachment(file);
+      if (!up.success || !up.data) {
+        setReuploadError(up.error?.message ?? '文件上传失败');
+        return;
+      }
+      const res = await reuploadReviewSubmission(id, up.data.attachmentId);
+      if (!res.success) {
+        setReuploadError(res.error?.message ?? '替换失败');
+        return;
+      }
+      // 重置本地状态并触发重新评审 SSE
+      streamStartedSubmissionRef.current = id;
+      setStreamError(null);
+      setResult(null);
+      setDimensionScores([]);
+      setSummary('');
+      setTotalScore(null);
+      setIsPassed(null);
+      setAdjustmentLog([]);
+      setExpandedDims(new Set());
+      setStreaming(true);
+      setSubmission(prev => prev ? {
+        ...prev,
+        status: 'Queued',
+        resultId: undefined,
+        isPassed: undefined,
+        completedAt: undefined,
+        appealStatus: null,
+        latestAppealId: undefined,
+        appealResolvedAt: undefined,
+        rerunCount: 0,
+        attachmentId: up.data!.attachmentId,
+        fileName: file.name,
+      } : prev);
+      sse.start({ url: getReviewResultStreamUrl(id!) });
+    } finally {
+      setReuploading(false);
+      if (reuploadInputRef.current) reuploadInputRef.current.value = '';
+    }
+  }
+
+  function toggleDim(key: string) {
+    setExpandedDims(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-6 h-6 border-2 border-indigo-500/50 border-t-indigo-400 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!submission) {
+    return (
+      <div className="h-full min-h-0 w-full overflow-y-auto px-4 py-6 sm:px-6 text-center">
+        <p className="text-token-muted">提交记录不存在</p>
+        <button onClick={() => navigate(reviewNav.reviewHome)} className="mt-4 text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] text-sm">
+          返回列表
+        </button>
+      </div>
+    );
+  }
+
+  const isDone = submission.status === 'Done' || totalScore !== null;
+  const isError = submission.status === 'Error';
+  const isAwaitingRetry = submission.status === 'Queued' && !!streamError && !streaming;
+  const isRunning = streaming
+    || submission.status === 'Running'
+    || (submission.status === 'Queued' && !isAwaitingRetry);
+
+  return (
+    <div className="h-full min-h-0 w-full overflow-y-auto px-4 py-6 sm:px-6" style={{ overscrollBehavior: 'contain' }}>
+      {/* 返回导航 */}
+      <button
+        onClick={goBack}
+        className="flex items-center gap-1.5 text-sm text-token-muted hover-text-primary mb-6 transition-colors"
+      >
+        <ArrowLeft className="w-4 h-4" />
+        返回我的提交
+      </button>
+
+      {/* 方案信息 */}
+      <div className="bg-token-nested border border-token-subtle rounded-xl p-5 mb-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
+              <ClipboardCheck className="w-4 h-4 text-[color:var(--accent-fg-blue)]" />
+            </div>
+            <div>
+              <h1 className="text-base font-semibold text-token-primary">{submission.title}</h1>
+              <p className="text-xs text-token-muted mt-0.5">{submission.fileName} · {new Date(submission.submittedAt).toLocaleString('zh-CN')}</p>
+            </div>
+          </div>
+          {/* 总分/状态 */}
+          {isDone && totalScore !== null && !isRunning && (
+            <div className="flex-shrink-0 text-right">
+              <div className={`text-2xl font-bold ${isPassed ? 'text-emerald-400' : 'text-[color:var(--accent-fg-warning)]'}`}>
+                {totalScore}分
+              </div>
+              <div className={`flex items-center gap-1 text-xs mt-0.5 justify-end ${isPassed ? 'text-emerald-400/80' : 'text-[color:var(--accent-fg-warning)]'}`}>
+                {isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                {isPassed ? '已通过' : '未通过'}
+              </div>
+              {submission.appealStatus && (
+                <div className="mt-1.5 flex justify-end">
+                  <AppealMiniChip status={submission.appealStatus} />
+                </div>
+              )}
+            </div>
+          )}
+          {isRunning && (
+            <div className="flex-shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-[color:var(--accent-fg-amber)]">
+                <MapSpinner size={14} />
+                评审中
+              </div>
+            </div>
+          )}
+          {isAwaitingRetry && (
+            <div className="flex-shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-[color:var(--accent-fg-amber)]">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                等待重试
+              </div>
+            </div>
+          )}
+          {isError && !isRunning && (
+            <div className="flex-shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-red-400/80">
+                <XCircle className="w-3.5 h-3.5" />
+                评审失败
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* 申诉操作行（仅在相关状态下展示） */}
+      {(canAppeal || canReupload || canReuploadOnFailure || canReuploadAfterError || hasAppealRecord) && (
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          {canReuploadAfterError && (
+            <>
+              <input
+                ref={reuploadAfterErrorInputRef}
+                type="file"
+                accept=".md,.markdown,text/markdown,text/plain"
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReuploadAfterErrorFile(f);
+                }}
+              />
+              <button
+                onClick={() => reuploadAfterErrorInputRef.current?.click()}
+                disabled={reuploading}
+                title="评审过程出错时，可替换方案文件后重新发起评审"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5" /> {reuploading ? '上传中...' : '重新上传方案并评审'}
+              </button>
+            </>
+          )}
+          {canReuploadOnFailure && (
+            <>
+              <input
+                ref={reuploadOnFailureInputRef}
+                type="file"
+                accept=".md,.markdown,text/markdown,text/plain"
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReuploadOnFailureFile(f);
+                }}
+              />
+              <button
+                onClick={() => reuploadOnFailureInputRef.current?.click()}
+                disabled={reuploading}
+                title="未通过的方案可重新上传文件再评审一次（每方案仅 1 次机会）"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5" /> {reuploading ? '上传中...' : '重新上传方案（剩 1 次救机会）'}
+              </button>
+            </>
+          )}
+          {canAppeal && (
+            <button
+              onClick={() => setShowAppealDialog(true)}
+              title="认为 AI 评分有误，提交人工复核（与「重新上传方案」不同：申诉走人审，重传是改写方案后再 AI 评）"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white transition-colors"
+            >
+              <Megaphone className="w-3.5 h-3.5" /> 我要申诉
+              {submission.completedAt && (
+                <span className="text-[10px] text-[color:var(--accent-fg-blue)] ml-1">
+                  ({Math.max(0, Math.floor((new Date(submission.completedAt).getTime() + APPEAL_WINDOW_HOURS * 3600_000 - Date.now()) / 60_000))} 分钟内)
+                </span>
+              )}
+            </button>
+          )}
+          {canReupload && (
+            <>
+              <input
+                ref={reuploadInputRef}
+                type="file"
+                accept=".md,.markdown,text/markdown,text/plain"
+                style={{ display: 'none' }}
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) handleReuploadFile(f);
+                }}
+              />
+              <button
+                onClick={() => reuploadInputRef.current?.click()}
+                disabled={reuploading}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5" /> {reuploading ? '上传中...' : '重新上传方案'}
+              </button>
+            </>
+          )}
+          {hasAppealRecord && (
+            <button
+              onClick={() => setShowHistoryDrawer(true)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft border border-token-subtle text-token-secondary transition-colors"
+            >
+              <History className="w-3.5 h-3.5" /> 申诉历史
+            </button>
+          )}
+          {reuploadError && (
+            <span className="text-xs text-red-400/90">{reuploadError}</span>
+          )}
+        </div>
+      )}
+
+      {isError && submission.errorMessage && (
+        <div className="mb-6 bg-red-500/8 border border-red-500/20 rounded-xl p-4">
+          <p className="text-xs font-medium text-red-300/90 mb-1">评审失败原因</p>
+          <p className="text-sm text-red-100/80 whitespace-pre-wrap">{submission.errorMessage}</p>
+        </div>
+      )}
+
+      {streamError && !isError && !isDone && (
+        <div className="mb-6 bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
+          <p className="text-xs font-medium text-[color:var(--accent-fg-amber)] mb-1">
+            {submission.status === 'Running' ? '评审仍在后台执行' : '评审连接暂时失败'}
+          </p>
+          <p className="text-sm text-amber-100/80">
+            {submission.status === 'Running'
+              ? '页面将自动刷新评审结果，无需重复提交。'
+              : streamError}
+          </p>
+          {submission.status === 'Queued' && (
+            <button
+              type="button"
+              onClick={retryReviewStream}
+              disabled={streaming}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-amber)] transition-colors hover:bg-amber-500/25 disabled:opacity-50"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              重新连接评审
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* 评审进行中：SSE 实时状态 */}
+      {isRunning && (
+        <div className="mb-6 space-y-4">
+          <SsePhaseBar phase={sse.phase} message={sse.phaseMessage} />
+          {sse.typing && (
+            <div className="bg-token-nested border border-token-subtle rounded-xl p-4">
+              <p className="text-xs text-token-muted mb-2 font-medium">AI 评审中...</p>
+              <SseTypingBlock text={sse.typing} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 分项评分结果 */}
+      {dimensionScores.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-medium text-token-secondary mb-3">分项评分</h2>
+          <div className="space-y-2">
+            {dimensionScores.map((dim) => {
+              const pct = dim.maxScore > 0 ? (dim.score / dim.maxScore) * 100 : 0;
+              const isExpanded = expandedDims.has(dim.key);
+              const scoreColor = pct >= 90 ? 'text-emerald-400' : pct >= 75 ? 'text-cyan-400' : pct >= 60 ? 'text-[color:var(--accent-fg-amber)]' : 'text-rose-400';
+              const barColor = pct >= 90 ? 'bg-emerald-500' : pct >= 75 ? 'bg-cyan-500' : pct >= 60 ? 'bg-amber-500' : 'bg-rose-500';
+              const dimCfg = dimConfigs.find(c => c.key === dim.key);
+
+              return (
+                <div key={dim.key} className="bg-token-nested border border-token-subtle rounded-lg overflow-hidden">
+                  <button
+                    className="w-full flex items-center gap-3 px-4 py-3 hover-bg-soft transition-colors"
+                    onClick={() => toggleDim(dim.key)}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-sm text-token-primary">{dim.name}</span>
+                        <span className={`text-sm font-semibold tabular-nums ${scoreColor}`}>
+                          {dim.score}/{dim.maxScore}
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-token-nested rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="text-token-muted flex-shrink-0">
+                      {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </div>
+                  </button>
+                  {isExpanded && (
+                    <div className="px-4 pb-3 border-t border-token-subtle pt-3 space-y-2.5">
+                      {dim.comment && (
+                        <p className="text-sm text-token-secondary leading-relaxed">{dim.comment}</p>
+                      )}
+                      {dim.items && dim.items.length > 0 && (
+                        <ChecklistTable items={dim.items} />
+                      )}
+                      {dimCfg?.description && (
+                        <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
+                          <p className="text-xs text-[color:var(--accent-fg-blue)] mb-1 font-medium">明细要求</p>
+                          <p className="text-xs text-token-muted leading-relaxed whitespace-pre-wrap">{dimCfg.description}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 评审历史（含被重传/重跑覆盖之前的旧结果），按需折叠展开 */}
+      {isDone && !isRunning && (
+        <div className="mb-6 bg-token-nested border border-token-subtle rounded-xl">
+          <button
+            onClick={() => {
+              const next = !showHistory;
+              setShowHistory(next);
+              if (next && resultHistory.length === 0) loadResultHistory();
+            }}
+            className="w-full flex items-center justify-between px-5 py-3 text-sm text-token-secondary hover-text-primary transition-colors"
+          >
+            <span className="flex items-center gap-2">
+              <ClockIcon className="w-4 h-4" />
+              评审历史 {resultHistory.length > 0 && <span className="text-xs text-token-muted">（共 {resultHistory.length} 次）</span>}
+            </span>
+            {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+          {showHistory && (
+            <div className="px-5 pb-4 border-t border-token-subtle">
+              {resultHistory.length === 0 ? (
+                <div className="text-xs text-token-muted py-3">仅本次评审，无更早历史。</div>
+              ) : (
+                <ul className="space-y-2 mt-3">
+                  {resultHistory.map((r, i) => (
+                    <li key={r.id} className="flex items-center gap-3 text-xs">
+                      <span className="text-token-muted tabular-nums w-12">#{resultHistory.length - i}</span>
+                      <span className={`tabular-nums font-medium ${r.isPassed ? 'text-emerald-400' : 'text-[color:var(--accent-fg-warning)]'}`}>
+                        {r.totalScore}分
+                      </span>
+                      <span className={`flex items-center gap-1 ${r.isPassed ? 'text-emerald-400/80' : 'text-[color:var(--accent-fg-warning)]'}`}>
+                        {r.isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
+                        {r.isPassed ? '通过' : '未通过'}
+                      </span>
+                      <span className="text-token-muted">{new Date(r.scoredAt).toLocaleString('zh-CN')}</span>
+                      {r.adjustmentLog && r.adjustmentLog.length > 0 && (
+                        <span className="text-[color:var(--accent-fg-amber)]">（系统兜底 {r.adjustmentLog.length} 项）</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 系统兜底调整记录（三层 guardrails 触发后才出现） */}
+      {adjustmentLog.length > 0 && !isRunning && (
+        <div className="mb-6 bg-amber-500/5 border border-amber-500/20 rounded-xl p-5">
+          <h2 className="text-sm font-medium text-[color:var(--accent-fg-amber)] mb-3 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            系统兜底调整记录
+            <span className="text-[11px] text-[color:var(--accent-fg-amber)] font-normal">
+              （LLM 原始打分被三层 guardrail 调整，明细如下）
+            </span>
+          </h2>
+          <ul className="space-y-1.5 text-[13px] text-amber-100/80 leading-relaxed">
+            {adjustmentLog.map((entry, idx) => (
+              <li key={idx} className="font-mono whitespace-pre-wrap">{entry}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* AI 总结评语 */}
+      {summary && !isRunning && (
+        <div className="mb-6 bg-token-nested border border-token-subtle rounded-xl p-5">
+          <h2 className="text-sm font-medium text-token-secondary mb-3">AI 总结评语</h2>
+          <p className="text-sm text-token-secondary leading-relaxed">{summary}</p>
+        </div>
+      )}
+
+      {/* 解析错误 / 原始 AI 输出诊断（仅当解析失败时显示） */}
+      {isDone && !isRunning && result?.parseError && (
+        <RawOutputDebug result={result} />
+      )}
+
+      {/* 底部：失败重评审 + 提交人 */}
+      {(isDone || isError) && !isRunning && (
+        <div className="flex items-center justify-between mt-4">
+          <div>
+            {isError && (
+              <button
+                onClick={handleRerun}
+                disabled={rerunning}
+                className="flex items-center gap-1.5 text-sm text-[color:var(--accent-fg-blue)] hover:text-[color:var(--accent-fg-blue)] transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${rerunning ? 'animate-spin' : ''}`} />
+                重新评审
+              </button>
+            )}
+          </div>
+          {submission.submitterName && (
+            <div className="flex items-center gap-1.5 text-sm text-token-muted">
+              <User className="w-3.5 h-3.5" />
+              {submission.submitterName}
+            </div>
+          )}
+        </div>
+      )}
+
+      {showAppealDialog && (
+        <AppealSubmitDialog
+          submission={submission}
+          onClose={() => setShowAppealDialog(false)}
+          onSuccess={() => {
+            // 申诉提交成功后刷新本地状态（appealStatus 变为 Pending）
+            setSubmission(prev => prev ? { ...prev, appealStatus: 'Pending' } : prev);
+            setShowHistoryDrawer(true);
+          }}
+        />
+      )}
+
+      <AppealHistoryDrawer
+        open={showHistoryDrawer}
+        onClose={() => setShowHistoryDrawer(false)}
+        submissionId={submission.id}
+        canResolve={canResolveAppeal}
+        onChange={() => loadData()}
+      />
+    </div>
+  );
+}
+

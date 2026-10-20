@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createProductVersionSnapshot, getLegacyVersionCopyTemplate,
   getProductVersionSnapshot, listLegacyVersionRegistrations,
@@ -94,9 +94,9 @@ function LegacyRecordList({ kind }: { kind: 'internal' | 'formal' }) {
                 <span className="text-xs text-token-muted">{record.applicationName || '未关联应用'} · {record.ownerName || record.createdByName || '-'}</span>
               </button>
               {openId === record.id && <div className="mt-3 space-y-2 border-t border-token-subtle pt-3 text-xs text-token-secondary">
-                <p>系统：{record.systemName || '-'}　应用：{record.applicationName || '-'}　来源：{record.sourceType === 'history_import' ? '历史导入' : '旧登记流程'}</p>
-                <p>T 来源：{record.tCode || '-'}　需求来源：{record.demandSource || '-'}　部门：{record.departmentName || '-'}</p>
-                <p>方案地址：{record.planUrl || '-'}　计划时间：{record.plannedReleaseAt || record.plannedProjectAt || '-'}</p>
+                <p>系统：{record.systemName || '-'} · 应用：{record.applicationName || '-'} · 来源：{record.sourceType === 'history_import' ? '历史导入' : '旧登记流程'}</p>
+                <p>T 来源：{record.tCode || '-'} · 需求来源：{record.demandSource || '-'} · 部门：{record.departmentName || '-'}</p>
+                <p>方案地址：{record.planUrl || '-'} · 计划时间：{record.plannedReleaseAt || record.plannedProjectAt || '-'}</p>
                 {record.kind === 'formal' && <p>预计培训时长：{record.plannedTrainingMinutes == null ? '未填写' : `${record.plannedTrainingMinutes} 分钟`}</p>}
                 {record.requirementDescription && <p className="whitespace-pre-wrap">项目需求描述：{record.requirementDescription}</p>}
                 {record.remark && <p className="whitespace-pre-wrap">备注：{record.remark}</p>}
@@ -122,12 +122,12 @@ function SnapshotArchive({ isAdmin, kind }: { isAdmin: boolean; kind: 'internal'
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof getProductVersionSnapshot>>['data'] | null>(null);
   const [message, setMessage] = useState('');
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     const result = await listProductVersionSnapshots(scope);
     if (result.success) setItems(result.data.items);
     else setMessage(result.error?.message ?? '存档加载失败');
-  };
-  useEffect(() => { void reload(); }, [scope]);
+  }, [scope]);
+  useEffect(() => { void reload(); }, [reload]);
 
   const create = async () => {
     const result = await createProductVersionSnapshot(name.trim() || undefined);
