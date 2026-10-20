@@ -13,9 +13,14 @@ import {
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
 import { classifyQualityRepairReason, hardenSelfContainedHtml } from '../src/quality/gate.js';
+import { runBrowserWorker } from '../src/quality/browser-worker.js';
 import type { BrowserQualityIssue } from '../src/quality/browser-contract.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
-import { DesignTaskExecutor, materializePresentationSourcePlan } from '../src/executor.js';
+import {
+  DesignTaskExecutor,
+  buildPresentationSourceScaffold,
+  materializePresentationSourcePlan,
+} from '../src/executor.js';
 import {
   auth,
   buildPackage,
@@ -64,6 +69,98 @@ afterEach(async () => {
 });
 
 describe('presentation frozen source materialization', () => {
+  it('preseeds every frozen source block exactly once without becoming a publishable presentation', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-scaffold-'));
+    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
+    const blocks = Array.from({ length: 210 }, (_, offset) => ({
+      Id: `sb-${(offset + 1).toString(16).padStart(64, '0')}`,
+      Html: offset === 0
+        ? '<h2>附件：基于 GitHub 和 PR 的版本管理与发布流程最佳实践.md</h2>'
+        : `<p>来源正文 ${offset + 1}</p>`,
+    }));
+    const pages = Array.from({ length: 34 }, (_, pageOffset) => ({
+      Index: pageOffset + 1,
+      Hash: `page-${pageOffset + 1}`,
+      DisplayTitle: pageOffset === 0
+        ? '从代码到生产的协作契约'
+        : pageOffset === 1
+          ? '<script>不能执行的标题</script>'
+          : `第 ${pageOffset + 1} 页`,
+      Blocks: blocks
+        .filter((_block, blockOffset) => blockOffset % 34 === pageOffset)
+        .map((block) => ({ Id: block.Id })),
+    }));
+    const plan = JSON.stringify({ SchemaVersion: 'map-mdppt-source-plan-v2', Fingerprint: 'frozen', Blocks: blocks, Pages: pages });
+    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
+    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
+      presentationContract: { targetPages: 34, sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
+    }));
+
+    const scaffold = buildPresentationSourceScaffold(root);
+
+    expect(scaffold).toContain('PASTE LAYOUTS FROM references/layouts.md HERE');
+    expect(scaffold).toContain('从代码到生产的协作契约');
+    expect(scaffold).toContain('&lt;script&gt;不能执行的标题&lt;/script&gt;');
+    expect(scaffold).not.toContain('<script>不能执行的标题</script>');
+    expect(scaffold).toContain(blocks[0].Html);
+    expect([...scaffold.matchAll(/data-mdppt-source=["']([^"']+)["']/g)]).toHaveLength(210);
+    for (const block of blocks) expect(scaffold.match(new RegExp(block.Id, 'g'))).toHaveLength(1);
+    expect(() => hardenSelfContainedHtml(scaffold)).toThrow(/untouched starter template/);
+
+    const withoutSentinel = scaffold.replace('PASTE LAYOUTS FROM references/layouts.md HERE', 'OpenDesign authored this layout');
+    fs.writeFileSync(path.join(root, 'index.html'), withoutSentinel);
+    const navigated = await runBrowserWorker({
+      workspaceDir: root,
+      evidenceDir: path.join(root, 'evidence-navigation'),
+      repairAttempt: 0,
+    });
+    expect(navigated.measurements.flatMap((measurement) => measurement.issues.map((issue) => issue.issueCode)))
+      .toContain('presentation_navigation_unusable');
+    fs.rmSync(root, { recursive: true, force: true });
+  }, 30_000);
+
+  it('runs OpenDesign against the source scaffold and never commits an unchanged seed', async () => {
+    harness = await startHarness();
+    const id = `sb-${'1'.repeat(64)}`;
+    const plan = JSON.stringify({
+      SchemaVersion: 'map-mdppt-source-plan-v2',
+      Fingerprint: 'frozen',
+      Blocks: [{ Id: id, Html: '<p>原始来源正文</p>' }],
+      Pages: [{ Index: 1, DisplayTitle: '正常非来源标题', Blocks: [{ Id: id }] }],
+    });
+    const pkg = buildPackage([{ path: 'brief/source-plan.json', content: plan, mediaType: 'application/json' }], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) },
+        },
+      },
+    });
+    harness.daemon.onRun = ({ workspaceDir, index, body }) => {
+      if (index === 1) {
+        const seed = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
+        expect(seed).toContain('正常非来源标题');
+        expect(seed).toContain('<p>原始来源正文</p>');
+        expect(String(body.systemPrompt)).toContain('Redesign that file in place');
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg, (request) => ({
+      ...request,
+      previewUrl: request.transfer.resultCommitUrl.replace('/result', '/preview'),
+    }));
+
+    expect(view.state).toBe('failed');
+    expect(view.error.code).toBe('design_output_quality_rejected');
+    expect(view.error.message).toContain('untouched starter template');
+    expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
+    expect(map!.previews).toHaveLength(0);
+    expect(map!.commits).toHaveLength(0);
+  });
+
   it('materializes the exact server-owned bytes before quality and rejects missing, duplicate, unknown, or modified slots', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-plan-'));
     fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
@@ -335,7 +432,8 @@ describe('edit runs seeded from the current published site', () => {
   it('rejects a legacy output allowlist that cannot retain browser quality evidence', async () => {
     harness = await startHarness();
     const pkg = buildPackage([]);
-    harness.daemon.onRun = ({ workspaceDir }) => {
+    harness.daemon.onRun = ({ workspaceDir, index }) => {
+      if (index === 1) expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
       fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>Launch page</main></body></html>');
       return { status: 'succeeded' };
     };

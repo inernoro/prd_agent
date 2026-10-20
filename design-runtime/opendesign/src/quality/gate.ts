@@ -24,7 +24,7 @@ export const MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA = 'map-design-artifact-quality-v
 export const MAX_QUALITY_REPAIR_ATTEMPTS = 4;
 
 /** 模板 <main> 里那段「把版式粘到这里」的指示注释。留在交付页面里 = 起始页原样交回。 */
-const TEMPLATE_UNTOUCHED_MARKER = 'PASTE LAYOUTS FROM references/layouts.md HERE';
+export const TEMPLATE_UNTOUCHED_MARKER = 'PASTE LAYOUTS FROM references/layouts.md HERE';
 
 const ARTIFACT_CSP = [
   "default-src 'none'",

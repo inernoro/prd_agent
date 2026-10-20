@@ -53,6 +53,7 @@ import {
   collectArtifactQualityEvidence,
   collectVisibleTextOccurrenceConstraints,
   createArtifactQualityGate,
+  TEMPLATE_UNTOUCHED_MARKER,
 } from './quality/gate.js';
 import {
   MAX_BROWSER_REPAIR_ATTEMPTS,
@@ -80,16 +81,22 @@ import {
 } from './workspace/transfer.js';
 
 interface FrozenPptSourceBlock { Id: string; Html: string }
-interface FrozenPptSourcePage { Index?: number; Blocks: Array<{ Id: string }> }
+interface FrozenPptSourcePage { Index?: number; DisplayTitle?: string; Blocks: Array<{ Id: string }> }
 interface FrozenPptSourcePlan { SchemaVersion: string; Blocks: FrozenPptSourceBlock[]; Pages: FrozenPptSourcePage[] }
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-export function materializePresentationSourcePlan(workspaceDir: string, html: string): string {
+interface ValidatedFrozenPptSourcePlan {
+  plan: FrozenPptSourcePlan;
+  expected: Map<string, string>;
+  assignedPages: Map<string, number>;
+}
+
+function readFrozenPresentationSourcePlan(workspaceDir: string): ValidatedFrozenPptSourcePlan | undefined {
   const planPath = path.join(workspaceDir, 'brief', 'source-plan.json');
-  if (!fs.existsSync(planPath)) return html;
+  if (!fs.existsSync(planPath)) return undefined;
   const planBytes = readRegularFileNoFollow(planPath, 8 * 1024 * 1024);
   const task = JSON.parse(readRegularFileNoFollow(path.join(workspaceDir, 'brief', 'task.json'), 1024 * 1024).toString('utf8')) as {
     presentationContract?: { sourcePlan?: { path?: string; contentHash?: string } };
@@ -113,16 +120,72 @@ export function materializePresentationSourcePlan(workspaceDir: string, html: st
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source blocks are invalid');
   }
   const assignedPages = new Map<string, number>();
+  const assignedBlockIds = new Set<string>();
   for (const [pageOffset, page] of plan.Pages.entries()) {
+    if (!page || typeof page !== 'object' || !Array.isArray(page.Blocks)) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source pages are invalid');
+    }
     const pageIndex = Number.isSafeInteger(page.Index) && Number(page.Index) > 0
       ? Number(page.Index)
       : pageOffset + 1;
-    for (const block of Array.isArray(page.Blocks) ? page.Blocks : []) {
-      if (block && typeof block.Id === 'string' && !assignedPages.has(block.Id)) {
-        assignedPages.set(block.Id, pageIndex);
+    for (const block of page.Blocks) {
+      if (!block || typeof block.Id !== 'string' || !expected.has(block.Id) || assignedBlockIds.has(block.Id)) {
+        throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source page assignments are invalid');
       }
+      assignedBlockIds.add(block.Id);
+      assignedPages.set(block.Id, pageIndex);
     }
   }
+  if (assignedBlockIds.size !== expected.size) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json must assign every source block exactly once');
+  }
+  return { plan, expected, assignedPages };
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+/**
+ * 为已绑定 SourcePlan 的新 PPT 生成一个可编辑的来源拓扑，不是可发布成品。
+ *
+ * 来源正文来自经过哈希校验的冻结计划，逐字节放进唯一槽；标题只作文本转义。骨架故意保留
+ * untouched sentinel，且不提供 Reveal controller，因此 OpenDesign 必须原位完成视觉设计、导航和交互，
+ * 之后仍要通过同一套确定性与双视口浏览器门。该派生文件不属于下载输入包，也不参与冻结输入哈希。
+ */
+export function buildPresentationSourceScaffold(workspaceDir: string): string {
+  const validated = readFrozenPresentationSourcePlan(workspaceDir);
+  if (!validated) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation source scaffold requires a frozen source plan');
+  }
+  const { plan, expected } = validated;
+  const sections = plan.Pages.map((page, pageOffset) => {
+    const pageIndex = Number.isSafeInteger(page.Index) && Number(page.Index) > 0 ? Number(page.Index) : pageOffset + 1;
+    const title = typeof page.DisplayTitle === 'string' && page.DisplayTitle.trim()
+      ? page.DisplayTitle.trim()
+      : `第 ${pageIndex} 页`;
+    const slots = page.Blocks.map(({ Id }) => `<div data-mdppt-source="${Id}">${expected.get(Id)!}</div>`).join('\n');
+    return `<section data-slide-index="${pageIndex}">\n<h1>${escapeHtmlText(title)}</h1>\n${slots}\n</section>`;
+  }).join('\n');
+  return `<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OpenDesign presentation source scaffold</title></head>
+<body>
+<!-- ${TEMPLATE_UNTOUCHED_MARKER} -->
+<main><div class="reveal"><div class="slides">${sections}</div></div></main>
+</body>
+</html>`;
+}
+
+export function materializePresentationSourcePlan(workspaceDir: string, html: string): string {
+  const validated = readFrozenPresentationSourcePlan(workspaceDir);
+  if (!validated) return html;
+  const { expected, assignedPages } = validated;
   let materialized = html;
   for (const [sourceBlockOffset, [id, body]] of [...expected.entries()].entries()) {
     const idPattern = escapeRegex(id);
@@ -403,6 +466,13 @@ export class DesignTaskExecutor {
       fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
       fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'), { mode: 0o644, flag: 'wx' });
     }
+    const sourcePlanSeed = editableSeeds.length === 0
+      && files.some((file) => file.path === 'brief/source-plan.json')
+      ? buildPresentationSourceScaffold(workspaceDir)
+      : undefined;
+    if (sourcePlanSeed !== undefined) {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), sourcePlanSeed, { mode: 0o644, flag: 'wx' });
+    }
     this.chownForEngine(workspaceDir);
     onStage('workspace_materialized', { fileCount: files.length });
     prepareWebPrototypeResources(
@@ -611,6 +681,17 @@ export class DesignTaskExecutor {
         this.promoteDeliverableEntry(stableDeliverableEntryFile, (stage, detail) => {
           onStage(stage === 'deliverable_entry_resolved' ? 'deliverable_entry_checkpointed' : stage, detail);
         });
+        const reviewIndexPath = path.join(workspaceDir, 'index.html');
+        if (
+          designContext.presentation?.sourcePlan
+          && fs.existsSync(reviewIndexPath)
+          && readRegularFileNoFollow(reviewIndexPath, transfer.maxOutputBytes).toString('utf8').includes(TEMPLATE_UNTOUCHED_MARKER)
+        ) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_quality_rejected',
+            'index.html is still the untouched starter template',
+          );
+        }
         this.exportOutputs(transfer, prepared);
         const stableOutputs = this.collectOutputs(transfer);
         const remainingReviewMs = budget.finalizationDeadline - Date.now();
@@ -1398,6 +1479,10 @@ export class DesignTaskExecutor {
         if (stat.size <= 0 || stat.size > PREVIEW_MAX_BYTES) return;
         let html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
         if (!html.trim()) return;
+        // SourcePlan scaffold is a server-derived editing surface, not a user-visible preview. It can
+        // only become previewable after OpenDesign has actually replaced the untouched marker and the
+        // same materialized bytes can proceed through deterministic and browser quality gates.
+        if (html.includes(TEMPLATE_UNTOUCHED_MARKER)) return;
         try {
           html = materializePresentationSourcePlan(this.options.paths.workspaceDir, html);
         } catch (error) {
