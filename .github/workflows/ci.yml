@@ -880,7 +880,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ce5c6ffc933d2b7c8b347998074a03a8bf5df9e5
+          ref: 26e93c3984783e3e55373a6b54b503dfb9be5613
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
@@ -908,7 +908,7 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { ESLint } from 'eslint';
           const base = '0dd78d40dc7f9c90e3b023fb04f81b1de95a04f8';
-          const expected = 'ce5c6ffc933d2b7c8b347998074a03a8bf5df9e5';
+          const expected = '26e93c3984783e3e55373a6b54b503dfb9be5613';
           const git = (...args) => execFileSync('git', args, {encoding: 'utf8', cwd: '..'});
           if (git('rev-parse', 'HEAD').trim() !== expected) throw new Error('Candidate mismatch');
           const files = git('diff', '--name-only', '--diff-filter=ACMR', base, expected, '--', 'prd-admin/src').trim().split('\n').filter(p => /\.(ts|tsx)$/.test(p));
