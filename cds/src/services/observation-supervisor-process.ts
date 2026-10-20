@@ -65,7 +65,8 @@ function startSupervisor(): void {
       if (closing) return;
       child = undefined; actors.clear();
       send({ type: 'factory-cleaned', generation: failedGeneration, supervisorMetrics: metrics() });
-      recovering = false; retry = setTimeout(launch, 250);
+      // 旧归属已确认清理，立即重建；故障频率仍受原30秒三次上限约束。
+      recovering = false; retry = setTimeout(launch, 0);
     } catch { fail(); }
   };
   process.on('message', (message: any) => {
