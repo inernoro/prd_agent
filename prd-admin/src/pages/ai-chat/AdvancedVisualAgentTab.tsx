@@ -73,6 +73,7 @@ import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
 import { glassToolbar } from '@/lib/glassStyles';
 import { canvasSaveCooldownRemaining, CANVAS_SAVE_DEBOUNCE_MS } from '@/lib/canvasSaveSchedule';
+import { CANVAS_GENERATOR_LABEL, CANVAS_SHAPE_LABEL_MAP, CANVAS_TEXT_LABEL } from '@/lib/canvasElementLabels';
 import {
   checkLayerSourcesReadable,
   createCompositePngBlob,
@@ -4208,7 +4209,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           kind: 'shape',
           shapeType: st,
           createdAt: Date.now(),
-          prompt: `Shape:${st}`,
+          prompt: CANVAS_SHAPE_LABEL_MAP[st],
           src: '',
           status: 'done',
           x: Math.round(wx - w / 2),
@@ -4230,14 +4231,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         key,
         kind: 'text',
         createdAt: Date.now(),
-        prompt: 'Text',
+        prompt: CANVAS_TEXT_LABEL,
         src: '',
         status: 'done',
         x: Math.round(wx - w / 2),
         y: Math.round(wy - h / 2),
         w,
         h,
-        text: 'Text',
+        text: CANVAS_TEXT_LABEL,
         fontSize: 26,
         textColor: 'rgba(11,11,15,0.92)',
         fill: 'rgba(255,255,255,0.90)',
@@ -4246,7 +4247,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       setCanvas((prev) => [next, ...prev].slice(0, 120));
       setSelectionWithoutChip([key]); // 文字不需要 chip
       setPlacing(null);
-      setTextEdit({ open: true, key, value: next.text || 'Text' });
+      setTextEdit({ open: true, key, value: next.text || CANVAS_TEXT_LABEL });
       return true;
     },
     [placing, canEditCanvas]
@@ -7328,7 +7329,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               : 'none',
                           }}
                         >
-                          {String(it.text ?? 'Text')}
+                          {String(it.text ?? CANVAS_TEXT_LABEL)}
                         </div>
                       </div>
                     ) : (
@@ -7795,7 +7796,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             textShadow: '0 2px 10px rgba(0,0,0,0.55)',
                           }}
                         >
-                          Image Generator
+                          {CANVAS_GENERATOR_LABEL}
                         </div>
                         <div
                           className="absolute text-[11px] font-semibold"
@@ -8888,8 +8889,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <button
                           type="button"
                           className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
-                          title="矩形"
-                          aria-label="矩形"
+                          title={CANVAS_SHAPE_LABEL_MAP.rect}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.rect}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8900,8 +8901,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         <button
                           type="button"
                           className="surface-inset h-12 rounded-full border border-token-subtle hover:opacity-90"
-                          title="圆形"
-                          aria-label="圆形"
+                          title={CANVAS_SHAPE_LABEL_MAP.circle}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.circle}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8913,8 +8914,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           type="button"
                           className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
                           style={{ clipPath: 'polygon(50% 15%, 10% 85%, 90% 85%)' }}
-                          title="三角形"
-                          aria-label="三角形"
+                          title={CANVAS_SHAPE_LABEL_MAP.triangle}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.triangle}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8926,8 +8927,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           type="button"
                           className="surface-inset h-12 rounded-[14px] border border-token-subtle hover:opacity-90"
                           style={{ clipPath: 'polygon(50% 10%, 61% 38%, 90% 38%, 66% 56%, 76% 86%, 50% 68%, 24% 86%, 34% 56%, 10% 38%, 39% 38%)' }}
-                          title="星形"
-                          aria-label="星形"
+                          title={CANVAS_SHAPE_LABEL_MAP.star}
+                          aria-label={CANVAS_SHAPE_LABEL_MAP.star}
                           onClick={() => {
                             setShapeMenuOpen(false);
                             setActiveTool('select');
@@ -8982,7 +8983,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       key,
                       kind: 'generator',
                       createdAt: Date.now(),
-                      prompt: 'Image Generator',
+                      prompt: CANVAS_GENERATOR_LABEL,
                       src: '',
                       status: 'done',
                       x: pos.x,
@@ -10392,7 +10393,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     setTextEdit({ open: false, key: '', value: '' });
                     return;
                   }
-                  const val = String(textEdit.value ?? '').trim() || 'Text';
+                  const val = String(textEdit.value ?? '').trim() || CANVAS_TEXT_LABEL;
                   setCanvas((prev) =>
                     prev.map((it) => (it.key === key ? { ...it, kind: 'text', text: val, prompt: val } : it))
                   );

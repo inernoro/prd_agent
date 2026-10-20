@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import * as ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import * as canvasLabels from '../../../lib/canvasElementLabels';
 
 // 执行编辑器实际注册的 effect，而不是在测试里重写一份快捷键判断。
 // AST 只负责定位；断言针对 DOM 键盘事件及随后真实 stage capture/bubble 的运行结果。
@@ -74,6 +75,7 @@ function keydown(key: string, code: string, modifiers: KeyboardEventInit = {}) {
 function pointerdown() {
   // 离散键盘事件已结束；用下一次渲染的状态重新创建生产回调，不预先点击消耗 placing。
   const context = {
+    ...canvasLabels,
     placing, effectiveTool: activeTool, stageRef, panRef, isMobile: false,
     canEditCanvas: () => true, // 本组键盘场景前置为画板已恢复；门禁另有独立回归。
     cameraRef: { current: { x: 0, y: 0 } }, zoomRef: { current: 1 }, worldRef: { current: null },
