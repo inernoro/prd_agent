@@ -10,7 +10,14 @@ export interface AtomicDirectoryReplacement {
   previousPath?: string;
 }
 
-export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]): void {
+interface OwnedDirectoryRemoval {
+  assertActive(): void;
+  /** false仅表示已确认终态的普通删除失败；未知停止/取消必须reject。 */
+  remove(directory: string): Promise<boolean>;
+}
+
+// 仅此一份换代/回退次序。三个递归删除位置交由同步或同票驱动执行。
+function* replacementSteps(pairs: AtomicDirectoryReplacement[]): Generator<string, void> {
   const stamp = Date.now();
   const backups = pairs.map((pair, idx) => ({
     ...pair,
@@ -51,7 +58,7 @@ export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]
     for (const pair of [...backups].reverse()) {
       try {
         if (pair.nextMoved && fs.existsSync(pair.currentPath)) {
-          fs.rmSync(pair.currentPath, { recursive: true, force: true });
+          yield pair.currentPath;
         }
         if (pair.previousPath) {
           if (pair.currentMoved && fs.existsSync(pair.previousPath)) {
@@ -75,13 +82,43 @@ export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]
     try {
       if (pair.previousPath) {
         if (pair.hadPrevious && pair.previousBackupPath) {
-          fs.rmSync(pair.previousBackupPath, { recursive: true, force: true });
+          yield pair.previousBackupPath;
         }
       } else if (pair.hadCurrent) {
-        fs.rmSync(pair.backupPath, { recursive: true, force: true });
+        yield pair.backupPath;
       }
     } catch {
       /* stale backup is safe to clean on the next maintenance pass */
     }
+  }
+}
+
+async function driveOwnedRemoval(steps: Generator<string, void>, removal: OwnedDirectoryRemoval): Promise<void> {
+  removal.assertActive();
+  let step = steps.next();
+  while (!step.done) {
+    // reject不能送回算法内原有best-effort catch，否则未知写者仍可能触发后续rename/删除。
+    const removed = await removal.remove(step.value);
+    removal.assertActive();
+    step = removed ? steps.next() : steps.throw(new Error('原子换代的归属删除已失败'));
+  }
+}
+
+export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]): void;
+export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[], removal: OwnedDirectoryRemoval): Promise<void>;
+export function replaceDirectoriesAtomically(
+  pairs: AtomicDirectoryReplacement[], removal?: OwnedDirectoryRemoval,
+): void | Promise<void> {
+  const steps = replacementSteps(pairs);
+  if (removal) return driveOwnedRemoval(steps, removal);
+  let step = steps.next();
+  while (!step.done) {
+    try {
+      fs.rmSync(step.value, { recursive: true, force: true });
+    } catch (error) {
+      step = steps.throw(error);
+      continue;
+    }
+    step = steps.next();
   }
 }
