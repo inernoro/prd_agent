@@ -23,7 +23,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { worktreePathActivity, WorktreeClaimHeldError } from '../services/worktree-path-activity.js';
 import { captureDeploymentInput, deploymentInputBranch, type DeploymentInputSnapshot } from '../services/deployment-input.js';
-import { admittedArtifactProfile, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { admittedArtifactProfile, artifactInspectionContext, verifyArtifactAdmission, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { resolveArtifactCommitIdentity } from '../services/artifact-commit-identity.js';
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
@@ -3032,17 +3032,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const profiles = input.profiles.filter(profile => !profileId || profile.id === profileId)
       .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(input, entry)));
     const target = input.artifactAdmission!.targetCommitSha;
-    const compare = componentInputComparator(shell, stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), assertCurrent);
+    const projectId = entry.projectId || 'default', branchName = entry.branch;
+    const repoRoot = stateService.getProjectRepoRoot(entry.projectId, config.repoRoot);
+    const assertOwner = () => {
+      assertCurrent(); const current = stateService.getBranch(entry.id);
+      if (!current || current !== entry || (current.projectId || 'default') !== projectId || current.branch !== branchName
+        || !stateService.getProject(projectId) || stateService.getProjectRepoRoot(current.projectId, config.repoRoot) !== repoRoot
+        || input.artifactAdmission?.targetCommitSha !== target) throw new BranchOperationSupersededError('', entry.id, 'artifact-input-owner');
+    };
+    const context = artifactInspectionContext(shell, worktreeService, repoRoot, assertOwner), compare = context.isComponentUnchangedSince;
     // 当前单服务入口执行于本机；整分支按其实际派发执行器核验，不借Master架构冒充。
     const executor = profileId ? null : resolveDeployTarget(entry, explicitTarget);
-    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertCurrent,
-      { isComponentUnchangedSince: compare }), executorId: 'local' };
+    if (!executor) return { ...await containerService.inspectDeploymentArtifacts(profiles, target, assertOwner, context), executorId: 'local' };
     assertCurrent();
     const response = await fetch(`http://${executor.host}:${executor.port}/exec/artifact-preflight`, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Executor-Token': config.executorToken || '' },
-      body: JSON.stringify({ profiles, commitSha: target }), signal: AbortSignal.timeout(120_000),
+      body: JSON.stringify({ profiles, commitSha: target, owner: { branchId: entry.id, branchName, projectId }, remainingMs: context.remainingMs() }),
+      signal: AbortSignal.timeout(context.remainingMs()),
     });
-    assertCurrent();
+    context.remainingMs();
     if (!response.ok) return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
       reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
     const reader = response.body?.getReader();
@@ -3050,19 +3058,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!reader) throw new Error('执行器未返回产物核验结果');
     try {
       for (;;) {
-        const { value, done } = await reader.read(); if (done) break;
+        context.remainingMs(); const { value, done } = await reader.read(); if (done) break;
         bytes += value.byteLength;
         if (bytes > 1024 * 1024) throw new Error('执行器产物核验结果超过读取预算');
         chunks.push(Buffer.from(value));
       }
     } finally { await reader.cancel().catch(() => {}); }
     const result = JSON.parse(Buffer.concat(chunks, bytes).toString('utf8')) as ArtifactAdmission;
-    assertCurrent();
+    context.remainingMs();
     if (!result || result.targetCommitSha !== target || !['ready', 'waiting'].includes(result.state) || !Array.isArray(result.artifacts)) {
       return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
         reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
     }
-    if (result.state === 'ready' && !await verifyArtifactAdmission(profiles, target, result, compare, assertCurrent)) {
+    if (result.state === 'ready' && !await verifyArtifactAdmission(profiles, target, result, compare, () => { context.remainingMs(); })) {
       return { state: 'waiting', targetCommitSha: target, checkedAt: new Date().toISOString(),
         reason: 'verification-unavailable', artifacts: [], executorId: executor.id };
     }
@@ -3114,11 +3122,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       // 带版本/一次性选项沿用既有不能持久重放的契约：先核验，缺产物时拒绝而非丢选项排队。
       if (input.versionId || input.hasOneShotOptions) {
+        let preparation: ReturnType<BranchOperationCoordinator['beginDeploymentPreparation']> | undefined;
         try {
-          deploymentInput.artifactAdmission = await inspectArtifactInput(entry, deploymentInput, input.profileId, () => {}, req.body?.targetExecutorId);
+          if (!branchOperationCoordinator) throw new Error('产物核验资格能力不可用');
+          preparation = branchOperationCoordinator.beginDeploymentPreparation(buildBranchOperationRequest(req, entry, input));
+          deploymentInput.artifactAdmission = await inspectArtifactInput(entry, deploymentInput, input.profileId, preparation.assertCurrent, req.body?.targetExecutorId);
         } catch {
           deploymentInput.artifactAdmission = { ...deploymentInput.artifactAdmission, state: 'waiting', reason: 'verification-unavailable', artifacts: [] };
-        }
+        } finally { preparation?.release(); }
       }
     }
     const waitForArtifacts = deploymentInput?.artifactAdmission?.state === 'waiting';

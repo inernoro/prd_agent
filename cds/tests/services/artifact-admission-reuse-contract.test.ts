@@ -4,10 +4,12 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import yaml from 'js-yaml';
 import { describe, expect, it, vi } from 'vitest';
-import { admittedArtifactProfile, inspectDeploymentArtifacts, verifyArtifactAdmission } from '../../src/services/artifact-admission.js';
+import { admittedArtifactProfile, artifactInspectionContext, inspectDeploymentArtifacts, verifyArtifactAdmission } from '../../src/services/artifact-admission.js';
+import { WorktreeService } from '../../src/services/worktree.js';
+import { READ_TIMEOUT_MS } from '../../src/services/release-git-reader.js';
 import { proveFallbackImage } from '../../src/services/prebuilt-reuse.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
-import type { BuildProfile } from '../../src/types.js';
+import type { BuildProfile, ExecOptions } from '../../src/types.js';
 import { branchVersionFacts } from '../../src/services/running-version.js';
 import { ContainerService } from '../../src/services/container.js';
 import type { BranchEntry, CdsConfig, ServiceState } from '../../src/types.js';
@@ -95,6 +97,54 @@ describe('增量 CI 与完整产物准入的复用契约', () => {
       Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': actualRevision } } }]), stderr: '', exitCode: 0 }));
     return { shell, profile };
   }
+
+  it.each(['认证返回', 'fetch槽派发', '预算失效'])('真实准入比较在%s后不得使用旧资格继续取B或转ready', async phase => {
+    const { shell, profile } = reusable(); let current = true, elapsed = 1000, enter!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { enter = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => elapsed), commands: string[] = [];
+    const assertCurrent = () => { if (!current) throw new Error('本轮资格已取代'); };
+    Object.assign(shell, { execOwnedOperation: async (command: string, options: ExecOptions & { beforeStart: () => void }) => {
+      if (command.startsWith('git fetch') && phase !== '认证返回') { enter(); await gate; }
+      options.beforeStart(); commands.push(command);
+      return { stdout: command.includes(actualRevision) ? actualRevision : '', stderr: '', exitCode: command.includes(actualRevision) ? 0 : 128 };
+    } });
+    const worktree = new WorktreeService(shell, async () => { if (phase === '认证返回') { enter(); await gate; } return { TEST_AUTH: 'synthetic-only' }; });
+    const outcome = inspectDeploymentArtifacts(shell, [profile], target, assertCurrent,
+      artifactInspectionContext(shell, worktree, '/owned', assertCurrent)).catch(error => error);
+    try {
+      await started; if (phase === '预算失效') elapsed += 120_001; else current = false;
+      release(); expect((await outcome)?.state).not.toBe('ready'); expect(commands.some(command => command.startsWith('git fetch'))).toBe(false);
+    } finally { release(); await outcome; clock.mockRestore(); }
+  });
+
+  it('认证超过同轮剩余预算后有限结束，迟返认证不能再派Git或泄露内容', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const { shell, profile } = reusable(); let enter!: () => void, release!: (value: Record<string, string>) => void;
+    const started = new Promise<void>(resolve => { enter = resolve; }), auth = new Promise<Record<string, string>>(resolve => { release = resolve; });
+    const commands: string[] = [];
+    Object.assign(shell, { execOwnedOperation: async (command: string, options: ExecOptions & { beforeStart: () => void }) => {
+      options.beforeStart(); commands.push(command); return { stdout: command.includes(actualRevision) ? actualRevision : '', stderr: '', exitCode: command.includes(actualRevision) ? 0 : 128 };
+    } });
+    const worktree = new WorktreeService(shell, async () => { enter(); return auth; });
+    const outcome = inspectDeploymentArtifacts(shell, [profile], target, () => {}, artifactInspectionContext(shell, worktree, '/owned', () => {}, 10));
+    try {
+      await started; await vi.advanceTimersByTimeAsync(11); expect((await outcome).state).toBe('waiting');
+      release({ TEST_AUTH: 'synthetic-secret' }); await Promise.resolve(); await Promise.resolve();
+      expect(commands.some(command => command.startsWith('git fetch'))).toBe(false); expect(JSON.stringify(await outcome)).not.toContain('synthetic-secret');
+    } finally { release({}); vi.useRealTimers(); }
+  });
+
+  it('剩余时间不足原只读窗时不入队，exact primary不准备任何Git输入', async () => {
+    const { shell, profile } = reusable(), prepare = vi.fn(async (_repo: string, sha: string) => sha);
+    Object.assign(shell, { execBackgroundObservation: shell.exec.bind(shell) });
+    const context = artifactInspectionContext(shell, { ensureCommitAvailable: prepare }, '/owned', () => {}, READ_TIMEOUT_MS - 1);
+    expect((await inspectDeploymentArtifacts(shell, [profile], target, () => {}, context)).state).toBe('waiting');
+    expect(shell.commands.some(command => /^'git'/.test(command))).toBe(false);
+    prepare.mockClear(); shell.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    shell.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: contentId, RepoDigests: [fixedImage], Os: 'linux', Architecture: 'amd64',
+      Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
+    expect((await inspectDeploymentArtifacts(shell, [profile], target, () => {}, context)).state).toBe('ready'); expect(prepare).not.toHaveBeenCalled();
+  });
 
   it.each([actualRevision, target])('本地裸仓库digest保持原样，实际revision=%s及运行环境仍以OCI事实为准', async revision => {
     const { shell, profile } = reusable();

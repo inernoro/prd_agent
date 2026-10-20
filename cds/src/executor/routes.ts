@@ -13,7 +13,7 @@ import { WorktreeService } from '../services/worktree.js';
 import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
-import { admittedArtifactProfile, type ArtifactAdmission } from '../services/artifact-admission.js';
+import { admittedArtifactProfile, artifactInspectionContext, type ArtifactAdmission } from '../services/artifact-admission.js';
 import { componentInputComparator } from '../services/prebuilt-reuse.js';
 import { BranchOperationCoordinator, BranchOperationSupersededError, type BranchOperationTrigger } from '../services/branch-operation-coordinator.js';
 import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
@@ -63,6 +63,20 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
     return { ...cdsEnv, ...mirrorEnv, ...customEnv };
   }
 
+  function artifactOwnerGuard(branchId: string, branchName: string, projectId: string, assertCurrent: () => void): { assertCurrent: () => void; worktree?: WorktreeService } {
+    const entry = stateService.getBranch(branchId), project = stateService.getProject(projectId), repoRoot = config.repoRoot;
+    const mappedProject = stateService.resolveProjectForAutoBuild(repoRoot), projectRepoRoot = stateService.getProjectRepoRoot(projectId, repoRoot);
+    const check = () => {
+      assertCurrent();
+      if (stateService.getProject(projectId) !== project || config.repoRoot !== repoRoot
+        || stateService.resolveProjectForAutoBuild(repoRoot) !== mappedProject || stateService.getProjectRepoRoot(projectId, repoRoot) !== projectRepoRoot
+        || stateService.getBranch(branchId) !== entry || entry && ((entry.projectId || 'default') !== projectId || entry.branch !== branchName)) {
+        throw new BranchOperationSupersededError('', branchId, 'executor-artifact-owner');
+      }
+    };
+    return { assertCurrent: check, worktree: project && mappedProject === project && projectRepoRoot === repoRoot ? worktreeService : undefined };
+  }
+
   // ── GET /exec/status — current load and branch status ──
   router.get('/status', (_req, res) => {
     const branches = stateService.getAllBranches();
@@ -75,19 +89,33 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
   // 只核验产物，不创建worktree、容器或修改项目/分支状态；使用本执行器daemon及registry访问。
   router.post('/artifact-preflight', async (req, res) => {
-    const { profiles, commitSha } = req.body || {};
+    const { profiles, commitSha, owner, remainingMs } = req.body || {};
     if (!Array.isArray(profiles) || profiles.length > 256 || typeof commitSha !== 'string' || !/^[0-9a-f]{40}$/i.test(commitSha)
       || !profiles.every(profile => profile && typeof profile.id === 'string' && profile.id.length <= 256
         && typeof profile.dockerImage === 'string' && profile.dockerImage.length <= 4096)) {
       res.status(400).json({ error: '产物核验输入无效' }); return;
     }
+    if (owner !== undefined && (!owner || !['branchId', 'branchName', 'projectId'].every(key => typeof owner[key] === 'string'
+      && owner[key].length > 0 && owner[key].length <= 1024) || typeof remainingMs !== 'number' || !Number.isFinite(remainingMs) || remainingMs <= 0)) {
+      res.status(400).json({ error: '产物核验归属或剩余时间无效' }); return;
+    }
+    let preparation: ReturnType<BranchOperationCoordinator['beginDeploymentPreparation']> | undefined, closed = false;
+    const onClose = () => { closed = true; preparation?.release(); };
+    res.once('close', onClose);
     try {
-      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, () => {},
-        { isComponentUnchangedSince: componentInputComparator(shell, config.repoRoot) });
+      const assertRequest = () => { if (closed) throw new Error('产物核验请求已结束'); preparation?.assertCurrent(); };
+      const qualification = owner ? artifactOwnerGuard(owner.branchId, owner.branchName, owner.projectId, assertRequest) : { assertCurrent: assertRequest, worktree: undefined };
+      const { assertCurrent } = qualification;
+      assertCurrent();
+      if (owner) preparation = preparations.beginDeploymentPreparation({ branchId: owner.branchId, projectId: owner.projectId,
+        kind: 'deploy', trigger: 'system', commitSha, commitPinned: true, source: 'executor.artifact-preflight' });
+      const context = artifactInspectionContext(shell, qualification.worktree, config.repoRoot, assertCurrent, owner ? remainingMs : 120_000);
+      const result = await containerService.inspectDeploymentArtifacts(profiles as BuildProfile[], commitSha, assertCurrent, context);
+      context.remainingMs();
       res.json(result);
     } catch {
       res.status(503).json({ error: '产物核验暂不可用，尚未开始部署' });
-    }
+    } finally { preparation?.release(); res.off('close', onClose); }
   });
 
   // ── POST /exec/deploy — deploy a branch (create worktree + build + run) ──
@@ -193,6 +221,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
           message: '预构建部署的完整目标尚未确认，尚未受理；请由Master等待齐备产物后重试，旧服务继续保留',
           ...(currentEntry ? { services: currentEntry.services } : {}) }); return;
       }
+      const { assertCurrent: assertArtifactOwner, worktree: artifactWorktree } = artifactOwnerGuard(branchId, branchName, resolvedProjectId, assertCurrent);
+      if (requiresArtifactAdmission) assertArtifactOwner();
       const allowedTriggers: BranchOperationTrigger[] = ['manual', 'webhook', 'auto-lifecycle', 'scheduler', 'janitor', 'system'];
       preparation = preparations.beginDeploymentPreparation({ branchId, projectId: actualProjectId, kind: 'deploy',
         trigger: allowedTriggers.includes(trigger as BranchOperationTrigger) ? trigger as BranchOperationTrigger : 'manual',
@@ -202,8 +232,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       if (requiresArtifactAdmission) {
         sendEvent('step', { step: 'artifact-preflight', status: 'running', title: '正在核验全部必需镜像及本地产物' });
         try {
-          admission = await containerService.inspectDeploymentArtifacts(profilesData as BuildProfile[], target!, assertCurrent, { inspectLocalArtifacts: true,
-            isComponentUnchangedSince: componentInputComparator(shell, config.repoRoot, assertCurrent) });
+          const context = artifactInspectionContext(shell, artifactWorktree, config.repoRoot, assertArtifactOwner);
+          admission = await containerService.inspectDeploymentArtifacts(profilesData as BuildProfile[], target!, assertArtifactOwner, { ...context, inspectLocalArtifacts: true });
         } catch (error) {
           assertCurrent();
           if (error instanceof BranchOperationSupersededError) throw error;

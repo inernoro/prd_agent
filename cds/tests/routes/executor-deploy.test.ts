@@ -29,7 +29,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { ShellExecutor, MockShellExecutor } from '../../src/services/shell-executor.js';
 import { createExecutorRouter } from '../../src/executor/routes.js';
-import type { CdsConfig, BranchEntry } from '../../src/types.js';
+import type { CdsConfig, BranchEntry, ExecOptions } from '../../src/types.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -159,6 +159,9 @@ describe('Executor /exec/deploy', () => {
     });
 
     mock = new MockShellExecutor();
+    Object.assign(mock, { execOwnedOperation: (command: string, options: ExecOptions & { beforeStart: () => void }) => {
+      options.beforeStart(); return mock.exec(command, options);
+    } });
     mock.addResponsePattern(/git rev-parse --verify '([^']+)\^\{commit\}'/, (match) => ({
       stdout: /^[0-9a-f]{7,40}$/i.test(match[1]) ? match[1].padEnd(40, '0') : 'a'.repeat(40), stderr: '', exitCode: 0,
     }));
@@ -273,6 +276,58 @@ describe('Executor /exec/deploy', () => {
     return { target, imageId, profiles, entry, payload: { branchId: entry.id, branchName: entry.branch, projectId: 'default', commitSha: target, profiles } };
   }
 
+  function unfetchedCommitFixture() {
+    const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const seed = path.join(tmpDir, 'input-seed'), origin = path.join(tmpDir, 'input-origin.git'), repo = path.join(tmpDir, 'input-clone');
+    fs.mkdirSync(seed); git(['init', '--initial-branch=main'], seed);
+    git(['config', 'user.name', 'artifact-input'], seed); git(['config', 'user.email', 'artifact-input@example.invalid'], seed);
+    fs.writeFileSync(path.join(seed, 'component.txt'), 'A'); git(['add', '.'], seed); git(['commit', '-m', '版本A'], seed);
+    git(['clone', '--bare', seed, origin], tmpDir); git(['clone', origin, repo], tmpDir);
+    const A = git(['rev-parse', 'HEAD'], repo);
+    fs.writeFileSync(path.join(seed, 'other.txt'), 'B'); git(['add', '.'], seed); git(['commit', '-m', '其他组件B'], seed);
+    const B = git(['rev-parse', 'HEAD'], seed); git(['push', origin, 'HEAD:refs/heads/later-object'], seed);
+    expect(() => git(['cat-file', '-e', `${B}^{commit}`], repo)).toThrow();
+    const native = new ShellExecutor(), original = mock.exec.bind(mock);
+    mock.exec = async (command, options) => {
+      if (/^'git'.*'diff'/.test(command) || options?.cwd === repo && /^git (rev-parse --verify|fetch origin [0-9a-f]{40}$)/.test(command)) {
+        mock.commands.push(command); mock.cwds.push(options?.cwd); mock.stdins.push(options?.stdin);
+        return native.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
+      }
+      return original(command, options);
+    };
+    Object.assign(mock, { execBackgroundObservation: mock.exec.bind(mock), execOwnedOperation: (command: string, options: ExecOptions & { beforeStart: () => void }) => {
+      options.beforeStart(); return mock.exec(command, options);
+    } });
+    config.repoRoot = repo; stateService.getProject('default')!.repoPath = repo;
+    return { A, B, repo, origin, git };
+  }
+
+  it.each(['preflight', 'deploy'])('上游已发布但clone缺目标B时，真实executor %s取回再比较且保留目标B/实际A', async mode => {
+    const f = artifactFixture(), { A, B, repo, origin, git } = unfetchedCommitFixture();
+    const fallback = 'ghcr.io/owned/api:branch-main', scope = ['component.txt'];
+    const profile = { ...f.profiles[0], dockerImage: `ghcr.io/owned/api:sha-${B}`, fallbackImage: [fallback], buildScope: scope };
+    mock.addResponsePatternFirst(/docker pull (.+)/, match => ({ stdout: '', stderr: match[1].includes(`sha-${B}`) ? 'manifest unknown' : '',
+      exitCode: match[1].includes(`sha-${B}`) ? 1 : 0 }));
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: f.imageId, RepoDigests: [`ghcr.io/owned/api@${f.imageId}`],
+      Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': A } } }]), stderr: '', exitCode: 0 }));
+    if (mode === 'preflight') {
+      const result = await artifactPost({ profiles: [profile], commitSha: B, remainingMs: 120_000,
+        owner: { branchId: f.entry.id, branchName: f.entry.branch, projectId: 'default' } });
+      expect(result.status).toBe(200); expect(result.body).toMatchObject({ state: 'ready', targetCommitSha: B, artifacts: [{ revision: A }] });
+      expect(mock.commands.some(command => /^docker (run|create|stop|rm)|git worktree/.test(command))).toBe(false);
+    } else {
+      const result = await postSse(server, '/exec/deploy', { ...f.payload, profiles: [profile], commitSha: B, artifactCommitSha: B });
+      expect(result.events.filter(event => event.event === 'error' || event.data?.status === 'error')).toEqual([]);
+      expect(result.events.some(event => event.event === 'complete')).toBe(true);
+      expect(stateService.getBranch(f.entry.id)?.services.api.deployedImage).toBe(`ghcr.io/owned/api:sha-${A}@${f.imageId}`);
+      expect(result.events.find(event => event.data?.step === 'artifact-target')?.data.artifactCommitSha).toBe(B);
+    }
+    const fetched = mock.commands.indexOf(`git fetch origin ${B}`), compared = mock.commands.findIndex(command => /^'git'.*'diff'/.test(command));
+    expect(fetched).toBeGreaterThanOrEqual(0); expect(fetched).toBeLessThan(compared);
+    expect(git(['rev-parse', '--verify', `${B}^{commit}`], repo)).toBe(B);
+    expect(git(['rev-parse', 'HEAD'], repo)).toBe(A); expect(git(['remote', 'get-url', 'origin'], repo)).toBe(origin);
+  });
+
   it.each(['missing', 'local-unverified', 'unknown-target'])('旧Master直调%s在全部副作用前拒绝，保留旧服务/孤儿和分支运行态', async (failure) => {
     const f = artifactFixture(); const before = structuredClone(f.entry);
     if (failure === 'missing') mock.addResponsePatternFirst(/docker pull .*web/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
@@ -285,6 +340,62 @@ describe('Executor /exec/deploy', () => {
     const error = result.events.find(e => e.event === 'error'); expect(error?.data.accepted).toBe(false);
     expect(result.events.some(e => e.event === 'complete')).toBe(false);
     expect(mock.commands.some(cmd => /docker (run|create|rm|stop|network create)|git |mkdir /.test(cmd))).toBe(false);
+  });
+
+  it.each(['preflight', 'deploy'])('executor %s保留未复制Master项目的exact-primary只读合同', async mode => {
+    const branchId = 'remote-only-project', projectId = 'master-real-project', target = 'b'.repeat(40), imageId = `sha256:${'c'.repeat(64)}`;
+    const profiles = ['api', 'web'].map(id => ({ id, name: id, dockerImage: `ghcr.io/owned/${id}:sha-${target}`,
+      prebuiltImage: true, command: '', workDir: '.', containerPort: 3000 }));
+    expect(stateService.getProjects().map(project => project.id)).toEqual(['default']);
+    expect(stateService.getBranch(branchId)).toBeUndefined();
+    mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: imageId,
+      RepoDigests: profiles.map(profile => `ghcr.io/owned/${profile.id}@${imageId}`), Os: 'linux', Architecture: 'amd64',
+      Config: { Labels: { 'org.opencontainers.image.revision': target } } }]), stderr: '', exitCode: 0 }));
+    const ensure = vi.spyOn(WorktreeService.prototype, 'ensureCommitAvailable');
+    try {
+      if (mode === 'preflight') {
+        const result = await artifactPost({ profiles, commitSha: target, remainingMs: 120_000,
+          owner: { branchId, branchName: 'main', projectId } });
+        expect(result.status).toBe(200); expect(result.body).toMatchObject({ state: 'ready', targetCommitSha: target });
+        expect(result.body.artifacts.flatMap((artifact: { profileIds: string[] }) => artifact.profileIds)).toEqual(['api', 'web']);
+        expect(stateService.getBranch(branchId)).toBeUndefined();
+      } else {
+        const result = await postSse(server, '/exec/deploy', { branchId, branchName: 'main', projectId, profiles, commitSha: target, artifactCommitSha: target });
+        expect(result.events.filter(event => event.event === 'error' || event.data?.status === 'error')).toEqual([]);
+        expect(result.events.some(event => event.event === 'complete')).toBe(true);
+        expect(stateService.getBranch(branchId)).toMatchObject({ projectId, status: 'running' });
+        expect(Object.keys(stateService.getBranch(branchId)!.services)).toEqual(['api', 'web']);
+      }
+      expect(ensure).not.toHaveBeenCalled();
+      expect(mock.commands.some(command => /^git |^'git'/.test(command))).toBe(false);
+    } finally { ensure.mockRestore(); }
+  });
+
+  it.each(['preflight', 'deploy'])('executor %s跨项目归属在Docker及Git前拒绝，不能借默认项目仓库', async mode => {
+    const f = artifactFixture(), now = new Date().toISOString(), before = structuredClone(f.entry);
+    stateService.addProject({ id: 'foreign', slug: 'foreign', name: 'Other', kind: 'git', repoPath: path.join(tmpDir, 'foreign'), createdAt: now, updatedAt: now });
+    if (mode === 'preflight') {
+      expect((await artifactPost({ profiles: f.profiles, commitSha: f.target, remainingMs: 120_000,
+        owner: { branchId: f.entry.id, branchName: f.entry.branch, projectId: 'foreign' } })).status).toBe(503);
+    } else {
+      const result = await postSse(server, '/exec/deploy', { ...f.payload, projectId: 'foreign' });
+      expect(result.events.some(event => event.event === 'complete')).toBe(false);
+    }
+    expect(mock.commands).toEqual([]); expect(stateService.getBranch(f.entry.id)).toEqual(before);
+  });
+
+  it('原origin没有目标对象时真实HTTP保持等待，单次精确fetch失败不能借HEAD放行', async () => {
+    const f = artifactFixture(), { A, repo, git } = unfetchedCommitFixture(), missing = 'f'.repeat(40);
+    const profile = { ...f.profiles[0], dockerImage: `ghcr.io/owned/api:sha-${missing}`, fallbackImage: ['ghcr.io/owned/api:branch-main'], buildScope: ['component.txt'] };
+    mock.addResponsePatternFirst(/docker pull (.+)/, match => ({ stdout: '', stderr: match[1].includes(missing) ? 'manifest unknown' : '', exitCode: match[1].includes(missing) ? 1 : 0 }));
+    mock.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: f.imageId, RepoDigests: [`ghcr.io/owned/api@${f.imageId}`],
+      Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': A } } }]), stderr: '', exitCode: 0 }));
+    const result = await artifactPost({ profiles: [profile], commitSha: missing, remainingMs: 120_000,
+      owner: { branchId: f.entry.id, branchName: f.entry.branch, projectId: 'default' } });
+    expect(result.body).toMatchObject({ state: 'waiting', artifacts: [] });
+    expect(mock.commands.filter(command => command.startsWith('git fetch'))).toEqual([`git fetch origin ${missing}`]);
+    expect(git(['rev-parse', 'HEAD'], repo)).toBe(A); expect(mock.commands.some(command => /reset|checkout|git worktree|docker (run|create)/.test(command))).toBe(false);
   });
 
   it('旧Master全部角色准入后运行固定digest，清除隐式fallback并标记实际镜像目标', async () => {
@@ -374,7 +485,7 @@ describe('Executor /exec/deploy', () => {
     expect(mock.commands.some(command => /docker (run|create|stop|rm)|git fetch|git worktree/.test(command))).toBe(false);
   });
 
-  it.each(['stop', 'delete', 'new-target', 'owner'])('执行器预检等待中%s后，旧请求不得迟到拆服务或写旧状态', async (change) => {
+  it.each(['stop', 'delete', 'new-target', 'owner', 'root', 'project', 'mapping'])('执行器预检等待中%s后，旧请求不得迟到拆服务或写旧状态', async (change) => {
     const f = artifactFixture(); let release!: () => void, entered!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
     const original = mock.exec.bind(mock); let pulls = 0;
@@ -386,6 +497,12 @@ describe('Executor /exec/deploy', () => {
     try {
       if (change === 'stop' || change === 'delete') await postJson(server, `/exec/${change}`, { branchId: f.entry.id });
       else if (change === 'owner') f.entry.projectId = 'other-owner';
+      else if (change === 'root') config.repoRoot = path.join(tmpDir, 'changed-root');
+      else if (change === 'project') stateService.getProject('default')!.repoPath = path.join(tmpDir, 'changed-project-root');
+      else if (change === 'mapping') {
+        stateService.getProject('default')!.legacyFlag = false; const now = new Date().toISOString();
+        stateService.addProject({ id: 'new-owner', slug: 'new-owner', name: '新映射项目', kind: 'git', repoPath: config.repoRoot, createdAt: now, updatedAt: now });
+      }
       else {
         const next = await postSse(server, '/exec/deploy', { ...f.payload, commitSha: 'd'.repeat(40) });
         expect(next.events.find(e => e.event === 'error')?.data.reason).toBe('revision-mismatch');
