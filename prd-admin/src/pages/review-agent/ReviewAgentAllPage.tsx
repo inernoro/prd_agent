@@ -2,7 +2,10 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { useReviewNavigation } from './reviewNavigation';
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ClipboardList, Search, ChevronLeft, ChevronRight, ArrowLeft, ChevronDown, ChevronUp, CheckCircle, XCircle, Clock, List, Trophy } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, ArrowLeft, CheckCircle, XCircle, Clock, List, Trophy } from 'lucide-react';
+import { Button } from '@/components/design/Button';
+import { SectionShell } from '@/components/agent-shell/AgentFullscreenLayout';
+import { OverviewDataTable, TruncateCell } from '@/pages/product-agent/overviewDataTable';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { getAllReviewSubmissions, getReviewSubmitters } from '@/services';
 import type { ReviewSubmission } from '@/services';
@@ -11,10 +14,10 @@ import { ReviewLeaderboardView } from './components/ReviewLeaderboardView';
 function getStatusInfo(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {
     if (item.isPassed === false) return { label: '未通过', color: 'text-[color:var(--accent-fg-warning)]', icon: <XCircle className="w-3.5 h-3.5" /> };
-    return { label: '已通过', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
+    return { label: '已通过', color: 'text-[color:var(--accent-fg-success)]', icon: <CheckCircle className="w-3.5 h-3.5" /> };
   }
-  if (item.status === 'Error') return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
-  if (item.status === 'Running') return { label: '评审中', color: 'text-blue-400/80', icon: <MapSpinner size={14} /> };
+  if (item.status === 'Error') return { label: '失败', color: 'text-[color:var(--accent-fg-danger)]', icon: <XCircle className="w-3.5 h-3.5" /> };
+  if (item.status === 'Running') return { label: '评审中', color: 'text-[color:var(--accent-fg-blue)]', icon: <MapSpinner size={14} /> };
   return { label: '等待评审', color: 'text-[color:var(--accent-fg-amber)]', icon: <Clock className="w-3.5 h-3.5" /> };
 }
 
@@ -61,7 +64,6 @@ export function ReviewAgentAllPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [selectedSubmitterId, setSelectedSubmitterId] = useState('');
   const [submitters, setSubmitters] = useState<Submitter[]>([]);
-  const [tagsExpanded, setTagsExpanded] = useState(false);
 
   const pageSize = 20;
 
@@ -94,53 +96,25 @@ export function ReviewAgentAllPage() {
 
   const totalPages = Math.ceil(total / pageSize);
 
-  const TAG_COLLAPSED_COUNT = 10;
-  const visibleSubmitters = tagsExpanded ? submitters : submitters.slice(0, TAG_COLLAPSED_COUNT);
-  const hasMoreTags = submitters.length > TAG_COLLAPSED_COUNT;
-
   return (
-    <div className="h-full min-h-0 flex flex-col">
-      <div
-        className="flex-1 min-h-0 overflow-y-auto"
-        style={{ overscrollBehavior: 'contain' }}
-      >
-        <div className="max-w-5xl mx-auto px-4 py-6">
-          {/* 返回按钮 */}
-          <button
-            onClick={goBack}
-            className="flex items-center gap-1.5 text-sm text-token-muted hover-text-primary mb-5 transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            返回
-          </button>
-
-          <div className="flex items-center gap-3 mb-5">
-            <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-              <ClipboardList className="w-4 h-4 text-[color:var(--accent-fg-blue)]" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold text-token-primary">全部评审提交</h1>
-              <p className="text-xs text-token-muted mt-0.5">
-                {view === 'list' ? `共 ${total} 条提交记录` : '按自然月维度查看排行'}
-              </p>
-            </div>
-          </div>
-
-          {/* 视图切换器 */}
-          <div className="flex gap-1 mb-5 border-b border-token-subtle pb-3">
+    <SectionShell
+      title="全部评审提交"
+      count={view === 'list' && !loading ? total : undefined}
+      desc={view === 'list' ? '查看全部方案的评审结果，按状态和提交人筛选' : '按自然月查看评审排行'}
+      actions={<Button size="sm" variant="ghost" onClick={goBack} aria-label="返回评审"><ArrowLeft size={14} /><span className="hidden sm:inline">返回评审</span></Button>}
+    >
+      <div className="flex min-h-full min-w-0 flex-col gap-4">
+          <div className="flex flex-wrap items-center gap-2 border-b border-token-subtle pb-3" role="group" aria-label="评审视图">
             {VIEW_TABS.map(tab => (
-              <button
+              <Button size="sm"
                 key={tab.key}
                 onClick={() => setView(tab.key)}
-                className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                  view === tab.key
-                    ? 'bg-indigo-600 border-indigo-600 text-white'
-                    : 'bg-token-nested border-token-subtle text-token-secondary hover-text-primary hover-border-token'
-                }`}
+                variant={view === tab.key ? 'secondary' : 'ghost'}
+                aria-pressed={view === tab.key}
               >
                 {tab.icon}
                 {tab.label}
-              </button>
+              </Button>
             ))}
           </div>
 
@@ -148,74 +122,40 @@ export function ReviewAgentAllPage() {
 
           {view === 'list' && (
             <>
-              {/* 搜索框 */}
-              <div className="relative mb-3">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-token-muted" />
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
+              <label className="flex min-w-0 basis-full items-center gap-2 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 focus-within:border-[var(--accent-fg-blue)] sm:min-w-64 sm:flex-1 sm:basis-auto">
+                <Search size={15} className="shrink-0 text-token-muted" />
                 <input
                   type="text"
+                  aria-label="搜索方案标题或提交人"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  placeholder="搜索方案标题或提交人..."
-                  className="w-full bg-token-nested border border-token-subtle rounded-lg pl-9 pr-4 py-2.5 text-sm text-token-primary placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
+                  placeholder="搜索当前页的方案标题或提交人"
+                  className="min-w-0 w-full bg-transparent text-sm text-token-primary placeholder-token-muted outline-none"
                 />
-              </div>
-
-              {/* 状态筛选 Tabs */}
-              <div className="flex gap-1 mb-3">
+              </label>
+              <label className="flex min-w-0 items-center gap-2 text-xs text-token-secondary">
+                <span className="shrink-0">提交人</span>
+                <select aria-label="提交人" value={selectedSubmitterId}
+                  onChange={e => { setSelectedSubmitterId(e.target.value); setPage(1); }}
+                  className="min-w-0 max-w-48 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+                  <option value="">全部提交人</option>
+                  {submitters.map(submitter => <option key={submitter.id} value={submitter.id}>{submitter.name}</option>)}
+                </select>
+              </label>
+              <div className="flex flex-wrap items-center gap-1" role="group" aria-label="评审状态">
                 {STATUS_TABS.map(tab => (
-                  <button
+                  <Button size="sm"
                     key={tab.key}
                     onClick={() => { setStatusFilter(tab.key); setPage(1); }}
-                    className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-                      statusFilter === tab.key
-                        ? 'bg-indigo-600 border-indigo-600 text-white'
-                        : 'bg-token-nested border-token-subtle text-token-secondary hover-text-primary hover-border-token'
-                    }`}
+                    variant={statusFilter === tab.key ? 'secondary' : 'ghost'}
+                    aria-pressed={statusFilter === tab.key}
                   >
                     {tab.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
-
-              {/* 用户标签筛选 */}
-              {submitters.length > 0 && (
-                <div className="mb-5">
-                  <div className="flex flex-wrap gap-1.5">
-                    <button
-                      onClick={() => { setSelectedSubmitterId(''); setPage(1); }}
-                      className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                        !selectedSubmitterId
-                          ? 'bg-indigo-500/20 border-indigo-500/40 text-[color:var(--accent-fg-blue)]'
-                          : 'bg-token-nested border-token-subtle text-token-secondary hover-border-token hover-text-primary'
-                      }`}
-                    >
-                      全部
-                    </button>
-                    {visibleSubmitters.map(s => (
-                      <button
-                        key={s.id}
-                        onClick={() => { setSelectedSubmitterId(prev => prev === s.id ? '' : s.id); setPage(1); }}
-                        className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
-                          selectedSubmitterId === s.id
-                            ? 'bg-indigo-500/20 border-indigo-500/40 text-[color:var(--accent-fg-blue)]'
-                            : 'bg-token-nested border-token-subtle text-token-secondary hover-border-token hover-text-primary'
-                        }`}
-                      >
-                        {s.name}
-                      </button>
-                    ))}
-                    {hasMoreTags && (
-                      <button
-                        onClick={() => setTagsExpanded(v => !v)}
-                        className="text-xs px-2.5 py-1 rounded-full border border-token-subtle text-token-muted hover-text-primary transition-colors flex items-center gap-0.5"
-                      >
-                        {tagsExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                        {tagsExpanded ? '收起' : `+${submitters.length - TAG_COLLAPSED_COUNT} 人`}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
+              </div>
 
               {/* 列表 */}
               {loading ? (
@@ -223,77 +163,43 @@ export function ReviewAgentAllPage() {
               ) : filtered.length === 0 ? (
                 <div className="text-center py-16 text-token-muted text-sm">暂无提交记录</div>
               ) : (
-                <div className="space-y-2">
-                  {filtered.map(item => {
+                <OverviewDataTable tableKey="review-all-submissions" rows={filtered}
+                  onRowClick={item => navigate(reviewNav.submission(item.id))}
+                  columns={[
+                    { key: 'title', header: '方案标题', defaultWidth: 350, render: item => <button type="button" title={item.title} className="block w-full truncate text-left text-sm text-token-primary hover:underline focus-visible:outline focus-visible:outline-2" onClick={event => { event.stopPropagation(); navigate(reviewNav.submission(item.id)); }}>{item.title}</button> },
+                    { key: 'submitter', header: '提交人', defaultWidth: 100, render: item => <TruncateCell text={item.submitterName} className="text-xs text-token-secondary" /> },
+                    { key: 'file', header: '方案文件', defaultWidth: 240, render: item => <TruncateCell text={item.fileName} className="text-xs text-token-secondary" /> },
+                    { key: 'date', header: '提交日期', defaultWidth: 115, render: item => <span className="text-xs text-token-muted">{new Date(item.submittedAt).toLocaleDateString('zh-CN')}</span> },
+                    { key: 'status', header: '评审状态', defaultWidth: 110, render: item => {
                     const statusInfo = getStatusInfo(item);
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => navigate(reviewNav.submission(item.id))}
-                        className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-5 py-4 text-left transition-colors"
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-medium text-token-primary truncate">{item.title}</span>
-                          </div>
-                          <div className="flex items-center gap-3 text-xs text-token-muted">
-                            <span>{item.submitterName}</span>
-                            <span>·</span>
-                            <span>{item.fileName}</span>
-                            <span>·</span>
-                            <span>{new Date(item.submittedAt).toLocaleDateString('zh-CN')}</span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          {item.appealStatus && (
-                            <span
-                              className={
-                                'inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ' +
-                                (item.appealStatus === 'Pending'
-                                  ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
-                                  : item.appealStatus === 'Approved'
-                                    ? 'bg-violet-500/15 text-[color:var(--accent-fg-violet)] border-violet-500/30'
-                                    : 'bg-rose-900/30 text-rose-300 border-rose-700/40')
-                              }
-                            >
-                              {item.appealStatus === 'Pending' ? '申诉中' : item.appealStatus === 'Approved' ? '申诉成功' : '申诉驳回'}
-                            </span>
-                          )}
-                          <div className={`flex items-center gap-1.5 text-xs ${statusInfo.color}`}>
-                            {statusInfo.icon}
-                            {statusInfo.label}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                    return <span className={`inline-flex items-center gap-1.5 text-xs ${statusInfo.color}`}>{statusInfo.icon}{statusInfo.label}</span>;
+                    } },
+                    { key: 'appeal', header: '申诉状态', defaultWidth: 100, render: item => <span className="text-xs text-token-secondary">{item.appealStatus === 'Pending' ? '申诉中' : item.appealStatus === 'Approved' ? '申诉成功' : item.appealStatus ? '申诉驳回' : '—'}</span> },
+                  ]}
+                />
               )}
 
               {/* 分页 */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-center gap-3 mt-6">
-                  <button
+                <div className="mt-auto flex flex-wrap items-center justify-end gap-3 border-t border-token-subtle pt-4">
+                  <Button size="sm" aria-label="上一页"
                     disabled={page <= 1}
                     onClick={() => setPage(p => p - 1)}
-                    className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
                   >
                     <ChevronLeft className="w-4 h-4 text-token-secondary" />
-                  </button>
-                  <span className="text-sm text-token-secondary">第 {page} / {totalPages} 页</span>
-                  <button
+                  </Button>
+                  <span className="text-xs text-token-secondary">共 {total} 条，第 {page} / {totalPages} 页</span>
+                  <Button size="sm" aria-label="下一页"
                     disabled={page >= totalPages}
                     onClick={() => setPage(p => p + 1)}
-                    className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
                   >
                     <ChevronRight className="w-4 h-4 text-token-secondary" />
-                  </button>
+                  </Button>
                 </div>
               )}
             </>
           )}
-        </div>
       </div>
-    </div>
+    </SectionShell>
   );
 }
