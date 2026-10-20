@@ -69,7 +69,7 @@ export function ReviewAgentSubmitPage() {
       const submissionId = submitRes.data!.submission.id;
       // replace：提交表单完成使命后不留在 history，返回时直接回到进入提交页前的页面
       navigate(reviewNav.submission(submissionId), { replace: true });
-    } catch (e) {
+    } catch {
       setError('提交过程发生错误，请重试');
       setUploading(false);
       setSubmitting(false);
