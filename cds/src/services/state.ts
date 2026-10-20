@@ -528,6 +528,7 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
+      this.pruneOrphanedPreviewAddresses();
       let identityBaselineAdded = false;
       for (const project of this.state.projects) {
         if (!project.identityHistory?.length) {
@@ -1286,6 +1287,10 @@ export class StateService {
     // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
     // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
     if (!entry.projectId) entry.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
+    const project = this.getProject(entry.projectId);
+    if (project && !project.mirror && !Object.values(this.state.branches).some(branch => branch.projectId === entry.projectId && branch.branch === entry.branch)) {
+      this.releasePreviewAddress(project, entry.branch, entry.id, '重新创建分支前释放遗留地址配置');
+    }
     this.state.branches[entry.id] = entry;
   }
 
@@ -1440,6 +1445,42 @@ export class StateService {
     return conflicts;
   }
 
+  private releasePreviewAddress(project: Project, ref: string, branchId: string, result: string): void {
+    if (!project.previewAddresses || !Object.hasOwn(project.previewAddresses, ref)) return;
+    const before = project.previewAddresses[ref];
+    const addresses = { ...project.previewAddresses };
+    delete addresses[ref];
+    // Replace the project rather than mutating a pending save's snapshot. A failed
+    // concurrent save must not roll this release back and resurrect the old claim.
+    this.updateProject(project.id, {
+      previewAddresses: addresses,
+      previewAddressAudit: [...(project.previewAddressAudit || []), {
+        id: crypto.randomUUID(),
+        at: new Date().toISOString(),
+        actor: 'system:branch-lifecycle',
+        branchId,
+        action: 'release',
+        scope: 'branch',
+        result,
+        before: { gitBranch: ref, branchAddress: before },
+        after: { branchAddress: null },
+      }],
+    }, { actor: 'system:branch-lifecycle' });
+  }
+
+  /** Historical audit may outlive a branch; active address claims must not. */
+  private pruneOrphanedPreviewAddresses(): void {
+    for (const project of this.state.projects || []) {
+      const activeRefs = new Set(Object.values(this.state.branches)
+        .filter(branch => branch.projectId === project.id).map(branch => branch.branch));
+      for (const ref of Object.keys(project.previewAddresses || {})) {
+        if (!activeRefs.has(ref)) {
+          this.releasePreviewAddress(this.getProject(project.id)!, ref, '', '已删除分支的遗留地址配置已释放');
+        }
+      }
+    }
+  }
+
   /**
    * 删分支，并级联清掉**绑在这条分支上**的自定义监控。
    *
@@ -1458,6 +1499,9 @@ export class StateService {
     if (!this.state.branches[id]) {
       throw new Error(`分支 "${id}" 不存在`);
     }
+    const branch = this.state.branches[id];
+    const project = this.getProject(branch.projectId);
+    if (project) this.releasePreviewAddress(project, branch.branch, id, '分支已删除，地址配置已释放');
     delete this.state.branches[id];
     if (this.state.defaultBranch === id) {
       this.state.defaultBranch = null;
@@ -1476,6 +1520,7 @@ export class StateService {
         }
       }
     }
+    this.save();
     return orphaned;
   }
 
@@ -2295,6 +2340,8 @@ export class StateService {
         Project,
         | 'name'
         | 'aliasName'
+        | 'previewAddresses'
+        | 'previewAddressAudit'
         | 'slug'
         | 'description'
         | 'deliveryMode'

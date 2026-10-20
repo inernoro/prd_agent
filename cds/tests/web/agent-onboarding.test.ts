@@ -228,7 +228,10 @@ describe('CDS Agent 接入口令', () => {
     //    + alarm-channels（通知通道：哪些出问题通知谁，2026-09-15）
     //    + user-project-access（人类账号项目授权，仅系统所有者，2026-10-03）
     //    + cds-system-diagnostics（主线程诊断与按需 CPU 采样，只读观测，2026-10-08）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(57);
+    // 分支地址设置只提供给有权限的人类会话，不新增 Agent 写入口。
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(58);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'preview-address'))
+      .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'user-project-access'))
       .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
