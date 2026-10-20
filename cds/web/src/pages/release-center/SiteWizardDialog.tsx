@@ -382,12 +382,12 @@ export function Field({ label, value, onChange, placeholder }: { label: string; 
 
 export function releaseModeDefinitions(
   discovery: ReleaseStrategyDiscovery | null,
-  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'> & Partial<Pick<SiteDraft, 'id' | 'strategyMode' | 'originalStrategy'>>,
+  draft: Pick<SiteDraft, 'composeProject' | 'publicDirectory'> & Partial<Pick<SiteDraft, 'id' | 'strategyMode' | 'originalStrategy' | 'scriptFile' | 'managedScript' | 'ciWorkflowFile'>>,
 ): ReleaseStrategyCandidate[] {
   const detected = new Map((discovery?.candidates || []).map((candidate) => [candidate.mode, candidate]));
   const fallbacks: ReleaseStrategyCandidate[] = [
-    { mode: 'project-script', label: '项目发布脚本（默认）', description: '项目提交、CI 验证，CDS 只执行同提交脚本，不判断业务部署类型。', confidence: 'manual', strategy: { mode: 'project-script', scriptFile: DEFAULT_RELEASE_SCRIPT_FILE }, requirements: ['项目 Git 与 CI'] },
-    { mode: 'managed-script', label: 'CDS 独立脚本（备选）', description: '明确选择后由 CDS 单独保存；不会因项目脚本缺失而自动切换。', confidence: 'manual', strategy: { mode: 'managed-script', script: '' }, requirements: ['单独审查正文'] },
+    { mode: 'project-script', label: '项目发布脚本（默认）', description: '项目提交、CI 验证，CDS 只执行同提交脚本，不判断业务部署类型。', confidence: 'manual', strategy: { mode: 'project-script', scriptFile: draft.scriptFile || DEFAULT_RELEASE_SCRIPT_FILE, ciWorkflowFile: draft.ciWorkflowFile || DEFAULT_RELEASE_CI_WORKFLOW_FILE }, requirements: ['项目 Git 与 CI'] },
+    { mode: 'managed-script', label: 'CDS 独立脚本（备选）', description: '明确选择后由 CDS 单独保存；不会因项目脚本缺失而自动切换。', confidence: 'manual', strategy: { mode: 'managed-script', script: draft.managedScript ?? '', ciWorkflowFile: draft.ciWorkflowFile || DEFAULT_RELEASE_CI_WORKFLOW_FILE }, requirements: ['单独审查正文'] },
     {
       mode: 'existing-script',
       label: '项目现有脚本',
@@ -419,7 +419,9 @@ export function releaseModeDefinitions(
     },
   ];
   return fallbacks.filter((item) => item.mode === 'project-script' || item.mode === 'managed-script' || (draft.id && item.mode === (draft.originalStrategy?.mode || draft.strategyMode)))
-    .map((fallback) => draft.id && draft.originalStrategy?.mode === fallback.mode
+    .map((fallback) => fallback.mode === 'project-script' || fallback.mode === 'managed-script'
+      ? { ...(detected.get(fallback.mode) || fallback), strategy: fallback.strategy }
+      : draft.id && draft.originalStrategy?.mode === fallback.mode
       ? { ...fallback, strategy: draft.originalStrategy }
       : detected.get(fallback.mode) || fallback);
 }

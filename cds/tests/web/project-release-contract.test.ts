@@ -32,6 +32,18 @@ describe('default project release UI', () => {
     const draft = applyDiscoveredStrategy(emptySiteDraft('project'), { mode: 'managed-script', script });
     expect(strategyFromDraft(draft)).toEqual({ mode: 'managed-script', script, ciWorkflowFile: 'ci.yml' });
   });
+  it.each([undefined,'existing'])('keeps per-mode unsaved script values for target %s through generic and detected choices', id => {
+    const script = '#!/bin/bash\n# draft body\n\n';
+    let draft = {...emptySiteDraft('project'),id,scriptFile:'ops/publish.sh',managedScript:script,ciWorkflowFile:'release-check.yaml',originalStrategy:id?{mode:'project-script' as const,scriptFile:'old.sh'}:undefined};
+    const discovery = {candidates:[{mode:'project-script',strategy:{mode:'project-script',scriptFile:'cds-release.sh'}},{mode:'managed-script',strategy:{mode:'managed-script',script:''}}]} as ReleaseStrategyDiscovery;
+    for(const mode of ['managed-script','project-script','managed-script','project-script'] as const){
+      const option = releaseModeDefinitions(discovery,draft).find(item=>item.mode===mode)!;
+      draft = applyDiscoveredStrategy(draft,option.strategy) as typeof draft;
+      expect(draft.scriptFile).toBe('ops/publish.sh');
+      expect(draft.managedScript).toBe(script);
+      expect(draft.ciWorkflowFile).toBe('release-check.yaml');
+    }
+  });
   it('renders a configured project file as a real read-only entry, not an empty deployment command', () => {
     const row = { target: { id: 'target', name: 'Production', projectId: 'project', isEnabled: true, strategy: { mode: 'project-script', scriptFile: 'cds-release.sh' }, ssh: { appPath: '/srv/project', healthcheckUrl: 'https://project.example.test/health' } } } as CenterRow;
     const html = renderToStaticMarkup(createElement(EnvConfigSection, { row, onSaved: () => {}, onReload: () => {}, onConfigure: () => {} }));
