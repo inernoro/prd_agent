@@ -31,7 +31,7 @@ export type VersionWorkflowImportRow = {
   openBrandScope?: string;
   isGlobalOpen?: boolean;
   contractParty?: string;
-  plannedTrainingAt?: string;
+  plannedTrainingMinutes?: number;
   announcementUrl?: string;
   date?: string;
   legacyData?: Record<string, string>;
@@ -135,19 +135,12 @@ function splitMembers(raw?: string): string[] | undefined {
   return raw.split(/[、,，;；]/).map((item) => item.trim()).filter(Boolean);
 }
 
-function parseChinaTrainingTime(raw?: string): string | undefined {
+function parseTrainingMinutes(raw?: string): number | undefined {
   const text = raw?.trim();
   if (!text) return undefined;
-  const serial = Number(text);
-  if (Number.isFinite(serial) && serial > 20000 && serial < 100000) {
-    const parsed = XLSX.SSF.parse_date_code(serial);
-    if (parsed) return new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d, parsed.H - 8, parsed.M, parsed.S)).toISOString();
-  }
-  const match = text.match(/^(\d{4})[.\/-](\d{1,2})[.\/-](\d{1,2})\s+(\d{1,2}):(\d{2})/);
-  if (!match) return undefined;
-  const [, year, month, day, hour, minute] = match;
-  const value = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour) - 8, Number(minute)));
-  return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+  const match = text.match(/^(\d+)\s*(?:分钟)?$/);
+  const value = match ? Number(match[1]) : NaN;
+  return Number.isInteger(value) && value >= 0 && value <= 2147483647 ? value : undefined;
 }
 
 function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImportKind, headerRowIndex: number): VersionWorkflowImportRow[] {
@@ -172,7 +165,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const requirementSourceIndex = indexOfHeader(headers, '需求来源');
   const platformIndex = indexOfHeader(headers, '平台');
   const contractPartyIndex = indexOfHeader(headers, '合同签订方');
-  const trainingTimeIndex = indexOfHeader(headers, '预计培训时间', '计划培训时间');
+  const trainingMinutesIndex = indexOfHeader(headers, '预计培训时长', '培训时长', '预计培训时间');
 
   const codeIndex = kind === 'release'
     ? indexOfHeader(headers, '正式版本号', 'v号', 'v 号', 'v上线号', '上线号')
@@ -192,6 +185,9 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
 
   const rows: VersionWorkflowImportRow[] = [];
   body.forEach((values, offset) => {
+    const trainingText = trainingMinutesIndex >= 0 ? values[trainingMinutesIndex]?.trim() : '';
+    const trainingMinutes = parseTrainingMinutes(trainingText);
+    if (trainingText && trainingMinutes == null) throw new Error(`第 ${headerRowIndex + offset + 2} 行预计培训时长应填写非负整数分钟，不能填写日期。`);
     const planName = (effectivePlanIndex >= 0 ? values[effectivePlanIndex]?.trim() : '') || '';
     const code = codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
     if (!planName && !code) return;
@@ -253,7 +249,7 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
       openBrandScope: openBrandIndex >= 0 ? values[openBrandIndex]?.trim() : undefined,
       isGlobalOpen: openBrandIndex >= 0 ? mapBool(values[openBrandIndex]) : undefined,
       contractParty: contractPartyIndex >= 0 ? values[contractPartyIndex]?.trim() : undefined,
-      plannedTrainingAt: trainingTimeIndex >= 0 ? parseChinaTrainingTime(values[trainingTimeIndex]) : undefined,
+      plannedTrainingMinutes: trainingMinutes,
       announcementUrl: announcementIndex >= 0 ? values[announcementIndex]?.trim() : undefined,
       date: dateIndex >= 0 ? parseDateValue(values[dateIndex]) : undefined,
       legacyData: Object.keys(legacyData).length > 0 ? legacyData : undefined,

@@ -32,6 +32,7 @@ describe('正式申领按方案选择应用', () => {
     expect(workflow).toContain("if (!productId) { setLoading(false); return; }");
     expect(workflow).toContain('sequence !== loadSequence.current');
     expect(workflow).toContain('setManifest([]); setBaselineManifest([]); setPreviousReleaseId(null)');
-    expect(workflow).toContain('matches.length === 1');
+    expect(workflow).toContain('parsed.matchedInitiationId');
+    expect(workflow).toContain('chooseInitiation(source.id, source)');
   });
 });

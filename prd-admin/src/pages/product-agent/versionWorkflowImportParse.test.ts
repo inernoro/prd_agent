@@ -71,16 +71,23 @@ describe('versionWorkflowImportParse', () => {
     expect(rows[0].isGlobalOpen).toBe(false);
   });
 
-  it('preserves old rollout form fields including Beijing training time', () => {
+  it('preserves rollout fields and reads training as minutes', () => {
     const csv = [
-      '应用,正式版本号,产品立项方案名称,需求来源,产品负责人,项目组成员,合同签订方,预计培训时间',
-      '互动营销,V2.3.5,上线方案,拜耳,宇凡,宇凡、火巍,客户甲,2026.09.20 14:30',
+      '应用,正式版本号,产品立项方案名称,需求来源,产品负责人,项目组成员,合同签订方,预计培训时长（分钟）',
+      '互动营销,V2.3.5,上线方案,拜耳,宇凡,宇凡、火巍,客户甲,30',
     ].join('\n');
     const rows = parseVersionWorkflowImportCsv(csv, 'release');
     expect(rows[0].demandSource).toBe('拜耳');
     expect(rows[0].ownerName).toBe('宇凡');
     expect(rows[0].projectMemberNames).toEqual(['宇凡', '火巍']);
     expect(rows[0].contractParty).toBe('客户甲');
-    expect(rows[0].plannedTrainingAt).toBe('2026-09-20T06:30:00.000Z');
+    expect(rows[0].plannedTrainingMinutes).toBe(30);
+  });
+
+  it('rejects dates and fractions instead of guessing duration', () => {
+    for (const value of ['2026.09.20 14:30', '1.5', '-1']) {
+      expect(() => parseVersionWorkflowImportCsv(`应用,正式版本号,产品立项方案名称,预计培训时长\n互动营销,V2.3.5,上线方案,${value}`, 'release')).toThrow('预计培训时长');
+    }
+    expect(parseVersionWorkflowImportCsv('正式版本号,产品立项方案名称,预计培训时长\nV2.3.5,方案,0 分钟', 'release')[0].plannedTrainingMinutes).toBe(0);
   });
 });

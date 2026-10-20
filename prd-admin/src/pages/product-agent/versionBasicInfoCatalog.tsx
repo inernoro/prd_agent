@@ -19,11 +19,8 @@ export function formatVersionBasicDate(value?: string | null) {
   return `${get('year')}-${get('month')}-${get('day')}`;
 }
 
-export function formatVersionTrainingTime(value?: string | null) {
-  if (!value) return DASH;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return DASH;
-  return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+export function formatVersionTrainingMinutes(value?: number | null) {
+  return value != null && Number.isInteger(value) && value >= 0 ? `${value} 分钟` : DASH;
 }
 
 export function formatVersionBasicBool(value?: boolean | null) {
@@ -110,7 +107,7 @@ export function buildReleaseBasicInfoRows(
     { label: '项目组成员', value: teamMembers },
     { label: '方案地址', value: externalLink(release.planUrl) },
     { label: '上线时间', value: formatVersionBasicDate(release.releasedAt ?? release.plannedReleaseAt) },
-    { label: '预计培训时间', value: formatVersionTrainingTime(release.plannedTrainingAt) },
+    { label: '预计培训时长', value: formatVersionTrainingMinutes(release.plannedTrainingMinutes) },
     { label: '是否全域开放', value: formatVersionBasicBool(release.isGlobalOpen) },
     { label: '合同签订方', value: release.contractParty?.trim() || legacy['合同签订方']?.trim() || DASH },
     { label: '当前开放品牌', value: release.openBrandScope?.trim() || DASH },

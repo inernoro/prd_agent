@@ -1,5 +1,6 @@
 import { apiRequest } from './apiClient';
 import type { ApiResponse } from '@/types/api';
+import type { ProductInitiation } from '@/pages/product-agent/types';
 
 export type VersionRegistrationKind = 'internal' | 'formal';
 export type VersionRegistrationSourceType = 'review_submission' | 'internal_registration' | 'manual_t' | 'history_import';
@@ -30,7 +31,7 @@ export interface VersionRegistration {
   projectMemberNames: string[];
   plannedProjectAt?: string | null;
   plannedReleaseAt?: string | null;
-  plannedTrainingAt?: string | null;
+  plannedTrainingMinutes?: number | null;
   contractParty?: string | null;
   developmentStatus?: string | null;
   remark?: string | null;
@@ -88,6 +89,7 @@ export interface VersionRegistrationImportRow extends VersionRegistrationFields 
   tCode?: string;
   isGlobalOpen?: boolean | null;
   plannedReleaseAt?: string;
+  plannedTrainingMinutes?: number;
   contractParty?: string;
   sourceRow: number;
 }
@@ -95,7 +97,11 @@ export interface VersionRegistrationImportRow extends VersionRegistrationFields 
 export interface VersionRegistrationMessageParseResult extends VersionRegistrationFields {
   isGlobalOpen?: boolean | null;
   plannedReleaseAt?: string;
-  plannedTrainingAt?: string;
+  plannedTrainingMinutes?: number;
+  matchedApplicationId?: string;
+  matchedInitiationId?: string;
+  candidateInitiationIds?: string[];
+  initiationCandidates?: ProductInitiation[];
   tCode?: string;
   matchedFields: string[];
 }
@@ -197,7 +203,7 @@ export function createFormalVersionRegistration(
     tCode?: string;
     isGlobalOpen?: boolean | null;
     plannedReleaseAt?: string;
-    plannedTrainingAt: string;
+    plannedTrainingMinutes: number;
     contractParty?: string;
   },
 ): Promise<ApiResponse<{ record: VersionRegistration; copyTemplate: string }>> {

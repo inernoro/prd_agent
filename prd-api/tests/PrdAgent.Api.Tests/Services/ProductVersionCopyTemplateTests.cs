@@ -26,7 +26,7 @@ public class ProductVersionCopyTemplateTests
     }
 
     [Fact]
-    public void 正式上线模板包含北京时间培训时刻和项目成员()
+    public void 正式上线模板包含分钟培训时长和项目成员()
     {
         var item = new ProductRelease
         {
@@ -35,13 +35,13 @@ public class ProductVersionCopyTemplateTests
             PlanUrl = "https://example.test/plan",
             ProjectMemberNames = new() { "宇凡", "火巍" },
             PlannedReleaseAt = new DateTime(2026, 9, 21),
-            PlannedTrainingAt = new DateTime(2026, 9, 20, 6, 30, 0, DateTimeKind.Utc),
+            PlannedTrainingMinutes = 30,
         };
 
         var message = ProductVersionCopyTemplate.Build(item);
         message.ShouldContain("【版本上线】");
         message.ShouldContain("项目组成员：宇凡、火巍");
-        message.ShouldContain("预计培训时间：2026.9.20 14:30");
+        message.ShouldContain("预计培训时长：30 分钟");
         message.ShouldEndWith("V4.26.1");
     }
 }

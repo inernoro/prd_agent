@@ -35,7 +35,7 @@ internal static class VersionRegistrationCopyTemplate
         $"方案地址：{Text(record.PlanUrl)}",
         $"项目组成员：{string.Join("、", record.ProjectMemberNames)}",
         $"计划上线时间：{DateLabel(record.PlannedReleaseAt)}",
-        $"预计培训时间：{TrainingTimeLabel(record.PlannedTrainingAt)}",
+        $"预计培训时长：{TrainingMinutesLabel(record.PlannedTrainingMinutes)}",
         record.Code,
     });
 
@@ -73,11 +73,8 @@ internal static class VersionRegistrationCopyTemplate
         return date.ToString("yyyy.M.d", CultureInfo.InvariantCulture);
     }
 
-    private static string TrainingTimeLabel(DateTime? value) =>
-        value.HasValue
-            ? DateTime.SpecifyKind(value.Value, DateTimeKind.Utc).AddHours(8)
-                .ToString("yyyy.M.d HH:mm", CultureInfo.InvariantCulture)
-            : string.Empty;
+    private static string TrainingMinutesLabel(int? value) =>
+        value.HasValue ? $"{value.Value.ToString(CultureInfo.InvariantCulture)} 分钟" : string.Empty;
 
     private static string Text(string? value) => value?.Trim() ?? string.Empty;
 }

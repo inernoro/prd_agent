@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services.ReviewAgent;
 
@@ -40,8 +41,7 @@ public static partial class VersionRegistrationMessageParser
                 GetFieldValue(text, "是否全域开放", "全域开放"));
             SetDate(result, "plannedReleaseAt", value => result.PlannedReleaseAt = value,
                 GetFieldValue(text, "计划上线时间", "上线时间"));
-            SetDateTime(result, "plannedTrainingAt", value => result.PlannedTrainingAt = value,
-                GetFieldValue(text, "预计培训时间", "计划培训时间"));
+            SetTrainingMinutes(result, GetFieldValue(text, "预计培训时长", "预计培训时长（分钟）", "预计培训时长(分钟)", "预计培训时间", "计划培训时间"));
             var tCode = VersionCodeRegex().Match(text);
             if (tCode.Success)
             {
@@ -115,23 +115,13 @@ public static partial class VersionRegistrationMessageParser
         result.MatchedFields.Add(field);
     }
 
-    private static void SetDateTime(VersionRegistrationMessageParseResult result, string field, Action<DateTime> assign, string? value)
+    private static void SetTrainingMinutes(VersionRegistrationMessageParseResult result, string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return;
-        var match = DateTimeRegex().Match(value);
-        if (!match.Success
-            || !int.TryParse(match.Groups["year"].Value, out var year)
-            || !int.TryParse(match.Groups["month"].Value, out var month)
-            || !int.TryParse(match.Groups["day"].Value, out var day)
-            || !int.TryParse(match.Groups["hour"].Value, out var hour)
-            || !int.TryParse(match.Groups["minute"].Value, out var minute)) return;
-        try
-        {
-            var chinaTime = new DateTime(year, month, day, hour, minute, 0);
-            assign(DateTime.SpecifyKind(chinaTime.AddHours(-8), DateTimeKind.Utc));
-            result.MatchedFields.Add(field);
-        }
-        catch (ArgumentOutOfRangeException) { }
+        var match = TrainingMinutesRegex().Match(value.Trim());
+        if (!match.Success || !int.TryParse(match.Groups["minutes"].Value, out var minutes)) return;
+        result.PlannedTrainingMinutes = minutes;
+        result.MatchedFields.Add("plannedTrainingMinutes");
     }
 
     private static string? GetFieldValue(string text, params string[] labels)
@@ -184,8 +174,8 @@ public static partial class VersionRegistrationMessageParser
     [GeneratedRegex(@"(?<year>20\d{2})[./-](?<month>\d{1,2})[./-](?<day>\d{1,2})", RegexOptions.CultureInvariant)]
     private static partial Regex DateRegex();
 
-    [GeneratedRegex(@"(?<year>20\d{2})[./-](?<month>\d{1,2})[./-](?<day>\d{1,2})\s+(?<hour>\d{1,2}):(?<minute>\d{2})", RegexOptions.CultureInvariant)]
-    private static partial Regex DateTimeRegex();
+    [GeneratedRegex(@"^(?<minutes>\d+)\s*(?:分钟)?$", RegexOptions.CultureInvariant)]
+    private static partial Regex TrainingMinutesRegex();
 }
 
 public sealed class VersionRegistrationMessageParseResult
@@ -201,7 +191,11 @@ public sealed class VersionRegistrationMessageParseResult
     public List<string> ProjectMemberNames { get; set; } = new();
     public DateTime? PlannedProjectAt { get; set; }
     public DateTime? PlannedReleaseAt { get; set; }
-    public DateTime? PlannedTrainingAt { get; set; }
+    public int? PlannedTrainingMinutes { get; set; }
+    public string? MatchedApplicationId { get; set; }
+    public string? MatchedInitiationId { get; set; }
+    public List<string> CandidateInitiationIds { get; set; } = new();
+    public List<ProductInitiation> InitiationCandidates { get; set; } = new();
     public string? TCode { get; set; }
     public List<string> MatchedFields { get; } = new();
 }

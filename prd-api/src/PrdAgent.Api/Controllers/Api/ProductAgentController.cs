@@ -792,13 +792,40 @@ public class ProductAgentController : ControllerBase
     }
 
     [HttpPost("version-workflow/parse-message")]
-    public IActionResult ParseProductVersionMessage([FromBody] ParseVersionRegistrationMessageRequest request)
+    public async Task<IActionResult> ParseProductVersionMessage([FromBody] ParseVersionRegistrationMessageRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Text))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先粘贴企微登记内容"));
         if (request.Kind is not (VersionRegistrationKind.Internal or VersionRegistrationKind.Formal))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择内部或正式版本"));
-        return Ok(ApiResponse<object>.Ok(new { result = VersionRegistrationMessageParser.Parse(request.Text, request.Kind) }));
+        var result = VersionRegistrationMessageParser.Parse(request.Text, request.Kind);
+        if (!string.IsNullOrWhiteSpace(result.PlanName) || !string.IsNullOrWhiteSpace(result.TCode))
+        {
+            var scope = await GetAccessibleProductIdsAsync(GetUserId());
+            var productFilter = Builders<Product>.Filter.Eq(product => product.IsDeleted, false);
+            if (scope != null) productFilter &= Builders<Product>.Filter.In(product => product.Id, scope);
+            var products = await _db.Products.Find(productFilter).Project(product => new { product.Id, product.Name }).ToListAsync();
+            var permittedProductIds = products.Select(product => product.Id).ToList();
+            var applications = products.Select(product => new VersionPlanApplication(product.Id, product.Name)).ToList();
+            var plans = new List<VersionPlanCandidate>();
+            if (request.Kind == VersionRegistrationKind.Formal)
+            {
+                var candidates = await _db.ProductInitiations.Find(item => !item.IsDeleted && item.Status == "approved"
+                    && item.TCode != null && permittedProductIds.Contains(item.ProductId))
+                    .Project(item => new { item.Id, item.ProductId, item.PlanName, item.TCode, item.LinkedProductId }).ToListAsync();
+                plans = candidates.Select(item => new VersionPlanCandidate(item.Id, item.ProductId, item.PlanName, item.TCode, item.LinkedProductId)).ToList();
+            }
+            ProductVersionPlanMatching.Match(result, applications, plans, request.Kind == VersionRegistrationKind.Formal);
+            if (result.CandidateInitiationIds.Count > 0)
+            {
+                result.InitiationCandidates = await _db.ProductInitiations.Find(item => !item.IsDeleted && item.Status == "approved"
+                    && permittedProductIds.Contains(item.ProductId) && result.CandidateInitiationIds.Contains(item.Id)).ToListAsync();
+                result.CandidateInitiationIds = result.InitiationCandidates.Select(item => item.Id).ToList();
+                if (result.MatchedInitiationId != null && !result.CandidateInitiationIds.Contains(result.MatchedInitiationId))
+                    result.MatchedInitiationId = null;
+            }
+        }
+        return Ok(ApiResponse<object>.Ok(new { result }));
     }
 
     [HttpGet("initiations/{id}/copy-template")]
@@ -895,7 +922,7 @@ public class ProductAgentController : ControllerBase
             AppName = appName,
             CustomerSource = request.CustomerSource?.Trim(),
             DemandSource = request.DemandSource?.Trim(),
-            PlanName = request.PlanName.Trim(),
+            PlanName = ProductVersionPlanMatching.CleanTitle(request.PlanName, appName ?? linkedProduct.Name),
             RequirementDescription = request.RequirementDescription?.Trim(),
             DepartmentName = departmentName,
             OwnerName = ownerName,
@@ -973,7 +1000,7 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.AppName, appName)
                 .Set(x => x.CustomerSource, request.CustomerSource?.Trim())
                 .Set(x => x.DemandSource, request.DemandSource?.Trim())
-                .Set(x => x.PlanName, request.PlanName.Trim())
+                .Set(x => x.PlanName, ProductVersionPlanMatching.CleanTitle(request.PlanName, appName ?? linkedProduct.Name))
                 .Set(x => x.RequirementDescription, request.RequirementDescription?.Trim())
                 .Set(x => x.DepartmentName, departmentName)
                 .Set(x => x.OwnerName, ownerName)
@@ -1293,8 +1320,8 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目组成员不能为空"));
         if (!request.PlannedReleaseAt.HasValue)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上线时间不能为空"));
-        if (!request.PlannedTrainingAt.HasValue || request.PlannedTrainingAt.Value == default)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "预计培训时间不能为空"));
+        if (!request.PlannedTrainingMinutes.HasValue || request.PlannedTrainingMinutes.Value < 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计培训时长（非负整数分钟）"));
         if (string.IsNullOrWhiteSpace(request.OwnerId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "产品负责人（申领人）不能为空"));
         var ownerExists = await _db.Users.Find(x => x.UserId == request.OwnerId).AnyAsync();
@@ -1314,6 +1341,8 @@ public class ProductAgentController : ControllerBase
         var memberNames = NormalizeVersionMemberNames(request.ProjectMemberNames);
         if (memberNames.Count == 0)
             memberNames = request.TeamMemberIds.Select(id => userNames.GetValueOrDefault(id, id)).ToList();
+        var projectType = initiation?.ProjectType ?? (request.ProjectType == "custom" ? "custom" : "standard");
+        var isGlobalOpen = request.IsTemporaryOptimization ? request.IsGlobalOpen : projectType == "standard";
         var item = new ProductRelease
         {
             ProductId = productId,
@@ -1326,7 +1355,7 @@ public class ProductAgentController : ControllerBase
             VersionType = versionType,
             SystemName = initiation?.SystemName ?? productSystemName,
             AppName = initiation?.AppName ?? productAppName,
-            ProjectType = initiation?.ProjectType ?? (request.ProjectType == "custom" ? "custom" : "standard"),
+            ProjectType = projectType,
             PlanUrl = request.PlanUrl?.Trim() ?? initiation?.PlanUrl,
             DepartmentName = request.DepartmentName?.Trim() ?? initiation?.DepartmentName,
             DemandSource = request.DemandSource?.Trim() ?? initiation?.DemandSource,
@@ -1335,13 +1364,13 @@ public class ProductAgentController : ControllerBase
             ProjectMemberNames = memberNames,
             ContractParty = request.ContractParty?.Trim(),
             Remark = request.Remark?.Trim(),
-            IsGlobalOpen = request.IsGlobalOpen,
+            IsGlobalOpen = isGlobalOpen,
             OwnerId = request.OwnerId,
-            OpenBrandScope = string.IsNullOrWhiteSpace(request.OpenBrandScope) ? "上线全域开放" : request.OpenBrandScope.Trim(),
+            OpenBrandScope = isGlobalOpen == true ? "上线全域开放" : string.IsNullOrWhiteSpace(request.OpenBrandScope) ? "非全域开放" : request.OpenBrandScope.Trim(),
             RequirementIds = (initiation?.RequirementIds ?? new()).Concat(request.AdditionalRequirementIds ?? new()).Distinct().ToList(),
             TeamMemberIds = request.TeamMemberIds.Distinct().ToList(),
             PlannedReleaseAt = request.PlannedReleaseAt,
-            PlannedTrainingAt = request.PlannedTrainingAt,
+            PlannedTrainingMinutes = request.PlannedTrainingMinutes,
             PreviousReleaseId = request.PreviousReleaseId ?? previousRelease?.Id,
             FeatureManifest = manifest,
             Status = "announcement_pending",
@@ -1542,6 +1571,12 @@ public class ProductAgentController : ControllerBase
 
             try
             {
+                if (row.PlannedTrainingMinutes < 0)
+                {
+                    errors.Add(new { row = index + 2, message = "预计培训时长必须是非负整数分钟" });
+                    snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "预计培训时长必须是非负整数分钟" });
+                    continue;
+                }
                 if (request.Kind == "release")
                 {
                     if (string.IsNullOrWhiteSpace(row.Code))
@@ -1596,7 +1631,7 @@ public class ProductAgentController : ControllerBase
                         OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope) ? "上线全域开放" : row.OpenBrandScope,
                         PlanUrl = row.PlanUrl, TeamMemberIds = row.TeamMemberIds ?? new(),
                         Status = string.IsNullOrWhiteSpace(row.AnnouncementUrl) ? "announcement_pending" : "released",
-                        PlannedReleaseAt = row.Date, PlannedTrainingAt = row.PlannedTrainingAt,
+                        PlannedReleaseAt = row.Date, PlannedTrainingMinutes = row.PlannedTrainingMinutes,
                         ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
                         LegacyData = legacyData,
                     };
@@ -7003,7 +7038,7 @@ public class ProductAgentController : ControllerBase
                     r.VersionType,
                     r.DepartmentName,
                     r.DemandSource,
-                    r.PlannedTrainingAt,
+                    r.PlannedTrainingMinutes,
                     r.IsGlobalOpen,
                     ownerId,
                     ownerName,
@@ -7977,7 +8012,7 @@ public class CreateReleaseRequest
     public List<string>? TeamMemberIds { get; set; }
     public List<string>? AdditionalRequirementIds { get; set; }
     public DateTime? PlannedReleaseAt { get; set; }
-    public DateTime? PlannedTrainingAt { get; set; }
+    public int? PlannedTrainingMinutes { get; set; }
     public string? PreviousReleaseId { get; set; }
     public List<ReleaseFeatureItem>? FeatureManifest { get; set; }
 }
@@ -8035,7 +8070,7 @@ public class ImportVersionWorkflowRow
     public string? OpenBrandScope { get; set; }
     public bool? IsGlobalOpen { get; set; }
     public string? ContractParty { get; set; }
-    public DateTime? PlannedTrainingAt { get; set; }
+    public int? PlannedTrainingMinutes { get; set; }
     public string? AnnouncementUrl { get; set; }
     public DateTime? Date { get; set; }
     public Dictionary<string, string>? LegacyData { get; set; }

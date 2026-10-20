@@ -64,17 +64,6 @@ export const FEATURE_CHANGE_LABEL: Record<FeatureChangeType, string> = {
   unchanged: '继承',
 };
 
-function shanghaiDateTimeInput(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const parts = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
-  }).formatToParts(date);
-  const get = (name: string) => parts.find((part) => part.type === name)?.value ?? '';
-  return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`;
-}
-
 const CHANGE_BADGE_CLASS: Record<FeatureChangeType, string> = {
   added: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
   modified: 'border-amber-400/30 bg-amber-400/10 text-amber-200',
@@ -143,6 +132,9 @@ export function ReleaseWorkflowDetail({
 
   const [initiationId, setInitiationId] = useState('');
   const [manualTCode, setManualTCode] = useState('');
+  const [pastedPlanCandidates, setPastedPlanCandidates] = useState<string[]>([]);
+  const [pastedInitiations, setPastedInitiations] = useState<ProductInitiation[]>([]);
+  const [planMatchHint, setPlanMatchHint] = useState('');
   const [sourceMode, setSourceMode] = useState<'initiation' | 'manual_t'>('initiation');
   const [ownerId, setOwnerId] = useState(currentUser?.userId ?? '');
   const [showOwnerPicker, setShowOwnerPicker] = useState(false);
@@ -152,7 +144,7 @@ export function ReleaseWorkflowDetail({
   const addTeamMembers = useCallback((ids: string[]) => setTeamIds((previous) => mergeMemberIds(previous, ids)), []);
   const pastedMembers = useReleasePastedMembers(isNew && !temporary, addTeamMembers);
   const [releaseAt, setReleaseAt] = useState('');
-  const [trainingAt, setTrainingAt] = useState('');
+  const [trainingMinutes, setTrainingMinutes] = useState('');
   const [projectType, setProjectType] = useState<'standard' | 'custom'>('standard');
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>('minor');
   const [planName, setPlanName] = useState('');
@@ -171,8 +163,8 @@ export function ReleaseWorkflowDetail({
   const [message, setMessage] = useState('');
 
   const approved = useMemo(
-    () => (availableInitiations ?? initiations).filter((item) => item.status === 'approved' && item.tCode),
-    [initiations, availableInitiations],
+    () => [...new Map([...(availableInitiations ?? initiations), ...pastedInitiations].map((item) => [item.id, item])).values()].filter((item) => item.status === 'approved' && item.tCode),
+    [initiations, availableInitiations, pastedInitiations],
   );
   const selectedInitiation = approved.find((item) => item.id === initiationId);
   // 与后端一致：有关联方案时项目类别以方案为准，手工 T 号使用表单类别。
@@ -398,9 +390,10 @@ export function ReleaseWorkflowDetail({
     }
     onApplicationProductChange(id);
   };
-  const chooseInitiation = (id: string) => {
+  const chooseInitiation = (id: string, matchedSource?: ProductInitiation) => {
+    setPastedPlanCandidates([]); setPlanMatchHint('');
     setInitiationId(id);
-    const source = approved.find((item) => item.id === id);
+    const source = matchedSource ?? approved.find((item) => item.id === id);
     if (onApplicationProductChange) {
       changeApplication(source?.productId ?? '');
     }
@@ -422,28 +415,35 @@ export function ReleaseWorkflowDetail({
   };
 
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
-    if (parsed.tCode) {
-      const matches = approved.filter((item) => item.tCode?.toUpperCase() === parsed.tCode?.toUpperCase());
-      const source = matches.length === 1 ? matches[0] : undefined;
+    const parsedInitiations = parsed.initiationCandidates ?? [];
+    const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
+      ?? approved.find((item) => item.id === parsed.matchedInitiationId) : undefined;
+    if (!temporary && (parsed.planName || parsed.tCode)) {
+      setPastedInitiations(parsedInitiations);
+      const candidates = parsed.candidateInitiationIds ?? [];
+      setPastedPlanCandidates(candidates);
       if (source) {
-        setSourceMode('initiation');
-        chooseInitiation(source.id);
-        setManualTCode('');
+        setSourceMode('initiation'); chooseInitiation(source.id, source); setManualTCode('');
+        setPlanMatchHint(`已匹配立项 ${source.tCode}，按已有方案资料回填。`);
+      } else if (candidates.length) {
+        setSourceMode('initiation'); setInitiationId(''); changeApplication(parsed.matchedApplicationId ?? '');
+        setPlanMatchHint(`匹配到 ${candidates.length} 个相近方案，请选择正确立项。`);
       } else {
-        setSourceMode('manual_t');
-        setManualTCode(parsed.tCode);
-        setInitiationId('');
-        changeApplication('');
+        setSourceMode('manual_t'); setManualTCode(parsed.tCode ?? ''); setInitiationId('');
+        changeApplication(parsed.matchedApplicationId ?? '');
+        setPlanMatchHint('未找到匹配的已通过立项，已保留识别内容，请补齐手工 T 号和申领资料；也可切回方案选择。');
       }
     }
-    if (parsed.projectType) setProjectType(parsed.projectType);
-    if (parsed.versionType) setVersionType(parsed.versionType);
-    if (parsed.demandSource) setDemandSource(parsed.demandSource);
-    if (parsed.planName) setPlanName(parsed.planName);
-    if (parsed.planUrl) setPlanUrl(parsed.planUrl);
-    if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
-    if (parsed.departmentName) setDepartmentName(parsed.departmentName);
-    if (parsed.ownerName) {
+    if (!source) {
+      if (parsed.projectType) setProjectType(parsed.projectType);
+      if (parsed.versionType) setVersionType(parsed.versionType);
+      if (parsed.demandSource) setDemandSource(parsed.demandSource);
+      if (parsed.planName) setPlanName(parsed.planName);
+      if (parsed.planUrl) setPlanUrl(parsed.planUrl);
+      if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
+      if (parsed.departmentName) setDepartmentName(parsed.departmentName);
+    }
+    if (!source && parsed.ownerName) {
       setOwnerName(parsed.ownerName);
       const matchedOwner = members.find((member) => member.displayName === parsed.ownerName);
       if (matchedOwner) setOwnerId(matchedOwner.userId);
@@ -457,7 +457,7 @@ export function ReleaseWorkflowDetail({
       }
     }
     if (parsed.plannedReleaseAt) setReleaseAt(parsed.plannedReleaseAt.slice(0, 10));
-    if (parsed.plannedTrainingAt) setTrainingAt(shanghaiDateTimeInput(parsed.plannedTrainingAt));
+    if (parsed.plannedTrainingMinutes != null) setTrainingMinutes(String(parsed.plannedTrainingMinutes));
     if (temporary && parsed.isGlobalOpen != null) setIsGlobalOpen(parsed.isGlobalOpen ? 'yes' : 'no');
   };
 
@@ -470,8 +470,8 @@ export function ReleaseWorkflowDetail({
       setMessage('请先选择方案以回填所属应用；手工 T 号请在表单中选择应用。');
       return;
     }
-    if (!releaseAt || !trainingAt || Number.isNaN(new Date(`${trainingAt}+08:00`).getTime())) {
-      setMessage('请填写上线日期和预计培训时间');
+    if (!releaseAt || trainingMinutes.trim() === '' || !Number.isInteger(Number(trainingMinutes)) || Number(trainingMinutes) < 0 || Number(trainingMinutes) > 2147483647) {
+      setMessage('请填写上线日期和预计培训时长（非负整数分钟）');
       return;
     }
     setBusy(true);
@@ -499,7 +499,7 @@ export function ReleaseWorkflowDetail({
       additionalRequirementIds: extraIds,
       teamMemberIds: teamIds,
       plannedReleaseAt: new Date(`${releaseAt}T00:00:00+08:00`).toISOString(),
-      plannedTrainingAt: new Date(`${trainingAt}+08:00`).toISOString(),
+      plannedTrainingMinutes: Number(trainingMinutes),
       previousReleaseId: previousReleaseId ?? undefined,
       featureManifest: activeManifest,
     });
@@ -544,7 +544,7 @@ export function ReleaseWorkflowDetail({
     else setRelease(res.data);
   };
 
-  const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || !trainingAt || !effectiveGlobalOpen || pastedMembers.pendingCount > 0 || teamIds.length === 0
+  const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || trainingMinutes.trim() === '' || !Number.isInteger(Number(trainingMinutes)) || Number(trainingMinutes) < 0 || Number(trainingMinutes) > 2147483647 || !effectiveGlobalOpen || pastedMembers.pendingCount > 0 || teamIds.length === 0
     || (!temporary && sourceMode === 'initiation' && selectedInitiation?.productId !== productId)
     || (temporary ? extraIds.length === 0 : sourceMode === 'manual_t' ? !manualTCode.trim() || !planName.trim() : !initiationId);
   const manifestInvalid = activeManifest.length === 0;
@@ -753,6 +753,7 @@ export function ReleaseWorkflowDetail({
                     <Select value={sourceMode} onChange={(e) => {
                       const mode = e.target.value as typeof sourceMode;
                       setSourceMode(mode);
+                      setPastedPlanCandidates([]); setPlanMatchHint('');
                       if (mode === 'manual_t') setInitiationId('');
                       else setManualTCode('');
                       if (onApplicationProductChange) {
@@ -765,7 +766,7 @@ export function ReleaseWorkflowDetail({
                   </Field>
                   {sourceMode === 'initiation' ? (
                     <Field label={applicationProducts ? '立项方案 *' : '立项号 *'}>
-                      {applicationProducts ? <ReleasePlanPicker plans={approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} loading={planLoading} error={planError} progress={planProgress} onRetry={onRetryPlans} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
+                      {applicationProducts ? <ReleasePlanPicker plans={pastedPlanCandidates.length ? approved.filter((item) => pastedPlanCandidates.includes(item.id)) : approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} loading={planLoading} error={planError} progress={planProgress} onRetry={onRetryPlans} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
                         <option value="">请选择</option>
                         {approved.map((i) => <option key={i.id} value={i.id}>{i.tCode} · {i.planName}</option>)}
                       </Select>}
@@ -777,6 +778,9 @@ export function ReleaseWorkflowDetail({
                     {sourceMode === 'manual_t' ? <ItemSearchSelect value={productId} onChange={changeApplication} options={toProductOptions(applicationProducts)} placeholder="手工 T 号请选择所属应用" countUnit="个应用" />
                       : <div role="status" className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{applicationProducts.find((product) => product.id === productId)?.name ?? '选择方案后自动回填'}</div>}
                   </Field>}
+                  {planMatchHint && <p role="status" className="text-xs leading-5 text-token-secondary">{planMatchHint}
+                    {pastedPlanCandidates.length > 0 && <button type="button" className="ml-2 hover:underline" onClick={() => { setPastedPlanCandidates([]); setPlanMatchHint(''); }}>查看全部方案</button>}
+                  </p>}
                   {selectedInitiation && (
                     <InfoBox>
                       <b>方案：</b>{selectedInitiation.planName}<br />
@@ -797,7 +801,9 @@ export function ReleaseWorkflowDetail({
                 <Field label="项目类别"><Select value={effectiveProjectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
                 <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
               </>}
-              {!temporary && <Field label="产品方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>}
+              {!temporary && <Field label="产品方案名称 *">{sourceMode === 'manual_t'
+                ? <Input value={planName} onChange={(e) => setPlanName(e.target.value)} />
+                : <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{selectedInitiation?.planName || '选择立项方案后自动回填'}</div>}</Field>}
               <Field label="需求来源"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} /></Field>
               <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field>
               <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
@@ -807,7 +813,7 @@ export function ReleaseWorkflowDetail({
               {temporary && <Field label="项目需求描述"><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>}
               <Field label="备注"><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
               <Field label="上线日期 *"><Input type="date" value={releaseAt} onChange={(e) => setReleaseAt(e.target.value)} /></Field>
-              <Field label="预计培训时间（北京时间）*"><Input type="datetime-local" value={trainingAt} onChange={(e) => setTrainingAt(e.target.value)} /></Field>
+              <Field label="预计培训时长（分钟）*"><Input type="number" min={0} max={2147483647} step={1} value={trainingMinutes} onChange={(e) => setTrainingMinutes(e.target.value)} placeholder="填写分钟数，例如 30" /></Field>
               <Field label="是否全域开放">{temporary
                 ? <Select value={isGlobalOpen} onChange={(e) => setIsGlobalOpen(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select>
                 : <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{effectiveGlobalOpen === 'yes' ? '是（非定制项目）' : '否（定制项目）'}</div>}</Field>

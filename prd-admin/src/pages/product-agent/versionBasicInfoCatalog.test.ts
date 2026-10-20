@@ -53,7 +53,7 @@ describe('versionBasicInfoCatalog', () => {
     expect(rows.map((r) => r.label)).toEqual([
       '产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称',
       '需求来源', '项目需求描述', '所属部门', '产品负责人', '项目组成员', '方案地址',
-      '上线时间', '预计培训时间', '是否全域开放', '合同签订方', '当前开放品牌', '备注',
+      '上线时间', '预计培训时长', '是否全域开放', '合同签订方', '当前开放品牌', '备注',
     ]);
     expect(rows.find((r) => r.label === '产品')?.value).toBe('互动营销');
     expect(rows.find((r) => r.label === '产品负责人')?.value).toBe('何丹铃');
@@ -75,15 +75,14 @@ describe('versionBasicInfoCatalog', () => {
     expect(rows.find((r) => r.label === '备注')?.value).toBe('—');
   });
 
-  it('正式版本培训时间按北京时间展示', () => {
+  it('正式版本培训只按分钟展示，不格式化成日期', () => {
     const rows = buildReleaseBasicInfoRows({
       ...releaseBase,
-      plannedTrainingAt: '2026-09-20T06:30:00.000Z',
+      plannedTrainingMinutes: 30,
       isGlobalOpen: true,
       demandSource: '拜耳',
     }, () => '—');
-    expect(String(rows.find((row) => row.label === '预计培训时间')?.value)).toContain('2026');
-    expect(String(rows.find((row) => row.label === '预计培训时间')?.value)).toContain('14:30');
+    expect(rows.find((row) => row.label === '预计培训时长')?.value).toBe('30 分钟');
     expect(rows.find((row) => row.label === '是否全域开放')?.value).toBe('是');
     expect(rows.find((row) => row.label === '需求来源')?.value).toBe('拜耳');
   });

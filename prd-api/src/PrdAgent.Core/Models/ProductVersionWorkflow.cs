@@ -105,7 +105,8 @@ public class ProductRelease
     public List<string> RequirementIds { get; set; } = new();
     public List<string> TeamMemberIds { get; set; } = new();
     public DateTime? PlannedReleaseAt { get; set; }
-    public DateTime? PlannedTrainingAt { get; set; }
+    /// <summary>预计培训时长，单位为分钟；不表示日期或时刻。</summary>
+    public int? PlannedTrainingMinutes { get; set; }
     public DateTime? ReleasedAt { get; set; }
     public string? AnnouncementUrl { get; set; }
     public string Status { get; set; } = "announcement_pending";

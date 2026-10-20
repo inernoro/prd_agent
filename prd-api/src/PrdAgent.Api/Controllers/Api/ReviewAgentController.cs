@@ -2509,8 +2509,8 @@ public class ReviewAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择项目类别"));
         if (!IsVersionRegistrationVersionType(versionType))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择版本类别"));
-        if (!request.PlannedTrainingAt.HasValue)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计培训时间后再申领正式版本号"));
+        if (!request.PlannedTrainingMinutes.HasValue || request.PlannedTrainingMinutes.Value < 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计培训时长（非负整数分钟）后再申领正式版本号"));
         var projectMembers = request.ProjectMemberNames?.Count > 0
             ? NormalizeNames(request.ProjectMemberNames)
             : internalSource?.ProjectMemberNames.ToList() ?? new();
@@ -2548,7 +2548,7 @@ public class ReviewAgentController : ControllerBase
             ProjectMemberNames = projectMembers,
             PlannedProjectAt = internalSource?.PlannedProjectAt,
             PlannedReleaseAt = request.PlannedReleaseAt,
-            PlannedTrainingAt = request.PlannedTrainingAt,
+            PlannedTrainingMinutes = request.PlannedTrainingMinutes,
             ContractParty = TrimToNull(request.ContractParty),
             DevelopmentStatus = FirstPresent(request.DevelopmentStatus, internalSource?.DevelopmentStatus),
             Remark = TrimToNull(request.Remark),
@@ -2587,6 +2587,11 @@ public class ReviewAgentController : ControllerBase
         foreach (var row in request.Rows)
         {
             var prefix = string.Equals(row.Kind, VersionRegistrationKind.Internal, StringComparison.Ordinal) ? "T" : "V";
+            if (row.PlannedTrainingMinutes < 0)
+            {
+                snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = "预计培训时长必须是非负整数分钟" });
+                continue;
+            }
             if (!TryParseVersionCode(row.Code, prefix, out var normalizedCode))
             {
                 snapshot.Errors.Add(new VersionRegistrationImportError { Row = row.SourceRow, Message = $"缺少或格式错误的 {prefix} 版本号" });
@@ -3115,6 +3120,7 @@ public class ReviewAgentController : ControllerBase
         record.ProjectMemberNames = NormalizeNames(row.ProjectMemberNames);
         record.PlannedProjectAt = row.PlannedProjectAt;
         record.PlannedReleaseAt = row.PlannedReleaseAt;
+        record.PlannedTrainingMinutes = row.PlannedTrainingMinutes;
         record.ContractParty = TrimToNull(row.ContractParty);
         record.DevelopmentStatus = TrimToNull(row.DevelopmentStatus);
         record.Remark = TrimToNull(row.Remark);
@@ -3220,7 +3226,7 @@ public class ReviewAgentController : ControllerBase
         ProjectMemberNames = source.ProjectMemberNames.ToList(),
         PlannedProjectAt = source.PlannedProjectAt,
         PlannedReleaseAt = source.PlannedReleaseAt,
-        PlannedTrainingAt = source.PlannedTrainingAt,
+        PlannedTrainingMinutes = source.PlannedTrainingMinutes,
         ContractParty = source.ContractParty,
         DevelopmentStatus = source.DevelopmentStatus,
         Remark = source.Remark,
@@ -3307,7 +3313,7 @@ public sealed class CreateFormalVersionRegistrationRequest : VersionRegistration
     public string? TCode { get; set; }
     public bool? IsGlobalOpen { get; set; }
     public DateTime? PlannedReleaseAt { get; set; }
-    public DateTime? PlannedTrainingAt { get; set; }
+    public int? PlannedTrainingMinutes { get; set; }
     public string? ContractParty { get; set; }
 }
 
@@ -3330,6 +3336,7 @@ public sealed class VersionRegistrationImportRow : VersionRegistrationFieldsRequ
     public string? TCode { get; set; }
     public bool? IsGlobalOpen { get; set; }
     public DateTime? PlannedReleaseAt { get; set; }
+    public int? PlannedTrainingMinutes { get; set; }
     public string? ContractParty { get; set; }
     public int SourceRow { get; set; }
 }

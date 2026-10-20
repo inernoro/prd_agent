@@ -218,7 +218,7 @@ export function createRelease(productId: string, body: {
   additionalRequirementIds?: string[];
   teamMemberIds: string[];
   plannedReleaseAt: string;
-  plannedTrainingAt: string;
+  plannedTrainingMinutes: number;
   previousReleaseId?: string;
   featureManifest?: ReleaseFeatureItem[];
 }) {
@@ -1073,7 +1073,7 @@ export interface OverviewReleaseRow {
   versionType: string;
   departmentName?: string | null;
   demandSource?: string | null;
-  plannedTrainingAt?: string | null;
+  plannedTrainingMinutes?: number | null;
   isGlobalOpen?: boolean | null;
   ownerId?: string | null;
   ownerName?: string | null;

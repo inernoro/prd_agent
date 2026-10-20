@@ -282,7 +282,7 @@ export interface ProductRelease {
   requirementIds: string[];
   teamMemberIds: string[];
   plannedReleaseAt?: string | null;
-  plannedTrainingAt?: string | null;
+  plannedTrainingMinutes?: number | null;
   releasedAt?: string | null;
   announcementUrl?: string | null;
   previousReleaseId?: string | null;

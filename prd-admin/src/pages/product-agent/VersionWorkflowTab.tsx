@@ -5,7 +5,7 @@ import { CheckCircle2, Download, HelpCircle, Loader2, Plus, Search, Upload, X } 
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
   listInitiations, listProductMembers, listVersionApplicationProducts, listReleases, getOverviewReleases,
-  syncInitiationReview, updateInitiation, listProductVersionReviewSources,
+  syncInitiationReview, updateInitiation, listProductVersionReviewSources, parseProductVersionMessage,
   type VersionApplicationProduct,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -30,7 +30,7 @@ import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { toProductOptions } from './comboboxOptions';
 import type { ProductInitiation, ProductMember, ProductRelease, Requirement } from './types';
-import { formatVersionBasicDate, resolveVersionProductLabel } from './versionBasicInfoCatalog';
+import { formatVersionBasicDate, formatVersionTrainingMinutes, resolveVersionProductLabel } from './versionBasicInfoCatalog';
 import { SelectionActionBar, ListTableSelectionCell, useOverviewTableSelection } from './selectableList';
 import {
   ListSelectionHeaderCell,
@@ -343,6 +343,8 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
   const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
   const [catalogProducts, setCatalogProducts] = useState<VersionApplicationProduct[]>([]);
   const [planName, setPlanName] = useState(seed?.planName ?? '');
+  const planNameRef = useRef(planName);
+  planNameRef.current = planName;
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed?.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no');
@@ -606,7 +608,8 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
       if (match) setReviewSubmissionId(match.id);
       const productMatches = catalogProducts.filter((product) =>
         (canUseProduct || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
-      if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
+      if (parsed.matchedApplicationId && catalogProducts.some((product) => product.id === parsed.matchedApplicationId && (canUseProduct || product.id === productId))) setLinkedProductId(parsed.matchedApplicationId);
+      else if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
     }
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
     if (parsed.needUiDesign != null) setNeedUiDesign(parsed.needUiDesign ? 'yes' : 'no');
@@ -642,7 +645,15 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
           emptyText="暂无产品"
         />
       </Field>
-      <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>
+      <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} onBlur={() => {
+        const entered = planName;
+        if (!entered.trim()) return;
+        void parseProductVersionMessage('internal', `产品立项方案名称：${entered}`).then((response) => {
+          if (!response.success || !response.data.result.planName || planNameRef.current !== entered) return;
+          const parsed = response.data.result;
+          setPlanName((previous) => previous === entered ? parsed.planName! : previous);
+        }).catch(() => { /* 提交时仍由同一服务端规则清洗，不因预览失败丢失输入。 */ });
+      }} /></Field>
       <Field label="版本级别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
       <Field label="需求来源 *"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
       <Field label="计划立项时间 *"><Input type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} /></Field>
@@ -817,7 +828,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '预计培训时间', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
@@ -832,7 +843,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{(item.projectMemberNames?.length ? item.projectMemberNames : item.teamMemberIds.map((id) => names.get(id) ?? id)).join('、')}</Td>
       <Td>{item.planUrl ? <a href={item.planUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()} className="text-cyan-300">查看方案</a> : '-'}</Td>
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
-      <Td>{item.plannedTrainingAt ? new Date(item.plannedTrainingAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '-'}</Td>
+      <Td>{formatVersionTrainingMinutes(item.plannedTrainingMinutes)}</Td>
       <Td>{formatBool(item.isGlobalOpen)}</Td>
       <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? item.ownerId === currentUserId && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>

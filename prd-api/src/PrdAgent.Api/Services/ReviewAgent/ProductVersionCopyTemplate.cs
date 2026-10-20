@@ -30,6 +30,6 @@ internal static class ProductVersionCopyTemplate
         PlanUrl = item.PlanUrl,
         ProjectMemberNames = item.ProjectMemberNames,
         PlannedReleaseAt = item.PlannedReleaseAt,
-        PlannedTrainingAt = item.PlannedTrainingAt,
+        PlannedTrainingMinutes = item.PlannedTrainingMinutes,
     });
 }

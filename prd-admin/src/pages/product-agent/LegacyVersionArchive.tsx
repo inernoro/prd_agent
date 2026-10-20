@@ -97,7 +97,7 @@ function LegacyRecordList({ kind }: { kind: 'internal' | 'formal' }) {
                 <p>系统：{record.systemName || '-'}　应用：{record.applicationName || '-'}　来源：{record.sourceType === 'history_import' ? '历史导入' : '旧登记流程'}</p>
                 <p>T 来源：{record.tCode || '-'}　需求来源：{record.demandSource || '-'}　部门：{record.departmentName || '-'}</p>
                 <p>方案地址：{record.planUrl || '-'}　计划时间：{record.plannedReleaseAt || record.plannedProjectAt || '-'}</p>
-                {record.kind === 'formal' && <p>预计培训时间：{record.plannedTrainingAt ? new Date(record.plannedTrainingAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '历史记录未填写'}</p>}
+                {record.kind === 'formal' && <p>预计培训时长：{record.plannedTrainingMinutes == null ? '未填写' : `${record.plannedTrainingMinutes} 分钟`}</p>}
                 {record.requirementDescription && <p className="whitespace-pre-wrap">项目需求描述：{record.requirementDescription}</p>}
                 {record.remark && <p className="whitespace-pre-wrap">备注：{record.remark}</p>}
                 <div className="flex flex-wrap items-center gap-2">
