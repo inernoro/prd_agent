@@ -1576,7 +1576,7 @@ public class ProductAgentController : ControllerBase
 
             try
             {
-                if (row.PlannedTrainingMinutes < 0)
+                if (request.Kind == "release" && row.PlannedTrainingMinutes < 0)
                 {
                     errors.Add(new { row = index + 2, message = "预计培训时长必须是非负整数分钟" });
                     snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "预计培训时长必须是非负整数分钟" });

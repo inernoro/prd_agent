@@ -1,9 +1,46 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseVersionWorkflowImportCsv,
+  parseVersionWorkflowImportMatrix,
 } from './versionWorkflowImportParse';
 
 describe('versionWorkflowImportParse', () => {
+  it('ignores training columns in internal history, including dates and arbitrary placeholders', () => {
+    for (const value of ['2026.10.16', '待确认', '-1', '1.5', '30']) {
+      const rows = parseVersionWorkflowImportMatrix([
+        ['应用', 'T 立项号', '产品立项方案名称', '预计培训时间', '立项时间'],
+        ['互动营销', 'T3.47.1', '渠道返利优化', value, '2026-10-16'],
+      ], 'initiation');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].code).toBe('T3.47.1');
+      expect(rows[0].appName).toBe('互动营销');
+      expect(rows[0].projectAt).toBeDefined();
+      expect(rows[0].plannedTrainingMinutes).toBeUndefined();
+    }
+  });
+
+  it('does not treat a blank Excel header as a training or other business column', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['', '应用', 'T 立项号', '产品立项方案名称', '立项时间'],
+      ['2026-10-16', '互动营销', 'T3.47.1', '渠道返利优化', '2026-10-15'],
+    ], 'initiation');
+    expect(rows[0].appName).toBe('互动营销');
+    expect(rows[0].code).toBe('T3.47.1');
+    expect(rows[0].planName).toBe('渠道返利优化');
+    expect(rows[0].plannedTrainingMinutes).toBeUndefined();
+    expect(rows[0].ownerName).toBeUndefined();
+    expect(rows[0].remark).toBeUndefined();
+  });
+
+  it('keeps release minute validation while ignoring unrelated blank columns', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['', '应用', '正式版本号', '产品立项方案名称', '预计培训时长（分钟）'],
+      ['2026-10-16', '互动营销', 'V3.47.1', '渠道返利优化', '30'],
+    ], 'release');
+    expect(rows[0].plannedTrainingMinutes).toBe(30);
+    expect(rows[0].appName).toBe('互动营销');
+  });
+
   it('parses release rows with V code and plan name', () => {
     const csv = [
       '正式版本号,内部版本号,产品立项方案名称,版本类别,上线日期',
