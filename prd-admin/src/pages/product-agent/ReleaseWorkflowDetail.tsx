@@ -137,7 +137,6 @@ export function ReleaseWorkflowDetail({
   const [planMatchHint, setPlanMatchHint] = useState('');
   const [sourceMode, setSourceMode] = useState<'initiation' | 'manual_t'>('initiation');
   const [ownerId, setOwnerId] = useState(currentUser?.userId ?? '');
-  const [showOwnerPicker, setShowOwnerPicker] = useState(false);
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const [showRequirementPicker, setShowRequirementPicker] = useState(false);
   const [teamIds, setTeamIds] = useState<string[]>(currentUser?.userId ? [currentUser.userId] : []);
@@ -487,7 +486,7 @@ export function ReleaseWorkflowDetail({
       demandSource: demandSource.trim() || undefined,
       planUrl: planUrl.trim() || undefined,
       departmentName: departmentName.trim() || undefined,
-      ownerName: ownerName.trim() || undefined,
+      ownerName: temporary ? ownerName.trim() || undefined : undefined,
       ...(temporary ? {
         projectMemberNames: projectMembers.split(/[、,，;；]/).map((name) => name.trim()).filter(Boolean),
         requirementDescription: requirementDescription.trim() || undefined,
@@ -733,19 +732,7 @@ export function ReleaseWorkflowDetail({
             <>
               <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} />
               <Field label="产品负责人（申领人）*">
-                <div className="flex items-center gap-2">
-                  <div className="min-w-0 flex-1">
-                    {showOwnerPicker
-                      ? <UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索 MAP 账户" />
-                      : <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary">{currentUser?.displayName ?? ownerId}</div>}
-                  </div>
-                  {!readOnly && (
-                    <button type="button" onClick={() => setShowOwnerPicker(true)} aria-label="更换产品负责人"
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-token-subtle bg-token-nested text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
-                      <Plus size={16} />
-                    </button>
-                  )}
-                </div>
+                <UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品负责人" />
               </Field>
               {!temporary && (
                 <>
