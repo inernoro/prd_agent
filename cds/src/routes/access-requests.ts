@@ -327,6 +327,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (decidedCount > 20) stateService.pruneAccessRequests(AUDIT_RETENTION_MS);
     const list = stateService.listAccessRequests().map((item) => ({
       ...publicView(item),
+      // 删除状态来自项目事实源，存量回执同样生效；不删除审计、不改变原批准结果。
+      // 同时关闭旧版页面已有的展示开关，无需强制刷新仍在编辑其他项目的标签页。
+      ...(item.kind === 'bootstrap' && item.status === 'approved' && item.createdProject
+        && !stateService.getProject(item.createdProject.id) ? { receiptArchived: true, creationReceiptEnabled: false } : {}),
       ...(item.kind !== 'bootstrap' ? { projectName: stateService.getProject(item.projectId)?.name } : {}),
     }));
     res.json({ requests: list, pendingCount: list.filter((r) => r.status === 'pending').length });

@@ -2,6 +2,8 @@
 export interface OnboardingReceipt {
   id: string;
   createdProject?: { id: string; name: string };
+  /** 服务端依据项目不存在自动归档；与本地手工收起偏好无关。 */
+  receiptArchived?: boolean;
 }
 
 const DISMISSED_KEY = 'cds:onboarding-receipts:dismissed:v1';
@@ -34,6 +36,7 @@ export function receiptProjectId(location: { pathname: string; search: string })
 }
 
 export function receiptBelongsOnPage(receipt: OnboardingReceipt, projectId: string, placement: 'inline' | 'floating'): boolean {
+  if (receipt.receiptArchived) return false;
   // Active creation stays visible globally. Completed receipts stay in the
   // information center; another project's page must not carry their floating card.
   return placement === 'inline' || !receipt.createdProject || !projectId || receipt.createdProject.id === projectId;

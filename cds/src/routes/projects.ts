@@ -4312,6 +4312,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
 
+    // 已打开的审批盒立即重读项目存在性，跨标签页自动收起已删除项目的旧回执。
+    cdsEventsBus.publish('access-request.progress', { projectId: project.id, stage: 'project-deleted' });
+
     // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
     // 墓碑已在 removeProject 之前落库，异步段崩溃 / docker 暂不可用时收割器
     // 按墓碑补偿重试（含「删最后一个项目、state 已空」的场景）。
