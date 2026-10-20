@@ -180,6 +180,20 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
+    public async Task LegacyHistoryReadsPersistedTCodeWithoutProductRawFields()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration {
+            Kind = VersionRegistrationKind.Formal, ApplicationName = "测试应用", TCode = "T1.2.3",
+            Code = "V8.9.0", PlanName = "不同的旧方案名称",
+        });
+        var result = await PrdAgent.Api.Services.ReviewAgent.ProductVersionHistoryLinks.CheckAsync(
+            fixture.Db, "product", "测试应用", "T1.2.3", "当前方案");
+        Assert.True(result.Blocked);
+        Assert.Contains("V8.9.0", result.Message);
+    }
+
+    [Fact]
     public async Task SelectedInitiationUsesItsActualApplicationForLegacyDuplicateCheck()
     {
         await using var fixture = await Fixture.CreateAsync();

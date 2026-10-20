@@ -43,13 +43,13 @@ public static class ProductVersionHistoryLinks
             .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim().ToUpperInvariant()).Distinct().ToList();
 
         var releases = await db.ProductReleases.Find(x => !x.IsTemporaryOptimization && (x.ProductId == productId || x.AppName == applicationName)).ToListAsync();
+        // 旧登记导入已把 V 表关联号保存到 TCode；只有产品历史记录保存 LegacyData。
         var legacy = await db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal
-            && (x.ApplicationName == applicationName || x.ApplicationName == null || x.ApplicationName == "")).ToListAsync();
+            && x.ApplicationName == applicationName).ToListAsync();
         var evidence = releases.Select(x => new HistoryRow("product:" + x.Id, x.VCode, x.PlanName,
                 ExplicitTCodes(x.TCode, x.LegacyData, initiations.FirstOrDefault(t => t.Id == x.InitiationId)?.TCode)))
-            .Concat(legacy.Where(x => x.ApplicationName == applicationName || RawApplicationMatches(x.LegacyData, applicationName))
-                .Select(x => new HistoryRow("legacy:" + x.Id, x.Code, x.PlanName,
-                    ExplicitTCodes(x.TCode, x.LegacyData, oldT.FirstOrDefault(t => t.Id == x.SourceInternalRegistrationId)?.Code)))).ToList();
+            .Concat(legacy.Select(x => new HistoryRow("legacy:" + x.Id, x.Code, x.PlanName ?? string.Empty,
+                    ExplicitTCodes(x.TCode, null, oldT.FirstOrDefault(t => t.Id == x.SourceInternalRegistrationId)?.Code)))).ToList();
         return Resolve(code, currentTitle, sameTitleCodes, evidence);
     }
 
@@ -81,7 +81,4 @@ public static class ProductVersionHistoryLinks
         return new(false, true, "历史 V 表有相近方案，但缺少明确 T 对照。请核对后确认是否为不同方案。", token, uncertain);
     }
 
-    private static bool RawApplicationMatches(IReadOnlyDictionary<string, string>? data, string name) =>
-        data?.Any(pair => (pair.Key.Trim() is "应用" or "产品" or "应用/产品")
-            && VersionRegistryCatalog.NormalizeName(pair.Value) == VersionRegistryCatalog.NormalizeName(name)) == true;
 }
