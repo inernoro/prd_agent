@@ -1,0 +1,614 @@
+{
+  "schema": 1,
+  "title": "用Codex做好一次测试交付",
+  "audience": "会用Codex、测试经验少的开发者",
+  "date": "2026-10-20",
+  "duration": 4800,
+  "preserve_baseline": "656e5b303",
+  "delivery": "讲解与可跟做粗样；所有演示数据与未验证项必须可见标注",
+  "inputs": [
+    {
+      "name": "MAP入口",
+      "hint": "按用户指定，从CDS返回的第一个分支取得实际地址；网络受限时标记未核验，不猜域名"
+    },
+    {
+      "name": "CDS入口",
+      "hint": "使用已配置的CDS_HOST或团队实际入口"
+    },
+    {
+      "name": "CDS项目",
+      "hint": "在CDS项目列表确认项目名称与ID"
+    },
+    {
+      "name": "目标提交",
+      "hint": "从本轮任务的提交记录取得"
+    },
+    {
+      "name": "实际入口",
+      "hint": "从权威预览查询结果取得"
+    },
+    {
+      "name": "练习仓库",
+      "hint": "选有权限且允许演练的仓库"
+    },
+    {
+      "name": "本轮报告深链",
+      "hint": "只使用技能归档后返回的实际链接"
+    },
+    {
+      "name": "应用入口",
+      "hint": "被验收应用的实际首页"
+    },
+    {
+      "name": "授权测试账号",
+      "hint": "仅使用已授权的隔离测试账号"
+    },
+    {
+      "name": "隔离环境",
+      "hint": "可以安全创建与清理练习数据的环境"
+    }
+  ],
+  "chapters": [
+    {
+      "id": "intro",
+      "title": "开场：这次真的测到了吗",
+      "duration": 90,
+      "goal": "能说明每个通过结论所依据的证据。",
+      "steps": [
+        {
+          "id": "I01",
+          "title": "选一个真实问题",
+          "where": "自己的任务卡",
+          "action": "写下谁、在什么条件下、做什么、应该得到什么。",
+          "expected": "一句能观察结果的预期，不用“正常”“没问题”代替。",
+          "recovery": "说不清预期时，先确认产品要求；不要让当前代码决定正确答案。",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "content",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "prompt"
+        }
+      ]
+    },
+    {
+      "id": "prepare",
+      "title": "准备：说清版本与环境",
+      "duration": 240,
+      "goal": "能区分目标代码、实测代码和环境。",
+      "steps": [
+        {
+          "id": "P01",
+          "title": "填写任务卡",
+          "where": "项目根目录与当前测试环境",
+          "action": "记录本轮目标、目标提交、环境实际运行提交、测试账号和练习数据。",
+          "expected": "能回答测的是哪份代码，以及是否与目标一致。",
+          "recovery": "不同版本先记录差异；不能拿新版本画面证明旧版本。",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "content",
+          "command": "git rev-parse HEAD",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "shell"
+        },
+        {
+          "id": "P02",
+          "title": "确认入口与权限",
+          "where": "应用首页与CDS项目",
+          "action": "用已有授权确认应用可登录、目标入口可点击、CDS报告项目可访问。",
+          "expected": "开始前就知道应用账号与CDS归档权限分别是否具备。",
+          "recovery": "401查登录；403查项目权限；502/503查环境状态。不要把环境失败记为产品失败。",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [
+            "应用入口",
+            "CDS入口",
+            "CDS项目"
+          ],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        }
+      ]
+    },
+    {
+      "id": "review",
+      "title": "第一章：Codex代码审查",
+      "duration": 900,
+      "goal": "能开启PR评审，确认实际审过本次提交，并处理一条发现。",
+      "steps": [
+        {
+          "id": "R01",
+          "title": "找到设置入口",
+          "where": "已登录的ChatGPT工作区",
+          "action": "打开配套官方设置链接，确认账户、工作区和仓库。",
+          "expected": "能看到所选仓库的代码评审设置。",
+          "recovery": "看不到仓库，先查GitHub连接、仓库授权与账号的push/admin权限。",
+          "sources": [
+            "https://chatgpt.com/settings/code-review",
+            "https://learn.chatgpt.com/docs/third-party/github"
+          ],
+          "proof": "pending",
+          "command": "https://chatgpt.com/settings/code-review",
+          "needs": [
+            "练习仓库"
+          ],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "url"
+        },
+        {
+          "id": "R02",
+          "title": "核对两层策略",
+          "where": "代码评审设置 → 仓库 Review code",
+          "action": "核对Automatic review、是否跟随Personal preferences，以及Review trigger的实际选择。",
+          "expected": "能复述哪个仓库、哪类事件会触发；保留当日设置画面。",
+          "recovery": "仓库跟随个人偏好时，还要核对个人开关；不要只拍一枚开关。",
+          "sources": [
+            "https://learn.chatgpt.com/docs/third-party/github"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "R03",
+          "title": "确认评审真正完成",
+          "where": "练习PR → 评审记录",
+          "action": "自动路径用符合配置的PR事件；手动路径使用@codex review。等待实际评审结果，核对提交。",
+          "expected": "区分完成但无发现、未执行、执行失败；自动与手动分别记录。",
+          "recovery": "排查事件是否匹配、额度、连接和运行错误；手动成功不能证明自动开关生效。",
+          "sources": [
+            "https://learn.chatgpt.com/docs/third-party/github"
+          ],
+          "proof": "pending",
+          "command": "@codex review",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "comment"
+        },
+        {
+          "id": "R04",
+          "title": "把发现变成可复现场景",
+          "where": "一条与本轮目标有关的评审发现",
+          "action": "读出触发条件、用户影响、代码位置和复现方法，再分类处理。",
+          "expected": "得到一条可验证场景，或保留明确范围的无发现记录。",
+          "recovery": "扩大范围的建议另记；没有调用证据的推测先补证据。",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "content",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "prompt"
+        }
+      ]
+    },
+    {
+      "id": "visual",
+      "title": "第二章：视觉验收技能到CDS查收",
+      "duration": 1080,
+      "goal": "能取得并接入技能，发起验收，并查收同一份在线报告。",
+      "steps": [
+        {
+          "id": "V01",
+          "title": "取得正确技能",
+          "where": "MAP首页 → 海鲜市场 → 搜索",
+          "action": "搜索create-visual-test-to-kb，点击卡片查看SKILL.md里的名称和版本，关闭详情后点击下载图标；若出现“拿来吧”命名框，确认后检查ZIP能打开且含技能正文。",
+          "expected": "得到实际ZIP文件；简称/create-visual-to-kb不当作已存在的命令。",
+          "recovery": "搜不到时核对正式名称与实例；本地已有时先核对版本。不要猜平台域名。",
+          "sources": [
+            ".claude/skills/findmapskills/SKILL.md",
+            "prd-admin/src/pages/marketplace/MarketplacePage.tsx"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [
+            "MAP入口"
+          ],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "V02",
+          "title": "解压到正确目录",
+          "where": "自己的项目根目录",
+          "action": "Codex安装到.agents/skills，Claude Code安装到.claude/skills。先查看ZIP根结构，再解压，保留已修改文件。",
+          "expected": "技能目录下面直接有SKILL.md；同包测试设计和场景编排两项依赖也存在。",
+          "recovery": "多了一层压缩包目录就调整；缺依赖时重新取完整包。不要覆盖已有本地修改。",
+          "sources": [
+            ".claude/skills/findmapskills/SKILL.md",
+            "scripts/skill-bundles.json"
+          ],
+          "proof": "pending",
+          "command": "请先检查下载的技能ZIP内部目录结构，再安装到当前项目的 .agents/skills/。保留已有本地修改；安装后核对 create-visual-test-to-kb、acceptance-test-design、acceptance-scenario-orchestrator 三个目录下的 SKILL.md 都存在。",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "local",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "V03",
+          "title": "确认工具真的看见技能",
+          "where": "重新加载后的Codex会话",
+          "action": "先让Codex读取技能正文，报告name和所需依赖路径。必要时新开会话。",
+          "expected": "工具返回实际读取的内容，而非凭技能名字概述。",
+          "recovery": "目录存在但工具不可见时，核对当前工作目录、宿主技能目录与会话重载。",
+          "sources": [
+            ".claude/skills/findmapskills/SKILL.md"
+          ],
+          "proof": "pending",
+          "command": "请先读取本项目 create-visual-test-to-kb 的 SKILL.md，告诉我实际读取路径、name 和两项依赖是否可读取。此步只确认接入，暂不执行验收。",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "local",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "V03B",
+          "title": "先检查验收环境",
+          "where": "当前Codex会话与独立验收环境",
+          "action": "按技能检查Python 3、Playwright与Chromium、应用登录、CDS项目归档权限，以及cdscli或明确的预览地址配置。凭据从安全配置读取。",
+          "expected": "逐项说明已具备或缺项，知道需要补什么；条件齐全后再发起验收。",
+          "recovery": "缺工具按项目规则安装；缺账号或项目权限时补对应授权配置。没有cdscli时使用已核对的实际入口配置，不手算域名。",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md"
+          ],
+          "proof": "pending",
+          "command": "请按 create-visual-test-to-kb 的前置要求检查当前环境，逐项列出工具、浏览器、应用登录、CDS项目归档权限、cdscli或预览地址配置是否齐全及缺项处理。只检查配置存在性和可用性，不输出密码、Token或Key，暂不执行验收。",
+          "command_kind": "prompt",
+          "needs": [
+            "CDS入口",
+            "CDS项目",
+            "实际入口"
+          ],
+          "hold": 8,
+          "required_proof": "live"
+        },
+        {
+          "id": "V04",
+          "title": "填齐验收输入",
+          "where": "任务卡 → 技能配置与安全凭据",
+          "action": "填写功能、目标提交、实际入口、验收范围与CDS归属项目；分别确认应用登录和归档权限。",
+          "expected": "没有仍未填写的占位值；截图与临时产物在仓库外。",
+          "recovery": "缺权限只补对应权限；不要把密码、Key写进提示词、视频或仓库。",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [
+            "目标提交",
+            "实际入口",
+            "CDS项目"
+          ],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "V05",
+          "title": "发起并观察验收",
+          "where": "Codex会话 → 浏览器真实入口",
+          "action": "让技能先读取规范、设计场景，再从首页点击进入目标功能，执行动作并记录结果。",
+          "expected": "证据对应操作与预期；适用主题与独立触控移动路径按技能要求覆盖。",
+          "recovery": "入口点不到如实保留；环境或脚本失败要与产品失败分开。",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md"
+          ],
+          "proof": "pending",
+          "command": "请使用本项目的 create-visual-test-to-kb 技能。先检查任务卡里的功能、版本、入口和CDS项目是否齐全，再读取权威规范、设计场景、走真实入口取证并归档。缺条件时明确阻塞，不编造结果或链接。",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "V06",
+          "title": "确认线上归档完成",
+          "where": "技能返回结果 → 本轮报告链接",
+          "action": "等待CDS归档结果，打开返回的真实深链，核对正文与证据可以访问。",
+          "expected": "获得实际在线报告，版本和本轮一致；链接检查通过。",
+          "recovery": "本地HTML与/tmp文件只是中间产物；网络或归档失败时保持未完成。",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "V07",
+          "title": "从平台找到同一份报告",
+          "where": "CDS首页 → 侧栏“报告”（展开后“验收报告”）→ 项目/文件夹",
+          "action": "从正常导航进入“报告”，选择正确项目和文件夹，在“报告台账”里点击本轮标题，打开同一报告。",
+          "expected": "读出目标版本、实测版本、结论、截图、失败项与未覆盖项；证据能打开。",
+          "recovery": "先清筛选、核对项目及登录身份；403查项目权限，不反复重跑产品测试。",
+          "sources": [
+            "cds/web/src/components/layout/AppShell.tsx",
+            "cds/web/src/pages/ReportsPage.tsx"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [
+            "CDS入口",
+            "本轮报告深链"
+          ],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "V08",
+          "title": "暂停：自己走一遍",
+          "where": "自己的项目",
+          "action": "独立完成获取、安装识别、输入、执行、平台查收；记录第一次卡住的位置。",
+          "expected": "能交出同一版本的报告链接，解释通过和未覆盖分别是什么。",
+          "recovery": "需要讲师临时补步骤的位置，记入教程修改清单。",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "proof": "content",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "prompt"
+        }
+      ]
+    },
+    {
+      "id": "unit",
+      "title": "第三章：单元测试与SSOT对齐",
+      "duration": 1200,
+      "goal": "能让原缺陷先失败再通过，并检查规则的所有使用方。",
+      "steps": [
+        {
+          "id": "U01",
+          "title": "先观察一个失败",
+          "where": "配套练习包 → practice-project/shipping-before",
+          "action": "运行“达到10件免运费”的修复前测试，读出输入10、预期0、实际6。",
+          "expected": "退出码非零且是预期断言失败，不是命令启动失败。",
+          "recovery": "缺依赖、语法错误或路径错误先修测试环境；不能算复现缺陷。",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "proof": "pending",
+          "command": "node --test shipping.test.mjs",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "local",
+          "command_kind": "shell"
+        },
+        {
+          "id": "U02",
+          "title": "修复与相邻边界",
+          "where": "配套练习包 → practice-project/shipping-after",
+          "action": "把超过10改成达到10，保持断言，重跑同一测试，再检查9、10、11件。",
+          "expected": "原失败用例转绿，相邻边界通过；没有改预期迎合实现。",
+          "recovery": "仍失败就读实际值；不要删除失败用例或添加跳过。",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "proof": "pending",
+          "command": "node --test shipping.test.mjs boundary.test.mjs",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "local",
+          "command_kind": "shell"
+        },
+        {
+          "id": "U03",
+          "title": "案例一：地址规则与多出口",
+          "where": "CDS地址规则和现有防漂移测试",
+          "action": "先运行已有测试；在仓库外隔离副本接回一个旧地址生成出口，再运行同一守卫。",
+          "expected": "旧出口被指出且测试失败；恢复后通过。共享函数单测与消费者检查分开解释。",
+          "recovery": "未看到目标失败原因就不算演练通过；合法旧链接解析不要误删。",
+          "sources": [
+            "cds/tests/services/preview-url-skill-drift.test.ts",
+            "cds/tests/services/preview-slug.test.ts"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "local",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "U04",
+          "title": "案例二：片长与双语标题",
+          "where": "MAP首页影片及现有测试",
+          "action": "在隔离副本把中文标题的{duration}写回旧秒数，运行现有测试，再恢复重跑。",
+          "expected": "只破坏一个使用方也被测试抓到；英文仍正确不能掩盖中文错误。",
+          "recovery": "只比较两个读取同一常量的值不够，还要确认消费者实际使用权威源。",
+          "sources": [
+            "prd-admin/src/lib/__tests__/landingFilm.test.ts",
+            "prd-admin/src/pages/home/film/filmTimeline.ts"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "local",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "U05",
+          "title": "检查测试有没有接上工作流",
+          "where": "项目测试命令和CI",
+          "action": "列出规则来源、所有相关消费者、守住它们的测试，以及真正执行这些测试的工作流。",
+          "expected": "能指出规则正确、使用方接入、测试执行分别由什么证据支持。",
+          "recovery": "没有消费者或CI证据就保留缺口；复发先查版本环境再归因。",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md",
+            ".github/workflows/ci.yml"
+          ],
+          "proof": "content",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "prompt"
+        }
+      ]
+    },
+    {
+      "id": "joint",
+      "title": "第四章：联合测试走完整链路",
+      "duration": 660,
+      "goal": "能检查页面到持久化与恢复的完整业务链路。",
+      "steps": [
+        {
+          "id": "J01",
+          "title": "画出当前案例的链路",
+          "where": "授权探测任务卡",
+          "action": "画出页面操作、请求、凭据保存、探测消费和结果反馈；确定本次要验证的条件。",
+          "expected": "每个交界都有可观察预期，知道哪里需要真实服务。",
+          "recovery": "具体账号与环境未准备好时，先完成链路图，不虚构一次成功授权。",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "content",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "J02",
+          "title": "完成一次核心旅程",
+          "where": "测试账号 → 首页正常导航",
+          "action": "实际授权、回到页面点击探测，观察请求、页面结果和持久化；按目标检查重启后恢复。",
+          "expected": "证明同一连接从生成到保存再到消费；日志只能辅助解释页面结果。",
+          "recovery": "单接口成功不能替代页面失败；重启操作只在可控隔离环境进行。",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [
+            "授权测试账号",
+            "隔离环境"
+          ],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "J03",
+          "title": "负面与恢复",
+          "where": "同一测试目标",
+          "action": "验证权限不足、依赖失败或凭据失效等适用分支，再验证恢复操作。",
+          "expected": "错误对用户可理解，恢复后回到可用状态；保留失败和恢复两份证据。",
+          "recovery": "缺外部依赖时明确未执行项，不用另一条成功路径代替。",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        }
+      ]
+    },
+    {
+      "id": "strict",
+      "title": "第五章：严厉版交付核对",
+      "duration": 360,
+      "goal": "能交付别人可复查的结论，明确未执行项。",
+      "steps": [
+        {
+          "id": "S01",
+          "title": "逐项检查五类证据",
+          "where": "交付卡",
+          "action": "对照代码审查、视觉、单元、联合与规范，逐项读回范围、版本、结果和证据。",
+          "expected": "每项有证据或明确状态；不是所有格子都必须写通过。",
+          "recovery": "命令没跑写未执行；环境错误、覆盖不足和产品失败分别记录。",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "content",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "prompt"
+        },
+        {
+          "id": "S02",
+          "title": "检查报告是否可查收",
+          "where": "CDS在线报告",
+          "action": "从最终链接打开正文、截图和内部链接，核对权限、版本及未覆盖项。",
+          "expected": "收件人在应有权限内能读到同一份结果，未执行项有补跑入口和关闭条件。",
+          "recovery": "打不开就保持交付未完成；不拿本机文件替代正式验收。",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md"
+          ],
+          "proof": "pending",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "live",
+          "command_kind": "prompt"
+        }
+      ]
+    },
+    {
+      "id": "exercise",
+      "title": "独立练习：换一个问题再做",
+      "duration": 270,
+      "goal": "能用自己的问题完成同样流程。",
+      "steps": [
+        {
+          "id": "E01",
+          "title": "交出一份可复查结果",
+          "where": "新的相似问题",
+          "action": "独立填写预期、版本、范围，执行适用检查，交付结果与证据。",
+          "expected": "能解释测了什么、没测什么、发现什么；他人能复查。",
+          "recovery": "记录所有依赖提示的位置；它们是课程要补的步骤，不归咎于学员。",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "proof": "content",
+          "command": "",
+          "needs": [],
+          "hold": 8,
+          "required_proof": "content",
+          "command_kind": "prompt"
+        }
+      ]
+    }
+  ],
+  "trial": {
+    "state": "pending",
+    "reason": "尚无目标学员独立跟做记录；自动检查与AI审阅不能代替真人试学。",
+    "requirements": [
+      "每一步不靠讲师补充即可找到操作位置",
+      "学员能说明结果和预期的差异",
+      "学员能完成对应练习并交出有效证据"
+    ]
+  }
+}
