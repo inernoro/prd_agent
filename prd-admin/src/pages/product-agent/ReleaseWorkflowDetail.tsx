@@ -48,6 +48,8 @@ import { DetailRecordActions } from './DetailRecordActions';
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
 import type { VersionRegistrationMessageParseResult } from '@/services/real/versionRegistration';
 import { VersionCopyActions } from './VersionCopyActions';
+import { mergeMemberIds, type PastedMemberMatch } from './releaseMemberMatching';
+import { useReleasePastedMembers } from './useReleasePastedMembers';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -139,6 +141,8 @@ export function ReleaseWorkflowDetail({
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const [showRequirementPicker, setShowRequirementPicker] = useState(false);
   const [teamIds, setTeamIds] = useState<string[]>(currentUser?.userId ? [currentUser.userId] : []);
+  const addTeamMembers = useCallback((ids: string[]) => setTeamIds((previous) => mergeMemberIds(previous, ids)), []);
+  const pastedMembers = useReleasePastedMembers(isNew && !temporary, addTeamMembers);
   const [releaseAt, setReleaseAt] = useState('');
   const [trainingAt, setTrainingAt] = useState('');
   const [projectType, setProjectType] = useState<'standard' | 'custom'>('standard');
@@ -163,6 +167,12 @@ export function ReleaseWorkflowDetail({
     [initiations, availableInitiations],
   );
   const selectedInitiation = approved.find((item) => item.id === initiationId);
+  // 与后端一致：有关联方案时项目类别以方案为准，手工 T 号使用表单类别。
+  const effectiveProjectType = !temporary && sourceMode === 'initiation' && selectedInitiation ? selectedInitiation.projectType : projectType;
+  const effectiveGlobalOpen = temporary ? isGlobalOpen : effectiveProjectType === 'standard' ? 'yes' : 'no';
+  const editableOpenBrandScope = !temporary && openBrandScope === '上线全域开放' ? '' : openBrandScope;
+  const effectiveOpenBrandScope = temporary ? openBrandScope : effectiveGlobalOpen === 'yes'
+    ? '上线全域开放' : editableOpenBrandScope.trim() || '非全域开放';
   const featureById = useMemo(() => new Map(features.map((f) => [f.id, f])), [features]);
   const readOnly = !isNew && release?.status === 'released';
 
@@ -372,7 +382,8 @@ export function ReleaseWorkflowDetail({
   const changeApplication = (id: string) => {
     if (!onApplicationProductChange) return;
     if (id !== productId) {
-      setExtraIds([]); setTeamIds(ownerId ? [ownerId] : []); setShowRequirementPicker(false);
+      setExtraIds([]); setShowRequirementPicker(false);
+      if (temporary) setTeamIds(ownerId ? [ownerId] : []);
       setManifest([]); setBaselineManifest([]); setPreviousReleaseId(null); setPreviousVCode(null);
       setRequirements([]); setFeatures([]); setMembers([]); setTracedDefects([]);
       setLoading(Boolean(id));
@@ -387,7 +398,8 @@ export function ReleaseWorkflowDetail({
     }
     if (!source) {
       setPlanName(''); setPlanUrl(''); setDemandSource(''); setRequirementDescription('');
-      setDepartmentName(''); setOwnerName(''); setProjectMembers('');
+      setDepartmentName(''); setOwnerName('');
+      if (!pastedMembers.matches.length) setProjectMembers('');
       return;
     }
     setProjectType(source.projectType);
@@ -398,7 +410,7 @@ export function ReleaseWorkflowDetail({
     setRequirementDescription(source.requirementDescription ?? '');
     setDepartmentName(source.departmentName ?? '');
     setOwnerName(source.ownerName ?? '');
-    setProjectMembers((source.projectMemberNames ?? []).join('、'));
+    if (!pastedMembers.matches.length) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
@@ -430,15 +442,22 @@ export function ReleaseWorkflowDetail({
     }
     if (parsed.projectMemberNames?.length) {
       setProjectMembers(parsed.projectMemberNames.join('、'));
-      const matchedIds = members.filter((member) => parsed.projectMemberNames?.includes(member.displayName)).map((member) => member.userId);
-      if (matchedIds.length) setTeamIds(matchedIds);
+      if (!temporary) pastedMembers.identify(parsed.projectMemberNames);
+      else {
+        const matchedIds = members.filter((member) => parsed.projectMemberNames?.includes(member.displayName)).map((member) => member.userId);
+        if (matchedIds.length) setTeamIds(matchedIds);
+      }
     }
     if (parsed.plannedReleaseAt) setReleaseAt(parsed.plannedReleaseAt.slice(0, 10));
     if (parsed.plannedTrainingAt) setTrainingAt(shanghaiDateTimeInput(parsed.plannedTrainingAt));
-    if (parsed.isGlobalOpen != null) setIsGlobalOpen(parsed.isGlobalOpen ? 'yes' : 'no');
+    if (temporary && parsed.isGlobalOpen != null) setIsGlobalOpen(parsed.isGlobalOpen ? 'yes' : 'no');
   };
 
   const saveNew = async () => {
+    if (pastedMembers.pendingCount > 0) {
+      setMessage('正在匹配企微成员，请稍候并核对名单后申领。');
+      return;
+    }
     if (loadError || loading || !productId || (!temporary && sourceMode === 'initiation' && selectedInitiation?.productId !== productId)) {
       setMessage('请先选择方案以回填所属应用；手工 T 号请在表单中选择应用。');
       return;
@@ -455,17 +474,19 @@ export function ReleaseWorkflowDetail({
       isTemporaryOptimization: temporary,
       planName: temporary ? temporaryPlanName : planName.trim() || undefined,
       ownerId,
-      openBrandScope,
-      isGlobalOpen: isGlobalOpen === '' ? undefined : isGlobalOpen === 'yes',
+      openBrandScope: effectiveOpenBrandScope,
+      isGlobalOpen: effectiveGlobalOpen === '' ? undefined : effectiveGlobalOpen === 'yes',
       demandSource: demandSource.trim() || undefined,
       planUrl: planUrl.trim() || undefined,
-      requirementDescription: requirementDescription.trim() || undefined,
       departmentName: departmentName.trim() || undefined,
       ownerName: ownerName.trim() || undefined,
       projectMemberNames: projectMembers.split(/[、,，;；]/).map((name) => name.trim()).filter(Boolean),
-      contractParty: contractParty.trim() || undefined,
+      ...(temporary ? {
+        requirementDescription: requirementDescription.trim() || undefined,
+        contractParty: contractParty.trim() || undefined,
+      } : {}),
       remark: remark.trim() || undefined,
-      projectType,
+      projectType: effectiveProjectType,
       versionType,
       additionalRequirementIds: extraIds,
       teamMemberIds: teamIds,
@@ -515,7 +536,7 @@ export function ReleaseWorkflowDetail({
     else setRelease(res.data);
   };
 
-  const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || !trainingAt || !isGlobalOpen || teamIds.length === 0
+  const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || !trainingAt || !effectiveGlobalOpen || pastedMembers.pendingCount > 0 || teamIds.length === 0
     || (!temporary && sourceMode === 'initiation' && selectedInitiation?.productId !== productId)
     || (temporary ? extraIds.length === 0 : sourceMode === 'manual_t' ? !manualTCode.trim() || !planName.trim() : !initiationId);
   const manifestInvalid = activeManifest.length === 0;
@@ -762,10 +783,10 @@ export function ReleaseWorkflowDetail({
               )}
               <div role="group" aria-label="项目组成员">
                 <span className="mb-1.5 block text-xs text-token-secondary">项目组成员 *</span>
-                <MemberChecks members={members} selected={teamIds} onChange={setTeamIds} />
+                <MemberChecks members={members} selected={teamIds} onChange={setTeamIds} pastedMatches={pastedMembers.matches} onChoosePasted={pastedMembers.choose} />
               </div>
               {!temporary && <>
-                <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
+                <Field label="项目类别"><Select value={effectiveProjectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
                 <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
               </>}
               {!temporary && <Field label="产品方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} /></Field>}
@@ -774,13 +795,17 @@ export function ReleaseWorkflowDetail({
               <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
               <Field label="产品负责人名称"><Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} /></Field>
               <Field label="项目组成员名称"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="企微通知中的姓名，用顿号分隔" /></Field>
-              <Field label="合同签订方"><Input value={contractParty} onChange={(e) => setContractParty(e.target.value)} /></Field>
-              <Field label="项目需求描述"><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
+              {temporary && <Field label="合同签订方"><Input value={contractParty} onChange={(e) => setContractParty(e.target.value)} /></Field>}
+              {temporary && <Field label="项目需求描述"><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>}
               <Field label="备注"><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
               <Field label="上线日期 *"><Input type="date" value={releaseAt} onChange={(e) => setReleaseAt(e.target.value)} /></Field>
               <Field label="预计培训时间（北京时间）*"><Input type="datetime-local" value={trainingAt} onChange={(e) => setTrainingAt(e.target.value)} /></Field>
-              <Field label="是否全域开放 *"><Select value={isGlobalOpen} onChange={(e) => setIsGlobalOpen(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
-              <Field label="当前开放品牌"><Input value={openBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder="上线全域开放" /></Field>
+              <Field label="是否全域开放">{temporary
+                ? <Select value={isGlobalOpen} onChange={(e) => setIsGlobalOpen(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select>
+                : <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{effectiveGlobalOpen === 'yes' ? '是（非定制项目）' : '否（定制项目）'}</div>}</Field>
+              <Field label="当前开放品牌">{!temporary && effectiveGlobalOpen === 'yes'
+                ? <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">上线全域开放</div>
+                : <Input value={editableOpenBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder={temporary ? '上线全域开放' : '填写本次开放的品牌'} />}</Field>
               <InfoBox>确认后自动审批并生成正式版本号，随后必须补充上线公告地址才能完成上线。</InfoBox>
             </>
           ) : null}
@@ -1147,8 +1172,9 @@ function RequirementSummary({ title, requirements, emptyText }: {
   );
 }
 
-function MemberChecks({ members, selected, onChange }: {
+function MemberChecks({ members, selected, onChange, pastedMatches, onChoosePasted }: {
   members: ProductMember[]; selected: string[]; onChange: (ids: string[]) => void;
+  pastedMatches: PastedMemberMatch[]; onChoosePasted: (name: string, userId: string) => void;
 }) {
   const currentUser = useAuthStore((state) => state.user);
   const [extraNames, setExtraNames] = useState<Map<string, string>>(new Map());
@@ -1184,6 +1210,21 @@ function MemberChecks({ members, selected, onChange }: {
       </section>
       <section aria-label="添加项目成员" className="rounded-lg border border-token-subtle bg-token-nested p-3">
         <div className="mb-2 text-xs font-medium text-token-secondary">添加成员</div>
+        {pastedMatches.length > 0 && <div aria-live="polite" className="mb-3 space-y-2 text-xs text-token-secondary">
+          <p className="flex items-center gap-2">{pastedMatches.some((item) => item.status === 'pending') && <MapSpinner size={14} />}
+            企微成员已匹配 {pastedMatches.filter((item) => item.userId && selected.includes(item.userId)).length}/{pastedMatches.length} 人
+          </p>
+          {pastedMatches.filter((item) => item.status !== 'matched').map((item) => <div key={item.name} className="space-y-1">
+            {item.status === 'pending' ? <p>正在查找“{item.name}”…</p>
+              : item.status === 'ambiguous' || item.status === 'limited' ? <>
+                <label htmlFor={`pasted-member-${item.name}`}>“{item.name}”{item.status === 'limited' ? '搜索结果较多，请确认或使用完整姓名搜索' : '对应多位成员，请选择'}</label>
+                {item.candidates.length > 0 && <Select id={`pasted-member-${item.name}`} value="" onChange={(event) => onChoosePasted(item.name, event.target.value)}>
+                  <option value="">请选择成员</option>
+                  {item.candidates.map((user) => <option key={user.userId} value={user.userId}>{user.displayName}（@{user.username}）</option>)}
+                </Select>}
+              </> : <p>{item.status === 'error' ? `“${item.name}”匹配失败` : `未找到“${item.name}”`}，请在下方搜索添加。</p>}
+          </div>)}
+        </div>}
         <UserSearchSelect value="" onChange={(id) => { if (id && !selected.includes(id)) onChange([...selected, id]); }} placeholder="搜索姓名，添加其他项目成员" uiSize="sm" />
         {availableMembers.length > 0 && <div className="mt-3 flex flex-wrap gap-2" style={{ maxHeight: 160, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {availableMembers.map((member) => <button key={member.userId} type="button" onClick={() => onChange([...selected, member.userId])} className="inline-flex items-center gap-1 rounded-md border border-token-subtle px-2.5 py-1.5 text-xs text-token-secondary hover-bg-soft">
