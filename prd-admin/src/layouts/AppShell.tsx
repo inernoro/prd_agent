@@ -195,6 +195,9 @@ const iconMap: Record<string, LucideIcon> = {
  * 原来 text 写死同色 300 档，浅色档下与 8% 淡底一起被暖纸稀释 —— 实测 1.51:1。
  * 通知条挂在 AppShell 上，36 条路由全渲染，一处错就是 36 处糊。
  */
+/** 通知卡片 / 铃铛的底边：默认贴底 20px，页面声明了右下角主操作按钮时再让出那块高度。 */
+const NOTIFICATION_DOCK_BOTTOM = 'calc(20px + var(--page-fab-clearance, 0px))';
+
 const notificationTone = {
   info: { border: 'rgba(59, 130, 246, 0.4)', bg: 'rgba(59, 130, 246, 0.08)', text: 'var(--accent-fg-blue)' },
   warning: { border: 'rgba(251, 146, 60, 0.45)', bg: 'rgba(251, 146, 60, 0.1)', text: 'var(--accent-fg-warning)' },
@@ -867,14 +870,16 @@ export default function AppShell() {
           // 收缩 / 免打扰状态：浮动按钮;如果悬浮组整体折叠了,这个按钮会跟着贴到屏幕右边缘
           <button
             type="button"
-            className="fixed bottom-5 z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
+            className="fixed z-[120] h-12 w-12 rounded-full flex items-center justify-center transition-all duration-200 hover:scale-105"
             style={{
               ...glassFloatingButton,
+              // 页面右下角有主操作按钮（如知识库「+」）时，它会声明 --page-fab-clearance，这里上移让位
+              bottom: NOTIFICATION_DOCK_BOTTOM,
               right: dockCollapsed ? (dockEdgeHover ? 12 : -20) : 20,
               opacity: dockCollapsed && !dockEdgeHover ? 0.6 : isSnoozed ? 0.7 : 1,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.92))',
               border: `1px solid ${isSnoozed ? 'var(--border-subtle, rgba(127,127,127,0.25))' : tone.border}`,
-              transition: 'right 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out',
+              transition: 'right 240ms cubic-bezier(.2,.8,.2,1), bottom 240ms cubic-bezier(.2,.8,.2,1), opacity 240ms ease-out, transform 180ms ease-out',
             }}
             onClick={() => {
               if (dockCollapsed) {
@@ -909,7 +914,7 @@ export default function AppShell() {
             className="fixed right-5 z-[120] w-[372px] overflow-hidden"
             style={{
               ...glassFloatingButton,
-              bottom: 20,
+              bottom: NOTIFICATION_DOCK_BOTTOM,
               minHeight: 112,
               borderRadius: 16,
               background: 'var(--panel-solid, rgba(18, 18, 22, 0.94))',

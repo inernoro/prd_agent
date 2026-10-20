@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import crypto from 'node:crypto';
+import { createServer } from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -120,21 +121,27 @@ describe('通知载荷', () => {
     detectedAt: '2026-09-09T09:00:00.000Z',
   };
 
-  it('掉线是 error 级、带下一步；来源与分区固定', () => {
+  it('检查异常是 warning 级、带下一步；来源与分区固定', () => {
     const p = buildNotificationPayload({ ...base, type: 'uptime.target.down' });
     expect(p.source).toBe('uptime-alert');   // 必须与 MAP SourceCatalog 登记的一致
     expect(p.section).toBe('admin');
-    expect(p.level).toBe('error');
-    expect(p.title).toContain('不可用');
+    expect(p.level).toBe('warning');
+    expect(p.title).toContain('检查异常');
     expect(p.message).toContain('下一步');   // 症状 + 下一步，不是只报个错
-    expect(p.message).toContain('连续失败 2 次');
+    expect(p.message).toContain('检查连续未通过');
   });
 
   it('恢复是 info 级，不带下一步', () => {
     const p = buildNotificationPayload({ ...base, type: 'uptime.target.recovered' });
     expect(p.level).toBe('info');
-    expect(p.title).toContain('已恢复');
+    expect(p.title).toContain('已稳定恢复');
     expect(p.message).not.toContain('下一步');
+  });
+
+  it('生产主动故障保留严重级别，采集异常与恢复不提权', () => {
+    expect(buildNotificationPayload({ ...base, type: 'uptime.target.down', urgency: 'urgent' }).level).toBe('error');
+    expect(buildNotificationPayload({ ...base, type: 'uptime.target.down', urgency: 'urgent', assessment: 'observation-unavailable' }).level).toBe('warning');
+    expect(buildNotificationPayload({ ...base, type: 'uptime.target.recovered', urgency: 'urgent' }).level).toBe('info');
   });
 
   it('幂等键区分方向与时刻：同一次翻转可去重，不同次翻转不被合并', () => {
@@ -202,6 +209,7 @@ describe('接线守卫', () => {
     // 写死 `mapNotifier?.send` 的旧判据当场变红——它锁的是实现写法不是行为
     // （predicate-and-wiring-discipline 形状 4a）。
     expect(block).toContain('sendLegacyAlarm(');
+    expect(block).toContain('urgency: data.urgency');
     const sender = indexSource.slice(indexSource.indexOf('const sendLegacyAlarm'), indexSource.indexOf('const alarmBoardUrl'));
     expect(sender).toContain('resolveMapNotifier()');
     expect(sender).toContain('notifier.send(alert)');
@@ -210,5 +218,40 @@ describe('接线守卫', () => {
   it('未配置凭据时必须把「不会有人被通知」印出来，不许静默禁用', () => {
     expect(indexSource).toContain('[map-notifier] 未配置');
     expect(indexSource).toContain('不会有人被通知');
+  });
+});
+
+it('MAP 通道实际 HTTP 载荷保留严重资格，演练和采集异常不能借此提权', async () => {
+  const { sendAlarm } = await import('../../src/services/alarm-dispatch.js');
+  const received: string[] = [];
+  const server = createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    received.push(JSON.parse(body).level);
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end('{}');
+  });
+  server.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', resolve));
+  const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const channel = { id: 'map-fixture', name: 'MAP', enabled: true, kind: 'map' as const, projects: [], events: [] as [], createdAt: 0, updatedAt: 0,
+    map: { endpoint: `http://127.0.0.1:${(server.address() as {port: number}).port}/events`, keyId: 'fixture', username: 'fixture', privateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() } };
+  const event = { kind: 'business-down' as const, projectId: 'fixture', targetName: '业务访问', urgency: 'urgent' as const,
+    message: '未响应', consecutiveFailures: 3, detectedAt: '2026-10-19T00:00:00Z' };
+  try {
+    expect((await sendAlarm(channel, event)).ok).toBe(true);
+    expect((await sendAlarm(channel, { ...event, assessment: 'observation-unavailable' })).ok).toBe(true);
+    expect((await sendAlarm(channel, { ...event, drill: true })).ok).toBe(true);
+    expect((await sendAlarm(channel, { ...event, kind: 'business-recovered' })).ok).toBe(true);
+    expect(received).toEqual(['error', 'warning', 'warning', 'info']);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+
+describe('通知返回具体检查详情', () => {
+  it('详情链接优先于内部探测地址，保留原有去重键', () => {
+    const payload = buildNotificationPayload({ type: 'uptime.target.down', targetId: 'monitor@x', targetName: '任务', boardUrl: 'https://control.example/status?target=monitor%40x', probeUrl: 'http://127.0.0.1:9900/api/self-check', message: '未通过', consecutiveFailures: 3, detectedAt: '2026-09-24T00:00:00Z' });
+    expect(payload.actionUrl).toBe('https://control.example/status?target=monitor%40x');
+    expect(payload.actionLabel).toBe('查看问题与处理建议');
+    expect(payload.dedupKey).toBe('uptime:monitor@x:down:2026-09-24T00:00:00Z');
   });
 });

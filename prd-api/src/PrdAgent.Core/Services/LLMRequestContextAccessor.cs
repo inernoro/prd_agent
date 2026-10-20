@@ -14,10 +14,6 @@ public class LLMRequestContextAccessor : ILLMRequestContextAccessor
     public IDisposable BeginScope(LlmRequestContext context)
     {
         var prev = _current.Value;
-        if (prev?.ForceFullShadowSample == true && !context.ForceFullShadowSample)
-        {
-            context = context with { ForceFullShadowSample = true };
-        }
         if (prev?.IsHealthProbe == true && context.IsHealthProbe != true)
         {
             context = context with { IsHealthProbe = true };

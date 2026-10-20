@@ -326,8 +326,7 @@ public class VideoToDocRunWorker : BackgroundService
                 DocumentHash: null,
                 SystemPromptRedacted: "[VIDEO_TO_DOC_ASR]",
                 RequestType: ModelTypes.Asr,
-                AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe,
-                ForceFullShadowSample: run.ForceFullShadowSample));
+                AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Transcribe));
 
             rawResp = await gateway.SendRawWithResolutionAsync(rawRequest, asrResolution, CancellationToken.None);
         }
@@ -505,8 +504,7 @@ public class VideoToDocRunWorker : BackgroundService
             DocumentHash: null,
             SystemPromptRedacted: "[VIDEO_TO_DOC_ANALYZE]",
             RequestType: ModelTypes.Vision,
-            AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Analyze,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: AppCallerRegistry.VideoAgent.VideoToDoc.Analyze));
 
         await foreach (var chunk in gateway.StreamAsync(request, CancellationToken.None))
         {

@@ -198,6 +198,7 @@ export function listReleases(productId: string, scope: 'mine' | 'all' = 'mine', 
   return apiRequest<ListWrap<ProductRelease>>(`/api/product/products/${productId}/releases?${q.toString()}`);
 }
 export function createRelease(productId: string, body: {
+  historyConfirmationToken?: string;
   initiationId?: string;
   manualTCode?: string;
   isTemporaryOptimization: boolean;
@@ -228,6 +229,20 @@ export function listProductVersionReviewSources() {
   return apiRequest<{ items: Array<{ id: string; title: string; fileName: string; completedAt?: string | null }>; canUseAllReviews: boolean }>(
     '/api/product/version-workflow/review-sources',
   );
+}
+export type VersionReleaseHistoryCheck = {
+  blocked: boolean;
+  needsConfirmation: boolean;
+  message: string;
+  confirmationToken: string | null;
+  candidates: Array<{ id: string; vCode: string; planName: string }>;
+};
+export function checkReleaseHistory(productId: string, source: { initiationId?: string; manualTCode?: string; planName?: string }) {
+  const query = new URLSearchParams();
+  if (source.initiationId) query.set('initiationId', source.initiationId);
+  if (source.manualTCode) query.set('manualTCode', source.manualTCode);
+  if (source.planName) query.set('planName', source.planName);
+  return apiRequest<VersionReleaseHistoryCheck>(`/api/product/products/${productId}/releases/history-check?${query.toString()}`);
 }
 export function parseProductVersionMessage(kind: 'internal' | 'formal', text: string) {
   return apiRequest<{ result: VersionRegistrationMessageParseResult }>(

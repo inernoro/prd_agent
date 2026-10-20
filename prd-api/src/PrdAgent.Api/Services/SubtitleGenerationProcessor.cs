@@ -589,8 +589,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_TRANSCRIBE_SUMMARY]",
             RequestType: ModelTypes.Chat,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary));
 
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Transcribe.Summary,
@@ -1069,8 +1068,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: appCallerCode));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
 
@@ -1403,8 +1401,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_AUDIO_CHAT]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: appCallerCode));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
         if (rawResp?.Success != true || string.IsNullOrWhiteSpace(rawResp.Content))
@@ -1573,8 +1570,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_ASR_JSON]",
             RequestType: ModelTypes.Asr,
-            AppCallerCode: appCallerCode,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: appCallerCode));
 
         var rawResp = await _llmGateway.SendRawWithResolutionAsync(rawRequest, gwResolution, CancellationToken.None);
 
@@ -1802,8 +1798,7 @@ public class SubtitleGenerationProcessor
             DocumentHash: null,
             SystemPromptRedacted: "[DOC_STORE_SUBTITLE_VISION]",
             RequestType: ModelTypes.Vision,
-            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision,
-            ForceFullShadowSample: run.ForceFullShadowSample));
+            AppCallerCode: AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision));
 
         var client = _llmGateway.CreateClient(
             AppCallerRegistry.DocumentStoreAgent.Subtitle.Vision,

@@ -372,12 +372,6 @@ public class VideoGenRun
 
     /// <summary>删除开始前固化的生成视频对象清单，保证中途失败后仍可幂等续作。</summary>
     public List<VideoGenDeletionArtifact> DeletionArtifacts { get; set; } = new();
-
-    /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
-    /// </summary>
-    public bool ForceFullShadowSample { get; set; }
 }
 
 public sealed class VideoGenDeletionArtifact

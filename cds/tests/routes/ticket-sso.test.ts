@@ -210,10 +210,17 @@ describe('ticket SSO routes', () => {
     const exchange = await call(server, 'POST', '/api/auth/sso/exchange', {
       code: 'a'.repeat(43),
       state,
+    }, {
+      Cookie: 'cds_gh_session=github-token; cds_token=basic-token',
     });
 
     expect(exchange.status).toBe(200);
     expect(exchange.body.redirect).toBe('/reports?project=cds-self');
+    expect(exchange.headers['set-cookie']).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^cds_sso_session=/),
+      expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+      expect.stringMatching(/^cds_token=.*Max-Age=0/),
+    ]));
   });
 
   it('uses the canonical public base URL instead of forwarded host headers', async () => {

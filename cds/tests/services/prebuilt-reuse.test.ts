@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage, targetShaOf,
-  normalizeBuildScope, normalizeImageRevision, proveFallbackImage,
+  normalizeBuildScope, normalizeImageRevision, proveFallbackImage, latestCommitImage,
 } from '../../src/services/prebuilt-reuse.js';
 
 const SHA_A = 'a'.repeat(40);
@@ -232,5 +232,41 @@ describe('浮动回退镜像的源码归属证明', () => {
       buildScope: ['prd-api/**'],
       isComponentUnchangedSince: async () => { throw new Error('git history missing'); },
     })).resolves.toMatchObject({ accepted: false, reason: 'component-changed-or-unverifiable' });
+  });
+});
+
+/**
+ * 方案甲（2026-10-08 mdimp）：CDS 记下的提交停在 09-30，部署却 pull 到当天的代码，
+ * 按旧提交找镜像扑空、回退宿主编译。部署要先试刚 pull 到的提交的镜像。
+ */
+describe('latestCommitImage', () => {
+  const locked = 'a'.repeat(40);
+  const latest = 'b'.repeat(40);
+  const image = `ghcr.io/md-imp/mdimp/mdimp-admin-api:sha-${locked}`;
+
+  it('最新提交比锁定的新：换成同仓库、最新提交的 per-SHA 镜像', () => {
+    expect(latestCommitImage(image, latest)).toBe(`ghcr.io/md-imp/mdimp/mdimp-admin-api:sha-${latest}`);
+  });
+
+  it('大写提交号按小写比较与拼接（CI 打的标签是小写）', () => {
+    expect(latestCommitImage(image, latest.toUpperCase())).toBe(`ghcr.io/md-imp/mdimp/mdimp-admin-api:sha-${latest}`);
+    expect(latestCommitImage(image, locked.toUpperCase())).toBeNull();
+  });
+
+  it('同一个提交、短提交号、空值都不额外尝试', () => {
+    expect(latestCommitImage(image, locked)).toBeNull();
+    expect(latestCommitImage(image, 'b'.repeat(7))).toBeNull();
+    expect(latestCommitImage(image, '')).toBeNull();
+    expect(latestCommitImage(image, undefined)).toBeNull();
+  });
+
+  it('目标镜像不是 per-SHA 标签（浮动标签 / 带端口的仓库）不换', () => {
+    expect(latestCommitImage('ghcr.io/acme/api:branch-main', latest)).toBeNull();
+    expect(latestCommitImage('registry.local:5000/acme/api:latest', latest)).toBeNull();
+  });
+
+  it('带端口的私有仓库也只换标签，不动仓库地址', () => {
+    expect(latestCommitImage(`registry.local:5000/acme/api:sha-${locked}`, latest))
+      .toBe(`registry.local:5000/acme/api:sha-${latest}`);
   });
 });

@@ -250,10 +250,10 @@ public class GatewayRequestContext
     public List<LlmImageReference>? ImageReferences { get; init; }
 
     /// <summary>
-    /// 网关传输路径观测标记（S2）：inproc / http / shadow / direct。
-    /// http 模式下由 MAP 侧 HttpLlmGatewayClient 置 "http" 后随请求体过线，serving 端 OpenContextScope
+    /// 网关传输路径观测标记（S2）：http / direct / admin-probe。
+    /// MAP 侧 HttpLlmGatewayClient 置 "http" 后随请求体过线，serving 端 OpenContextScope
     /// 将其注入 LlmRequestContext，供 serving 的 LlmGateway 权威标注该条日志的传输通道。
-    /// 为 null 时 serving 端 LlmGateway 兜底为 inproc。
+    /// 为 null 时 serving 端 LlmGateway 同样按 http 记录。
     /// </summary>
     public string? GatewayTransport { get; init; }
 

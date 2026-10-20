@@ -32,8 +32,8 @@ metadata:
 本地诊断沿用下文正式归档命令的全部必填参数,但配置必须为 `report.mode=local`,并额外添加:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 python3 "$SKILLS_ROOT/create-visual-test-to-kb/scripts/archive_report.py" \
   --local-diagnostic \
   --config "$SKILLS_ROOT/create-visual-test-to-kb/acceptance.config.json" \
@@ -87,9 +87,9 @@ python3 "$SKILLS_ROOT/create-visual-test-to-kb/scripts/archive_report.py" \
 每日/昨日自动验收必须先跑机器盘点:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
 # 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 python3 "$SKILLS_ROOT/acceptance-test-design/scripts/daily_scope.py" \
   --date <YYYY-MM-DD> \
   --json-out /tmp/daily-scope.json \
@@ -354,9 +354,9 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 `scripts/example-driver.mjs` 是可直接改的取证脚本骨架。完整一轮:
 
 ```bash
-# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 解析当前项目的技能根（Claude Code 用 .claude，Codex 用 .agents）。
 # 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
-SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILLS_ROOT=$(for h in .claude .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
 SKILL="$SKILLS_ROOT/create-visual-test-to-kb"
 export PWPATH=$(npm root -g)/playwright
 export MAP_AI_USER='<login-user>' MAP_ACCEPT_PASS='<login-password>' AI_ACCESS_KEY='<access-key>'

@@ -11,19 +11,51 @@ namespace PrdAgent.Infrastructure.Database;
 public class MongoDbContext
 {
     private readonly IMongoDatabase _database;
+    private readonly IMongoCollection<LlmRequestLog> _llmRequestLogs;
 
     /// <summary>
     /// 暴露底层 IMongoDatabase 实例（用于 DropCollectionAsync 等高级操作）
     /// </summary>
     public IMongoDatabase Database => _database;
 
-    public MongoDbContext(string connectionString, string databaseName)
+    /// <param name="llmRequestLogDatabaseName">
+    /// 模型请求日志所在库。MAP 的模型调用全部经独立网关，日志由 serving 写进网关库；
+    /// MAP 进程传网关库名，让日志页、成本统计等读者读到同一份。不传则与业务库相同（serving 自身即如此）。
+    /// </param>
+    /// <param name="llmRequestLogConnectionString">
+    /// 网关库单独部署在另一台 Mongo 时传它的连接串（与 serving 的 LlmGateway:MongoConnectionString 同源）；不传则与业务库同一连接。
+    /// </param>
+    /// <param name="llmRequestLogTenantId">
+    /// 网关日志集合由全部租户共用。MAP 进程传内部租户 ID，日志的每一次读写都被限定在这个租户上；
+    /// serving 自己要写所有租户的日志，不传。
+    /// </param>
+    public MongoDbContext(
+        string connectionString,
+        string databaseName,
+        string? llmRequestLogDatabaseName = null,
+        string? llmRequestLogConnectionString = null,
+        string? llmRequestLogTenantId = null)
     {
         // 注册 BSON 类映射（替代注解方式）
         BsonClassMapRegistration.Register();
         
         var client = new MongoClient(connectionString);
         _database = client.GetDatabase(databaseName);
+        var logClient = string.IsNullOrWhiteSpace(llmRequestLogConnectionString)
+                        || string.Equals(llmRequestLogConnectionString, connectionString, StringComparison.Ordinal)
+            ? client
+            : new MongoClient(llmRequestLogConnectionString);
+        var llmRequestLogDatabase = string.IsNullOrWhiteSpace(llmRequestLogDatabaseName)
+            ? _database
+            : logClient.GetDatabase(llmRequestLogDatabaseName);
+        HasSeparateLegacyLlmRequestLogCollection = !ReferenceEquals(logClient, client)
+            || !string.Equals(llmRequestLogDatabase.DatabaseNamespace.DatabaseName, databaseName, StringComparison.Ordinal);
+        var llmRequestLogs = llmRequestLogDatabase.GetCollection<LlmRequestLog>("llmrequestlogs");
+        _llmRequestLogs = string.IsNullOrWhiteSpace(llmRequestLogTenantId)
+            ? llmRequestLogs
+            : new ScopedMongoCollection<LlmRequestLog>(
+                llmRequestLogs,
+                Builders<LlmRequestLog>.Filter.Eq(x => x.TenantId, llmRequestLogTenantId.Trim()));
         
         // 索引由 DBA 手动创建，禁止应用启动时自动创建
         // 索引定义文档：doc/guide.platform.mongodb-indexes.md
@@ -70,8 +102,13 @@ public class MongoDbContext
     /// PRD 问答系统提示词（非 JSON 输出任务）：按角色（PM/DEV/QA）可被管理后台覆盖
     /// </summary>
     public IMongoCollection<SystemPromptSettings> SystemPrompts => _database.GetCollection<SystemPromptSettings>("systemprompts");
-    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _database.GetCollection<LlmRequestLog>("llmrequestlogs");
-    public IMongoCollection<LlmShadowComparison> LlmShadowComparisons => _database.GetCollection<LlmShadowComparison>("llmshadow_comparisons");
+    public IMongoCollection<LlmRequestLog> LlmRequestLogs => _llmRequestLogs;
+
+    /// <summary>
+    /// 业务库里切换前留下的旧 llmrequestlogs 是否与 <see cref="LlmRequestLogs"/> 不是同一个集合。
+    /// 网关库与业务库在同一连接上配成同名时为 false：那时清理旧集合就等于删掉网关全部租户的日志。
+    /// </summary>
+    public bool HasSeparateLegacyLlmRequestLogCollection { get; }
     public IMongoCollection<ApiRequestLog> ApiRequestLogs => _database.GetCollection<ApiRequestLog>("apirequestlogs");
     public IMongoCollection<PrdComment> PrdComments => _database.GetCollection<PrdComment>("prdcomments");
     public IMongoCollection<ModelLabExperiment> ModelLabExperiments => _database.GetCollection<ModelLabExperiment>("model_lab_experiments");
@@ -221,6 +258,7 @@ public class MongoDbContext
     public IMongoCollection<ReportTemplate> ReportTemplates => _database.GetCollection<ReportTemplate>("report_templates");
     public IMongoCollection<UserReportTemplatePreference> UserReportTemplatePreferences => _database.GetCollection<UserReportTemplatePreference>("user_report_template_preferences");
     public IMongoCollection<WeeklyReport> WeeklyReports => _database.GetCollection<WeeklyReport>("report_weekly_reports");
+    public IMongoCollection<MonthlyReport> MonthlyReports => _database.GetCollection<MonthlyReport>("report_monthly_reports");
     public IMongoCollection<ReportDailyLog> ReportDailyLogs => _database.GetCollection<ReportDailyLog>("report_daily_logs");
     public IMongoCollection<ReportDataSource> ReportDataSources => _database.GetCollection<ReportDataSource>("report_data_sources");
     public IMongoCollection<ReportCommit> ReportCommits => _database.GetCollection<ReportCommit>("report_commits");
@@ -1589,6 +1627,26 @@ public class MongoDbContext
         WeeklyReports.Indexes.CreateOne(new CreateIndexModel<WeeklyReport>(
             Builders<WeeklyReport>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.PeriodEnd),
             new CreateIndexOptions { Name = "idx_weekly_reports_user_period" }));
+
+        // MonthlyReports：(UserId, TeamId, Year, Month) 唯一，防止重复月报
+        try
+        {
+            MonthlyReports.Indexes.CreateOne(new CreateIndexModel<MonthlyReport>(
+                Builders<MonthlyReport>.IndexKeys
+                    .Ascending(x => x.UserId)
+                    .Ascending(x => x.TeamId)
+                    .Ascending(x => x.Year)
+                    .Ascending(x => x.Month),
+                new CreateIndexOptions { Name = "uniq_monthly_reports_user_team_month", Unique = true }));
+        }
+        catch (MongoCommandException ex) when (IsIndexConflict(ex))
+        {
+            // ignore
+        }
+        // MonthlyReports：按 TeamId + Year + Month 查询团队月报
+        MonthlyReports.Indexes.CreateOne(new CreateIndexModel<MonthlyReport>(
+            Builders<MonthlyReport>.IndexKeys.Ascending(x => x.TeamId).Ascending(x => x.Year).Ascending(x => x.Month),
+            new CreateIndexOptions { Name = "idx_monthly_reports_team_month" }));
 
         // ReportDailyLogs：(UserId, Date) 唯一，一天一条
         try

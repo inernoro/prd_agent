@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { ServerEventLogSink } from './server-event-log-store.js';
+import type { DeploymentInputSnapshot } from './deployment-input.js';
+import type { ArtifactAdmission } from './artifact-admission.js';
 
 export type BranchOperationKind =
   | 'deploy'
@@ -66,6 +68,8 @@ export interface BranchOperationRequest {
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
+  /** 内部派发的原操作身份；重放必须消费协调器发出的同范围、同目标凭据。 */
+  pendingReplay?: { operationId: string; generation: number } | null;
 }
 
 export interface BranchOperationLease {
@@ -74,6 +78,7 @@ export interface BranchOperationLease {
   generation: number;
   request: BranchOperationRequest;
   startedAt: string;
+  admissionGeneration?: number;
   isCurrent(): boolean;
   assertCurrent(step?: string): void;
 }
@@ -92,6 +97,8 @@ export interface BranchOperationDecision {
   activeOperationId?: string;
   activeKind?: BranchOperationKind;
   pendingCommitSha?: string | null;
+  joinedPending?: boolean;
+  cancelledPending?: boolean;
   lease?: BranchOperationLease;
 }
 
@@ -124,6 +131,21 @@ export interface PendingWebhookDeploy {
   updatedAt: string;
 }
 
+/** 内部重放保留原请求的部署范围，服务请求不能扩大成整分支部署。 */
+export function pendingDeployRoute(pending: PendingWebhookDeploy): string {
+  const branch = `/api/branches/${encodeURIComponent(pending.branchId)}/deploy`;
+  return pending.request.kind === 'deploy-profile' && pending.request.profileId
+    ? `${branch}/${encodeURIComponent(pending.request.profileId)}`
+    : branch;
+}
+
+export function pendingDeployBody(pending: PendingWebhookDeploy): Record<string, unknown> {
+  return {
+    commitSha: pending.request.commitPinned ? pending.request.commitSha || undefined : undefined,
+    pendingReplay: { operationId: pending.operationId, generation: pending.generation },
+  };
+}
+
 export class BranchOperationSupersededError extends Error {
   constructor(
     readonly operationId: string,
@@ -142,6 +164,10 @@ const TERMINAL_KINDS = new Set<BranchOperationKind>([
   'factory-reset',
   'janitor-remove',
 ]);
+
+export function cancelsBranchDeployments(kind: BranchOperationKind): boolean {
+  return kind === 'stop' || TERMINAL_KINDS.has(kind);
+}
 
 function priorityOf(req: BranchOperationRequest): number {
   if (req.trigger === 'manual' && TERMINAL_KINDS.has(req.kind)) return 100;
@@ -186,13 +212,15 @@ export function sameCommitIdentity(a?: string | null, b?: string | null): boolea
 }
 
 /**
- * 「同一个 commit 的整分支部署已经在跑」判定（2026-09-08）。
- * 只认整分支 deploy 对整分支 deploy、双方都带 commitSha 且相等、在途未被取消。
+ * 「同范围、同完整提交和配置的部署已经在跑」判定（2026-09-08）。
+ * 整分支与单服务分别比较，同项目同范围、双方固定完整提交且配置一致、在途未被取消。
  * 带版本 / 一次性选项的 manual deploy 语义不同（重放会丢配置），不并入。
  */
 function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: ActiveOperation): boolean {
   if (active.cancelled) return false;
-  if (incoming.kind !== 'deploy' || active.request.kind !== 'deploy') return false;
+  if (!['deploy', 'deploy-profile'].includes(incoming.kind) || incoming.kind !== active.request.kind) return false;
+  if ((incoming.profileId || null) !== (active.request.profileId || null)
+    || (incoming.projectId || null) !== (active.request.projectId || null)) return false;
   // 两边都得是「钉住了提交」的请求。没钉住的落地的是届时的分支 HEAD，
   // 手里这个缓存 SHA 说明不了它要部署什么（见 commitPinned 注释）。
   if (!incoming.commitPinned || !active.request.commitPinned) return false;
@@ -216,8 +244,7 @@ function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: Ac
  * 撞上同优先级的在途 manual deploy 只会 409，agent 排队焦虑 → 反复重试 →
  * 同分支部署叠加、每次重试往全局构建队列塞一整层服务（重试风暴正反馈）。
  * 现在与 webhook 同样合并为「当前部署完成后自动执行的最新待部署请求」
- * （last-writer-wins）。范围仅限**整分支 deploy**：manual deploy-profile /
- * restart 语义按单服务隔离，合并归属不明确，维持 409。
+ * （last-writer-wins）。整分支与单服务各自按范围保存，restart 不参与部署合并。
  * 带 versionId 的版本重部署不合并（pending 重放会丢版本捕获配置，Codex P2）。
  * 带一次性选项（force/ignoreRequired/targetExecutorId）的请求同理不合并
  * （pending 重放只送 commitSha，选项丢失后重放可能直接失败，Codex P2）。
@@ -225,7 +252,7 @@ function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: Ac
  * 比较在 begin() 里先于本判定执行，manual 压 webhook 的既有语义不变。
  */
 function isMergeableManualDeploy(req: BranchOperationRequest): boolean {
-  return req.trigger === 'manual' && req.kind === 'deploy' && !req.versionId && !req.hasOneShotOptions;
+  return req.trigger === 'manual' && (req.kind === 'deploy' || req.kind === 'deploy-profile') && !req.versionId && !req.hasOneShotOptions;
 }
 
 /**
@@ -244,6 +271,13 @@ const MANUAL_MERGE_BEHIND_KINDS = new Set<BranchOperationKind>([
   'database-init',
 ]);
 
+function replayIdentity(input: BranchOperationRequest['pendingReplay']): NonNullable<BranchOperationRequest['pendingReplay']> | null {
+  if (!input || typeof input !== 'object' || typeof input.operationId !== 'string'
+    || input.operationId.length === 0 || input.operationId.length > 64
+    || !Number.isSafeInteger(input.generation) || input.generation <= 0) return null;
+  return { operationId: input.operationId, generation: input.generation };
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -252,20 +286,244 @@ export class BranchOperationCoordinator {
   private readonly active = new Map<string, ActiveOperation>();
   private readonly pendingWebhookDeploys = new Map<string, PendingWebhookDeploy>();
   private readonly reservedContinuations = new Map<string, ReservedContinuation>();
+  private readonly pendingReplayClaims = new Map<string, { pending: PendingWebhookDeploy; expiresAt: number }>();
+  private readonly deploymentInputs = new Map<string, DeploymentInputSnapshot>();
+  private readonly artifactTargetReads = new Map<string, { request: BranchOperationRequest; readers: Map<object, BranchOperationRequest>; requestedSha: string; resolvedSha?: string }>();
   private generations = new Map<string, number>();
+
+  private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
 
   constructor(private readonly events?: ServerEventLogSink | null) {}
 
-  begin(request: BranchOperationRequest): BranchOperationDecision {
+  /** 受理前的只读身份解析有资格围栏，不持有执行lease或创建部署run。 */
+  beginArtifactTargetRead(request: BranchOperationRequest): { assertCurrent: () => void; confirmIdentity: (fullSha: string) => void; release: () => void } {
+    if (!['deploy', 'deploy-profile'].includes(request.kind) || !/^[0-9a-f]{7,39}$/i.test(request.commitSha || '')) {
+      throw new Error('短提交解析仅支持明确的部署提交');
+    }
+    return this.beginDeploymentPreparation(request);
+  }
+
+  /** 执行器准备阶段沿用同一有界资格集合；未点名源码目标不参与同目标共用。 */
+  beginDeploymentPreparation(request: BranchOperationRequest): { assertCurrent: () => void; confirmIdentity: (fullSha: string) => void; release: () => void } {
+    if (!['deploy', 'deploy-profile'].includes(request.kind)
+      || (request.commitSha != null && !/^[0-9a-f]{7,40}$/i.test(request.commitSha))) throw new Error('部署准备目标无效');
+    const key = this.operationKey(request);
+    const same = this.artifactTargetReads.get(key);
+    const equivalent = Boolean(request.commitSha) && same?.requestedSha === request.commitSha?.toLowerCase();
+    for (const item of this.artifactTargetReads.values()) {
+      if (this.operationsConflict(request, item.request) && priorityOf(item.request) > priorityOf(request)
+        && !(equivalent && item === same) && !this.sameArtifactTarget(request, item.request)) {
+        throw new BranchOperationSupersededError('', request.branchId, 'artifact-target-priority');
+      }
+    }
+    if ([...this.artifactTargetReads.values()].reduce((sum, item) => sum + item.readers.size, 0) >= 64) {
+      throw new Error('短提交解析请求已达容量上限');
+    }
+    const item = equivalent ? same! : { request: { ...request }, readers: new Map<object, BranchOperationRequest>(), requestedSha: request.commitSha?.toLowerCase() || '', resolvedSha: undefined as string | undefined };
+    if (!equivalent) this.invalidateArtifactTargetReads(request);
+    const reader = {}; item.readers.set(reader, { ...request });
+    const updatePriority = () => {
+      const highest = [...item.readers.values()].reduce((a, b) => priorityOf(a) >= priorityOf(b) ? a : b);
+      item.request = { ...highest, commitSha: item.resolvedSha || item.requestedSha };
+    };
+    updatePriority(); this.artifactTargetReads.set(key, item);
+    const assertCurrent = () => {
+      if (this.artifactTargetReads.get(key) !== item || !item.readers.has(reader)) {
+        throw new BranchOperationSupersededError('', request.branchId, 'artifact-target-resolution');
+      }
+    };
+    return {
+      assertCurrent,
+      confirmIdentity: (fullSha) => {
+        assertCurrent();
+        const full = fullSha.toLowerCase();
+        if (!item.requestedSha || !/^[0-9a-f]{40}$/.test(full) || !full.startsWith(item.requestedSha)
+          || (item.resolvedSha && item.resolvedSha !== full)) throw new Error('短提交的完整身份确认不一致');
+        item.resolvedSha = full; updatePriority();
+      },
+      release: () => {
+        item.readers.delete(reader);
+        if (!item.readers.size && this.artifactTargetReads.get(key) === item) this.artifactTargetReads.delete(key);
+        else if (item.readers.size) updatePriority();
+      },
+    };
+  }
+
+  private sameArtifactTarget(a: BranchOperationRequest, b: BranchOperationRequest): boolean {
+    if (!a.commitSha || !b.commitSha) return false;
+    const left = a.commitSha.toLowerCase(), right = b.commitSha.toLowerCase();
+    return left === right;
+  }
+
+  private invalidateArtifactTargetReads(request: BranchOperationRequest): void {
+    for (const [key, item] of this.artifactTargetReads) {
+      if (!this.operationsConflict(request, item.request)) continue;
+      if (['deploy', 'deploy-profile'].includes(request.kind) && this.sameArtifactTarget(request, item.request)) continue;
+      this.artifactTargetReads.delete(key);
+    }
+  }
+
+  /** 首次受理保留私有输入；并入请求不能改写原目标，代次结束立即释放。 */
+  rememberDeploymentInput(operationId: string, generation: number, input: DeploymentInputSnapshot): void {
+    const key = this.replayKey({ operationId, generation });
+    if (!this.deploymentInputs.has(key)) this.deploymentInputs.set(key, structuredClone(input));
+  }
+
+  /** HTTP 鉴权只读当前领取的公开身份；不暴露私有配置，begin 仍原子消费并复核。 */
+  getClaimedPendingReplay(input: BranchOperationRequest['pendingReplay']): PendingWebhookDeploy | undefined {
+    this.prunePendingReplayClaims();
+    const identity = replayIdentity(input);
+    const pending = identity ? this.pendingReplayClaims.get(this.replayKey(identity))?.pending : undefined;
+    return pending ? { ...pending, request: { ...pending.request } } : undefined;
+  }
+
+  /** 只对有效领取、同项目/分支/服务及原目标返回输入；begin 仍须再次消费凭据。 */
+  getDeploymentInputForReplay(request: BranchOperationRequest): DeploymentInputSnapshot | undefined {
+    this.prunePendingReplayClaims();
+    const identity = replayIdentity(request.pendingReplay);
+    if (!identity) return undefined;
+    const key = this.replayKey(identity);
+    const pending = this.pendingReplayClaims.get(key)?.pending;
+    if (!pending || this.operationKey(pending.request) !== this.operationKey(request)
+      || pending.request.kind !== request.kind
+      || Boolean(pending.request.commitPinned) !== Boolean(request.commitPinned)
+      || (pending.request.commitPinned && pending.request.commitSha?.toLowerCase() !== request.commitSha?.toLowerCase())
+      || (pending.request.versionId || null) !== (request.versionId || null) || request.hasOneShotOptions) return undefined;
+    const input = this.deploymentInputs.get(key);
+    return input ? structuredClone(input) : undefined;
+  }
+
+  seedGeneration(branchId: string, generation: number): void {
+    if (Number.isSafeInteger(generation) && generation > this.currentGeneration(branchId)) this.generations.set(branchId, generation);
+  }
+
+  /** 启动期恢复已落盘、尚未执行的意图，原操作与代次保持不变。 */
+  restorePendingDeployment(pending: PendingWebhookDeploy, input: DeploymentInputSnapshot): void {
+    if (this.hasWaitingOperation(pending.operationId, pending.generation)) return;
+    this.seedGeneration(pending.branchId, pending.generation);
+    const restored = { ...pending, request: { ...pending.request, pendingReplay: null } };
+    this.supersedeCoveredWaiting(restored.request);
+    this.pendingWebhookDeploys.set(this.operationKey(restored.request), restored);
+    this.rememberDeploymentInput(restored.operationId, restored.generation, input);
+    this.record('branch.operation.restored', restored.request, restored.operationId, restored.generation, 'info', { pending: true, recoveredAt: nowIso() });
+  }
+
+  onOperationEnded(listener: (operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void): () => void {
+    this.operationEndListeners.add(listener);
+    return () => this.operationEndListeners.delete(listener);
+  }
+
+  hasWaitingOperation(operationId: string, generation: number): boolean {
+    this.prunePendingReplayClaims();
+    return [...this.pendingWebhookDeploys.values()].some((pending) => pending.operationId === operationId && pending.generation === generation)
+      || this.pendingReplayClaims.has(this.replayKey({ operationId, generation }));
+  }
+
+  abandonAdmission(operationId: string, generation: number): void {
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      if (pending.operationId !== operationId || pending.generation !== generation) continue;
+      this.pendingWebhookDeploys.delete(key);
+      this.record('branch.operation.failed', pending.request, operationId, generation, 'error', { reason: 'admission persistence failed', pending: true });
+    }
+  }
+
+
+  begin(request: BranchOperationRequest, options: { waitForArtifacts?: boolean } = {}): BranchOperationDecision {
+    if (options.waitForArtifacts && (request.versionId || request.hasOneShotOptions)) {
+      return { status: 'rejected', operationId: this.createOperationId(), generation: this.currentGeneration(request.branchId),
+        reason: '本次指定版本或一次性选项不能作为产物等待恢复，请在产物齐备后重试' };
+    }
+    const higherTargetRead = [...this.artifactTargetReads.values()].find(item => this.operationsConflict(request, item.request)
+      && priorityOf(item.request) > priorityOf(request) && !this.sameArtifactTarget(request, item.request));
+    if (higherTargetRead) {
+      const operationId = this.createOperationId(), generation = this.currentGeneration(request.branchId);
+      const reason = '较高优先级请求正在确认目标提交，请稍后重试';
+      this.record('branch.operation.rejected', request, operationId, generation, 'warn', { reason, phase: 'artifact-target-resolution' });
+      return { status: 'rejected', operationId, generation, reason };
+    }
+    const decision = this.beginExecution(request);
+    if (decision.status !== 'rejected') this.invalidateArtifactTargetReads(request);
+    if (!options.waitForArtifacts || decision.status !== 'started' || !decision.lease) return decision;
+    const lease = decision.lease;
+    const active = this.active.get(this.operationKey(lease.request));
+    if (!active || active.operationId !== lease.operationId || active.generation !== lease.generation) return decision;
+    // 尚未开始执行。直接保存原身份为pending，不用complete制造失败或新建另一个任务。
+    this.active.delete(this.operationKey(lease.request));
+    this.pendingWebhookDeploys.set(this.operationKey(lease.request), { operationId: lease.operationId,
+      generation: lease.generation, branchId: lease.branchId, request: lease.request, mergedCount: 1, updatedAt: nowIso() });
+    this.record('branch.operation.queued', lease.request, lease.operationId, lease.generation, 'info', { artifactWaiting: true });
+    return { status: 'merged', operationId: lease.operationId, generation: lease.generation,
+      pendingCommitSha: lease.request.commitSha, reason: 'waiting for required deployment artifacts' };
+  }
+
+  private beginExecution(request: BranchOperationRequest): BranchOperationDecision {
+    this.prunePendingReplayClaims();
+    let replay: PendingWebhookDeploy | undefined;
+    if (request.pendingReplay) {
+      const identity = replayIdentity(request.pendingReplay);
+      const key = identity ? this.replayKey(identity) : '';
+      replay = identity ? this.pendingReplayClaims.get(key)?.pending : undefined;
+      if (!replay || this.operationKey(replay.request) !== this.operationKey(request)
+        || replay.request.kind !== request.kind
+        || Boolean(replay.request.commitPinned) !== Boolean(request.commitPinned)
+        || (replay.request.commitPinned && replay.request.commitSha?.toLowerCase() !== request.commitSha?.toLowerCase())
+        || (replay.request.configHash && replay.request.configHash !== request.configHash)
+        || (replay.request.versionId || null) !== (request.versionId || null)
+        || request.hasOneShotOptions) {
+        this.record('branch.operation.rejected', request, identity?.operationId || this.createOperationId(),
+          identity?.generation || this.currentGeneration(request.branchId), 'warn', {
+            reason: 'pending replay identity expired, superseded or mismatched', pendingReplay: true,
+          });
+        return {
+          status: 'rejected', operationId: identity?.operationId || '',
+          generation: identity?.generation || 0,
+          reason: '待部署请求已更新、过期或不再匹配，请查看最新部署结果',
+        };
+      }
+      this.pendingReplayClaims.delete(key);
+      // 来源取自此前真实受理的请求，重放不能靠 HTTP 字段改成更高优先级或改写施动者。
+      request = { ...replay.request, pendingReplay: identity };
+    }
     const branchId = request.branchId;
     const active = this.findBlockingActive(request);
+    const reserved = !active ? this.getUsableReservedContinuation(branchId, request) : undefined;
+    // 已受理的重建续接先完成；其后排队的整分支意图不能反过来阻断续接。
+    if (reserved && this.requestMatchesContinuation(request, reserved)) return this.beginAgainstReservedContinuation(request, reserved, replay);
+    const queued = this.pendingWebhookDeploys.get(this.operationKey(request));
+    if (!replay && queued && (!active || isWebhookDeploy(request) || MANUAL_MERGE_BEHIND_KINDS.has(active.request.kind))
+      && isSameCommitDeployInFlight(request, { ...queued, startedAt: queued.updatedAt, cancelled: false })) {
+      const cancelledPending = this.supersedeCoveredWaiting(request, queued);
+      this.record('branch.operation.joined', request, queued.operationId, queued.generation, 'info', {
+        activeOperationId: active?.operationId || null, pending: true, commitSha: request.commitSha || null,
+      });
+      return { status: 'joined', operationId: queued.operationId, generation: queued.generation,
+        activeOperationId: active?.operationId, activeKind: active?.request.kind, joinedPending: true, cancelledPending,
+        pendingCommitSha: queued.request.commitSha || null, reason: 'same target already queued' };
+    }
+    // 服务的较新意图必须等待较早整分支意图，包含已领取、尚未到达的重放。
+    const waiting = this.findWaitingBarrier(request, replay?.generation ?? Infinity, !replay);
+    if (waiting && (request.kind === 'deploy' || request.kind === 'deploy-profile')) {
+      if ((isWebhookDeploy(request) || isMergeableManualDeploy(request))
+        && (!active || MANUAL_MERGE_BEHIND_KINDS.has(active.request.kind))) {
+        return this.mergePending(request, waiting.operationId, waiting.request.kind, 'waiting for earlier overlapping deployment', {
+          waitingForGeneration: waiting.generation,
+        }, replay);
+      }
+      this.record('branch.operation.rejected', request, waiting.operationId, waiting.generation, 'warn', {
+        reason: 'earlier overlapping deployment has not finished', activeOperationId: waiting.operationId, activeKind: waiting.request.kind,
+      });
+      return { status: 'rejected', operationId: waiting.operationId, generation: waiting.generation,
+        activeOperationId: waiting.operationId, activeKind: waiting.request.kind,
+        reason: '更早的重叠范围部署尚未结束，请等待后重试' };
+    }
     if (!active) {
-      const reserved = this.getUsableReservedContinuation(branchId, request);
-      if (reserved) return this.beginAgainstReservedContinuation(request, reserved);
-      return this.start(request);
+      if (reserved) return this.beginAgainstReservedContinuation(request, reserved, replay);
+      return this.start(request, replay ? { operationId: replay.operationId, generation: replay.generation } : undefined);
     }
 
     if (isSameCommitDeployInFlight(request, active)) {
+      // 最新请求回到当前目标时，旧的同范围待办不能在其完成后再次覆盖它。
+      const cancelledPending = !replay && this.supersedeCoveredWaiting(request);
       this.record('branch.operation.joined', request, active.operationId, active.generation, 'info', {
         activeOperationId: active.operationId,
         activeKind: active.request.kind,
@@ -274,6 +532,7 @@ export class BranchOperationCoordinator {
       });
       return {
         status: 'joined',
+        cancelledPending,
         operationId: active.operationId,
         generation: active.generation,
         activeOperationId: active.operationId,
@@ -284,32 +543,7 @@ export class BranchOperationCoordinator {
     }
 
     if (isWebhookDeploy(request)) {
-      const existing = this.pendingWebhookDeploys.get(branchId);
-      const generation = this.nextGeneration(branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(branchId, {
-        operationId,
-        branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'webhook deploy merged into latest pending operation',
-      };
+      return this.mergePending(request, active.operationId, active.request.kind, 'webhook deploy merged into latest pending operation', {}, replay);
     }
 
     const incomingPriority = priorityOf(request);
@@ -324,8 +558,22 @@ export class BranchOperationCoordinator {
           supersededByTrigger: request.trigger,
         });
       }
-      if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-        this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`);
+      if (cancelsBranchDeployments(request.kind)) {
+        this.cancelPendingWebhookDeploy(branchId, `superseded by ${request.kind}`, {}, request);
+        this.cancelReservedContinuations(request, `superseded by ${request.kind}`);
+      } else {
+        // 新部署取代在途操作时，同一部署范围的旧待办也被取代；否则 C 完成后
+        // 会重放此前排队的 B。不同服务的请求不因这次替换而被丢弃。
+        const pending = this.pendingWebhookDeploys.get(this.operationKey(request));
+        if (pending && (request.kind === 'deploy' || request.kind === 'deploy-profile') && pending.request.kind === request.kind
+          && (request.profileId || null) === (pending.request.profileId || null)
+          && (request.projectId || null) === (pending.request.projectId || null)) {
+          this.cancelPendingWebhookDeploy(branchId, 'superseded by newer deploy request', {
+            supersededByCommitSha: request.commitSha || null,
+            supersededByTrigger: request.trigger,
+            supersededByRequestId: request.requestId || null,
+          }, request, true);
+        }
       }
       return this.start(request);
     }
@@ -335,33 +583,7 @@ export class BranchOperationCoordinator {
     // 仅限部署类在途操作（stop/reset/delete 在途时维持 409，见
     // MANUAL_MERGE_BEHIND_KINDS 注释）。
     if (isMergeableManualDeploy(request) && MANUAL_MERGE_BEHIND_KINDS.has(active.request.kind)) {
-      const existing = this.pendingWebhookDeploys.get(branchId);
-      const generation = this.nextGeneration(branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(branchId, {
-        operationId,
-        branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-        manualMerge: true,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: active.operationId,
-        activeKind: active.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'manual deploy merged into latest pending operation',
-      };
+      return this.mergePending(request, active.operationId, active.request.kind, 'manual deploy merged into latest pending operation', { manualMerge: true }, replay);
     }
 
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(branchId), 'warn', {
@@ -381,30 +603,69 @@ export class BranchOperationCoordinator {
   }
 
   complete(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error?: string): PendingWebhookDeploy | null {
+    return this.finishAndDrain(lease, status, error, 1)[0] || null;
+  }
+
+  /** 生产派发器一次领取全部互不冲突的服务待办，避免最后一个操作结束后遗留无人派发的请求。 */
+  completeAll(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error?: string): PendingWebhookDeploy[] {
+    return this.finishAndDrain(lease, status, error, Infinity);
+  }
+
+  private finishAndDrain(lease: BranchOperationLease, status: 'completed' | 'failed' | 'cancelled', error: string | undefined, limit: number): PendingWebhookDeploy[] {
     const activeEntry = this.findActiveEntryByOperation(lease.operationId);
     const active = activeEntry?.active;
-    if (activeEntry && active?.operationId === lease.operationId) {
+    const sameGeneration = active?.generation === lease.generation;
+    const wasCurrent = Boolean(active && sameGeneration && !active.cancelled);
+    // force-rebuild 续接会复用 operationId，迟到收尾必须同时匹配代次。
+    if (activeEntry && sameGeneration) {
       this.active.delete(activeEntry.key);
     }
     this.record(`branch.operation.${status}`, lease.request, lease.operationId, lease.generation, status === 'failed' ? 'error' : status === 'cancelled' ? 'warn' : 'info', {
       error: error || null,
       cancelled: active?.cancelled || false,
       cancelReason: active?.cancelReason || null,
+      staleCompletion: !wasCurrent,
     });
     if (
       status === 'completed'
+      && wasCurrent
       && lease.request.kind === 'force-rebuild'
       && (lease.request.continueWith === 'deploy' || lease.request.continueWith === 'deploy-profile')
     ) {
       this.reserveContinuation(lease, lease.request.continueWith);
-      return null;
+      // 独立服务仍可派发；与本续约冲突的范围继续等待。
     }
-    const pending = this.pendingWebhookDeploys.get(lease.branchId) || null;
-    if (pending) this.pendingWebhookDeploys.delete(lease.branchId);
-    return pending;
+    return this.drainReady(lease.branchId, lease.request.projectId, limit);
+  }
+
+  /** 领取可执行意图；用于完成、派发失败及定时对账，领取后仍由凭据保护。 */
+  drainReady(branchId?: string, projectId?: string | null, limit = Infinity): PendingWebhookDeploy[] {
+    this.prunePendingReplayClaims();
+    const ready: PendingWebhookDeploy[] = [];
+    const ordered = [...this.pendingWebhookDeploys.entries()].sort((a, b) => a[1].generation - b[1].generation);
+    for (const [key, pending] of ordered) {
+      if (branchId && pending.branchId !== branchId) continue;
+      if (projectId && pending.request.projectId && projectId !== pending.request.projectId) continue;
+      if (this.deploymentInputs.get(this.replayKey(pending))?.artifactAdmission?.state === 'waiting') continue;
+      if (this.findBlockingActive(pending.request) || this.getUsableReservedContinuation(pending.branchId, pending.request)) continue;
+      // 查询续约时可能清理过期范围及其待办，已取消的请求不能被本轮继续派发。
+      if (this.pendingWebhookDeploys.get(key) !== pending) continue;
+      if (this.findWaitingBarrier(pending.request, pending.generation)) continue;
+      if (ready.some(item => this.operationsConflict(item.request, pending.request))) continue;
+      this.pendingWebhookDeploys.delete(key);
+      this.pendingReplayClaims.set(this.replayKey(pending), { pending, expiresAt: Date.now() + 5 * 60_000 });
+      ready.push(pending);
+      if (ready.length >= limit) break;
+    }
+    return ready;
   }
 
   cancelBranch(branchId: string, reason: string): void {
+    for (const [key, item] of this.artifactTargetReads) if (item.request.branchId === branchId) this.artifactTargetReads.delete(key);
+    for (const [key, claim] of this.pendingReplayClaims) {
+      if (claim.pending.branchId !== branchId) continue;
+      this.cancelPendingReplayClaim(key, reason);
+    }
     const activeEntries = [...this.active.entries()].filter(([, active]) => active.branchId === branchId);
     for (const [key, active] of activeEntries) {
       active.cancelled = true;
@@ -412,19 +673,16 @@ export class BranchOperationCoordinator {
       this.record('branch.operation.cancelled', active.request, active.operationId, active.generation, 'warn', { reason });
       this.active.delete(key);
     }
-    const pending = this.pendingWebhookDeploys.get(branchId);
-    if (pending) {
-      this.pendingWebhookDeploys.delete(branchId);
-      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', { reason, pending: true });
-    }
-    const reserved = this.reservedContinuations.get(branchId);
-    if (reserved) {
-      this.reservedContinuations.delete(branchId);
+    this.cancelPendingWebhookDeploy(branchId, reason);
+    for (const [key, reserved] of this.reservedContinuations) {
+      if (reserved.branchId !== branchId) continue;
+      this.reservedContinuations.delete(key);
       this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', { reason, reserved: true });
     }
   }
 
   interruptAll(reason: string, source: string): void {
+    this.artifactTargetReads.clear();
     for (const active of this.active.values()) {
       this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
         reason,
@@ -441,6 +699,11 @@ export class BranchOperationCoordinator {
         pending: true,
         mergedCount: pending.mergedCount,
         updatedAt: pending.updatedAt,
+      });
+    }
+    for (const { pending } of this.pendingReplayClaims.values()) {
+      this.record('branch.operation.interrupted', pending.request, pending.operationId, pending.generation, 'warn', {
+        reason, source, pending: true, pendingReplay: true, updatedAt: pending.updatedAt,
       });
     }
     for (const reserved of this.reservedContinuations.values()) {
@@ -461,7 +724,7 @@ export class BranchOperationCoordinator {
 
   getActive(branchId: string, profileId?: string | null): ActiveOperation | undefined {
     if (profileId) {
-      return this.active.get(this.profileKey(branchId, profileId));
+      return [...this.active.values()].find(item => item.branchId === branchId && item.request.profileId === profileId);
     }
     return [...this.active.values()].find((active) => active.branchId === branchId);
   }
@@ -471,21 +734,65 @@ export class BranchOperationCoordinator {
     return branchId ? active.filter((item) => item.branchId === branchId) : active;
   }
 
-  getPendingWebhookDeploy(branchId: string): PendingWebhookDeploy | undefined {
-    return this.pendingWebhookDeploys.get(branchId);
+  getPendingWebhookDeploy(branchId: string, profileId?: string | null): PendingWebhookDeploy | undefined {
+    return [...this.pendingWebhookDeploys.values()].find(item => item.branchId === branchId
+      && (!profileId || item.request.profileId === profileId));
+  }
+
+  getArtifactWaiterKeys(): string[] {
+    return [...this.pendingWebhookDeploys.values()].filter(pending =>
+      this.deploymentInputs.get(this.replayKey(pending))?.artifactAdmission?.state === 'waiting').map(pending => this.replayKey(pending));
+  }
+
+  getArtifactWaiters(limit = 16, offset = 0): Array<{ pending: PendingWebhookDeploy; input: DeploymentInputSnapshot }> {
+    const pending = [...this.pendingWebhookDeploys.values()].filter(item =>
+      this.deploymentInputs.get(this.replayKey(item))?.artifactAdmission?.state === 'waiting');
+    const selected = [];
+    for (let index = 0; index < Math.min(16, limit, pending.length); index++) {
+      const item = pending[(offset + index) % pending.length];
+      selected.push({ pending: structuredClone(item), input: structuredClone(this.deploymentInputs.get(this.replayKey(item))!) });
+    }
+    return selected;
+  }
+
+  isArtifactWaiterCurrent(pending: PendingWebhookDeploy): boolean {
+    const current = this.pendingWebhookDeploys.get(this.operationKey(pending.request));
+    return current?.operationId === pending.operationId && current.generation === pending.generation
+      && this.deploymentInputs.get(this.replayKey(pending))?.artifactAdmission?.state === 'waiting';
+  }
+
+  updateArtifactWaiter(pending: PendingWebhookDeploy, admission: ArtifactAdmission): boolean {
+    if (!this.isArtifactWaiterCurrent(pending)) return false;
+    const original = this.deploymentInputs.get(this.replayKey(pending))!;
+    if (admission.targetCommitSha.toLowerCase() !== original.artifactAdmission!.targetCommitSha.toLowerCase()) return false;
+    // 复核只能更新产物事实，不能换掉已受理的配置、私有值或目标。
+    this.deploymentInputs.set(this.replayKey(pending), { ...original, artifactAdmission: structuredClone(admission) });
+    return true;
   }
 
   clearForTest(): void {
+    this.artifactTargetReads.clear();
     this.active.clear();
     this.pendingWebhookDeploys.clear();
     this.reservedContinuations.clear();
+    this.pendingReplayClaims.clear();
+    this.deploymentInputs.clear();
     this.generations.clear();
   }
 
-  private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
+  private start(request: BranchOperationRequest, existing?: { operationId: string; generation?: number; admissionGeneration?: number; continuedFrom?: BranchOperationRequest }): BranchOperationDecision {
+    if (!request.pendingReplay && !existing?.continuedFrom) {
+      if (cancelsBranchDeployments(request.kind)) {
+        this.cancelPendingWebhookDeploy(request.branchId, `superseded by ${request.kind}`, {}, request);
+        this.cancelReservedContinuations(request, `superseded by ${request.kind}`);
+      }
+      this.supersedeCoveredWaiting(request);
+      this.invalidatePendingReplayClaims(request, `superseded by ${request.kind}`);
+    }
     const branchId = request.branchId;
     const key = this.operationKey(request);
     const generation = existing?.generation ?? this.nextGeneration(branchId);
+    const admissionGeneration = existing?.admissionGeneration ?? generation;
     const operationId = existing?.operationId ?? this.createOperationId();
     const active: ActiveOperation = {
       operationId,
@@ -502,6 +809,7 @@ export class BranchOperationCoordinator {
       generation,
       request,
       startedAt: active.startedAt,
+      admissionGeneration,
       isCurrent: () => this.isCurrent(branchId, operationId, generation),
       assertCurrent: (step?: string) => {
         if (!this.isCurrent(branchId, operationId, generation)) {
@@ -516,42 +824,56 @@ export class BranchOperationCoordinator {
     return { status: 'started', operationId, generation, lease };
   }
 
+  private mergePending(request: BranchOperationRequest, blockerId: string, blockerKind: BranchOperationKind,
+    reason: string, details: Record<string, unknown> = {}, replay?: PendingWebhookDeploy): BranchOperationDecision {
+    const key = this.operationKey(request);
+    const existing = this.pendingWebhookDeploys.get(key);
+    if (replay) {
+      this.pendingWebhookDeploys.set(key, { ...replay, request, updatedAt: nowIso() });
+      this.record('branch.operation.merged', request, replay.operationId, replay.generation, 'info', {
+        activeOperationId: blockerId, activeKind: blockerKind, requeuedReplay: true, ...details,
+      });
+      return { status: 'merged', operationId: replay.operationId, generation: replay.generation,
+        activeOperationId: blockerId, activeKind: blockerKind, pendingCommitSha: request.commitSha || null, reason };
+    }
+    if (existing && isSameCommitDeployInFlight(request, { ...existing, startedAt: existing.updatedAt, cancelled: false })) {
+      const cancelledPending = this.supersedeCoveredWaiting(request, existing);
+      this.record('branch.operation.joined', request, existing.operationId, existing.generation, 'info', {
+        activeOperationId: blockerId, activeKind: blockerKind, pending: true, ...details,
+      });
+      return { status: 'joined', operationId: existing.operationId, generation: existing.generation,
+        activeOperationId: blockerId, activeKind: blockerKind, joinedPending: true, cancelledPending,
+        pendingCommitSha: existing.request.commitSha || null, reason: 'same target already queued' };
+    }
+    this.supersedeCoveredWaiting(request, existing);
+    this.invalidatePendingReplayClaims(request, 'superseded by newer pending request');
+    if (existing) this.record('branch.operation.cancelled', existing.request, existing.operationId, existing.generation, 'warn', {
+      reason: 'superseded by newer pending target', pending: true, supersededByCommitSha: request.commitSha || null,
+    });
+    const generation = this.nextGeneration(request.branchId);
+    const operationId = existing?.operationId || this.createOperationId();
+    this.pendingWebhookDeploys.set(key, { operationId, branchId: request.branchId, generation, request,
+      mergedCount: (existing?.mergedCount || 0) + 1, updatedAt: nowIso() });
+    this.record('branch.operation.merged', request, operationId, generation, 'info', {
+      activeOperationId: blockerId, activeKind: blockerKind, mergedCount: (existing?.mergedCount || 0) + 1,
+      commitSha: request.commitSha || null, ...details,
+    });
+    return { status: 'merged', operationId, generation, activeOperationId: blockerId, activeKind: blockerKind,
+      pendingCommitSha: request.commitSha || null, reason };
+  }
+
   private beginAgainstReservedContinuation(
     request: BranchOperationRequest,
     reserved: ReservedContinuation,
+    replay?: PendingWebhookDeploy,
   ): BranchOperationDecision {
     if (isWebhookDeploy(request)) {
-      const existing = this.pendingWebhookDeploys.get(request.branchId);
-      const generation = this.nextGeneration(request.branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(request.branchId, {
-        operationId,
-        branchId: request.branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        reservedContinuation: true,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'webhook deploy merged while force-rebuild waits for its deploy continuation',
-      };
+      return this.mergePending(request, reserved.operationId, reserved.request.kind,
+        'webhook deploy merged while force-rebuild waits for its deploy continuation', { reservedContinuation: true }, replay);
     }
 
     if (this.requestMatchesContinuation(request, reserved)) {
-      this.reservedContinuations.delete(request.branchId);
+      this.reservedContinuations.delete(this.operationKey(reserved.request));
       const generation = this.nextGeneration(request.branchId);
       this.record('branch.operation.continued', request, reserved.operationId, generation, 'info', {
         reservedAt: reserved.reservedAt,
@@ -561,20 +883,17 @@ export class BranchOperationCoordinator {
       return this.start(request, {
         operationId: reserved.operationId,
         generation,
+        admissionGeneration: reserved.generation,
         continuedFrom: reserved.request,
       });
     }
 
     const incomingPriority = priorityOf(request);
     const reservedPriority = priorityOf(reserved.request);
-    if (incomingPriority > reservedPriority || TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-      this.reservedContinuations.delete(request.branchId);
-      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
-        reason: `reserved continuation superseded by ${request.kind}`,
-        reserved: true,
-      });
-      if (TERMINAL_KINDS.has(request.kind) || request.kind === 'stop') {
-        this.cancelPendingWebhookDeploy(request.branchId, `reserved continuation superseded by ${request.kind}`);
+    if (incomingPriority > reservedPriority || cancelsBranchDeployments(request.kind)) {
+      this.cancelReservedContinuations(request, `reserved continuation superseded by ${request.kind}`);
+      if (cancelsBranchDeployments(request.kind)) {
+        this.cancelPendingWebhookDeploy(request.branchId, `reserved continuation superseded by ${request.kind}`, {}, request);
       }
       return this.start(request);
     }
@@ -586,34 +905,8 @@ export class BranchOperationCoordinator {
     // is reserved」）。必须放在 requestMatchesContinuation 之后——force-rebuild
     // 自己的 deploy 续约仍优先接续执行，不能被合并吞掉。
     if (isMergeableManualDeploy(request)) {
-      const existing = this.pendingWebhookDeploys.get(request.branchId);
-      const generation = this.nextGeneration(request.branchId);
-      const operationId = existing?.operationId || this.createOperationId();
-      this.pendingWebhookDeploys.set(request.branchId, {
-        operationId,
-        branchId: request.branchId,
-        generation,
-        request,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        updatedAt: nowIso(),
-      });
-      this.record('branch.operation.merged', request, operationId, generation, 'info', {
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        reservedContinuation: true,
-        mergedCount: (existing?.mergedCount || 0) + 1,
-        commitSha: request.commitSha || null,
-        manualMerge: true,
-      });
-      return {
-        status: 'merged',
-        operationId,
-        generation,
-        activeOperationId: reserved.operationId,
-        activeKind: reserved.request.kind,
-        pendingCommitSha: request.commitSha || null,
-        reason: 'manual deploy merged while force-rebuild waits for its deploy continuation',
-      };
+      return this.mergePending(request, reserved.operationId, reserved.request.kind,
+        'manual deploy merged while force-rebuild waits for its deploy continuation', { reservedContinuation: true, manualMerge: true }, replay);
     }
 
     this.record('branch.operation.rejected', request, this.createOperationId(), this.currentGeneration(request.branchId), 'warn', {
@@ -633,6 +926,7 @@ export class BranchOperationCoordinator {
   }
 
   private requestMatchesContinuation(request: BranchOperationRequest, reserved: ReservedContinuation): boolean {
+    if (request.pendingReplay) return false;
     if (request.trigger !== reserved.request.trigger) return false;
     if (reserved.continueWith === 'deploy' && request.kind === 'deploy') return true;
     return reserved.continueWith === 'deploy-profile'
@@ -642,7 +936,7 @@ export class BranchOperationCoordinator {
 
   private reserveContinuation(lease: BranchOperationLease, continueWith: 'deploy' | 'deploy-profile'): void {
     const expiresAt = Date.now() + 5 * 60 * 1000;
-    this.reservedContinuations.set(lease.branchId, {
+    this.reservedContinuations.set(this.operationKey(lease.request), {
       operationId: lease.operationId,
       branchId: lease.branchId,
       generation: lease.generation,
@@ -658,37 +952,72 @@ export class BranchOperationCoordinator {
     });
   }
 
-  private cancelPendingWebhookDeploy(branchId: string, reason: string): void {
-    const pending = this.pendingWebhookDeploys.get(branchId);
-    if (!pending) return;
-    this.pendingWebhookDeploys.delete(branchId);
-    this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
-      reason,
-      pending: true,
-      mergedCount: pending.mergedCount,
-      updatedAt: pending.updatedAt,
-    });
+  private cancelPendingWebhookDeploy(branchId: string, reason: string, details: Record<string, unknown> = {}, request?: BranchOperationRequest, exactScope = false): void {
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      if (pending.branchId !== branchId) continue;
+      if (request && (exactScope ? key !== this.operationKey(request) : !this.operationsConflict(request, pending.request))) continue;
+      this.pendingWebhookDeploys.delete(key);
+      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
+        reason, pending: true, mergedCount: pending.mergedCount, updatedAt: pending.updatedAt, ...details,
+      });
+    }
   }
 
   private getUsableReservedContinuation(branchId: string, request?: BranchOperationRequest): ReservedContinuation | null {
-    const reserved = this.reservedContinuations.get(branchId);
-    if (!reserved) return null;
-    if (request && !this.operationsConflict(request, reserved.request)) return null;
-    if (Date.now() <= reserved.expiresAt) return reserved;
-    this.reservedContinuations.delete(branchId);
-    this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
-      reason: 'reserved continuation expired',
-      reserved: true,
-    });
-    const pending = this.pendingWebhookDeploys.get(branchId);
-    if (pending) {
-      this.pendingWebhookDeploys.delete(branchId);
-      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
-        reason: 'reserved continuation expired before manual deploy continuation arrived',
-        pending: true,
+    for (const [key, reserved] of this.reservedContinuations) {
+      if (reserved.branchId !== branchId || (request && !this.operationsConflict(request, reserved.request))) continue;
+      if (Date.now() <= reserved.expiresAt) return reserved;
+      this.reservedContinuations.delete(key);
+      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', {
+        reason: 'reserved continuation expired', reserved: true,
       });
+      this.cancelPendingWebhookDeploy(branchId, 'reserved continuation expired before manual deploy continuation arrived', {}, reserved.request);
     }
     return null;
+  }
+
+  private cancelReservedContinuations(request: BranchOperationRequest, reason: string): void {
+    for (const [key, reserved] of this.reservedContinuations) {
+      if (!this.operationsConflict(request, reserved.request)) continue;
+      this.reservedContinuations.delete(key);
+      this.record('branch.operation.cancelled', reserved.request, reserved.operationId, reserved.generation, 'warn', { reason, reserved: true });
+    }
+  }
+
+  /** HTTP 派发失败或分支消失后释放凭据，迟到回调不能释放另一个代次。 */
+  releasePendingReplay(pending: PendingWebhookDeploy, reason: string): PendingWebhookDeploy[] {
+    this.cancelPendingReplayClaim(this.replayKey(pending), reason);
+    return this.drainReady(pending.branchId, pending.request.projectId);
+  }
+
+  private replayKey(identity: { operationId: string; generation: number }): string {
+    return JSON.stringify([identity.operationId, identity.generation]);
+  }
+
+  private invalidatePendingReplayClaims(request: BranchOperationRequest, reason: string): void {
+    const terminal = cancelsBranchDeployments(request.kind);
+    for (const [key, claim] of this.pendingReplayClaims) {
+      if (terminal ? this.operationsConflict(request, claim.pending.request)
+        : this.operationKey(request) === this.operationKey(claim.pending.request)) {
+        this.cancelPendingReplayClaim(key, reason);
+      }
+    }
+  }
+
+  private prunePendingReplayClaims(): void {
+    for (const [key, claim] of this.pendingReplayClaims) {
+      if (Date.now() > claim.expiresAt) this.cancelPendingReplayClaim(key, 'pending replay expired before dispatch');
+    }
+  }
+
+  private cancelPendingReplayClaim(key: string, reason: string): void {
+    const claim = this.pendingReplayClaims.get(key);
+    if (!claim) return;
+    this.pendingReplayClaims.delete(key);
+    const { pending } = claim;
+    this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
+      reason, pending: true, pendingReplay: true,
+    });
   }
 
   private nextGeneration(branchId: string): number {
@@ -712,28 +1041,51 @@ export class BranchOperationCoordinator {
     return this.findBlockingActives(request)[0];
   }
 
+  private coversDeploymentScope(incoming: BranchOperationRequest, older: BranchOperationRequest): boolean {
+    if (!['deploy', 'deploy-profile'].includes(incoming.kind) || !['deploy', 'deploy-profile'].includes(older.kind)) return false;
+    return this.operationsConflict(incoming, older)
+      && (this.isBranchWide(incoming) || this.operationKey(incoming) === this.operationKey(older));
+  }
+
+  private supersedeCoveredWaiting(request: BranchOperationRequest, keep?: PendingWebhookDeploy): boolean {
+    let cancelled = false;
+    const isKept = (pending: PendingWebhookDeploy) => pending.operationId === keep?.operationId && pending.generation === keep?.generation;
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      if (isKept(pending) || !this.coversDeploymentScope(request, pending.request)) continue;
+      this.pendingWebhookDeploys.delete(key); cancelled = true;
+      this.record('branch.operation.cancelled', pending.request, pending.operationId, pending.generation, 'warn', {
+        reason: 'superseded by newer covering deployment', pending: true, supersededByCommitSha: request.commitSha || null,
+        supersededByTrigger: request.trigger, supersededByRequestId: request.requestId || null,
+      });
+    }
+    for (const [key, claim] of this.pendingReplayClaims) {
+      if (isKept(claim.pending) || !this.coversDeploymentScope(request, claim.pending.request)) continue;
+      this.cancelPendingReplayClaim(key, 'superseded by newer covering deployment'); cancelled = true;
+    }
+    return cancelled;
+  }
+
+  private findWaitingBarrier(request: BranchOperationRequest, beforeGeneration = Infinity, ignoreCovered = false): PendingWebhookDeploy | undefined {
+    return [...this.pendingWebhookDeploys.values(), ...[...this.pendingReplayClaims.values()].map((claim) => claim.pending)]
+      .filter((pending) => pending.generation < beforeGeneration && this.operationsConflict(request, pending.request)
+        && !(ignoreCovered && this.coversDeploymentScope(request, pending.request)))
+      .sort((a, b) => a.generation - b.generation)[0];
+  }
+
   private findBlockingActives(request: BranchOperationRequest): ActiveOperation[] {
     return [...this.active.values()].filter((active) => this.operationsConflict(request, active.request));
   }
 
   private operationsConflict(a: BranchOperationRequest, b: BranchOperationRequest): boolean {
     if (a.branchId !== b.branchId) return false;
+    if (a.projectId && b.projectId && a.projectId !== b.projectId) return false;
     if (this.isBranchWide(a) || this.isBranchWide(b)) return true;
     return (a.profileId || null) === (b.profileId || null);
   }
 
   private operationKey(request: BranchOperationRequest): string {
-    return this.isBranchWide(request)
-      ? this.branchKey(request.branchId)
-      : this.profileKey(request.branchId, request.profileId || '');
-  }
-
-  private branchKey(branchId: string): string {
-    return `${branchId}::*`;
-  }
-
-  private profileKey(branchId: string, profileId: string): string {
-    return `${branchId}::${profileId}`;
+    // JSON 元组避免分隔符碰撞；null 表示整分支范围。
+    return JSON.stringify([request.projectId || null, request.branchId, this.isBranchWide(request) ? null : request.profileId]);
   }
 
   private isBranchWide(request: BranchOperationRequest): boolean {
@@ -757,6 +1109,16 @@ export class BranchOperationCoordinator {
     severity: 'info' | 'warn' | 'error',
     details: Record<string, unknown> = {},
   ): void {
+    if (['branch.operation.completed', 'branch.operation.cancelled', 'branch.operation.failed', 'branch.operation.interrupted'].includes(action)) {
+      this.deploymentInputs.delete(this.replayKey({ operationId, generation }));
+    }
+    const terminal = action === 'branch.operation.cancelled' ? 'cancelled'
+      : action === 'branch.operation.failed' ? 'failed'
+      : action === 'branch.operation.interrupted' ? 'interrupted' : undefined;
+    if (terminal) for (const listener of this.operationEndListeners) {
+      try { listener(operationId, generation, terminal); }
+      catch (err) { console.error('[branch-operation] run lifecycle observer failed', (err as Error).name); }
+    }
     this.events?.record({
       category: 'system',
       severity,
@@ -783,6 +1145,7 @@ export class BranchOperationCoordinator {
         source: request.source || null,
         reason: request.reason || null,
         priority: priorityOf(request),
+        replayOf: replayIdentity(request.pendingReplay),
         ...details,
       },
     });

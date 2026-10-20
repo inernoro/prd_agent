@@ -247,7 +247,7 @@ public class ClaudeClient : ILLMClient
                     IsStreaming: true,
                     // S2 观测标记：ClaudeClient 是"直连发送端"（绕开网关池调度：ModelDomainService 兜底、
                     // ModelLab/Arena 锁定 platform+model、健康探活）。若上下文已显式指定传输路径则尊重之，
-                    // 否则兜底为 direct。网关路径（inproc/http/shadow）由各自的日志构建点标注，不经此处。
+                    // 否则兜底为 direct。网关路径（http）由网关的日志构建点标注，不经此处。
                     GatewayTransport: ctx?.GatewayTransport ?? GatewayTransports.Direct,
                     RunId: ctx?.RunId),
                 cancellationToken);

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Production helper for the LLM Gateway cutover: bind visual video callers to
+# Production helper for the LLM Gateway: bind visual video callers to
 # the same video-gen pool already used by the canonical video-agent caller.
 # Dry-run is the default; execute mode takes a Mongo backup first.
 

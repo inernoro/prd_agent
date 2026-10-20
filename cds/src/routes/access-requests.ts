@@ -25,6 +25,7 @@ import type { AccessRequest, AgentKey, GlobalAgentKey } from '../types.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { resolveUserCredential } from './identity.js';
 import { PROJECT_CREDENTIAL_TTL_DAYS } from '../services/identity.js';
+import { isAuthenticatedHuman, isHumanSystemOwner } from '../services/human-auth.js';
 
 export interface AccessRequestsRouterDeps {
   stateService: StateService;
@@ -79,6 +80,25 @@ function presentedKey(req: { headers: Record<string, unknown> }): string {
   const auth = req.headers['authorization'];
   if (typeof auth === 'string' && auth.startsWith('Bearer ')) return auth.slice(7).trim();
   return '';
+}
+
+/** Only display a repository location: credentials, query tokens and fragments never enter the inbox. */
+function requestedProjectView(value: unknown): AccessRequest['requestedProject'] {
+  if (!value || typeof value !== 'object') return undefined;
+  const input = value as { name?: unknown; repository?: unknown };
+  if (typeof input.name !== 'string' || !input.name.trim()) return undefined;
+  let repository: string | undefined;
+  if (typeof input.repository === 'string') {
+    const raw = input.repository.trim();
+    try {
+      const url = new URL(raw);
+      if (['https:', 'http:', 'ssh:'].includes(url.protocol)) repository = `${url.host}${url.pathname}`.slice(0, 500);
+    } catch {
+      const scp = /^git@([a-zA-Z0-9.-]+):([a-zA-Z0-9_./-]+)$/.exec(raw);
+      if (scp) repository = `${scp[1]}/${scp[2]}`.slice(0, 500);
+    }
+  }
+  return { name: input.name.trim().slice(0, 100), ...(repository ? { repository } : {}) };
 }
 
 export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Router {
@@ -147,7 +167,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       });
       return;
     }
-    const body = (req.body || {}) as { agentName?: string; purpose?: string };
+    const body = (req.body || {}) as { agentName?: string; purpose?: string; requestedProject?: unknown };
     const agentName = typeof body.agentName === 'string' && body.agentName.trim()
       ? body.agentName.trim().slice(0, 100) : 'AI Agent';
     const purpose = typeof body.purpose === 'string' && body.purpose.trim()
@@ -156,6 +176,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     const item: AccessRequest = {
       id: newRequestId(),
       kind: 'bootstrap',
+      requestedProject: requestedProjectView(body.requestedProject),
       projectId: BOOTSTRAP_PROJECT_ID,
       pollTokenHash: sha256(pollToken),
       agentName,
@@ -238,6 +259,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (item.issuedKeyPlaintext && !item.deliveredAt) {
       const authorizationKey = item.issuedKeyPlaintext;
       stateService.updateAccessRequest(item.id, { issuedKeyPlaintext: undefined, deliveredAt: new Date().toISOString() });
+      cdsEventsBus.publish('access-request.progress', { requestId: item.id, stage: 'delivered' });
       res.json({ status: 'approved', authorizationKey });
       return;
     }
@@ -261,9 +283,12 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   function decider(req: import('express').Request): string {
     // github 模式身份在 cdsUser.githubLogin(不是 .login),否则审计里全是 'operator'、
     // 签发的 AgentKey.createdBy 也丢了「谁批的」。两个字段都读。
-    const gh = (req as unknown as { cdsUser?: { login?: string; githubLogin?: string } }).cdsUser;
+    const gh = (req as unknown as {
+      cdsUser?: { login?: string; githubLogin?: string; username?: string };
+    }).cdsUser;
     if (gh?.githubLogin) return gh.githubLogin;
     if (gh?.login) return gh.login;
+    if (gh?.username) return gh.username;
     if ((req as unknown as { _cdsCookieAuth?: boolean })._cdsCookieAuth) return 'cookie';
     return 'operator';
   }
@@ -275,13 +300,15 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   function requireHumanOperator(req: import('express').Request, res: import('express').Response): boolean {
     // disabled 模式全站无鉴权,dashboard 用户即操作员 → 放行(否则本地 dev 用不了)。
     if (authDisabled) return true;
-    const r = req as unknown as { _cdsCookieAuth?: boolean; cdsUser?: { login?: string; githubLogin?: string } };
-    const isHuman = r._cdsCookieAuth === true || !!(r.cdsUser && (r.cdsUser.login || r.cdsUser.githubLogin));
-    if (!isHuman) {
+    if (!isAuthenticatedHuman(req)) {
       res.status(403).json({
         error: 'human_approval_required',
         message: '授权审批必须由登录用户在 CDS 界面完成,机器密钥(API key)不可批准/拒绝授权申请。',
       });
+      return false;
+    }
+    if (!isHumanSystemOwner(req)) {
+      res.status(403).json({ error: 'system_owner_required', message: '请联系 CDS 系统所有者查看和处理授权申请。' });
       return false;
     }
     return true;
@@ -319,6 +346,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         stateService.addGlobalAgentKey(keyEntry);
         stateService.updateAccessRequest(item.id, {
           status: 'approved',
+          creationReceiptEnabled: true,
           decidedAt: now.toISOString(),
           decidedBy,
           issuedKeyId: keyId,

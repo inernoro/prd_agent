@@ -40,6 +40,7 @@ builder.Services.AddSingleton<LlmGatewayDatabaseInitializer>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<LlmGatewayDatabaseInitializer>());
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<IGatewayScopedKeyAuthorizer, GatewayScopedKeyAuthorizer>();
+builder.Services.AddSingleton<IGatewayRuntimeGrantCallCounter, GatewayRuntimeGrantCallCounter>();
 builder.Services.AddSingleton<GatewayBudgetCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();
@@ -105,10 +106,6 @@ builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
         sp.GetRequiredService<IAssetStorage>(),
         sp.GetRequiredService<IConfiguration>(),
         sp.GetRequiredService<IHttpContextAccessor>()));
-builder.Services.AddSingleton<ILlmShadowComparisonWriter>(sp =>
-    new LlmShadowComparisonWriter(
-        sp.GetRequiredService<LlmGatewayDataContext>().Context,
-        sp.GetRequiredService<ILogger<LlmShadowComparisonWriter>>()));
 
 // GW-owned 运行设置（LlmRequestLogWriter 依赖 IAppSettingsService）。首次只复制 MAP 非敏感日志字段，
 // MAP 不可达时使用默认值，不阻断 serving 启动。

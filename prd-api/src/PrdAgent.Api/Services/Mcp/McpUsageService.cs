@@ -53,6 +53,14 @@ public sealed class McpUsageService
     public const int DefaultRateLimitPerMin = 60;
 
     public const string KindImage = "image";
+
+    /// <summary>
+    /// 生图调用成功后该退回几张预占额度：按请求张数占的坑，减去下游报告真正新入队的张数（重放、没排上的都不该扣）。
+    /// 网关与直连共用这一处，不各算各的。下游没报 queuedImages 时不退。
+    /// </summary>
+    public static int UnqueuedImages(McpQuotaVerdict verdict, int? queued)
+        => verdict.ReservedKind == KindImage && queued is int q && q >= 0 && q < verdict.ReservedAmount
+            ? verdict.ReservedAmount - q : 0;
     public const string KindWrite = "write";
 
     private readonly MongoDbContext _db;

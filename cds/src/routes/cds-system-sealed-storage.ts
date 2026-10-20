@@ -6,6 +6,7 @@ import {
   initializeSealedStorage,
   SealedStorageBootstrapError,
 } from '../services/sealed-storage-bootstrap.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 
 export interface CdsSystemSealedStorageRouterDeps {
   authMode: string;
@@ -19,19 +20,8 @@ export function isGlobalHumanAdminRequest(
   req: Request,
   deps: Pick<CdsSystemSealedStorageRouterDeps, 'authMode'>,
 ): boolean {
-  if (deps.authMode === 'basic') {
-    return Boolean((req as Request & { _cdsBasicHumanAuth?: boolean })._cdsBasicHumanAuth);
-  }
-  if (deps.authMode !== 'github') return false;
-  const request = req as typeof req & {
-    cdsUser?: { isSystemOwner?: boolean; authProvider?: string };
-    cdsSession?: unknown;
-  };
-  return Boolean(
-    request.cdsSession
-    && request.cdsUser?.isSystemOwner === true
-    && request.cdsUser.authProvider !== 'sso',
-  );
+  if (deps.authMode !== 'basic' && deps.authMode !== 'github') return false;
+  return isHumanSystemOwner(req);
 }
 
 function hasRequestInput(req: Request): boolean {

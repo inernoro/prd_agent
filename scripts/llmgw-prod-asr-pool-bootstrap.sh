@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# Production helper for the LLM Gateway cutover: create the ASR model pool and
+# Production helper for the LLM Gateway: create the ASR model pool and
 # bind all ASR app callers after taking a Mongo backup. Dry-run is the default.
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

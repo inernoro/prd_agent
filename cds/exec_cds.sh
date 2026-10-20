@@ -190,7 +190,11 @@ env_upsert_locked() {
     # #856：用单引号包裹并转义内部单引号（每个 ' 替换成 '\''），保证任意内容
     # （尤其是含换行/$/反引号的多行 PEM 私钥，如 GitHub App private key）被 source
     # 时原样保留，不会被 shell 解释（此前双引号写法会导致 `RSA: command not found`）。
-    local escaped="${value//\'/\'\\\'\'}"
+    # 先声明再在 assignment context 中做未加引号的参数替换。macOS 自带
+    # Bash 3.2 会把原来的带引号写法二次转义，把 `p@ss'word` 写成
+    # 无法往返的字面量。赋值上下文本身不会做分词或 glob 展开。
+    local escaped
+    escaped=${value//\'/\'\\\'\'}
     printf "export %s='%s'\n" "$key" "$escaped" >> "$tmp" || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
@@ -247,7 +251,8 @@ env_upsert_many_locked() {
     if [ -n "$value" ]; then
       # 与 env_upsert_locked 同一套转义（#856）：单引号包裹并把内部 ' 写成 '\'' ，
       # 保证含换行/$/反引号的多行 PEM 私钥被 source 时原样保留。
-      local escaped="${value//\'/\'\\\'\'}"
+      local escaped
+      escaped=${value//\'/\'\\\'\'}
       printf "export %s='%s'\n" "$key" "$escaped" >> "$tmp" || { rc=$?; break; }
     fi
     command cat "$tmp" > "$work" || { rc=$?; break; }
@@ -1228,6 +1233,7 @@ proxy_core() {
         proxy_cache     off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_hide_header X-Powered-By;
         add_header X-Accel-Buffering "no"      always;
 EOP
 }
@@ -1622,6 +1628,8 @@ http {
     gzip_min_length   1024;
     gzip_types        text/plain text/css application/javascript text/javascript application/json application/xml image/svg+xml application/wasm;
 
+    server_tokens off;
+
     access_log  /var/log/nginx/access.log;
     error_log   /var/log/nginx/error.log warn;
 
@@ -1686,6 +1694,11 @@ services:
     image: nginx:1.27-alpine
     container_name: ${NGINX_CONTAINER}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
     network_mode: host
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro

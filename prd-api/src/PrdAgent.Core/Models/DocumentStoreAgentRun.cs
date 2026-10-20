@@ -116,12 +116,6 @@ public class DocumentStoreAgentRun
     /// <summary>Worker 存活心跳；用于区分仍在处理与已失联的 running 任务。</summary>
     public DateTime? HeartbeatAt { get; set; }
     public DateTime? EndedAt { get; set; }
-
-    /// <summary>
-    /// 内部发布证据采样标记：仅由带服务密钥的 LLM Gateway shadow seed 写入。
-    /// Worker 读取后把本次 run 的 LLM 调用强制纳入 shadow comparison。
-    /// </summary>
-    public bool ForceFullShadowSample { get; set; }
 }
 
 /// <summary>再加工对话历史消息</summary>

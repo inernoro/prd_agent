@@ -8,6 +8,13 @@ public sealed record VersionPlanCandidate(string Id, string ProductId, string Pl
 /// <summary>只在调用方已授权的应用/立项范围内做标题清洗和候选匹配，不发号、不改历史数据。</summary>
 public static class ProductVersionPlanMatching
 {
+    public static bool HistoricalTitlesEqual(string? left, string? right) =>
+        HistoryTopic(left).Length > 0 && HistoryTopic(left) == HistoryTopic(right);
+
+    public static bool HistoricalTitlesSimilar(string? left, string? right) => IsSimilarTopic(HistoryTopic(left), HistoryTopic(right));
+
+    private static string HistoryTopic(string? title) => Topic(Regex.Replace(title ?? "", @"[TV]\d+\.\d+\.\d+", "", RegexOptions.IgnoreCase));
+
     public static IReadOnlyList<VersionPlanApplication> MatchApplications(string? title, IReadOnlyList<VersionPlanApplication> applications)
     {
         var prefix = Prefix(title ?? string.Empty);

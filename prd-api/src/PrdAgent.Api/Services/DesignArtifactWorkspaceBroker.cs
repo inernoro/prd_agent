@@ -19,6 +19,7 @@ public sealed record PreparedDesignArtifactWorkspace(
     string InputSha256,
     string ResultCommitUrl,
     string TransferToken,
+    string ModelGrantId,
     string ModelBaseUrl,
     string ModelToken,
     string Model,
@@ -35,6 +36,11 @@ public sealed record DesignArtifactResultCommit(
 public interface IDesignArtifactWorkspaceBroker
 {
     Task<PreparedDesignArtifactWorkspace> PrepareAsync(
+        DesignArtifactRun run,
+        string? currentHtml,
+        CancellationToken ct);
+
+    Task<PreparedDesignArtifactWorkspace> PrepareForDirectGatewayAsync(
         DesignArtifactRun run,
         string? currentHtml,
         CancellationToken ct);
@@ -78,6 +84,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     private readonly IAssetStorage _storage;
     private readonly IDataProtector _protector;
     private readonly IConfiguration _configuration;
+    private readonly IDesignArtifactGatewayGrantService _gatewayGrants;
     private readonly IHostedSiteService? _sites;
     private readonly IDesignKnowledgeSnapshotResolver? _knowledge;
     private readonly ILogger<DesignArtifactWorkspaceBroker>? _logger;
@@ -102,6 +109,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         IAssetStorage storage,
         IDataProtectionProvider dataProtectionProvider,
         IConfiguration configuration,
+        IDesignArtifactGatewayGrantService gatewayGrants,
         IHostedSiteService? sites = null,
         IDesignKnowledgeSnapshotResolver? knowledge = null,
         ILogger<DesignArtifactWorkspaceBroker>? logger = null)
@@ -110,14 +118,26 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         _storage = storage;
         _protector = dataProtectionProvider.CreateProtector("DesignArtifactWorkspaceBroker.v1");
         _configuration = configuration;
+        _gatewayGrants = gatewayGrants;
         _logger = logger;
         _sites = sites;
         _knowledge = knowledge;
     }
 
-    public async Task<PreparedDesignArtifactWorkspace> PrepareAsync(
+    public Task<PreparedDesignArtifactWorkspace> PrepareAsync(
         DesignArtifactRun run,
         string? currentHtml,
+        CancellationToken ct) => PrepareCoreAsync(run, currentHtml, directGateway: false, ct);
+
+    public Task<PreparedDesignArtifactWorkspace> PrepareForDirectGatewayAsync(
+        DesignArtifactRun run,
+        string? currentHtml,
+        CancellationToken ct) => PrepareCoreAsync(run, currentHtml, directGateway: true, ct);
+
+    private async Task<PreparedDesignArtifactWorkspace> PrepareCoreAsync(
+        DesignArtifactRun run,
+        string? currentHtml,
+        bool directGateway,
         CancellationToken ct)
     {
         var publicBaseUrl = ResolvePublicBaseUrl(_configuration)
@@ -190,16 +210,34 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         run.UpdatedAt = updatedAt;
 
         var transferToken = ProtectTicket(run, "workspace", expiresAt);
-        var modelToken = ProtectTicket(run, "model", expiresAt);
         var runtimeRoot = $"{publicBaseUrl}/api/design-artifacts/runtime/{Uri.EscapeDataString(run.Id)}";
+        if (!directGateway)
+        {
+            return new PreparedDesignArtifactWorkspace(
+                $"{runtimeRoot}/workspace/input",
+                inputSha256,
+                $"{runtimeRoot}/workspace/result",
+                transferToken,
+                string.Empty,
+                $"{runtimeRoot}/llm/v1",
+                ProtectTicket(run, "model", expiresAt),
+                "map-managed",
+                package.BaseRevision,
+                MaxInputBytes,
+                MaxOutputBytes,
+                AllowedOutputPaths);
+        }
+
+        var modelGrant = await _gatewayGrants.IssueAsync(run, expiresAt, CancellationToken.None);
         return new PreparedDesignArtifactWorkspace(
             $"{runtimeRoot}/workspace/input",
             inputSha256,
             $"{runtimeRoot}/workspace/result",
             transferToken,
-            $"{runtimeRoot}/llm/v1",
-            modelToken,
-            "map-managed",
+            modelGrant.Id,
+            modelGrant.BaseUrl,
+            modelGrant.ApiKey,
+            modelGrant.Model,
             package.BaseRevision,
             MaxInputBytes,
             MaxOutputBytes,

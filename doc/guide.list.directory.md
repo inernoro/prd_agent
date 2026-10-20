@@ -150,6 +150,7 @@
 - [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
 - [周报管理 Agent (Report Agent) · 设计](./design.report-agent.md) `design.report-agent`
+- [周报管理 Agent · 月报 · 设计](./design.report-agent.monthly.md) `design.report-agent.monthly`
 - [产品评审员技术 · 设计](./design.review-agent.md) `design.review-agent`
 - [苹果快捷指令集成 · 设计](./design.shortcuts-agent.apple.md) `design.shortcuts-agent.apple`
 - [海鲜市场技能开放接口设计 (Skill Marketplace Open API) · 设计](./design.skill.marketplace-open-api.md) `design.skill.marketplace-open-api`
@@ -281,11 +282,15 @@
 - [AI 百宝箱文本辅助 · 计划](./plan.ai-toolbox.text-assist.md) `plan.ai-toolbox.text-assist`
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
+- [CDS 控制面卡顿治理 · 计划](./plan.cds.control-plane-lag.md) `plan.cds.control-plane-lag`
 - [CDS 数据库隔离三档收敛 · 计划](./plan.cds.database-isolation.md) `plan.cds.database-isolation`
 - [录音交付页设计稿还原工程](./plan.prd-admin.recording-design-restoration.md) `plan.prd-admin.recording-design-restoration`
 - [CDS 基础设施加固 · 计划](./plan.cds.infra-hardening.md) `plan.cds.infra-hardening`
+- [CDS 本地多用户认证解耦 · 计划](./plan.cds.local-multi-user-auth.md) `plan.cds.local-multi-user-auth`
 - [CDS 一仓多项目与身份层 · 计划](./plan.cds.multi-project-identity.md) `plan.cds.multi-project-identity`
 - [CDS 多项目剩余交付 · 计划](./plan.cds.multi-project-phases.md) `plan.cds.multi-project-phases`
+- [CDS 长期性能优化与独立验收 · 计划](./plan.cds.performance.optimization.md) `plan.cds.performance.optimization`
+- [CDS 长期性能优化待办 · 计划](./plan.cds.performance.todo.md) `plan.cds.performance.todo`
 - [CDS 发布系统改进 · 计划](./plan.cds.release-system.md) `plan.cds.release-system`
 - [CDS 高可用运行验证 · 计划](./plan.cds.resilience-rollout.md) `plan.cds.resilience-rollout`
 - [CDS 服务关系与跨项目引用 · 计划](./plan.cds.service-relations.md) `plan.cds.service-relations`
@@ -404,6 +409,7 @@
 - [周报 2026-W37 (2026-09-07 ~ 2026-09-13)](./report.2026-W37.md) `report.2026-W37`
 - [周报 2026-W38 (2026-09-14 ~ 2026-09-20)](./report.2026-W38.md) `report.2026-W38`
 - [周报 2026-W39 (2026-09-21 ~ 2026-09-27)](./report.2026-W39.md) `report.2026-W39`
+- [周报 2026-W40 (2026-09-28 ~ 2026-10-04)](./report.2026-W40.md) `report.2026-W40`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

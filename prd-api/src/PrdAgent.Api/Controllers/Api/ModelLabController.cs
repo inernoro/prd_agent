@@ -671,7 +671,7 @@ public class ModelLabController : ControllerBase
                 RequestType: requestType,
                 AppCallerCode: appCallerCode,
                 // ModelLab 仍锁定 admin 明确选中的 platform+model，但该语义已由 pinned gateway 保证。
-                // transport 不在调用方硬写，交给当前网关模式在日志构建点标注为 inproc/http。
+                // transport 不在调用方硬写，由网关在日志构建点标注。
                 ModelResolutionType: ModelResolutionType.DirectModel));
 
             var startedAt = item.StartedAt;

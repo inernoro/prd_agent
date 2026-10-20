@@ -32,20 +32,17 @@ public class TranscriptAgentController : ControllerBase
 
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
-    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IConfiguration _config;
     private readonly ILogger<TranscriptAgentController> _logger;
 
     public TranscriptAgentController(
         MongoDbContext db,
         IAssetStorage assetStorage,
-        ILLMRequestContextAccessor llmRequestContext,
         IConfiguration config,
         ILogger<TranscriptAgentController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
-        _llmRequestContext = llmRequestContext;
         _config = config;
         _logger = logger;
     }
@@ -160,8 +157,7 @@ public class TranscriptAgentController : ControllerBase
             OwnerUserId = userId,
             OwnerInstanceId = InstanceIdentity.Get(_config),
             Type = "asr",
-            Status = TranscriptRunStatuses.ScopedQueued,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true
+            Status = TranscriptRunStatuses.ScopedQueued
         };
         await _db.TranscriptRuns.InsertOneAsync(run);
 
@@ -269,8 +265,7 @@ public class TranscriptAgentController : ControllerBase
             OwnerInstanceId = InstanceIdentity.Get(_config),
             Type = "copywrite",
             TemplateId = dto.TemplateId,
-            Status = TranscriptRunStatuses.ScopedQueued,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true
+            Status = TranscriptRunStatuses.ScopedQueued
         };
         await _db.TranscriptRuns.InsertOneAsync(run);
 

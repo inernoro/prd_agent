@@ -43,6 +43,7 @@ import rabbitIconUrl from 'devicon/icons/rabbitmq/rabbitmq-original.svg';
 import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
 import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
+import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { Button } from '@/components/ui/button';
@@ -131,6 +132,7 @@ interface ProjectResourceUsage {
 interface ProjectsResponse {
   projects: ProjectSummary[];
   total: number;
+  canManageProjects?: boolean;
 }
 
 interface GithubRepo {
@@ -389,7 +391,7 @@ type PendingImportYamlState =
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; projects: ProjectSummary[]; legacy: LegacyCleanupStatus | null };
+  | { status: 'ok'; projects: ProjectSummary[]; legacy: LegacyCleanupStatus | null; canManageProjects: boolean };
 
 function formatRelativeTime(value?: string | null): string {
   if (!value) return '尚未部署';
@@ -452,6 +454,7 @@ function compactList(values: string[] | undefined, empty = '无'): string {
 }
 
 export function ProjectListPage(): JSX.Element {
+  const events = useCdsEvents();
   const navigate = useNavigate();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
@@ -505,32 +508,38 @@ export function ProjectListPage(): JSX.Element {
   const refresh = useCallback(async (showLoading = false) => {
     if (showLoading) setState({ status: 'loading' });
     try {
-      const [projectsRes, legacyRes] = await Promise.all([
-        apiRequest<ProjectsResponse>('/api/projects'),
-        apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null),
-      ]);
+      const projectsRes = await apiRequest<ProjectsResponse>('/api/projects');
       const nextProjects = projectsRes.projects || [];
       const lastKnownGood = lastKnownGoodProjectsRef.current;
-      if (nextProjects.length > 0) {
+      const canManageProjects = projectsRes.canManageProjects !== false;
+      const legacyRes = canManageProjects
+        ? await apiRequest<LegacyCleanupStatus>('/api/legacy-cleanup/status').catch(() => null)
+        : null;
+      if (nextProjects.length > 0 || !canManageProjects) {
         lastKnownGoodProjectsRef.current = nextProjects;
       }
       const suspiciousEmpty =
-        nextProjects.length === 0 &&
+        canManageProjects && nextProjects.length === 0 &&
         ((projectsRes.total || 0) > 0 || lastKnownGood.length > 0);
       setState({
         status: 'ok',
         projects: suspiciousEmpty ? lastKnownGood : nextProjects,
         legacy: legacyRes,
+        canManageProjects,
       });
       if (suspiciousEmpty) {
         setToast('项目列表返回可疑空结果，已保留上一次有效列表');
       }
-      void loadPendingImports();
+      if (canManageProjects) void loadPendingImports();
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
       setState({ status: 'error', message });
     }
   }, [loadPendingImports]);
+
+  useEffect(() => {
+    if (events.lastAccessRequestEvent?.type === 'progress') void refresh(false);
+  }, [events.lastAccessRequestEvent, refresh]);
 
   // 暂停 / 恢复一个项目。乐观刷新；暂停会停止运行容器，由后端后台执行，
   // 前端轮询反映停止结果。返回的 message 已含「正在停止 N 个分支」。
@@ -611,6 +620,7 @@ export function ProjectListPage(): JSX.Element {
   }, [toast]);
 
   const projects = state.status === 'ok' ? state.projects : [];
+  const canManageProjects = state.status === 'ok' && state.canManageProjects;
   const legacy = state.status === 'ok' ? state.legacy : null;
   const activeCount = useMemo(
     () => projects.reduce((sum, project) => sum + (project.runningServiceCount || 0), 0),
@@ -691,7 +701,7 @@ export function ProjectListPage(): JSX.Element {
               ) : null}
             </>
           }
-          center={
+          center={canManageProjects ? (
             <form
               className="flex min-w-0 items-center gap-1.5"
               onSubmit={(event) => void createProjectFromRepoUrl(event)}
@@ -716,10 +726,11 @@ export function ProjectListPage(): JSX.Element {
                 创建
               </Button>
             </form>
-          }
+          ) : null}
           right={
             <>
               <PaletteHint />
+              {canManageProjects ? <>
               <Button
                 variant="ghost"
                 size="sm"
@@ -749,6 +760,7 @@ export function ProjectListPage(): JSX.Element {
                   {pendingImportCount}
                 </Button>
               ) : null}
+              </> : null}
               <Button
                 variant="ghost"
                 size="icon"
@@ -759,7 +771,7 @@ export function ProjectListPage(): JSX.Element {
                 <RefreshCw />
                 <span className="md:hidden">刷新</span>
               </Button>
-              <DropdownMenu
+              {canManageProjects ? <DropdownMenu
                 trigger={
                   <Button variant="outline" size="sm" aria-label="新建 / 自动化菜单">
                     <Plus />
@@ -799,7 +811,7 @@ export function ProjectListPage(): JSX.Element {
                   <FileText className="h-4 w-4 shrink-0" />
                   Agent 申请记录
                 </DropdownItem>
-              </DropdownMenu>
+              </DropdownMenu> : null}
             </>
           }
         />
@@ -829,7 +841,7 @@ export function ProjectListPage(): JSX.Element {
           {state.status === 'loading' ? <ProjectListSkeleton /> : null}
           {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
           {state.status === 'ok' && projects.length === 0 ? (
-            <EmptyProjects onCreate={() => setCreateOpen(true)} />
+            <EmptyProjects canManageProjects={canManageProjects} onCreate={() => setCreateOpen(true)} />
           ) : null}
           {state.status === 'ok' && projects.length > 0 ? (
             <div className="cds-card-grid">
@@ -837,6 +849,7 @@ export function ProjectListPage(): JSX.Element {
                 <ProjectCard
                   key={project.id}
                   project={project}
+                  canManageProjects={canManageProjects}
                   onClone={() => setCloneTarget(project)}
                   onAgentKeys={() => setAgentKeyProject(project)}
                   onAgentSessions={() => navigate(`/agent-requests/${encodeURIComponent(project.id)}`)}
@@ -848,7 +861,7 @@ export function ProjectListPage(): JSX.Element {
           ) : null}
         </section>
 
-        <CreateProjectDialog
+        {canManageProjects ? <CreateProjectDialog
           open={createOpen}
           onOpenChange={(next) => {
             setCreateOpen(next);
@@ -868,7 +881,7 @@ export function ProjectListPage(): JSX.Element {
             info,
             pendingClone: project.cloneStatus === 'pending' ? project : null,
           })}
-        />
+        /> : null}
 
         {/*
          * 建项目时填了一个已被绑走的仓库：项目建好了、仓库没绑上。默认不绑是对的
@@ -988,7 +1001,7 @@ export function ProjectListPage(): JSX.Element {
           onOpenChange={setMonitoringOpen}
         />
         <PendingImportDialog
-          open={pendingImportOpen}
+          open={canManageProjects && pendingImportOpen}
           onOpenChange={(open) => {
             setPendingImportOpen(open);
             if (!open) setPendingImportFocusId(null);
@@ -1453,23 +1466,23 @@ function LegacyBanner({
 
 // ProjectListSkeleton 的 SSOT 在 @/components/skeletons/PageSkeletons（路由切换骨架与本页数据骨架共用同一副）。
 
-function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
+function EmptyProjects({ onCreate, canManageProjects }: { onCreate: () => void; canManageProjects: boolean }): JSX.Element {
   return (
     <div className="cds-surface-raised cds-hairline px-6 py-12">
       <div className="mx-auto flex max-w-xl flex-col items-center text-center">
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
           <FolderGit2 />
         </div>
-        <h2 className="mt-5 text-lg font-semibold">还没有项目</h2>
+        <h2 className="mt-5 text-lg font-semibold">{canManageProjects ? '还没有项目' : '还没有获授权的项目'}</h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-          粘贴上方仓库 URL 创建第一个项目，CDS 会自动 clone、识别栈并生成默认构建配置。
+          {canManageProjects ? '粘贴上方仓库 URL 创建第一个项目，CDS 会自动 clone、识别栈并生成默认构建配置。' : '请联系系统所有者在「用户管理 → 项目授权」中分配访问权限，然后刷新本页。'}
         </p>
-        <div className="mt-5">
+        {canManageProjects ? <div className="mt-5">
           <Button onClick={onCreate}>
             <Plus />
             新建项目
           </Button>
-        </div>
+        </div> : null}
       </div>
     </div>
   );
@@ -1895,6 +1908,7 @@ function ProjectDockNode({
  */
 function ProjectCard({
   project,
+  canManageProjects,
   onClone,
   onAgentKeys,
   onAgentSessions,
@@ -1902,6 +1916,7 @@ function ProjectCard({
   onTogglePause,
 }: {
   project: ProjectSummary;
+  canManageProjects: boolean;
   onClone: () => void;
   onAgentKeys: () => void;
   onAgentSessions: () => void;
@@ -2079,7 +2094,7 @@ function ProjectCard({
         </div>
       ) : null}
 
-      <div
+      {canManageProjects ? <div
         className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 transition-opacity duration-150 ${
           paused ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
         }`}
@@ -2169,7 +2184,7 @@ function ProjectCard({
         >
           <Trash2 />
         </Button>
-      </div>
+      </div> : null}
     </article>
   );
 }

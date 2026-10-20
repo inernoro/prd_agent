@@ -47,7 +47,8 @@ import { createPortal } from 'react-dom';
 import { buildVisualAgentModelOptions, type VisualAgentModelOption } from '@/pages/ai-chat/visualAgentModelOptions';
 import { normalizeSizesByResolution, reconcileSize, type SizesByResolution } from '@/lib/visualModelSizes';
 import { useNavigate } from 'react-router-dom';
-import { buildInlineImageToken, computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
+import { computeRequestedSizeByRefRatio, readImageSizeFromFile } from '@/lib/visualAgentPromptUtils';
+import { createVisualAgentHandoffPayload } from '@/lib/visualAgentHandoff';
 import { normalizeFileToSquareDataUrl } from '@/lib/imageSquare';
 import { BackdropPhoto, PageVignette } from '@/components/effects/PageBackdrop';
 import { BackdropSettings, readBackdropMode, resolveBackdrop, type BackdropMode } from '@/components/visual-agent/BackdropSettings';
@@ -1549,12 +1550,9 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       }
       const ws = res.data.workspace;
 
-      // 3. 构建消息文本（使用 [IMAGE src=... name=...] 和 (@size:...) 标记）
-      // 格式：${inlineRefToken}${uiSizeToken}${display || reqText}
-      // 即：[IMAGE src=... name=...] (@size:1024x1024) 文本内容
-      let messageText = prompt;
+      // 3. 准备参考图交接数据。图片必须是独立字段，不能借消息标记传递：
+      // buildInlineImageToken 会刻意拒绝 data:/blob:，避免把大图写进聊天文本。
       const assetId: string | null = null;
-      let imageToken = '';
       let imageSize: { w: number; h: number } | null = null;
 
       // 4. 参考图**不在这里上传**。
@@ -1569,12 +1567,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // 上传时也会带给后端，否则这张资产的 width/height 永远是空。
       if (selectedImage) {
         imageSize = await measureDataUrl(selectedImage.previewUrl);
-        imageToken = buildInlineImageToken(selectedImage.previewUrl, selectedImage.file.name || '参考图');
       }
-
-      // 构建最终消息：图片标记 + 尺寸标记 + 文本内容
-      const sizeToken = selectedSize ? `(@size:${selectedSize}) ` : '';
-      messageText = `${imageToken}${sizeToken}${messageText}`;
 
       // 5. 使用 sessionStorage 传递参数（避免刷新时重复创建）
       //
@@ -1584,7 +1577,16 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
       // modelId 必须进交接包：偏好接口写失败时只返回 { success:false }，
       // 编辑器再去读偏好就会拿到上一次的模型，用户在首页选的 A 会变成 B——
       // 而这是一次要花钱的生成。交接包直接带上，编辑器就不必依赖那次写。
-      const payload = { messageText, assetId, imageSize, modelId, timestamp: Date.now() };
+      const payload = createVisualAgentHandoffPayload({
+        prompt,
+        size: selectedSize,
+        assetId,
+        imageSize,
+        modelId,
+        inlineImage: selectedImage
+          ? { src: selectedImage.previewUrl, name: selectedImage.file.name || '参考图' }
+          : null,
+      });
       // 图太大存不下时**不再退化成「只带文字」**。
       //
       // 上一版是：丢掉 [IMAGE] 标记、只存文字、照常跳转，然后提示「请在画板里重新拖入」。

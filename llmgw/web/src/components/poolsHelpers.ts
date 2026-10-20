@@ -1,4 +1,4 @@
-// 健康状态 chip 注册表（模型池 / 影子共用）。颜色走固定语义色，弱底跟随主题。
+// 健康状态 chip 注册表。颜色走固定语义色，弱底跟随主题。
 export function healthChip(status: number): { label: string; color: string; bg: string } {
   switch (status) {
     case 0:

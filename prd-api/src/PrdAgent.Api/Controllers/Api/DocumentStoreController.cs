@@ -5794,7 +5794,6 @@ public class DocumentStoreController : ControllerBase
             TemplateKey = request.StyleKey?.Trim().ToLowerInvariant(),
             CustomPrompt = string.IsNullOrWhiteSpace(request.CustomPrompt) ? null : request.CustomPrompt.Trim(),
             StyleContext = string.IsNullOrWhiteSpace(request.StyleContext) ? null : request.StyleContext.Trim(),
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
         var generationEntry = await DocumentStoreRunGenerationPublisher.PublishAsync(
             _db,
@@ -5961,7 +5960,6 @@ public class DocumentStoreController : ControllerBase
             TemplateKey = reqTemplateKey,
             CustomPrompt = reqCustomPrompt,
             StyleContext = reqStyleContext,
-            ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
         };
         if (kind == DocumentStoreAgentRunKind.Transcribe)
         {
@@ -6120,7 +6118,6 @@ public class DocumentStoreController : ControllerBase
                 Status = DocumentStoreRunStatus.Queued,
                 Phase = "排队中",
                 Messages = new List<ReprocessChatMessage> { userMsg },
-                ForceFullShadowSample = _llmRequestContext.Current?.ForceFullShadowSample == true,
             };
             await _db.DocumentStoreAgentRuns.InsertOneAsync(run);
         }
@@ -6166,8 +6163,7 @@ public class DocumentStoreController : ControllerBase
                     .Set(r => r.GeneratedText, null)
                     .Set(r => r.EndedAt, (DateTime?)null)
                     .Set(r => r.ErrorMessage, null)
-                    .Set(r => r.FailureCode, null)
-                    .Set(r => r.ForceFullShadowSample, _llmRequestContext.Current?.ForceFullShadowSample == true),
+                    .Set(r => r.FailureCode, null),
                 cancellationToken: CancellationToken.None);
             if (updateResult.ModifiedCount == 0)
             {

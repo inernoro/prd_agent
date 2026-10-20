@@ -20,6 +20,8 @@ const ACTION_LABEL: Record<string, string> = {
   'reset-password': '重置密码',
   'disable-user': '禁用用户',
   'enable-user': '启用用户',
+  'grant-project': '授权项目',
+  'revoke-project': '撤销项目授权',
 };
 
 function actionLabel(action: string): string {

@@ -3,7 +3,7 @@
 
 This script is a read-only progress reporter for the target architecture:
 multi-protocol ingress -> Gateway Request IR -> appCaller registry ->
-GW router/model pools -> provider adapter/upstream, with console and rollout
+GW router/model pools -> provider adapter/upstream, with console and runtime
 evidence gates.
 
 It does not call production, MAP, Gateway, or model providers.
@@ -101,7 +101,6 @@ def _write_markdown(path: str, payload: dict[str, Any]) -> None:
 
 def build_report() -> dict[str, Any]:
     target_doc = _read("doc/design.platform.llm-gateway.physical-isolation.md")
-    full_cutover_doc = _read("doc/plan.platform.llm-gateway.full-cutover.md")
     brief = _read("assets/prototypes/llmgw-architecture-drawing-brief.md")
     html = _read("assets/prototypes/llmgw-architecture-map.html")
     request = _read("prd-api/src/PrdAgent.Core/LlmGateway/GatewayRequest.cs")
@@ -115,19 +114,16 @@ def build_report() -> dict[str, Any]:
     details_drawer = _read("llmgw/web/src/components/GenerationDetailsDrawer.tsx")
     overview_page = _read("llmgw/web/src/pages/OverviewPage.tsx")
     app_callers_page = _read("llmgw/web/src/pages/AppCallersPage.tsx")
-    shadow_page = _read("llmgw/web/src/pages/ShadowPage.tsx")
     pools_page = _read("llmgw/web/src/pages/ModelPoolsPage.tsx")
     models_page = _read("llmgw/web/src/pages/ModelsPage.tsx")
     platforms_page = _read("llmgw/web/src/pages/PlatformsPage.tsx")
     exchanges_page = _read("llmgw/web/src/pages/ExchangesPage.tsx")
     audits_page = _read("llmgw/web/src/pages/AuditsPage.tsx")
-    prod_stage = _read("scripts/llmgw-prod-stage.sh")
-    rollout_ledger = _read("scripts/llmgw-rollout-ledger.py")
     protocol_canary = _read("scripts/llmgw-protocol-canary.py")
-    release_gate = _read("scripts/llmgw-release-gate.py")
+    config_authority_backup = _read("scripts/llmgw-config-authority-backup.sh")
+    config_authority_apply = _read("scripts/llmgw-config-authority-apply.py")
     compose = _read("docker-compose.yml")
     cds_compose = _read("cds-compose.yml")
-    readiness = _read("scripts/llmgw-readiness-audit.py")
     protocol_router_changelog = _read("changelogs/2026-07-09_llmgw-protocol-router.md")
     assembled_changelog = _read("CHANGELOG.md")
 
@@ -278,7 +274,7 @@ def build_report() -> dict[str, Any]:
     ))
 
     ok, detail = _contains_all(
-        resolver + "\n" + prod_stage + "\n" + compose + "\n" + cds_compose,
+        resolver + "\n" + compose + "\n" + cds_compose,
         [
             # 2026-09-15 断流后删掉了模型池那一整套分支，所以这里不再要求池相关的符号存在。
             # 仍然要守的是同一件事：GW 配置是权威，MAP 只是兼容退路，且退路能被开关关掉。
@@ -292,8 +288,6 @@ def build_report() -> dict[str, Any]:
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
             "LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers",
             "LlmGateway__DisableMapConfigFallbackForActiveAppCallers",
-            "disableMapConfigFallbackForActiveAppCallers",
-            "disable_map_fallback_default=true",
         ],
     )
     checks.append(_check(
@@ -303,7 +297,6 @@ def build_report() -> dict[str, Any]:
         detail,
         [
             "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs",
-            "scripts/llmgw-prod-stage.sh",
             "docker-compose.yml",
             "cds-compose.yml",
         ],
@@ -326,8 +319,6 @@ def build_report() -> dict[str, Any]:
             "app.MapPost(\"/gw/app-callers/bulk-governance\"",
             "app.MapGet(\"/gw/audits\"",
             "llmgw_operation_audits",
-            "ReadyForHttpFull",
-            "config_authority_rollout_ledger",
             "appcaller_policy_drift",
             "HasObservedFieldDrift",
             "/gw/app-callers?drift=any",
@@ -344,18 +335,10 @@ def build_report() -> dict[str, Any]:
             "activeAppCallerMapFallbackExitReady",
             "disableMapFallbackForActiveAppCallers",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
-            "ReadLatestHttpFullRolloutLedgerEvidence",
-            "latestProtocolCanaryRequired",
-            "latestHasProtocolCanaryJson",
             "TargetIngressProtocols",
             "NormalizeIngressProtocol",
             "ProtocolCoverageData",
             "DroppedParameterRequests",
-            "ReadLatestConfigAuthorityRolloutLedgerEvidence",
-            "LlmGateway:RolloutLedgerPath",
-            "LLMGW_ROLLOUT_LEDGER",
-            "same-commit",
-            "externalBackupJson",
             "var runtimeCommit = NormalizeCommitFilter(gitCommit)",
             "Builders<BsonDocument>.Filter.Eq(\"ReleaseCommit\", runtimeCommit)",
             "current_commit_http_transport",
@@ -381,51 +364,29 @@ def build_report() -> dict[str, Any]:
         ["llmgw/console-api/Program.cs"],
     ))
 
+    # 发布后的四协议 canary 由 exec_dep.sh 直接调用；配置权威的迁移工具保持「先备份、再应用」
+    # 两个独立脚本，由操作者按需执行。这里只守工具本身在、且四类协议入口都被 canary 覆盖。
     ok, detail = _contains_all(
-        prod_stage + "\n" + rollout_ledger + "\n" + release_gate + "\n" + protocol_canary + "\n" + full_cutover_doc,
+        protocol_canary,
         [
-            "config-authority",
-            "scripts/llmgw-config-authority-backup.sh",
-            "LLMGW_CONFIG_AUTHORITY_BACKUP_DRY_RUN=0",
-            "scripts/llmgw-config-authority-apply.py",
-            "--external-backup-json",
-            "_require_external_backup",
-            "_require_config_authority_apply",
-            "protocol-router-audit.json",
-            "--protocol-router-audit-json",
-            "_require_protocol_router_audit",
-            "protocolRouterAuditJson",
-            "targetComplete must remain false until runtime gates pass",
-            "activeAppCallerMapFallbackReady=true",
             "LLM Gateway four-protocol runtime canary",
             "--execute",
             "gw-native",
             "openai-compatible",
             "claude-compatible",
             "gemini-compatible",
-            "--protocol-canary-json",
-            "protocolCanary",
-            "protocolCanaryJson",
-            "protocolCanaryRequired",
-            "_require_protocol_canary_for_commit",
         ],
     )
-    backup_before_apply = (
-        prod_stage.find("scripts/llmgw-config-authority-backup.sh") >= 0
-        and prod_stage.find("python3 scripts/llmgw-config-authority-apply.py") >= 0
-        and prod_stage.find("scripts/llmgw-config-authority-backup.sh")
-        < prod_stage.find("python3 scripts/llmgw-config-authority-apply.py")
-    )
+    config_tools_present = bool(config_authority_backup.strip()) and bool(config_authority_apply.strip())
     checks.append(_check(
-        "rollout",
-        "config_authority_stage_is_backup_first_and_ledger_gated",
-        ok and backup_before_apply,
-        detail if backup_before_apply else f"{detail}; backupBeforeApply=false",
+        "release",
+        "protocol_canary_covers_four_ingress_protocols_and_config_tools_exist",
+        ok and config_tools_present,
+        detail if config_tools_present else f"{detail}; configAuthorityToolsPresent=false",
         [
-            "scripts/llmgw-prod-stage.sh",
-            "scripts/llmgw-rollout-ledger.py",
             "scripts/llmgw-protocol-canary.py",
-            "doc/plan.platform.llm-gateway.full-cutover.md",
+            "scripts/llmgw-config-authority-backup.sh",
+            "scripts/llmgw-config-authority-apply.py",
         ],
     ))
 
@@ -436,7 +397,6 @@ def build_report() -> dict[str, Any]:
         details_drawer,
         overview_page,
         app_callers_page,
-        shadow_page,
         pools_page,
         models_page,
         platforms_page,
@@ -458,12 +418,9 @@ def build_report() -> dict[str, Any]:
             "droppedParameters",
             "initialQueryValue('releaseCommit')",
             "releaseCommit: filterReleaseCommit.trim() || undefined",
-            "searchParams.get('releaseCommit')",
-            "getShadowComparisons({",
             "runtimeGateActionLinks",
             "item.links && item.links.length > 0 ? item.links : runtimeGateActionLinks",
             "/logs${releaseQuery}",
-            "/shadow${releaseQuery}",
             "/app-callers?status=active",
             "/audits?targetType=llmgw_config_authority",
             "configAuthority",
@@ -483,11 +440,8 @@ def build_report() -> dict[str, Any]:
     ))
 
     ok, detail = _contains_all(
-        readiness + "\n" + protocol_router_changelog + "\n" + assembled_changelog,
+        protocol_router_changelog + "\n" + assembled_changelog,
         [
-            "config_authority_stage_backup_is_local_auditable_and_safe",
-            "prod_stage_runner_sequences_shadow_canary_http_and_rollback",
-            "scripts/llmgw-config-authority-backup.sh",
             "四类协议入口",
             "appCaller 被动注册",
         ],
@@ -498,7 +452,6 @@ def build_report() -> dict[str, Any]:
         ok,
         detail,
         [
-            "scripts/llmgw-readiness-audit.py",
             "changelogs/2026-07-09_llmgw-protocol-router.md",
             "CHANGELOG.md",
         ],
@@ -510,19 +463,15 @@ def build_report() -> dict[str, Any]:
     remaining_runtime_gates = [
         {
             "name": "production_config_authority_execute",
-            "evidence": "rollout ledger success for config-authority with non-dry-run backup evidence and configAuthority status=ready",
+            "evidence": "scripts/llmgw-config-authority-backup.sh non-dry-run backup, then scripts/llmgw-config-authority-apply.py execute, and production /gw/config-authority/report status=ready",
         },
         {
             "name": "active_appcaller_map_fallback_exit",
             "evidence": "production /gw/config-authority/report shows activeAppCallerMapFallbackReady=true, then LlmGateway:DisableMapConfigFallbackForActiveAppCallers enabled and verified",
         },
         {
-            "name": "full_http_rollout_acceptance",
-            "evidence": "http-full rollout ledger success with release gate, serving probe, smoke, shadow coverage, and configAuthority.ok=true",
-        },
-        {
-            "name": "legacy_cleanup_after_stability",
-            "evidence": "inproc/legacy retained through stability window; deletion only after rollback window is no longer required",
+            "name": "post_deploy_gateway_verification",
+            "evidence": "exec_dep.sh post-deploy serving probe, gw-smoke and four-protocol canary pass for the released commit",
         },
     ]
     return {
@@ -535,7 +484,7 @@ def build_report() -> dict[str, Any]:
         "passedChecks": passed,
         "staticEvidencePercent": static_percent,
         "progressPercent": None,
-        "progressSemantics": "staticEvidencePercent covers code/doc evidence only; runtime gates and rollout ledger prove target completion.",
+        "progressSemantics": "staticEvidencePercent covers code/doc evidence only; runtime gates and post-deploy verification prove target completion.",
         "remainingRuntimeGates": remaining_runtime_gates,
         "checks": checks,
     }

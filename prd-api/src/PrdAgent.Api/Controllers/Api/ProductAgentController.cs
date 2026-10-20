@@ -1268,6 +1268,25 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
+    [HttpGet("products/{productId}/releases/history-check")]
+    public async Task<IActionResult> CheckReleaseHistory(string productId, [FromQuery] string? initiationId,
+        [FromQuery] string? manualTCode, [FromQuery] string? planName)
+    {
+        var product = await FindAccessibleProductAsync(productId, GetUserId());
+        if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
+        ProductInitiation? initiation = null;
+        if (!string.IsNullOrWhiteSpace(initiationId)) {
+            initiation = await _db.ProductInitiations.Find(x => x.Id == initiationId && x.ProductId == productId && x.Status == "approved" && !x.IsDeleted).FirstOrDefaultAsync();
+            if (initiation == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已取得 T 号的立项"));
+        }
+        var code = initiation?.TCode ?? manualTCode?.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(code) || !IsWorkflowVersionCode(code, "T"))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先选择或填写有效的 T 号"));
+        var result = await ProductVersionHistoryLinks.CheckAsync(_db, productId, initiation?.AppName ?? product.Name,
+            code, initiation?.PlanName ?? planName);
+        return Ok(ApiResponse<ReleaseHistoryCheck>.Ok(result));
+    }
+
     [HttpPost("products/{productId}/releases")]
     public async Task<IActionResult> CreateRelease(string productId, [FromBody] CreateReleaseRequest request)
     {
@@ -1317,6 +1336,11 @@ public class ProductAgentController : ControllerBase
                     && x.TCode == usedTCode && x.ApplicationName == claimApplicationName).FirstOrDefaultAsync();
             if (registered != null)
                 return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", $"该 T 号已登记正式版本 {registered.Code}"));
+            var history = await ProductVersionHistoryLinks.CheckAsync(_db, productId, claimApplicationName, usedTCode, initiation?.PlanName ?? request.PlanName);
+            if (history.Blocked)
+                return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", history.Message));
+            if (history.NeedsConfirmation && request.HistoryConfirmationToken != history.ConfirmationToken)
+                return Conflict(ApiResponse<object>.Fail("HISTORY_LINK_CONFIRMATION_REQUIRED", history.Message));
         }
         if (request.TeamMemberIds == null || request.TeamMemberIds.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目组成员不能为空"));
@@ -8003,6 +8027,7 @@ public class ApproveInitiationRequest
 
 public class CreateReleaseRequest
 {
+    public string? HistoryConfirmationToken { get; set; }
     public string? InitiationId { get; set; }
     public string? ManualTCode { get; set; }
     public bool IsTemporaryOptimization { get; set; }

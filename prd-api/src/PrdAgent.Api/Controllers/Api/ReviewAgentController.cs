@@ -2533,6 +2533,11 @@ public class ReviewAgentController : ControllerBase
                 && x.ApplicationName == application.Name && x.TCode == tCode).AnyAsync(ct)
             || await _db.ProductReleases.Find(x => x.AppName == application.Name && x.TCode == tCode).AnyAsync(ct))
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已申领 V 号，请查看现有登记"));
+        var history = await ProductVersionHistoryLinks.CheckAsync(_db, "__legacy__", application.Name, tCode, planName);
+        if (history.Blocked)
+            return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", history.Message));
+        if (history.NeedsConfirmation && request.HistoryConfirmationToken != history.ConfirmationToken)
+            return Conflict(ApiResponse<object>.Fail("HISTORY_LINK_CONFIRMATION_REQUIRED", history.Message + "请到产品管理版本页核对。"));
         var record = new VersionRegistration
         {
             Kind = VersionRegistrationKind.Formal,
@@ -3320,6 +3325,7 @@ public sealed class CreateInternalVersionRegistrationRequest : VersionRegistrati
 
 public sealed class CreateFormalVersionRegistrationRequest : VersionRegistrationFieldsRequest
 {
+    public string? HistoryConfirmationToken { get; set; }
     /// <summary>manual_t 或 internal_registration。</summary>
     public string? SourceMode { get; set; }
     public string? SourceInternalRegistrationId { get; set; }

@@ -85,13 +85,46 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
       if (req.method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(req.path)) return next();
       if (req.method === 'POST' && req.path === '/api/bootstrap-access-requests') return next();
       if (req.method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(req.path)) return next();
-      // 默认模拟人类 cookie 登录;带 x-machine-key 头时模拟「机器密钥通过全局鉴权
-      // 但不是人」—— 用于验证 approve/reject 拒绝机器密钥。
-      if (req.headers['x-machine-key'] !== '1') (req as any)._cdsCookieAuth = true;
+      // 默认模拟原始账号的人类 cookie 登录;带 x-local-user 时模拟持久化本地会话;
+      // 带 x-machine-key 时模拟「机器密钥通过全局鉴权但不是人」。
+      if (req.headers['x-member'] === '1') {
+        (req as any).cdsUser = { username: 'member', isSystemOwner: false, authProvider: 'local' };
+        (req as any).cdsSession = { id: 'member-session' };
+        return next();
+      }
+      if (req.headers['x-machine-key'] !== '1') {
+        if (req.headers['x-local-user'] === '1') {
+          (req as any).cdsUser = {
+            username: 'local-owner', isSystemOwner: true, authProvider: 'local',
+          };
+          (req as any).cdsSession = { id: 'local-session' };
+        } else {
+          (req as any)._cdsCookieAuth = true;
+          (req as any)._cdsBasicHumanAuth = true;
+          (req as any).cdsUser = {
+            username: 'legacy-owner', isSystemOwner: true, authProvider: 'legacy',
+          };
+        }
+      }
       next();
     });
     app.use('/api', createAccessRequestsRouter({ stateService }));
     server = app.listen(0);
+  });
+
+  it('普通成员不能枚举其他项目的授权目标、回执或批准申请', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      agentName: 'test', requestedProject: { name: 'Private', repository: 'https://github.com/acme/private' },
+    });
+    const headers = { 'x-member': '1' };
+    const list = await request(server, 'GET', '/api/access-requests', undefined, headers);
+    expect(list.status).toBe(403);
+    expect(JSON.stringify(list.body)).not.toContain('acme/private');
+    for (const action of ['approve', 'reject']) {
+      const result = await request(server, 'POST', `/api/access-requests/${init.body.requestId}/${action}`, {}, headers);
+      expect(result.status).toBe(403);
+    }
+    expect(stateService.getAccessRequest(init.body.requestId)?.status).toBe('pending');
   });
 
   afterEach(async () => {
@@ -184,11 +217,33 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(match?.access).toEqual({ canCreateProjects: true, projects: [] });
     const entry = stateService.getGlobalAgentKeys().find((key) => key.id === match?.keyId);
     expect(entry?.oneTime).toBe(true);
+    const receiptList = await request(server, 'GET', '/api/access-requests');
+    const receipt = receiptList.body.requests.find((row: any) => row.id === reqId);
+    expect(receipt.status).toBe('approved');
+    expect(receipt.creationReceiptEnabled).toBe(true);
+    expect(receipt.deliveredAt).toEqual(expect.any(String));
+    expect(receipt.createdProject).toBeUndefined();
+    expect(receipt.issuedKeyPlaintext).toBeUndefined();
 
     const deliverAgain = await request(server, 'GET', `/api/bootstrap-access-requests/${reqId}`, undefined, {
       'X-Poll-Token': token,
     });
     expect(deliverAgain.body).toEqual({ status: 'approved', delivered: true });
+  });
+
+  it('申请目标只保留项目名和脱敏仓库，不采信客户端创建回执', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      agentName: 'Codex',
+      requestedProject: { name: '  新人演练  ', repository: 'https://user:secret@github.com/example/demo.git?token=private#private' },
+      createdProject: { id: 'forged', name: '假的成功' },
+    });
+    expect(init.status).toBe(201);
+    const list = await request(server, 'GET', '/api/access-requests');
+    const item = list.body.requests.find((entry: any) => entry.id === init.body.requestId);
+    expect(item.requestedProject).toEqual({ name: '新人演练', repository: 'github.com/example/demo.git' });
+    expect(item.createdProject).toBeUndefined();
+    expect(JSON.stringify(item)).not.toContain('secret');
+    expect(JSON.stringify(item)).not.toContain('private');
   });
 
   it('拒绝路径:发起方凭 token 轮询看到 rejected + 原因', async () => {
@@ -239,6 +294,20 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(poll.body.status).toBe('pending');
     // 人类(默认 cookie)可以批准
     expect((await request(server, 'POST', `/api/access-requests/${reqId}/approve`, {})).status).toBe(200);
+  });
+
+  it('持久化本地会话可以列出、批准和拒绝授权申请', async () => {
+    const local = { 'x-local-user': '1' };
+    const first = await request(server, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'approve' });
+    const second = await request(server, 'POST', '/api/projects/proj-a/access-requests', { purpose: 'reject' });
+
+    expect((await request(server, 'GET', '/api/access-requests', undefined, local)).status).toBe(200);
+    expect((await request(server, 'POST', `/api/access-requests/${first.body.requestId}/approve`, {}, local)).status).toBe(200);
+    expect((await request(server, 'POST', `/api/access-requests/${second.body.requestId}/reject`, { reason: '不批' }, local)).status).toBe(200);
+
+    const decided = stateService.listAccessRequests();
+    expect(decided.find((item) => item.id === first.body.requestId)?.decidedBy).toBe('local-owner');
+    expect(decided.find((item) => item.id === second.body.requestId)?.decidedBy).toBe('local-owner');
   });
 
   // 回归(真实环境抓到):发起存的是 project.id,调用方用 slug 轮询时不能误判 404。

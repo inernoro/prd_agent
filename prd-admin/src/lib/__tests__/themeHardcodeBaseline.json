@@ -2320,5 +2320,11 @@
     "darkHex": 2,
     "darkRgbaBg": 24,
     "lightFg": 16
+  },
+  "/pages/home/film/filmPalette.ts": {
+    "whiteAlpha": 6,
+    "darkHex": 13,
+    "darkRgbaBg": 0,
+    "lightFg": 0
   }
 }

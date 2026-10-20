@@ -4,12 +4,12 @@
 // 它是上游卖的货，展开上游就该看到。同时它还回答了另一个更要紧的问题——
 // **哪些货登记了、哪些没登记**。没登记的模型躺在库里，调用方按公开名请求时找不到它，
 // 而在这之前这件事只能靠在两个页面之间来回对照才能看出来。
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { LogicalModelItem, ModelItem } from '@/lib/types';
 import { Chip } from '@/components/ui';
-import { HINT_TEXT, MONO_META } from '@/lib/typography';
-import { GAP, INSET_BLOCK } from '@/lib/surface';
+import { HINT_TEXT } from '@/lib/typography';
+import { CollectionView } from '@/components/CollectionView';
 
 export type ProviderModelRow = {
   model: ModelItem;
@@ -56,71 +56,24 @@ export function summarizeProviderModels(rows: ProviderModelRow[]): string {
     : `${rows.length} 个模型 · ${unregistered} 个没登记`;
 }
 
-export function ProviderModelsPanel({ rows, onRegister }: {
-  rows: ProviderModelRow[];
-  onRegister?: () => void;
-}) {
-  const unregistered = useMemo(() => rows.filter((x) => x.publicIds.length === 0).length, [rows]);
-
-  if (rows.length === 0) {
-    return (
-      <div style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.normal }}>
-        <span style={HINT_TEXT}>这个上游名下还没有模型。从上游拉一次清单，勾中的一次登记完。</span>
-        {onRegister ? <button type="button" onClick={onRegister} style={linkButton}>批量登记</button> : null}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal }}>
-        <span style={{ fontSize: 'var(--fs-secondary)', fontWeight: 'var(--fw-strong)' as unknown as number }}>
-          这个上游卖的模型
-        </span>
-        {unregistered > 0
-          ? <Chip label={`${unregistered} 个没登记，调用方找不到`} color="var(--warn)" bg="var(--warn-bg)" />
-          : <Chip label="都已登记" color="var(--ok)" bg="var(--ok-bg)" />}
-        <span style={{ flex: 1 }} />
-        {onRegister ? <button type="button" onClick={onRegister} style={linkButton}>批量登记</button> : null}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {rows.slice(0, 12).map(({ model, publicIds }) => (
-          <div key={model.id} style={row}>
-            <span style={{ ...MONO_META, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {model.modelName}
-            </span>
-            <span style={{ width: 260, minWidth: 0 }}>
-              {publicIds.length === 0
-                ? <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>还没登记，调用方找不到它</span>
-                : <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
-                    登记为 {publicIds.join('、')}
-                  </span>}
-            </span>
-          </div>
-        ))}
-        {rows.length > 12
-          ? <div style={{ ...HINT_TEXT, paddingTop: GAP.tight }}>
-              还有 {rows.length - 12} 个，<Link className="lg-text-link" to="/models">去模型页看全部</Link>
-            </div>
-          : null}
-      </div>
-    </div>
-  );
+export function ProviderModelsPanel({ rows, onRegister }: { rows: ProviderModelRow[]; onRegister?: () => void }) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const returnRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const selected = rows.find((row) => row.model.id === selectedId);
+  useEffect(() => {
+    if (selected) returnRef.current?.focus({ preventScroll: true });
+    else if (triggerRef.current?.isConnected) triggerRef.current.focus({ preventScroll: true });
+  }, [selected?.model.id]);
+  const unregistered = useMemo(() => rows.filter((row) => row.publicIds.length === 0).length, [rows]);
+  return <>
+    <CollectionView afterToolbar={<div className="lg-collection-subhead"><Chip label={`${unregistered} 个未登记`} color="var(--warn)" bg="var(--warn-bg)" /><span className="lg-collection-spacer" />{onRegister ? <button type="button" onClick={onRegister} style={linkButton}>从上游批量登记</button> : null}</div>} className={selected ? 'lg-collection-hidden' : ''} items={rows} placeholder="搜索上游模型或公开标识" searchText={({ model, publicIds }) => `${model.name} ${model.modelName} ${publicIds.join(' ')}`} filters={[{ value: 'unregistered', label: '未登记', matches: (row) => row.publicIds.length === 0 }, { value: 'registered', label: '已登记', matches: (row) => row.publicIds.length > 0 }]}>
+      {(pageRows) => <><table className="lg-collection-owned-table"><colgroup><col style={{width:'62%'}}/><col style={{width:'20%'}}/><col style={{width:'18%'}}/></colgroup><thead><tr><th>模型</th><th>登记</th><th>操作</th></tr></thead><tbody>{pageRows.map(({ model, publicIds }) => <tr key={model.id}>
+        <td title={`${model.modelName || model.name} · ${publicIds.length ? `已登记到 ${publicIds.length} 个公开模型` : '还没登记，调用方找不到它'}`}><Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}><strong>{model.modelName || model.name}</strong></Link></td>
+        <td><Chip label={publicIds.length ? '已登记' : '未登记'} color={publicIds.length ? 'var(--ok)' : 'var(--warn)'} bg={publicIds.length ? 'var(--ok-bg)' : 'var(--warn-bg)'} /></td><td>{publicIds.length ? <button type="button" onClick={(event) => {triggerRef.current=event.currentTarget;setSelectedId(model.id);}} style={linkButton}>登记详情</button> : <Link to={`/models/view?modelId=${encodeURIComponent(model.id)}&model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(model.platformId || '')}`}>详情</Link>}</td>
+      </tr>)}</tbody></table></>}
+    </CollectionView>
+    {selected ? <><div className="lg-collection-toolbar"><button ref={returnRef} type="button" style={linkButton} onClick={() => setSelectedId(null)}>返回名下模型</button><span style={HINT_TEXT}>{selected.publicIds.length} 个公开模型</span></div><CollectionView key={selected.model.id} items={selected.publicIds} searchText={(id) => id} placeholder="搜索登记的公开模型">{(ids) => <>{ids.map((id) => <div className="lg-collection-code" key={id}><Link to={`/models/view?model=${encodeURIComponent(id)}`}>{id}</Link></div>)}</>}</CollectionView></> : null}
+  </>;
 }
-
-const row: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: GAP.section,
-  padding: '5px 0',
-  borderTop: '1px solid var(--border-subtle)',
-};
-
-const linkButton: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  padding: 0,
-  color: 'var(--accent)',
-  fontSize: 'var(--fs-secondary)',
-  cursor: 'pointer',
-};
+const linkButton: React.CSSProperties = { background: 'none', border: 'none', padding: 0, color: 'var(--accent)', fontSize: 'var(--fs-secondary)', cursor: 'pointer' };

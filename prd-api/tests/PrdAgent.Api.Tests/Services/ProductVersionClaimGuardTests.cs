@@ -130,6 +130,27 @@ public class ProductVersionClaimGuardTests
     };
 
     [Fact]
+    public async Task HistoricalVRawTMappingBlocksNewVDespiteDifferentPlanName()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", PlanName = "当前T方案", Status = "approved" });
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease {
+            ProductId = "product", VCode = "V4.5.6", PlanName = "名称不同的历史方案", LegacyData = new() { ["内部版本号"] = "T1.2.3" },
+        });
+        var result = await fixture.Controller().CreateRelease("product", new CreateReleaseRequest {
+            ManualTCode = "T1.2.3", PlanName = "当前T方案", HistoryConfirmationToken = "cannot-bypass-explicit-relation",
+        });
+        // 手工 T 已存在于当前 T 表时，本来就要求选对应立项；改用真实立项路径验证历史 V 对照。
+        Assert.IsType<BadRequestObjectResult>(result);
+        var initiation = await fixture.Db.ProductInitiations.Find(x => x.TCode == "T1.2.3").SingleAsync();
+        result = await fixture.Controller().CreateRelease("product", new CreateReleaseRequest { InitiationId = initiation.Id, HistoryConfirmationToken = "cannot-bypass-explicit-relation" });
+        var error = Assert.IsType<ApiResponse<object>>(Assert.IsType<BadRequestObjectResult>(result).Value).Error;
+        Assert.Equal("DUPLICATE_RELEASE", error!.Code);
+        Assert.Contains("V4.5.6", error.Message);
+        Assert.Equal(1, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
     public async Task ConcurrentLegacyVAndProductManualTShareOneClaim()
     {
         await using var fixture = await Fixture.CreateAsync();

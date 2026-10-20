@@ -183,6 +183,32 @@ public class ArenaLeaderboardFetcherTests
     /// 行序不是名次的降级近似，它是另一个量。Codex 在 PR #1538 第二轮指出。
     /// </summary>
     [Fact]
+    public void Parse_厂商格换成外层flex加内层truncate的新标记_仍能读出厂商与授权()
+    {
+        // 2026-09-30 起 agent 榜的厂商格长这样（线上抓取原样）：
+        //   <span class="text-text-secondary flex min-w-0 items-center gap-1 text-xs"><span class="truncate">Anthropic · Proprietary</span></span>
+        // 旧判据认完整类名「text-text-secondary truncate text-xs」，在新标记上 0 命中，
+        // 整榜因厂商覆盖率不足被拒收，快照停更 60 多小时。
+        var redesigned = RealFixture
+            .Replace("<span class=\"text-text-secondary truncate text-xs\">Anthropic · Proprietary</span>",
+                     "<span class=\"text-text-secondary flex min-w-0 items-center gap-1 text-xs\"><span class=\"truncate\">Anthropic · Proprietary</span></span>",
+                     StringComparison.Ordinal)
+            .Replace("<span class=\"text-text-secondary truncate text-xs\">Moonshot · Kimi K3 license · SiliconFlow</span>",
+                     "<span class=\"text-text-secondary flex min-w-0 items-center gap-1 text-xs\"><span class=\"truncate\">Moonshot · Kimi K3 license · SiliconFlow</span></span>",
+                     StringComparison.Ordinal);
+        Assert.DoesNotContain("text-text-secondary truncate text-xs", redesigned);   // 两处替换都真的命中了
+
+        var r = ArenaLeaderboardFetcher.Parse(redesigned);
+
+        Assert.Equal(2, r.Entries.Count);
+        Assert.Equal("Anthropic", r.Entries[0].Organization);
+        Assert.Equal("Proprietary", r.Entries[0].License);
+        Assert.Equal("Moonshot", r.Entries[1].Organization);
+        // 模型名那个 span 也带 truncate，但后面跟着 title 属性，不能被误当成厂商格
+        Assert.Equal("Claude Fable 5.1 (Max)", r.Entries[0].Name);
+    }
+
+    [Fact]
     public void Parse_名次读不出来时整行拒绝_不退回行序()
     {
         // 把两行的名次都改成读不出来的写法（>1< → >第1<），区间那两个数字原样保留。
@@ -563,10 +589,12 @@ public class ArenaLeaderboardFetcherTests
     [Fact]
     public void EnsureUsable_厂商几乎全空时拒绝整份()
     {
-        // 只改类名，表格数据一个字不动——正是对方重排类名时会发生的事
+        // 只改类名，表格数据一个字不动——正是对方重排类名时会发生的事。
+        // 判据现在只认 truncate 这一个词，所以要把它改掉才能让厂商格失配
+        // （原先改成 text-xs-v2 在新判据下照样命中，这条用例就不再测它声称的东西了）。
         var renamed = RealFixture.Replace(
             "text-text-secondary truncate text-xs",
-            "text-text-secondary truncate text-xs-v2", StringComparison.Ordinal);
+            "text-text-secondary ellipsis text-xs", StringComparison.Ordinal);
         Assert.NotEqual(RealFixture, renamed);
 
         var parsed = ArenaLeaderboardFetcher.Parse(renamed);

@@ -60,7 +60,7 @@ describe('CDS Agent 接入口令', () => {
     // CDS 宿主的编译算力是全部项目共享的：Agent 用 dev / static 源码模式部署，等于在宿主上
     // 跑 dotnet build / pnpm build 试错，一条分支就能把别人的部署排到队尾。所以口令必须
     // 把极速版写成硬约束，判据是 prebuiltModes（不是模式名），切换只写分支覆盖，
-    // 生效看 deployRuntime.prebuilt；push 之后自己循环验证，不把测试甩回给用户。
+    // 生效看 deployRuntime.prebuiltCoverage 为 all（prebuilt 只表示任一服务）；push 之后自己循环验证，不把测试甩回给用户。
     const prompt = buildCdsAgentPrompt({
       cdsOrigin: 'https://cds.example',
       target: { kind: 'existing', projectId: 'proj-a' },
@@ -73,7 +73,7 @@ describe('CDS Agent 接入口令', () => {
     expect(prompt).toContain('模式名不是判据，deployModes 里 prebuilt 为 true 才是');
     expect(prompt).toContain('cdscli branch set-mode <branchId> <profileId> <prebuiltModes 中的模式名>');
     expect(prompt).toContain('不要用 profile deploy-mode 改项目级默认');
-    expect(prompt).toContain('核对 deployRuntime.prebuilt 为 true');
+    expect(prompt).toContain('核对 deployRuntime.prebuiltCoverage 为 all 且 pendingPublish 为 false');
     expect(prompt).toContain('不得切回源码编译模式抢时间');
     expect(prompt).toContain('不得自行切到源码编译模式顶替，也不得手写一个不存在的模式名');
     expect(prompt).toContain('409 agent_prebuilt_only 拒绝');
@@ -298,7 +298,11 @@ describe('CDS Agent 接入口令', () => {
     //    + cds-system-sealed-storage（密封存储初始化，只允许全局人工管理员同源发起，2026-09-06）
     //    + infra-credential-rotation（基础设施凭据轮换，密封存储就绪 + 作业排空后才可执行，2026-09-06）
     //    + alarm-channels（通知通道：哪些出问题通知谁，2026-09-15）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(55);
+    //    + user-project-access（人类账号项目授权，仅系统所有者，2026-10-03）
+    //    + cds-system-diagnostics（主线程诊断与按需 CPU 采样，只读观测，2026-10-08）
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(57);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS.find(capability => capability.id === 'user-project-access'))
+      .toMatchObject({ access: 'human-only', agentUse: 'guided', risk: 'write' });
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS
@@ -411,7 +415,6 @@ describe('CDS Agent 接入口令', () => {
   it('列出三个 Agent 的项目级技能目录', () => {
     expect(PROJECT_SKILL_PATHS).toEqual([
       { agent: 'Codex / 通用 Agent Skills', path: '.agents/skills' },
-      { agent: 'Cursor', path: '.cursor/skills' },
       { agent: 'Claude Code', path: '.claude/skills' },
     ]);
   });

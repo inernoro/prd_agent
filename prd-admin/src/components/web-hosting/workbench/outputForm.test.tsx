@@ -9,6 +9,7 @@ import {
   OUTPUT_FORM_ORDER,
   OUTPUT_FORM_REGISTRY,
   buildHtmlPptHandoff,
+  missingRuntimeBlocker,
   openHtmlPptHandoff,
   sendRoute,
   type HtmlPptHandoff,
@@ -175,5 +176,12 @@ describe('发送分派（sendRoute）', () => {
     expect(sendRoute({ ...base, outputForm: 'web-page', hasRuntime: false })).toBe('none');
     expect(sendRoute({ ...base, outputForm: 'web-page', blocked: true })).toBe('none');
     expect(sendRoute({ ...base, outputForm: 'html-ppt', generating: true })).toBe('none');
+  });
+});
+
+describe('没有执行器时的拦截文案（missingRuntimeBlocker）', () => {
+  it('能力接口还没回来时报「正在检测」，回来仍为空才报缺失', () => {
+    expect(missingRuntimeBlocker(false)).toBe('正在检测设计服务…');
+    expect(missingRuntimeBlocker(true)).toContain('没有可用的设计执行器');
   });
 });

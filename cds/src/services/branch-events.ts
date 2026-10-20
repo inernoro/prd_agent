@@ -73,6 +73,8 @@ export interface BranchUpdatedPayload {
     'ciImageStatus' | 'ciTargetSha' | 'ciWorkflowConclusion' | 'ciWorkflowRunUrl' | 'ciWaitingSince' | 'ciImageError' |
     // 2026-07-09 构建排队可视化：分支卡「排队中 · 前面还有 N 个」chip + 耗时对比剔除排队
     'buildQueue' | 'lastDeployQueueWaitMs'>>;
+  /** 部署跑完、容器已起来，但分支状态落盘失败：前端据此不播「部署成功」 */
+  stateFlushFailed?: boolean;
   ts: string;
 }
 

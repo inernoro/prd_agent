@@ -136,6 +136,41 @@ describe('authentication', () => {
 });
 
 describe('POST /v1/tasks', () => {
+  it('accepts only the configured direct LLMGW authority and binds its identity to the task', async () => {
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const direct = taskRequest(map, pkg, {
+      model: {
+        baseUrl: 'http://gateway/gw/v1',
+        protocol: 'openai',
+        apiKey: 'run-scoped-grant',
+        model: 'default-chat-curated',
+        sourceSystem: 'map',
+        appCallerCode: 'prd-agent-web.web-hosting.generate-html::chat',
+        userId: 'user-1',
+        runId: pkg.runId,
+      },
+    });
+
+    const normalized = normalizeTaskRequest(direct, 'http://gateway/gw/v1');
+
+    expect(normalized.model).toMatchObject({
+      baseUrl: 'http://gateway/gw/v1',
+      sourceSystem: 'map',
+      appCallerCode: 'prd-agent-web.web-hosting.generate-html::chat',
+      userId: 'user-1',
+      runId: pkg.runId,
+    });
+    expect(() => normalizeTaskRequest({
+      ...direct,
+      model: { ...(direct.model as object), baseUrl: 'https://other-internal.example/gw/v1' },
+    }, 'http://gateway/gw/v1')).toThrow(/configured LLMGW endpoint/);
+    expect(() => normalizeTaskRequest({
+      ...direct,
+      model: { ...(direct.model as object), runId: 'another-run' },
+    }, 'http://gateway/gw/v1')).toThrow(/model.runId must equal taskId/);
+  });
+
   it('runs a task end to end, streams status / text_delta / done, commits to MAP and empties every task directory', async () => {
     harness = await startHarness();
     const pkg = buildPackage([{ path: 'knowledge/source.md', content: 'Product overview for the launch.', mediaType: 'text/markdown' }]);

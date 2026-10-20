@@ -21,6 +21,7 @@
  * JSON 转义。一律当纯文本塞，第一条带引号的错误信息就会把 body 变成非法 JSON，
  * 而那时通道会以「400」的形式失败——排查的人会以为是对方接口的问题。
  */
+import { PhoneDispatchQueue, type PhoneItem } from './phone-dispatch-queue.js';
 import { withAlarmDeliveryHistory } from './alarm-delivery-history.js';
 import type { ServerEventLogSink } from './server-event-log-store.js';
 import { MapNotifier, buildNotificationPayload } from './map-notifier.js';
@@ -32,6 +33,23 @@ export interface AlarmDeliveryResult {
   status?: number;
   reason?: string;
 }
+
+let phoneQueue: PhoneDispatchQueue | undefined;
+export function configurePhoneDispatch(file: string, history: ServerEventLogSink | null | undefined,
+  delivered: (item: PhoneItem, result: AlarmDeliveryResult) => Promise<void>) {
+  phoneQueue = new PhoneDispatchQueue(file, async (items, message) => {
+    const first = items[0];
+    return withAlarmDeliveryHistory(history, {
+      channelId: first.channel.id, channelName: first.channel.name, channelKind: 'bark',
+      kind: first.event.drill ? 'drill' : 'alert', eventKind: first.event.kind,
+      projectId: first.event.projectId, targetId: first.event.targetId, targetName: first.event.targetName,
+      detectedAt: first.event.detectedAt, title: message.title, body: message.body,
+    }, () => httpSend(buildBarkUrl(first.channel, message), { method: 'GET' }, DEFAULT_TIMEOUT_MS));
+  }, delivered);
+  const timer = setInterval(() => { void phoneQueue?.flush().catch(() => console.warn('[alarm] 手机摘要队列处理失败，待投递事件已保留')); }, 5000);
+  timer.unref();
+}
+export function phoneDispatchConfigured() { return Boolean(phoneQueue); }
 
 const DEFAULT_BARK_SERVER = 'https://api.day.app';
 const DEFAULT_TIMEOUT_MS = 8000;
@@ -66,11 +84,12 @@ export function buildBarkUrl(channel: AlarmChannelConfig, message: AlarmMessage)
     `${base}/${encodeURIComponent(bark.key.trim())}`
     + `/${encodeURIComponent(message.title)}/${encodeURIComponent(message.body)}`,
   );
-  url.searchParams.set('group', bark.group?.trim() || 'CDS 监控');
+  url.searchParams.set('group', message.group || bark.group?.trim() || 'CDS 监控');
   if (bark.sound?.trim()) url.searchParams.set('sound', bark.sound.trim());
-  // 通道没钉死级别时用消息自己的级别：业务挂了该是 critical，恢复该是 passive。
+  // 通道未指定时采用事件级别；未确认业务影响的检查异常不升级为紧急打断。
   const level = bark.level?.trim() || message.level;
   if (BARK_LEVELS.includes(level)) url.searchParams.set('level', level);
+  if (message.icon) url.searchParams.set('icon', message.icon);
   if (message.url) url.searchParams.set('url', message.url);
   if (bark.call) url.searchParams.set('call', '1');
   return url.toString();
@@ -102,15 +121,37 @@ async function httpSend(
  *
  * 返回值永远是结果，不抛——调用方是探测循环，它不该因为一次通知失败而断掉。
  */
+export function independentIncidentUrl(channel: AlarmChannelConfig, event: AlarmEvent, detailUrl?: string): string | undefined {
+  if (!channel.incidentPageUrl) return undefined;
+  try {
+    const url = new URL(channel.incidentPageUrl);
+    if (url.protocol !== 'https:' || url.username || url.password) return undefined;
+    if (event.targetId) url.searchParams.set('target', event.targetId);
+    url.searchParams.set('detectedAt', event.detectedAt);
+    // 通知上下文只放片段，不发送给静态托管方，也不写进公开快照。
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    fragment.set('notice', JSON.stringify({ detailUrl, targetId: event.targetId, name: event.targetName.slice(0, 120),
+      environment: event.environmentLabel, drill: event.drill, finding: event.finding, assessment: event.assessment, count: event.affectedChecks,
+      detectedAt: event.detectedAt, recovered: event.kind.endsWith('-recovered') }));
+    url.hash = fragment.toString();
+    return url.toString();
+  } catch { return undefined; }
+}
+
 export async function sendAlarm(
   channel: AlarmChannelConfig,
   event: AlarmEvent,
   opts: { boardUrl?: string; timeoutMs?: number; history?: ServerEventLogSink | null; deliveryKind?: 'alert' | 'drill' } = {},
 ): Promise<AlarmDeliveryResult> {
-  const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
+  const boardUrl = independentIncidentUrl(channel, event, opts.boardUrl) || opts.boardUrl;
+  const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
+  if (channel.kind === 'bark' && phoneQueue) return phoneQueue.enqueue({ channel, event, message, boardUrl: opts.boardUrl });
   const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
+    identity: event.identity,
+    urgency: event.drill ? 'normal' : event.urgency,
+    finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,
     type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
-    targetId: event.targetName, targetName: event.targetName, projectId: event.projectId,
+    targetId: event.targetId || event.targetName, targetName: event.targetName, projectId: event.projectId,
     message: event.message, consecutiveFailures: event.consecutiveFailures, detectedAt: event.detectedAt,
   }) : null;
   return withAlarmDeliveryHistory(opts.history, {
@@ -124,7 +165,8 @@ export async function sendAlarm(
 async function sendAlarmTransport(
   channel: AlarmChannelConfig, event: AlarmEvent, opts: { boardUrl?: string; timeoutMs?: number },
 ): Promise<AlarmDeliveryResult> {
-  const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
+  const boardUrl = independentIncidentUrl(channel, event, opts.boardUrl) || opts.boardUrl;
+  const message = renderAlarmMessage(event, boardUrl ? { boardUrl } : {});
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   try {
     if (channel.kind === 'bark') {
@@ -167,12 +209,16 @@ async function sendAlarmTransport(
       timeoutMs,
     });
     return await notifier.send({
+      identity: event.identity,
+      urgency: event.drill ? 'normal' : event.urgency,
+      finding: event.finding, assessment: event.assessment, affectedChecks: event.affectedChecks, environmentLabel: event.environmentLabel,
       type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
-      targetId: event.targetName,
+      targetId: event.targetId || event.targetName,
       targetName: event.targetName,
       projectId: event.projectId,
       ...(event.probeUrl ? { probeUrl: event.probeUrl } : {}),
       message: event.message,
+      boardUrl,
       consecutiveFailures: event.consecutiveFailures,
       detectedAt: event.detectedAt,
     });
@@ -187,7 +233,8 @@ export function drillEvent(now: number): AlarmEvent {
   return {
     kind: 'business-down',
     projectId: 'cds',
-    targetName: '演练：一条假的业务监控',
+    targetName: '通知演练',
+    drill: true, assessment: 'observation-unavailable', affectedChecks: 5,
     message: '这是一次演练，没有任何业务真的出问题',
     detectedAt: new Date(now).toISOString(),
     consecutiveFailures: 1,

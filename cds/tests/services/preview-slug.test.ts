@@ -137,28 +137,26 @@ describe('preview project identity helpers', () => {
     })).toBe('workspace');
   });
 
-  it('uses aliasSlug before the immutable project slug for new preview URLs', () => {
+  it('uses the single persisted project slug for new preview URLs', () => {
     expect(previewProjectSlug({
       id: 'default',
-      slug: 'workspace',
-      aliasSlug: 'prd-agent',
+      slug: 'prd-agent',
       gitRepoUrl: 'git@github.com:inernoro/prd_agent.git',
     })).toBe('prd-agent');
   });
 
-  it('returns identity source diagnostics for aliasSlug', () => {
+  it('returns identity source diagnostics for the project slug', () => {
     expect(resolvePreviewProjectIdentity({
       id: 'default',
-      slug: 'workspace',
-      aliasSlug: 'prd-agent',
+      slug: 'prd-agent',
     })).toEqual({
       slug: 'prd-agent',
-      source: 'aliasSlug',
+      source: 'slug',
       degraded: false,
     });
   });
 
-  it('keeps generic legacy project slug unless collision-checked alias exists', () => {
+  it('keeps generic legacy project slug without implicitly changing it from the repository', () => {
     expect(resolvePreviewProjectIdentity({
       id: 'default',
       slug: 'workspace',

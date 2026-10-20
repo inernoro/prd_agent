@@ -6,11 +6,13 @@
  * 「2 个服务挂在壳下面」，图里一个都没有（2026-09-16 用户：「第一眼就很一般」）。
  *
  * 缩略态换一种读法：从左到右一行读完，入口 → 壳 → 前缀成员 → 共享基础设施 / 外部引用。
+ * 只有一个壳的子域另起一条泳道排成网格（2026-09-30：8 个子域壳曾和主域名壳挤在同一列，
+ * 流向条被拉到 600px 高，入口悬在中间、左侧整片空白）。
  * 前缀写在节点里，线上不挂标签；灰实线 = 域名与前缀分流，紫实线 = 环境变量引用 / 调用，
  * 蓝 = 跨项目引用，红 = 断裂；虚线只留给「按名推断」。出问题的节点自己描边并挂「N 问题」。
  *
  * `layoutFlow` 是纯函数（守卫测试直接断言它列全了每个服务），渲染层只负责摆放与连线。
- * 窄于 FLOW_NARROW_PX 时成员列与尾列各折成一个计数 chip，不让流向条再被裁掉一半。
+ * 容器放不下横排时改竖排（成员挂在壳下的竖线上），任何宽度都不裁、不折叠成员。
  */
 import { useEffect, useRef, useState } from 'react';
 import type { LintFindingView, RelationPayload, RoleView } from './RelationGraph';
@@ -29,8 +31,10 @@ export interface FlowChip {
 export interface FlowLink { from: number; to: number; kind: 'prefix' | 'call' | 'ref' | 'broken' }
 export interface FlowModel {
   entry: FlowChip;
-  /** 壳列：主域名壳在前，子域壳随后；主域名没有壳时是一枚灰 chip */
+  /** 壳列：主域名壳在前，带前缀成员的子域壳随后；主域名没有壳时是一枚灰 chip */
   shells: FlowChip[];
+  /** 子域泳道：只有一个壳、下面没有成员的子域，一格一站。同一服务同时是主域名成员时两处都画 */
+  subsites: FlowChip[];
   /** 成员列：主域名前缀成员在前，其余（内网 / 游离）服务随后 */
   members: FlowChip[];
   /** 壳列 → 成员列：只有前缀成员有线 */
@@ -39,15 +43,14 @@ export interface FlowModel {
   tail: FlowChip[];
   /** 成员列 → 尾列 */
   tailLinks: FlowLink[];
-  facts: { sites: number; services: number; prefixes: number; infra: number; refs: number; errors: number; warnings: number };
+  facts: { sites: number; services: number; prefixes: number; subdomains: number; infra: number; refs: number; errors: number; warnings: number };
 }
 
 const ROLE_KIND: Record<RoleView, FlowKind> = { web: 'web', api: 'api', worker: 'job' };
 const KIND_LABEL: Record<FlowKind, string> = { gw: 'GW', web: 'WEB', api: 'API', job: 'JOB', db: 'DB', r: 'R', ext: 'EXT' };
 // 颜色只许走主题 token（cds-theme-tokens）：redis 不再用 --bad——红色只在「坏了」时出现，
 // 否则节点真出了问题，红描边和红徽标会打架（2026-09-16 微调 1）。
-const KIND_TOKEN: Record<FlowKind, string> = { gw: '--graph-call', web: '--role-web', api: '--role-api', job: '--role-worker', db: '--series-2', r: '--series-5', ext: '--graph-external' };
-export const FLOW_NARROW_PX = 880;
+const KIND_TOKEN: Record<FlowKind, string> = { gw: '--badge-gw', web: '--badge-web', api: '--badge-api', job: '--badge-job', db: '--badge-db', r: '--badge-r', ext: '--badge-ext' };
 
 const svc = (id: string): string => id.replace(/^service:/, '');
 const isRedis = (n: { id: string; dockerImage?: string }): boolean => /redis/i.test(n.dockerImage || n.id);
@@ -67,7 +70,10 @@ export function layoutFlow(payload: RelationPayload, entryHost?: string): FlowMo
   };
 
   const main = graph.sites.find((s) => s.kind === 'main');
-  const subs = graph.sites.filter((s) => s.kind === 'subdomain');
+  const allSubs = graph.sites.filter((s) => s.kind === 'subdomain');
+  const isSimpleSub = (s: (typeof allSubs)[number]): boolean => Boolean(s.shellId && nodeById.has(s.shellId)) && !s.members.some((m) => nodeById.has(m.id));
+  const subs = allSubs.filter((s) => !isSimpleSub(s));
+  const simpleSubs = allSubs.filter(isSimpleSub);
   const placed = new Set<string>();
 
   const shells: FlowChip[] = [];
@@ -101,9 +107,11 @@ export function layoutFlow(payload: RelationPayload, entryHost?: string): FlowMo
       placed.add(m.id);
     }
   }
+  const subsites: FlowChip[] = simpleSubs.map((s) => chipOf(s.shellId!, `子域 ${s.subdomain ?? ''}`));
+  const inSubsite = new Set(simpleSubs.map((s) => s.shellId!));
   for (const n of nodes) {
     const id = n.rawId ?? svc(n.id);
-    if (placed.has(id)) continue;
+    if (placed.has(id) || inSubsite.has(id)) continue;
     members.push(chipOf(id, n.subdomain ? `子域 ${n.subdomain}` : '内网 · 不对外'));
     placed.add(id);
   }
@@ -141,19 +149,23 @@ export function layoutFlow(payload: RelationPayload, entryHost?: string): FlowMo
   const prefixes = graph.sites.reduce((s, site) => s + site.members.reduce((m, x) => m + x.prefixes.length, 0), 0);
   return {
     entry: { id: 'entry', kind: 'gw', name: entryHost || `分支 ${payload.branch}`, sub: entryHost ? '入口 · 按域名与前缀分流' : '入口 · 按域名与前缀分流（域名未就绪）' },
-    shells, members, shellLinks, tail, tailLinks,
-    facts: { sites: graph.sites.length, services: nodes.length, prefixes, infra: graph.nodes.filter((n) => n.kind === 'infra').length, refs, errors: lint.summary.errors, warnings: lint.summary.warnings },
+    shells, subsites, members, shellLinks, tail, tailLinks,
+    facts: { sites: graph.sites.length, services: nodes.length, prefixes, subdomains: allSubs.length, infra: graph.nodes.filter((n) => n.kind === 'infra').length, refs, errors: lint.summary.errors, warnings: lint.summary.warnings },
   };
 }
 
 /** 事实行：结论之下的一行数字，让人不点开就能核对这张图值不值得看。 */
 export function FlowFacts({ facts }: { facts: FlowModel['facts'] }): JSX.Element {
-  const tone = facts.errors ? 'text-bad' : facts.warnings ? 'text-warn' : 'text-ok';
-  const item = (n: number, label: string) => <span className="whitespace-nowrap"><b className="font-semibold text-foreground-muted">{n}</b> {label}</span>;
+  const tone = facts.errors ? 'text-bad' : facts.warnings ? 'text-[hsl(var(--warn-ink))]' : 'text-[hsl(var(--ok-ink))]';
+  // 为零的可选项不占位（没有子域 / 基础设施 / 跨项目引用就不写「0 个」），读起来只剩有信息的数字
+  const items: Array<[number, string]> = [[facts.sites, '站点'], [facts.services, '服务'], [facts.prefixes, '前缀']];
+  if (facts.subdomains) items.push([facts.subdomains, '子域']);
+  if (facts.infra) items.push([facts.infra, '共享基础设施']);
+  if (facts.refs) items.push([facts.refs, '跨项目引用']);
   const dot = <span aria-hidden className="h-[3px] w-[3px] rounded-full bg-[hsl(var(--hairline-strong))]" />;
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted-foreground" data-testid="relation-facts">
-      {item(facts.sites, '站点')}{dot}{item(facts.services, '服务')}{dot}{item(facts.prefixes, '前缀')}{dot}{item(facts.infra, '共享基础设施')}{dot}{item(facts.refs, '跨项目引用')}{dot}
+    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[0.8125rem] text-muted-foreground" data-testid="relation-facts">
+      {items.map(([n, label]) => <span key={label} className="inline-flex items-center gap-2.5 whitespace-nowrap"><span><b className="font-semibold text-foreground-muted">{n}</b> {label}</span>{dot}</span>)}
       <span className="whitespace-nowrap">体检 <b className={`font-semibold ${tone}`}>{facts.errors} 错 {facts.warnings} 警</b></span>
     </div>
   );
@@ -200,13 +212,13 @@ function Chip({ chip, index }: { chip: FlowChip; index: number }): JSX.Element {
       data-problem={chip.problem}
       title={chip.problemCount ? `${chip.name} · ${chip.problemCount} 个问题` : chip.name}
     >
-      <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] text-[0.66rem] font-extrabold tracking-wide text-primary-foreground" style={{ background: `hsl(var(${KIND_TOKEN[chip.kind]}))` }}>{KIND_LABEL[chip.kind]}</span>
+      <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] text-[0.66rem] font-extrabold tracking-wide" style={{ background: `hsl(var(${KIND_TOKEN[chip.kind]}))`, color: 'hsl(var(--badge-ink))' }}>{KIND_LABEL[chip.kind]}</span>
       <div className="flex min-w-0 flex-1 flex-col justify-center">
         <div className="truncate text-[0.92rem] font-bold leading-tight">{chip.name}</div>
         <div className="mt-0.5 truncate text-[0.77rem] leading-tight text-muted-foreground">{chip.sub}</div>
       </div>
       {chip.problemCount ? (
-        <span className={`inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-1.5 text-[0.66rem] font-semibold ${chip.problem === 'bad' ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`}>{chip.problemCount} 问题</span>
+        <span className={`inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-1.5 text-[0.66rem] font-semibold ${chip.problem === 'bad' ? 'border-destructive/60 text-bad' : 'border-warn/60 bg-warn-soft text-[hsl(var(--warn-ink))]'}`}>{chip.problemCount} 问题</span>
       ) : null}
     </div>
   );
@@ -226,63 +238,182 @@ function Column({ chips, width, offset = 0 }: { chips: FlowChip[]; width: number
 }
 
 const W = { entry: 280, shell: 236, member: 236, infra: 176, ext: 248, conn: 56 } as const;
-/** 窄容器（< FLOW_NARROW_PX）下的一档：列折成计数 chip 之外，每枚 chip 与连接器也收窄 */
-const W_NARROW = { entry: 176, shell: 200, member: 200, infra: 164, ext: 200, conn: 42 } as const;
+/** 泳道左右内边距 + 边框（px-4 在 85% 根字号下约 27px，再加 2px 边框，留余量取 32） */
+const LANE_CHROME = 32;
+/** 横排时整行至少要多宽（各列基准宽 + 连接器）。容器比这窄就改竖排，不再横向滚动或裁掉一截 */
+export function flowRowMin(model: FlowModel): number {
+  const tailW = model.tail.some((c) => c.kind === 'ext') ? W.ext : W.infra;
+  return W.entry + W.conn + W.shell + (model.members.length > 0 ? W.conn + W.member : 0) + (model.tail.length > 0 ? W.conn + tailW : 0);
+}
 
-/** 流向条本体。SSR / 首帧按宽版渲染，量到容器宽度后再决定要不要折叠。 */
+/**
+ * 流向条本体。两种排法，按容器实际宽度选：
+ * - 横排：入口 → 壳 → 前缀成员 → 共享 / 外部，一行读完；
+ * - 竖排：容器放不下横排时，入口、壳在上，成员挂在壳下的竖线上，共享 / 外部排在最后。
+ * 此前还有一档「窄横排」：把成员折成一枚「N 个服务」，名字全看不到，而且在 1440 宽的屏幕上照样被裁掉一截
+ * （2026-10-03 relation-visual-audit C1：内容 1123 / 可见 884）。竖排把每个成员都列出来，任何宽度都不裁。
+ * SSR / 首帧按横排渲染，量到容器宽度后再决定。
+ */
 export function RelationFlowStrip({ model, className }: { model: FlowModel; className?: string }): JSX.Element {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [narrow, setNarrow] = useState(false);
+  const rowMin = flowRowMin(model);
+  const [stacked, setStacked] = useState(false);
   useEffect(() => {
     const el = hostRef.current;
     if (!el || typeof ResizeObserver === 'undefined') return undefined;
-    const ro = new ResizeObserver(() => setNarrow(el.clientWidth > 0 && el.clientWidth < FLOW_NARROW_PX));
+    const measure = (): void => setStacked(el.clientWidth > 0 && el.clientWidth < rowMin + LANE_CHROME);
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    setNarrow(el.clientWidth > 0 && el.clientWidth < FLOW_NARROW_PX);
+    measure();
     return () => ro.disconnect();
-  }, []);
+  }, [rowMin]);
 
-  const w = narrow ? W_NARROW : W;
-  const tailW = model.tail.some((c) => c.kind === 'ext') ? w.ext : w.infra;
-  const members = narrow && model.members.length > 1
-    ? [{ id: 'members', kind: 'api' as FlowKind, name: `${model.members.length} 个服务`, sub: '前缀成员与内网服务 · 点开看全图', problem: model.members.find((c) => c.problem === 'bad')?.problem ?? model.members.find((c) => c.problem === 'warn')?.problem, problemCount: model.members.reduce((s, c) => s + (c.problemCount ?? 0), 0) || undefined }]
-    : model.members;
-  const tail = narrow && model.tail.length > 1
-    ? [{ id: 'tail', kind: (model.tail.every((c) => c.kind === 'ext') ? 'ext' : 'db') as FlowKind, name: `${model.tail.length} 个共享 / 外部`, sub: '基础设施与跨项目引用', problem: model.tail.find((c) => c.problem)?.problem }]
-    : model.tail;
-  const shellLinks = narrow && model.members.length > 1 ? (model.shellLinks.length ? [{ from: 0, to: 0, kind: 'prefix' as const }] : []) : model.shellLinks;
-  const tailLinks = narrow && (model.members.length > 1 || model.tail.length > 1)
-    ? (model.tailLinks.length ? [{ from: 0, to: 0, kind: model.tailLinks.some((l) => l.kind === 'broken') ? 'broken' as const : 'call' as const }] : [])
-    : model.tailLinks;
-  const inferredMembers = new Set(members.map((c, i) => (c.inferred ? i : -1)).filter((i) => i >= 0));
+  const tailW = model.tail.some((c) => c.kind === 'ext') ? W.ext : W.infra;
+  const inferredMembers = new Set(model.members.map((c, i) => (c.inferred ? i : -1)).filter((i) => i >= 0));
+  const head = <LaneHead title={`主域名${model.entry.name.includes('.') ? ` · ${model.entry.name}` : ''}`} note="壳承接 /，其余按前缀分流" mono={model.entry.name.includes('.')} />;
+  const laneCls = 'rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 pb-4 pt-3.5';
+  const laneStyle = { backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' };
 
-  return (
-    <div
-      ref={hostRef}
-      className={`overflow-x-auto rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4 ${className ?? ''}`}
-      style={{ backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}
-      data-testid="relation-strip"
-      data-narrow={narrow ? 'true' : undefined}
-    >
-      {/* 内层 w-full + min-w-max：装得下就按比例撑满（列会长到 1.6 倍基准宽），装不下就保持 max-content 横向滚动——
-          justify-center 配 overflow 会把左端裁掉、还滚不回来，所以居中靠 mx-auto 而不是 justify */}
-      <div className="mx-auto flex w-full min-w-max items-center justify-center">
-        <Column chips={[model.entry]} width={w.entry} />
-        <Connector links={[{ from: 0, to: 0, kind: 'prefix' }]} leftRows={1} rightRows={model.shells.length} width={w.conn} />
-        <Column chips={model.shells} width={w.shell} offset={1} />
-        {members.length > 0 ? (
+  const flow = stacked ? (
+    <div className={laneCls} style={laneStyle} data-testid="relation-strip-main">
+      {head}
+      <StackedFlow model={model} />
+    </div>
+  ) : (
+    <div className={`overflow-x-auto ${laneCls}`} style={laneStyle} data-testid="relation-strip-main">
+      {head}
+      {/* 内层 w-full + 显式最小宽：装得下就按比例撑满（列会长到 1.6 倍基准宽）。justify-center 配 overflow 会把左端裁掉，所以居中靠 mx-auto */}
+      <div className="mx-auto flex w-full items-center justify-center" style={{ minWidth: rowMin }}>
+        <Column chips={[model.entry]} width={W.entry} />
+        <Connector links={[{ from: 0, to: 0, kind: 'prefix' }]} leftRows={1} rightRows={model.shells.length} width={W.conn} />
+        <Column chips={model.shells} width={W.shell} offset={1} />
+        {model.members.length > 0 ? (
           <>
-            <Connector links={shellLinks} leftRows={model.shells.length} rightRows={members.length} dashedFrom={inferredMembers} width={w.conn} />
-            <Column chips={members} width={w.member} offset={1 + model.shells.length} />
+            <Connector links={model.shellLinks} leftRows={model.shells.length} rightRows={model.members.length} dashedFrom={inferredMembers} width={W.conn} />
+            <Column chips={model.members} width={W.member} offset={1 + model.shells.length} />
           </>
         ) : null}
-        {tail.length > 0 ? (
+        {model.tail.length > 0 ? (
           <>
-            <Connector links={tailLinks} leftRows={Math.max(1, members.length)} rightRows={tail.length} width={w.conn} />
-            <Column chips={tail} width={tailW} offset={1 + model.shells.length + members.length} />
+            <Connector links={model.tailLinks} leftRows={Math.max(1, model.members.length)} rightRows={model.tail.length} width={W.conn} />
+            <Column chips={model.tail} width={tailW} offset={1 + model.shells.length + model.members.length} />
           </>
         ) : null}
       </div>
+    </div>
+  );
+
+  return (
+    <div ref={hostRef} className={`flex min-w-0 flex-col gap-2.5 ${className ?? ''}`} data-testid="relation-strip" data-mode={stacked ? 'stacked' : 'row'}>
+      {flow}
+      {model.subsites.length > 0 ? (
+        /* 子域泳道：一格一站，按宽度自动排列数，不再把卡片拉高 */
+        <div className="rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3" data-testid="relation-strip-subsites">
+          <LaneHead title={`子域 · ${model.subsites.length} 个`} note="每个子域整站归一个服务" />
+          <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${stacked ? 200 : 236}px), 1fr))` }}>
+            {model.subsites.map((c, i) => <Chip key={`${c.id}-${i}`} chip={c} index={1 + model.shells.length + model.members.length + model.tail.length + i} />)}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 竖排的分组：每个壳只带它真正连着的成员（按 shellLinks 的 from / to），没有连线的成员单独成组。
+ * 不能「所有成员都挂在第一个壳下」：内网服务、别的子域壳的成员会被画成主域名壳的前缀成员，
+ * 连线表达的关系就是错的（Codex P1，PR #1654）。
+ */
+export function stackedGroups(model: FlowModel): { groups: Array<{ shell: FlowChip; members: FlowChip[] }>; loose: FlowChip[] } {
+  const owner = new Map<number, number>();
+  for (const l of model.shellLinks) if (!owner.has(l.to)) owner.set(l.to, l.from);
+  const groups = model.shells.map((shell) => ({ shell, members: [] as FlowChip[] }));
+  const loose: FlowChip[] = [];
+  model.members.forEach((c, i) => {
+    const from = owner.get(i);
+    if (from !== undefined && groups[from]) groups[from].members.push(c);
+    else loose.push(c);
+  });
+  return { groups, loose };
+}
+
+/**
+ * 竖排的尾列：每个共享基础设施 / 跨项目引用带上「谁在用它」。横排靠 tailLinks 画线表达，
+ * 竖排没有连线，只剩一排孤立的 chip 就看不出是哪个服务连着它（Codex P2，PR #1654）。
+ * 壳直连基础设施不进 tailLinks（横排也不画），这里如实说「流向条里没有成员直接连它」。
+ */
+export function stackedTail(model: FlowModel): Array<{ chip: FlowChip; sources: string[]; broken: boolean }> {
+  return model.tail.map((chip, i) => {
+    const links = model.tailLinks.filter((l) => l.to === i);
+    const sources = [...new Set(links.map((l) => model.members[l.from]?.name).filter((x): x is string => Boolean(x)))];
+    return { chip, sources, broken: links.some((l) => l.kind === 'broken') };
+  });
+}
+
+/** 竖排：入口在上；每个壳下面用竖线挂它自己的成员；没连在任何壳下的服务单列一组、不画连线；共享 / 外部在最后 */
+export function StackedFlow({ model }: { model: FlowModel }): JSX.Element {
+  const line = 'bg-[hsl(var(--hairline-strong))]';
+  const { groups, loose } = stackedGroups(model);
+  let n = 0;
+  const grid = (chips: FlowChip[], min: number) => (
+    <div className="grid gap-2.5" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${min}px), 1fr))` }}>{chips.map((c) => <Chip key={c.id} chip={c} index={n++} />)}</div>
+  );
+  return (
+    <div className="flex min-w-0 flex-col" data-testid="relation-strip-stacked">
+      <Chip chip={model.entry} index={n++} />
+      {groups.map(({ shell, members }) => (
+        <div key={shell.id} className="flex min-w-0 flex-col" data-stack-group={shell.id}>
+          <span aria-hidden className={`ml-[1.375rem] h-3 w-px ${line}`} />
+          <Chip chip={shell} index={n++} />
+          {members.length > 0 ? (
+            <div className="flex min-w-0 flex-col pt-2.5">
+              {members.map((c, i) => {
+                const last = i === members.length - 1;
+                return (
+                  <div key={c.id} className="relative pb-2.5 pl-10 last:pb-0" data-tree-member={c.id}>
+                    {/* 竖线：从上一行延续下来，最后一个成员只画到自己中线 */}
+                    <span aria-hidden className={`absolute left-[1.375rem] top-[-0.625rem] w-px ${line}`} style={{ height: last ? 'calc(50% + 0.625rem)' : 'calc(100% + 0.625rem)' }} />
+                    <span aria-hidden className={`absolute left-[1.375rem] top-1/2 h-px w-[1.125rem] ${line} ${c.inferred ? 'opacity-60' : ''}`} />
+                    <Chip chip={c} index={n++} />
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ))}
+      {loose.length > 0 ? (
+        <div className="mt-3 border-t border-dashed border-[hsl(var(--hairline))] pt-3" data-testid="relation-strip-loose">
+          <div className="mb-2 text-[0.75rem] text-muted-foreground">其它服务（内网服务，或没有挂在任何壳下）</div>
+          {grid(loose, 200)}
+        </div>
+      ) : null}
+      {model.tail.length > 0 ? (
+        <div className="mt-3 border-t border-dashed border-[hsl(var(--hairline))] pt-3">
+          <div className="mb-2 text-[0.75rem] text-muted-foreground">共享基础设施与跨项目引用</div>
+          <div className="grid gap-2.5" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 200px), 1fr))' }}>
+            {stackedTail(model).map(({ chip, sources, broken }) => {
+              const who = sources.length ? `${broken ? '断裂 · ' : ''}被 ${sources.join('、')} 使用` : '流向条里没有成员直接连它，见全图';
+              return (
+                <div key={chip.id} className="flex min-w-0 flex-col gap-1" data-tail={chip.id} data-tail-from={sources.join(',')}>
+                  <Chip chip={chip} index={n++} />
+                  <div className={`truncate pl-1 text-[0.75rem] ${broken ? 'text-bad' : 'text-muted-foreground'}`} title={who}>{who}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LaneHead({ title, note, mono }: { title: string; note: string; /** 标题里带域名时，域名那段用等宽 */ mono?: boolean }): JSX.Element {
+  const [head, ...rest] = title.split(' · ');
+  return (
+    <div className="mb-3 flex min-w-0 items-baseline justify-between gap-4 text-[0.75rem] text-muted-foreground">
+      <span className="min-w-0 truncate font-semibold text-foreground-muted" title={title}>{head}{rest.length ? <> · <span className={mono ? 'font-mono font-medium' : ''}>{rest.join(' · ')}</span></> : null}</span>
+      <span className="hidden shrink-0 sm:inline">{note}</span>
     </div>
   );
 }
@@ -291,9 +422,11 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
 export function RelationFlowSkeleton({ note, tone = 'muted' }: { note: string; tone?: 'muted' | 'bad' }): JSX.Element {
   const ghost = (w: number, i: number) => <div key={i} className="min-w-0 flex-1 rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-background/60 motion-safe:animate-pulse" style={{ maxWidth: w, height: ROW_H, animationDelay: `${i * 120}ms` }} />;
   return (
-    <div className="relative flex items-center justify-center gap-8 overflow-hidden rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4" data-testid="relation-strip-skeleton">
-      {[W.entry, W.shell, W.member, W.infra].map((w, i) => ghost(w, i))}
-      <div className={`absolute inset-x-0 bottom-1.5 text-center text-[0.8125rem] ${tone === 'bad' ? 'text-destructive' : 'text-muted-foreground'}`}>{note}</div>
+    <div className="relative flex flex-col overflow-hidden rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 pb-4 pt-3.5" data-testid="relation-strip-skeleton">
+      {/* 与真实流向条同一副外形：一行泳道标题 + 一排 chip，数据到了只换内容不换高度 */}
+      <div className="mb-3 h-[1.125rem] w-40 rounded bg-background/60 motion-safe:animate-pulse" />
+      <div className="flex items-center justify-center gap-8">{[W.entry, W.shell, W.member, W.infra].map((w, i) => ghost(w, i))}</div>
+      <div className={`absolute inset-x-0 bottom-1.5 text-center text-[0.8125rem] ${tone === 'bad' ? 'text-bad' : 'text-muted-foreground'}`}>{note}</div>
     </div>
   );
 }

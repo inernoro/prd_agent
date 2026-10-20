@@ -49,12 +49,12 @@ jobs:
     name: Detect changed components
     runs-on: ubuntu-latest
     outputs:
-      api: ${{ steps.filter.outputs.api }}
-      admin: ${{ steps.filter.outputs.admin }}
-      llmgw: ${{ steps.filter.outputs.llmgw }}
-      llmgw_web: ${{ steps.filter.outputs.llmgw_web }}
-      llmgw_serve: ${{ steps.filter.outputs.llmgw_serve }}
-      design_opendesign: ${{ steps.filter.outputs.design_opendesign }}
+      api: ${{ steps.filter.outputs.api == 'true' || steps.main_drift.outputs.api == 'true' }}
+      admin: ${{ steps.filter.outputs.admin == 'true' || steps.main_drift.outputs.admin == 'true' }}
+      llmgw: ${{ steps.filter.outputs.llmgw == 'true' || steps.main_drift.outputs.llmgw == 'true' }}
+      llmgw_web: ${{ steps.filter.outputs.llmgw_web == 'true' || steps.main_drift.outputs.llmgw_web == 'true' }}
+      llmgw_serve: ${{ steps.filter.outputs.llmgw_serve == 'true' || steps.main_drift.outputs.llmgw_serve == 'true' }}
+      design_opendesign: ${{ steps.filter.outputs.design_opendesign == 'true' || steps.main_drift.outputs.design_opendesign == 'true' }}
       same_as_main: ${{ steps.main_equivalence.outputs.value }}
     steps:
       - name: Checkout
@@ -114,6 +114,39 @@ jobs:
           else
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # 分支落后于 main 时的镜像缺口（2026-09-29，一条只改 prd-admin 的分支部署全部失败）。
+      #
+      # 上面的 paths-filter 问的是「这条分支自己改没改这个组件」（对比 merge-base）。
+      # 但 CDS 在本提交没有 sha 镜像时，回退 `:branch-main` 之前要**证明等价**：该组件的
+      # 构建输入（cds-compose 的 buildScope，与上面的 filter 逐条对齐）在「main 镜像的提交」
+      # 与「本提交」之间必须一字不差（container.ts 的 proveFallbackImage）。
+      # 于是有一个两边都不管的缝：分支没碰 prd-api、main 在分叉之后改了 prd-api——
+      # CI 说「你没改，不用建」，CDS 说「你和 main 不一样，不许借」，整个部署红掉。
+      # CDS 这道闸是对的（放行就是拿别人的代码冒充本分支），缺的是 CI 这一侧：
+      # 凡是构建输入与 main 不一致的组件，就给它建本提交的镜像。
+      #
+      # 判据直接读上面那一份 filter（不另抄一份路径表，免得两处漂移），逐个组件做
+      # 「origin/main 与 HEAD 两棵树」的差异比较——比的是树，不是历史，所以 depth=1 就够。
+      # git 比较失败（拿不到 main 等）一律按「有差异」处理：多建一次镜像，好过部署失败。
+      - name: Detect build inputs drifted from main
+        id: main_drift
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            exit 0
+          fi
+          filters="$(yq '.jobs.changes.steps[] | select(.id == "filter") | .with.filters' .github/workflows/branch-image.yml)"
+          for name in $(printf '%s\n' "$filters" | yq 'keys | .[]'); do
+            mapfile -t scope < <(printf '%s\n' "$filters" | yq ".${name}[]")
+            if git diff --quiet origin/main HEAD -- "${scope[@]}"; then
+              value=false
+            else
+              value=true
+            fi
+            echo "${name}=${value}" >> "$GITHUB_OUTPUT"
+            echo "${name}: 构建输入与 main 不一致=${value}（${scope[*]}）"
+          done
 
   api-image:
     name: Build prd-api image

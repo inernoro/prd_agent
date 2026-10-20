@@ -12,9 +12,9 @@
 //     否则浅色主题下这些为深色底调过的绿黄红会直接刺眼。
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { Server, GitCompare, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
-import { bulkClaimConfigAuthority, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
-import type { PlatformItem, ModelItem, ShadowSummary, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
+import { Server, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
+import { bulkClaimConfigAuthority, getPlatforms, getModels, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
+import type { PlatformItem, ModelItem, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
 import { useAuth } from '@/lib/auth';
@@ -59,7 +59,6 @@ export function GovernancePage() {
   const [runtimeGates, setRuntimeGates] = useState<RuntimeGatesData | null>(null);
   const [protocolCoverage, setProtocolCoverage] = useState<ProtocolCoverageData | null>(null);
   const [appCallerTotal, setAppCallerTotal] = useState<number | null>(null);
-  const [shadow, setShadow] = useState<ShadowSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<string | null>(null);
@@ -70,8 +69,8 @@ export function GovernancePage() {
     // 每个 slice 失败也置空数组（而非留 null）→ loading 一定会收敛、不卡 spinner；成功的部分照常渲染局部数据。
     // 「success 但 body 缺字段」也要兜：否则 setX(undefined) 会绕过 `=== null` 的 loading 判定，
     // 直接渲染并在 keyHealth!.status 上抛错，整页白屏。
-    Promise.all([getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
-      ([platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes, shadowRes]) => {
+    Promise.all([getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 })]).then(
+      ([platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes]) => {
         if (!alive) return;
         if (platformsRes.success) setPlatforms(platformsRes.data.items); else { setPlatforms([]); setError((e) => e || platformsRes.error?.message || '加载失败'); }
         if (modelsRes.success) setModels(modelsRes.data.items); else { setModels([]); setError((e) => e || modelsRes.error?.message || '加载失败'); }
@@ -81,13 +80,11 @@ export function GovernancePage() {
         if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data); else { setRuntimeGates(emptyRuntimeGates()); setError((e) => e || runtimeGatesRes.error?.message || '加载失败'); }
         if (protocolCoverageRes.success) setProtocolCoverage(protocolCoverageRes.data); else { setProtocolCoverage(emptyProtocolCoverage()); setError((e) => e || protocolCoverageRes.error?.message || '加载失败'); }
         if (appCallersRes.success) setAppCallerTotal(appCallersRes.data.total); else { setAppCallerTotal(0); setError((e) => e || appCallersRes.error?.message || '加载失败'); }
-        if (shadowRes.success) setShadow(shadowRes.data.summary ?? { total: 0, allMatch: 0, critical: 0, httpFail: 0 }); else setShadow({ total: 0, allMatch: 0, critical: 0, httpFail: 0 });
       },
     ).catch((err) => {
       // Promise.all/then 里抛错也要收敛 loading（否则永远转圈）。
       if (!alive) return;
       setPlatforms((p) => p ?? []); setModels((p) => p ?? []); setExchanges((p) => p ?? []); setKeyHealth((p) => p ?? emptyKeyHealth()); setConfigAuthority((p) => p ?? emptyConfigAuthority()); setRuntimeGates((p) => p ?? emptyRuntimeGates()); setProtocolCoverage((p) => p ?? emptyProtocolCoverage()); setAppCallerTotal((p) => p ?? 0);
-      setShadow((s) => s ?? { total: 0, allMatch: 0, critical: 0, httpFail: 0 });
       setError((e) => e || (err instanceof Error ? err.message : '加载失败'));
     });
     return () => { alive = false; };
@@ -127,7 +124,6 @@ export function GovernancePage() {
   const enabledPlatforms = platforms!.filter((p) => p.enabled).length;
   const enabledModels = models!.filter((m) => m.enabled).length;
   const enabledExchanges = exchanges!.filter((x) => x.enabled).length;
-  const matchRate = shadow && shadow.total > 0 ? Math.round((shadow.allMatch / shadow.total) * 100) : null;
   const keyHealthTone = keyHealth!.status === 'ok' ? 'var(--ok)' : keyHealth!.status === 'unreadable' ? 'var(--err)' : 'var(--warn)';
   const authorityTone = configAuthority!.status === 'ready' ? 'var(--ok)' : configAuthority!.status === 'blocked' ? 'var(--err)' : 'var(--warn)';
   const mapOnlyTotal = configAuthority!.mapOnlyPools + configAuthority!.mapOnlyPlatforms + configAuthority!.mapOnlyModels + configAuthority!.mapOnlyExchanges;
@@ -179,7 +175,7 @@ export function GovernancePage() {
           <StatCard
             icon={<ShieldCheck size={16} />}
             label="发布 Gate"
-            value={runtimeGates!.readyForHttpFull ? 'Ready' : runtimeGateLabel(runtimeGates!)}
+            value={runtimeGates!.readyForRelease ? 'Ready' : runtimeGateLabel(runtimeGates!)}
             sub={`${runtimeGates!.passed} 通过 · ${runtimeGates!.blocked} 阻塞 · ${runtimeGates!.waiting} 等待`}
             to="/governance"
             color={runtimeGateColor(runtimeGates!.status)}
@@ -191,13 +187,6 @@ export function GovernancePage() {
             sub={`${keyHealth!.ok} 可解 · ${keyHealth!.unreadable} 不可解 · ${keyHealth!.missing} 缺省`}
             to="/platforms"
             color={keyHealthTone}
-          />
-          <StatCard
-            icon={<GitCompare size={16} />}
-            label="影子比对"
-            value={shadow && shadow.total > 0 ? `${matchRate}%` : '暂无'}
-            sub={shadow && shadow.total > 0 ? `${shadow.total} 样本 · ${shadow.critical} 严重差异` : '未开启 shadow 模式'}
-            to="/shadow"
           />
         </div>
 
@@ -294,13 +283,13 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
           <ShieldCheck size={16} /> 发布 Gate
           <HelpPopover label="发布 Gate">
             这些 gate 只聚合本控制台已有的证据，不替代发布脚本和生产台账。
-            readyForHttpFull 为真才代表可以进入 full-http 发布流程；为假时，下面每张卡的「下一步」就是当前阻塞点。
+            全部阻塞项通过才代表当前 commit 可以放行发布；没通过时，下面每张卡的「下一步」就是当前阻塞点。
           </HelpPopover>
         </h2>
         <Chip label={runtimeGateLabel(gates)} color={runtimeGateColor(gates.status)} bg={runtimeGateBg(gates.status)} />
-        {/* 右侧这句由 readyForHttpFull 派生，不是常驻说明：状态变了它跟着变。 */}
+        {/* 右侧这句由 readyForRelease（= 全部 blocking gate 通过）派生，不是常驻说明：状态变了它跟着变。 */}
         <span style={{ ...BODY_TEXT, marginLeft: 'auto' }}>
-          {gates.readyForHttpFull ? '可以进入 full-http 发布流程' : '还不能宣称 full-http 完成'}
+          {gates.readyForRelease ? '当前 commit 可以放行发布' : '还有阻塞项，暂不能放行发布'}
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: GAP.normal }}>
@@ -449,11 +438,6 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
         { label: '模型', to: '/models' },
         { label: 'Exchange', to: '/exchanges' },
       ];
-    case 'config_authority_rollout_ledger':
-      return [
-        { label: '审计', to: '/audits?targetType=llmgw_config_authority' },
-        { label: '概览', to: '/' },
-      ];
     case 'active_appcaller_pool_binding':
       return [
         { label: 'active 调用方', to: '/app-callers?status=active' },
@@ -474,6 +458,7 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
         { label: 'active 调用方', to: '/app-callers?status=active' },
         { label: '模型', to: '/logical-models' },
         { label: '平台密钥', to: '/platforms' },
+        { label: '配置权威审计', to: '/audits?targetType=llmgw_config_authority' },
       ];
     case 'gateway_key_integrity':
       return [
@@ -489,24 +474,12 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
       return [
         { label: 'active 调用方', to: missingCode ? `/app-callers?status=active&search=${encodeURIComponent(missingCode)}` : '/app-callers?status=active' },
         { label: '当前 commit 日志', to: `/logs${releaseQuery}` },
-        { label: '当前 commit shadow', to: `/shadow${releaseQuery}` },
       ];
     case 'protocol_runtime_coverage':
       return [
         { label: '协议覆盖', to: `/${releaseCommit ? `?protocolCoverage=1&releaseCommit=${encodeURIComponent(releaseCommit)}` : '?protocolCoverage=1'}` },
         { label: '协议日志', to: `/logs${releaseQuery}` },
         { label: '调用方', to: '/app-callers' },
-      ];
-    case 'shadow_runtime_evidence': {
-      const critical = Number(facts.critical || 0);
-      const httpFail = Number(facts.httpFail || 0);
-      const quick = critical > 0 ? '&quick=critical' : httpFail > 0 ? '&quick=httpFail' : '';
-      return [{ label: 'shadow 样本', to: `/shadow${releaseQuery}${releaseQuery ? quick : quick.replace('&', '?')}` }];
-    }
-    case 'full_http_rollout_ledger':
-      return [
-        { label: '当前 commit 日志', to: `/logs${releaseQuery}` },
-        { label: '当前 commit shadow', to: `/shadow${releaseQuery}` },
       ];
     default:
       return [];
@@ -516,27 +489,6 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
 function runtimeGateFactsForDisplay(item: { id: string; facts?: Record<string, string> }): Array<[string, string]> {
   const facts = item.facts ?? {};
   const preferredByGate: Record<string, string[]> = {
-    config_authority_rollout_ledger: [
-      'sameCommit',
-      'missing',
-      'latestCommit',
-      'recordedAt',
-      'externalBackupJson',
-      'configAuthorityJson',
-      'rolloutLedger',
-    ],
-    full_http_rollout_ledger: [
-      'sameCommit',
-      'missing',
-      'latestCommit',
-      'recordedAt',
-      'releaseGateJson',
-      'protocolCanaryRequired',
-      'protocolCanaryJson',
-      'disableMapConfigFallbackForActiveAppCallers',
-      'evidenceJson',
-      'rolloutLedger',
-    ],
     active_appcaller_map_fallback_exit: [
       'disableMapConfigFallbackForActiveAppCallers',
       'mapFallbackObjectsRemaining',
@@ -629,11 +581,10 @@ function emptyConfigAuthority(): ConfigAuthoritySummary {
 function emptyRuntimeGates(): RuntimeGatesData {
   return {
     status: 'unknown',
-    readyForHttpFull: false,
+    readyForRelease: false,
     passed: 0,
     blocked: 0,
     waiting: 0,
-    retained: 0,
     generatedAt: '',
     releaseCommit: null,
     items: [],
@@ -709,7 +660,7 @@ function protocolCoverageBg(status: string) {
 }
 
 function runtimeGateLabel(gates: RuntimeGatesData) {
-  if (gates.readyForHttpFull) return 'Ready';
+  if (gates.readyForRelease) return 'Ready';
   if (gates.status === 'blocked') return 'Blocked';
   if (gates.status === 'waiting') return 'Waiting';
   return 'Unknown';
@@ -719,21 +670,18 @@ function runtimeGateStatusLabel(status: string) {
   if (status === 'pass') return '通过';
   if (status === 'blocked') return '阻塞';
   if (status === 'waiting') return '等待';
-  if (status === 'retained') return '保留';
   return '未知';
 }
 
 function runtimeGateColor(status: string) {
   if (status === 'ready' || status === 'pass') return 'var(--ok)';
   if (status === 'blocked') return 'var(--err)';
-  if (status === 'retained') return 'var(--text-muted)';
   return 'var(--warn)';
 }
 
 function runtimeGateBg(status: string) {
   if (status === 'ready' || status === 'pass') return 'var(--ok-bg)';
   if (status === 'blocked') return 'var(--err-bg)';
-  if (status === 'retained') return 'var(--bg-surface)';
   return 'var(--warn-bg)';
 }
 

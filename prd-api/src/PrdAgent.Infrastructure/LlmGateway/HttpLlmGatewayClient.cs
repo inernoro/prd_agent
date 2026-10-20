@@ -16,15 +16,10 @@ using PrdAgent.Core.LlmGateway;
 namespace PrdAgent.Infrastructure.LlmGateway;
 
 /// <summary>
-/// 跨进程 LLM Gateway 客户端 —— 把 MAP 自身的 LLM 调用从进程内（直接 new LlmGateway）
-/// 切换到 HTTP，远程调用独立部署的 PrdAgent.LlmGateway serving 服务（/gw/v1/*）。
+/// 跨进程 LLM Gateway 客户端 —— MAP 唯一的模型调用通道，远程调用独立部署的
+/// PrdAgent.LlmGateway serving 服务（/gw/v1/*）。
 ///
 /// 物理隔离设计见 doc/design.platform.llm-gateway.physical-isolation.md。
-/// 仅当配置 LlmGateway:Mode=http（环境变量 LlmGateway__Mode=http）时由 DI 注册，默认走进程内 LlmGateway。
-///
-/// 同时实现 Infrastructure 与 Core 两个 ILlmGateway 接口（两者仅命名空间不同；
-/// CreateClient 签名完全一致，单一实现满足两者），与进程内 LlmGateway 保持一致，
-/// 这样 Core 桥接注册（强转 Infrastructure → Core）在 http 模式下仍成立。
 ///
 /// JSON 口径与 serving 端严格对齐：PascalCase（PropertyNamingPolicy = null）。
 /// </summary>
@@ -78,10 +73,25 @@ public sealed class HttpLlmGatewayClient
             : GatewayTenantDefaults.InternalTenantId;
     }
 
-    private HttpClient CreateHttp(bool infiniteTimeout)
+    /// <summary>传输超时下限；请求自带更长的预算（如生图最多 3600 秒）时按预算加余量放宽。</summary>
+    internal static readonly TimeSpan DefaultTransportTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>
+    /// 请求自身预算 + 60 秒余量，且不低于默认 10 分钟：serving 那一侧要先跑完自己的超时并返回结构化错误，
+    /// MAP 这一跳不能比它先断开。
+    /// </summary>
+    internal static TimeSpan TransportTimeoutFor(int requestTimeoutSeconds)
+    {
+        var budget = TimeSpan.FromSeconds(Math.Max(0, requestTimeoutSeconds) + 60);
+        return budget > DefaultTransportTimeout ? budget : DefaultTransportTimeout;
+    }
+
+    private HttpClient CreateHttp(bool infiniteTimeout, int? requestTimeoutSeconds = null)
     {
         var http = _httpFactory.CreateClient();
-        http.Timeout = infiniteTimeout ? Timeout.InfiniteTimeSpan : TimeSpan.FromMinutes(10);
+        http.Timeout = infiniteTimeout
+            ? Timeout.InfiniteTimeSpan
+            : requestTimeoutSeconds is { } seconds ? TransportTimeoutFor(seconds) : DefaultTransportTimeout;
         http.DefaultRequestHeaders.Remove("X-Gateway-Key");
         http.DefaultRequestHeaders.Add("X-Gateway-Key", _gatewayKey);
         return http;
@@ -92,7 +102,7 @@ public sealed class HttpLlmGatewayClient
 
     /// <summary>
     /// S2 观测：返回一份把 Context.GatewayTransport 打成 "http" 的请求副本（其余字段原样拷贝）。
-    /// serving 端据此把该条日志标为 http 传输（跨进程），区分于本地 inproc。
+    /// serving 端据此把该条日志标为 http 传输（跨进程）。
     /// </summary>
     private static GatewayRequest TagHttpTransport(GatewayRequest request)
         => new()
@@ -116,7 +126,7 @@ public sealed class HttpLlmGatewayClient
         request = TagHttpTransport(request);
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
+            using var http = CreateHttp(infiniteTimeout: false, request.TimeoutSeconds);
             using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/send") { Content = JsonBody(request) };
             ApplyRoutingHeaders(req, request.AppCallerCode, request.Context);
             using var resp = await http.SendAsync(req, ct);
@@ -342,7 +352,7 @@ public sealed class HttpLlmGatewayClient
 
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
+            using var http = CreateHttp(infiniteTimeout: false, outboundRequest.TimeoutSeconds);
             using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw") { Content = JsonBody(outboundRequest) };
             ApplyRoutingHeaders(req, outboundRequest.AppCallerCode, outboundRequest.Context);
             using var resp = await http.SendAsync(req, ct);
@@ -665,7 +675,7 @@ public sealed class HttpLlmGatewayClient
             if (!resp.IsSuccessStatusCode)
             {
                 // serving 不可达 / 鉴权失败 / 坏负载 不能伪装成「空池」——否则 admin/smoke 看到「无可用池」
-                // 却分不清网关其实是 down 的（Cursor Bugbot）。与 inproc 实现一致：错误向上抛，让调用方区分
+                // 却分不清网关其实是 down 的（Cursor Bugbot）。错误向上抛，让调用方区分
                 // 「真的没池」(200 + []) 与「网关故障」。
                 _logger.LogWarning("[HttpLlmGatewayClient] GetAvailablePoolsAsync serving 返回 {Code}: {Body}",
                     (int)resp.StatusCode, Truncate(body));
@@ -713,7 +723,7 @@ public sealed class HttpLlmGatewayClient
             return GatewayRawResponse.Fail("IMAGE_REQUEST_INVALID", "图片请求必须指定业务模型和标准参数。", 400);
         try
         {
-            using var http = CreateHttp(infiniteTimeout: false);
+            using var http = CreateHttp(infiniteTimeout: false, request.TimeoutSeconds);
             using var message = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/gw/v1/raw") { Content = JsonBody(request) };
             ApplyRoutingHeaders(message, request.AppCallerCode, request.Context);
             using var response = await http.SendAsync(message, ct);

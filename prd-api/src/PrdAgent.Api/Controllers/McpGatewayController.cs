@@ -239,6 +239,9 @@ public class McpGatewayController : ControllerBase
         foreach (var p in t.Params)
         {
             var ps = new JsonObject { ["type"] = p.Type, ["description"] = p.Description };
+            // 数组参数必须带 items：不少客户端（OpenAI 系）遇到没有 items 的 array schema 会整张工具表拒收。
+            if (p.Type == "array")
+                ps["items"] = p.ItemsType == null ? new JsonObject() : new JsonObject { ["type"] = p.ItemsType };
             if (p.EnumValues is { Length: > 0 })
             {
                 var ea = new JsonArray();
@@ -348,7 +351,7 @@ public class McpGatewayController : ControllerBase
         {
             log.Capability = McpCapabilityCatalog.ByScope(bt.RequiredScope)?.Key;
             log.IsWrite = McpUsageService.IsWriteTool(bt);
-            log.ImageCount = bt.Name == "map_literary_generate_image" ? 1
+            log.ImageCount = bt.Name == "map_literary_generate_image" ? ReadLiteraryImageCount(args)
                 : McpUsageService.IsImageTool(bt) ? ReadRequestedImageCount(args) : 0;
 
             if (!ScopeSatisfies(scopes, bt.RequiredScope))
@@ -500,6 +503,10 @@ public class McpGatewayController : ControllerBase
         }
         else
         {
+            // 批量生图里有的是重放、有的没排上：只为真正新入队的那几张扣额度，其余按占坑那天退回
+            var unqueued = McpUsageService.UnqueuedImages(verdict, McpArtifactExtractor.QueuedImages(respBody));
+            if (unqueued > 0)
+                await _usage.ReleaseAsync(log.KeyId, verdict.ReservedKind!, unqueued, verdict.ReservedDay, ct);
             ApplyArtifact(log, McpArtifactExtractor.Extract(log.ToolName, producesArtifacts, respBody));
         }
         await _usage.LogAsync(log, ct);
@@ -541,6 +548,21 @@ public class McpGatewayController : ControllerBase
         }
         return PrdAgent.Api.Controllers.Api.VisualOpenApiController.ResolveImageCount(
             new PrdAgent.Api.Controllers.Api.VisualOpenApiController.GenerateImageRequest { Count = requested });
+    }
+
+    /// <summary>文学配图这次要占几格：批量按 markerIndexes 去重后的个数，与控制器同一个口径。</summary>
+    internal static int ReadLiteraryImageCount(JsonObject args)
+    {
+        var indexes = new List<int>();
+        if (args.TryGetPropertyValue("markerIndexes", out var node) && node is JsonArray arr)
+        {
+            foreach (var item in arr)
+            {
+                if (item is JsonValue v && v.TryGetValue<int>(out var i)) indexes.Add(i);
+                else if (item is JsonValue dv && dv.TryGetValue<double>(out var d)) indexes.Add((int)d);
+            }
+        }
+        return PrdAgent.Api.Controllers.Api.LiteraryImageOpenApiController.RequestedImageCount(null, indexes);
     }
 
     internal static (string path, JsonNode? body, string? err) BuildBuiltinRequest(McpToolDef t, JsonObject args)

@@ -15,6 +15,7 @@ public class ProductVersionApplyRoutePolicyTests
     [InlineData("GET", "/api/product/version-workflow/products", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("GET", "/api/product/version-workflow/products/p1", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("GET", "/api/product/version-workflow/review-sources", AdminPermissionCatalog.ProductAgentUse)]
+    [InlineData("GET", "/api/product/products/p1/releases/history-check", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("POST", "/api/product/version-workflow/parse-message", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("POST", "/api/product/products/p1/initiations", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("POST", "/api/product/products/p1/releases", AdminPermissionCatalog.ProductAgentUse)]
@@ -37,6 +38,7 @@ public class ProductVersionApplyRoutePolicyTests
 
     [Theory]
     [InlineData("GET", "/api/product/overview/requirements", AdminPermissionCatalog.ProductAgentUse)]
+    [InlineData("POST", "/api/product/products/p1/releases/history-check", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("POST", "/api/product/overview/version-workflow/import", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("POST", "/api/product/overview/version-workflow/snapshots", AdminPermissionCatalog.ProductAgentUse)]
     [InlineData("POST", "/api/product/products/p1/version-workflow/import", AdminPermissionCatalog.ProductAgentUse)]

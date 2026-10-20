@@ -67,13 +67,23 @@ public class McpInputBoundsTests
         ["CreateWorkspaceRequest.ClientRequestId"] = Bound.Hashed,
 
         ["GenerateRequest.ClientRequestId"] = Bound.Hashed,
+        // 风格 / 水印按 ID 或名称解析成账号里真实存在的那一套，落库的是解析出的 ID 与参考图 sha，原文不进库
+        ["GenerateRequest.Style"] = Bound.MustExist,
+        ["GenerateRequest.Watermark"] = Bound.MustExist,
+        ["GenerateRequest.Size"] = Bound.FiniteShape,
         ["MoveRequest.FolderName"] = Bound.OwnMetadataCap,
 
         ["WriteContentRequest.Content"] = Bound.OwnContentCap,
+        ["WriteContentRequest.MarkedContent"] = Bound.OwnContentCap,
         ["WriteContentRequest.Mode"] = Bound.FiniteShape,
         ["WriteContentRequest.ExpectedUpdatedAt"] = Bound.FiniteShape,
 
         ["GenerateImageRequest.Prompt"] = Bound.OwnContentCap,
+
+        // 文学配图：只改一张描述（4000 字上限，与标记描述同一上限）/ 从历史放回一张旧图
+        ["UpdateIllustrationRequest.Prompt"] = Bound.OwnContentCap,
+        ["UpdateIllustrationRequest.ExpectedUpdatedAt"] = Bound.FiniteShape,
+        ["RestoreImageRequest.AssetId"] = Bound.MustExist,
         ["GenerateImageRequest.Size"] = Bound.FiniteShape,
         ["GenerateImageRequest.ClientRequestId"] = Bound.Hashed,
 
@@ -110,6 +120,8 @@ public class McpInputBoundsTests
         ["GenerateImageRequest.Prompt"] = ContentKind.Create,
         ["UpdateEntryContentRequest.Content"] = ContentKind.Overwrite,
         ["WriteContentRequest.Content"] = ContentKind.Overwrite,
+        ["WriteContentRequest.MarkedContent"] = ContentKind.Overwrite,
+        ["UpdateIllustrationRequest.Prompt"] = ContentKind.Overwrite,
     };
 
     [Fact]

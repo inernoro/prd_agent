@@ -12,6 +12,7 @@ import { MongoClient, type Db, type Collection } from 'mongodb';
 import type {
   BranchEntry,
   DeploymentRun,
+  PersistedDeploymentIntent,
   DeploymentVersion,
   GithubWebhookDelivery,
   Project,
@@ -69,6 +70,7 @@ interface DeploymentRunDoc {
   projectId: string;
   branchId: string;
   doc: DeploymentRun;
+  executionIntent?: PersistedDeploymentIntent;
   updatedAt: string;
 }
 
@@ -142,6 +144,7 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     const client = new MongoClient(this.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
+      timeoutMS: 30_000,
     });
     try {
       await client.connect();
@@ -208,8 +211,8 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
     col: Collection<T>,
   ): ISplitMongoCollection<T> {
     return {
-      async findOne(filter) {
-        const doc = await col.findOne(filter as never);
+      async findOne(filter, options) {
+        const doc = await col.findOne(filter as never, options);
         return (doc as T) ?? null;
       },
       find(filter) {
@@ -226,8 +229,8 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
       async deleteOne(filter) {
         await col.deleteOne(filter as never);
       },
-      async bulkWrite(operations) {
-        await col.bulkWrite(operations as never);
+      async bulkWrite(operations, options) {
+        await col.bulkWrite(operations as never, options);
       },
       async countDocuments(filter) {
         return await col.countDocuments((filter as never) || {});

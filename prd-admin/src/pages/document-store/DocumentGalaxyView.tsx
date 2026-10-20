@@ -57,22 +57,11 @@ import {
   type GalaxyInputEntry,
   type GalaxyInputLink,
 } from '@/lib/docGalaxy/buildDocGalaxy';
+import { DOC_TYPE_COLOR, colorForDocType } from '@/lib/docGalaxy/docTypeColors';
 
-// ── docType → 颜色注册表（数值 SSOT = 演示版 doc-tree-3d.html TYPE_COLORS，照抄） ──
-const TYPE_COLOR: Record<string, string> = {
-  spec: '#4ade80',
-  design: '#60a5fa',
-  plan: '#fbbf24',
-  rule: '#f87171',
-  guide: '#a78bfa',
-  report: '#22d3ee',
-  debt: '#fb923c',
-  unknown: '#94a3b8',
-};
-export function colorForDocType(docType?: string | null): string {
-  if (!docType) return TYPE_COLOR.unknown;
-  return TYPE_COLOR[docType] ?? TYPE_COLOR.unknown;
-}
+// ── docType → 颜色注册表：SSOT 在 lib/docGalaxy/docTypeColors（首页片花也用同一份） ──
+const TYPE_COLOR = DOC_TYPE_COLOR;
+export { colorForDocType };
 
 export function rotateOrbitOffsetByPixels(
   offset: THREE.Vector3,

@@ -3,11 +3,11 @@
 
 This script is read-only. It calls /gw/v1/resolve for production-critical
 AppCallerCode + ModelType pairs and verifies that the gateway can select a
-usable model, platform, and protocol before a staged rollout enters video/ASR
-or full HTTP cutover.
+usable model, platform, and protocol before a release that touches video/ASR
+or other production-critical entries.
 
-It does not replace raw shadow seed evidence. Provider-side channel failures
-can only be proven by real MAP business requests, and key decryptability is
+It does not replace real MAP business acceptance (scripts/llmgw-map-acceptance-seed.py).
+Provider-side channel failures can only be proven by real MAP business requests, and key decryptability is
 covered by the llmgw-serve ServingKeyIntegrity startup check. This gate catches
 missing AppCaller bindings, empty pools, unavailable models, and disabled
 platforms earlier and with lower cost.

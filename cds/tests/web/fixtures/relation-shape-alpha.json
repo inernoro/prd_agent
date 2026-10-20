@@ -1,0 +1,403 @@
+{
+ "_source": "合成样本：与 2026-09-30 用户截图那条分支同构（13 个服务、8 个子域、4 个前缀成员、5 条依赖、3 个共享基础设施、1 个只被子域调用的内网服务、1 处双公网面、6 条前缀的长服务），名字全部换成中性的。按 scripts/fixtures/mobile-layout-fixtures.mjs 的约定不存真实环境快照。",
+ "branchId": "fixture-branch-alpha",
+ "projectId": "fixture-project",
+ "branch": "feature/alpha",
+ "status": "running",
+ "graph": {
+  "nodes": [
+   {
+    "id": "service:acme-api-demo",
+    "rawId": "acme-api-demo",
+    "name": "acme-api",
+    "kind": "service",
+    "pathPrefixes": [
+     "/api/",
+     "/api/open-platform/partner_app",
+     "/api/open-platform/partner_app/",
+     "/partner/",
+     "/ops/",
+     "/health-api/"
+    ],
+    "containerPort": 8080,
+    "role": "api",
+    "roleSource": "name",
+    "roleReason": "服务名含「api」"
+   },
+   {
+    "id": "service:acme-admin-demo",
+    "rawId": "acme-admin-demo",
+    "name": "acme-admin",
+    "kind": "service",
+    "pathPrefixes": [
+     "/"
+    ],
+    "containerPort": 3000,
+    "role": "web",
+    "roleSource": "route",
+    "roleReason": "声明了用户入口「品牌商经营后台」"
+   },
+   {
+    "id": "service:acme-vendor-api-demo",
+    "rawId": "acme-vendor-api-demo",
+    "name": "acme-vendor-api",
+    "kind": "service",
+    "pathPrefixes": [
+     "/api/portal/",
+     "/vendor-health-api/"
+    ],
+    "containerPort": 8081,
+    "role": "api",
+    "roleSource": "name",
+    "roleReason": "服务名含「api」"
+   },
+   {
+    "id": "service:acme-vendor-demo",
+    "rawId": "acme-vendor-demo",
+    "name": "acme-vendor",
+    "kind": "service",
+    "pathPrefixes": [
+     "/vendor/"
+    ],
+    "containerPort": 3001,
+    "role": "web",
+    "roleSource": "route",
+    "roleReason": "探活路径 /vendor/ 是页面"
+   },
+   {
+    "id": "service:acme-open-platform-demo",
+    "rawId": "acme-open-platform-demo",
+    "name": "acme-open-platform",
+    "kind": "service",
+    "pathPrefixes": null,
+    "subdomain": "open-platform",
+    "containerPort": 3003,
+    "role": "web",
+    "roleSource": "route",
+    "roleReason": "探活路径 / 是页面"
+   },
+   {
+    "id": "service:cloudlink-api-demo",
+    "rawId": "cloudlink-api-demo",
+    "name": "cloudlink-api",
+    "kind": "service",
+    "pathPrefixes": null,
+    "containerPort": 8091,
+    "role": "api",
+    "roleSource": "name",
+    "roleReason": "服务名含「api」"
+   },
+   {
+    "id": "service:cloudlink-web-demo",
+    "rawId": "cloudlink-web-demo",
+    "name": "cloudlink-web",
+    "kind": "service",
+    "pathPrefixes": null,
+    "subdomain": "cloudlink",
+    "containerPort": 3004,
+    "role": "web",
+    "roleSource": "route",
+    "roleReason": "声明了用户入口「云桥运维控制台」"
+   },
+   {
+    "id": "service:acme-open-platform-api-demo",
+    "rawId": "acme-open-platform-api-demo",
+    "name": "acme-open-platform-api",
+    "kind": "service",
+    "pathPrefixes": [
+     "/api/open-platform/",
+     "/open/"
+    ],
+    "subdomain": "open-platform-api",
+    "containerPort": 8082,
+    "role": "api",
+    "roleSource": "name",
+    "roleReason": "服务名含「api」"
+   },
+   {
+    "id": "service:acme-scan-runtime-api-demo",
+    "rawId": "acme-scan-runtime-api-demo",
+    "name": "acme-scan-runtime-api",
+    "kind": "service",
+    "pathPrefixes": null,
+    "subdomain": "scan-runtime",
+    "containerPort": 8083,
+    "role": "api",
+    "roleSource": "name",
+    "roleReason": "服务名含「api」"
+   },
+   {
+    "id": "service:acme-worker-generation-demo",
+    "rawId": "acme-worker-generation-demo",
+    "name": "acme-worker-generation",
+    "kind": "service",
+    "pathPrefixes": null,
+    "subdomain": "worker-generation",
+    "containerPort": 9999,
+    "role": "worker",
+    "roleSource": "declared",
+    "roleReason": "配置声明 cds.role: worker"
+   },
+   {
+    "id": "service:acme-worker-code-return-demo",
+    "rawId": "acme-worker-code-return-demo",
+    "name": "acme-worker-code-return",
+    "kind": "service",
+    "pathPrefixes": null,
+    "subdomain": "worker-code-return",
+    "containerPort": 9999,
+    "role": "worker",
+    "roleSource": "declared",
+    "roleReason": "配置声明 cds.role: worker"
+   },
+   {
+    "id": "service:acme-worker-product-batch-demo",
+    "rawId": "acme-worker-product-batch-demo",
+    "name": "acme-worker-product-batch",
+    "kind": "service",
+    "pathPrefixes": null,
+    "subdomain": "worker-product-batch",
+    "containerPort": 9999,
+    "role": "worker",
+    "roleSource": "declared",
+    "roleReason": "配置声明 cds.role: worker"
+   },
+   {
+    "id": "service:acme-worker-common-demo",
+    "rawId": "acme-worker-common-demo",
+    "name": "acme-worker-common",
+    "kind": "service",
+    "pathPrefixes": null,
+    "subdomain": "worker-common",
+    "containerPort": 9999,
+    "role": "worker",
+    "roleSource": "declared",
+    "roleReason": "配置声明 cds.role: worker"
+   },
+   {
+    "id": "infra:redis-demo",
+    "rawId": "redis-demo",
+    "name": "redis-demo",
+    "kind": "infra",
+    "dockerImage": "redis:7-alpine"
+   },
+   {
+    "id": "infra:rabbitmq-demo",
+    "rawId": "rabbitmq-demo",
+    "name": "rabbitmq-demo",
+    "kind": "infra",
+    "dockerImage": "rabbitmq:3-management-alpine"
+   },
+   {
+    "id": "infra:mysql-demo",
+    "rawId": "mysql-demo",
+    "name": "mysql-demo",
+    "kind": "infra",
+    "dockerImage": "mysql:8.0"
+   }
+  ],
+  "edges": [
+   {
+    "from": "service:acme-admin-demo",
+    "to": "service:acme-api-demo",
+    "envKeys": [],
+    "dependsOn": true
+   },
+   {
+    "from": "service:acme-vendor-api-demo",
+    "to": "service:acme-api-demo",
+    "envKeys": [],
+    "dependsOn": true
+   },
+   {
+    "from": "service:acme-vendor-demo",
+    "to": "service:acme-vendor-api-demo",
+    "envKeys": [],
+    "dependsOn": true
+   },
+   {
+    "from": "service:acme-open-platform-demo",
+    "to": "service:acme-open-platform-api-demo",
+    "envKeys": [],
+    "dependsOn": true
+   },
+   {
+    "from": "service:cloudlink-web-demo",
+    "to": "service:cloudlink-api-demo",
+    "envKeys": [],
+    "dependsOn": true
+   }
+  ],
+  "layers": [
+   [
+    "cloudlink-web-demo",
+    "acme-admin-demo",
+    "acme-open-platform-demo",
+    "acme-scan-runtime-api-demo",
+    "acme-vendor-demo",
+    "acme-worker-code-return-demo",
+    "acme-worker-common-demo",
+    "acme-worker-generation-demo",
+    "acme-worker-product-batch-demo"
+   ],
+   [
+    "cloudlink-api-demo",
+    "acme-open-platform-api-demo",
+    "acme-vendor-api-demo"
+   ],
+   [
+    "acme-api-demo"
+   ]
+  ],
+  "sites": [
+   {
+    "id": "main",
+    "kind": "main",
+    "shellId": "acme-admin-demo",
+    "shellSource": "declared",
+    "members": [
+     {
+      "id": "acme-api-demo",
+      "prefixes": [
+       "/api/",
+       "/api/open-platform/partner_app",
+       "/api/open-platform/partner_app/",
+       "/partner/",
+       "/ops/",
+       "/health-api/"
+      ]
+     },
+     {
+      "id": "acme-open-platform-api-demo",
+      "prefixes": [
+       "/api/open-platform/",
+       "/open/"
+      ]
+     },
+     {
+      "id": "acme-vendor-api-demo",
+      "prefixes": [
+       "/api/portal/",
+       "/vendor-health-api/"
+      ]
+     },
+     {
+      "id": "acme-vendor-demo",
+      "prefixes": [
+       "/vendor/"
+      ]
+     }
+    ],
+    "conflicts": []
+   },
+   {
+    "id": "sub:open-platform",
+    "kind": "subdomain",
+    "subdomain": "open-platform",
+    "shellId": "acme-open-platform-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   },
+   {
+    "id": "sub:cloudlink",
+    "kind": "subdomain",
+    "subdomain": "cloudlink",
+    "shellId": "cloudlink-web-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   },
+   {
+    "id": "sub:open-platform-api",
+    "kind": "subdomain",
+    "subdomain": "open-platform-api",
+    "shellId": "acme-open-platform-api-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   },
+   {
+    "id": "sub:scan-runtime",
+    "kind": "subdomain",
+    "subdomain": "scan-runtime",
+    "shellId": "acme-scan-runtime-api-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   },
+   {
+    "id": "sub:worker-generation",
+    "kind": "subdomain",
+    "subdomain": "worker-generation",
+    "shellId": "acme-worker-generation-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   },
+   {
+    "id": "sub:worker-code-return",
+    "kind": "subdomain",
+    "subdomain": "worker-code-return",
+    "shellId": "acme-worker-code-return-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   },
+   {
+    "id": "sub:worker-product-batch",
+    "kind": "subdomain",
+    "subdomain": "worker-product-batch",
+    "shellId": "acme-worker-product-batch-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   },
+   {
+    "id": "sub:worker-common",
+    "kind": "subdomain",
+    "subdomain": "worker-common",
+    "shellId": "acme-worker-common-demo",
+    "shellSource": "declared",
+    "members": [],
+    "conflicts": []
+   }
+  ],
+  "internal": [
+   "cloudlink-api-demo"
+  ],
+  "unresolvedCalls": []
+ },
+ "lint": {
+  "findings": [
+   {
+    "rule": "double-public-surface",
+    "severity": "warn",
+    "services": [
+     "acme-open-platform-api-demo"
+    ],
+    "message": "acme-open-platform-api-demo 同时暴露在子域 open-platform-api 和主域名前缀 /api/open-platform/、/open/ 上，一个服务两个公网入口",
+    "fix": "二选一：只留子域（整站归它），或只留主域名前缀"
+   },
+   {
+    "rule": "role-by-name",
+    "severity": "info",
+    "services": [
+     "cloudlink-api-demo",
+     "acme-api-demo",
+     "acme-open-platform-api-demo",
+     "acme-scan-runtime-api-demo",
+     "acme-vendor-api-demo"
+    ],
+    "message": "5 个服务的角色靠服务名或默认值推断：cloudlink-api-demo、acme-api-demo、acme-open-platform-api-demo、acme-scan-runtime-api-demo、acme-vendor-api-demo",
+    "fix": "给它们声明 cds.role: web / api / worker，声明后不再依赖名字"
+   }
+  ],
+  "summary": {
+   "errors": 0,
+   "warnings": 1,
+   "infos": 1
+  }
+ },
+ "references": []
+}

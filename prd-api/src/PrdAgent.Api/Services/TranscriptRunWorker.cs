@@ -135,8 +135,7 @@ public class TranscriptRunWorker : BackgroundService
                 DocumentHash: null,
                 SystemPromptRedacted: "[TRANSCRIPT_RUN]",
                 RequestType: run.Type == "asr" ? ModelTypes.Asr : ModelTypes.Chat,
-                AppCallerCode: appCallerCode,
-                ForceFullShadowSample: run.ForceFullShadowSample));
+                AppCallerCode: appCallerCode));
 
             if (run.Type == "asr")
                 await ProcessAsrAsync(db, gateway, run, configuration);

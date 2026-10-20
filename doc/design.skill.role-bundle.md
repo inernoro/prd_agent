@@ -76,11 +76,11 @@ pm-starter.zip
 
 ```
 curl -sSLo pm.zip "https://<域名>/api/official-skills/pm-starter/download"
-SKILLS_DIRS=$(for h in .claude .cursor .agents; do [ -d "$h" ] && printf '%s/skills ' "$h"; done); [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=.agents/skills
+SKILLS_DIRS=$(for h in .claude .agents; do [ -d "$h" ] && printf '%s/skills ' "$h"; done); [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=.agents/skills
 for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o pm.zip -d "$d"; done
 ```
 
-打开你的 AI 编码工具，说：`/sdd-init`。上面第二、三行是项目级多宿主安装的标准写法（`.claude` / `.cursor` / `.agents` 存在几个装几个，不写用户主目录），与全仓统一的技能安装位置约定同源。
+打开你的 AI 编码工具，说：`/sdd-init`。上面第二、三行是项目级多宿主安装的标准写法（`.claude` / `.agents` 存在几个装几个，不写用户主目录），与全仓统一的技能安装位置约定同源。
 
 API key 只在「往市场上传技能」时才需要，不挡在门口。
 

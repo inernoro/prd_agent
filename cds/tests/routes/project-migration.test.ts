@@ -1,6 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { maskKey, normalizeBaseUrl, toPublicView } from '../../src/routes/project-migration.js';
+import express from 'express';
+import http from 'node:http';
+import { createProjectMigrationRouter, maskKey, normalizeBaseUrl, toPublicView } from '../../src/routes/project-migration.js';
+import type { StateService } from '../../src/services/state.js';
 import type { CdsPeer } from '../../src/types.js';
+
+async function request(server: http.Server, headers: Record<string, string> = {}): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: addr.port,
+      path: '/api/projects/project-1/migration/peers',
+      method: 'GET',
+      headers,
+    }, (res) => {
+      res.resume();
+      res.on('end', () => resolve(res.statusCode ?? 0));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
 
 /**
  * 项目迁移路由的纯函数单测。真实推送需要远端 CDS,但「地址归一化、密钥脱敏、
@@ -65,5 +86,44 @@ describe('toPublicView', () => {
     const view = toPublicView({ ...peer, accessKey: '' });
     expect(view.hasKey).toBe(false);
     expect(view.keyMasked).toBeNull();
+  });
+});
+
+describe('project migration human-owner guard', () => {
+  it('rejects ordinary persisted accounts and accepts persisted or legacy owners', async () => {
+    const stateService = {
+      getCustomEnv: () => ({}),
+      getProject: () => ({ id: 'project-1' }),
+      getCdsPeers: () => [],
+    } as unknown as StateService;
+    const app = express();
+    app.use((req, _res, next) => {
+      if (req.headers['x-auth-kind'] === 'member') {
+        (req as any).cdsUser = { username: 'member', isSystemOwner: false, authProvider: 'local' };
+        (req as any).cdsSession = { id: 'member-session' };
+      }
+      if (req.headers['x-auth-kind'] === 'owner') {
+        (req as any).cdsUser = { username: 'owner', isSystemOwner: true, authProvider: 'local' };
+        (req as any).cdsSession = { id: 'owner-session' };
+      }
+      if (req.headers['x-auth-kind'] === 'legacy') {
+        (req as any)._cdsBasicHumanAuth = true;
+        (req as any).cdsUser = { username: 'legacy', isSystemOwner: true, authProvider: 'legacy' };
+      }
+      next();
+    });
+    app.use('/api', createProjectMigrationRouter({
+      stateService,
+      authMode: 'basic',
+      assertProjectAccess: () => null,
+    }));
+    const server = app.listen(0);
+    try {
+      expect(await request(server, { 'x-auth-kind': 'member' })).toBe(403);
+      expect(await request(server, { 'x-auth-kind': 'owner' })).toBe(200);
+      expect(await request(server, { 'x-auth-kind': 'legacy' })).toBe(200);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

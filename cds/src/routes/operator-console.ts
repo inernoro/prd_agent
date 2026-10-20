@@ -13,6 +13,7 @@ import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 import { operatorOpRegistry, type OperatorOpContext } from '../services/operator-console.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { operatorApprovalService } from '../services/operator-approval.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 
 export function createOperatorConsoleRouter(deps: {
   stateService: StateService;
@@ -38,26 +39,15 @@ export function createOperatorConsoleRouter(deps: {
   //   1. POST /operator/run 直接以 root 跑任意 shell
   //   2. POST /operator/request 自己发请求,再 POST /approve 自审自批,绕过弹窗
   //   3. GET /operator/ops 读到 destructive op 的 confirmText token
-  // 修复:这些"管理员动作"必须人类 cookie 鉴权(server.ts 给人类 cookie 登录打
-  // 的 req._cdsCookieAuth 标记 —— 单租户 CDS 上等同 admin)。AI / project key 一律
+  // 修复:这些"管理员动作"必须由已验证的 system owner 执行。普通持久化账号、AI / project key 一律
   // 403。`/operator/request`(AI 发起待批)与 `/operator/requests/:id`(查自己请求
   // 状态)保持对 AI 开放 —— 这正是"AI 请求 → 人类审批"流程的入口。
-  // Codex review(PR #684):basic-auth 模式下 server.ts 打 _cdsCookieAuth;但
-  // CDS_AUTH_MODE=github 模式下 github-auth 中间件只打 req.cdsUser/cdsSession,
-  // 不打 _cdsCookieAuth。原来只认 _cdsCookieAuth 会把 GitHub 登录的管理员一律 403,
-  // 整个 operator console 在 github 模式不可用。这里同时接受"已验证的 GitHub 会话"。
-  const isHumanAdmin = (req: Request): boolean => {
-    if ((req as { _cdsCookieAuth?: boolean })._cdsCookieAuth === true) return true;
-    // github-auth 中间件验证通过才会同时挂 cdsUser + cdsSession(机器密钥不会)
-    const r = req as { cdsUser?: unknown; cdsSession?: unknown };
-    return !!r.cdsUser && !!r.cdsSession;
-  };
   const requireHuman = (req: Request, res: Response, next: () => void): void => {
-    if (isHumanAdmin(req)) { next(); return; }
+    if (isHumanSystemOwner(req)) { next(); return; }
     res.status(403).json({
       ok: false,
-      error: 'human_auth_required',
-      message: '该运维操作只允许已登录的人类管理员(CDS cookie 或 GitHub 会话)执行,AI / 项目级密钥被拒绝。',
+      error: 'human_owner_required',
+      message: '该运维操作只允许已登录的 CDS 系统所有者执行，普通账号、AI 与项目级密钥均无权操作。',
     });
   };
 
@@ -141,7 +131,7 @@ export function createOperatorConsoleRouter(deps: {
     const r = operatorApprovalService.get(req.params.id);
     if (!r) { res.status(404).json({ ok: false, error: 'not found' }); return; }
     const owns = r.callerKey && r.callerKey === callerKeyFor(req);
-    if (!isHumanAdmin(req) && !owns) {
+    if (!isHumanSystemOwner(req) && !owns) {
       res.status(403).json({ ok: false, error: 'forbidden', message: '只能查看自己发起的运维请求,或以人类管理员身份查看全部。' });
       return;
     }

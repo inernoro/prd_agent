@@ -25,6 +25,7 @@ const PX = /(?<![A-Za-z0-9.])(\d*\.?\d+)px(?![A-Za-z0-9])/g;
 const ALLOW: Array<{ file: string; needle: string; why: string }> = [
   { file: 'index.css', needle: 'max(10px, 0.6875rem)', why: '左栏两字标签的可读性下限：9.5px 已糊，保底 10 物理像素' },
   { file: 'pages/StatusPage.tsx', needle: "'(max-width: 767px)'", why: '媒体查询字符串：断点读不到根字号，和 CSS 断点一样保持 px' },
+  { file: 'components/branch/RelationCard.tsx', needle: "'(max-width: 639px)'", why: '媒体查询字符串（手机上问题带只先放要处理的）：断点读不到根字号，与 Tailwind sm 断点同值' },
   { file: 'pages/HomePage.tsx', needle: "rootMargin: '0px 0px -40px 0px'", why: 'IntersectionObserver 的 rootMargin 是 JS API 参数不是 CSS，规范只接受 px 与 %，写 rem 会直接抛构造异常' },
   { file: 'components/BranchDetailDrawer.tsx', needle: "'-9999px'", why: '把 textarea 挪出视口以便 execCommand(copy) 的哨兵常量，不是设计尺寸，不该跟根字号缩' },
 ];

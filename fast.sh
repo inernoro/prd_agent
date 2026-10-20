@@ -179,8 +179,8 @@ fi
 # 180s 的依据：api 镜像约数百 MB，按生产机常见的 5-10 MB/s 出口带宽算，冷拉一张需要
 # 60-120s，180s 留一倍余量；仍拉不完就是网络确实有问题，该走下面的 WARN 跳过。
 timeout_seconds="${FAST_PULL_TIMEOUT_SECONDS:-180}"
-# 全部镜像预热的**总**预算。单张放宽到 180s 之后必须有这道闸：整条
-# scripts/llmgw-prod-stage.sh 是一条 SSH 命令，共享 CDS 侧 30 分钟的执行超时，
+# 全部镜像预热的**总**预算。单张放宽到 180s 之后必须有这道闸：远程发布时
+# fast.sh 与 exec_dep.sh 同在一条 SSH 命令里，共享 CDS 侧 30 分钟的执行超时，
 # 后面还有 exec_dep.sh 的权威 pull + 构建 + post-deploy 门禁。没有总闸的话，
 # 谁再把单张调大一点，「预热超时」就会变成更难查的 release.exec.timeout。
 total_timeout_seconds="${FAST_PULL_TOTAL_TIMEOUT_SECONDS:-420}"

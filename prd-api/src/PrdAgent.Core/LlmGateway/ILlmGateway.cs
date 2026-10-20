@@ -66,6 +66,7 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         GatewayRawRequest request,
         GatewayModelResolution resolution,
         Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null,
         CancellationToken ct = default)
         => Task.FromResult(GatewayRawResponse.Fail(
             "NATIVE_RESPONSES_UNSUPPORTED", "当前网关未提供原生 Responses 通道", 501));
@@ -291,7 +292,7 @@ public class PoolModelInfo
 }
 
 /// <summary>
-/// LLMGW 对外发布的图片能力快照。尺寸只保存原始宽高，比例由 MAP 通用计算，
+/// LLMGW 对外发布的图片能力快照。保留原始宽高与模型声明的比例，
 /// 因此这里不包含任何供应商或具体模型名称。
 /// </summary>
 public sealed class GatewayImageCapabilitiesSnapshot
@@ -299,6 +300,7 @@ public sealed class GatewayImageCapabilitiesSnapshot
     public string SizeConstraintType { get; init; } = string.Empty;
     public string SizeConstraintDescription { get; init; } = string.Empty;
     public Dictionary<string, List<string>> SizesByResolution { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> AspectRatiosBySize { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public string SizeParamFormat { get; init; } = string.Empty;
     public bool SizesNotApplicable { get; init; }
     public int? MustBeDivisibleBy { get; init; }

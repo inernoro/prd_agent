@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only production provider config audit for LLM Gateway video/ASR cutover.
+"""Read-only production provider config audit for LLM Gateway video/ASR entries.
 
 The audit intentionally does not print secrets. When key-shape decryption is
 enabled, it only reports metadata such as length and whether a key looks like a
@@ -812,8 +812,7 @@ def _audit(
             ],
             "asrClassifications": asr_classifications,
             "videoClassifications": video_classifications,
-            "expectedGrowth": seed_evidence.get("expectedGrowth"),
-            "summaries": seed_evidence.get("summaries"),
+            "successCounts": seed_evidence.get("successCounts"),
         }
         for step in failed:
             name = str(step.get("name") or "")
@@ -1331,7 +1330,7 @@ def main() -> int:
     parser.add_argument("--asr-model-id", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_MODEL_ID", DEFAULT_ASR_MODEL_ID))
     parser.add_argument("--asr-transformer", default=os.environ.get("LLMGW_PROVIDER_AUDIT_ASR_TRANSFORMER", DEFAULT_ASR_TRANSFORMER))
     parser.add_argument("--input-json", default="", help="Optional pre-collected Mongo snapshot JSON")
-    parser.add_argument("--seed-evidence-json", default="", help="Optional llmgw-map-shadow-seed evidence JSON")
+    parser.add_argument("--seed-evidence-json", default="", help="Optional llmgw-map-acceptance-seed evidence JSON")
     parser.add_argument("--skip-key-shape", action="store_true", help="Do not decrypt key shape metadata")
     parser.add_argument("--json-out", default="")
     parser.add_argument("--report-md", default="")

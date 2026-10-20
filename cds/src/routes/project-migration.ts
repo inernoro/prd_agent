@@ -33,6 +33,7 @@ import type { StateService } from '../services/state.js';
 import type { BuildProfile, CdsPeer, InfraService, RoutingRule } from '../types.js';
 import { toCdsCompose } from '../services/compose-parser.js';
 import { getCdsAiAccessKey } from '../config/known-env-keys.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 
 export interface ProjectMigrationDeps {
   stateService: StateService;
@@ -150,8 +151,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     // 判定口径与 operator-console / remote-hosts 等系统级管理端一致(secret-revealing 须 cookie 鉴权)。
     // disabled 模式 = 开放面板,无任何登录/标记,且本就没有安全边界(谁都能调任意 API),
     // 强求人类管理员会让迁移在默认 disabled 装机完全不可用(Codex P2)→ 此模式放行。
-    const isHumanAdmin =
-      deps.authMode === 'disabled' || req._cdsCookieAuth === true || (!!req.cdsUser && !!req.cdsSession);
+    const isHumanAdmin = deps.authMode === 'disabled' || isHumanSystemOwner(req);
     if (!isHumanAdmin) {
       res.status(403).json({
         error: 'human_auth_required',

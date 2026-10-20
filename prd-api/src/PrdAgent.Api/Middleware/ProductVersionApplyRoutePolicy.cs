@@ -18,7 +18,7 @@ public static class ProductVersionApplyRoutePolicy
         @"GET /api/product/overview/version-workflow/(?:legacy(?:/[^/]+/copy-template)?|snapshots(?:/[^/]+)?)|" +
         @"GET /api/product/(?:initiations|releases)/[^/]+(?:/copy-template)?|" +
         @"(?:GET|POST) /api/product/products/[^/]+/(?:initiations|releases)|" +
-        @"GET /api/product/products/[^/]+/releases/inherit-manifest|" +
+        @"GET /api/product/products/[^/]+/releases/(?:inherit-manifest|history-check)|" +
         @"GET /api/product/products/[^/]+/(?:requirements|features|members|defects)|" +
         @"PATCH /api/product/initiations/[^/]+(?:/meeting)?|" +
         @"POST /api/product/initiations/[^/]+/(?:review|decision|approve)|" +

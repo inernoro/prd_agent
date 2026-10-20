@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Bug, Building2, ChevronDown, CircleDollarSign, FileClock, Layers3,
-  Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
+  Check, ExternalLink, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
   ShieldCheck, Sun, Tags, UserRound, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -43,7 +43,6 @@ const NAV_GROUPS: NavGroup[] = [
   { label: '治理', items: [
     { to: '/usage', label: '预算与用量', icon: <CircleDollarSign size={16} />, page: 'usage' },
     { to: '/audits', label: '审计', icon: <FileClock size={16} />, page: 'audits' },
-    { to: '/shadow', label: '影子对比', icon: <GitCompare size={16} />, page: 'shadow' },
     { to: '/governance', label: '系统运维', icon: <ShieldCheck size={16} />, page: 'governance' },
   ] },
   { label: '设置', items: [

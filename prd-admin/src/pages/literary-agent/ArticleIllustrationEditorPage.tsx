@@ -55,13 +55,16 @@ import {
   getLiteraryAgentWorkspaceDetailReal as getVisualAgentWorkspaceDetail,
   updateLiteraryAgentWorkspaceReal as updateVisualAgentWorkspace,
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
+  setLiteraryIllustrationPrefsReal,
+  type LiteraryIllustrationChoice,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
 import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryModelOption } from './literaryModelOptions';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
+import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
 import type { WatermarkConfig } from '@/services/contracts/watermark';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -505,6 +508,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 刻意不在打开期间实时重算列表：否则更靠前的 marker 后完成插入会让已打开的图悄悄错位（违反"最小惊讶"）。
   // 新完成的配图重新打开灯箱即可看到。
   const [lightbox, setLightbox] = useState<{ images: string[]; index: number } | null>(null);
+  // 历史配图：改稿 / 重新规划 / 重新生成前的旧图都不删，在这里按版本找回
+  const [historyOpen, setHistoryOpen] = useState(false);
+  // 这篇文章自己的风格 / 水印（智能体或网页为它指定过才有）。有它时顶栏改的是这篇文章，不动账号级的「当前启用」
+  const [articleChoice, setArticleChoice] = useState<LiteraryIllustrationChoice | null>(null);
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
   const [pendingWatermarkEdit, setPendingWatermarkEdit] = useState(false); // 用于延迟触发水印编辑
   const handleWatermarkStatusChange = useCallback((status: { hasActiveConfig: boolean; activeId?: string; activeName?: string }) => {
@@ -793,7 +800,41 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [workspaceId]);
   // ---- 生成设置的就地菜单：风格图 / 水印直接切换，不必打开完整配置页 ----
   const activeRefConfig = referenceImageConfigs.find((c) => c.isActive) ?? null;
+  // 顶栏「本文风格 / 水印」有三种状态，文案要分开说：这篇记住的 / 这篇没单独指定、跟随账号默认 /
+  // 记住的那套已被删除、正按账号默认出图。最后一种以前也写成「本文自己的设定」，用户带着回退的那套去花额度却不知道。
+  type ArticlePref = { name: string; source: string; missing?: boolean };
+  const articlePrefNote = (kind: string, item: ArticlePref | undefined): React.ReactNode => {
+    if (!item) return undefined;
+    if (item.missing) {
+      return (
+        <span style={{ color: 'var(--accent-fg-amber)' }}>
+          {`这篇文章原先记住的${kind}已被删除，现在按账号默认「${item.name}」出图。重新选一套即可记到本文。`}
+        </span>
+      );
+    }
+    if (item.source !== 'remembered') return `这篇文章没单独指定${kind}，跟随账号默认；在这里选一套会记到本文，智能体和网页重画都按它来`;
+    return `这里选的是这篇文章自己的${kind}，智能体和网页重画都按它来`;
+  };
+  const articlePrefTitle = (kind: string, item: ArticlePref) =>
+    item.missing ? `本文的${kind}：原先记住的已被删除，正按账号默认「${item.name}」出图`
+      : item.source !== 'remembered' ? `本文的${kind}：跟随账号默认「${item.name}」`
+        : `本文的${kind}：${item.name}（这篇文章自己的设定，智能体与网页生图都按它来）`;
+  // 改这篇文章自己的设定（智能体与网页读写同一份）。clear = 回到跟随账号默认
+  const applyArticleChoice = async (input: { style?: string; watermark?: string; clear?: boolean }) => {
+    const res = await setLiteraryIllustrationPrefsReal({ id: workspaceId, ...input });
+    if (!res.success || !res.data) {
+      toast.error('保存本文的配图设定失败', res.error?.message || '未知错误，请稍后重试');
+      return;
+    }
+    setArticleChoice(input.clear ? null : res.data.effective);
+    if (input.clear) toast.success('本文已改为跟随账号默认的风格与水印');
+  };
   const switchReferenceImage = async (config: ReferenceImageConfig, activate: boolean) => {
+    if (articleChoice) {
+      setReferenceImageSaving(true);
+      try { await applyArticleChoice({ style: activate ? config.id : 'none' }); } finally { setReferenceImageSaving(false); }
+      return;
+    }
     setReferenceImageSaving(true);
     try {
       const res = await mutateReferenceImageScenario(
@@ -826,6 +867,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     setWatermarkLoadError(res.error?.message || '水印列表读取失败');
   };
   const switchWatermark = async (target: WatermarkConfig | null) => {
+    if (articleChoice) {
+      setWatermarkSaving(true);
+      try { await applyArticleChoice({ watermark: target ? target.id : 'none' }); } finally { setWatermarkSaving(false); }
+      return;
+    }
     const current = watermarkOptions?.find((w) => w.appKeys?.includes(LITERARY_APP_KEY)) ?? null;
     if ((target?.id ?? null) === (current?.id ?? null)) return;
     // 要关水印却找不到当前绑定记录：说明列表与实际状态对不上，不能只改界面状态了事
@@ -1207,6 +1253,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const res = await getVisualAgentWorkspaceDetail({ id: workspaceId });
       if (res.success && res.data?.workspace) {
         const ws = res.data.workspace;
+        setArticleChoice(res.data.illustrationChoice ?? null);
         const suppressAutoSubmit = ws.suppressAutoSubmit === true;
         autoSubmitSuppressedRef.current = suppressAutoSubmit;
         setAutoSubmitSuppressed(suppressAutoSubmit);
@@ -2895,6 +2942,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <span>{manualSubmitting ? '投稿中…' : '投稿当前'}</span>
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setHistoryOpen(true)}
+                data-tour-id="literary-editor-history"
+                className="h-7 px-2.5 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs font-medium"
+                style={{ color: 'var(--text-secondary)' }}
+                title="这篇文章生成过的全部配图，改稿或重新生成前的旧图也在"
+              >
+                <History size={13} />
+                <span>历史配图</span>
+              </button>
               {/* 本页教程入口(内嵌头部右侧):自动开讲关掉/已消费后,仍可手动重开编辑器教程 */}
               <TipsEntryButton compact />
             </div>
@@ -3502,14 +3560,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             </Button>
           ))}
 
-          {/* 生成设置：一行四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
+          {/* 生成设置：四个弹出按钮（图标 + 当前值 + 上下箭头），就地弹出选项菜单；
               行尾图标按钮打开完整配置页。参照 Apple HIG 的弹出按钮：长得像下拉就必须就地给出选项。 */}
           <div
             className="mt-2.5 pt-2.5 border-t flex items-center gap-1.5"
             style={{ borderColor: 'var(--border-subtle)' }}
             data-testid="literary-generation-settings"
           >
-            <div className="grid grid-cols-4 gap-1.5 flex-1 min-w-0">
+            {/* 两行两列：右栏只有三百来像素，四个挤一行时风格、水印的名字被截成「全域…」「水印…」，
+                看不出用的是哪一套。「这是本文自己的设定」由悬停说明与菜单说明交代，不占按钮文字 */}
+            <div className="grid grid-cols-2 gap-1.5 flex-1 min-w-0">
               <QuickMenu
                 title="提示词风格"
                 width={260}
@@ -3543,14 +3603,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <QuickMenu
                 title="风格参考图"
                 width={260}
+                note={articlePrefNote('风格', articleChoice?.style)}
                 // 还没拿到真实列表（首次读取失败）时，打开菜单就重读一次
                 onOpenChange={(o) => { if (o && !referenceImageListReady && !referenceImageLoading) void loadReferenceImageConfigs(); }}
                 trigger={
                   <PopupButton
-                    icon={<ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
-                    value={!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
-                    isSet={!!activeRefConfig}
-                    title={`风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
+                    icon={articleChoice?.style.missing
+                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                      : <ImageIcon size={13} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />}
+                    warning={!!articleChoice?.style.missing}
+                    value={articleChoice
+                      ? (articleChoice.style.styleId === 'none' ? '无' : articleChoice.style.name)
+                      : !referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中…') : (activeRefConfig?.name || '无')}
+                    isSet={articleChoice ? articleChoice.style.styleId !== 'none' : !!activeRefConfig}
+                    title={articleChoice
+                      ? articlePrefTitle('风格', articleChoice.style)
+                      : `风格参考图：${!referenceImageListReady ? (referenceImageLoadError ? '读取失败' : '读取中') : (activeRefConfig?.name || '不使用')}`}
                     aria-label="风格参考图"
                   />
                 }
@@ -3565,19 +3633,33 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <>
                     <QuickMenuItem
                       label="不使用"
-                      selected={!activeRefConfig}
+                      selected={articleChoice ? articleChoice.style.styleId === 'none' : !activeRefConfig}
                       disabled={referenceImageSaving}
-                      onSelect={() => { if (activeRefConfig) void switchReferenceImage(activeRefConfig, false); }}
+                      onSelect={() => {
+                        if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== 'none') void applyArticleChoice({ style: 'none' }); return; }
+                        if (activeRefConfig) void switchReferenceImage(activeRefConfig, false);
+                      }}
                     />
                     {referenceImageConfigs.map((c) => (
                       <QuickMenuItem
                         key={c.id}
                         label={c.name || '未命名'}
-                        selected={c.isActive}
+                        selected={articleChoice ? articleChoice.style.styleId === c.id : c.isActive}
                         disabled={referenceImageSaving}
-                        onSelect={() => { if (!c.isActive) void switchReferenceImage(c, true); }}
+                        onSelect={() => {
+                          if (articleChoice) { if (articleChoice.style.missing || articleChoice.style.styleId !== c.id) void switchReferenceImage(c, true); return; }
+                          if (!c.isActive) void switchReferenceImage(c, true);
+                        }}
                       />
                     ))}
+                    {articleChoice && (
+                      <QuickMenuItem
+                        label="跟随账号默认（清除本文设定）"
+                        selected={false}
+                        disabled={referenceImageSaving}
+                        onSelect={() => void applyArticleChoice({ clear: true })}
+                      />
+                    )}
                   </>
                 )}
                 <QuickMenuAction label="管理风格图…" onSelect={() => setPromptPreviewOpen(true)} />
@@ -3586,13 +3668,21 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <QuickMenu
                 title="水印"
                 width={240}
+                note={articlePrefNote('水印', articleChoice?.watermark)}
                 onOpenChange={(o) => { if (o) void loadWatermarkOptions(); }}
                 trigger={
                   <PopupButton
-                    icon={<Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
-                    value={watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
-                    isSet={watermarkStatus.enabled}
-                    title={`水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
+                    icon={articleChoice?.watermark.missing
+                      ? <AlertTriangle size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                      : <Sparkles size={13} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />}
+                    warning={!!articleChoice?.watermark.missing}
+                    value={articleChoice
+                      ? (articleChoice.watermark.watermarkId === 'none' ? '关' : articleChoice.watermark.name)
+                      : watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '关'}
+                    isSet={articleChoice ? articleChoice.watermark.watermarkId !== 'none' : watermarkStatus.enabled}
+                    title={articleChoice
+                      ? articlePrefTitle('水印', articleChoice.watermark)
+                      : `水印：${watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'}`}
                     aria-label="水印"
                   />
                 }
@@ -3605,7 +3695,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <>
                     <QuickMenuItem
                       label="不加水印"
-                      selected={!watermarkStatus.enabled}
+                      selected={articleChoice ? articleChoice.watermark.watermarkId === 'none' : !watermarkStatus.enabled}
                       disabled={watermarkSaving}
                       onSelect={() => void switchWatermark(null)}
                     />
@@ -3613,11 +3703,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       <QuickMenuItem
                         key={w.id}
                         label={w.name || w.text || '未命名'}
-                        selected={w.appKeys?.includes(LITERARY_APP_KEY)}
+                        selected={articleChoice ? articleChoice.watermark.watermarkId === w.id : w.appKeys?.includes(LITERARY_APP_KEY)}
                         disabled={watermarkSaving}
                         onSelect={() => void switchWatermark(w)}
                       />
                     ))}
+                    {articleChoice && (
+                      <QuickMenuItem
+                        label="跟随账号默认（清除本文设定）"
+                        selected={false}
+                        disabled={watermarkSaving}
+                        onSelect={() => void applyArticleChoice({ clear: true })}
+                      />
+                    )}
                   </>
                 )}
                 <QuickMenuAction
@@ -5010,6 +5108,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </div>
         }
       />
+
+      <IllustrationHistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} workspaceId={workspaceId} onRestored={() => void loadWorkspace()} />
 
       {/* 图片灯箱（可放大/缩小/拖拽预览）。列表在打开时已快照，避免打开期间靠前 marker 完成插入导致错位 */}
       {lightbox && (

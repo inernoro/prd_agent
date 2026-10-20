@@ -16,6 +16,7 @@
  */
 
 import net from 'node:net';
+import { maskSecrets } from './secret-masker.js';
 import { internalProbeHeaders } from './self-check-auth.js';
 import type { MonitorObservation, UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
 import { normalizeMonitorEnvironment, type MonitorEnvironment } from './monitor-environment.js';
@@ -873,12 +874,13 @@ async function readBodyPrefix(res: Response, limitBytes: number): Promise<string
 async function httpProbe(
   monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'observeMode' | 'sampleCountPath'>,
   timeoutMs: number,
+  snapshot?: { body: string; code: number },
 ): Promise<CustomProbeOutcome> {
   const startedAt = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(monitor.url || '', {
+    const res = snapshot ? new Response(snapshot.body, { status: snapshot.code }) : await fetch(monitor.url || '', {
       method: monitor.method || 'GET',
       signal: ctrl.signal,
       redirect: 'manual',
@@ -939,8 +941,15 @@ async function httpProbe(
         }
       }
       if (!verdict.ok) {
+        let publicMessage: string | undefined;
+        try {
+          const value = findHealthCheck(JSON.parse(body), monitor.healthComponentId || '')?.publicMessage;
+          if (typeof value === 'string') publicMessage = maskSecrets(value, { mask: true }).replace(/https?:\/\/[^\s<>"']+/gi, '[详情中查看]').slice(0, 160);
+        } catch { /* 非法文档由原判据记录，不生成通知说明。 */ }
         // 判据不成立时 HTTP 往往仍是 200——「接口通但结论是坏的」正是这类探测的存在意义。
-        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err, ...(observation ? { observation } : {}) };
+        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err,
+          ...(verdict.observed !== undefined ? { finding: publicMessage || `当前读数 ${verdict.observed.slice(0, 80)}，应${({eq:'等于',ne:'不等于',lt:'低于',lte:'不高于',gt:'高于',gte:'不低于'} as Record<string,string>)[op]} ${String(monitor.healthValue).slice(0, 80)}。` } : {}),
+          ...(observation ? { observation } : {}) };
       }
       return { up: true, ms: Date.now() - startedAt, code, ...(observation ? { observation } : {}) };
     } else {
@@ -957,6 +966,41 @@ async function httpProbe(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 同一个自检端点只读取一次；采集失败与真实指标越界分别返回。 */
+export async function probeHealthJsonBatch(monitors: UptimeCustomMonitor[], timeoutMs: number): Promise<{
+  collection: CustomProbeOutcome; members: CustomProbeOutcome[];
+}> {
+  const started = Date.now();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const first = monitors[0];
+    if (!first?.url || monitors.some(m => m.kind !== 'health-json' || m.url !== first.url)) throw new Error('自检分组配置不一致');
+    const res = await fetch(first.url, { signal: ctrl.signal, redirect: 'manual',
+      headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', ...internalProbeHeaders(first.url) } });
+    if (res.status < 200 || res.status >= 300) {
+      await res.body?.cancel().catch(() => undefined);
+      throw new Error(`自检接口返回 HTTP ${res.status}`);
+    }
+    const body = await readBodyPrefix(res, HEALTH_BODY_LIMIT_BYTES);
+    const doc = JSON.parse(body);
+    if (!doc || typeof doc.checks !== 'object' || !doc.checks) throw new Error('自检响应缺少检查数据');
+    const ms = Date.now() - started;
+    const members = await Promise.all(monitors.map(async m => {
+      const outcome = await httpProbe(m, timeoutMs, { body, code: res.status });
+      const check = findHealthCheck(doc, m.healthComponentId || '');
+      const value = check?.[m.healthField || 'observedValue'];
+      return { ...outcome, ms, ...(value === undefined || value === null ? { up: false, noData: true } : {}) };
+    }));
+    const missing = monitors.filter((m, i) => { const value = findHealthCheck(doc, m.healthComponentId || '')?.[m.healthField || 'observedValue']; return members[i].observation?.sampleCount !== 0 && (value === undefined || value === null); }).length;
+    return { collection: missing ? { up: false, ms, code: res.status, err: `${missing} 项自检缺少读数，无法判断` } : { up: true, ms, code: res.status }, members };
+  } catch (error) {
+    const err = ctrl.signal.aborted ? `自检数据读取超时（${timeoutMs}ms）` : '自检数据读取失败';
+    const collection = { up: false, ms: Date.now() - started, err };
+    return { collection, members: monitors.map(() => ({ ...collection, noData: true })) };
+  } finally { clearTimeout(timer); }
 }
 
 /** 按监控定义发一次探测。timeoutMs 由调用方结算（监控自身 > 全局）。 */

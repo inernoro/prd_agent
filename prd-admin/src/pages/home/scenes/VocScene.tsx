@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useBreakpoint, useIsMobile } from '@/hooks/useBreakpoint';
 import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import { BeatNarration, SceneFrame, SceneIcon, SceneMono } from './SceneFrame';
@@ -53,11 +53,16 @@ const GROUP_HUES = [214, 205, 196, 187, 178, 169, 160, 151, 142];
 const ERR_HUE = SCENE_HUE.clay;
 const SLOW_HUE = SCENE_HUE.amber;
 
+/**
+ * 画布按真实像素排：先量出 SVG 实际多宽多高，再按这个尺寸跑 squarify。
+ * 上一版是固定 1000×470 的 viewBox + preserveAspectRatio="none" 拉伸到容器，
+ * 色块跟着拉没问题，**字也被一起横向拉宽**——宽屏上横向放大近两倍、纵向反而缩小，
+ * 看起来像被压扁（2026-09-29 用户截图指出）。量出来之前先用这个比例占位。
+ */
 const VIEW_W = 1000;
-// 块数从 18 涨到 38 后画布跟着抬高：块再挤下去就只剩色块、看不见名字了
 const VIEW_H = 470;
 const PAD = 3;
-const HDR = 15;
+const HDR = 20;
 
 type Rect = { x: number; y: number; w: number; h: number };
 type Placed<T> = T & { rect: Rect };
@@ -129,6 +134,20 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
   const { beat, ref, armed, release, visible } = useSceneTimeline(HOLDS, { gates: isDesktop ? GATED : undefined });
   const isMobile = useIsMobile();
   const steel = inkTone(SCENE_HUE.steel);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [box, setBox] = useState({ w: VIEW_W, h: VIEW_H });
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) setBox((b) => (Math.abs(b.w - r.width) < 1 && Math.abs(b.h - r.height) < 1 ? b : { w: r.width, h: r.height }));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, []);
 
   /**
    * 布局纯几何、与拍子无关，算一次就够。
@@ -142,7 +161,7 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
     const source = isMobile ? s.groups.slice(0, 4) : s.groups;
     const groups = squarify(
       source.map((g) => ({ ...g, weight: g.leaves.reduce((n, l) => n + l.weight, 0) })),
-      { x: 0, y: 0, w: VIEW_W, h: VIEW_H },
+      { x: 0, y: 0, w: box.w, h: box.h },
     );
     return groups.map((g, gi) => {
       const inner: Rect = {
@@ -154,7 +173,7 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
       const leaves = squarify(g.leaves, inner).map((leaf, li) => ({ ...leaf, depth: li, hue: GROUP_HUES[gi % GROUP_HUES.length] }));
       return { ...g, hue: GROUP_HUES[gi % GROUP_HUES.length], leaves };
     });
-  }, [s.groups, isMobile]);
+  }, [s.groups, isMobile, box]);
 
   /** 全图块的书写顺序按 x 排，扫描线才是"从左写到右"而不是乱蹦 */
   const order = useMemo(() => {
@@ -200,8 +219,8 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
 
         <div style={{ padding: '16px' }}>
           <svg
-            viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
-            preserveAspectRatio="none"
+            ref={svgRef}
+            viewBox={`0 0 ${box.w} ${box.h}`}
             style={{ display: 'block', width: '100%', height: isMobile ? '300px' : 'clamp(250px, 30vw, 390px)' }}
             role="img"
             aria-label={s.title}
@@ -210,9 +229,9 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
               <g key={group.label}>
                 <text
                   x={group.rect.x + PAD + 2}
-                  y={group.rect.y + PAD + 10}
+                  y={group.rect.y + PAD + 13}
                   style={{
-                    fill: SCENE.inkDim, fontSize: '11px', fontFamily: 'var(--font-body)',
+                    fill: SCENE.inkDim, fontSize: '13px', fontFamily: 'var(--font-body)',
                     opacity: beat >= B.calm ? 1 : 0,
                     transition: 'opacity .6s ease',
                   }}
@@ -235,8 +254,8 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
                    * 小块也给名字，只是缩一档字号。阈值从 74×26 放到 52×20 ——
                    * 38 块里有一半够不到原阈值，全成无名色块的话这张图就退化成装饰。
                    */
-                  const showLabel = leaf.rect.w > 52 && leaf.rect.h > 20;
-                  const tiny = leaf.rect.w < 88 || leaf.rect.h < 30;
+                  const showLabel = leaf.rect.w > 56 && leaf.rect.h > 24;
+                  const tiny = leaf.rect.w < 96 || leaf.rect.h < 34;
                   return (
                     // 痛点块就是最后一拍要点的那个东西。多个痛点块共用一个落点名，
                     // 指针取第一个 —— 确定、可复现，不必再挑「哪一个才算」。
@@ -258,11 +277,11 @@ export function VocScene({ variant }: { variant?: SceneVariant }) {
                       />
                       {showLabel && (
                         <text
-                          x={leaf.rect.x + (tiny ? 5 : 8)}
-                          y={leaf.rect.y + (tiny ? 14 : 19)}
+                          x={leaf.rect.x + (tiny ? 6 : 9)}
+                          y={leaf.rect.y + (tiny ? 16 : 21)}
                           style={{
                             fill: lit ? SCENE.ink : SCENE.inkMid,
-                            fontSize: tiny ? '8.5px' : '10.5px',
+                            fontSize: tiny ? '11px' : '12.5px',
                             fontFamily: 'var(--font-body)',
                             opacity: written ? 1 : 0,
                             transition: `opacity .5s ease ${idx * 55 + 160}ms, fill .7s ease`,

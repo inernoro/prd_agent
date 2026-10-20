@@ -1,9 +1,8 @@
 /**
- * Local username + password auth routes — coexists with GitHub OAuth.
+ * Local username + password auth routes — independent from the login provider.
  *
- * These mount in the same `CDS_AUTH_MODE=github` block as the OAuth routes so
- * the session gate (github-auth middleware) protects everything uniformly and
- * local + GitHub users share the exact same session-cookie mechanism.
+ * GitHub OAuth and legacy CDS_USERNAME/CDS_PASSWORD may both coexist with this
+ * router, but neither is a prerequisite for the persisted local-user model.
  *
  * Endpoints (all under /api):
  *   GET  /api/auth/bootstrap-status   → public; { needsBootstrap } when zero users
@@ -21,11 +20,27 @@
 
 import { Router, type Request, type Response } from 'express';
 import { AuthService, LocalAuthError } from '../services/auth-service.js';
-import { GH_SESSION_COOKIE } from './auth.js';
-import { toPublicUser, type CdsUser } from '../domain/auth.js';
+import {
+  buildLegacyLogoutCookie,
+  buildLogoutCookie,
+  buildSessionCookie,
+  buildSsoLogoutCookie,
+  GH_SESSION_COOKIE,
+} from './auth.js';
+import { toPublicUser, type CdsUser, type PublicCdsUser } from '../domain/auth.js';
+import type { StateService } from '../services/state.js';
+import { humanPrincipalId, beginHumanProjectGrantUpdate, boundedHumanAccessFlush,
+  markHumanProjectGrantRecovery, reconcileHumanAccessRestore, type FinishHumanAccessUpdate } from '../services/human-project-access.js';
+
+export interface LegacyLocalLoginResult {
+  user: PublicCdsUser;
+  setCookie: string;
+}
 
 export interface AuthLocalRouterDeps {
   authService: AuthService;
+  /** Production servers synchronize linked machine credentials with account status. */
+  stateService?: StateService;
   /** Set to true for HTTPS environments; cookies get the Secure flag. */
   cookieSecure: boolean;
   /**
@@ -36,24 +51,32 @@ export interface AuthLocalRouterDeps {
    * (PR #865 Codex P1). When false, bootstrap is disabled.
    */
   bootstrapAllowed: boolean;
+  /**
+   * Compatibility hook for the original CDS_USERNAME/CDS_PASSWORD account.
+   * It runs before persisted local-account verification, so the original
+   * credential keeps deterministic ownership even if old data contains the
+   * same username.
+   */
+  legacyLogin?: (
+    input: { username: string; password: string },
+    req: Request,
+  ) => Promise<LegacyLocalLoginResult | null> | LegacyLocalLoginResult | null;
+  /** Usernames owned by external/legacy providers and unavailable for creation. */
+  reservedUsernames?: string[];
 }
 
 interface AuthedRequest extends Request {
   cdsUser?: CdsUser;
 }
 
-function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
-  const maxAgeSec = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
-  const parts = [
-    `${GH_SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    'Path=/',
-    'HttpOnly',
-    'SameSite=Lax',
-    `Max-Age=${maxAgeSec}`,
-    `Expires=${new Date(expiresAt).toUTCString()}`,
-  ];
-  if (secure) parts.push('Secure');
-  return parts.join('; ');
+function sessionToken(req: Request): string | null {
+  const match = (req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${GH_SESSION_COOKIE}=([^;]*)`));
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 function clientIp(req: Request): string | null {
@@ -86,7 +109,10 @@ function localErrStatus(err: LocalAuthError): number {
 
 export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
   const router = Router();
-  const { authService, cookieSecure, bootstrapAllowed } = deps;
+  const { authService, cookieSecure, bootstrapAllowed, legacyLogin } = deps;
+  const reservedUsernames = new Set(
+    (deps.reservedUsernames ?? []).map((username) => String(username).trim().toLowerCase()),
+  );
 
   // ── First-run bootstrap (public) ──
   router.get('/auth/bootstrap-status', async (_req: Request, res: Response) => {
@@ -122,7 +148,11 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         summary: '首次启动创建本地系统所有者账号',
         ip: clientIp(req),
       });
-      res.setHeader('Set-Cookie', buildSessionCookie(session.token, session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', [
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure),
+        buildSsoLogoutCookie(cookieSecure),
+      ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
       if (err instanceof LocalAuthError) {
@@ -143,7 +173,22 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       return;
     }
     try {
-      const user = await authService.verifyLocalLogin(String(username), String(password));
+      const normalizedUsername = String(username);
+      const normalizedPassword = String(password);
+      const legacy = await legacyLogin?.(
+        { username: normalizedUsername, password: normalizedPassword },
+        req,
+      );
+      if (legacy) {
+        res.setHeader('Set-Cookie', [
+          legacy.setCookie,
+          buildLogoutCookie(cookieSecure),
+          buildSsoLogoutCookie(cookieSecure),
+        ]);
+        res.json({ user: legacy.user });
+        return;
+      }
+      const user = await authService.verifyLocalLogin(normalizedUsername, normalizedPassword);
       if (!user) {
         res.status(401).json({ error: '用户名或密码错误' });
         return;
@@ -159,7 +204,11 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
         summary: '本地账号登录',
         ip: clientIp(req),
       });
-      res.setHeader('Set-Cookie', buildSessionCookie(session.token, session.expiresAt, cookieSecure));
+      res.setHeader('Set-Cookie', [
+        buildSessionCookie(session.token, session.expiresAt, cookieSecure),
+        buildLegacyLogoutCookie(cookieSecure),
+        buildSsoLogoutCookie(cookieSecure),
+      ]);
       res.json({ user: toPublicUser(user) });
     } catch (err) {
       // 存储后端在 verifyLocalLogin / 建会话 / 记活动时拒绝时，async Express 4
@@ -169,6 +218,20 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       console.error('[auth-local] login failed:', err);
       res.status(500).json({ error: '登录失败' });
     }
+  });
+
+  // ── Local session logout ──
+  // In GitHub mode the OAuth router registers the same path first; in basic
+  // mode this handler owns it. Both clear the shared persisted-session cookie.
+  router.post('/auth/logout', async (req: Request, res: Response) => {
+    const token = sessionToken(req);
+    if (token) await authService.logout(token);
+    res.setHeader('Set-Cookie', [
+      buildLogoutCookie(cookieSecure),
+      buildLegacyLogoutCookie(cookieSecure),
+      buildSsoLogoutCookie(cookieSecure),
+    ]);
+    res.json({ ok: true });
   });
 
   // ── Change own password (authed) ──
@@ -225,8 +288,16 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     if (!me) return;
     const { username, password, name, isSystemOwner } = req.body || {};
     try {
+      const normalizedUsername = String(username || '').trim().toLowerCase();
+      if (reservedUsernames.has(normalizedUsername)) {
+        res.status(409).json({
+          error: `用户名 ${normalizedUsername} 由原始管理员账号占用`,
+          code: 'username_taken',
+        });
+        return;
+      }
       const user = await authService.createLocalUser({
-        username: String(username || ''),
+        username: normalizedUsername,
         password: String(password || ''),
         name: typeof name === 'string' ? name : undefined,
         isSystemOwner: isSystemOwner === true,
@@ -257,6 +328,8 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
     if (!me) return;
     const targetId = req.params.id;
     const { status, newPassword } = req.body || {};
+    let finishUpdate: FinishHumanAccessUpdate | undefined;
+    let linkedStatusFailed = false;
     try {
       let result: CdsUser | null = await authService.findUserById(targetId);
       if (!result) {
@@ -284,7 +357,55 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
           res.status(400).json({ error: '不能禁用自己的账号' });
           return;
         }
-        result = await authService.setUserStatus(targetId, status);
+        const state = deps.stateService;
+        const principalId = humanPrincipalId(targetId);
+        if (state) {
+          finishUpdate = beginHumanProjectGrantUpdate(state, principalId, 'disabled');
+          if (!finishUpdate) {
+            res.status(409).json({ error: '此账号的访问状态正在保存或恢复，请稍后刷新并重试。' }); return;
+          }
+        }
+        let writing: Promise<void> | undefined;
+        try {
+          // Disable the credential side durably before disabling the account.
+          // Enable the account first; the shared gate blocks credentials until
+          // their active state is durable. No cross-store atomicity is assumed.
+          if (state?.getPrincipal(principalId) && status === 'disabled') {
+            state.setPrincipalStatus(principalId, 'disabled', me.username || me.githubLogin);
+            writing = state.flush();
+            await boundedHumanAccessFlush(writing);
+          }
+          result = await authService.setUserStatus(targetId, status);
+          if (state?.getPrincipal(principalId) && status === 'active') {
+            state.setPrincipalStatus(principalId, 'active', me.username || me.githubLogin);
+            writing = state.flush();
+            await boundedHumanAccessFlush(writing);
+          }
+        } catch (error) {
+          if (state?.getPrincipal(principalId)) {
+            linkedStatusFailed = true;
+            // On either store failure, retain a disabled credential side, not
+            // an optimistic enable. Serialize compensation after a late write.
+            try { state.setPrincipalStatus(principalId, 'disabled', me.username || me.githubLogin); }
+            catch { /* Mutation precedes save; retry durable compensation below. */ }
+            const restored = (writing || Promise.resolve()).catch(() => {}).then(async () => {
+              state.save(); await state.flush();
+            });
+            try { await boundedHumanAccessFlush(restored); } catch {
+              markHumanProjectGrantRecovery(state, principalId);
+              const release = finishUpdate!;
+              finishUpdate = undefined;
+              reconcileHumanAccessRestore(state, restored, release);
+            }
+          }
+          throw error;
+        }
+        const cleared = await finishUpdate?.();
+        finishUpdate = undefined;
+        if (cleared === false) {
+          linkedStatusFailed = true;
+          throw new Error('account access journal cleanup pending');
+        }
         await authService.recordActivity({
           userId: me.id,
           userLogin: me.username || me.githubLogin,
@@ -298,13 +419,21 @@ export function createAuthLocalRouter(deps: AuthLocalRouterDeps): Router {
       const fresh = (await authService.findUserById(targetId)) ?? result;
       res.json({ user: fresh ? toPublicUser(fresh) : null });
     } catch (err) {
+      if (finishUpdate) {
+        if (!await finishUpdate()) linkedStatusFailed = true;
+        finishUpdate = undefined;
+      }
       if (err instanceof LocalAuthError) {
         res.status(localErrStatus(err)).json({ error: err.message, code: err.code });
         return;
       }
       // eslint-disable-next-line no-console
       console.error('[auth-local] patch-user failed:', err);
-      res.status(500).json({ error: '更新用户失败' });
+      res.status(500).json({ error: linkedStatusFailed
+        ? '账号更新未能完整保存；关联机器凭据已暂停，请恢复存储后刷新账号状态并重试。'
+        : '更新用户失败' });
+    } finally {
+      await finishUpdate?.();
     }
   });
 

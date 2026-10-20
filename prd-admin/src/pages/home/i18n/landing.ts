@@ -333,6 +333,57 @@ export interface TailTranslation {
   };
 }
 
+/**
+ * 片花（`film/`）。画面与配乐都由代码按时间轴实时生成，文案随语言切换，
+ * 所以片子里的每一个字都在这里，没有烤进任何视频文件。
+ */
+export interface FilmTranslation {
+  eyebrow: string;
+  title: string;
+  subtitle: string;
+  controls: {
+    play: string;
+    pause: string;
+    replay: string;
+    mute: string;
+    unmute: string;
+    fullscreen: string;
+    soundOn: string;
+    /** 影院模式下，手机竖着拿时的一句提示 */
+    rotateHint: string;
+    /** 影院模式：点暗处回到页面 */
+    exitTheater: string;
+    /** 浏览器拿不到音频能力时的如实说明 */
+    noAudio: string;
+    /** 成品配乐取不回 / 解不开、退回合成配乐时的如实说明 */
+    trackFallback: string;
+    /** 点了播放、配乐还在解码 */
+    loading: string;
+  };
+  /** 开场两行 */
+  open: [string, string];
+  /** 下三分之一字幕：六幕各一条 */
+  chapters: Array<{ title: string; headline: string; line: string }>;
+  visual: { prompt: string; send: string; tileDone: string; tileWorking: string };
+  writing: { docTitle: string; paragraphs: string[] };
+  toolbox: { unit: string; search: string };
+  workflow: { title: string; schedule: string; nodes: string[]; done: string };
+  models: { poolName: string; rateLimited: string; switched: string; failures: string; statLabel: string; primary: string; standby: string; rows: string[] };
+  /** 三张分幕卡：片子里的功能分属哪个产品（顺序与 filmTimeline 的 FilmPart 一致） */
+  parts: Array<{ name: string; title: string; line: string }>;
+  /** 画面里窗口标题等零碎标签 */
+  labels: {
+    canvas: string;
+    knowledge: string;
+    /** 知识星系左上角大数字后面那句（数字是本仓库 doc/ 的真实篇数） */
+    galaxyStat: string;
+  };
+  cds: { command: string; branch: string; stages: string[]; ready: string; slogan: string };
+  /** 快切：每拍一个字 */
+  montage: string[];
+  finale: { brand: string; tagline: string; cta: string };
+}
+
 /** 三层一体三块各自的数据形状 —— 组件直接引这三个别名，不要去 typeof import 整棵树 */
 export type MapLaneData = TranslationShape['scenes']['layers']['map']['lane'];
 export type GatewayStackData = TranslationShape['scenes']['layers']['gateway']['stack'];
@@ -354,7 +405,14 @@ export interface TranslationShape {
     title: string;
     subtitle: string;
     primaryCta: string;
-    secondaryCta: string;
+    /** 首屏满屏循环上那一行短句（原 subtitle 两行太长，压在画面上太挤） */
+    tagline: string;
+    /** 首屏输入框里依次打出的两句话，分别对应背景的两个镜头（知识星系 / 四张海报） */
+    loopPrompts: [string, string];
+    /** 两句话各由哪个 Agent 接，显示在输入框左侧的小标签上 */
+    loopAgents: [string, string];
+    /** 右下角「观看完整片花」 */
+    watchFilm: string;
     techBarLabel: string;
     techItems: string[];
   };
@@ -368,6 +426,8 @@ export interface TranslationShape {
    * 摆放位置见 `LandingPage` 的节奏表。
    */
   interludes: Array<{ kicker: string; title: string; note: string }>;
+  /** 片花：首屏数字条之后那一块可播放的影片 */
+  film: FilmTranslation;
   footer: {
     brand: string;
     github: string;
@@ -398,8 +458,10 @@ const zh: TranslationShape = {
     subtitle:
       '三十几个 Agent 在同一个台面上干活，模型调度和交付环境都在下面接着。你说一句话，产物落在画布或文档里，不是聊天记录里。',
     primaryCta: '进入 MAP',
-    // 原来是「观看片花」，指向的 #cinema 那一幕早就撤了 —— 一颗点下去什么也不发生的按钮
-    secondaryCta: '看它怎么干活',
+    tagline: '说一句话，产物落在画布或文档里，不在聊天记录里',
+    loopPrompts: ['把仓库的 doc/ 目录同步进知识库', '为新品发布会做一张海报：暖色，留白'],
+    loopAgents: ['知识库', '视觉创作'],
+    watchFilm: '观看完整片花',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',
@@ -942,6 +1004,81 @@ const zh: TranslationShape = {
       note: '这两件事都不该由业务代码操心。下面两幕就是它们各自那一层。',
     },
   ],
+  film: {
+    // 时长不写死：{duration} 与眉标后的时钟都由 FilmSection 按时间轴实际片长填（换一段配乐片长就会变）
+    eyebrow: 'FILM',
+    title: '{duration} 秒，看它怎么干活',
+    subtitle: '画面是这一页现场算出来的——没有一个视频文件，每一次切镜都踩在配乐的鼓点上。建议开声音。',
+    controls: {
+      play: '播放片花',
+      pause: '暂停',
+      replay: '重播',
+      mute: '静音',
+      unmute: '打开声音',
+      fullscreen: '全屏',
+      soundOn: '有声',
+      rotateHint: '横过来看，片子里的字更清楚',
+      exitTheater: '点暗处回到页面',
+      noAudio: '当前浏览器不支持网页音频，只播画面',
+      trackFallback: '配乐没加载出来，正在放备用的合成配乐',
+      loading: '配乐加载中',
+    },
+    open: ['说一句话。', '剩下的，交给 Agent。'],
+    chapters: [
+      { title: '视觉创作', headline: '一句话，一张图。', line: '产物落在画布上，不在聊天记录里' },
+      { title: '文学与知识库', headline: '边写，边配图。', line: '读过的东西，自己连成一张网' },
+      { title: '百宝箱', headline: '三十几个 Agent。', line: '摆在同一个台面上' },
+      { title: '工作流', headline: '排好了，它自己跑。', line: '一串活儿，不用人盯' },
+      { title: '模型池', headline: '一个倒下，下一个顶上。', line: '限流、超时、宕机，用户都感觉不到' },
+      { title: 'CDS', headline: 'push，就上线。', line: '分支即环境，push 是唯一那一步' },
+    ],
+    visual: {
+      prompt: '为新品发布会做一张海报：暖色，胶片感',
+      send: '发送',
+      tileDone: '已完成',
+      tileWorking: '生成中',
+    },
+    writing: {
+      docTitle: '第三章 · 雨停之后',
+      paragraphs: [
+        '雨是在傍晚停的。街灯一盏一盏亮起来，像有人沿着河岸点了一串火柴。',
+        '她把伞收进门后，发现窗台上那盆薄荷又长高了一截，叶子上还挂着水。',
+        '远处有列车驶过，声音被湿漉漉的空气压得很低，听上去像一句没说完的话。',
+      ],
+    },
+    toolbox: { unit: '个常用 Agent', search: '搜索 Agent' },
+    workflow: {
+      title: '工作流 · 周报自动汇总',
+      schedule: '每周五 18:00 自动运行，不用人盯',
+      nodes: ['定时触发', '抓取周报', '模型归纳', '生成图表', '推送群聊'],
+      done: '已送达 · 用时 38 秒',
+    },
+    models: {
+      poolName: '模型池 · 对话主力',
+      rateLimited: '429 限流',
+      switched: '已自动切换',
+      failures: '用户侧失败 0 次',
+      statLabel: '次用户侧失败',
+      primary: '主力',
+      standby: '候补',
+      rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
+    },
+    cds: {
+      command: 'git push origin feature/film',
+      branch: 'feature/film',
+      stages: ['拉取', '构建', '启动', '就绪'],
+      ready: '预览已上线',
+      slogan: 'push 之后，什么都不用做',
+    },
+    montage: ['写', '画', '查', '编', '跑', '测', '发', '看'],
+    parts: [
+      { name: 'MAP', title: '智能体平台', line: '你每天打开的那个台面' },
+      { name: 'LLMGW', title: '模型网关', line: '每一次调用背后，替你挑模型的那一层' },
+      { name: 'CDS', title: '分支预览', line: '每条分支一套环境，push 完就能打开' },
+    ],
+    labels: { canvas: '画布', knowledge: '知识星系', galaxyStat: '篇文档，一篇不落在星图里' },
+    finale: { brand: 'MAP · 米多智能体生态平台', tagline: '让创造，自由呼吸', cta: '进入 MAP' },
+  },
   footer: {
     brand: '米多智能体生态平台',
     github: 'GitHub',
@@ -969,7 +1106,10 @@ const en: TranslationShape = {
     subtitle:
       'Thirty-odd agents working on one desk, with model routing and delivery environments underneath. Say a sentence — the artifact lands on a canvas or in a document, not in a chat log.',
     primaryCta: 'Enter MAP',
-    secondaryCta: 'See it work',
+    tagline: 'Say one sentence. The result lands on a canvas or in a doc, not in a chat log.',
+    loopPrompts: ["Sync this repo's doc/ folder into the knowledge base", 'A launch poster: warm tones, lots of air'],
+    loopAgents: ['Knowledge', 'Visual'],
+    watchFilm: 'Watch the film',
     techBarLabel: 'POWERED BY',
     techItems: [
       'GPT-5',
@@ -1509,6 +1649,80 @@ const en: TranslationShape = {
       note: 'Neither should be product code’s problem. The next two acts are those layers.',
     },
   ],
+  film: {
+    eyebrow: 'FILM',
+    title: '{duration} seconds of it at work',
+    subtitle: 'The picture is computed live by this page — there is no video file, and every cut lands on a beat of the score. Sound on, if you can.',
+    controls: {
+      play: 'Play the film',
+      pause: 'Pause',
+      replay: 'Replay',
+      mute: 'Mute',
+      unmute: 'Sound on',
+      fullscreen: 'Fullscreen',
+      soundOn: 'Sound',
+      rotateHint: 'Turn your phone sideways for a sharper picture',
+      exitTheater: 'Tap the dark area to return',
+      noAudio: 'This browser has no Web Audio, playing picture only',
+      trackFallback: 'Soundtrack failed to load, playing the synthesized backup',
+      loading: 'Loading soundtrack',
+    },
+    open: ['Say one sentence.', 'Agents do the rest.'],
+    chapters: [
+      { title: 'Visual', headline: 'One sentence. One image.', line: 'It lands on a canvas, not in a chat log' },
+      { title: 'Writing & Knowledge', headline: 'Write. It illustrates.', line: 'What you read links itself up' },
+      { title: 'Toolbox', headline: 'Thirty-odd agents.', line: 'All on one desk' },
+      { title: 'Workflows', headline: 'Line it up. It runs.', line: 'A chain of work nobody has to watch' },
+      { title: 'Model pool', headline: 'One falls. The next steps in.', line: 'Rate limits, timeouts, outages — users never notice' },
+      { title: 'CDS', headline: 'Push. It’s live.', line: 'A branch is an environment; push is the only step' },
+    ],
+    visual: {
+      prompt: 'A launch-event poster: warm tones, film grain',
+      send: 'Send',
+      tileDone: 'Done',
+      tileWorking: 'Rendering',
+    },
+    writing: {
+      docTitle: 'Chapter 3 · After the Rain',
+      paragraphs: [
+        'The rain stopped at dusk. Streetlights came on one by one, like someone striking matches along the river.',
+        'She left her umbrella by the door and saw the mint on the sill had grown again, still beaded with water.',
+        'A train went by far off, its sound pressed low by the wet air, like a sentence left unfinished.',
+      ],
+    },
+    toolbox: { unit: 'everyday agents', search: 'Search agents' },
+    workflow: {
+      title: 'Workflow · Weekly digest',
+      schedule: 'Runs every Friday at 18:00 — nobody has to watch it',
+      nodes: ['Schedule', 'Fetch reports', 'Summarize', 'Chart it', 'Post to chat'],
+      done: 'Delivered · 38 s',
+    },
+    models: {
+      poolName: 'Model pool · Chat primary',
+      rateLimited: '429 rate limited',
+      switched: 'Switched over',
+      failures: '0 user-facing failures',
+      statLabel: 'user-facing failures',
+      primary: 'primary',
+      standby: 'standby',
+      rows: ['GPT-5', 'Claude 4.6', 'Gemini 2.5', 'DeepSeek V3'],
+    },
+    cds: {
+      command: 'git push origin feature/film',
+      branch: 'feature/film',
+      stages: ['Pull', 'Build', 'Start', 'Ready'],
+      ready: 'Preview is live',
+      slogan: 'After push, nothing left to do',
+    },
+    montage: ['Write', 'Draw', 'Find', 'Build', 'Run', 'Test', 'Ship', 'See'],
+    parts: [
+      { name: 'MAP', title: 'Agent platform', line: 'The desk you open every day' },
+      { name: 'LLMGW', title: 'Model gateway', line: 'The layer that picks a model behind every call' },
+      { name: 'CDS', title: 'Branch previews', line: 'One environment per branch, live right after push' },
+    ],
+    labels: { canvas: 'Canvas', knowledge: 'Knowledge galaxy', galaxyStat: 'docs, every one on the map' },
+    finale: { brand: 'MAP · MIDOO AGENTIC PLATFORM', tagline: 'Create, freely.', cta: 'Enter MAP' },
+  },
   footer: {
     brand: 'Midoo Agentic Platform',
     github: 'GitHub',

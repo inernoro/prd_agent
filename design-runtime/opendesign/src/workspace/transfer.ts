@@ -29,6 +29,10 @@ export interface OpenDesignModelAuthority {
   protocol: 'openai';
   apiKey: string;
   model: string;
+  sourceSystem: 'map';
+  appCallerCode: string;
+  userId: string;
+  runId: string;
 }
 
 export interface WorkspacePackageFile {
@@ -101,21 +105,34 @@ function normalizeAgentWorkspaceModelBaseUrl(value: unknown): string {
 }
 
 /**
- * 模型出口必须是本次任务的 MAP 出口：OpenAI 兼容协议、带本次任务票据、与工作区传输同一个 MAP origin。
+ * 模型出口只能是配置中钉死的 LLMGW，或回滚兼容期内与工作区同源的 MAP 代理。
  * 原为 AgentWorkspaceSessionRuntime.validateModelAuthority；提交任务时与执行前共用这一份判据。
  */
-export function validateModelAuthority(model: OpenDesignModelAuthority, inputPackageUrl: string): void {
+export function validateModelAuthority(
+  model: OpenDesignModelAuthority,
+  inputPackageUrl: string,
+  trustedLlmGwBaseUrl?: string,
+): void {
   if (model.protocol !== 'openai' || !model.apiKey || !model.model.trim()) {
     throw new AgentWorkspaceRuntimeError(
       'model_authority_invalid',
       'OpenDesign requires a run-scoped MAP OpenAI-compatible base URL, API key, and model',
     );
   }
-  const parsed = new URL(normalizeAgentWorkspaceModelBaseUrl(model.baseUrl));
-  if (parsed.origin !== new URL(inputPackageUrl).origin) {
+  let parsed: URL;
+  try {
+    parsed = new URL(model.baseUrl);
+  } catch {
+    throw new AgentWorkspaceRuntimeError('model_authority_invalid', 'modelBaseUrl must be an absolute HTTP URL');
+  }
+  const directLlmGw = trustedLlmGwBaseUrl !== undefined
+    && parsed.toString().replace(/\/$/, '') === new URL(trustedLlmGwBaseUrl).toString().replace(/\/$/, '');
+  if (!directLlmGw) parsed = new URL(normalizeAgentWorkspaceModelBaseUrl(model.baseUrl));
+  const legacyMapProxy = parsed.origin === new URL(inputPackageUrl).origin;
+  if (!legacyMapProxy && !directLlmGw) {
     throw new AgentWorkspaceRuntimeError(
       'model_authority_origin_mismatch',
-      'modelBaseUrl and workspace transfer URLs must share one MAP origin',
+      'modelBaseUrl must be the configured LLMGW endpoint or the legacy same-origin MAP proxy',
     );
   }
 }

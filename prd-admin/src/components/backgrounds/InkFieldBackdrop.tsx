@@ -224,11 +224,31 @@ export function InkFieldBackdrop({ colors, intensity = 0.22, className }: InkFie
     });
     const mesh = new Mesh(gl, { geometry: new Triangle(gl), program });
 
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    /**
+     * 尺寸以容器**实际布局后的大小**为准（ResizeObserver），不能只听 window 的 resize：
+     * 手机旋转时 resize 事件常常早于新布局落地，读到的还是旋转前的宽高，画布就按旧比例
+     * 拉伸，满屏变成几团放大的色块（2026-09-30 用户横过手机后的截图）。
+     * 「减少动态」那条路只画一帧，尺寸变了也得重画那一帧，不然同样是被拉伸的旧图。
+     */
+    let lastW = 0;
+    let lastH = 0;
     const resize = () => {
-      renderer.setSize(host.clientWidth, host.clientHeight);
+      const w = host.clientWidth;
+      const h = host.clientHeight;
+      if (w === lastW && h === lastH) return;
+      lastW = w;
+      lastH = h;
+      renderer.setSize(w, h);
       program.uniforms.uResolution.value = [gl.canvas.width, gl.canvas.height];
+      if (reduceMotion) {
+        program.uniforms.uTime.value = 12.0;
+        renderer.render({ scene: mesh });
+      }
     };
     resize();
+    const ro = new ResizeObserver(resize);
+    ro.observe(host);
     window.addEventListener('resize', resize);
 
     /* 指针目标值与当前值分开存，逐帧插值 —— 直接跟手会显得神经质 */
@@ -239,7 +259,6 @@ export function InkFieldBackdrop({ colors, intensity = 0.22, className }: InkFie
     };
     window.addEventListener('pointermove', onPointer, { passive: true });
 
-    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let raf = 0;
     let running = false;
     let dropped = false;
@@ -315,6 +334,7 @@ export function InkFieldBackdrop({ colors, intensity = 0.22, className }: InkFie
     return () => {
       stop();
       document.removeEventListener('visibilitychange', onVisibility);
+      ro.disconnect();
       window.removeEventListener('resize', resize);
       window.removeEventListener('pointermove', onPointer);
       gl.canvas.remove();

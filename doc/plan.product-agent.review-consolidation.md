@@ -53,7 +53,7 @@
 | 评审功能入口归位 | `F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/pages/review-agent/`，作为项目事实，读取既有评审、评估和版本申领页面；不改业务规则。 |
 | 评审功能入口归位 | `F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/pages/product-agent/`，作为项目事实，读取产品管理菜单与版本/需求页面；复用现有布局。 |
 | 评审功能入口归位 | `F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/app/App.tsx` 与 `F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/app/navRegistry.tsx`，必须遵守，作为路由和导航入口的事实源。 |
-| 评审功能入口归位 | `F:/project/midoo/miduo/米多来发专项/lipin/map/doc/plan.review-agent.version-registry-master-data.md`，仅供参考，版本主数据目标另有活动窗口，本次不接管。 |
+| 评审功能入口归位 | [版本主数据计划](./plan.review-agent.version-registry-master-data.md)，仅供参考，版本主数据目标另有活动窗口，本次不接管。 |
 | 评审功能入口归位 | 当前分支 `codex/product-version-number-application`，必须遵守，唯一允许提交和 CDS 预览的分支。 |
 | 版本 UI 收敛与能力保全 | `F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/pages/review-agent/VersionRegistrationDialog.tsx`，作为项目事实，逐项审计旧字段、企微自动回填、记录、导入与快照；不把旧弹窗保留为第二入口。 |
 | 版本 UI 收敛与能力保全 | `F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/pages/product-agent/OverviewShell.tsx`、`F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/pages/product-agent/VersionWorkflowTab.tsx`、`F:/project/midoo/miduo/米多来发专项/lipin/map/prd-admin/src/pages/product-agent/ReleaseWorkflowDetail.tsx`，作为实现证据，复用既有 T/V 列表与申领流程。 |

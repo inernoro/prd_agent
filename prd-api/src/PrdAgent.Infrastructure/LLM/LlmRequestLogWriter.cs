@@ -102,7 +102,7 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 PlatformName = start.PlatformName,
                 Protocol = start.Protocol,
                 ResolutionReason = start.ResolutionReason,
-                // S2 观测标记：网关传输路径（inproc/http/shadow/direct）。构建点未标注则留 null。
+                // S2 观测标记：网关传输路径（http/direct/admin-probe）。构建点未标注则留 null。
                 GatewayTransport = start.GatewayTransport,
                 ModelPolicy = string.IsNullOrWhiteSpace(start.ModelPolicy) ? null : start.ModelPolicy,
                 ModelPoolId = string.IsNullOrWhiteSpace(start.ModelPoolId) ? null : start.ModelPoolId,

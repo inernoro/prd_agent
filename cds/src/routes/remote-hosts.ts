@@ -22,9 +22,12 @@
  * 命名规范：路径走 `/api/cds-system/*` 前缀（系统级），符合
  * .claude/rules/scope-naming.md §3。
  */
+import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { prepareServiceReplacement, reserveServiceReplacements, replacementLaunchEntry, preserveReplacementNames, commitServiceReplacements } from '../services/service-replacement.js';
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { StateService } from '../services/state.js';
@@ -63,15 +66,17 @@ import {
   type WorkspaceTransferRequest,
 } from '../services/agent-workspace-session-runtime.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
+import { isHumanSystemOwner } from '../services/human-auth.js';
 
 const AGENT_WORKSPACE_STOP_RETRY_DELAYS_MS = [0, 250, 750] as const;
 
 export interface RemoteHostsRouterDeps {
   stateService: StateService;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
   config?: Pick<CdsConfig, 'portStart'>;
   shell?: IShellExecutor;
   agentWorkspaceSessionRuntime?: AgentWorkspaceSessionRuntime;
+  registerResourceShutdown?: (close: () => Promise<void>) => void;
   serverEventLogStore?: ServerEventLogSink | null;
 }
 
@@ -95,9 +100,13 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell, {
       // systemd PrivateTmp 下的 /tmp 只对 CDS 可见，不能作为宿主 Docker 的 bind 源。
       // 复用构建缓存所在的数据根，保持宿主路径一致且不依赖启动工作目录。
+      serverEventLogStore: deps.serverEventLogStore,
       rootDir: process.env.CDS_AGENT_WORKSPACE_ROOT
         || path.join(path.dirname(deps.stateService.getCacheBase()), 'agent-workspaces'),
     }) : undefined);
+  if (agentWorkspaceSessionRuntime && typeof agentWorkspaceSessionRuntime.closeCapabilityProbes === 'function') {
+    deps.registerResourceShutdown?.(() => agentWorkspaceSessionRuntime.closeCapabilityProbes());
+  }
   const persistedRecoverableReservations = deps.stateService.listAgentSessionReservations()
     .filter((reservation) => reservation.item.resourceCleanupPending === true
       || (reservation.item.status !== 'stopped' && reservation.item.status !== 'failed'));
@@ -2325,7 +2334,7 @@ interface CdsManagedRuntimeReconcileOptions {
   force?: boolean;
   hostPort?: number;
   now: string;
-  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness'>;
+  containerService?: Pick<ContainerService, 'runService' | 'waitForReadiness' | 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
   portStart?: number;
 }
 
@@ -2475,13 +2484,15 @@ async function reconcileCdsManagedRuntimeCapacity(
 
   const branch = stateService.findBranchByProjectAndName(project.id, CDS_MANAGED_RUNTIME_BRANCH_NAME);
   const existingService = branch?.services?.[profileId];
+  if (options.liveApply && existingService) preserveServingRuntime(existingService);
   const hostPort = options.hostPort
     || existingService?.hostPort
     || (options.liveApply && options.portStart ? stateService.allocatePort(options.portStart) : 0);
   const hostPortReady = !options.liveApply && hostPort ? await probeCdsManagedRuntimeHostPort(hostPort) : false;
   const initialServiceStatus = hostPortReady ? 'running' : 'starting';
-  const initialBranchStatus = hostPortReady ? 'running' : 'idle';
+  const initialBranchStatus = existingService?.servingRuntime && options.liveApply ? 'building' : hostPortReady ? 'running' : 'idle';
   const serviceState: ServiceState = {
+    ...existingService,
     profileId,
     containerName,
     hostPort,
@@ -2489,34 +2500,36 @@ async function reconcileCdsManagedRuntimeCapacity(
   };
   let branchChange: 'created' | 'updated' = 'created';
   let serviceChange: 'created' | 'updated' = 'created';
-  let managedBranch: BranchEntry;
-  if (branch) {
-    branch.services = branch.services || {};
-    serviceChange = branch.services[profileId] ? 'updated' : 'created';
-    branch.services[profileId] = serviceState;
-    branch.status = initialBranchStatus;
-    branch.worktreePath = worktreePath;
-    branch.lastAccessedAt = options.now;
-    branch.lastDeployAt = options.now;
-    branchChange = 'updated';
-    managedBranch = branch;
-  } else {
-    managedBranch = {
-      id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
-      projectId: project.id,
-      branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
-      worktreePath,
-      status: initialBranchStatus,
-      services: {
-        [profileId]: serviceState,
-      },
-      createdAt: options.now,
-      lastAccessedAt: options.now,
-      lastDeployAt: options.now,
-      githubCommitSha: 'cds-managed-runtime',
-    };
-    stateService.addBranch(managedBranch);
-  }
+  const managedBranch = await worktreePathActivity.withClaim([worktreePath, ...(branch?.worktreePath ? [branch.worktreePath] : [])], async () => {
+    if (branch) {
+      branch.services = branch.services || {};
+      serviceChange = branch.services[profileId] ? 'updated' : 'created';
+      branch.services[profileId] = serviceState;
+      branch.status = initialBranchStatus;
+      stateService.setBranchWorktreePath(branch.id, worktreePath);
+      branch.lastAccessedAt = options.now;
+      branch.lastDeployAt = options.now;
+      branchChange = 'updated';
+      return branch;
+    } else {
+      const managedBranch: BranchEntry = {
+        id: `${slugifyRuntimeSegment(project.id)}-${CDS_MANAGED_RUNTIME_BRANCH_NAME}`,
+        projectId: project.id,
+        branch: CDS_MANAGED_RUNTIME_BRANCH_NAME,
+        worktreePath,
+        status: initialBranchStatus,
+        services: {
+          [profileId]: serviceState,
+        },
+        createdAt: options.now,
+        lastAccessedAt: options.now,
+        lastDeployAt: options.now,
+        githubCommitSha: 'cds-managed-runtime',
+      };
+      stateService.addBranch(managedBranch);
+      return managedBranch;
+    }
+  });
   stateService.save();
 
   let liveApply: Record<string, unknown> = {
@@ -2636,22 +2649,42 @@ async function startCdsManagedRuntimeContainer(
 
   const logs: string[] = [];
   const startedAt = Date.now();
+  const isCurrent = () => stateService.getBranch(branch.id) === branch && branch.services[profile.id] === serviceState
+    && !['stopped', 'stopping'].includes(branch.status) && !['stopped', 'stopping'].includes(serviceState.status);
+  const assertCurrent = () => { if (!isCurrent()) throw new Error('服务更新已由较新的操作接管'); };
+  assertCurrent();
+  preserveServingRuntime(serviceState);
+  reserveServiceReplacements({ entry: branch, profileIds: [profile.id], state: stateService, portStart: serviceState.hostPort });
   serviceState.status = 'building';
   branch.status = 'building';
   branch.lastDeployAt = options.now;
   stateService.save();
 
   try {
+    const target = await prepareServiceReplacement({ entry: branch, service: serviceState, profile, state: stateService,
+      container: options.containerService, portStart: serviceState.hostPort, assertCurrent });
+    if (target !== serviceState) {
+      serviceState.pendingRuntime = runtimeRef(target);
+      stateService.save([{ kind: 'branches', id: branch.id }]); await stateService.flush();
+    }
     await options.containerService.runService(
-      branch,
+      replacementLaunchEntry(branch),
       profile,
-      serviceState,
+      target,
       (chunk) => {
         logs.push(...chunk.split('\n').map(line => line.trim()).filter(Boolean).slice(-20));
         if (logs.length > 20) logs.splice(0, logs.length - 20);
       },
       stateService.getCustomEnv(project.id),
+      { preserveContainerNames: preserveReplacementNames(branch, target), assertCurrent,
+        onRuntimeCreated: target !== serviceState ? async runtime => {
+          assertCurrent();
+          serviceState.pendingRuntime = runtimeRef(runtime); stateService.save([{ kind: 'branches', id: branch.id }]); await stateService.flush();
+          assertCurrent();
+        } : undefined },
     );
+    assertCurrent();
+    if (target !== serviceState) { Object.assign(serviceState, target); serviceState.pendingRuntime = undefined; }
 
     serviceState.status = 'starting';
     branch.status = 'starting';
@@ -2670,6 +2703,7 @@ async function startCdsManagedRuntimeContainer(
       },
     );
 
+    assertCurrent();
     if (!ready) {
       serviceState.status = 'error';
       serviceState.errorMessage = 'CDS-managed official SDK runtime readiness probe failed';
@@ -2689,6 +2723,7 @@ async function startCdsManagedRuntimeContainer(
 
     serviceState.status = 'running';
     serviceState.errorMessage = undefined;
+    await commitServiceReplacements({ entry: branch, profileIds: [profile.id], state: stateService, container: options.containerService, assertCurrent });
     branch.status = 'running';
     branch.errorMessage = undefined;
     branch.lastAccessedAt = new Date().toISOString();
@@ -2704,6 +2739,8 @@ async function startCdsManagedRuntimeContainer(
       fallbackScope: 'operator-debug-only',
     };
   } catch (err) {
+    if (!isCurrent()) return { requested: true, attempted: true, status: 'superseded',
+      durationMs: Date.now() - startedAt, fallbackScope: 'operator-debug-only' };
     const message = (err as Error).message;
     serviceState.status = 'error';
     serviceState.errorMessage = message;
@@ -2995,7 +3032,9 @@ interface CdsManagedRuntimeResult {
 function authenticateProjectRequest(
   req: {
     headers: { authorization?: string | string[] | undefined };
-    _cdsCookieAuth?: boolean;
+    _cdsBasicHumanAuth?: boolean;
+    cdsUser?: { isSystemOwner?: boolean; authProvider?: string };
+    cdsSession?: unknown;
     _aiSession?: unknown;
     cdsProjectKey?: { projectId: string; keyId: string };
   },
@@ -3003,10 +3042,9 @@ function authenticateProjectRequest(
   pairing: CdsPairingService,
   requiredScopes: string[],
 ): { ok: true; partnerBaseUrl?: string; principalKey: string } | { ok: false; status: number; code: string; message: string } {
-  // [#746 obs-auth] 仪表盘操作者放行 —— 人类 cookie 登录(`_cdsCookieAuth`,由 server.ts
-  // 主鉴权中间件盖章)是 admin 等价,直接放行。不加这条,仪表盘操作者点「Sidecar Pool /
-  // Agent 会话」卡片会永远 401(端点只认 Bearer 连接 token,而浏览器带的是 cds_token cookie)。
-  if (req._cdsCookieAuth === true) {
+  // [#746 obs-auth] 仪表盘系统所有者放行。原始账号 cookie 与持久化本地/GitHub
+  // 会话统一走共享 owner 判据；普通本地账号不得获得跨项目 admin 等价权限。
+  if (isHumanSystemOwner(req)) {
     return { ok: true, principalKey: 'cookie-admin' };
   }
   // server.ts also stamps scoped connection tokens as AI sessions. Preserve that

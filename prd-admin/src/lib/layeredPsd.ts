@@ -91,6 +91,7 @@ export async function decomposeImageToLayers(input: {
       targetKey: input.targetKey,
       responseFormat: 'url',
       imageRefs: [{ refId: 1, assetSha256: sourceSha256, url: sourceUrl, label: '待分层原图' }],
+      expectedImageRefCount: 1,
     },
     idempotencyKey: `imLayer_${input.workspaceId}_${input.targetKey}_${layerCount}${attemptSuffix(input.attempt)}`,
   });

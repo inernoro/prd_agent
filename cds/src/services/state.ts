@@ -1,6 +1,9 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
+import { worktreePathActivity } from './worktree-path-activity.js';
+import { serviceRuntimeRefs } from './service-runtime.js';
 import type {
   DbLedgerEntry,
   CdsState,
@@ -47,6 +50,7 @@ import type {
   ScheduledJobRun,
   ScheduledJobAction,
   DeploymentRun,
+  PersistedDeploymentIntent,
   DeploymentVersion,
   ContainerTeardownTombstone,
   DeletedProjectWorktreeTombstone,
@@ -68,7 +72,8 @@ import { createReportObjectStore, type ReportObjectStore } from './report-object
 import { buildCacheMounts } from './cache-catalog.js';
 import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
-import { isGenericPreviewProjectSlug, repoNameFromGitRef } from './preview-slug.js';
+import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
+import { projectBranchPreviewSlugs } from './preview-entrypoints.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -94,6 +99,7 @@ import {
   selectReleaseRunsToPrune,
 } from './release-retention.js';
 import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
+import { isHumanProjectGrantUpdatePending, recoverInterruptedHumanAccessUpdates } from './human-project-access.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 import { migrateLegacyDataMigrationCredentials } from './secure-database-cli.js';
@@ -277,6 +283,7 @@ function emptyState(): CdsState {
     nextPortIndex: 0,
     logs: {},
     deploymentRuns: {},
+    deploymentIntents: {},
     deploymentVersions: {},
     containerLogArchives: {},
     defaultBranch: null,
@@ -355,6 +362,7 @@ export interface ProjectRemovalSummary {
 
 export class StateService {
   private state: CdsState = emptyState();
+  private readonly criticalDeploymentRunReferences = new Map<string, number>();
   private readonly filePath: string;
   private readonly repoRoot?: string;
   /** P3: the persistence seam. Mutable — setBackingStore() swaps it
@@ -520,11 +528,15 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
-      // Legacy CDS instances sometimes ran from a generic checkout dir
-      // (`workspace`, `cursor-workspace`). Keep the immutable project slug
-      // intact, but set a preview alias from the Git repo so new URLs do
-      // not keep exposing the container/workspace folder name.
-      this.migrateLegacyPreviewAlias();
+      let identityBaselineAdded = false;
+      for (const project of this.state.projects) {
+        if (!project.identityHistory?.length) {
+          project.identityHistory = [identityRecord(project, 'baseline', { actor: 'system:history-baseline' })];
+          identityBaselineAdded = true;
+        }
+      }
+      if (identityBaselineAdded) this.save();
+      this.migrateProjectSlugs();
       // PR_A: 把旧的 4 个全局字段 seed 到所有项目（首次启动只跑一遍，
       // 已经有项目级值的字段会被跳过）。详见方法顶部注释。
       this.migrateGlobalsToProjects();
@@ -558,6 +570,7 @@ export class StateService {
       this.migrateProjects();
       // (nothing to scope on a fresh install — collections are empty)
     }
+    recoverInterruptedHumanAccessUpdates(this);
   }
 
   /**
@@ -655,6 +668,7 @@ export class StateService {
       if (!profile.cacheMounts) profile.cacheMounts = [];
 
       for (const cm of profile.cacheMounts) {
+        if (cm.kind === 'volume') continue;
         const updated = this.normalizeCacheHostPath(cm.hostPath);
         if (updated !== cm.hostPath) {
           cm.hostPath = updated;
@@ -826,25 +840,41 @@ export class StateService {
     }
   }
 
-  private migrateLegacyPreviewAlias(): void {
+  private migrateProjectSlugs(): void {
     const projects = this.state.projects || [];
-    const legacy = projects.find((p) => p.legacyFlag === true);
-    if (!legacy || legacy.aliasSlug || !isGenericPreviewProjectSlug(legacy.slug)) return;
-
-    const candidate =
-      repoNameFromGitRef(legacy.gitRepoUrl) ||
-      repoNameFromGitRef(legacy.githubRepoFullName) ||
-      repoNameFromGitRef(readGitOriginUrl(this.repoRoot));
-    if (!candidate || candidate === legacy.slug) return;
-
-    const collides = projects.some(
-      (p) => p.id !== legacy.id && (p.slug === candidate || p.aliasSlug === candidate),
-    );
-    if (collides) return;
-
-    legacy.aliasSlug = candidate;
-    legacy.updatedAt = new Date().toISOString();
-    this.save();
+    const changes = projects.map((project) => {
+      // aliasSlug 仅在旧状态导入边界读取，迁移后从对象中物理删除。
+      const oldAlias = (project as Project & { aliasSlug?: string }).aliasSlug;
+      const candidate = oldAlias?.trim().toLowerCase() ||
+        (project.legacyFlag && isGenericPreviewProjectSlug(project.slug)
+          ? repoNameFromGitRef(project.gitRepoUrl) || repoNameFromGitRef(project.githubRepoFullName) || repoNameFromGitRef(readGitOriginUrl(this.repoRoot))
+          : '') || project.slug;
+      const resolved = !oldAlias && projects.some((other) => other.id !== project.id && projectReservedIdentifiers(other).includes(candidate)) ? project.slug : candidate;
+      return { project, candidate: resolved, hadAlias: Object.hasOwn(project, 'aliasSlug') };
+    });
+    // 先校验整批，冲突时不覆盖任何项目，保留原状态供原版本恢复。
+    for (const { project, candidate } of changes) {
+      if (candidate === project.slug) continue;
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(candidate)) {
+        throw new Error(`项目「${project.name}」的旧标识格式无效，迁移未执行。请先在原版本修正。`);
+      }
+      if (changes.some((other) => other.project.id !== project.id &&
+          (other.candidate === candidate || projectReservedIdentifiers(other.project).includes(candidate)))) {
+        throw new Error(`项目「${project.name}」的 slug「${candidate}」冲突，迁移未执行。请先在原版本修改冲突标识。`);
+      }
+    }
+    let changed = false;
+    for (const { project, candidate, hadAlias } of changes) {
+      if (candidate !== project.slug || hadAlias) {
+        const before = projectIdentitySnapshot(project);
+        project.slug = candidate;
+        delete (project as Project & { aliasSlug?: string }).aliasSlug;
+        project.identityHistory!.push(identityRecord(project, 'migrated', { actor: 'system:single-project-slug' }, before));
+        project.updatedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    if (changed) this.save();
   }
 
   /**
@@ -1031,7 +1061,10 @@ export class StateService {
     // hints（2026-07-21 增量快照）：mutator 确定本次只改了哪块 state 时传入，
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
-    this.backingStore.save(this.state, hints);
+    // 未到日志批次阈值的发布尾部仍在内存；一次实体级保存不能把它误当已落盘。
+    const completeHints = this.pendingReleaseLogLines > 0 && hints?.length && !hints.some(hint => hint.kind === 'global')
+      ? [...hints, ...HINT_GLOBAL] : hints;
+    this.backingStore.save(this.state, completeHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
 
@@ -1044,9 +1077,22 @@ export class StateService {
   }
 
   async flush(): Promise<void> {
+    this.flushPendingReleaseLogs();
     const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
     if (typeof maybeFlush === 'function') {
       await maybeFlush.call(this.backingStore);
+    }
+  }
+
+  async flushDeploymentRun(id: string): Promise<void> {
+    this.criticalDeploymentRunReferences.set(id, (this.criticalDeploymentRunReferences.get(id) || 0) + 1);
+    try {
+      if (this.backingStore.flushDeploymentRun) await this.backingStore.flushDeploymentRun(id);
+      else await this.flush();
+    } finally {
+      const remaining = (this.criticalDeploymentRunReferences.get(id) || 1) - 1;
+      if (remaining) this.criticalDeploymentRunReferences.set(id, remaining);
+      else this.criticalDeploymentRunReferences.delete(id);
     }
   }
 
@@ -1234,6 +1280,8 @@ export class StateService {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
+    worktreePathActivity.assertClaimable([entry.worktreePath,
+      ...Object.values(entry.services || {}).map(s => s.sourceCheckoutPath).filter((p): p is string => !!p)]);
     // PR_B.1: 类型 `projectId: string` 已要求 caller 传入。这里仍然兜底到
     // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
     // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
@@ -1365,7 +1413,7 @@ export class StateService {
       for (const other of Object.values(this.state.branches)) {
         if (other.id === branchId) continue;
         // Collision: candidate equals another branch's slug
-        if (other.id.toLowerCase() === normalized) {
+        if (other.id.toLowerCase() === normalized || projectBranchPreviewSlugs(other, this.getProject(other.projectId)).includes(normalized)) {
           conflicts.push({ alias: candidate, conflictWith: other.id, reason: 'slug' });
           continue;
         }
@@ -1467,7 +1515,7 @@ export class StateService {
     const usedPorts = new Set<number>();
     for (const b of Object.values(this.state.branches)) {
       for (const svc of Object.values(b.services)) {
-        if (svc.hostPort) usedPorts.add(svc.hostPort);
+        for (const runtime of serviceRuntimeRefs(svc)) if (runtime.hostPort) usedPorts.add(runtime.hostPort);
       }
       // 复制集成员/专用隔离实例的端口同样保留（Codex 第二十五轮 P2）：stopped/
       // provisioning 成员不在 ss 可见集合里，分配序列绕回后会把它们保留的
@@ -1575,7 +1623,7 @@ export class StateService {
 
   // ── Deployment runs（分支部署唯一事实源）──
 
-  addDeploymentRun(run: DeploymentRun): DeploymentRun {
+  addDeploymentRun(run: DeploymentRun, intent?: PersistedDeploymentIntent): DeploymentRun {
     if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
     if (this.state.deploymentRuns[run.id]) {
       throw new Error(`DeploymentRun already exists: ${run.id}`);
@@ -1586,6 +1634,13 @@ export class StateService {
       throw new Error(`DeploymentRun project mismatch: ${run.projectId} != ${branch.projectId}`);
     }
     this.state.deploymentRuns[run.id] = run;
+    if (intent) {
+      if (intent.runId !== run.id || intent.operationId !== run.operationId || intent.generation !== run.operationGeneration) {
+        delete this.state.deploymentRuns[run.id];
+        throw new Error('Deployment intent does not match run identity');
+      }
+      (this.state.deploymentIntents ||= {})[run.id] = intent;
+    }
     branch.lastDeploymentRunId = run.id;
     this.pruneDeploymentRuns(run.projectId);
     // prune 只会删同 kind 的其他 run —— 删除检测靠 id 集，单实体 hint 足够覆盖。
@@ -1605,13 +1660,27 @@ export class StateService {
    */
   removeDeploymentRunsForBranch(branchId: string): number {
     const ids = Object.values(this.state.deploymentRuns || {}).filter((run) => run.branchId === branchId).map((run) => run.id);
-    for (const id of ids) delete this.state.deploymentRuns?.[id];
+    for (const id of ids) { delete this.state.deploymentRuns?.[id]; delete this.state.deploymentIntents?.[id]; }
     if (ids.length > 0) this.save([{ kind: 'deploymentRuns', id: ids[0] }]);
     return ids.length;
   }
 
   getDeploymentRun(id: string): DeploymentRun | undefined {
     return this.state.deploymentRuns?.[id];
+  }
+
+  /** 仅供执行恢复读取，不通过公开 run 投影暴露。 */
+  getDeploymentIntents(): PersistedDeploymentIntent[] {
+    return Object.values(this.state.deploymentIntents || {});
+  }
+
+  getDeploymentRunForOperation(operationId: string, generation: number): DeploymentRun | undefined {
+    // 写操作关联读取无需生成、过滤和排序整份历史列表。
+    for (const id in this.state.deploymentRuns || {}) {
+      const run = this.state.deploymentRuns![id];
+      if (run.operationId === operationId && run.operationGeneration === generation) return run;
+    }
+    return undefined;
   }
 
   getDeploymentRuns(filters: { projectId?: string; branchId?: string; status?: DeploymentRun['status'] } = {}): DeploymentRun[] {
@@ -1631,6 +1700,7 @@ export class StateService {
     const run = this.state.deploymentRuns?.[id];
     if (!run) throw new Error(`DeploymentRun not found: ${id}`);
     mutate(run);
+    if (run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') delete this.state.deploymentIntents?.[id];
     this.save([{ kind: 'deploymentRuns', id }]);
     return run;
   }
@@ -1643,8 +1713,10 @@ export class StateService {
     if (overflow <= 0) return;
     for (const run of runs) {
       if (overflow <= 0) break;
+      if (this.criticalDeploymentRunReferences.has(run.id)) continue;
       if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
       delete this.state.deploymentRuns?.[run.id];
+      delete this.state.deploymentIntents?.[run.id];
       overflow -= 1;
     }
   }
@@ -1864,7 +1936,7 @@ export class StateService {
     const byId = projects.find((p) => p.id === idOrSlug);
     if (byId) return byId;
     const lc = idOrSlug.toLowerCase();
-    return projects.find((p) => (p.slug || '').toLowerCase() === lc);
+    return projects.find((p) => projectHistoricalSlugs(p).includes(lc));
   }
 
   /**
@@ -1952,13 +2024,23 @@ export class StateService {
    * method (no HTTP surface) so tests can exercise the storage layer
    * without waiting for Part 2's route work.
    */
-  addProject(project: Project): void {
+  addProject(project: Project, context: ProjectIdentityActor = { actor: 'unknown' }): void {
+    if (Object.hasOwn(project, 'aliasSlug')) {
+      if (!project.mirror) throw new Error('项目只保留一个 slug，不接受 aliasSlug 字段');
+      project = importLegacyProjectSlug(project);
+    }
     if (!this.state.projects) this.state.projects = [];
     if (this.state.projects.some((p) => p.id === project.id)) {
       throw new Error(`Project with id '${project.id}' already exists`);
     }
-    if (this.state.projects.some((p) => p.slug === project.slug)) {
+    if (this.state.projects.some(p => projectReservedIdentifiers(p).includes(project.id))) {
+      throw new Error(`Project id '${project.id}' is reserved by an existing project`);
+    }
+    if (this.state.projects.some((p) => projectReservedIdentifiers(p).includes(project.slug))) {
       throw new Error(`Project with slug '${project.slug}' already exists`);
+    }
+    if (!project.mirror || !project.identityHistory?.length) {
+      project.identityHistory = [identityRecord(project, project.mirror ? 'baseline' : 'created', context)];
     }
     this.state.projects.push(project);
     this.save();
@@ -2213,7 +2295,7 @@ export class StateService {
         Project,
         | 'name'
         | 'aliasName'
-        | 'aliasSlug'
+        | 'slug'
         | 'description'
         | 'deliveryMode'
         | 'managedSpec'
@@ -2238,17 +2320,47 @@ export class StateService {
         | 'composeSource'
       >
     >,
+    context: ProjectIdentityActor = { actor: 'unknown' },
   ): void {
     if (!this.state.projects) return;
     const idx = this.state.projects.findIndex((p) => p.id === id);
     if (idx < 0) return;
     const current = this.state.projects[idx];
-    this.state.projects[idx] = {
+    const next = {
       ...current,
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+    if (identityChanged(current, next)) {
+      const history = current.identityHistory?.length ? current.identityHistory : [
+        identityRecord(current, 'baseline', { actor: 'system:history-baseline' }),
+      ];
+      next.identityHistory = [...history, identityRecord(next, 'changed', context, projectIdentitySnapshot(current))];
+    }
+    this.state.projects[idx] = next;
     this.save();
+  }
+
+  /** 恢复未确认保存的字段；后续身份版本和独立并发修改不被回退。 */
+  restoreProjectSettingsUpdate(id: string, before: Project, applied: Project, fields: Array<keyof Project>, writtenProject: Project): boolean {
+    const current = this.getProject(id);
+    if (!current) return false;
+    const ownsIdentity = current.identityHistory === applied.identityHistory;
+    const identityFields = new Set<keyof Project>(['name', 'aliasName', 'slug', 'gitRepoUrl']);
+    for (const key of fields) {
+      if (identityFields.has(key) && !ownsIdentity) continue;
+      if (current[key] !== applied[key]) continue;
+      if (Object.hasOwn(before, key)) (current as unknown as Record<string, unknown>)[key] = before[key];
+      else delete (current as unknown as Record<string, unknown>)[key];
+    }
+    if (ownsIdentity) {
+      if (before.identityHistory) current.identityHistory = before.identityHistory;
+      else delete current.identityHistory;
+    }
+    if (current === writtenProject && current.updatedAt === applied.updatedAt) current.updatedAt = before.updatedAt;
+    this.save();
+    return fields.every(key => JSON.stringify(current[key]) === JSON.stringify(before[key])) &&
+      JSON.stringify(current.identityHistory) === JSON.stringify(before.identityHistory);
   }
 
   /**
@@ -2963,6 +3075,17 @@ export class StateService {
     return this.state.principals || [];
   }
 
+  getHumanAccessRecoveries(): NonNullable<CdsState['humanAccessRecovery']> {
+    return this.state.humanAccessRecovery || {};
+  }
+
+  /** Journal changes travel in the same snapshot as the next access mutation. */
+  setHumanAccessRecovery(id: string, record: NonNullable<CdsState['humanAccessRecovery']>[string] | undefined): void {
+    if (!this.state.humanAccessRecovery) this.state.humanAccessRecovery = {};
+    if (record) this.state.humanAccessRecovery[id] = record;
+    else delete this.state.humanAccessRecovery[id];
+  }
+
   getPrincipal(id: string): Principal | undefined {
     return (this.state.principals || []).find((p) => p.id === id);
   }
@@ -3097,8 +3220,8 @@ export class StateService {
   // ── Project-scoped Agent Keys ──
   //
   // Each AgentKey stores only the sha256 of the plaintext key; the key
-  // prefix (`cdsp_<slugHead12>_...`) encodes the owning project so the
-  // auth middleware can look up the project from the header alone.
+  // prefix (`cdsp_<slugHead12>_...`) is a readable signing-time hint;
+  // the saved hash binding identifies the owning project after a rename.
   // Plaintext is shown once at signing time and never persisted.
 
   /** Append an AgentKey entry under a project. Creates the array on demand. */
@@ -3143,7 +3266,7 @@ export class StateService {
    * timingSafeEqual for hash comparison so the endpoint doesn't leak
    * hash bytes via timing.
    *
-   * Returns null on any failure (malformed prefix, unknown slug, no
+   * Returns null on any failure (malformed prefix, no
    * matching hash, key revoked).
    */
   findAgentKeyForAuth(plaintextKey: string): { projectId: string; keyId: string } | null {
@@ -3156,8 +3279,7 @@ export class StateService {
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const project of this.state.projects || []) {
-      const projectSlugHead = project.slug.slice(0, 12).toLowerCase();
-      if (projectSlugHead !== slugHead) continue;
+      // 哈希归属才是权限依据；slug 前缀只是签发时的可读提示，改名不会撤销凭据。
       for (const entry of project.agentKeys || []) {
         if (entry.revokedAt) continue;
         // 身份层（2026-09-01）：新签发的项目级凭证是短命的（用即续）。存量密钥
@@ -3170,6 +3292,8 @@ export class StateService {
         // 只对带 principalId 的密钥生效 —— 存量密钥没有主体、没有授权行，
         // 这段整个跳过，与启用前逐字节一致。
         if (entry.principalId) {
+          // 绑定同主体的项目凭据也不能使用尚未确认落盘的临时授权。
+          if (isHumanProjectGrantUpdatePending(this, entry.principalId)) continue;
           const principal = (this.state.principals || []).find((p) => p.id === entry.principalId);
           if (!credentialUsability(entry, principal, Date.now(), true).usable) continue;
           if (!hasActiveGrant(this.state.projectGrants || [], entry.principalId, project.id)) continue;
@@ -3203,7 +3327,7 @@ export class StateService {
       if (next) entry.expiresAt = next;
     }
     // Save is best-effort — a failed save here shouldn't block the request.
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save([{ kind: 'projects', id: projectId }]); } catch { /* ignore */ }
   }
 
   // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
@@ -3337,7 +3461,7 @@ export class StateService {
     const entry = (this.state.globalAgentKeys || []).find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save(HINT_GLOBAL); } catch { /* ignore */ }
   }
 
   // ── Pending imports (agent-submitted CDS compose awaiting approval) ──
@@ -3520,6 +3644,7 @@ export class StateService {
   setBranchWorktreePath(branchId: string, worktreePath: string): void {
     const branch = this.state.branches[branchId];
     if (!branch) return;
+    worktreePathActivity.assertClaimable([worktreePath]);
     branch.worktreePath = worktreePath;
   }
 
@@ -4076,6 +4201,25 @@ export class StateService {
     return true;
   }
 
+  /** 读取项目的分支自定义分组；从未配置过返回空列表（updatedAt 为 null）。 */
+  getProjectBranchGroups(projectId: string): import('../types.js').BranchGroupsSettings | null {
+    const project = this.getProject(projectId);
+    if (!project) return null;
+    return project.branchGroups ?? { groups: [], updatedAt: null, updatedBy: null };
+  }
+
+  /** 整体替换项目的分支分组（调用方负责先经 normalizeBranchGroups 校验）。 */
+  setProjectBranchGroups(
+    projectId: string,
+    settings: import('../types.js').BranchGroupsSettings,
+  ): boolean {
+    const project = this.getProject(projectId);
+    if (!project) return false;
+    project.branchGroups = settings;
+    project.updatedAt = new Date().toISOString();
+    return true;
+  }
+
   /** 读取项目的 Agent 角色声明；从未声明过返回 null。 */
   getProjectAgentProfile(projectId: string): import('../types.js').ProjectAgentProfile | null {
     return this.getProject(projectId)?.agentProfile ?? null;
@@ -4409,7 +4553,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.deployDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordDeployDuration save failed:', (err as Error).message);
     }
@@ -4472,7 +4616,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.releaseDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordReleaseDuration save failed:', (err as Error).message);
     }
@@ -4512,7 +4656,7 @@ export class StateService {
     list.push(delivery);
     this.state.githubWebhookDeliveries = pruneWebhookDeliveries(list);
     try {
-      this.save();
+      this.save([{ kind: 'webhookDeliveries' }]);
     } catch (err) {
       // 写盘失败不影响 webhook 主链路 - 顶多丢这条日志
       console.warn('[state] recordGithubWebhookDelivery save failed:', (err as Error).message);
@@ -4554,6 +4698,13 @@ export class StateService {
    * 读接口返回的是**存着的原样**（含密钥），只给服务端用；路由层负责脱敏后才出网
    * ——私钥、Bark key、自定义请求头的值一律不回给前端，那些是写了就不再读的东西。
    */
+  getAlarmIdentity(): import('./alarm-identity.js').AlarmIdentitySettings | undefined {
+    return this.state.alarmIdentity ? structuredClone(this.state.alarmIdentity) : undefined;
+  }
+  setAlarmIdentity(identity: import('./alarm-identity.js').AlarmIdentitySettings): void {
+    this.state.alarmIdentity = structuredClone(identity);
+    this.save();
+  }
   listAlarmChannels(): import('./alarm-route.js').AlarmChannelConfig[] {
     return [...(this.state.alarmChannels ?? [])];
   }

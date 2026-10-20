@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 /// <summary>
 /// HTTP 模式故障面守卫：serving 不可达或鉴权失败时，MAP 侧 HttpLlmGatewayClient
-/// 必须显式失败，不得伪装成成功、空池或回退到 inproc。
+/// 必须显式失败，不得伪装成成功或空池；MAP 没有其它路径可退。
 /// </summary>
 public class HttpLlmGatewayClientFailureTests
 {
@@ -179,6 +179,26 @@ public class HttpLlmGatewayClientFailureTests
                 "openai/gpt-audio",
                 CancellationToken.None),
             Times.Once);
+    }
+
+    [Theory]
+    [InlineData("user quota is not enough", true)]
+    [InlineData("rate limit exceeded", false)]
+    public async Task StructuredRawProviderFailure_OnlyExplicitQuotaFailureNotifiesAdmin(string message, bool expectedNotice)
+    {
+        var body = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            Success = false, StatusCode = 403, ErrorCode = "UPSTREAM_ERROR", ErrorMessage = message,
+        });
+        var notifier = new Mock<IPoolFailoverNotifier>();
+        var client = BuildClient(new StaticResponseHttpClientFactory(HttpStatusCode.Forbidden, body),
+            failoverNotifier: notifier.Object);
+        await client.SendRawWithResolutionAsync(RawRequest(), new GatewayModelResolution
+        {
+            Success = true, ActualModel = "gemini-3-pro-image-preview", ActualPlatformName = "apiyi-gemini",
+        });
+        notifier.Verify(x => x.NotifyQuotaExceededAsync("apiyi-gemini", "gemini-3-pro-image-preview",
+            CancellationToken.None), expectedNotice ? Times.Once() : Times.Never());
     }
 
     [Fact]

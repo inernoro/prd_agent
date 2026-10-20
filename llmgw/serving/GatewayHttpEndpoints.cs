@@ -121,7 +121,8 @@ public static class GatewayHttpEndpoints
                         authorizationInputs.RequiredScope,
                         context.Connection.RemoteIpAddress,
                         context.RequestAborted,
-                        authorizationInputs.AllowSingleAppCallerInference);
+                        authorizationInputs.AllowSingleAppCallerInference,
+                        path);
                 if (!authorization.Allowed)
                 {
                     await WriteRejectedGatewayRequestLogAsync(
@@ -410,6 +411,9 @@ public static class GatewayHttpEndpoints
             IServiceProvider services) =>
         {
             var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+            var runtimeGrant = GetVerifiedRuntimeGrant(http);
+            if (body is not null && runtimeGrant is not null)
+                ApplyRuntimeGrantPolicy(body, runtimeGrant);
             if (PrdAgent.Infrastructure.LlmGateway.LlmGateway.ValidateNativeResponsesBody(body) is { } invalid)
             {
                 await WriteCompatErrorAsync(http, invalid.ErrorMessage!, "invalid_request_error", invalid.ErrorCode, invalid.StatusCode);
@@ -418,15 +422,21 @@ public static class GatewayHttpEndpoints
             var nativeBody = body!;
             var requestId = TrackGatewayRequestId(http);
             var stream = ReadBool(nativeBody, "stream");
-            var model = ReadString(nativeBody, "model");
-            var pool = ResolveCompatModelPoolId(http, nativeBody);
+            var model = runtimeGrant is null ? ReadString(nativeBody, "model") : runtimeGrant.Model;
+            var pool = runtimeGrant is null ? ResolveCompatModelPoolId(http, nativeBody) : runtimeGrant.ModelPoolId;
             // gw-native 是内部路：MAP 侧代理先剥掉运行时自带的 pin，再按自己冻结的快照盖上去。
             // 兼容入口（/v1/*）一律拒绝客户端自带 pin（见 RejectClientSuppliedPinnedTarget），
             // 那条禁令按 gw-native / 兼容两分面划界，不覆盖这一条。
-            var (platform, pinnedModel) = ReadDeclaredPinnedTarget(http, nativeBody);
-            var policy = ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel);
-            var strict = ReadProviderRequireParameters(nativeBody);
-            var runId = ResolveCompatRunId(http, nativeBody);
+            var (declaredPlatform, declaredPinnedModel) = ReadDeclaredPinnedTarget(http, nativeBody);
+            var platform = runtimeGrant is null ? declaredPlatform : runtimeGrant.PinnedPlatformId;
+            var pinnedModel = runtimeGrant is null ? declaredPinnedModel : runtimeGrant.PinnedModelId;
+            var policy = runtimeGrant is null
+                ? ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel)
+                : !string.IsNullOrWhiteSpace(pool) ? "pool"
+                : !string.IsNullOrWhiteSpace(platform) ? "pinned"
+                : "pinned";
+            var strict = runtimeGrant?.RequireDeclaredParameters ?? ReadProviderRequireParameters(nativeBody);
+            var runId = runtimeGrant?.RunId ?? ResolveCompatRunId(http, nativeBody);
             StripGatewayRoutingFields(nativeBody);
             // provider 是本网关的路由信封，不属于原生 OpenAI JSON；未知选项不可悄悄丢弃。
             if (nativeBody["provider"] is JsonObject provider)
@@ -444,9 +454,9 @@ public static class GatewayHttpEndpoints
             var ingress = new GatewayIngressRequest
             {
                 RequestId = requestId,
-                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "map",
+                SourceSystem = runtimeGrant is null ? ResolveHeader(http, "X-Gateway-Source") ?? "map" : "map",
                 IngressProtocol = "gw-native",
-                AppCallerCode = ResolveVerifiedAppCaller(http, string.Empty),
+                AppCallerCode = runtimeGrant?.AppCallerCode ?? ResolveVerifiedAppCaller(http, string.Empty),
                 RequestType = requestType,
                 ExpectedModel = policy == "pool" && !string.IsNullOrWhiteSpace(pool) ? pool : model,
                 ModelPoolId = pool,
@@ -459,7 +469,7 @@ public static class GatewayHttpEndpoints
                 {
                     RequestId = requestId, RunId = runId,
                     SessionId = ResolveHeader(http, "X-Gateway-Session-Id"),
-                    UserId = ResolveHeader(http, "X-Gateway-User-Id"),
+                    UserId = runtimeGrant?.UserId ?? ResolveHeader(http, "X-Gateway-User-Id"),
                     GatewayTransport = GatewayTransports.Http,
                 },
             };
@@ -490,6 +500,26 @@ public static class GatewayHttpEndpoints
             {
                 var resolution = await gateway.ResolveModelAsync(request.AppCallerCode, request.ModelType,
                     request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, token);
+                Func<CancellationToken, Task<GatewayRawResponse?>>? admit = null;
+                if (runtimeGrant is not null)
+                {
+                    admit = async admissionToken =>
+                    {
+                        var counter = services.GetService<IGatewayRuntimeGrantCallCounter>();
+                        if (counter is null)
+                            return GatewayRawResponse.Fail(
+                                "GATEWAY_RUNTIME_GRANT_ADMISSION_UNAVAILABLE",
+                                "运行时授权计数服务不可用",
+                                StatusCodes.Status503ServiceUnavailable);
+                        var admission = await counter.TryReserveAsync(runtimeGrant, admissionToken);
+                        return admission.Allowed
+                            ? null
+                            : GatewayRawResponse.Fail(
+                                admission.ErrorCode,
+                                admission.Detail,
+                                admission.StatusCode);
+                    };
+                }
                 var disconnected = false;
                 var outcome = await gateway.SendNativeResponsesWithResolutionAsync(request, resolution, async (chunk, _) =>
                 {
@@ -512,7 +542,7 @@ public static class GatewayHttpEndpoints
                     catch (IOException) { disconnected = true; }
                     catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { disconnected = true; }
                     catch (ObjectDisposedException) { disconnected = true; }
-                }, token);
+                }, admit, token);
                 http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
                 if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
                     http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
@@ -1632,94 +1662,6 @@ public static class GatewayHttpEndpoints
                 cancellation?.Dispose();
             }
         });
-
-        // 影子比对读端点（观测）：X-Gateway-Key 门内，读 llm_gateway.llmshadow_comparisons 给汇总 + 最近 N 条。
-        // 灰度翻 http 前看「inproc vs http 逐字段一致性」的窗口（去黑盒）。
-        app.MapGet("/gw/v1/shadow-comparisons", async (
-            // [FromServices] 必填：GET 端点不允许「推断 body」参数，IServiceProvider 若被推断为 body，
-            // RequestDelegateFactory 在首个请求构建 endpoint matcher 时会抛
-            // InvalidOperationException（"Body was inferred but the method does not allow inferred body
-            // parameters"），进而拖垮整张路由表（含 healthz / 全部 /gw/v1/*）。见 GatewayKeyGateContractTests。
-            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services,
-            HttpContext http,
-            int? limit,
-            int? failureLimit,
-            string? appCallerCode,
-            string? kind,
-            string? releaseCommit,
-            double? sinceHours) =>
-        {
-            var n = Math.Clamp(limit ?? 50, 1, 500);
-            var db = services.GetService<LlmGatewayDataContext>()?.Context
-                ?? services.GetRequiredService<MongoDbContext>();
-            var col = db.LlmShadowComparisons;
-            var filters = new List<FilterDefinition<LlmShadowComparison>>
-            {
-                Builders<LlmShadowComparison>.Filter.Eq(x => x.TenantId, GetVerifiedTenantId(http)),
-            };
-            var verifiedTeamId = GetVerifiedTeamId(http);
-            if (!string.IsNullOrWhiteSpace(verifiedTeamId))
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.TeamId, verifiedTeamId));
-            var verifiedAppCaller = GetVerifiedAuthorizationInputs(http).AppCallerCode;
-            var authorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
-            if (authorization is not { LegacySharedKey: true })
-            {
-                if (string.IsNullOrWhiteSpace(verifiedAppCaller))
-                    return Results.Json(new { error = new { code = "GATEWAY_APP_CALLER_REQUIRED", message = "读取影子比对必须指定 appCaller" } }, jsonOpts, statusCode: 400);
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, verifiedAppCaller));
-            }
-            else if (!string.IsNullOrWhiteSpace(appCallerCode))
-            {
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.AppCallerCode, appCallerCode.Trim()));
-            }
-            if (!string.IsNullOrWhiteSpace(kind))
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.Kind, kind.Trim()));
-            var normalizedReleaseCommit = NormalizeCommitFilter(releaseCommit);
-            if (normalizedReleaseCommit is not null)
-                filters.Add(Builders<LlmShadowComparison>.Filter.Eq(x => x.ReleaseCommit, normalizedReleaseCommit));
-            var since = sinceHours is > 0 ? DateTime.UtcNow.AddHours(-sinceHours.Value) : (DateTime?)null;
-            if (since is not null)
-                filters.Add(Builders<LlmShadowComparison>.Filter.Gte(x => x.ComparedAt, since.Value));
-            var filter = Builders<LlmShadowComparison>.Filter.And(filters);
-
-            var total = await col.CountDocumentsAsync(filter);
-            var allMatch = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.AllMatch, true));
-            var critical = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HasCritical, true));
-            var httpFail = await col.CountDocumentsAsync(filter & Builders<LlmShadowComparison>.Filter.Eq(x => x.HttpOk, false));
-            var first = total > 0
-                ? (await col.Find(filter).SortBy(x => x.ComparedAt).Limit(1).FirstOrDefaultAsync())?.ComparedAt
-                : null;
-            var last = total > 0
-                ? (await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(1).FirstOrDefaultAsync())?.ComparedAt
-                : null;
-            var coverageHours = first is not null && last is not null
-                ? Math.Max(0, (last.Value - first.Value).TotalHours)
-                : 0;
-            var recent = await col.Find(filter).SortByDescending(x => x.ComparedAt).Limit(n).ToListAsync();
-            var failureN = Math.Clamp(failureLimit ?? 10, 0, 100);
-            var failureRecent = failureN == 0
-                ? new List<LlmShadowComparison>()
-                : await col.Find(filter & (Builders<LlmShadowComparison>.Filter.Eq(x => x.HttpOk, false)
-                                           | Builders<LlmShadowComparison>.Filter.Eq(x => x.HasCritical, true)))
-                    .SortByDescending(x => x.ComparedAt)
-                    .Limit(failureN)
-                    .ToListAsync();
-
-            return Results.Json(new
-            {
-                summary = new { total, allMatch, critical, httpFail, sinceHours, since, releaseCommit = normalizedReleaseCommit, firstComparedAt = first, lastComparedAt = last, coverageHours },
-                recent,
-                failureRecent,
-            }, jsonOpts);
-        });
-    }
-
-    static string? NormalizeCommitFilter(string? value)
-    {
-        var trimmed = (value ?? string.Empty).Trim();
-        if (trimmed.StartsWith("sha-", StringComparison.OrdinalIgnoreCase))
-            trimmed = trimmed[4..];
-        return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed.ToLowerInvariant();
     }
 
     private static bool HasGatewayKey(HttpContext context, string gatewayApiKey)
@@ -2059,6 +2001,58 @@ public static class GatewayHttpEndpoints
             ? authorization.TeamId
             : null;
 
+    private static GatewayRuntimeGrantRecord? GetVerifiedRuntimeGrant(HttpContext context)
+        => context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization authorization
+            ? authorization.RuntimeGrant
+            : null;
+
+    private static void ApplyRuntimeGrantPolicy(JsonObject body, GatewayRuntimeGrantRecord grant)
+    {
+        var requestedReasoning = body["reasoning"] is JsonObject reasoning
+            ? reasoning.DeepClone().AsObject()
+            : new JsonObject();
+        body.Remove("model");
+        StripGatewayRoutingFields(body);
+        if (body["provider"] is JsonObject provider)
+        {
+            provider.Clear();
+            if (grant.RequireDeclaredParameters) provider["require_parameters"] = true;
+            else body.Remove("provider");
+        }
+        else if (grant.RequireDeclaredParameters)
+        {
+            body["provider"] = new JsonObject { ["require_parameters"] = true };
+        }
+
+        if (grant.ReasoningMode is not null)
+            foreach (var field in new[] { "reasoning", "reasoning_effort", "reasoningEffort", "thinking", "include_reasoning" })
+                body.Remove(field);
+        if (grant.OutputTokenMode == "omit")
+            foreach (var field in new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }) body.Remove(field);
+        if (grant.Temperature is { } temperature) body["temperature"] = temperature;
+        if (grant.TopP is { } topP) { body.Remove("topP"); body["top_p"] = topP; }
+        if (grant.ReasoningMode == "effort")
+        {
+            requestedReasoning["effort"] = grant.ReasoningEffort;
+            body["reasoning"] = requestedReasoning;
+        }
+
+        if (!string.IsNullOrWhiteSpace(grant.ModelPoolId))
+        {
+            body["model_pool_id"] = grant.ModelPoolId;
+            body["model_policy"] = "pool";
+        }
+        else
+        {
+            body["model"] = grant.Model;
+        }
+        if (!string.IsNullOrWhiteSpace(grant.PinnedPlatformId))
+        {
+            body["pinned_platform_id"] = grant.PinnedPlatformId;
+            body["pinned_model_id"] = grant.PinnedModelId;
+        }
+    }
+
     private static GatewayAuthorizationInputs GetVerifiedAuthorizationInputs(HttpContext context)
         => context.Items["llmgw.key.authorization.inputs"] is GatewayAuthorizationInputs inputs
             ? inputs
@@ -2133,8 +2127,7 @@ public static class GatewayHttpEndpoints
     private static string ResolveRequiredScope(string path)
     {
         if (path.Equals("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)) return GatewayLegacyProbeScopes.Readiness;
-        if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase)
-            || path.Equals("/gw/v1/shadow-comparisons", StringComparison.OrdinalIgnoreCase))
+        if (path.Equals("/gw/v1/route-self-test", StringComparison.OrdinalIgnoreCase))
             return GatewayLegacyProbeScopes.Route;
         if (path.Equals("/gw/v1/profile-test", StringComparison.OrdinalIgnoreCase)) return "profile:test";
         // requestId 是用户输入，可能恰好叫 resolve/raw/pools。请求控制路由必须先按
@@ -2195,21 +2188,6 @@ public static class GatewayHttpEndpoints
             && !string.IsNullOrWhiteSpace(queryCaller.FirstOrDefault()))
         {
             appCallerCode = queryCaller.First()!.Trim();
-        }
-
-        if (path.Equals("/gw/v1/shadow-comparisons", StringComparison.OrdinalIgnoreCase)
-            && context.Request.Query.TryGetValue("appCallerCode", out var shadowQueryCaller)
-            && !string.IsNullOrWhiteSpace(shadowQueryCaller.FirstOrDefault()))
-        {
-            var requestedAppCaller = shadowQueryCaller.First()!.Trim();
-            if (!string.IsNullOrWhiteSpace(headerAppCaller)
-                && !string.Equals(headerAppCaller, requestedAppCaller, StringComparison.OrdinalIgnoreCase))
-            {
-                return new(sourceSystem, requestedAppCaller, ingressProtocol, requiredScope,
-                    "GATEWAY_APP_CALLER_MISMATCH",
-                    "X-Gateway-App-Caller 与查询 appCallerCode 不一致");
-            }
-            appCallerCode = requestedAppCaller;
         }
 
         if (!ShouldInspectAuthorizationBody(path))

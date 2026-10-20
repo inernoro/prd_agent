@@ -19,7 +19,7 @@ export interface DaemonHandle {
   readonly apiToken: string;
   /**
    * 交给 Codex 的占位 token（MAP_CODEX_MODEL_TOKEN）。它只能用来访问本服务的本机转发口；
-   * 真实的 MAP 模型票据只在转发口里注入，引擎永远拿不到。
+   * 真实的任务级模型凭据只在转发口里注入，引擎永远拿不到。
    */
   readonly modelPlaceholderToken: string;
 }

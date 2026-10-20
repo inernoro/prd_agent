@@ -152,6 +152,7 @@ type CapabilitySeed = readonly [
 const CDS_AGENT_CAPABILITY_SEEDS = [
   ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
+  ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
   ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
   ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],
   ['bootstrap', '项目初始化与技能分发', 'bootstrap.ts', 'system', 'public', 'read-only', 'direct', 'cds', '', '匿名只读：发引导脚本与代理 MAP 技能包，不签发凭据也不碰项目数据'],
@@ -161,6 +162,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['cds-events', 'CDS 事件与自刷新', 'cds-events.ts', 'system', 'system', 'write', 'direct', 'cds', '', '事件可只读查询，自刷新属于写操作'],
   ['cds-system-connections', 'CDS 系统间连接', 'cds-system-connections.ts', 'system', 'protocol-token', 'protocol', 'protocol-only', 'cds', '', '连接签发、接受和撤销走专用长令牌协议'],
   ['cds-system-topology', 'CDS 网络拓扑', 'cds-system-topology.ts', 'system', 'system', 'read-only', 'direct', 'cds', '', '只读拓扑用于判断控制面、节点和路由故障范围'],
+  ['cds-system-diagnostics', 'CDS 主线程诊断', 'cds-system-diagnostics.ts', 'system', 'system', 'read-only', 'direct', 'cds', '', '只读观测主线程被卡时间、分段耗时、卡顿归因与 SSE 长连接；CPU 采样会给主线程加少量开销，同一时刻只允许一次'],
   ['cds-system-offsite-backup', 'CDS 离机备份配置', 'cds-system-offsite-backup.ts', 'system', 'system', 'write', 'guided', 'cds', '', '凭据先对 R2 实测再落盘，通不过一律不保存；读取永不返回 secret，access key 只回尾四位'],
   ['cds-system-sealed-storage', 'CDS 密封存储初始化', 'cds-system-sealed-storage.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '只允许全局人工管理员同源初始化；服务端生成密钥且永不接受或回显客户端密钥材料'],
   ['credential-self-check', '凭据自检', 'credential-self-check.ts', 'system', 'public', 'read-only', 'direct', 'cds', 'connect', '匿名只读诊断：把「未授权」拆成有效 / 已吊销 / 从未签发 / 项目前缀不符；不返回明文或哈希，也不签发任何凭据'],
@@ -248,10 +250,10 @@ export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefini
 
 export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, readonly string[]> = {
   'agent-access': ['access-requests', 'projects', 'operator-console'],
-  auth: ['auth-local', 'auth-session', 'ticket-sso'],
+  auth: ['auth-local', 'auth-session', 'ticket-sso', 'user-project-access'],
   github: ['github-oauth', 'github-webhook'],
   projects: ['projects', 'managed-projects', 'workspaces'],
-  'system-health': ['server-control-plane', 'cds-system-topology', 'docker-network-health', 'cluster', 'executor-scheduler'],
+  'system-health': ['server-control-plane', 'cds-system-topology', 'cds-system-diagnostics', 'docker-network-health', 'cluster', 'executor-scheduler'],
   'system-observability': ['server-control-plane', 'cds-events', 'operator-console'],
   maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup'],
   settings: ['comment-template', 'cds-system-connections', 'cds-system-offsite-backup', 'cds-system-sealed-storage', 'peer-sync', 'remote-hosts'],
@@ -518,7 +520,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
       '只使用 CDS API 返回的预览入口',
       '只用极速版（CI 预构建）部署，不在 CDS 宿主跑源码编译，也不改项目级默认部署模式',
     ],
-    completion: ['目标提交已部署', 'branch status 的 deployRuntime.prebuilt 为 true', '服务健康', '真实预览入口可访问'],
+    completion: ['目标提交已部署', 'branch status 的 deployRuntime.prebuiltCoverage 为 all 且未待生效', '服务健康', '真实预览入口可访问'],
     pagePath: (projectId) => projectPath('/branches', projectId),
   },
   'build-diagnostics': {

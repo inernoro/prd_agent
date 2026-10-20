@@ -219,7 +219,7 @@ Agent / 外部平台 / MAP workload
 | 协议入口 | GW Native、OpenAI-compatible、Claude-compatible、Gemini-compatible 已进入统一 IR |
 | 配置权威 | appCaller、模型池、平台、模型、Exchange、上游 key 已归 `llm_gateway` |
 | 外部密钥基座 | 已有 `gwk_*` scoped service key，支持 appCaller、ingress protocol、scope、过期时间和撤销 |
-| 日志与审计 | 请求日志、shadow、登录审计、操作审计已独立写入 `llm_gateway` |
+| 日志与审计 | 请求日志、登录审计、操作审计已独立写入 `llm_gateway` |
 | 发布保障 | 同 commit 发布、runtime gate、回滚演练和六类一次性验收已落地 |
 
 ### 2.2 真正缺失
@@ -300,7 +300,7 @@ Tenant
 | 路由 | 模型池、模型、平台、Exchange |
 | 开发者 | Quickstart、API Keys、协议参考、错误码 |
 | 组织 | 团队、成员、角色 |
-| 治理 | 预算与用量、审计、shadow、运行状态 |
+| 治理 | 预算与用量、审计、运行状态 |
 | 设置 | 租户设置、安全、保留策略 |
 
 首页第一屏必须回答四件事：
@@ -582,7 +582,7 @@ OpenRouter 的正确表达是一个 `Provider` 加一个或多个 `Provider Endp
 
 - 不重新迁移 MAP 模型请求。
 - 不重新设计 GW 模型池调度算法。
-- 不删除 inproc/legacy 回滚代码；该任务由 full-cutover 最后阶段负责。
+- 不删除 inproc/legacy 回滚代码；该任务由 full-cutover 最后阶段负责（MAP 侧已于 2026-10-04 删除）。
 - 不伪造供应商账单、价格或汇率。
 - 不把 MAP 用户表直接当 GW 多租户表复用。
 - 不在没有租户隔离测试前开放公网自助注册。

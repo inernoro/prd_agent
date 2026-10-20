@@ -18,6 +18,8 @@ import { getUserCards } from '@/services/real/teams';
 import {
   completeRelease,
   createRelease,
+  checkReleaseHistory,
+  type VersionReleaseHistoryCheck,
   getInitiation,
   getInheritReleaseManifest,
   getRelease,
@@ -160,6 +162,10 @@ export function ReleaseWorkflowDetail({
   const [announcementUrl, setAnnouncementUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const historyScope = JSON.stringify([productId, sourceMode, initiationId, manualTCode, planName]);
+  const historyScopeRef = useRef(historyScope);
+  historyScopeRef.current = historyScope;
+  const [historyReview, setHistoryReview] = useState<{ scope: string; check: VersionReleaseHistoryCheck; confirmed: boolean } | null>(null);
 
   const approved = useMemo(
     () => [...new Map([...(availableInitiations ?? initiations), ...pastedInitiations].map((item) => [item.id, item])).values()].filter((item) => item.status === 'approved' && item.tCode),
@@ -475,7 +481,34 @@ export function ReleaseWorkflowDetail({
     }
     setBusy(true);
     setMessage('');
+    let historyConfirmationToken: string | undefined;
+    if (!temporary) {
+      const checked = await checkReleaseHistory(productId, {
+        initiationId: sourceMode === 'initiation' ? initiationId : undefined,
+        manualTCode: sourceMode === 'manual_t' ? manualTCode.trim() : undefined,
+        planName: planName.trim() || undefined,
+      });
+      if (historyScopeRef.current !== historyScope) {
+        setBusy(false); setMessage('方案或应用已变化，请重新核对后申领。'); return;
+      }
+      if (!checked.success) {
+        setBusy(false); setMessage(checked.error.message); return;
+      }
+      if (checked.data.blocked) {
+        setBusy(false); setHistoryReview({ scope: historyScope, check: checked.data, confirmed: false });
+        setMessage(checked.data.message); return;
+      }
+      if (checked.data.needsConfirmation) {
+        if (!historyReview?.confirmed || historyReview.scope !== historyScope
+            || historyReview.check.confirmationToken !== checked.data.confirmationToken) {
+          setBusy(false); setHistoryReview({ scope: historyScope, check: checked.data, confirmed: false });
+          setMessage(checked.data.message); return;
+        }
+        historyConfirmationToken = checked.data.confirmationToken ?? undefined;
+      }
+    }
     const res = await createRelease(productId, {
+      historyConfirmationToken,
       initiationId: temporary || sourceMode === 'manual_t' ? undefined : initiationId,
       manualTCode: !temporary && sourceMode === 'manual_t' ? manualTCode.trim() : undefined,
       isTemporaryOptimization: temporary,
@@ -863,6 +896,16 @@ export function ReleaseWorkflowDetail({
         />
       )}
 
+      {isNew && !temporary && historyReview?.scope === historyScope && historyReview.check.needsConfirmation && (
+        <section aria-label="历史 T/V 对照人工确认" className="space-y-2 rounded-lg border border-token-subtle bg-token-nested p-3 text-xs text-token-secondary">
+          <p>以下历史 V 方案名称相近，但没有明确 T 号对照，请先人工核对：</p>
+          {historyReview.check.candidates.map((candidate) => <p key={candidate.id} className="break-words">{candidate.vCode}：{candidate.planName}</p>)}
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={historyReview.confirmed} onChange={(event) => setHistoryReview({ ...historyReview, confirmed: event.target.checked })} />
+            <span>我已核对，以上历史 V 均不是本次 T 的方案，确认后再次点击申领。若属于同一方案，请查看原 V 号，不要重复申领。</span>
+          </label>
+        </section>
+      )}
       {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
       {loadError && <div role="alert" className="rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">{loadError}</div>}
 

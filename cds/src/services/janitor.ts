@@ -1,7 +1,11 @@
+import { WorktreeService } from './worktree.js';
+import { reclaimDeploymentSources, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
-import type { BranchEntry } from '../types.js';
+import type { BranchEntry, IShellExecutor } from '../types.js';
+import { shellQuoteArg } from './secure-database-cli.js';
 import type { StateService } from './state.js';
 import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
 import {
@@ -10,11 +14,21 @@ import {
 } from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 import { reclaimLock, isReclaimSkip } from './reclaim-lock.js';
+import { worktreePathActivity, readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity,
+  WorktreeClaimHeldError, type WorktreeDirectoryIdentity } from './worktree-path-activity.js';
 import {
   resolveBranchProtection,
   describeBranchProtectionReason,
   type BranchProtectionReason,
 } from './branch-protection.js';
+
+/** 部署准备期尚无容器挂载，分支在册即认领其源码桶，专用回收另走容量治理。 */
+function claimedWorktreePaths(branches: BranchEntry[]): string[] {
+  return branches.flatMap((branch) => branch.worktreePath
+    ? [branch.worktreePath, WorktreeService.deploymentSourceRootFor(branch.worktreePath),
+        ...Object.values(branch.services || {}).map((service) => service.sourceCheckoutPath).filter((p): p is string => !!p)]
+    : []);
+}
 
 /**
  * JanitorService — Phase 2 of the CDS resilience plan.
@@ -114,45 +128,50 @@ export interface ImageDockerFns {
   removeImage: (image: string) => Promise<string | null>;
 }
 
-export const defaultImageDocker: ImageDockerFns = {
-  listImages: async () => {
-    const out = await execDocker(['images', '--format', '{{.Repository}}:{{.Tag}}'], 60_000);
-    return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
-  },
-  listInUseImages: async () => {
-    const out = await execDocker(['ps', '-a', '--format', '{{.Image}}'], 60_000);
-    return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
-  },
-  removeImage: async (image) => {
-    const out = await execDocker(['rmi', image], 60_000);
-    if (!out.startsWith('__ERR__')) return null;
-    const err = out.replace('__ERR__ ', '');
-    // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
-    // 1 个 admin 镜像卡在这里，不处理就是永远失败下去的噪音）。只在**确认此刻
-    // 没有任何容器引用它**之后才 -f 重试——不带这层确认直接 -f 会把停止容器
-    // 依赖的镜像删掉，那个容器就再也起不来了。ps -a 的过滤是即时的，比 sweep
-    // 开头那张快照更新，顺带收窄了「快照之后新起容器」的竞态窗口。
-    if (!/must be forced/i.test(err)) return err;
-    const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000);
-    if (refs.startsWith('__ERR__') || refs.trim() !== '') {
-      // 「有容器引用」是**正常的保留**，不是失败（2026-07-28 生产实测：每轮固定
-      // 一个 admin 镜像因停止容器引用而卡住，于是 /api/janitor/state 里 failed
-      // 恒为 1、errors 恒为 1——一个永远亮着的红灯，真出新故障时反而看不出来）。
-      // 用哨兵前缀把它与真失败区分开，由调用方归到「按住不删」而非「删失败」。
-      return `${IMAGE_HELD_PREFIX}${err}（有容器引用或引用检查失败，未强制删除）`;
-    }
-    const forced = await execDocker(['rmi', '-f', image], 60_000);
-    return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
-  },
-};
+type DockerCommandResult = { ok: boolean; stdout: string; error: string };
+type DockerRunner = (args: string[], timeoutMs: number) => Promise<DockerCommandResult>;
 
-function execDocker(args: string[], timeoutMs = 120_000): Promise<string> {
-  return new Promise((resolve) => {
-    execFile('docker', args, { timeout: timeoutMs }, (err, stdout, stderr) => {
-      if (err) resolve(`__ERR__ ${(stderr || err.message || '').trim()}`);
-      else resolve((stdout || '').trim());
-    });
-  });
+function createImageDocker(run: DockerRunner): ImageDockerFns {
+  return {
+    listImages: async () => {
+      const out = await execDocker(['images', '--format', '{{.Repository}}:{{.Tag}}'], 60_000, run);
+      if (out.startsWith('__ERR__')) throw new Error('镜像列表查询失败，本轮跳过镜像回收。');
+      return out.split('\n').filter(Boolean);
+    },
+    listInUseImages: async () => {
+      const out = await execDocker(['ps', '-a', '--format', '{{.Image}}'], 60_000, run);
+      if (out.startsWith('__ERR__')) throw new Error('容器镜像占用查询失败，本轮跳过镜像回收。');
+      return out.split('\n').filter(Boolean);
+    },
+    removeImage: async (image) => {
+      const out = await execDocker(['rmi', image], 60_000, run);
+      if (!out.startsWith('__ERR__')) return null;
+      const err = out.replace('__ERR__ ', '');
+      // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
+      // 1 个 admin 镜像卡在这里，不处理就是永远失败下去的噪音）。只在**确认此刻
+      // 没有任何容器引用它**之后才 -f 重试——不带这层确认直接 -f 会把停止容器
+      // 依赖的镜像删掉，那个容器就再也起不来了。ps -a 的过滤是即时的，比 sweep
+      // 开头那张快照更新，顺带收窄了「快照之后新起容器」的竞态窗口。
+      if (!/must be forced/i.test(err)) return err;
+      const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000, run).catch(() => '__ERR__ 容器引用查询未确认');
+      if (refs.startsWith('__ERR__') || refs.trim() !== '') {
+        // 「有容器引用」是**正常的保留**，不是失败（2026-07-28 生产实测：每轮固定
+        // 一个 admin 镜像因停止容器引用而卡住，于是 /api/janitor/state 里 failed
+        // 恒为 1、errors 恒为 1——一个永远亮着的红灯，真出新故障时反而看不出来）。
+        // 用哨兵前缀把它与真失败区分开，由调用方归到「按住不删」而非「删失败」。
+        return `${IMAGE_HELD_PREFIX}${err}（有容器引用或引用检查失败，未强制删除）`;
+      }
+      const forced = await execDocker(['rmi', '-f', image], 60_000, run);
+      return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
+    },
+  };
+}
+
+export const defaultImageDocker: ImageDockerFns = createImageDocker(execDockerDetailed);
+
+async function execDocker(args: string[], timeoutMs = 120_000, run: DockerRunner = execDockerDetailed): Promise<string> {
+  const result = await run(args, timeoutMs);
+  return result.ok ? result.stdout.trim() : `__ERR__ ${result.error.trim()}`;
 }
 
 /**
@@ -180,25 +199,30 @@ function execDockerDetailed(
  * 刻意**不**带 `-a`(会删有 tag 的基础镜像→下次构建重新 pull 反而更慢)、
  * **不** `container prune`(会删停止的分支容器)、**不** `--volumes`(数据)。
  */
-export const defaultDockerPrune: DockerPruneFn = async () => {
-  const result: DockerPruneResult = { ran: true, reclaimed: [], errors: [] };
-  for (const [label, args] of [
-    ['悬空镜像', ['image', 'prune', '-f']],
-    ['构建缓存', ['builder', 'prune', '-f', '--keep-storage', '10GB']],
-  ] as Array<[string, string[]]>) {
-    const out = await execDocker(args);
-    if (out.startsWith('__ERR__')) {
-      result.errors.push(`${label}: ${out.replace('__ERR__ ', '')}`);
-    } else {
-      const reclaimedLine = out.split('\n').find((l) => /reclaimed/i.test(l)) || out.split('\n').pop() || '';
-      result.reclaimed.push(`${label}: ${reclaimedLine.trim() || '无可回收'}`);
+function createDockerPrune(run: DockerRunner): DockerPruneFn {
+  return async () => {
+    const result: DockerPruneResult = { ran: true, reclaimed: [], errors: [] };
+    for (const [label, args] of [
+      ['悬空镜像', ['image', 'prune', '-f']],
+      ['构建缓存', ['builder', 'prune', '-f', '--keep-storage', '10GB']],
+    ] as Array<[string, string[]]>) {
+      const out = await execDocker(args, 120_000, run);
+      if (out.startsWith('__ERR__')) {
+        result.errors.push(`${label}: ${out.replace('__ERR__ ', '')}`);
+      } else {
+        const reclaimedLine = out.split('\n').find((l) => /reclaimed/i.test(l)) || out.split('\n').pop() || '';
+        result.reclaimed.push(`${label}: ${reclaimedLine.trim() || '无可回收'}`);
+      }
     }
-  }
-  return result;
-};
+    return result;
+  };
+}
+
+export const defaultDockerPrune: DockerPruneFn = createDockerPrune(execDockerDetailed);
 
 /** Report returned by a single sweep pass. */
 export interface JanitorSweepReport {
+  deploymentSources?: DeploymentSourceRetentionReport;
   timestamp: string;
   /** Branches removed by this pass. */
   removedBranches: string[];
@@ -253,6 +277,10 @@ export interface JanitorSweepReport {
 }
 
 /** 孤儿 worktree 对账所需的磁盘读写（注入点：测试里换成假实现，不碰磁盘）。 */
+export interface DirectoryRemovalOptions {
+  beforeStart: () => void; identity?: WorktreeDirectoryIdentity; entryOnly: boolean; allowedBase: string;
+  sourceOnly?: boolean;
+}
 export interface OrphanWorktreeFs {
   /**
    * 枚举 `<base>/<projectId>/<slug>` 两层下的全部目录。
@@ -260,11 +288,11 @@ export interface OrphanWorktreeFs {
    * `knownProjectIds` 是**白名单**，不是提示：只有名字在其中的顶层目录才是项目桶，
    * 其余一律整个跳过（既不当桶往下枚举，也不当候选）。见实现里的注释。
    */
-  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<WorktreeEnumeration>;
+  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<WorktreeEnumeration & { sourceBuckets?: string[] }>;
   /** 当前被任何容器（含已停止）bind-mount 的宿主路径。查不到时返回 null。 */
   listMountedHostPaths: () => Promise<string[] | null>;
   /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
-  removeDir: (dir: string) => Promise<string | null>;
+  removeDir: (dir: string, options?: DirectoryRemovalOptions) => Promise<string | null>;
   /**
    * 单个目录的 mtime（毫秒）；不存在或读不出来返回 null。
    *
@@ -274,12 +302,14 @@ export interface OrphanWorktreeFs {
    * 陈旧的计划去删，删掉的就是刚 checkout 出来的新工作树。
    */
   statDirMtimeMs: (dir: string) => Promise<number | null>;
+  readDirectoryIdentity?: (dir: string, followTarget?: boolean) => Promise<WorktreeDirectoryIdentity | null>;
 }
 
 export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
   listWorktreeDirs: async (base, knownProjectIds) => {
     const out: DiskWorktreeDir[] = [];
     const unreadable: string[] = [];
+    const sourceBuckets = new Set<string>();
     // 项目桶白名单（Codex PR #1275 二轮 P1）。此前是「顶层每个目录都当项目桶」，
     // 在**从扁平布局迁移过来的存量部署**上会酿成删活代码：
     // FU-04 的 migrateFlatLayoutIfNeeded 采用符号链接而非移动——原来的
@@ -295,7 +325,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     if (allowed.size === 0) return { dirs: out, unreadable }; // 拿不到项目清单就不对账
     let projects: fs.Dirent[];
     try {
-      projects = fs.readdirSync(base, { withFileTypes: true });
+      projects = await fs.promises.readdir(base, { withFileTypes: true });
     } catch (err) {
       // base 读不出来：可能真不存在（没什么可对账），也可能是 EACCES / IO / 挂载抖动。
       // 后者必须如实上报——把它当成「都空了」会让调用方摘掉墓碑（Codex 六轮 P2）。
@@ -304,10 +334,10 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     }
     let resolvedBase: string;
     try {
-      // macOS 的 os.tmpdir() 可能返回 /var/...，realpathSync() 却返回
+      // macOS 的 os.tmpdir() 可能返回 /var/...，realpath() 却返回
       // /private/var/...。安全边界必须在两边都规范化后比较，否则合法的桶内
       // 迁移别名会被误判成指向 base 之外，永远无法进入回收候选。
-      resolvedBase = fs.realpathSync(base);
+      resolvedBase = await fs.promises.realpath(base);
     } catch {
       unreadable.push(base);
       return { dirs: out, unreadable };
@@ -319,12 +349,26 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
       const projDir = path.posix.join(base, proj.name);
       let slugs: fs.Dirent[];
       try {
-        slugs = fs.readdirSync(projDir, { withFileTypes: true });
+        slugs = await fs.promises.readdir(projDir, { withFileTypes: true });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') unreadable.push(projDir);
         continue;
       }
       for (const slug of slugs) {
+        if (slug.name === '.deployment-sources') {
+          // Never offer the whole source bucket for deletion, but keep its project discoverable.
+          const sourceRoot = path.join(projDir, slug.name);
+          if (!slug.isDirectory()) { sourceBuckets.add(proj.name); continue; }
+          try {
+            const buckets = await fs.promises.readdir(sourceRoot, { withFileTypes: true });
+            for (const bucket of buckets) {
+              if (!bucket.isDirectory() || (await fs.promises.readdir(path.join(sourceRoot, bucket.name))).length) {
+                sourceBuckets.add(proj.name); break;
+              }
+            }
+          } catch { unreadable.push(sourceRoot); }
+          continue;
+        }
         // 桶内条目认两种形态：真实目录，以及**指向真实 worktree 的符号链接**——
         // 扁平布局迁移留下的 `<base>/default/<slug>` 正是后者（Codex 六轮 P2）。
         // 此前 isDirectory() 一票否决把别名整个漏掉，而它的真身在顶层又被项目桶
@@ -333,7 +377,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
         let realPath: string | undefined;
         if (slug.isSymbolicLink()) {
           try {
-            const resolved = fs.realpathSync(full);
+            const resolved = await fs.promises.realpath(full);
             // 只认解析后仍落在 base 之内的链接：指到 base 之外的一律不碰（不删别人的东西）
             if (resolved === resolvedBase || resolved.startsWith(`${resolvedBase}/`)) realPath = resolved;
             else continue;
@@ -355,53 +399,29 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
           continue;
         }
         try {
-          // lstat 兜底：断链的 statSync 会抛，用链接自身的 mtime 才拿得到年龄
+          // lstat兜底：断链按链接自身年龄；逐条异步读，避免整轮占住控制面。
           let mtimeMs: number;
-          try { mtimeMs = fs.statSync(full).mtimeMs; } catch { mtimeMs = fs.lstatSync(full).mtimeMs; }
-          out.push({ path: full, mtimeMs, ...(realPath ? { realPath } : {}) });
+          try { mtimeMs = (await fs.promises.stat(full)).mtimeMs; } catch { mtimeMs = (await fs.promises.lstat(full)).mtimeMs; }
+          const identity = await readWorktreeDirectoryIdentity(full);
+          if (!identity) { unreadable.push(full); mtimeMs = Number.NaN; }
+          out.push({ path: full, mtimeMs, ...(realPath ? { realPath } : {}), ...(identity ? { identity } : {}) });
         } catch {
           // 连 lstat 都失败 → 给 NaN，纯函数据此判为过新并跳过
           out.push({ path: full, mtimeMs: Number.NaN, ...(realPath ? { realPath } : {}) });
         }
       }
     }
-    return { dirs: out, unreadable };
+    return { dirs: out, unreadable, ...(sourceBuckets.size ? { sourceBuckets: [...sourceBuckets] } : {}) };
   },
-  listMountedHostPaths: async () => {
-    // 必须走 docker inspect，不能走 docker ps（2026-07-28 生产实测定位）：
-    // `docker ps --format` 里的 .Mounts 是**逗号分隔的字符串**，对它 `{{range}}`
-    // 会让 Go 模板报错 → 整条命令非零退出 → 这里返回 null → 对账降级成只报不删。
-    // 生产第一轮就是这样：找到 66 个孤儿目录、一个都没敢删（护栏起作用了，
-    // 但功能等于没生效）。inspect 的 .Mounts 才是真正的数组。
-    const ids = await execDocker(['ps', '-aq'], 60_000);
-    if (ids.startsWith('__ERR__')) return null;
-    const idList = ids.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (idList.length === 0) return [];
-    const paths: string[] = [];
-    // 分批，避免容器多时超出单条命令的参数长度上限
-    for (let i = 0; i < idList.length; i += 100) {
-      const batch = idList.slice(i, i + 100);
-      const r = await execDockerDetailed(
-        // 用 {{println}} 而不是 {{"\\n"}}：后者在 TS 单引号串里 \\n 会被转义成**真正的
-        // 换行**塞进 Go 模板的引号内，模板解析直接失败（unterminated quoted string），
-        // docker 非零退出且**无任何输出** —— 生产上挂载枚举一直返回 null 的真凶。
-        // println 不需要引号，从根上避开这一类转义坑。
-        ['inspect', '--format', '{{range .Mounts}}{{println .Source}}{{end}}', ...batch], 60_000,
-      );
-      // 非零退出**不代表查不到**：只要有一个 id 在 ps 与 inspect 之间消失，docker 就
-      // 整体非零，但找得到的那些照样打了出来。而消失的容器本就不可能挂着任何目录，
-      // 忽略它完全安全。真正危险的是「一条都没查到却当成没人挂载」——那种情况下
-      // stdout 为空，下面按失败处理返回 null，调用方整轮只报不删。
-      //（生产实测：容器持续增删，此前恒定走 null 分支，孤儿回收一直停在 0/66。）
-      if (!r.ok && !r.stdout) return null;
-      for (const line of r.stdout.split('\n')) {
-        const t = line.trim();
-        if (t) paths.push(t);
-      }
+  listMountedHostPaths: () => listMountedHostPaths(execDockerDetailed),
+  readDirectoryIdentity: readWorktreeDirectoryIdentity,
+  removeDir: async (dir, options) => {
+    options?.beforeStart();
+    if (options?.sourceOnly && options.identity) {
+      const { removeOwnedDirectory } = await import('./worktree-directory-removal-process.js');
+      if (await removeOwnedDirectory({ ...options, dir, identity: options.identity }) !== 'removed') throw new WorktreeClaimHeldError();
+      return null;
     }
-    return paths;
-  },
-  removeDir: async (dir) => {
     try {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
       return null;
@@ -411,15 +431,81 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
   },
   statDirMtimeMs: async (dir) => {
     try {
-      return fs.statSync(dir).mtimeMs;
+      return (await fs.promises.stat(dir)).mtimeMs;
     } catch {
-      // 断链的符号链接：statSync 会抛，但它**确实还在**，只是指向已删的真身。
+      // 断链的符号链接：stat会抛，但它**确实还在**，只是指向已删的真身。
       // 不用 lstat 兜底的话，临删复核会把它判成「目录已消失」而跳过 —— 于是
       // 成对回收失败留下的残骸永远删不掉（Codex 十一轮 P2）。
-      try { return fs.lstatSync(dir).mtimeMs; } catch { return null; }
+      try { return (await fs.promises.lstat(dir)).mtimeMs; } catch { return null; }
     }
   },
 };
+
+async function listMountedHostPaths(run: DockerRunner): Promise<string[] | null> {
+  try {
+    // 必须走 docker inspect，不能走 docker ps（2026-07-28 生产实测定位）：
+    // `docker ps --format` 里的 .Mounts 是**逗号分隔的字符串**，对它 `{{range}}`
+    // 会让 Go 模板报错 → 整条命令非零退出 → 这里返回 null → 对账降级成只报不删。
+    // 生产第一轮就是这样：找到 66 个孤儿目录、一个都没敢删（护栏起作用了，
+    // 但功能等于没生效）。inspect 的 .Mounts 才是真正的数组。
+    const ids = await execDocker(['ps', '-aq'], 60_000, run);
+    if (ids.startsWith('__ERR__')) return null;
+    const idList = ids.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (idList.length === 0) return [];
+    const paths: string[] = [];
+    // 分批，避免容器多时超出单条命令的参数长度上限
+    for (let i = 0; i < idList.length; i += 100) {
+      const batch = idList.slice(i, i + 100);
+      const r = await run(
+        // 用 {{println}} 而不是 {{"\\n"}}：后者在 TS 单引号串里 \\n 会被转义成**真正的
+        // 换行**塞进 Go 模板的引号内，模板解析直接失败（unterminated quoted string），
+        // docker 非零退出且**无任何输出** —— 生产上挂载枚举一直返回 null 的真凶。
+        // println 不需要引号，从根上避开这一类转义坑。
+        ['inspect', '--format', '{{range .Mounts}}{{println .Source}}{{end}}', ...batch], 60_000,
+      );
+      // 部分输出不能证明遗漏的容器已经消失：权限、daemon 或传输失败也会漏项。
+      // 未完整确认挂载占用时整轮只报不删，下轮成功重采后再允许回收。
+      if (!r.ok) return null;
+      for (const line of r.stdout.split('\n')) {
+        const t = line.trim();
+        if (t) paths.push(t);
+      }
+    }
+    return paths;
+  } catch { return null; }
+}
+
+/** 生产装配复用同一执行器：读取隔离，回收操作保持原有执行顺序。 */
+export function createJanitorDockerAdapters(shell: IShellExecutor): {
+  dockerPrune: DockerPruneFn; imageDocker: ImageDockerFns; orphanWorktreeFs: OrphanWorktreeFs;
+} {
+  const run: DockerRunner = async (args, timeout) => {
+    const readOnly = ['images', 'ps', 'inspect'].includes(args[0]);
+    const result = await shell.exec(['docker', ...args].map(shellQuoteArg).join(' '), {
+      timeout, executionLane: readOnly ? 'observation' : 'operation',
+    });
+    return { ok: result.exitCode === 0, stdout: result.stdout.trim(),
+      error: result.stderr.trim() || (result.exitCode !== 0 ? 'Docker 命令未成功，未确认操作结果。' : '') };
+  };
+  return { dockerPrune: createDockerPrune(run), imageDocker: createImageDocker(run),
+    orphanWorktreeFs: { ...defaultOrphanWorktreeFs, listMountedHostPaths: () => listMountedHostPaths(run),
+      removeDir: async (dir, options) => {
+        if (!options?.identity || !shell.execOwnedOperation) throw new WorktreeClaimHeldError();
+        const sourceRuntime = import.meta.url.endsWith('.ts');
+        const worker = fileURLToPath(new URL(sourceRuntime
+          ? './worktree-directory-removal-process.ts' : './worktree-directory-removal-process.js', import.meta.url));
+        const result = await shell.execOwnedOperation(`${shellQuoteArg(process.execPath)} --max-old-space-size=128 ${sourceRuntime ? '--import tsx ' : ''}${shellQuoteArg(worker)}`, {
+          cwd: fileURLToPath(new URL('../../', import.meta.url)),
+          executionLane: 'operation', timeout: 60_000, beforeStart: options.beforeStart,
+          stdin: JSON.stringify({ dir, allowedBase: options.allowedBase, identity: options.identity, entryOnly: options.entryOnly, sourceOnly: options.sourceOnly }),
+        });
+        if (result.exitCode !== 0) return '目录回收执行失败，已保留本轮回收记录。';
+        let status: unknown;
+        try { status = JSON.parse(result.stdout).status; } catch { return '目录回收回执未确认，请核对实际状态。'; }
+        if (status === 'held') throw new WorktreeClaimHeldError();
+        return status === 'removed' ? null : '目录回收回执未确认，请核对实际状态。';
+      } } };
+}
 
 /** Callback: 返回孤儿 infra 容器名列表(在 Docker 但不在 state 台账)。 */
 export type OrphanInfraScanFn = () => Promise<string[]>;
@@ -456,6 +542,7 @@ export interface JanitorSnapshot {
     } | null;
     /** 孤儿 worktree 对账摘要。null = 本次未执行。 */
     orphanWorktrees: { removed: number; failed: number; deferred: number } | null;
+    deploymentSources?: { scanned: number; attempted: number; removed: number; held: number; deferred: number };
     dockerPrune: string[] | null;
     errors: number;
   } | null;
@@ -517,6 +604,7 @@ export class JanitorService {
   /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
   private firstSweepHandle: NodeJS.Timeout | null = null;
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
+  private deploymentSourceCursor: string | undefined;
   /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
   private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
@@ -560,9 +648,7 @@ export class JanitorService {
     const knownProjectIds = [...new Set([...liveProjectIds, ...tombstones.map((t) => t.projectId)])];
     const enumeration = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase, knownProjectIds);
     const diskDirs = enumeration.dirs;
-    const claimedPaths = this.stateService.getAllBranches()
-      .map((b) => b.worktreePath)
-      .filter((p): p is string => !!p);
+    const claimedPaths = claimedWorktreePaths(this.stateService.getAllBranches());
     const mountedPaths = await this.orphanWorktreeFs.listMountedHostPaths();
     // 查不到挂载占用 = 本轮不删（只报不删）：删一个还被容器挂着的目录，那个容器
     // 当场瞎掉，代价远大于晚一轮回收。
@@ -588,54 +674,109 @@ export class JanitorService {
     // 先删残留目录再 `git worktree add`，`addBranch()` 落台账更在其后，于是存在一个
     // 「目录已是新 checkout、台账还没记上」的窗口；拿陈旧计划直接删，删掉的就是
     // 别人刚拉出来的工作树。删之前把台账与 mtime 都重新读一遍，任一变化即放弃本条。
-    const freshClaimed = new Set(
-      this.stateService.getAllBranches()
-        .flatMap((b) => [b.worktreePath])
-        .filter((p): p is string => !!p)
-        .map(normalizeWorktreePath),
-    );
+    // 逐项读取，且在异步磁盘复核后再读取一次；前一项回收期间的新认领不能用旧快照覆盖。
+    const isClaimedNow = (dir: string, real?: string): boolean => {
+      const paths = [dir, ...(real ? [normalizeWorktreePath(real)] : [])];
+      return claimedWorktreePaths(this.stateService.getAllBranches()).map(normalizeWorktreePath)
+        .some(claimed => paths.some(candidate => claimed === candidate
+          || claimed.startsWith(`${candidate}/`) || candidate.startsWith(`${claimed}/`)));
+    };
     const plannedMtime = new Map(diskDirs.map((d) => [normalizeWorktreePath(d.path), d.mtimeMs]));
+    const plannedIdentity = new Map(diskDirs.map(d => [normalizeWorktreePath(d.path), d.identity]));
     const skippedByRecheck: string[] = [];
     for (const dir of plan.remove) {
-      if (freshClaimed.has(dir)) {
-        // 台账在本轮期间认领了它 —— 分支重建已完成
-        plan.keptReasons[dir] = '临删复核：台账已重新认领该目录（分支疑似重建）';
-        skippedByRecheck.push(dir);
-        continue;
-      }
-      const nowMtime = await this.orphanWorktreeFs.statDirMtimeMs(dir);
-      if (nowMtime === null) {
-        plan.keptReasons[dir] = '临删复核：目录已消失（无需回收）';
-        skippedByRecheck.push(dir);
-        continue;
-      }
-      const planned = plannedMtime.get(dir);
-      if (planned === undefined || !Number.isFinite(planned) || nowMtime !== planned) {
-        // mtime 变了 = 判定之后有人动过它（重建的 checkout 会刷新 mtime），
-        // 而台账可能还没跟上。宁可漏删一轮，也不删别人正在建的东西。
-        plan.keptReasons[dir] = '临删复核：目录在本轮期间被改动过（可能正在重建），留到下轮';
-        skippedByRecheck.push(dir);
-        continue;
-      }
-      // 顺序要紧：**先真身、后别名**（Codex PR #1275 八轮 P2）。
-      // 别名是真身唯一的可发现入口 —— 真身住在顶层，而顶层被项目桶白名单刻意排除在
-      // 枚举之外。若先删别名、再删真身时遇到 EBUSY 之类的暂时性失败，那棵（往往很大的）
-      // 工作树就永远没人再发现得到，也没有下一轮重试的机会，等于永久泄漏。
-      // 反过来先删真身：真身失败就整条放弃、别名原样留着，下一轮照常重来。
       const real = realPathOf.get(dir);
-      if (real) {
-        // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
-        const realErr = await this.orphanWorktreeFs.removeDir(real);
-        if (realErr) {
-          failed.push({ path: real, error: realErr });
-          plan.keptReasons[dir] = `真身回收失败，保留别名以便下轮重试（${real}）`;
-          continue; // 别名必须留着，否则真身再也找不回来
-        }
-        removed.push(real);
+      const activity = worktreePathActivity.tryAcquire([dir, ...(real ? [real] : [])]);
+      if (!activity) {
+        plan.keptReasons[dir] = '临删复核：目录或关联路径正在创建、准备或回收';
+        skippedByRecheck.push(dir); continue;
       }
-      const err = await this.orphanWorktreeFs.removeDir(dir);
-      if (err) { failed.push({ path: dir, error: err }); continue; }
-      removed.push(dir);
+      let cleanupUnknown = false;
+      try {
+        const identity = plannedIdentity.get(dir);
+        if (identity && !activity.extend([identity.entryPath, ...(identity.target ? [identity.target.path] : [])])) {
+          plan.keptReasons[dir] = '临删复核：规范目录或关联真身正在创建、准备或回收';
+          skippedByRecheck.push(dir); continue;
+        }
+        if (isClaimedNow(dir, real)) {
+          // 台账在本轮期间认领了它 —— 分支重建已完成
+          plan.keptReasons[dir] = '临删复核：台账已重新认领该目录（分支疑似重建）';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        const nowMtime = await this.orphanWorktreeFs.statDirMtimeMs(dir);
+        if (isClaimedNow(dir, real)) {
+          plan.keptReasons[dir] = '临删复核：磁盘检查期间台账已认领该目录或真身';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        if (nowMtime === null) {
+          plan.keptReasons[dir] = '临删复核：目录已消失（无需回收）';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        const planned = plannedMtime.get(dir);
+        if (planned === undefined || !Number.isFinite(planned) || nowMtime !== planned) {
+          // mtime 变了 = 判定之后有人动过它（重建的 checkout 会刷新 mtime），
+          // 而台账可能还没跟上。宁可漏删一轮，也不删别人正在建的东西。
+          plan.keptReasons[dir] = '临删复核：目录在本轮期间被改动过（可能正在重建），留到下轮';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        if (identity) {
+          const current = await this.orphanWorktreeFs.readDirectoryIdentity?.(dir);
+          if (!current || !sameWorktreeDirectoryIdentity(identity, current) || isClaimedNow(dir, real)) {
+            plan.keptReasons[dir] = '临删复核：目录对象、链接目标或归属已变化，留到下轮';
+            skippedByRecheck.push(dir); continue;
+          }
+        }
+        // 顺序要紧：**先真身、后别名**（Codex PR #1275 八轮 P2）。
+        // 别名是真身唯一的可发现入口 —— 真身住在顶层，而顶层被项目桶白名单刻意排除在
+        // 枚举之外。若先删别名、再删真身时遇到 EBUSY 之类的暂时性失败，那棵（往往很大的）
+        // 工作树就永远没人再发现得到，也没有下一轮重试的机会，等于永久泄漏。
+        // 反过来先删真身：真身失败就整条放弃、别名原样留着，下一轮照常重来。
+        const beforeStart = () => {
+          if (isClaimedNow(dir, real) || !activity.markDestructive()) throw new WorktreeClaimHeldError();
+        };
+        if (real) {
+          // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
+          const realIdentity = identity?.target ? { entryPath: identity.target.path,
+            entry: { dev: identity.target.dev, ino: identity.target.ino,
+              ctimeNs: identity.target.ctimeNs, mtimeNs: identity.target.mtimeNs } } : undefined;
+          const realErr = await this.orphanWorktreeFs.removeDir(real, {
+            beforeStart, identity: realIdentity, entryOnly: false, allowedBase: this.worktreeBase,
+          });
+          if (realErr) {
+            failed.push({ path: real, error: realErr });
+            plan.keptReasons[dir] = `真身回收失败，保留别名以便下轮重试（${real}）`;
+            continue; // 别名必须留着，否则真身再也找不回来
+          }
+          removed.push(real);
+        }
+        // 真身移除期间，别名可能改指向；此时只比较别名自身，不要求已删真身仍存在。
+        const aliasCurrent = real && identity ? await this.orphanWorktreeFs.readDirectoryIdentity?.(dir, false) : undefined;
+        if ((real && identity && (!aliasCurrent || !sameWorktreeDirectoryIdentity(identity, aliasCurrent, true)))
+          || isClaimedNow(dir, real)) {
+          plan.keptReasons[dir] = '临删复核：真身回收期间台账已认领，保留别名';
+          skippedByRecheck.push(dir);
+          continue;
+        }
+        const err = await this.orphanWorktreeFs.removeDir(dir, {
+          beforeStart, identity, entryOnly: !!real, allowedBase: this.worktreeBase,
+        });
+        if (err) { failed.push({ path: dir, error: err }); continue; }
+        removed.push(dir);
+      } catch (error) {
+        const code = (error as { code?: string } | null)?.code;
+        if (code === 'worktree-held') {
+          plan.keptReasons[dir] = '删除派发复核：目录已认领、身份变化或归属未知，保留本轮';
+          skippedByRecheck.push(dir);
+        } else {
+          cleanupUnknown = code === 'cleanup';
+          if (cleanupUnknown) activity.markUncertain();
+          failed.push({ path: dir, error: cleanupUnknown ? '回收进程清理尚未确认，保留路径围栏' : '目录回收未完成，保留本轮记录' });
+        }
+      } finally { if (!cleanupUnknown) activity.release(); }
     }
     if (skippedByRecheck.length) {
       console.warn(`[janitor] 孤儿 worktree 临删复核拦下 ${skippedByRecheck.length} 个目录（疑似并发重建）`);
@@ -653,7 +794,7 @@ export class JanitorService {
       );
     }
     if (tombstones.length && !enumerationBroken) {
-      const stillThere = new Set<string>();
+      const stillThere = new Set(enumeration.sourceBuckets || []);
       const removedSet = new Set(removed);
       for (const d of diskDirs) {
         if (removedSet.has(normalizeWorktreePath(d.path))) continue;
@@ -838,6 +979,12 @@ export class JanitorService {
               deferred: report.orphanWorktrees.deferred,
             }
             : null,
+          ...(report.deploymentSources && (report.deploymentSources.scanned || report.deploymentSources.failed.length
+            || Object.keys(report.deploymentSources.held).length) ? { deploymentSources: {
+            scanned: report.deploymentSources.scanned, attempted: report.deploymentSources.attempted,
+            removed: report.deploymentSources.removed.length, held: Object.keys(report.deploymentSources.held).length,
+            deferred: report.deploymentSources.deferred,
+          } } : {}),
           dockerPrune: report.dockerPrune?.reclaimed ?? null,
           errors: report.errors.length,
         };
@@ -1031,6 +1178,15 @@ export class JanitorService {
     //      而孤儿目录已经不属于任何分支，删它不涉及用户的分支资产。
     if (this.config.orphanWorktrees !== false) {
       try {
+        report.deploymentSources = await reclaimDeploymentSources({ base: this.worktreeBase,
+          projectIds: [...this.stateService.getProjects().map(p => p.id),
+            ...this.stateService.getDeletedProjectWorktreeBuckets().map(p => p.projectId)],
+          branches: () => this.stateService.getAllBranches(), files: this.orphanWorktreeFs,
+          nowMs: this.clock.now(), afterPath: this.deploymentSourceCursor });
+        const sources = report.deploymentSources;
+        this.deploymentSourceCursor = sources.lastAttemptedPath ?? sources.lastScannedPath ?? this.deploymentSourceCursor;
+        if (sources.scanned || sources.failed.length || Object.keys(sources.held).length) console.log(`[janitor] 部署源码回收：扫描 ${sources.scanned}、删除 ${sources.removed.length}、保留 ${Object.keys(sources.held).length}、待下轮 ${sources.deferred}`);
+        for (const f of sources.failed) report.errors.push(`deployment source: ${f.path}: ${f.error}`);
         report.orphanWorktrees = await this.runOrphanWorktreeReconcile();
         const o = report.orphanWorktrees;
         if (o.removed.length || o.deferred || o.failed.length) {

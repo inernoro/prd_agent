@@ -123,12 +123,12 @@ jobs:
               - 'scripts/tests/release-evidence.test.py'
               - 'scripts/llmgw-prod-preflight.py'
               - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
+              - 'scripts/tests/mongo-ci-contract.test.py'
               # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
               # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
-              # 它们守的是 gw-smoke / 发布双密钥 / rollout 账本 / ASR WebSocket 转发，
+              # 它们守的是 gw-smoke / 发布双密钥 / ASR WebSocket 转发，
               # 所以连同各自的被测脚本一起登记进这道闸。
               - 'scripts/gw-smoke.py'
-              - 'scripts/llmgw-rollout-ledger.py'
               # changelog 碎片合并的被测文件：不登记的话，只改合并逻辑的 PR
               # 完全跳过这道闸，而它要防的重复日期段恰恰是在那里长出来的（形状 7）。
               - 'scripts/assemble-changelog.sh'
@@ -310,6 +310,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
+
       - name: Static release layout
         run: sh scripts/tests/static-release-layout.test.sh
 
@@ -383,7 +386,9 @@ jobs:
     name: Server Build & Test
     needs: changes
     if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 临时兼容：24.04 镜像 20261018.339.1 的 Azure 7.0 内核被 Mongo 8.0 拒绝。
+    # SERVER-131779 修复在 8.0.35；可用并在原 runner 真验后回迁，见 debt.platform.md。
+    runs-on: ubuntu-22.04
     services:
       mongodb:
         image: mongo:8.0
@@ -403,6 +408,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: MongoDB runtime versions
+        run: |
+          uname -r
+          docker exec "${{ job.services.mongodb.id }}" mongosh --quiet --eval \
+            'const v = db.version(); print("MongoDB " + v); if (!/^8[.]0[.]/.test(v) || db.adminCommand({ ping: 1 }).ok !== 1) quit(1);'
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -734,6 +745,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 停止演练回归读取固定历史基线，浅克隆没有该提交。
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

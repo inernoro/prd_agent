@@ -1,7 +1,7 @@
 ---
 name: cds
 metadata:
-  version: 0.16.6
+  version: 0.16.9
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
@@ -47,7 +47,7 @@ CLI="python3 $(git rev-parse --show-toplevel)/.claude/skills/cds/cli/cdscli.py"
 
 # 安全接入：默认页面批准，密钥不进入对话或 stdout，不写 shell profile
 $CLI connect --host https://cds.example --project <id> --agent Codex
-$CLI connect --host https://cds.example --new-project --agent Cursor
+$CLI connect --host https://cds.example --new-project --agent Codex
 $CLI init                                # 交互式安全向导
 $CLI init --legacy-env                   # 仅兼容旧用户：写 ~/.cdsrc
 $CLI auth inspect --strict               # 脱敏检查凭据来源；冲突时停止
@@ -147,6 +147,10 @@ python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
 不会被截断（`16:9` 是完整的）。刻意不做表达式——自由文本判据一开口，下一轮就会被
 要求加同义词和嵌套。
 
+配置通知身份：`cdscli monitor identity` 查看，`cdscli monitor identity --file <私有JSON文件>` 更新（管理员）。身份配置只存运行状态，真实名称、地址与凭据不得提交仓库。
+
+更新现有通知的独立故障入口：`cdscli monitor incident-page --file <私有JSON文件>`。文件包含 channelId 与 incidentPageUrl，保留原接收者和事件订阅；实际地址不写入命令行或仓库。
+
 查通知发送记录：`cdscli monitor notifications --hours 24`（也支持 1 / 168 小时，仅管理员）。按目标、通道、事件类型、小时统计，演练单列；`truncated=true` 时是部分统计。成功表示推送服务已接受，不能当作手机已展示；旧版未留记录的历史不可回填。
 
 看历史证据：`cdscli monitor observations <id>`；只看功能监控：`monitor list --functional-only`。
@@ -192,7 +196,7 @@ curl -sS "$CDS_HOST/api/skills/bundles"               # 有哪些角色套装、
 curl -sSL "$CDS_HOST/api/bootstrap/pm-project" -o init.sh   # 取引导脚本（先读再跑）
 ```
 
-**安装目录约定**：项目级优先，探测顺序 `.claude` → `.cursor` → 兜底 `.agents`。
+**安装目录约定**：项目级优先，探测顺序 `.claude` → 兜底 `.agents`。
 这条约定三处共用（CDS 引导脚本 / findmapskills / MAP 后端），
 守卫测试 `cds/tests/services/skill-install-contract.test.ts` 把它们钉在一起。
 不要装到用户主目录 —— 技能不跟项目走，团队 clone 下来会少一半。
