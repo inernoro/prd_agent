@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Copy } from 'lucide-react';
-import { getProductVersionCopyTemplate } from '@/services/real/productAgent';
+import { getLegacyVersionCopyTemplate, getProductVersionCopyTemplate } from '@/services/real/productAgent';
 
-export function VersionCopyActions({ kind, id, code }: {
+export function VersionCopyActions({ kind, id, code, legacy = false }: {
   kind: 'initiation' | 'release';
   id: string;
   code: string;
+  legacy?: boolean;
 }) {
   const [hint, setHint] = useState('');
 
@@ -19,12 +20,16 @@ export function VersionCopyActions({ kind, id, code }: {
   };
 
   const copyTemplate = async () => {
-    const response = await getProductVersionCopyTemplate(kind, id);
-    if (!response.success) {
-      setHint(response.error?.message ?? '生成通知失败');
-      return;
+    try {
+      const response = await (legacy ? getLegacyVersionCopyTemplate(id) : getProductVersionCopyTemplate(kind, id));
+      if (!response.success) {
+        setHint(response.error?.message ?? '生成通知失败');
+        return;
+      }
+      await copy(response.data.text, '完整企微通知');
+    } catch {
+      setHint('通知读取失败，请重试。');
     }
-    await copy(response.data.text, '完整企微通知');
   };
 
   return (

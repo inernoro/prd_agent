@@ -1130,6 +1130,17 @@ export function getOverviewReleases(params?: { keyword?: string }) {
   const qs = q.toString();
   return apiRequest<ListWrap<OverviewReleaseRow>>(`/api/product/overview/releases${qs ? `?${qs}` : ''}`);
 }
+export type WorkflowVersionRecord<T> = T & { legacyRegistration?: VersionRegistration | null };
+type WorkflowVersionList<T> = {
+  items: Array<{ record: T; legacyRegistration?: VersionRegistration | null }>;
+  requirementNames: Record<string, string>;
+};
+export function getWorkflowInitiations() {
+  return apiRequest<WorkflowVersionList<ProductInitiation>>('/api/product/overview/initiations?workflow=true');
+}
+export function getWorkflowReleases() {
+  return apiRequest<WorkflowVersionList<ProductRelease>>('/api/product/overview/releases?workflow=true');
+}
 export function getOverviewInitiations(params?: { keyword?: string }) {
   const q = new URLSearchParams();
   if (params?.keyword) q.set('keyword', params.keyword);

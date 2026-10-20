@@ -2,15 +2,36 @@ import { describe, expect, it } from 'vitest';
 import versions from './VersionWorkflowTab.tsx?raw';
 import workflow from './ReleaseWorkflowDetail.tsx?raw';
 import picker from './ReleasePlanPicker.tsx?raw';
+import client from '@/services/real/productAgent.ts?raw';
+import copyActions from './VersionCopyActions.tsx?raw';
 
 describe('version pages show content without waiting for every dependency', () => {
-  it('mounts formal and internal tables during loading and loads requirement names independently', () => {
-    expect(versions).toContain('void getOverviewReleases().then(');
-    expect(versions).toContain('onItems: (items) =>');
-    expect(versions).toContain('mergeVersionListSnapshot(previous, items)');
-    expect(versions).toContain('loadedScope.current !== scope');
-    expect(versions).toContain('记录尚未完整读取');
+  it('reads each tab globally and keeps tables silent and existing records during refresh', () => {
+    expect(versions).toContain('await getWorkflowInitiations()');
+    expect(versions).toContain('await getWorkflowReleases()');
+    expect(versions).toContain('new Map(Object.entries(result.data.requirementNames))');
+    expect(versions).not.toContain('loadProductVersionList');
+    expect(versions).not.toContain('setInitiations([])');
+    expect(versions).not.toContain('setReleases([])');
+    expect(versions).not.toContain('正在补充版本记录');
+    expect(versions).not.toContain('记录尚未完整读取');
+    expect(versions).toContain('items.length === 0 && !pending');
+    expect(versions).toContain('requestSequence.current === sequence');
     expect(versions).not.toContain('listLoading\n        ? <MapSectionLoader');
+  });
+
+  it('includes legacy records in the primary tables without extra history entry points', () => {
+    expect(versions).not.toContain('查看旧登记记录');
+    expect(versions).not.toContain('查看历史存档');
+    expect(versions).not.toContain('setArchive');
+    expect(versions).toContain('...record, legacyRegistration');
+    expect(versions).toContain('onOpenLegacy(item.legacyRegistration)');
+    expect(versions).toContain('!item.legacyRegistration && item.createdBy === currentUserId');
+    expect(versions).toContain('if (!result.success)');
+    expect(versions).toContain('版本记录读取失败，请重试');
+    expect(client).toContain('/api/product/overview/initiations?workflow=true');
+    expect(client).toContain('/api/product/overview/releases?workflow=true');
+    expect(copyActions).toContain('legacy ? getLegacyVersionCopyTemplate(id)');
   });
 
   it('keeps the formal form mounted and isolates plan progress and retry inside its picker', () => {

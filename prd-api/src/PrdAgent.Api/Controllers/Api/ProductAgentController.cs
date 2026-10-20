@@ -6985,9 +6985,12 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>跨产品正式版本（V 号）列表（字段与单产品版本 tab 对齐，供管理层宽表只读浏览）。</summary>
     [HttpGet("overview/releases")]
-    public async Task<IActionResult> OverviewReleases([FromQuery] string? keyword = null)
+    public async Task<IActionResult> OverviewReleases([FromQuery] string? keyword = null, [FromQuery] bool workflow = false)
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        if (workflow)
+            return Ok(ApiResponse<object>.Ok(await ProductVersionListReader.ReadReleasesAsync(
+                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
         var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
         var names = await ProductNamesAsync(items.Select(r => r.ProductId));
         var reqIds = items.SelectMany(r => r.RequirementIds).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
@@ -7067,9 +7070,12 @@ public class ProductAgentController : ControllerBase
 
     /// <summary>跨产品内部版本立项（T 号）列表（字段与单产品版本 tab 对齐，供管理层宽表只读浏览）。</summary>
     [HttpGet("overview/initiations")]
-    public async Task<IActionResult> OverviewInitiations([FromQuery] string? keyword = null)
+    public async Task<IActionResult> OverviewInitiations([FromQuery] string? keyword = null, [FromQuery] bool workflow = false)
     {
         var scope = await GetAccessibleProductIdsAsync(GetUserId());
+        if (workflow)
+            return Ok(ApiResponse<object>.Ok(await ProductVersionListReader.ReadInitiationsAsync(
+                _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
         var items = await FindInScopeAsync<ProductInitiation>(scope, i => i.ProductId, i => i.IsDeleted);
         var names = await ProductNamesAsync(items.Select(i => i.ProductId));
         var userNames = await UserNamesAsync(items.SelectMany(i => new[] { i.PrimaryOwnerId, i.CreatedBy }));

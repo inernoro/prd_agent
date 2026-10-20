@@ -4,9 +4,9 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
-  listInitiations, listProductMembers, listVersionApplicationProducts, listReleases, getOverviewReleases,
+  listProductMembers, listVersionApplicationProducts, getWorkflowInitiations, getWorkflowReleases,
   syncInitiationReview, updateInitiation, listProductVersionReviewSources, parseProductVersionMessage,
-  type VersionApplicationProduct,
+  type VersionApplicationProduct, type WorkflowVersionRecord,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import {
@@ -24,7 +24,6 @@ import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useProductListScope } from '@/lib/productListScope';
-import { loadProductVersionList, mergeVersionListSnapshot } from '@/lib/productVersionList';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
@@ -48,11 +47,11 @@ import {
   isMeetingResultPending,
 } from './initiationWorkflowUtils';
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
-import type { VersionRegistrationMessageParseResult } from '@/services/real/versionRegistration';
+import type { VersionRegistration, VersionRegistrationMessageParseResult } from '@/services/real/versionRegistration';
 import { VersionCopyActions } from './VersionCopyActions';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
-import { LegacyVersionArchive } from './LegacyVersionArchive';
+import { LegacyVersionDetail } from './LegacyVersionDetail';
 import { downloadListCsv } from './listExport';
 import { initiationExportConfig, releaseExportConfig, VERSION_WORKFLOW_STATUS_LABEL as STATUS_LABEL } from './versionWorkflowExport';
 
@@ -69,18 +68,17 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [catalogLoaded, setCatalogLoaded] = useState(false);
   const [catalogError, setCatalogError] = useState('');
   const [catalogAttempt, setCatalogAttempt] = useState(0);
-  const [initiations, setInitiations] = useState<ProductInitiation[]>([]);
-  const [releases, setReleases] = useState<ProductRelease[]>([]);
+  const [initiations, setInitiations] = useState<WorkflowVersionRecord<ProductInitiation>[]>([]);
+  const [releases, setReleases] = useState<WorkflowVersionRecord<ProductRelease>[]>([]);
   const [requirementNames, setRequirementNames] = useState<Map<string, string>>(new Map());
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [auxiliaryError, setAuxiliaryError] = useState('');
-  const [progress, setProgress] = useState({ completed: 0, total: 0 });
+  const [loadedTabs, setLoadedTabs] = useState({ initiation: false, release: false });
   const [dialog, setDialog] = useState<'initiation' | 'release' | 'temporary' | null>(null);
   const [actionProductId, setActionProductId] = useState('');
   const [importKind, setImportKind] = useState<MainTab | null>(null);
-  const [archive, setArchive] = useState<'legacy' | 'snapshots' | null>(null);
+  const [legacyDetail, setLegacyDetail] = useState<VersionRegistration | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('all');
@@ -89,7 +87,6 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
   const requestSequence = useRef(0);
-  const loadedScope = useRef('');
   const productNames = useMemo(() => new Map(products.map((product) => [product.id, product.name])), [products]);
   const productName = productNames.get(productId) ?? '';
   const internalExport = initiationExportConfig(productId || '全部产品', productName, names, productNames);
@@ -113,56 +110,30 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   }, [catalogAttempt]);
 
   const reload = useCallback(async () => {
-    if (!catalogLoaded || catalogError) return;
     const sequence = ++requestSequence.current;
     const isCurrent = () => requestSequence.current === sequence;
     setLoading(true);
     setLoadError('');
-    setAuxiliaryError('');
-    const ids = productId ? products.filter((product) => product.id === productId).map((product) => product.id) : products.map((product) => product.id);
-    const scope = `${tab}:${ids.join(',')}`;
-    if (loadedScope.current !== scope) {
-      loadedScope.current = scope;
-      setInitiations([]); setReleases([]); setRequirementNames(new Map());
-    }
-    setProgress({ completed: 0, total: ids.length });
-    const options = {
-      isCurrent,
-      onProgress: (completed: number, total: number) => {
-        if (isCurrent()) setProgress({ completed, total });
-      },
-    };
-    if (tab === 'initiation') {
-      const result = await loadProductVersionList(ids, (id) => listInitiations(id, 'all'), {
-        ...options,
-        onItems: (items) => { if (isCurrent()) setInitiations((previous) => mergeVersionListSnapshot(previous, items)); },
-      });
-      if (!isCurrent()) return;
-      setInitiations((previous) => mergeVersionListSnapshot(previous.filter((item) => result.failedProductIds.includes(item.productId)), result.items));
-      if (result.failedProductIds.length) setLoadError(`有 ${result.failedProductIds.length} 个产品的内部版本加载失败，当前结果不完整，请重试。`);
-    } else {
-      // 需求名称是辅助展示，不阻塞版本记录和操作入口。
-      void getOverviewReleases().then((overview) => {
+    try {
+      if (tab === 'initiation') {
+        const result = await getWorkflowInitiations();
         if (!isCurrent()) return;
-        if (!overview.success) { setAuxiliaryError('关联需求名称加载失败，版本记录仍可查看，请重试。'); return; }
-        const titles = new Map<string, string>();
-        overview.data.items.forEach((row) => {
-          row.requirementIds.forEach((id, index) => {
-            if (row.requirementTitles[index]) titles.set(id, row.requirementTitles[index]);
-          });
-        });
-        setRequirementNames(titles);
-      }).catch(() => { if (isCurrent()) setAuxiliaryError('关联需求名称加载失败，版本记录仍可查看，请重试。'); });
-      const result = await loadProductVersionList(ids, (id) => listReleases(id, 'all'), {
-        ...options,
-        onItems: (items) => { if (isCurrent()) setReleases((previous) => mergeVersionListSnapshot(previous, items)); },
-      });
-      if (!isCurrent()) return;
-      setReleases((previous) => mergeVersionListSnapshot(previous.filter((item) => result.failedProductIds.includes(item.productId)), result.items));
-      if (result.failedProductIds.length) setLoadError(`有 ${result.failedProductIds.length} 个产品的正式版本加载失败，当前结果不完整，请重试。`);
+        if (!result.success) { setLoadError(result.error?.message ?? '内部版本读取失败，请重试。'); return; }
+        setInitiations(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+      } else {
+        const result = await getWorkflowReleases();
+        if (!isCurrent()) return;
+        if (!result.success) { setLoadError(result.error?.message ?? '正式版本读取失败，请重试。'); return; }
+        setReleases(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+        setRequirementNames(new Map(Object.entries(result.data.requirementNames)));
+      }
+      setLoadedTabs((previous) => ({ ...previous, [tab]: true }));
+    } catch {
+      if (isCurrent()) setLoadError('版本记录读取失败，请重试；已显示的记录予以保留。');
+    } finally {
+      if (isCurrent()) setLoading(false);
     }
-    setLoading(false);
-  }, [catalogLoaded, catalogError, products, productId, tab]);
+  }, [tab]);
 
   useEffect(() => {
     void reload();
@@ -221,7 +192,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
       .filter((item) => !productId || item.productId === productId).map((item) => item.status),
   )), [initiations, releases, productId, tab]);
   const selectedProductUnavailable = catalogLoaded && !catalogError && Boolean(productId) && !productNames.has(productId);
-  const listLoading = !catalogLoaded || loading;
+  const listLoading = loading || !loadedTabs[tab];
   const dialogTitle = dialog === 'initiation' ? '申领内部版本号' : dialog === 'temporary' ? '临时优化需求' : '申领正式版本号';
 
   return <div className="flex h-full min-h-0 flex-col gap-5">
@@ -233,7 +204,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <div role="group" aria-label="按产品筛选版本" className="w-56">
           <ItemSearchSelect value={productId} onChange={setProductId} options={toProductOptions(products)}
-            placeholder={productId && !productName ? '正在加载产品…' : '输入产品名称或编号搜索'}
+            placeholder="输入产品名称或编号搜索"
             clearOptionLabel="全部产品" uiSize="sm" countUnit="个产品" />
         </div>
         <RecordToolbar query={query} onQueryChange={setQuery}
@@ -254,19 +225,14 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
         {tab === 'release' && <span title="月度常规计划外、紧急且工作量较小的优化，无需 T 号，沿用既有自动审批规则。" className="text-token-muted"><HelpCircle size={15} /></span>}
       </div>
     </div>
-    <div className="flex shrink-0 gap-3 text-xs text-token-muted">
-      <button type="button" onClick={() => setArchive('legacy')} className="hover-text-primary">查看旧登记记录</button>
-      <button type="button" onClick={() => setArchive('snapshots')} className="hover-text-primary">查看历史存档</button>
-    </div>
-    {(catalogError || loadError || auxiliaryError || selectedProductUnavailable) && <div role="alert" className="shrink-0 rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">
-      {catalogError || (selectedProductUnavailable ? '所选产品不存在或无权访问，请清除产品筛选后重试。' : [loadError, auxiliaryError].filter(Boolean).join(' '))}
+    {(catalogError || loadError || selectedProductUnavailable) && <div role="alert" className="shrink-0 rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">
+      {catalogError || (selectedProductUnavailable ? '所选产品不存在或无权访问，请清除产品筛选后重试。' : loadError)}
       {!selectedProductUnavailable && <button type="button" className="ml-3 text-[color:var(--accent-fg-blue)] hover:underline" onClick={() => catalogError ? setCatalogAttempt((value) => value + 1) : void reload()}>重试</button>}
     </div>}
-    {listLoading && !catalogError && <p role="status" className="flex shrink-0 items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />{!catalogLoaded ? '正在读取产品目录，表格已就绪…' : `正在补充版本记录（${progress.completed}/${progress.total} 个产品），已取得的记录会先显示…`}</p>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
-      {!catalogError && !selectedProductUnavailable && (tab === 'release'
-          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} />
-          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} />)}
+      {!selectedProductUnavailable && (tab === 'release'
+          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} onOpenLegacy={setLegacyDetail} />
+          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
     </div>
     {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
       <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
@@ -277,8 +243,8 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     {dialog === 'temporary' && actionProductId && <ReleaseApplicationDialog productId={actionProductId} temporary onClose={() => setDialog(null)} onChanged={reload} />}
     {importKind && isAdmin && <VersionWorkflowImportDialog kind={importKind} products={products} fixedProductId={productId || undefined}
       onClose={() => setImportKind(null)} onImported={async () => { setImportKind(null); await reload(); }} />}
-    {archive && <Modal title={archive === 'legacy' ? '全域旧登记记录（只读）' : '全域历史存档'} onClose={() => setArchive(null)} width="max-w-6xl">
-      <LegacyVersionArchive kind={tab === 'release' ? 'formal' : 'internal'} isAdmin={isAdmin} mode={archive} />
+    {legacyDetail && <Modal title="历史版本详情（只读）" onClose={() => setLegacyDetail(null)} width="max-w-2xl">
+      <LegacyVersionDetail record={legacyDetail} />
     </Modal>}
     {retrySeed && <InitiationApplication productId={retrySeed.productId} seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={async () => { setRetrySeed(null); await reload(); }} />}
     {meetingFillItem && <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
@@ -790,27 +756,30 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   </Modal>;
 }
 
-function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged, pending }: {
+function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged, pending, onOpenLegacy }: {
   pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
-  items: ProductInitiation[];
+  items: WorkflowVersionRecord<ProductInitiation>[];
   names: ReadonlyMap<string, string>;
   currentUserId?: string;
   onRetryReview: (item: ProductInitiation) => void;
   onFillMeeting: (item: ProductInitiation) => void;
+  onOpenLegacy: (record: VersionRegistration) => void;
   onChanged: () => Promise<void>;
 }) {
   const navigate = useNavigate();
-  const openDetail = (item: ProductInitiation) => navigate(`/product-agent/p/${item.productId}/initiation/${item.id}`);
+  const openDetail = (item: WorkflowVersionRecord<ProductInitiation>) => item.legacyRegistration
+    ? onOpenLegacy(item.legacyRegistration)
+    : navigate(`/product-agent/p/${item.productId}/initiation/${item.id}`);
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, initiationExportConfig(productId || '全部产品', productName, names, productNames));
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
       <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
-          const isOwner = item.createdBy === currentUserId;
+          const isOwner = !item.legacyRegistration && item.createdBy === currentUserId;
           const showRetryReview = isOwner && item.status === 'review_failed';
           const showFillMeeting = isOwner && isMeetingResultPending(item);
           const reviewScoreText = formatInitiationReviewScore(item);
@@ -828,7 +797,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
         <div>{item.ownerName || names.get(item.primaryOwnerId ?? item.createdBy) || item.legacyData?.['产品负责人'] || item.primaryOwnerId || item.createdBy || '-'}</div>
-        {item.primaryOwnerId === currentUserId && item.status === 'owner_pending' && <button onClick={async (event) => { event.stopPropagation(); const result = await approveInitiation(item.id); if (result.success) await onChanged(); }} className="mt-1 text-cyan-300">负责人同意</button>}
+        {!item.legacyRegistration && item.primaryOwnerId === currentUserId && item.status === 'owner_pending' && <button onClick={async (event) => { event.stopPropagation(); const result = await approveInitiation(item.id); if (result.success) await onChanged(); }} className="mt-1 text-cyan-300">负责人同意</button>}
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatDate(item.plannedProjectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td><Td>{formatBool(item.isAiPoc)}</Td>
@@ -846,6 +815,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
         )}
       </Td>
       <Td onClick={(e) => e.stopPropagation()}>
+        {item.legacyRegistration && <button type="button" onClick={() => onOpenLegacy(item.legacyRegistration!)} className="text-token-secondary hover:underline">历史详情</button>}
         {(showRetryReview || showFillMeeting) ? (
           <div className="flex flex-col items-start gap-1">
             {showRetryReview && (
@@ -859,27 +829,30 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       </Td>
     </tr>
           );
-        })}{items.length === 0 && <Empty cols={21}>{pending ? '记录尚未完整读取，请查看上方进度或错误提示。' : '暂无立项记录'}</Empty>}
+        })}{items.length === 0 && !pending && <Empty cols={21}>暂无立项记录</Empty>}
       </Table>
     </>
   );
 }
 
-function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, onChanged, currentUserId, pending }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, onChanged, currentUserId, pending, onOpenLegacy }: {
   pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
-  items: ProductRelease[];
+  items: WorkflowVersionRecord<ProductRelease>[];
   requirementNames: ReadonlyMap<string, string>;
   names: ReadonlyMap<string, string>;
   onChanged: () => Promise<void>;
   currentUserId?: string;
+  onOpenLegacy: (record: VersionRegistration) => void;
 }) {
   const navigate = useNavigate();
   const [editing, setEditing] = useState<string | null>(null);
   const [url, setUrl] = useState('');
-  const openRelease = (item: ProductRelease) => navigate(`/product-agent/p/${item.productId}/release/${item.id}`);
+  const openRelease = (item: WorkflowVersionRecord<ProductRelease>) => item.legacyRegistration
+    ? onOpenLegacy(item.legacyRegistration)
+    : navigate(`/product-agent/p/${item.productId}/release/${item.id}`);
   const openInitiation = (item: ProductRelease) => navigate(`/product-agent/p/${item.productId}/initiation/${item.initiationId}`);
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
@@ -901,12 +874,12 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
       <Td>{formatVersionTrainingMinutes(item.plannedTrainingMinutes)}</Td>
       <Td>{formatBool(item.isGlobalOpen)}</Td>
-      <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
-      <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? item.ownerId === currentUserId && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
+      <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
+      <Td onClick={(e) => e.stopPropagation()}>{!item.legacyRegistration && item.status === 'announcement_pending' ? item.ownerId === currentUserId && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
         : item.ownerId !== currentUserId ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && <Empty cols={18}>{pending ? '记录尚未完整读取，请查看上方进度或错误提示。' : '暂无上线记录'}</Empty>}
+    </tr>)}{items.length === 0 && !pending && <Empty cols={18}>暂无上线记录</Empty>}
   </Table>
   </>;
 }
