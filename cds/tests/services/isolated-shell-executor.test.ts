@@ -79,6 +79,140 @@ describe('IsolatedShellExecutor 真实进程', () => {
     expect(operation.exec).not.toHaveBeenCalled();
   }, 15000);
 
+  it.each([
+    { lane: 'observation', control: 'late-message', name: 'observation首代期限消息迟到不得回收已就绪的新代或重放旧请求' },
+    { lane: 'operation', control: 'late-message', name: 'operation首代期限消息迟到不得回收已就绪的新代或重放旧请求' },
+    { lane: 'observation', control: 'cleaned-first', name: '首代真实cleaned先于迟到的Master期限回调，新代仍可就绪执行' },
+    { lane: 'observation', control: 'unobserved-first', name: '首次期限未观察factory-started时只失效首代，随后新代仍可执行' },
+  ] as const)('$name', async ({ lane, control }) => {
+    const e = executor({ concurrency: 1, isolatedLane: lane });
+    const dir = await directory(), marker = path.join(dir, 'must-not-replay-after-late-deadline');
+    const nativeSetTimeout = globalThis.setTimeout;
+    let deadlineCallback: (() => void) | undefined, scheduledAt: number | undefined, dueAt: number | undefined, invokedAt: number | undefined;
+    let notifyDue!: () => void;
+    const physicallyDue = new Promise<void>(resolve => { notifyDue = resolve; });
+    const capture = control !== 'cleaned-first' ? undefined : vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: (...args: any[]) => void, ms?: number, ...args: any[]) => {
+      if (!deadlineCallback && ms === 5000) {
+        scheduledAt = performance.now(); deadlineCallback = () => callback(...args);
+        return nativeSetTimeout(() => { dueAt = performance.now(); notifyDue(); }, ms);
+      }
+      return nativeSetTimeout(callback, ms, ...args);
+    }) as typeof setTimeout);
+    let starting: Promise<void>;
+    try { starting = e.start(); } finally { capture?.mockRestore(); }
+    const startupFailed = expect(starting).rejects.toMatchObject({ code: 'unavailable' });
+    const channel = (e as unknown as { factory: childProcess.ChildProcess }).factory;
+    const originalSend = channel.send.bind(channel), originalEmit = channel.emit.bind(channel);
+    const events: { type: string; generation: number; pid?: number }[] = [];
+    let firstPid = 0, firstGeneration = 0, pauseError: unknown;
+    let held: { message: object; callback?: (error: Error | null) => void } | undefined;
+    let delivered = false, callbackFinished = false;
+    let holdUp = control === 'unobserved-first', cleanedDeliveredAt: number | undefined;
+    let notifyCleaned!: () => void;
+    const firstCleaned = new Promise<void>(resolve => { notifyCleaned = resolve; });
+    const heldUp: unknown[][] = [];
+    const forwardUp = (args: unknown[]): boolean => {
+      const result = Reflect.apply(originalEmit, channel, ['message', ...args]) as boolean;
+      const message = args[0] as { type?: string; generation?: number };
+      if (message.type === 'factory-cleaned' && message.generation === firstGeneration) {
+        cleanedDeliveredAt = performance.now();
+        if (control === 'cleaned-first' && invokedAt === undefined) holdUp = true;
+        notifyCleaned();
+      }
+      return result;
+    };
+    const flushUp = (): void => { holdUp = false; for (const args of heldUp.splice(0)) forwardUp(args); };
+    const incoming = vi.spyOn(channel, 'emit').mockImplementation(((event: string | symbol, ...args: unknown[]) => {
+      if (event !== 'message') return Reflect.apply(originalEmit, channel, [event, ...args]) as boolean;
+      const message = args[0] as { type: string; generation: number; pid: number };
+      if (['factory-started', 'factory-resetting', 'factory-cleaned', 'ready'].includes(message.type)) {
+        events.push({ type: message.type, generation: message.generation, pid: message.pid });
+      }
+      if (message.type === 'factory-started' && !firstPid) {
+        firstPid = message.pid; firstGeneration = message.generation;
+        try { process.kill(-firstPid, 'SIGSTOP'); } catch (error) { pauseError = error; }
+      }
+      if (holdUp) { heldUp.push(args); return true; }
+      return forwardUp(args);
+    }) as typeof channel.emit);
+    const send = vi.spyOn(channel, 'send').mockImplementation(((message: object, callback?: (error: Error | null) => void) => {
+      if ((message as { type?: string }).type === 'restart-after-startup-deadline') {
+        held = { message, callback }; return true; // 只截留实际传输，不伪造发送回执。
+      }
+      return originalSend(message, callback);
+    }) as typeof channel.send);
+    const deliver = async (): Promise<void> => {
+      if (!held || delivered) return;
+      const pending = held; delivered = true;
+      await new Promise<void>((resolve, reject) => originalSend(pending.message, error => {
+        callbackFinished = true; pending.callback?.(error);
+        if (error) reject(error); else resolve();
+      }));
+    };
+    const oldBeforeStart = vi.fn();
+    const oldRequestFailed = expect(e.exec(`touch ${quote(marker)}`, { executionLane: lane, timeout: 20000, beforeStart: oldBeforeStart }))
+      .rejects.toMatchObject({ code: 'unavailable' });
+    try {
+      if (control === 'cleaned-first') {
+        await Promise.all([physicallyDue, firstCleaned]);
+        expect(dueAt! - scheduledAt!).toBeGreaterThanOrEqual(4900);
+        expect(held).toBeUndefined(); expect(e.getLifecycle().startupFailure).toBeUndefined();
+        expect(cleanedDeliveredAt).toBeDefined();
+        invokedAt = performance.now(); deadlineCallback!();
+        expect(invokedAt).toBeGreaterThanOrEqual(dueAt!);
+        expect(invokedAt).toBeGreaterThanOrEqual(cleanedDeliveredAt!);
+      }
+      await startupFailed; await oldRequestFailed;
+      if (control === 'unobserved-first') {
+        expect(e.getLifecycle().failure?.generation).toBe(0);
+        expect(e.getStats().factoryPid).toBeUndefined();
+      }
+      flushUp();
+      expect(pauseError).toBeUndefined(); expect(firstPid).toBeGreaterThan(1);
+      expect(held).toBeDefined(); expect(typeof held!.callback).toBe('function');
+      expect(delivered).toBe(false); expect(callbackFinished).toBe(false);
+      expect(e.getLifecycle().failure).toMatchObject({ reason: 'startup-deadline', phase: 'startup' });
+      const end = performance.now() + 6500;
+      while (e.getStats().unavailable && performance.now() < end) await new Promise(resolve => setTimeout(resolve, 25));
+      const replacement = e.getStats();
+      expect(replacement.unavailable).toBe(false); expect(replacement.supervisorPid).toBe(channel.pid);
+      expect(replacement.factoryPid).toBeGreaterThan(1); expect(replacement.factoryPid).not.toBe(firstPid);
+      const launches = events.filter(event => event.type === 'factory-started');
+      expect(launches).toHaveLength(2);
+      const replacementGeneration = launches[1].generation;
+      expect(replacementGeneration).toBeGreaterThan(firstGeneration);
+      expect(launches[1].pid).toBe(replacement.factoryPid);
+      expect(events.findIndex(event => event.type === 'factory-cleaned' && event.generation === firstGeneration))
+        .toBeLessThan(events.findIndex(event => event.type === 'factory-started' && event.generation === replacementGeneration));
+      expect(events).toContainEqual({ type: 'factory-cleaned', generation: firstGeneration, pid: undefined });
+      expect(events).toContainEqual({ type: 'ready', generation: replacementGeneration, pid: undefined });
+      await deliver(); expect(callbackFinished).toBe(true);
+      const newBeforeStart = vi.fn(); let assignment: ExecAssignment | undefined;
+      // 同一IPC上紧跟旧消息的真实exec是有序屏障，不能用瞬时stats替代执行结果。
+      const result = await e.exec('printf current-generation-survived', { executionLane: lane, timeout: 5000,
+        beforeStart: newBeforeStart, onAssigned: value => { assignment = value; } });
+      expect(result).toMatchObject({ exitCode: 0, stdout: 'current-generation-survived' });
+      expect(newBeforeStart).toHaveBeenCalledOnce();
+      expect(assignment).toMatchObject({ factoryPid: replacement.factoryPid, factoryGeneration: replacementGeneration, lane });
+      expect(e.getStats()).toMatchObject({ unavailable: false, supervisorPid: channel.pid, factoryPid: replacement.factoryPid });
+      expect(events.filter(event => event.type === 'factory-resetting').map(event => event.generation)).toEqual([firstGeneration]);
+      expect(events.filter(event => event.type === 'factory-started')).toEqual(launches);
+      expect(oldBeforeStart).not.toHaveBeenCalled();
+      await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(e.getLifecycle().startupFailure?.reason).toBe('startup-deadline');
+      const dead = await new ShellExecutor().exec(`ps -o stat= -p ${firstPid}`);
+      expect(dead.stdout.trim()).toMatch(/^(Z.*)?$/);
+    } finally {
+      send.mockRestore(); incoming.mockRestore(); flushUp();
+      // 若前置断言失败，也只通过真实send完成原callback，随后走原close归属清理。
+      await deliver().catch(() => {});
+      console.info('[cds-late-startup-deadline-receipt]', JSON.stringify({ lane, control, firstPid, firstGeneration,
+        delivered, callbackFinished, physicalDeadline: { scheduledAt, dueAt, invokedAt, cleanedDeliveredAt },
+        events, stats: e.getStats(), lifecycle: e.getLifecycle() }));
+      await e.close();
+    }
+  }, 15000);
+
   it('同步创建错误只记录有限原因，原异常正文不进入诊断', async () => {
     const e = executor({ processFactory: () => { throw new Error('secret-provider-message'); } });
     await expect(e.start()).rejects.toMatchObject({ code: 'unavailable' });

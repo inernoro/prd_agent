@@ -28,8 +28,8 @@ export interface PrebuiltFetchDeps {
   exec: (cmd: string, opts?: { timeout?: number }) => Promise<PrebuiltExecResult>;
   /** 读取 staged manifest.json 文本（不存在返回 null）。 */
   readManifest: (manifestPath: string) => Promise<string | null>;
-  /** 递归删除路径（清理 staging 残留）。 */
-  rmrf: (p: string) => void;
+  /** 递归删除路径；异步清理必须终态后才可重建 staging。 */
+  rmrf: (p: string) => void | Promise<void>;
   /** 递归建目录。 */
   mkdirp: (p: string) => void;
 }
@@ -71,7 +71,7 @@ export async function fetchCdsPrebuilt(
   const { distDir, webDistDir, manifestPath } = prebuiltStagingPaths(stagingRoot);
   const pullTimeoutMs = opts?.pullTimeoutMs ?? 120_000;
   try {
-    deps.rmrf(stagingRoot);
+    await deps.rmrf(stagingRoot);
     deps.mkdirp(distDir);
     deps.mkdirp(webDistDir);
 
