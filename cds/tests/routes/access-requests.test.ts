@@ -233,6 +233,33 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(deliverAgain.body).toEqual({ status: 'approved', delivered: true });
   });
 
+  it('项目删除后存量回执自动归档，审计和其他正常授权保持原样，重新加载仍归档', async () => {
+    const now = new Date().toISOString();
+    const receipt = {
+      id: 'completed-bootstrap', kind: 'bootstrap' as const, projectId: '__new_project__',
+      agentName: 'Codex', purpose: '归档回归', status: 'approved' as const,
+      pollTokenHash: 'a'.repeat(64), createdAt: now, decidedAt: now, deliveredAt: now,
+      creationReceiptEnabled: true, createdProject: { id: 'proj-a', name: 'Alpha', createdAt: now },
+    };
+    stateService.addAccessRequest(receipt);
+    stateService.addAccessRequest({ ...receipt, id: 'creating-bootstrap', createdProject: undefined });
+    stateService.addAccessRequest({ ...receipt, id: 'project-approval', kind: 'project', projectId: 'proj-a', createdProject: undefined });
+    let response = await request(server, 'GET', '/api/access-requests');
+    expect(response.body.requests.find((r: any) => r.id === receipt.id).receiptArchived).not.toBe(true);
+    stateService.removeProject('proj-a');
+    await flushAllJsonStateStores();
+    stateService.load();
+    response = await request(server, 'GET', '/api/access-requests');
+    expect(response.body.requests.find((r: any) => r.id === receipt.id)).toMatchObject({
+      receiptArchived: true, creationReceiptEnabled: false, status: 'approved', createdProject: receipt.createdProject,
+    });
+    for (const id of ['creating-bootstrap', 'project-approval']) {
+      expect(response.body.requests.find((r: any) => r.id === id).receiptArchived).not.toBe(true);
+    }
+    expect(stateService.getAccessRequest(receipt.id)).toEqual(receipt);
+    expect(JSON.stringify(response.body)).not.toContain(receipt.pollTokenHash);
+  });
+
   it('超时申请不能晚批，列表与轮询均不再显示可批准授权', async () => {
     const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
       requestedProject: { name: 'Timeout', repository: 'https://github.com/acme/demo' }, waitSeconds: 10,
