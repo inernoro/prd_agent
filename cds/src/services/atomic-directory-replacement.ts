@@ -17,7 +17,7 @@ interface OwnedDirectoryRemoval {
 }
 
 // 仅此一份换代/回退次序。三个递归删除位置交由同步或同票驱动执行。
-function* replacementSteps(pairs: AtomicDirectoryReplacement[]): Generator<string, void> {
+function* replacementSteps(pairs: AtomicDirectoryReplacement[]): Generator<string, void, boolean | void> {
   const stamp = Date.now();
   const backups = pairs.map((pair, idx) => ({
     ...pair,
@@ -58,7 +58,13 @@ function* replacementSteps(pairs: AtomicDirectoryReplacement[]): Generator<strin
     for (const pair of [...backups].reverse()) {
       try {
         if (pair.nextMoved && fs.existsSync(pair.currentPath)) {
-          yield pair.currentPath;
+          const removed = yield pair.currentPath;
+          // 普通非零已确认无在途写者；保留未删完的候选，再恢复完整旧代。
+          // 不把它当异常跳过本目录回滚，也不覆盖重新出现的原候选路径。
+          if (removed === false && fs.existsSync(pair.currentPath)) {
+            if (fs.existsSync(pair.nextPath)) throw new Error('回滚候选路径已被占用');
+            fs.renameSync(pair.currentPath, pair.nextPath);
+          }
         }
         if (pair.previousPath) {
           if (pair.currentMoved && fs.existsSync(pair.previousPath)) {
@@ -93,14 +99,15 @@ function* replacementSteps(pairs: AtomicDirectoryReplacement[]): Generator<strin
   }
 }
 
-async function driveOwnedRemoval(steps: Generator<string, void>, removal: OwnedDirectoryRemoval): Promise<void> {
+async function driveOwnedRemoval(steps: Generator<string, void, boolean | void>, removal: OwnedDirectoryRemoval): Promise<void> {
   removal.assertActive();
   let step = steps.next();
   while (!step.done) {
     // reject不能送回算法内原有best-effort catch，否则未知写者仍可能触发后续rename/删除。
     const removed = await removal.remove(step.value);
     removal.assertActive();
-    step = removed ? steps.next() : steps.throw(new Error('原子换代的归属删除已失败'));
+    // 普通false交给当前阶段处理；成功后的旧备份仍只保留，不触发反向回滚。
+    step = steps.next(removed);
   }
 }
 

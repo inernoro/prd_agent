@@ -324,6 +324,64 @@ describe('replaceDirectoriesAtomically', () => {
     }
   });
 
+  it.each([false, true])('owned回滚删除普通非零时保留候选并恢复旧目录（保留上一代=%s）', async (keepPrevious) => {
+    const root = makeTmpRoot();
+    const currentA = path.join(root, 'dist'), nextA = path.join(root, 'dist.next');
+    const currentB = path.join(root, 'web-dist'), nextB = path.join(root, 'web-dist.next');
+    const previous = path.join(root, 'dist.previous');
+    writeMarker(currentA, 'old-a'); writeMarker(nextA, 'new-a');
+    writeMarker(currentB, 'old-b'); writeMarker(nextB, 'new-b');
+    if (keepPrevious) writeMarker(previous, 'previous-a');
+    const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
+    const runtime = new SelfMaintenanceRuntime(operation, root, () => {});
+    ownedResources.push({ runtime, operation });
+    const ticket = runtime.acquire({ source: 'self-update', actor: 'atomic-rollback-nonzero-fixture' })!;
+    const failure = new Error('fixture第二份候选激活失败'), originalRename = fs.renameSync;
+    const renameSpy = vi.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (from === nextB && to === currentB) throw failure;
+      return originalRename(from, to);
+    });
+    const assignments: ExecAssignment[] = [], removals: string[] = [], exits: number[] = [];
+    const deadline = performance.now() + 15 * 60_000;
+    try {
+      await expect(ownedSwap([
+        { currentPath: currentA, nextPath: nextA, ...(keepPrevious ? { previousPath: previous } : {}) },
+        { currentPath: currentB, nextPath: nextB },
+      ], {
+        assertActive() {
+          const state = runtime.observe();
+          if (state?.id !== ticket.id || state.stopRequested || state.unconfirmedJobCount || performance.now() >= deadline) {
+            throw new Error('本票已停止，不能继续原子换代');
+          }
+        },
+        async remove(directory) {
+          removals.push(directory);
+          const timeout = Math.ceil(deadline - performance.now());
+          if (timeout <= 0) throw new Error('原阶段预算已耗尽');
+          const result = await runtime.exec(ticket, 'false', {
+            timeout, onAssigned: assignment => assignments.push(assignment),
+          });
+          exits.push(result.exitCode);
+          return result.exitCode === 0;
+        },
+      })).rejects.toBe(failure);
+      expect(removals).toEqual([currentA]); expect(exits).toEqual([1]);
+      expect(assignments).toHaveLength(1);
+      expect(assignments[0]).toMatchObject({ lane: 'operation' });
+      expect(assignments[0].actorPid).toBeGreaterThan(1);
+      expect.soft(readMarker(currentA)).toBe('old-a'); expect.soft(readMarker(currentB)).toBe('old-b');
+      expect.soft(fs.existsSync(nextA)).toBe(true);
+      if (fs.existsSync(nextA)) expect.soft(readMarker(nextA)).toBe('new-a');
+      expect.soft(readMarker(nextB)).toBe('new-b');
+      if (keepPrevious) expect.soft(readMarker(previous)).toBe('previous-a');
+      expect.soft(fs.readdirSync(root).filter(name => name.includes('.old.'))).toEqual([]);
+      expect(runtime.observe()).toMatchObject({ activeJobCount: 0, unconfirmedJobCount: 0, stopRequested: false });
+      expect(runtime.finish(ticket)).toBe(true);
+    } finally {
+      renameSpy.mockRestore();
+    }
+  });
+
   it('前端产物换代后保留上一代目录', () => {
     const root = makeTmpRoot();
     const current = path.join(root, 'dist');
