@@ -14,6 +14,13 @@ vi.mock('@/services', () => ({
     { id: 'existing-review', title: '已有方案', fileName: '已有方案.md', status: 'Done', isPassed: true, createdAt: '2026-10-20T00:00:00Z' },
   ] } })),
 }));
+vi.mock('@/services/real/productReviewApi', () => ({
+  getMyReviewSubmissions: vi.fn(async () => ({ success: true, data: { total: 1, items: [
+    { id: 'existing-review', title: '已有方案', fileName: '已有方案.md', status: 'Done', isPassed: true, createdAt: '2026-10-20T00:00:00Z' },
+  ] } })),
+}));
+vi.mock('./ReviewAgentDimensionsModal', () => ({ ReviewAgentDimensionsModal: () => null }));
+vi.mock('./ReviewAgentWebhookModal', () => ({ ReviewAgentWebhookModal: () => null }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: { permissions: string[] }) => unknown) => select({ permissions: ['review-agent.use', 'review-agent.view-all', 'review-agent.manage'] }) }));
 vi.mock('@/components/daily-tips/TipsEntryButton', () => ({ TipsEntryButton: () => null }));
 vi.mock('@/pages/review-agent/ReviewAgentDimensionsModal', () => ({ ReviewAgentDimensionsModal: () => null }));

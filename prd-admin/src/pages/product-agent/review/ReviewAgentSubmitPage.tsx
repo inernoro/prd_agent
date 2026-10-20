@@ -3,7 +3,7 @@ import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardCheck, Upload, FileText, X, AlertCircle } from 'lucide-react';
 import { uploadAttachment } from '@/services/real/aiToolbox';
-import { createReviewSubmission } from '@/services';
+import { createReviewSubmission } from '@/services/real/productReviewApi';
 import { useReviewNavigation } from './reviewNavigation';
 
 export function ReviewAgentSubmitPage() {

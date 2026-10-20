@@ -6,8 +6,8 @@ import { Button } from '@/components/design/Button';
 import { SectionShell } from '@/components/agent-shell/AgentFullscreenLayout';
 import { OverviewDataTable, TruncateCell } from '@/pages/product-agent/overviewDataTable';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
-import { listAssessments, createAssessment } from '@/services';
-import type { RequirementAssessmentRun } from '@/services';
+import { listAssessments, createAssessment } from '@/services/real/productReviewApi';
+import type { RequirementAssessmentRun } from '@/services/real/productReviewApi';
 import { useReviewNavigation } from './reviewNavigation';
 
 const PAGE_SIZE = 20;

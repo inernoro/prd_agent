@@ -20,9 +20,9 @@ describe('产品管理与既有评审智能体隔离', () => {
   });
 
   it('产品权限编辑只管理产品权限，不接管原评审权限', () => {
-    expect(panel).toContain("const isProductPermission = (key: string) => key.startsWith('product-agent.');");
-    expect(panel).not.toContain("|| key.startsWith('review-agent.')");
-    expect(panel).toContain('其权限继续在原权限管理中配置，本页不修改。');
+    expect(panel).toContain('permissions.includes(PRODUCT_MAP_ADMIN)');
+    expect(panel).not.toContain('updateSystemRole');
+    expect(panel).toContain('独立评审智能体仍在原权限管理中配置。');
   });
 
   it('产品历史兼容类型不引入原评审名下的新登记接口', () => {

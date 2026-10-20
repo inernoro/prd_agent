@@ -1,3 +1,4 @@
+import { hasProductReviewPermission } from '../productPermissionAccess';
 // 产品管理专用视图：独立评审智能体保持原样；接口、弹框及流式组件继续复用。
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -5,11 +6,11 @@ import { ClipboardCheck, Plus, Search, ChevronRight, ChevronLeft, ChevronDown, C
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { Button } from '@/components/design/Button';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getMyReviewSubmissions } from '@/services';
+import { getMyReviewSubmissions } from '@/services/real/productReviewApi';
 import { useAuthStore } from '@/stores/authStore';
-import type { ReviewSubmission } from '@/services';
-import { ReviewAgentDimensionsModal } from '@/pages/review-agent/ReviewAgentDimensionsModal';
-import { ReviewAgentWebhookModal } from '@/pages/review-agent/ReviewAgentWebhookModal';
+import type { ReviewSubmission } from '@/services/real/productReviewApi';
+import { ReviewAgentDimensionsModal } from './ReviewAgentDimensionsModal';
+import { ReviewAgentWebhookModal } from './ReviewAgentWebhookModal';
 import { useReviewNavigation } from './reviewNavigation';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
@@ -38,8 +39,8 @@ export function ReviewAgentPage() {
   const navigate = useNavigate();
   const reviewNav = useReviewNavigation();
   const permissions = useAuthStore(s => s.permissions ?? []);
-  const canViewAll = permissions.includes('review-agent.view-all') || permissions.includes('super');
-  const canManage = permissions.includes('review-agent.manage') || permissions.includes('super');
+  const canViewAll = hasProductReviewPermission(permissions, 'review-agent.view-all');
+  const canManage = hasProductReviewPermission(permissions, 'review-agent.manage');
   const [dimsModalOpen, setDimsModalOpen] = useState(false);
   const [webhookModalOpen, setWebhookModalOpen] = useState(false);
   const canUseProduct = permissions.includes('product-agent.use') || permissions.includes('product-agent.version-apply') || permissions.includes('super');

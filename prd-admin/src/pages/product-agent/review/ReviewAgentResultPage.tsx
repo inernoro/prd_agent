@@ -1,3 +1,4 @@
+import { hasProductReviewPermission } from '../productPermissionAccess';
 // 产品管理专用视图：独立评审智能体保持原样；接口、弹框及流式组件继续复用。
 import { useSmartBack } from '@/hooks/useSmartBack';
 import { useReviewNavigation } from './reviewNavigation';
@@ -8,13 +9,13 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useSseStream } from '@/lib/useSseStream';
 import { SsePhaseBar } from '@/components/sse/SsePhaseBar';
 import { SseTypingBlock } from '@/components/sse/SseTypingBlock';
-import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions, reuploadReviewAfterError, reuploadReviewOnFailure, getReviewSubmissionResults } from '@/services';
-import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services';
-import { reuploadReviewSubmission } from '@/services/real/reviewAgent';
+import { getReviewSubmission, getReviewResultStreamUrl, rerunReviewSubmission, getReviewDimensions, reuploadReviewAfterError, reuploadReviewOnFailure, getReviewSubmissionResults } from '@/services/real/productReviewApi';
+import type { ReviewSubmission, ReviewResult, ReviewDimensionScore, ReviewDimensionConfig, DimensionCheckItemResult } from '@/services/real/productReviewApi';
+import { reuploadReviewSubmission } from '@/services/real/productReview';
 import { uploadAttachment } from '@/services/real/aiToolbox';
 import { useAuthStore } from '@/stores/authStore';
-import { AppealSubmitDialog } from '@/pages/review-agent/components/AppealSubmitDialog';
-import { AppealHistoryDrawer } from '@/pages/review-agent/components/AppealHistoryDrawer';
+import { AppealSubmitDialog } from './components/AppealSubmitDialog';
+import { AppealHistoryDrawer } from './components/AppealHistoryDrawer';
 import {
   normalizeReviewStreamError,
   shouldAutoStartReviewStream,
@@ -210,7 +211,7 @@ export function ReviewAgentResultPage() {
   const currentUserId = authUser?.userId;
   const isOwner = !!(submission && currentUserId && submission.submitterId === currentUserId);
   const canResolveAppeal = useMemo(
-    () => permissions.includes('review-agent.appeal-review') || permissions.includes('super'),
+    () => hasProductReviewPermission(permissions, 'review-agent.appeal-review'),
     [permissions]
   );
   const canAppeal = isOwner && canAppealLocal(submission);

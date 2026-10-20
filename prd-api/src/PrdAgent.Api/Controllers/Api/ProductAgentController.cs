@@ -75,6 +75,8 @@ public class ProductAgentController : ControllerBase
     /// </summary>
     private async Task<bool> IsProductApplicationAdminAsync(string userId)
     {
+        if (HasPermission(ProductPermissionRules.Scoped) || HasPermission(ProductPermissionRules.MapAdmin))
+            return HasPermission(AdminPermissionCatalog.ProductAgentAdmin);
         var settings = await GetProductAgentSettingsAsync();
         return settings == null
             ? HasPermission(AdminPermissionCatalog.ProductAgentAdmin)

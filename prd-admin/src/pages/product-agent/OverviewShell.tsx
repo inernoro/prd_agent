@@ -63,6 +63,7 @@ import { filterByTracked } from './productRecordTrackStorage';
 import { useAuthStore } from '@/stores/authStore';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { ReviewAgentPage } from './review/ReviewAgentPage';
+import { hasProductMenu, hasProductReviewPermission, PRODUCT_MAP_ADMIN, PRODUCT_MENU_KEYS, PRODUCT_MENU_SCOPED } from './productPermissionAccess';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
@@ -81,9 +82,9 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
   const permissions = useAuthStore((state) => state.permissions ?? []);
   const isRoot = useAuthStore((state) => state.isRoot);
   const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
-  const canUseReview = hasEffectivePermission(permissions, 'review-agent.use', isRoot);
+  const canUseReview = isRoot || hasProductReviewPermission(permissions, 'review-agent.use');
   // 与 SingleProductView 一致：分区由 URL ?section= 派生，避免 state 与地址栏不同步
-  const active: Section = canUseProduct ? (sectionOverride ?? parseOverviewSection(searchParams.get('section'))) : 'versions';
+  const active: Section = canUseProduct ? (sectionOverride ?? (searchParams.has('section') ? parseOverviewSection(searchParams.get('section')) : PRODUCT_MENU_KEYS.find((key) => hasProductMenu(permissions, key, isRoot)) ?? 'dashboard')) : 'versions';
 
   const selectSection = useCallback((section: Section) => {
     if (sectionOverride) {
@@ -126,14 +127,15 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
 
   useEffect(() => {
     if (canUseProduct) {
-      void loadStats();
+      if (hasProductMenu(permissions, 'dashboard', isRoot)) void loadStats();
+      else setStatsLoading(false);
       void loadProducts();
     } else {
       setStatsLoading(false);
     }
-  }, [canUseProduct, loadStats, loadProducts]);
+  }, [canUseProduct, loadStats, loadProducts, permissions, isRoot]);
 
-  const isAdmin = stats?.isAdmin ?? false;
+  const isAdmin = isRoot || permissions.includes(PRODUCT_MAP_ADMIN) || (stats?.isAdmin ?? false);
 
   const navItems: NavItem<Section>[] = canUseProduct ? [
     { key: 'dashboard', label: '概览', icon: LayoutDashboard },
@@ -146,7 +148,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
     { key: 'customers', label: '客户', icon: Users },
     { key: 'knowledge', label: '知识库', icon: BookOpen },
     { key: 'graph', label: '图谱', icon: Share2 },
-    { key: 'settings', label: '设置', icon: Settings, hidden: !isAdmin, dividerBefore: true },
+    { key: 'settings', label: '设置', icon: Settings, hidden: permissions.includes(PRODUCT_MENU_SCOPED) ? !hasProductMenu(permissions, 'settings', isRoot) : !isAdmin, dividerBefore: true },
   ] : [{ key: 'versions', label: '版本', icon: Boxes }];
 
   return (
@@ -161,7 +163,7 @@ export function OverviewShell({ sectionOverride, children }: { sectionOverride?:
           <ArrowLeft size={13} /> 返回首页
         </button>
       }
-      items={navItems}
+      items={navItems.filter((item) => hasProductMenu(permissions, item.key, isRoot))}
       active={active}
       onSelect={selectSection}
     >

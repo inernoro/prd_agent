@@ -531,7 +531,7 @@ public static class AdminPermissionCatalog
         new(TeamActivityManage, "团队动态-管理", "处理行为洞察（确认/已修复/忽略/转缺陷关联），写操作权限"),
 
         new(Super, "超级权限", "兜底放行：建议仅给 root/超级管理员"),
-    };
+    }.Concat(ProductPermissionRules.AdditionalDefinitions).ToArray();
 }
 
 public sealed record AdminPermissionDef(string Key, string Name, string? Description);

@@ -50,6 +50,8 @@ import { useListFilter, distinctOptions, TIME_PRESETS, inTimeRange, OVERVIEW_LIS
 import { useProductCategories, categoryLabel } from './productCategories';
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
+import { useAuthStore } from '@/stores/authStore';
+import { hasProductMenu, productRouteMenu } from './productPermissionAccess';
 
 type Section = 'overview' | 'blueprint' | 'versions' | 'requirements' | 'features' | 'board' | 'rtm' | 'reports' | 'defects' | 'team' | 'knowledge' | 'graph';
 
@@ -72,6 +74,8 @@ const NAV: NavItem<Section>[] = [
 ];
 
 export function SingleProductView() {
+  const permissions = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
   const navigate = useNavigate();
   const { productId = '' } = useParams();
   const { categories } = useProductCategories();
@@ -103,10 +107,10 @@ export function SingleProductView() {
 
   useEffect(() => {
     void reload();
-    void getOverviewStats().then((res) => {
+    if (hasProductMenu(permissions, 'dashboard', isRoot)) void getOverviewStats().then((res) => {
       if (res.success) setIsAdmin(res.data.isAdmin);
     });
-  }, [reload]);
+  }, [reload, permissions, isRoot]);
 
   if (loading) {
     return (
@@ -137,7 +141,7 @@ export function SingleProductView() {
           </button>
         </div>
       }
-      items={NAV}
+      items={NAV.filter((item) => hasProductMenu(permissions, productRouteMenu('/product-agent/p/' + productId, '?tab=' + item.key) ?? 'unknown', isRoot))}
       active={active}
       onSelect={setActive}
     >
