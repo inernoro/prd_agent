@@ -94,6 +94,10 @@ export function ReleaseWorkflowDetail({
   availableInitiations,
   applicationProducts,
   onApplicationProductChange,
+  planLoading,
+  planError,
+  planProgress,
+  onRetryPlans,
 }: {
   productId: string;
   releaseId: string;
@@ -104,6 +108,10 @@ export function ReleaseWorkflowDetail({
   availableInitiations?: ProductInitiation[];
   applicationProducts?: VersionApplicationProduct[];
   onApplicationProductChange?: (productId: string) => void;
+  planLoading?: boolean;
+  planError?: string;
+  planProgress?: { completed: number; total: number };
+  onRetryPlans?: () => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -548,7 +556,7 @@ export function ReleaseWorkflowDetail({
       || '正式版本';
   }, [release]);
 
-  if (loading && !(isNew && applicationProducts)) return <MapSectionLoader text="正在加载版本详情…" />;
+  if (loading && !isNew) return <MapSectionLoader text="正在加载版本详情…" />;
 
   if (!isNew && !release) {
     return (
@@ -567,7 +575,7 @@ export function ReleaseWorkflowDetail({
 
   return (
     <div className="flex flex-col gap-4">
-      {loading && isNew && applicationProducts && <p role="status" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />正在回填所属应用的需求、成员和版本资料…</p>}
+      {loading && isNew && <p role="status" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />正在回填所属应用的需求、成员和版本资料，可以先填写基础信息…</p>}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className={onClose ? 'sr-only' : 'text-lg font-semibold text-token-primary'}>
@@ -757,7 +765,7 @@ export function ReleaseWorkflowDetail({
                   </Field>
                   {sourceMode === 'initiation' ? (
                     <Field label={applicationProducts ? '立项方案 *' : '立项号 *'}>
-                      {applicationProducts ? <ReleasePlanPicker plans={approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
+                      {applicationProducts ? <ReleasePlanPicker plans={approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} loading={planLoading} error={planError} progress={planProgress} onRetry={onRetryPlans} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
                         <option value="">请选择</option>
                         {approved.map((i) => <option key={i.id} value={i.id}>{i.tCode} · {i.planName}</option>)}
                       </Select>}
@@ -1246,7 +1254,7 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
   const [issued, setIssued] = useState<{ release: ProductRelease; autoCopied: boolean } | null>(null);
   const planBased = !temporary && Boolean(applicationProducts);
   const [applicationProductId, setApplicationProductId] = useState(planBased ? '' : productId);
-  const [planSources, setPlanSources] = useState<ProductInitiation[] | undefined>(undefined);
+  const [planSources, setPlanSources] = useState<ProductInitiation[]>([]);
   const [plansLoading, setPlansLoading] = useState(planBased);
   const [plansError, setPlansError] = useState('');
   const [plansAttempt, setPlansAttempt] = useState(0);
@@ -1258,10 +1266,11 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
     void loadProductVersionList(applicationProducts.map((product) => product.id), (id) => listInitiations(id, 'all'), {
       isCurrent: () => active,
       onProgress: (completed, total) => { if (active) setPlanProgress({ completed, total }); },
+      onItems: (items) => { if (active) setPlanSources(items); },
     }).then((result) => {
       if (!active) return;
       if (result.failedProductIds.length) setPlansError(`有 ${result.failedProductIds.length} 个应用的方案加载失败，请重试后选择。`);
-      else setPlanSources(result.items);
+      setPlanSources(result.items);
       setPlansLoading(false);
     }).catch(() => { if (active) { setPlansError('方案加载失败，请重试。'); setPlansLoading(false); } });
     return () => { active = false; };
@@ -1280,10 +1289,14 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
       {issued && <p role="status" className="mb-3 rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2 text-sm text-token-secondary">
         {issued.release.vCode} 已生成{issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。
       </p>}
-      {plansLoading ? <MapSectionLoader text={`正在加载可选方案（${planProgress.completed}/${planProgress.total} 个应用）…`} /> : plansError ? <div role="alert" className="rounded-lg border border-token-subtle bg-token-nested p-4 text-sm text-token-secondary">{plansError}<button type="button" className="ml-3 hover:underline" onClick={() => setPlansAttempt((attempt) => attempt + 1)}>重试</button></div> : <ReleaseWorkflowDetail
+      <ReleaseWorkflowDetail
         key={issued?.release.id ?? 'new'}
         productId={issued?.release.productId ?? applicationProductId}
-        availableInitiations={issued ? undefined : planSources}
+        availableInitiations={issued || !planBased ? undefined : planSources}
+        planLoading={!issued && plansLoading}
+        planError={plansError}
+        planProgress={planProgress}
+        onRetryPlans={() => setPlansAttempt((attempt) => attempt + 1)}
         applicationProducts={issued || !planBased ? undefined : applicationProducts}
         onApplicationProductChange={issued || !planBased ? undefined : setApplicationProductId}
         releaseId={issued?.release.id ?? 'new'}
@@ -1291,7 +1304,7 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
         temporary={temporary}
         onClose={close}
         onCreated={(release, autoCopied) => setIssued({ release, autoCopied })}
-      />}
+      />
     </div>}
   />;
 }

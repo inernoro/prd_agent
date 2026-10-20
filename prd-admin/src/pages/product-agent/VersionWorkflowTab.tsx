@@ -22,9 +22,9 @@ import {
 import { hasRecoverableSseOutcome, waitForSubmissionDone } from './initiationReviewFinish';
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { useProductListScope } from '@/lib/productListScope';
-import { loadProductVersionList } from '@/lib/productVersionList';
+import { loadProductVersionList, mergeVersionListSnapshot } from '@/lib/productVersionList';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { ItemSearchSelect } from '@/components/ItemSearchSelect';
@@ -75,6 +75,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [names, setNames] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [auxiliaryError, setAuxiliaryError] = useState('');
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [dialog, setDialog] = useState<'initiation' | 'release' | 'temporary' | null>(null);
   const [actionProductId, setActionProductId] = useState('');
@@ -88,6 +89,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
   const requestSequence = useRef(0);
+  const loadedScope = useRef('');
   const productNames = useMemo(() => new Map(products.map((product) => [product.id, product.name])), [products]);
   const productName = productNames.get(productId) ?? '';
   const internalExport = initiationExportConfig(productId || '全部产品', productName, names, productNames);
@@ -116,38 +118,51 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     const isCurrent = () => requestSequence.current === sequence;
     setLoading(true);
     setLoadError('');
-    setProgress({ completed: 0, total: products.length });
+    setAuxiliaryError('');
+    const ids = productId ? products.filter((product) => product.id === productId).map((product) => product.id) : products.map((product) => product.id);
+    const scope = `${tab}:${ids.join(',')}`;
+    if (loadedScope.current !== scope) {
+      loadedScope.current = scope;
+      setInitiations([]); setReleases([]); setRequirementNames(new Map());
+    }
+    setProgress({ completed: 0, total: ids.length });
     const options = {
       isCurrent,
       onProgress: (completed: number, total: number) => {
         if (isCurrent()) setProgress({ completed, total });
       },
     };
-    const ids = products.map((product) => product.id);
     if (tab === 'initiation') {
-      const result = await loadProductVersionList(ids, (id) => listInitiations(id, 'all'), options);
+      const result = await loadProductVersionList(ids, (id) => listInitiations(id, 'all'), {
+        ...options,
+        onItems: (items) => { if (isCurrent()) setInitiations((previous) => mergeVersionListSnapshot(previous, items)); },
+      });
       if (!isCurrent()) return;
-      setInitiations(result.items);
+      setInitiations((previous) => mergeVersionListSnapshot(previous.filter((item) => result.failedProductIds.includes(item.productId)), result.items));
       if (result.failedProductIds.length) setLoadError(`有 ${result.failedProductIds.length} 个产品的内部版本加载失败，当前结果不完整，请重试。`);
     } else {
-      const [result, overview] = await Promise.all([
-        loadProductVersionList(ids, (id) => listReleases(id, 'all'), options),
-        getOverviewReleases(),
-      ]);
-      if (!isCurrent()) return;
-      setReleases(result.items);
-      const titles = new Map<string, string>();
-      if (overview.success) overview.data.items.forEach((row) => {
-        row.requirementIds.forEach((id, index) => {
-          if (row.requirementTitles[index]) titles.set(id, row.requirementTitles[index]);
+      // 需求名称是辅助展示，不阻塞版本记录和操作入口。
+      void getOverviewReleases().then((overview) => {
+        if (!isCurrent()) return;
+        if (!overview.success) { setAuxiliaryError('关联需求名称加载失败，版本记录仍可查看，请重试。'); return; }
+        const titles = new Map<string, string>();
+        overview.data.items.forEach((row) => {
+          row.requirementIds.forEach((id, index) => {
+            if (row.requirementTitles[index]) titles.set(id, row.requirementTitles[index]);
+          });
         });
+        setRequirementNames(titles);
+      }).catch(() => { if (isCurrent()) setAuxiliaryError('关联需求名称加载失败，版本记录仍可查看，请重试。'); });
+      const result = await loadProductVersionList(ids, (id) => listReleases(id, 'all'), {
+        ...options,
+        onItems: (items) => { if (isCurrent()) setReleases((previous) => mergeVersionListSnapshot(previous, items)); },
       });
-      setRequirementNames(titles);
+      if (!isCurrent()) return;
+      setReleases((previous) => mergeVersionListSnapshot(previous.filter((item) => result.failedProductIds.includes(item.productId)), result.items));
       if (result.failedProductIds.length) setLoadError(`有 ${result.failedProductIds.length} 个产品的正式版本加载失败，当前结果不完整，请重试。`);
-      else if (!overview.success) setLoadError('版本已加载，但关联需求名称未能加载，请重试。');
     }
     setLoading(false);
-  }, [catalogLoaded, catalogError, products, tab]);
+  }, [catalogLoaded, catalogError, products, productId, tab]);
 
   useEffect(() => {
     void reload();
@@ -243,16 +258,15 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
       <button type="button" onClick={() => setArchive('legacy')} className="hover-text-primary">查看旧登记记录</button>
       <button type="button" onClick={() => setArchive('snapshots')} className="hover-text-primary">查看历史存档</button>
     </div>
-    {(catalogError || loadError || selectedProductUnavailable) && <div role="alert" className="shrink-0 rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">
-      {catalogError || (selectedProductUnavailable ? '所选产品不存在或无权访问，请清除产品筛选后重试。' : loadError)}
+    {(catalogError || loadError || auxiliaryError || selectedProductUnavailable) && <div role="alert" className="shrink-0 rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">
+      {catalogError || (selectedProductUnavailable ? '所选产品不存在或无权访问，请清除产品筛选后重试。' : [loadError, auxiliaryError].filter(Boolean).join(' '))}
       {!selectedProductUnavailable && <button type="button" className="ml-3 text-[color:var(--accent-fg-blue)] hover:underline" onClick={() => catalogError ? setCatalogAttempt((value) => value + 1) : void reload()}>重试</button>}
     </div>}
+    {listLoading && !catalogError && <p role="status" className="flex shrink-0 items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />{!catalogLoaded ? '正在读取产品目录，表格已就绪…' : `正在补充版本记录（${progress.completed}/${progress.total} 个产品），已取得的记录会先显示…`}</p>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
-      {!catalogError && !selectedProductUnavailable && (listLoading
-        ? <MapSectionLoader text={progress.total ? `正在加载版本记录（${progress.completed}/${progress.total} 个产品）…` : '正在加载版本记录…'} />
-        : tab === 'release'
-          ? <ReleaseTable productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} />
-          : <InitiationTable productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} />)}
+      {!catalogError && !selectedProductUnavailable && (tab === 'release'
+          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} />
+          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} />)}
     </div>
     {dialog && dialog !== 'release' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
       <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
@@ -291,14 +305,15 @@ function InitiationApplication({ productId, seed, onClose, onChanged }: {
     }).catch(() => { if (active) setError('产品成员加载失败，请重试。'); });
     return () => { active = false; };
   }, [productId, attempt]);
-  if (!members) return <Modal compact title="申领内部版本号" onClose={onClose} width="max-w-lg">
+  const memberNotice = !members ? <div className="mb-3">
     {error ? <div role="alert" className="text-sm text-token-secondary">{error}<button type="button" className="ml-2 hover:underline" onClick={() => setAttempt((value) => value + 1)}>重试</button></div>
-      : <MapSectionLoader text="正在加载申领信息…" />}
-  </Modal>;
-  return <InitiationWizard productId={productId} requirements={[]} members={members} seed={seed} onClose={onClose} onChanged={onChanged} />;
+      : <p role="status" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />正在加载可选成员，可以先填写基础信息…</p>}
+  </div> : null;
+  return <InitiationWizard key={productId} productId={productId} requirements={[]} members={members ?? []} seed={seed} onClose={onClose} onChanged={onChanged} memberNotice={memberNotice} />;
 }
 
-export function InitiationWizard({ productId, members, onClose, onChanged, seed }: {
+export function InitiationWizard({ productId, members, onClose, onChanged, seed, memberNotice }: {
+  memberNotice?: ReactNode;
   productId: string;
   requirements: Requirement[];
   members: ProductMember[];
@@ -600,6 +615,7 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed 
   };
 
   return <Modal title={wizardTitle} onClose={onClose} width="max-w-3xl">
+    {memberNotice}
     <Stepper step={step} />
     {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} />
@@ -707,7 +723,8 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed 
   </Modal>;
 }
 
-function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged }: {
+function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged, pending }: {
+  pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
@@ -775,13 +792,14 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       </Td>
     </tr>
           );
-        })}{items.length === 0 && <Empty cols={21}>暂无立项记录</Empty>}
+        })}{items.length === 0 && <Empty cols={21}>{pending ? '记录尚未完整读取，请查看上方进度或错误提示。' : '暂无立项记录'}</Empty>}
       </Table>
     </>
   );
 }
 
-function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, onChanged, currentUserId }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, onChanged, currentUserId, pending }: {
+  pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
@@ -821,7 +839,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
         : item.ownerId !== currentUserId ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && <Empty cols={18}>暂无上线记录</Empty>}
+    </tr>)}{items.length === 0 && <Empty cols={18}>{pending ? '记录尚未完整读取，请查看上方进度或错误提示。' : '暂无上线记录'}</Empty>}
   </Table>
   </>;
 }

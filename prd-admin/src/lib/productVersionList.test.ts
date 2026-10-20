@@ -1,8 +1,47 @@
 import { describe, expect, it } from 'vitest';
 import { fail, ok } from '@/types/api';
-import { loadProductVersionList } from './productVersionList';
+import { loadProductVersionList, mergeVersionListSnapshot } from './productVersionList';
 
 describe('version list loading through existing product-scoped APIs', () => {
+  it('publishes a fast product before a slow product finishes, using immutable snapshots', async () => {
+    type Row = { id: string; productId: string; updatedAt: string };
+    let resolveSlow!: (value: ReturnType<typeof ok<{ items: Row[] }>>) => void;
+    const slow = new Promise<ReturnType<typeof ok<{ items: Row[] }>>>((resolve) => { resolveSlow = resolve; });
+    const snapshots: Row[][] = [];
+    let finished = false;
+    const request = loadProductVersionList(['slow', 'fast'], (id) => id === 'slow' ? slow : Promise.resolve(ok({ items: [{ id, productId: id, updatedAt: '2026-10-20' }] })), {
+      isCurrent: () => true, onProgress: () => undefined, onItems: (items) => snapshots.push(items),
+    }).then((result) => { finished = true; return result; });
+    await Promise.resolve(); await Promise.resolve();
+    expect(finished).toBe(false);
+    expect(snapshots[0].map((item) => item.id)).toEqual(['fast']);
+    resolveSlow(ok({ items: [{ id: 'slow', productId: 'slow', updatedAt: '2026-10-19' }] }));
+    const result = await request;
+    expect(result.items).toHaveLength(2);
+    expect(snapshots[0]).toHaveLength(1);
+  });
+
+  it('ignores a late response after the view has expired', async () => {
+    let current = true;
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => { release = resolve; });
+    const snapshots: unknown[] = [];
+    const request = loadProductVersionList(['old'], async (productId) => {
+      await wait;
+      return ok({ items: [{ id: 'old', productId, updatedAt: '' }] });
+    }, { isCurrent: () => current, onProgress: () => undefined, onItems: (items) => snapshots.push(items) });
+    current = false;
+    release();
+    await request;
+    expect(snapshots).toEqual([]);
+  });
+
+  it('keeps prior rows during a same-scope refresh and replaces matching ids without duplicates', () => {
+    expect(mergeVersionListSnapshot([{ id: 'old', updatedAt: '1' }, { id: 'same', updatedAt: '2' }], [{ id: 'same', updatedAt: '3' }])).toEqual([
+      { id: 'same', updatedAt: '3' }, { id: 'old', updatedAt: '1' },
+    ]);
+  });
+
   it('deduplicates products, caps concurrency at four and preserves each row product', async () => {
     let active = 0;
     let maximum = 0;
