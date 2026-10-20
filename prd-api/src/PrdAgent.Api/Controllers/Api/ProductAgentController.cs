@@ -1276,6 +1276,7 @@ public class ProductAgentController : ControllerBase
         if (product == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
         var (productSystemName, productAppName) = await ResolveInitiationSystemAppNamesAsync(product);
+        var claimApplicationName = productAppName ?? product.Name;
         ProductInitiation? initiation = null;
         var manualTCode = request.ManualTCode?.Trim().ToUpperInvariant();
         var hasManualT = !string.IsNullOrWhiteSpace(manualTCode);
@@ -1305,14 +1306,15 @@ public class ProductAgentController : ControllerBase
                     return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已通过并取得 T 号的立项，或填写手工 T 号"));
             }
             var usedTCode = hasManualT ? manualTCode : initiation!.TCode;
+            claimApplicationName = initiation?.AppName ?? claimApplicationName;
             if (string.IsNullOrWhiteSpace(usedTCode))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选立项尚未取得 T 号"));
-            var existing = await _db.ProductReleases.Find(x => (x.ProductId == productId || x.AppName == (productAppName ?? product.Name)) && x.TCode == usedTCode).FirstOrDefaultAsync();
+            var existing = await _db.ProductReleases.Find(x => (x.ProductId == productId || x.AppName == claimApplicationName) && x.TCode == usedTCode).FirstOrDefaultAsync();
             if (existing != null)
                 return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", $"该 T 号已申领上线号 {existing.VCode}"));
-            var registered = string.IsNullOrWhiteSpace(productAppName) ? null
+            var registered = string.IsNullOrWhiteSpace(claimApplicationName) ? null
                 : await _db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal
-                    && x.TCode == usedTCode && x.ApplicationName == productAppName).FirstOrDefaultAsync();
+                    && x.TCode == usedTCode && x.ApplicationName == claimApplicationName).FirstOrDefaultAsync();
             if (registered != null)
                 return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", $"该 T 号已登记正式版本 {registered.Code}"));
         }
@@ -1377,7 +1379,7 @@ public class ProductAgentController : ControllerBase
             CreatedBy = userId,
         };
         if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
-                ProductVersionClaimPolicy.ReleaseKey(productAppName ?? product.Name, item.TCode!), "release:" + item.Id))
+                ProductVersionClaimPolicy.ReleaseKey(claimApplicationName, item.TCode!), "release:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(item));

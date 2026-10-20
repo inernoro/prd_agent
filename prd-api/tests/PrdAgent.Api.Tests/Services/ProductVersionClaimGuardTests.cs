@@ -157,6 +157,21 @@ public class ProductVersionClaimGuardTests
         Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(0, await fixture.Db.VersionRegistrations.CountDocumentsAsync(_ => true));
     }
+
+    [Fact]
+    public async Task SelectedInitiationUsesItsActualApplicationForLegacyDuplicateCheck()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "linked", ProductId = "product", AppName = "方案归属应用", TCode = "T1.2.3", Status = "approved",
+        });
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration {
+            Kind = VersionRegistrationKind.Formal, ApplicationName = "方案归属应用", TCode = "T1.2.3", Code = "V1.2.3",
+        });
+        var result = await fixture.Controller().CreateRelease("product", new CreateReleaseRequest { InitiationId = "linked" });
+        Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+    }
     private static CreateInitiationRequest Request(string review) => new() {
         LinkedProductId = "product", PlanName = "申领测试方案", ReviewSubmissionId = review,
     };
