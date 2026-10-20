@@ -1,0 +1,20 @@
+# 第一、二章分段制作
+
+此目录给制作Agent维护；学员使用交付包内的视频、教材与审阅页，不执行这些脚本。
+
+本轮只制作第一章四段、第二章五段。`course.json`保留完整课程操作卡；`production.json`描述已确认的前两章画面与口播。教材从同一规格、操作卡和实际分镜时间生成，不再独立维护一份验收规则。其余章节等待用户审阅。
+
+制作顺序：
+
+1. `prepare_narration.py`提取旁白并保留原文字幕；`synthesize_narration.py`用本地模型逐句生成音频，以实际采样数记录边界。
+2. `build_segments.py`读取实际音频构建独立项目。输出根提供`audio`、初始化的`template`、原始`source-assets`；`--shared-assets`提供手绘运行时、字体与手臂原素材。旧绝对路径缺失时从输出根取得对应音频和截图。
+3. `render_segments.py --root`只渲染已经构建的段。完整浏览器检查零错误、已判读的警告、成片音视频格式和完整解码通过后才记为成功。相同输入与文件哈希才复用缓存。
+4. `finalize_segments.py --root`核对成片版本与哈希，生成JSON和离线JS清单，从实际MP4抽取教材同帧。全部九段未齐时默认拒绝完整交付；`--partial`用于制作过程中更新预览。
+5. `build_review.py`和`build_textbook.py`均使用`--root`、`--repo`及实际`--link-record`，生成相同段号的审阅页和教材。最终截图齐全后打印PDF。
+6. `serve_materials.py`由Agent在本机托管材料，支持视频Range读取；学员无需运行命令。也保留独立MP4、PDF与离线HTML。
+
+只改某段内容时，只重做该段受影响音频、构建与渲染，刷新教材和交付清单。每段编号保持稳定，用户意见附段号、时间点、版本及文件校验值。公共画面样式变化时应重新检查所有受影响段。
+
+声音依赖见`narration-requirements.txt`，模型来源与校验值见`narration-models.json`；模型和虚拟环境不入Git。构建另需fontTools 4.61.1，渲染使用固定HyperFrames 0.8.171、Chromium与FFmpeg。媒体及其原素材放交付/制作归档，不提交到仓库。
+
+公开地址、登录跳转、登录后的目标页面核验分开记录。现有平台实录缺口见`doc/debt.platform.md`，不得将路径示意、教学组件数据或技术检查称为真实平台验收通过。机器配音听感与真人独立跟做仍由审阅和试学判断。

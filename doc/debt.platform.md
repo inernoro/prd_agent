@@ -906,6 +906,17 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 | X-5 | `ExchangeController.cs` ASR 失败时后端先发 `result` event（含 text/segmentCount/durationMs/diagnostic），紧接着为兼容老前端再发 `error` event。前端 `ExchangeTestPanel.tsx` 的 error handler 曾把 `sseResult` 覆盖为 `text:''/segmentCount:0/durationMs:0`，把 result event 携带的部分转录数据丢光。当前已改为保留已有 `text/segmentCount/durationMs`，只追加 error message，并补充前端单测锁定。 | `prd-api/src/PrdAgent.Api/Controllers/Api/ExchangeController.cs` + `prd-admin/src/components/exchange/ExchangeTestPanel.tsx` | P3 | 已还债：2026-05-12 |
 ---
 
+## 自动化测试课程的实录与跟做缺口（2026-10-20）
+
+当前先交第一、二章分段视频与同源教材供审阅，其余章节待用户确认。媒体检查、页面可读与真人能独立跟做属于不同判据。
+
+| 待补项 | 当前边界 | 负责人及关闭条件 |
+|---|---|---|
+| 当前账户的GitHub连接、应用安装授权、评审设置与分析页实录 | 公开入口与来源有记录，登录后的按钮、权限、自动事件及当前账户指标未完成取证；画面明确为路径示意 | 课程制作Agent在有实际访问条件的本人会话补录地址、点击、结果与核验时间；不得用登录跳转替代目标核验 |
+| 视觉验收现场与CDS查收 | 现有图片为真实源码组件的本地教学数据；当轮线上执行、归档与收件人可读取尚未证明 | 课程制作Agent完成一轮同版本的真实动作、预期、实际截图、正式归档及读者查收，再替换对应段及教材同帧 |
+| 非CDS项目的报告目的地 | 教程讲解项目本地化；现有技能正式归档并未普遍支持桌面或其他平台 | 技能维护Agent按具体项目适配并验证其正式目的地，提供实际可查收报告后才称支持 |
+| 配音听感及独立试学 | 机器配音完成波形、字幕边界和解码检查；这些检查不代表英文发音与真人理解通过 | 用户审阅声音与节奏；安排目标学员只依视频教材跟做，修复记录的卡点并复验 |
+
 ## 实现来源
 
 给要跳去看代码的人；只读这篇文档的人可以整块跳过。

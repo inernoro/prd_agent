@@ -1,0 +1,863 @@
+{
+  "schema": 1,
+  "goal": "先制作用户已认可的第一、第二章分段审阅视频，其他章节暂缓",
+  "source_commit": "fe3d4274d",
+  "source_script": "doc/guide.platform.testing.script.md",
+  "timing_policy": "配音逐句合成，以实际采样数对齐字幕；各幕加明确阅读停顿，章节最终时长以成片ffprobe为准；历史101分钟不作为制作目标。",
+  "visual_policy": "沿用已认可纸白手绘风格；真实资料与路径示意清楚分开；每段可单独重渲染。",
+  "audio_state": "31幕中文机器配音已生成并通过波形、字幕一致性和完整解码检查；听感待人工审阅。",
+  "segments": [
+    {
+      "id": "c1-s01",
+      "title": "从账户连接到仓库授权",
+      "chapter": 1,
+      "steps": [
+        "R00",
+        "R00A",
+        "R00B"
+      ],
+      "scenes": [
+        {
+          "id": "c1-s01-a",
+          "headline": "先从自己的账户连接",
+          "bullets": [
+            "当前账户与工作区",
+            "找到连接GitHub入口"
+          ],
+          "voice": "先从你实际使用的账户开始。打开画面上的入口，在当前Codex项目找到连接GitHub的动作。你只完成登录和必要的授权确认，Agent负责检查项目。普通插件能够读取文件，还不能单独证明代码评审权限已经生效，所以这一步之后，还要继续确认仓库与评审设置。",
+          "kind": "steps",
+          "sources": [
+            "https://help.openai.com/en/articles/11390924",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "操作路径示意；当前账户登录后的入口仍待实录",
+          "actual_capture_required": true,
+          "display_url": "https://chatgpt.com/",
+          "han_characters": 99,
+          "editorial_duration_seconds": 34
+        },
+        {
+          "id": "c1-s01-b",
+          "headline": "安装时选对所属人与仓库",
+          "bullets": [
+            "确认发布者openai",
+            "只选择要使用的仓库"
+          ],
+          "voice": "进入ChatGPT Codex Connector的安装流程，先看发布者，再选仓库属于你的个人账户，还是某个组织。接着选择这次需要使用的仓库。组织要求管理员批准时，就保留等待状态。申请提交成功和权限已经生效是两件事，不能在这里提前宣布连接完成。",
+          "kind": "steps",
+          "sources": [
+            "https://github.com/apps/chatgpt-codex-connector",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "公开应用身份已核对；账户安装确认画面待实录",
+          "actual_capture_required": true,
+          "display_url": "https://github.com/apps/chatgpt-codex-connector",
+          "han_characters": 90,
+          "editorial_duration_seconds": 31
+        },
+        {
+          "id": "c1-s01-c",
+          "headline": "返回原账户，确认真的可读",
+          "bullets": [
+            "完成用户授权与回跳",
+            "Agent读回目标仓库"
+          ],
+          "voice": "安装应用以后，继续完成页面要求的用户授权，再回到发起连接的账户和工作区。让Agent实际读取你选择的仓库规则，告诉你它读到的是哪一个项目。以后复用到自己的仓库，就重复这条路径，并核对连接账户、安装所属身份和目标仓库是否一致。",
+          "kind": "prompt",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "授权回跳与仓库读取的真实结果待补",
+          "actual_capture_required": true,
+          "han_characters": 98,
+          "editorial_duration_seconds": 32
+        }
+      ],
+      "evidence_gaps": [
+        "当前账户连接入口、GitHub安装与组织审批、授权回跳及目标仓库可读取结果尚无登录后实录。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 97
+    },
+    {
+      "id": "c1-s02",
+      "title": "打开评审设置并确认怎样触发",
+      "chapter": 1,
+      "steps": [
+        "R01",
+        "R02",
+        "R03"
+      ],
+      "scenes": [
+        {
+          "id": "c1-s02-a",
+          "headline": "打开地址，再找自己的仓库",
+          "bullets": [
+            "先给可点击地址",
+            "再圈本步的仓库行"
+          ],
+          "voice": "现在打开代码评审设置。先确认账户与工作区，再搜索刚才授权的仓库全名，进入对应仓库。画面应当先展示实际地址，再圈这一步要点击的位置。换一个项目时，选新仓库即可；如果仓库找不到，先回查连接、仓库勾选和组织批准，而不是让人去改代码。",
+          "kind": "steps",
+          "sources": [
+            "https://learn.chatgpt.com/docs/third-party/github"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "设置地址来源已核对；当前账户仓库与按钮画面待实录",
+          "actual_capture_required": true,
+          "display_url": "https://chatgpt.com/settings/code-review",
+          "han_characters": 101,
+          "editorial_duration_seconds": 33
+        },
+        {
+          "id": "c1-s02-b",
+          "headline": "仓库策略和个人偏好一起看",
+          "bullets": [
+            "Automatic review",
+            "Personal preferences与触发条件"
+          ],
+          "voice": "在仓库评审区域查看自动评审策略。如果仓库跟随个人偏好，还要继续看个人自动开关以及实际选择的触发事件。不要只拍一枚已经打开的开关。要能回答：哪个仓库、谁的请求、什么事件会让评审开始。这里的代码评审，也不是Agent执行操作时的自动审批。",
+          "kind": "steps",
+          "sources": [
+            "https://learn.chatgpt.com/docs/third-party/github"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "仓库策略、个人偏好与触发事件须按登录后页面核验",
+          "actual_capture_required": true,
+          "han_characters": 102,
+          "editorial_duration_seconds": 34
+        },
+        {
+          "id": "c1-s02-c",
+          "headline": "用实际事件证明开启生效",
+          "bullets": [
+            "自动与手动分别验证",
+            "等到实际结果完成"
+          ],
+          "voice": "让Agent跟进一条已经存在的练习PR。验证自动策略时，用符合配置的实际事件；需要手动复审时，由Agent发出评审请求。两条路径分别记录，因为手动成功不能证明自动开关生效。继续等待真实结果，核对被审版本。已请求、运行失败和完成后没有发现，要清楚区分。",
+          "kind": "prompt",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "live_run_pending",
+          "source_note": "已有PR的实际触发、完成状态和被审版本待取证",
+          "actual_capture_required": true,
+          "han_characters": 101,
+          "editorial_duration_seconds": 35
+        }
+      ],
+      "evidence_gaps": [
+        "需要登录后设置页面与一次匹配策略的真实自动触发；手动请求不得用作自动生效证明。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 102
+    },
+    {
+      "id": "c1-s03",
+      "title": "发现问题后，修复再审到最新版本",
+      "chapter": 1,
+      "steps": [
+        "R04",
+        "R05"
+      ],
+      "scenes": [
+        {
+          "id": "c1-s03-a",
+          "headline": "发现必须能说清用户影响",
+          "bullets": [
+            "什么情况会触发",
+            "怎样复现与验证"
+          ],
+          "voice": "拿到评审意见以后，先让Agent讲清楚：什么情况会触发，用户会受到什么影响，实际证据在哪里，以及怎样复现。只说可能有问题还不够，先找真实调用路径，再决定它是不是本轮需要修复的直接缺陷。",
+          "kind": "draw",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "pause_seconds": 2,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 78,
+          "editorial_duration_seconds": 25
+        },
+        {
+          "id": "c1-s03-a2",
+          "headline": "历史案例：入口可达，链路仍可能断",
+          "bullets": [
+            "凭据生成、保存和消费逐段核对",
+            "授权能打开，不等于探测可用"
+          ],
+          "voice": "用授权后探测这个案例理解：授权页能打开，只证明入口可达。让Agent沿凭据生成、保存、读取到真正发出探测请求逐段核对。凭据生成正确但消费端不接受，或者重启后读不回，用户仍会失败。这是历史案例讲解，当前是否复现要以当次实测为准。",
+          "kind": "draw",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "evidence_state": "explanatory",
+          "source_note": "历史授权探测案例的因果示意，不是当次复现、修复或通过证明。",
+          "actual_capture_required": false,
+          "pause_seconds": 3,
+          "han_characters": 97
+        },
+        {
+          "id": "c1-s03-b",
+          "headline": "按范围处理，别追着所有建议跑",
+          "bullets": [
+            "直接缺陷本轮处理",
+            "扩范围与推测另记"
+          ],
+          "voice": "把意见分成三类。直接违反本轮目标的缺陷，让Agent修复并验证；有价值但扩大范围的建议，留给后续任务；没有真实路径证据的推测，先补证据。这样既不会放过有效问题，也不会为了清空所有机器意见，无限扩大这一次改动。",
+          "kind": "steps",
+          "sources": [
+            "AGENTS.md",
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "pause_seconds": 2,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 89,
+          "editorial_duration_seconds": 29
+        },
+        {
+          "id": "c1-s03-c",
+          "headline": "修复以后，最新提交重新审",
+          "bullets": [
+            "修复与相关测试",
+            "更新后再次评审"
+          ],
+          "voice": "第一轮发现有效问题，就让Agent修复、运行相关测试。只要发生修复，最新提交还要再接受一轮实际评审。如果这一轮又发现有效问题，就继续这个闭环。不能只关掉评论，也不能拿旧版本的审查结果，代替已经修改过的新版本。",
+          "kind": "draw",
+          "sources": [
+            "AGENTS.md",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 89,
+          "editorial_duration_seconds": 30
+        },
+        {
+          "id": "c1-s03-d",
+          "headline": "完成条件要落到证据上",
+          "bullets": [
+            "最新版本实际完成",
+            "开放P0和P1为零"
+          ],
+          "voice": "宣布代码评审完成之前，核对最新版本的结果确实已经结束，未解决的P0和P1都为零，已修复问题有实际复测证据。额度不足、权限受阻或持续扩范围时，清楚说明卡在哪里；流程暂停，不能改写成评审通过。",
+          "kind": "steps",
+          "sources": [
+            "AGENTS.md",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 81,
+          "editorial_duration_seconds": 28
+        }
+      ],
+      "evidence_gaps": [
+        "本段为方法与完成条件讲解；真实修复提交、测试与后续评审结果仍应由当次PR提供，不能预录通过。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 112
+    },
+    {
+      "id": "c1-s04",
+      "title": "在分析页读懂数量，不被零误导",
+      "chapter": 1,
+      "steps": [
+        "R06"
+      ],
+      "scenes": [
+        {
+          "id": "c1-s04-a",
+          "headline": "分析页看趋势，PR看具体问题",
+          "bullets": [
+            "先确认账户和日期",
+            "再看实际提供的指标"
+          ],
+          "voice": "缺陷数量分析使用画面上的入口。打开以后，先确认账户和日期范围，再读页面实际提供的评审活动与发现指标。这里帮助你看一段时间发生了什么。某个问题有没有修好，仍然回到同一条PR的最新结果确认；累计发现数不能直接当作当前未解决数。",
+          "kind": "steps",
+          "sources": [
+            "https://chatgpt.com/settings/usage?tab=analytics",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "用户提供的分析入口；登录后实际指标与圈注待取证",
+          "actual_capture_required": true,
+          "display_url": "https://chatgpt.com/settings/usage?tab=analytics",
+          "han_characters": 101,
+          "editorial_duration_seconds": 34
+        },
+        {
+          "id": "c1-s04-b",
+          "headline": "真实历史：中间为零，后面又有P1",
+          "bullets": [
+            "PR1281的八轮记录",
+            "评论数没有逐轮下降"
+          ],
+          "voice": "看这份真实历史记录。项目PR一二八一的八轮评审中，我们读到了二十三条行内发现评论。第五到第七轮，各自没有新报P1，第八轮又报出一条。数字并不保证一路下降，所以不能凭中间某一轮的零，就宣布整个任务完成；修复后仍要让最新版本接受复审。",
+          "kind": "chart",
+          "sources": [
+            "https://github.com/inernoro/prd_agent/pull/1281"
+          ],
+          "pause_seconds": 4,
+          "evidence_state": "historical_verified",
+          "source_note": "GitHub实际历史评论统计，不是OpenAI分析页截图",
+          "actual_capture_required": false,
+          "asset_candidates": [
+            "/workspace/scratch/testing-course-expansion-20261020/evidence/review-rounds.png"
+          ],
+          "han_characters": 101,
+          "editorial_duration_seconds": 35
+        },
+        {
+          "id": "c1-s04-c",
+          "headline": "每轮评论、有效问题、开放问题分开",
+          "bullets": [
+            "相同问题跨轮去重",
+            "未知状态不要填零"
+          ],
+          "voice": "让Agent逐轮列出发现数、有效问题、已修并复测、待复测和开放P0或P1。同一个问题跨轮重复出现，要去重。刚才这份图只统计发现评论，没有核实去重缺陷和当前修复状态。遇到没有数据，也先查范围和覆盖，不要直接填零；数量只有连到真实证据，才有判断价值。",
+          "kind": "draw",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 101,
+          "editorial_duration_seconds": 34
+        },
+        {
+          "id": "c1-s04-pause",
+          "headline": "暂停后，换自己的PR核对",
+          "bullets": [
+            "让Agent跟进你的现有PR",
+            "核对最新版本、开放P0/P1和复测证据"
+          ],
+          "voice": "",
+          "kind": "pause",
+          "evidence_state": "exercise_instruction",
+          "source_note": "仅练习说明；10秒供阅读，不表示已完成练习或评审。",
+          "actual_capture_required": false,
+          "pause_seconds": 10,
+          "editorial_duration_seconds": 10
+        }
+      ],
+      "evidence_gaps": [
+        "分析页当前账户截图待补；历史数据不证明历史PR目前已修复或零开放问题。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 103
+    },
+    {
+      "id": "c2-s01",
+      "title": "两条获取途径，安装交给Agent",
+      "chapter": 2,
+      "steps": [
+        "V01",
+        "V01A",
+        "V02",
+        "V03"
+      ],
+      "scenes": [
+        {
+          "id": "c2-s01-a",
+          "headline": "MAP下载ZIP，直接拖给Codex",
+          "bullets": [
+            "核对来源与版本",
+            "下载后交Agent安装"
+          ],
+          "voice": "视觉验收技能有两条主要获取途径。第一条是MAP海鲜市场：找到视觉验收技能，核对正式名称、来源和版本，点击下载，确认实际拿到ZIP。然后把它直接拖进当前项目的Codex，让Agent检查和安装。你不用解压、移动目录或执行命令。",
+          "kind": "market",
+          "sources": [
+            "prd-admin/src/pages/marketplace/MarketplacePage.tsx",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "local_component_demo",
+          "source_note": "本机真实市场组件与教学数据；不证明线上下载已完成",
+          "actual_capture_required": false,
+          "asset_candidates": [
+            "/workspace/scratch/testing-course-expansion-20261020/evidence/map-01c-card-focus.png",
+            "/workspace/scratch/testing-course-expansion-20261020/evidence/map-02b-dialog-focus.png"
+          ],
+          "han_characters": 85,
+          "editorial_duration_seconds": 30
+        },
+        {
+          "id": "c2-s01-b",
+          "headline": "CDS从接入Agent选择技能",
+          "bullets": [
+            "上手助手打开技能库",
+            "复制启动提示词"
+          ],
+          "voice": "第二条是CDS。打开接入Agent，在上手助手进入技能步，打开技能库，搜索视觉验收归档，完成选择并生成上手包，再复制启动提示词。注意搜索在上手助手的技能库里，不在海鲜市场页签；当前市场页签只有清单，不能在那里寻找不存在的下载按钮。",
+          "kind": "steps",
+          "sources": [
+            "cds/web/src/components/SkillDownloadDialog.tsx",
+            "cds/web/src/components/AgentStarterTab.tsx"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "路径已按源码核对；线上CDS入口与技能库实录待补",
+          "actual_capture_required": true,
+          "han_characters": 96,
+          "editorial_duration_seconds": 32
+        },
+        {
+          "id": "c2-s01-c",
+          "headline": "复制提示词，只是接入的起点",
+          "bullets": [
+            "缺包由Agent下载",
+            "不用人拼接接口"
+          ],
+          "voice": "把CDS的启动提示词交给当前项目Agent，技能缺失时，让它从当前实例提供的权威分发取得包，再完成安装和读取。复制成功不等于已经安装。另一个手动安装页签下载的是CDS自身技能，也不能冒充视觉验收包。",
+          "kind": "prompt",
+          "sources": [
+            "cds/src/services/skill-proxy.ts",
+            "cds/src/routes/bootstrap.ts",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "authenticated_ui_pending",
+          "source_note": "权威分发来源已查证；当前实例下载与安装闭环待取证",
+          "actual_capture_required": true,
+          "han_characters": 81,
+          "editorial_duration_seconds": 28
+        },
+        {
+          "id": "c2-s01-d",
+          "headline": "实际读到正文，还要继续适配",
+          "bullets": [
+            "主技能与依赖可读取",
+            "已有修改先保留"
+          ],
+          "voice": "无论走哪条路径，都让Agent核对主技能、测试设计和场景编排依赖，保留项目里已有的本地修改，再实际读取技能正文和版本。文件存在不等于当前会话可读。即使这一步成功，也还要先做本项目适配，再开始正式验收。",
+          "kind": "draw",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 86,
+          "editorial_duration_seconds": 29
+        }
+      ],
+      "evidence_gaps": [
+        "CDS获取与当前宿主安装实录待补；MAP图片明确为本机组件演示。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 119
+    },
+    {
+      "id": "c2-s02",
+      "title": "先适配登录、风格和报告位置",
+      "chapter": 2,
+      "steps": [
+        "V03B",
+        "V04",
+        "V04A"
+      ],
+      "scenes": [
+        {
+          "id": "c2-s02-a",
+          "headline": "登录要按本系统的策略",
+          "bullets": [
+            "表单或SSO与回跳",
+            "需要人授权时再接手"
+          ],
+          "voice": "安装好以后，让Agent先读取本项目的登录与会话规则。系统可能使用表单、单点登录或授权回跳，不同角色也可能看到不同入口。不能把MAP的登录字段直接套到所有项目。技术检查和配置由Agent处理；真正需要你登录或确认授权时，它再给出实际页面和明确的下一步。",
+          "kind": "draw",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            ".claude/skills/create-visual-test-to-kb/acceptance.config.json"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 104,
+          "editorial_duration_seconds": 35
+        },
+        {
+          "id": "c2-s02-b",
+          "headline": "页面风格和正常入口也要适配",
+          "bullets": [
+            "沿现有导航进入",
+            "按项目主题与设备检查"
+          ],
+          "voice": "接着确认本项目的主题、组件、导航、桌面和移动支持范围。验收要从用户能找到的入口走进去，实际检查文字、按钮、弹层、滚动和错误反馈是否符合本系统风格。移动端也要有独立的真实触控路径，不能只缩窄桌面窗口。让Agent先把这些约定读回，再确认它理解正确。",
+          "kind": "draw",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            "doc/rule.acceptance.map-enterprise.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 105,
+          "editorial_duration_seconds": 34
+        },
+        {
+          "id": "c2-s02-c",
+          "headline": "报告放哪里，按项目约定",
+          "bullets": [
+            "CDS、桌面或其他平台",
+            "不支持先适配再开测"
+          ],
+          "voice": "最后确认报告放在哪里，谁来看，从哪里进入。有的项目用CDS，有的放桌面或别的平台，以本项目正式交付约定为准。当前技能内置正式归档只支持CDS，其他目标要先由Agent适配并验证。内置本地诊断草稿不能换个名字当正式交付，未准备好就保留未完成状态。",
+          "kind": "steps",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py"
+          ],
+          "pause_seconds": 4,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 101,
+          "editorial_duration_seconds": 35
+        }
+      ],
+      "evidence_gaps": [
+        "当前系统登录、风格、导航和报告目的地的实际适配结果未取证；非CDS正式归档尚非现成功能。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 104
+    },
+    {
+      "id": "c2-s03",
+      "title": "选择触发方式，再看一轮真实执行",
+      "chapter": 2,
+      "steps": [
+        "V04B",
+        "V05"
+      ],
+      "scenes": [
+        {
+          "id": "c2-s03-a",
+          "headline": "可以手动，也可在任务开头约定",
+          "bullets": [
+            "现在验收这个动作",
+            "完成检查与预览后执行"
+          ],
+          "voice": "触发验收有几种方式。你可以直接说现在视觉验收这个动作，也可以在下任务时约定：功能完成、必要检查通过、预览可用以后，自动执行验收。修复后、主题改动后、已有PR更新或发布前，也都可以针对受影响的用户旅程触发。每次先确认目标和版本，避免测成另一份代码。",
+          "kind": "steps",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 108,
+          "editorial_duration_seconds": 35
+        },
+        {
+          "id": "c2-s03-b",
+          "headline": "定时与事件触发必须真的配置",
+          "bullets": [
+            "安装不等于自动监听",
+            "规则不另抄一份"
+          ],
+          "voice": "如果希望每天巡检或PR变化就自动验收，需要另有真实的调度和事件配置，并验证它实际启动过。装了技能不会自动创建监听器，对话里说以后自动，也不等于持久工作流已经启用。调度只传任务范围和环境，具体标准留在技能主源，避免多复制一份规则以后漂移。",
+          "kind": "draw",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 107,
+          "editorial_duration_seconds": 35
+        },
+        {
+          "id": "c2-s03-b2",
+          "headline": "先把这一轮要证明的动作说具体",
+          "bullets": [
+            "授权后探测，应显示连接可用",
+            "隔离环境重启后，再验证连接"
+          ],
+          "voice": "现在给Agent具体目标：用隔离测试账号完成授权，返回页面点击探测，应看到连接可用；在允许的隔离环境重启后再测。版本、登录、操作和清理由Agent负责，你确认目标及必要授权。现场保留真实结果；缺条件就标记未执行，不预录成功。",
+          "kind": "draw",
+          "sources": [
+            "doc/guide.platform.testing.script.md"
+          ],
+          "evidence_state": "explanatory",
+          "source_note": "待执行场景与预期，不是实际结果；紧接c2-s03-c拍真实动作与同轮报告，缺条件保持未执行。",
+          "actual_capture_required": false,
+          "pause_seconds": 3,
+          "han_characters": 90
+        },
+        {
+          "id": "c2-s03-c",
+          "headline": "当场看输入、动作、反馈与报告",
+          "bullets": [
+            "先设计再从真实入口操作",
+            "同一轮证据对应同一版本"
+          ],
+          "voice": "适配检查通过后，当场给Agent一句明确的验收目标。让它先设计场景，再从真实首页进入，完成核心动作，展示等待、成功或失败及恢复，并覆盖适用主题和设备。最后查同一轮的报告和证据。缺登录、环境或归档条件就停在对应分支，不能拿旧录屏剪成这一次已经成功。",
+          "kind": "draw",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 4,
+          "evidence_state": "live_run_pending",
+          "source_note": "本幕为执行顺序示意；当前系统现场自动化与最终报告实录待补",
+          "actual_capture_required": true,
+          "han_characters": 106,
+          "editorial_duration_seconds": 36
+        }
+      ],
+      "evidence_gaps": [
+        "现场自动化、主题/移动端证据与同轮正式报告尚未取得；不能把示意动画当执行证明。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 106
+    },
+    {
+      "id": "c2-s04",
+      "title": "把验收失败反哺到系统工程",
+      "chapter": 2,
+      "steps": [
+        "V05A"
+      ],
+      "scenes": [
+        {
+          "id": "c2-s04-a",
+          "headline": "先分清问题在哪一层",
+          "bullets": [
+            "产品还是脚本",
+            "环境、适配或预期"
+          ],
+          "voice": "验收出现失败，先让Agent保留版本、操作、预期、实际和截图，再分清是哪一层。产品业务真的坏了、测试脚本误报、登录环境不可用、报告交付失败，处理方式并不一样。根本没有测到时，就说明这次还没测出来；不要一律说产品坏了，也不能悄悄改成通过。",
+          "kind": "draw",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            "doc/rule.acceptance.map-enterprise.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 98,
+          "editorial_duration_seconds": 33
+        },
+        {
+          "id": "c2-s04-b",
+          "headline": "修对应层，让同类问题有回归",
+          "bullets": [
+            "保留可复现的用户影响",
+            "规则回到唯一权威源"
+          ],
+          "voice": "可复现的产品问题，让Agent修实现并补能抓住原问题的回归；脚本等错状态，就修脚本和取证逻辑。相同规则在多个出口不一致，要找到唯一权威来源、检查所有消费者，再加防漂移守卫。不要为了让这一次变绿，去改正确预期、删失败记录，或复制第二套规则。",
+          "kind": "draw",
+          "sources": [
+            ".claude/rules/predicate-and-wiring-discipline.md",
+            "doc/guide.platform.testing.script.md"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 102,
+          "editorial_duration_seconds": 34
+        },
+        {
+          "id": "c2-s04-c",
+          "headline": "修好不算结束，还要复验与接线",
+          "bullets": [
+            "同一场景修复后再跑",
+            "稳定回归进入实际流程"
+          ],
+          "voice": "修复以后，重跑原失败场景和受影响路径，留下关闭证据。让稳定回归进入项目实际会执行的测试或CI流程，再查以前为什么没拦住。台账从待解决，到已解决待验收，再到已验收；关掉事项和提交代码都不能代替复测。这样验收才会把这次发现，变成下一次开发的保护。",
+          "kind": "steps",
+          "sources": [
+            ".claude/skills/stable-smoke/SKILL.md",
+            ".claude/skills/auto-fix-issues/SKILL.md"
+          ],
+          "pause_seconds": 4,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 108,
+          "editorial_duration_seconds": 37
+        }
+      ],
+      "evidence_gaps": [
+        "本段为工程反馈方法；具体缺陷的修复、回归与关闭状态须以当次证据判定。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 104
+    },
+    {
+      "id": "c2-s05",
+      "title": "打开报告，检查每个结论的依据",
+      "chapter": 2,
+      "steps": [
+        "V06",
+        "V07",
+        "V08"
+      ],
+      "scenes": [
+        {
+          "id": "c2-s05-a",
+          "headline": "先给实际位置，再逐步找到报告",
+          "bullets": [
+            "实际地址与读者权限",
+            "项目、文件夹和本轮标题"
+          ],
+          "voice": "报告生成后，先由Agent实际打开并确认可访问，再给你地址和逐步点击的位置。本项目在CDS，可以从侧栏验收报告进入，核对项目和文件夹，在报告台账打开本轮标题。收缩侧栏可能只显示报告两个字。其他系统则按已经适配的正式位置查收，不用猜域名或报告编号。",
+          "kind": "report",
+          "sources": [
+            "cds/web/src/pages/ReportsPage.tsx",
+            "cds/web/src/components/layout/AppShell.tsx"
+          ],
+          "pause_seconds": 3,
+          "evidence_state": "local_component_demo",
+          "source_note": "本机CDS真实组件与演示数据；线上报告及真实访问仍待取证",
+          "actual_capture_required": false,
+          "asset_candidates": [
+            "/workspace/scratch/testing-course-expansion-20261020/evidence/cds-05-report-open.png"
+          ],
+          "han_characters": 105,
+          "editorial_duration_seconds": 35
+        },
+        {
+          "id": "c2-s05-b",
+          "headline": "先看版本、范围和有没有测完",
+          "bullets": [
+            "产品结论与覆盖分开",
+            "失败和未执行都要读"
+          ],
+          "voice": "打开正文以后，先确认目标、版本和范围，再看产品结论以及测试有没有做完。问题数量为零，不等于所有关键场景都有证据。继续读失败、跳过和未执行，核对原因、补跑入口与关闭条件。不要把列表里的绿色状态或上方聚合卡，直接当成这份报告已经足够支持交付。",
+          "kind": "report",
+          "sources": [
+            "cds/web/src/pages/ReportsPage.tsx",
+            "doc/rule.acceptance.map-enterprise.md"
+          ],
+          "pause_seconds": 4,
+          "evidence_state": "local_component_demo",
+          "source_note": "本机报告正文与覆盖示例，不代表线上验收已通过",
+          "actual_capture_required": false,
+          "asset_candidates": [
+            "/workspace/scratch/testing-course-expansion-20261020/evidence/cds-06-coverage.png"
+          ],
+          "han_characters": 107,
+          "editorial_duration_seconds": 36
+        },
+        {
+          "id": "c2-s05-c",
+          "headline": "点开证据，再看复测与剩余缺口",
+          "bullets": [
+            "动作、预期、实际要对应",
+            "别人能读到同一份结果"
+          ],
+          "voice": "最后点开一条截图，核对用户动作、预期和实际是否对应，异常能不能从图里找到。图片来自另一版本、缺陷没有入镜，或者证据打不开，结论就还站不住。再看修复后的复测与剩余缺口，确认应有权限的同事也能查收。现在换自己的功能，让Agent完整走一遍，再用证据解释结果。",
+          "kind": "draw",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            "doc/guide.acceptance.report-evidence.md"
+          ],
+          "pause_seconds": 4,
+          "evidence_state": "explanatory",
+          "source_note": "教学讲解；不冒充实际运行结果",
+          "actual_capture_required": false,
+          "han_characters": 109,
+          "editorial_duration_seconds": 37
+        },
+        {
+          "id": "c2-s05-pause",
+          "headline": "暂停后，换自己的功能走一遍",
+          "bullets": [
+            "让Agent适配登录和正式报告位置",
+            "执行后按版本、覆盖、截图查收报告"
+          ],
+          "voice": "",
+          "kind": "pause",
+          "evidence_state": "exercise_instruction",
+          "source_note": "仅练习说明；10秒供阅读，用户暂停后自行跟做，不表示已执行或验收通过。",
+          "actual_capture_required": false,
+          "pause_seconds": 10,
+          "editorial_duration_seconds": 10
+        }
+      ],
+      "evidence_gaps": [
+        "线上CDS列表、正文、证据放大及收件人权限的实录与圈注待补；当前图片只有本机演示范围。"
+      ],
+      "render_status": "not_rendered",
+      "review_status": "awaiting_user_review",
+      "editorial_duration_seconds": 108
+    }
+  ],
+  "chapters": [
+    {
+      "chapter": 1,
+      "segment_ids": [
+        "c1-s01",
+        "c1-s02",
+        "c1-s03",
+        "c1-s04"
+      ],
+      "editorial_duration_seconds": 414
+    },
+    {
+      "chapter": 2,
+      "segment_ids": [
+        "c2-s01",
+        "c2-s02",
+        "c2-s03",
+        "c2-s04",
+        "c2-s05"
+      ],
+      "editorial_duration_seconds": 541
+    }
+  ],
+  "not_in_scope": [
+    "第三章及以后视频渲染",
+    "创建或合并PR",
+    "修改线上评审策略",
+    "擅自配置定时触发",
+    "用示意或本机组件冒充线上实录"
+  ],
+  "historical_editorial_estimate_seconds": 955,
+  "required_deliverables": [
+    "第一章四段视频",
+    "第二章五段视频",
+    "同源逐幕教材HTML与PDF",
+    "可复制地址与提示词",
+    "独立版本与时间点审阅入口"
+  ]
+}
