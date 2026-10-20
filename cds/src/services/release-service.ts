@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { hasReleaseCI } from './project-release-script.js';
+import type { ProjectReleaseCIVerifier } from './project-release-ci.js';
 import type { StateService } from './state.js';
 import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleasePreflightCheck, ReleasePreflightRecord, ReleaseRun, ReleaseRunProgress, ReleaseRunStatus, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
@@ -362,6 +362,7 @@ export interface ReleaseSshExecRequest {
 export type ReleaseSshExecutor = (req: ReleaseSshExecRequest) => Promise<string>;
 
 export interface ReleaseServiceOptions {
+  verifyProjectCI?: ProjectReleaseCIVerifier;
   now?: () => Date;
   /** 发布命令执行超时（毫秒）。缺省读 CDS_RELEASE_EXEC_TIMEOUT_MS，再缺省用常量。 */
   execTimeoutMs?: number;
@@ -385,6 +386,7 @@ export class ReleaseService {
   private readonly execTimeoutMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly sshExecutor: ReleaseSshExecutor;
+  private readonly verifyProjectCI: ProjectReleaseCIVerifier;
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
   private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
@@ -395,6 +397,7 @@ export class ReleaseService {
       ?? RELEASE_EXEC_TIMEOUT_MS;
     this.heartbeatIntervalMs = resolvePositiveMs(options.heartbeatIntervalMs) ?? RELEASE_HEARTBEAT_INTERVAL_MS;
     this.sshExecutor = options.sshExecutor || defaultReleaseSshExecutor;
+    this.verifyProjectCI = options.verifyProjectCI || (async () => ({ ok: false, message: '项目发布 CI 读取器未接入，不能借用镜像构建绿灯' }));
   }
 
   /**
@@ -597,9 +600,10 @@ export class ReleaseService {
 
     const strategyError = validateReleaseStrategy(strategy);
     if (!projectMismatch && target && branch && (strategy.mode === 'project-script' || strategy.mode === 'managed-script')) {
-      const ciOk = hasReleaseCI(branch, commitSha);
+      const ci = await this.verifyProjectCI(branch, commitSha, strategy);
+      const ciOk = ci.ok;
       push({ id: 'release-ci', label: '同提交 CI 成功', status: ciOk ? 'pass' : 'fail',
-        message: ciOk ? `CI 已通过 ${commitSha.slice(0, 12)}` : '必须等待当前完整提交的 CI 成功，不能借用旧版本绿灯', blocking: !ciOk });
+        message: ci.message, blocking: !ciOk });
       if (!strategyError && commitSha) {
         try {
           const execution = buildReleaseExecution(target, { commitSha, artifact: buildArtifact(branch, commitSha, input.previewUrl || ''), releaseId: 'preflight' } as ReleaseRun);
@@ -864,7 +868,9 @@ export class ReleaseService {
     if (!target.isEnabled || target.lifecycle === 'archived' || target.type !== 'ssh' || !target.ssh) return undefined;
     if (!branch || branch.status !== 'running' || branch.projectId !== target.projectId) return undefined;
     const mode = effectiveReleaseStrategy(target).mode;
-    if ((mode === 'project-script' || mode === 'managed-script') && !hasReleaseCI(branch, resolveCommitSha(branch))) return undefined;
+    // Always read authoritative project CI again: a newer rerun can invalidate
+    // this commit's old green result without changing any branch/image fields.
+    if (mode === 'project-script' || mode === 'managed-script') return undefined;
 
     return {
       ok: true,

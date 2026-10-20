@@ -1574,6 +1574,8 @@ export interface ReleaseStrategy {
   mode: ReleaseExecutionMode;
   /** Default: the project's CI-tested file, read at the immutable release commit. */
   scriptFile?: string;
+  /** Project-owned workflow which tests the release contract; never image CI. */
+  ciWorkflowFile?: string;
   /** Explicit fallback only: script maintained in CDS, not in the project. */
   script?: string;
   /** existing-script 模式下的项目脚本或命令。 */

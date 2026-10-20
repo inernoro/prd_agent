@@ -11,7 +11,7 @@ describe('default project release UI', () => {
     expect(draft.strategyMode).toBe('project-script');
     expect(draft.scriptFile).toBe('cds-release.sh');
     expect(releaseModeDefinitions(null, draft).map(item => item.mode)).toEqual(['project-script', 'managed-script']);
-    expect(strategyFromDraft(draft)).toEqual({ mode: 'project-script', scriptFile: 'cds-release.sh' });
+    expect(strategyFromDraft(draft)).toEqual({ mode: 'project-script', scriptFile: 'cds-release.sh', ciWorkflowFile: 'ci.yml' });
   });
   it('preserves a legacy target only while explicitly editing that target', () => {
     const draft = { ...emptySiteDraft('project'), id: 'existing', strategyMode: 'generated-compose' as const };
@@ -20,7 +20,7 @@ describe('default project release UI', () => {
   it('round-trips separately managed script bytes without silently trimming its body', () => {
     const script = '#!/bin/bash\n# separately reviewed\n\n';
     const draft = applyDiscoveredStrategy(emptySiteDraft('project'), { mode: 'managed-script', script });
-    expect(strategyFromDraft(draft)).toEqual({ mode: 'managed-script', script });
+    expect(strategyFromDraft(draft)).toEqual({ mode: 'managed-script', script, ciWorkflowFile: 'ci.yml' });
   });
   it('renders a configured project file as a real read-only entry, not an empty deployment command', () => {
     const row = { target: { id: 'target', name: 'Production', projectId: 'project', isEnabled: true, strategy: { mode: 'project-script', scriptFile: 'cds-release.sh' }, ssh: { appPath: '/srv/project', healthcheckUrl: 'https://project.example.test/health' } } } as CenterRow;

@@ -990,6 +990,7 @@ function draftFromTarget(target: ReleaseTarget): SiteDraft {
     healthcheckUrl: ssh?.healthcheckUrl || '',
     strategyMode: strategy.mode,
     scriptFile: strategy.scriptFile,
+    ciWorkflowFile: strategy.ciWorkflowFile,
     managedScript: strategy.script,
     composeFile: strategy.composeFile || 'compose.yml',
     composeProject: strategy.composeProject || `${target.projectId}-prod`,

@@ -7,7 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { buildReleaseExecution, validateReleaseStrategy } from '../../src/services/release-strategy.js';
-import { hasReleaseCI } from '../../src/services/project-release-script.js';
 import { ReleaseService } from '../../src/services/release-service.js';
 import { StateService } from '../../src/services/state.js';
 import type { BranchEntry, ReleaseRun, ReleaseTarget, ReleaseStrategy } from '../../src/types.js';
@@ -77,13 +76,6 @@ describe('project-owned publishing contract', () => {
     expect(result.scriptSha256).toBe(crypto.createHash('sha256').update(script).digest('hex'));
     expect(fs.readdirSync(path.join(f.root, '.cds-releases/target')).some(name => name.startsWith('managed.'))).toBe(false);
   });
-  it('rejects a stale green CI result or a failed rerun for the same commit', () => {
-    const sha = 'a'.repeat(40);
-    expect(hasReleaseCI(undefined, sha)).toBe(false);
-    expect(hasReleaseCI({ ciWorkflowConclusion: 'success', ciTargetSha: 'b'.repeat(40) } as BranchEntry, sha)).toBe(false);
-    expect(hasReleaseCI({ ciWorkflowConclusion: 'failure', ciTargetSha: sha } as BranchEntry, sha)).toBe(false);
-    expect(hasReleaseCI({ ciWorkflowConclusion: 'success', ciTargetSha: sha } as BranchEntry, sha)).toBe(true);
-  });
   it('real preflight requires this commit CI and cannot reuse a green preflight after CI fails', async () => {
     const f = fixture();
     const state = new StateService(path.join(f.root, 'state.json')); state.load();
@@ -92,8 +84,8 @@ describe('project-owned publishing contract', () => {
     state.addBranch({ id: 'branch', projectId: 'project', branch: 'main', worktreePath: f.repo, status: 'running', pinnedCommit: f.sha, createdAt: now, services: {} });
     state.addRemoteHost({ id: 'host', name: 'Host', host: '127.0.0.1', sshPort: 22, sshUser: 'deploy', sshPrivateKeyEncrypted: 'fixture', sshPrivateKeyFingerprint: 'fixture', tags: [], isEnabled: true, createdAt: now });
     state.upsertReleaseTarget({ id: 'target', projectId: 'project', name: 'Target', type: 'ssh', isEnabled: true, createdAt: now, strategy: { mode: 'project-script', scriptFile: 'cds-release.sh' }, ssh: { host: '127.0.0.1', port: 22, user: 'deploy', privateKeyRef: 'host', appPath: f.repo, deployCommand: '', healthcheckUrl: 'https://project.example.test/health' } });
-    let deployments = 0;
-    const service = new ReleaseService(state, { sshExecutor: async req => {
+    let deployments = 0, ciOk = false;
+    const service = new ReleaseService(state, { verifyProjectCI: async () => ({ ok: ciOk, message: 'project CI result' }), sshExecutor: async req => {
       if (req.command.includes('CDS_RELEASE_ID=')) deployments++;
       return req.command.includes('CDS_REPO_ORIGIN=') ? 'CDS_REPO_ORIGIN=https://github.com/owner/project.git\n' : '';
     } });
@@ -101,11 +93,11 @@ describe('project-owned publishing contract', () => {
     const missing = await service.preflight(input);
     expect(missing.ok).toBe(false);
     expect(missing.checks.find(c => c.id === 'release-ci')?.status).toBe('fail');
-    Object.assign(state.getBranch('branch')!, { ciTargetSha: f.sha, ciWorkflowConclusion: 'success' });
+    ciOk = true; // source-mode branch has no prebuilt-image CI fields at all
     const green = await service.preflight(input);
     expect(green.ok, JSON.stringify(green.checks)).toBe(true);
     expect(green.checks.find(c => c.id === 'release-script')?.message).toContain(crypto.createHash('sha256').update(f.content).digest('hex'));
-    Object.assign(state.getBranch('branch')!, { ciWorkflowConclusion: 'failure' });
+    ciOk = false; // a newer CI rerun invalidates the cached preflight
     await expect(service.startRelease({ ...input, preflightId: green.preflightId })).rejects.toThrow(/发布前检查未通过/);
     expect(deployments).toBe(0);
     await state.flush();
@@ -125,7 +117,7 @@ describe('project-owned publishing contract', () => {
       const priorExecution = buildReleaseExecution(target, f.run);
       state.addReleaseRun({ ...f.run, releaseId: 'rel_prior', projectId: 'project', branchId: 'branch', targetId: 'target', planId: 'project:project-script', status: 'success', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T00:00:01Z', logs: [], seq: 0, executionSnapshot: { ...priorExecution, strategy: target.strategy! } });
       const deployments: string[] = [];
-      const service = new ReleaseService(state, { sshExecutor: async req => {
+      const service = new ReleaseService(state, { verifyProjectCI: async () => ({ ok: true, message: 'project CI passed' }), sshExecutor: async req => {
         if (req.command.includes('CDS_REPO_ORIGIN=')) return 'CDS_REPO_ORIGIN=https://github.com/owner/project.git\n';
         if (req.command.includes('CDS_RELEASE_ID=')) {
           deployments.push(req.command);

@@ -1,6 +1,6 @@
 import { projectResourceNamespace } from '../services/preview-slug.js';
 import crypto from 'node:crypto';
-import { DEFAULT_RELEASE_SCRIPT_FILE } from '../domain/release-script-contract.js';
+import { DEFAULT_RELEASE_SCRIPT_FILE, DEFAULT_RELEASE_CI_WORKFLOW_FILE } from '../domain/release-script-contract.js';
 import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
@@ -1153,8 +1153,9 @@ function parseReleaseStrategy(body: Record<string, unknown>): ReleaseStrategy {
   const mode = raw.mode === 'project-script' || raw.mode === 'managed-script' || raw.mode === 'generated-compose' || raw.mode === 'generated-static' || raw.mode === 'existing-script'
     ? raw.mode
     : typeof body.deployCommand === 'string' && body.deployCommand.trim() ? 'existing-script' : 'project-script';
-  if (mode === 'project-script') return { mode, scriptFile: typeof raw.scriptFile === 'string' && raw.scriptFile.trim() ? raw.scriptFile.trim() : DEFAULT_RELEASE_SCRIPT_FILE };
-  if (mode === 'managed-script') return { mode, script: typeof raw.script === 'string' ? raw.script : '' };
+  const ciWorkflowFile = typeof raw.ciWorkflowFile === 'string' && raw.ciWorkflowFile.trim() ? raw.ciWorkflowFile.trim() : DEFAULT_RELEASE_CI_WORKFLOW_FILE;
+  if (mode === 'project-script') return { mode, ciWorkflowFile, scriptFile: typeof raw.scriptFile === 'string' && raw.scriptFile.trim() ? raw.scriptFile.trim() : DEFAULT_RELEASE_SCRIPT_FILE };
+  if (mode === 'managed-script') return { mode, ciWorkflowFile, script: typeof raw.script === 'string' ? raw.script : '' };
   if (mode === 'generated-compose') {
     return {
       mode,

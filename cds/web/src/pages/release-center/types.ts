@@ -15,6 +15,7 @@ export type ReleaseExecutionMode = 'project-script' | 'managed-script' | 'existi
 export interface ReleaseStrategy {
   mode: ReleaseExecutionMode;
   scriptFile?: string;
+  ciWorkflowFile?: string;
   script?: string;
   command?: string;
   composeFile?: string;
@@ -247,6 +248,7 @@ export interface SiteDraft {
   healthcheckUrl: string;
   strategyMode: ReleaseExecutionMode;
   scriptFile?: string;
+  ciWorkflowFile?: string;
   managedScript?: string;
   composeFile: string;
   composeProject: string;

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
-import type { BranchEntry, ReleaseRun, ReleaseStrategy } from '../types.js';
+import type { ReleaseRun, ReleaseStrategy } from '../types.js';
 import { DEFAULT_RELEASE_SCRIPT_FILE } from '../domain/release-script-contract.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 
@@ -8,11 +8,8 @@ export function releaseScriptFile(strategy: ReleaseStrategy): string {
   return strategy.scriptFile || DEFAULT_RELEASE_SCRIPT_FILE;
 }
 
-export function hasReleaseCI(branch: BranchEntry | undefined, commit: string): boolean {
-  return Boolean(branch && branch.ciWorkflowConclusion === 'success' && branch.ciTargetSha === commit);
-}
-
 export function validateProjectScript(strategy: ReleaseStrategy): string | null {
+  if (strategy.ciWorkflowFile && !/^[A-Za-z0-9_-]+\.ya?ml$/.test(strategy.ciWorkflowFile)) return '发布 CI 必须是 .github/workflows 下的工作流文件名';
   if (strategy.mode === 'project-script') {
     const file = releaseScriptFile(strategy);
     if (!/^(?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.sh$/.test(file)

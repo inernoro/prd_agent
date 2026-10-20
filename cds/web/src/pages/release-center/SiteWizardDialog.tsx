@@ -7,7 +7,7 @@
  */
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import { DEFAULT_RELEASE_SCRIPT_FILE } from '../../../../src/domain/release-script-contract';
+import { DEFAULT_RELEASE_SCRIPT_FILE, DEFAULT_RELEASE_CI_WORKFLOW_FILE } from '../../../../src/domain/release-script-contract';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -57,6 +57,7 @@ export function emptySiteDraft(projectId: string): SiteDraft {
     healthcheckUrl: '',
     strategyMode: 'project-script',
     scriptFile: DEFAULT_RELEASE_SCRIPT_FILE,
+    ciWorkflowFile: DEFAULT_RELEASE_CI_WORKFLOW_FILE,
     managedScript: '',
     composeFile: 'compose.yml',
     composeProject: `${projectId.replace(/[^a-z0-9_-]+/gi, '-').toLowerCase()}-prod`,
@@ -234,7 +235,7 @@ export function SiteWizardDialog({
             ) : null}
 
             {step === 'scripts' ? (
-              <WizardPanel title="确认发布方式" description="CDS 先扫描项目事实，再推荐发布方式；自动生成脚本会在每次发布时固化哈希，不写回项目仓库。">
+              <WizardPanel title="确认发布方式" description="项目提供并测试发布脚本，CDS 执行对应提交；独立脚本只作为明确选择的备选。">
                 {discovering ? <LoadingBlock label="正在扫描项目发布能力" /> : null}
                 {discovery ? (
                   <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-xs text-muted-foreground">
@@ -264,6 +265,12 @@ export function SiteWizardDialog({
                   <div className="space-y-2">
                     <Field label="项目发布脚本文件" value={draft.scriptFile || DEFAULT_RELEASE_SCRIPT_FILE} onChange={(value) => onDraft((c) => ({ ...c, scriptFile: value }))} placeholder={DEFAULT_RELEASE_SCRIPT_FILE} />
                     <p className="text-xs text-muted-foreground">默认读取仓库中该提交的脚本正文，先执行 check，再执行 deploy。项目 CI 必须测试同一文件；业务发布规则由项目负责。</p>
+                  </div>
+                ) : null}
+                {draft.strategyMode === 'project-script' || draft.strategyMode === 'managed-script' ? (
+                  <div className="space-y-2">
+                    <Field label="项目发布 CI 工作流" value={draft.ciWorkflowFile || DEFAULT_RELEASE_CI_WORKFLOW_FILE} onChange={(value) => onDraft((c) => ({ ...c, ciWorkflowFile: value }))} placeholder={DEFAULT_RELEASE_CI_WORKFLOW_FILE} />
+                    <p className="text-xs text-muted-foreground">.github/workflows 下测试该发布脚本 check 的工作流。CDS 读取该分支、同提交的最新运行结论；镜像构建绿灯不能代替此项。</p>
                   </div>
                 ) : null}
                 {draft.strategyMode === 'managed-script' ? (
@@ -420,6 +427,7 @@ export function applyDiscoveredStrategy(draft: SiteDraft, strategy: ReleaseStrat
     ...draft,
     strategyMode: strategy.mode,
     scriptFile: strategy.scriptFile || draft.scriptFile,
+    ciWorkflowFile: strategy.ciWorkflowFile || draft.ciWorkflowFile,
     managedScript: strategy.script ?? draft.managedScript,
     deployCommand: strategy.command || draft.deployCommand,
     composeFile: strategy.composeFile || draft.composeFile,
@@ -432,8 +440,8 @@ export function applyDiscoveredStrategy(draft: SiteDraft, strategy: ReleaseStrat
 }
 
 export function strategyFromDraft(draft: SiteDraft): ReleaseStrategy {
-  if (draft.strategyMode === 'project-script') return { mode: 'project-script', scriptFile: draft.scriptFile?.trim() || DEFAULT_RELEASE_SCRIPT_FILE };
-  if (draft.strategyMode === 'managed-script') return { mode: 'managed-script', script: draft.managedScript || '' };
+  if (draft.strategyMode === 'project-script') return { mode: 'project-script', ciWorkflowFile: draft.ciWorkflowFile?.trim() || DEFAULT_RELEASE_CI_WORKFLOW_FILE, scriptFile: draft.scriptFile?.trim() || DEFAULT_RELEASE_SCRIPT_FILE };
+  if (draft.strategyMode === 'managed-script') return { mode: 'managed-script', ciWorkflowFile: draft.ciWorkflowFile?.trim() || DEFAULT_RELEASE_CI_WORKFLOW_FILE, script: draft.managedScript || '' };
   if (draft.strategyMode === 'existing-script') {
     return { mode: 'existing-script', command: draft.deployCommand.trim(), detectedFrom: draft.detectedFrom };
   }
