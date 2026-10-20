@@ -248,7 +248,14 @@ export class SelfMaintenanceRuntime {
     checkpoint.busy = true;
     if (action === 'snapshot') checkpoint.snapshotStarted = true;
     const source = import.meta.url.endsWith('.ts');
-    const worker = fileURLToPath(new URL(source ? './self-maintenance-files-process.ts' : './self-maintenance-files-process.js', import.meta.url));
+    const originalWorker = fileURLToPath(new URL(source ? './self-maintenance-files-process.ts' : './self-maintenance-files-process.js', import.meta.url));
+    // native模块路径与本票已realpath的root固定匹配，不探测新live文件或选择新代代码。
+    const managedNative = !source && path.resolve(originalWorker) === path.join(input.root.path,
+      'cds', 'dist', 'services', 'self-maintenance-files-process.js');
+    // snapshot已确认的旧dist含原worker及相邻atomic；恢复会将backup/0移回原位置。
+    const worker = managedNative && (action === 'restore' || action === 'discard')
+      && checkpoint.existed?.[0] === true && !checkpoint.artifactsRestored
+      ? path.join(input.backup.path, '0', 'services', 'self-maintenance-files-process.js') : originalWorker;
     try {
       // 显式保持原operation默认有限上界；五目录是一份job，不逐目录重新发预算。
       const result = await this.exec(ticket, `${shellQuote(process.execPath)} ${source ? '--import tsx ' : ''}${shellQuote(worker)}`, {

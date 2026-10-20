@@ -266,4 +266,146 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     expect(fs.existsSync(checkpoint.backupPath)).toBe(false);
     expect(instance.finish(ticket)).toBe(true);
   });
+
+  it.each(['restore', 'discard'] as const)('native dist换代移走新worker后，%s仍用同票完成且不借Master模块缓存', async action => {
+    seedFiles();
+    const source = fileURLToPath(new URL('../../src/', import.meta.url));
+    const dist = path.join(root, 'cds/dist');
+    const entries = [
+      'services/self-maintenance-runtime.ts', 'services/self-maintenance-files-process.ts',
+      'services/atomic-directory-replacement.ts', 'services/isolated-shell-executor.ts',
+      'services/observation-process-launcher.ts', 'services/observation-process-group.ts',
+      'services/sidecar/sidecar-deployer.ts', 'services/sidecar/remote-host-service.ts',
+      'services/ssh-exec-failure.ts', 'infra/secret-seal.ts',
+      'services/shell-executor.ts', 'services/observation-process.ts',
+      'services/observation-executor-process.ts', 'services/observation-supervisor-process.ts',
+    ];
+    await build({ entryPoints: entries.map(file => path.join(source, file)), outdir: dist, outbase: source,
+      format: 'esm', platform: 'node', target: 'node20', bundle: false, sourcemap: false, logLevel: 'silent' });
+    fs.writeFileSync(path.join(root, 'cds/package.json'), '{"type":"module"}');
+    // 只引导native import的真实ssh2依赖，不在五目录内，不冒充PNPM安装/整树验收。
+    fs.symlinkSync(fs.realpathSync(new URL('../../node_modules/', import.meta.url)), path.join(root, 'node_modules'), 'dir');
+    const worker = path.join(dist, 'services/self-maintenance-files-process.js');
+    const atomic = path.join(dist, 'services/atomic-directory-replacement.js');
+    const rawRelative = fs.readlinkSync(path.join(root, 'cds/node_modules/pkg'));
+    const rawAbsolute = fs.readlinkSync(path.join(root, 'cds/node_modules/absolute-pkg'));
+    const nativeRuntimeUrl = pathToFileURL(path.join(dist, 'services/self-maintenance-runtime.js')).href;
+    const runner = path.join(root, 'native-dist-case.mjs');
+    // d65的new Function import在Vitest VM缺callback；改由独立Node执行完整序列。
+    // runner只是测试编排；真实runtime/worker/atomic及其池模块都在将被换代的dist内。
+    fs.writeFileSync(runner, `
+import fs from 'node:fs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { SelfMaintenanceRuntime } from ${JSON.stringify(nativeRuntimeUrl)};
+import { IsolatedShellExecutor } from ${JSON.stringify(pathToFileURL(path.join(dist, 'services/isolated-shell-executor.js')).href)};
+import { ShellExecutor } from ${JSON.stringify(pathToFileURL(path.join(dist, 'services/shell-executor.js')).href)};
+import { replaceDirectoriesAtomically } from ${JSON.stringify(pathToFileURL(atomic).href)};
+const root = ${JSON.stringify(root)}, dist = ${JSON.stringify(dist)}, action = ${JSON.stringify(action)};
+const worker = ${JSON.stringify(worker)}, atomic = ${JSON.stringify(atomic)};
+const directories = ${JSON.stringify(directories)};
+const workerBytes = fs.readFileSync(worker), atomicBytes = fs.readFileSync(atomic);
+const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
+const children = [];
+const instance = new SelfMaintenanceRuntime({ exec: operation.exec.bind(operation),
+  execOwnedOperation: async (command, options) => {
+    const result = await operation.execOwnedOperation(command, options);
+    children.push({ command, result }); return result;
+  },
+}, root, () => {});
+let report;
+try {
+  const ticket = instance.acquire({ source: 'self-update', actor: 'native-dist-fixture' });
+  const ownerBefore = instance.observe();
+  const checkpoint = instance.prepareCheckpoint(ticket);
+  const snapshot = await instance.files(ticket, 'snapshot', checkpoint);
+  const snapshotChildren = children.map(child => ({ ...child }));
+  const savedWorker = fs.readFileSync(path.join(checkpoint.backupPath, '0/services/self-maintenance-files-process.js')).equals(workerBytes);
+  const savedAtomic = fs.readFileSync(path.join(checkpoint.backupPath, '0/services/atomic-directory-replacement.js')).equals(atomicBytes);
+  // 合法旧代ESM夹具而非b547全量构建，原子换代清掉旧dist后只剩backup有worker。
+  const candidate = path.join(root, 'cds/dist.next');
+  fs.mkdirSync(candidate);
+  fs.writeFileSync(path.join(candidate, 'index.js'), 'export const fixtureGeneration = "old-without-maintenance-worker";\\n');
+  fs.writeFileSync(path.join(candidate, 'fixture'), 'new:dist');
+  replaceDirectoriesAtomically([{ currentPath: dist, nextPath: candidate }]);
+  const generation = (await import(pathToFileURL(path.join(dist, 'index.js')).href)).fixtureGeneration;
+  const absentAfterSwap = { worker: !fs.existsSync(worker), atomic: !fs.existsSync(atomic) };
+  for (const relative of directories.slice(1)) {
+    const dir = path.join(root, 'cds', relative);
+    fs.rmSync(dir, { recursive: true, force: true }); fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'fixture'), 'new:' + relative);
+  }
+  const terminal = await instance.files(ticket, action, checkpoint).then(receipt => ({ receipt }), error => ({
+    error: String(error), childAfterSwap: children.at(-1),
+  }));
+  const childrenAtTerminal = children.map(child => ({ ...child }));
+  let postRestoreDiscard = null;
+  if (action === 'restore' && 'receipt' in terminal) {
+    postRestoreDiscard = await instance.files(ticket, 'discard', checkpoint).then(receipt => ({ receipt }), error => ({
+      error: String(error), childAfterRestore: children.at(-1),
+    }));
+  }
+  const restoredPrograms = fs.existsSync(worker) && fs.existsSync(atomic)
+    && fs.readFileSync(worker).equals(workerBytes) && fs.readFileSync(atomic).equals(atomicBytes);
+  const relativeLink = path.join(root, 'cds/node_modules/pkg');
+  const absoluteLink = path.join(root, 'cds/node_modules/absolute-pkg');
+  report = { nativePid: process.pid, runtimeModule: ${JSON.stringify(nativeRuntimeUrl)}, ownerBefore,
+    snapshot, snapshotChildren, savedWorker, savedAtomic, generation, absentAfterSwap, terminal, childrenAtTerminal, postRestoreDiscard, children,
+    files: directories.map(relative => fs.readFileSync(path.join(root, 'cds', relative, 'fixture'), 'utf8')),
+    workerPresent: fs.existsSync(worker), atomicPresent: fs.existsSync(atomic), restoredPrograms,
+    relativeLink: fs.existsSync(relativeLink) ? fs.readlinkSync(relativeLink) : null,
+    absoluteLink: fs.existsSync(absoluteLink) ? fs.readlinkSync(absoluteLink) : null,
+    backupPresent: fs.existsSync(checkpoint.backupPath), ownerAfter: instance.observe(), finished: instance.finish(ticket) };
+} finally {
+  await instance.close(); await operation.close();
+}
+report.closed = true;
+report.poolAfterClose = { active: operation.getStats().active, queued: operation.getStats().queued };
+process.stdout.write(JSON.stringify(report));
+`);
+    // 外层也借真实owned池，原afterEach负责其回收；不是Vitest VM内native import。
+    const result = await pool().execOwnedOperation(`${shellQuote(process.execPath)} ${shellQuote(runner)}`, {
+      cwd: root, beforeStart: () => {},
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.nativePid).toBeGreaterThan(1); expect(report.nativePid).not.toBe(process.pid);
+    expect(report.runtimeModule).toBe(nativeRuntimeUrl);
+    expect(report.ownerBefore).toMatchObject({ source: 'self-update', actor: 'native-dist-fixture', phase: 'prepare' });
+    expect(report.snapshot).toMatchObject({ ownerId: report.ownerBefore.id, existed: [true, true, true, true, true] });
+    expect(report.snapshotChildren).toHaveLength(1);
+    expect(report.snapshotChildren[0].command).toContain(shellQuote(worker));
+    expect(report.snapshotChildren[0].command).not.toContain('--import tsx');
+    expect(report.snapshotChildren[0].result.exitCode).toBe(0);
+    expect(report.savedWorker).toBe(true); expect(report.savedAtomic).toBe(true);
+    expect(report.generation).toBe('old-without-maintenance-worker');
+    expect(report.absentAfterSwap).toEqual({ worker: true, atomic: true });
+    expect(report.closed).toBe(true); expect(report.poolAfterClose).toEqual({ active: 0, queued: 0 });
+    expect.soft(report.childrenAtTerminal).toHaveLength(2);
+    expect.soft(report.children[1]?.command).not.toContain('--import tsx');
+    expect.soft(report.terminal).toMatchObject({ receipt: { action, ownerId: report.ownerBefore.id, artifactsRestored: action === 'restore' } });
+    for (const relative of directories) {
+      expect.soft(report.files[directories.indexOf(relative)])
+        .toBe(`${action === 'restore' ? 'old' : 'new'}:${relative}`);
+    }
+    expect.soft(report.ownerAfter).toMatchObject({ id: report.ownerBefore.id, source: 'self-update', actor: 'native-dist-fixture' });
+    if (action === 'restore') {
+      expect.soft(report.children).toHaveLength(3);
+      expect.soft(report.postRestoreDiscard).toMatchObject({ receipt: { action: 'discard', ownerId: report.ownerBefore.id, artifactsRestored: false } });
+      const cleanupChild = report.children[2];
+      expect.soft(cleanupChild?.command).toBe(`${shellQuote(process.execPath)} ${shellQuote(worker)}`);
+      expect.soft(cleanupChild?.command ?? '').not.toContain(path.join(root, 'cds/.cds'));
+      expect.soft(cleanupChild?.command ?? '').not.toContain('--import tsx');
+      expect.soft(cleanupChild?.result.exitCode).toBe(0);
+      expect.soft(report.workerPresent).toBe(true); expect.soft(report.atomicPresent).toBe(true);
+      expect.soft(report.restoredPrograms).toBe(true);
+      expect.soft(report.relativeLink).toBe(rawRelative); expect.soft(report.absoluteLink).toBe(rawAbsolute);
+      expect.soft(report.backupPresent).toBe(false);
+    } else {
+      expect.soft(report.children).toHaveLength(2);
+      expect.soft(report.workerPresent).toBe(false);
+      expect.soft(report.backupPresent).toBe(false);
+    }
+    expect.soft(report.finished).toBe(true);
+  });
 });
