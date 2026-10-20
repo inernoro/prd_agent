@@ -62,7 +62,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     const response = await fetch(`${origin}/api/agent/setup.json?target=existing&project=does-not-exist&skills=preview-url`);
     expect(response.status).toBe(200);
     const body = await response.json();
-    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.4', cliVersion: '0.17.4', authentication: 'existing-page-approval' });
+    expect(body).toMatchObject({ version: 'cds-agent-setup.v1', target: { kind: 'existing', projectId: 'does-not-exist' }, skills: ['preview-url'], minCliVersion: '0.17.5', cliVersion: '0.17.5', authentication: 'existing-page-approval' });
     expect(body.installedSkills).toHaveLength(5);
     expect(body.project).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();
@@ -74,7 +74,7 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(response.status).toBe(200);
     const archive = Buffer.from(await response.arrayBuffer());
     const manifest = JSON.parse(execFileSync('tar', ['-xzOf', '-', 'skills/cds/cli/cds-skill-manifest.json'], { input: archive, encoding: 'utf8' }));
-    expect(manifest).toMatchObject({ format: 'agent-skills', version: '0.17.4' });
+    expect(manifest).toMatchObject({ format: 'agent-skills', version: '0.17.5' });
     for (const skill of manifest.skills) {
       const content = fs.readFileSync(path.resolve(process.cwd(), '../.claude/skills', skill, 'SKILL.md'));
       expect(manifest.files[`${skill}/SKILL.md`]).toBe(createHash('sha256').update(content).digest('hex'));
@@ -228,7 +228,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     const version = bundleVersion(Buffer.from(await downloaded.arrayBuffer()));
     const metadata = await (await fetch(`${origin}/api/agent/setup.json`)).json();
     expect(metadata.cliVersion).toBe(version);
-    expect(metadata.cliVersion).toBe('0.17.4');
+    expect(metadata.cliVersion).toBe('0.17.5');
   });
 
   it('reports the cached upstream bundle version instead of an incomplete local CLI', async () => {
@@ -254,7 +254,7 @@ describe('setup version follows the actual distributed skill bundle', () => {
     available = false;
     const metadata = await (await fetch(`${origin}/api/agent/setup.json`)).json();
     expect(metadata.cliVersion).toBe(version);
-    expect(metadata.cliVersion).toBe('0.17.4');
+    expect(metadata.cliVersion).toBe('0.17.5');
     expect(downloads).toBe(1);
   });
 });

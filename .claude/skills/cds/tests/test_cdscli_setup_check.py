@@ -33,6 +33,7 @@ class SetupCheckTests(unittest.TestCase):
         self.redirects = {}
         self.status = "active"
         self.kind = "project"
+        self.global_projects = "all"
         self.version = re.search(r'^VERSION = "([^"]+)"', self.cli.read_text(), re.MULTILINE)[1]
         self.bundle_manifest = self.cli.with_name("cds-skill-manifest.json")
         self.write_bundle_manifest()
@@ -56,11 +57,15 @@ class SetupCheckTests(unittest.TestCase):
                     body = {"version": "cds-agent-setup.v1", "cliVersion": test.version}
                 elif self.path == "/api/credentials/self-check":
                     body = {"kind": test.kind, "status": test.status}
+                    if test.kind == "global":
+                        body["keyId"] = "global-current"
                     if test.kind == "project":
                         body["projectId"] = "proj-a"
                 elif self.path == "/api/projects/proj-a":
                     status = test.project_status
                     body = {"project": {"id": test.returned_project}, "secret": SECRET}
+                elif self.path == "/api/global-agent-keys":
+                    body = {"keys": [{"id": "global-current", "access": {"projects": test.global_projects}}], "secret": SECRET}
                 elif self.path == "/api/config":
                     body = {"secret": SECRET}
                 else:
@@ -345,6 +350,23 @@ class SetupCheckTests(unittest.TestCase):
     def test_system_task_cannot_reuse_project_key_as_system_permission(self):
         self.assert_failure("system_scope_required", "--system")
         self.assertFalse(any(path == "/api/config" for path, _ in self.requests))
+
+    def test_system_check_rejects_create_only_and_project_scoped_global_keys(self):
+        self.kind = "global"
+        for scope in ([], ["proj-a"]):
+            with self.subTest(scope=scope):
+                self.global_projects = scope
+                self.requests.clear()
+                self.assert_failure("system_scope_required", "--system")
+                self.assertFalse(any(path == "/api/config" for path, _ in self.requests))
+
+    def test_system_check_accepts_only_confirmed_all_project_global_access(self):
+        self.kind = "global"
+        result, payload = self.run_check("--system")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(payload["data"]["connected"])
+        self.assertIn("/api/global-agent-keys", [path for path, _ in self.requests])
+        self.assertEqual(self.requests[-1][0], "/api/config")
 
     def test_system_read_only_check_does_not_invent_project(self):
         self.kind = "static"

@@ -47,7 +47,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.17.4"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -823,6 +823,16 @@ def cmd_setup_check(args: argparse.Namespace) -> None:
         fail("authorization", "project_mismatch", "凭据被绑定到其他项目，停止当前操作并确认目标。")
     if not project and identity.get("kind") not in ("static", "global"):
         fail("authorization", "system_scope_required", "当前凭据不能证明系统访问范围，请由人类在 CDS 页面处理。")
+    if not project and identity.get("kind") == "global":
+        key_id = identity.get("keyId")
+        if not isinstance(key_id, str) or not key_id:
+            fail("authorization", "system_scope_required", "无法确认全局凭据的系统作用域，请由人类在 CDS 页面处理。")
+        status, key_metadata, _ = request("/api/global-agent-keys")
+        entries = key_metadata.get("keys") if isinstance(key_metadata, dict) else None
+        matching = [entry for entry in entries if isinstance(entry, dict) and entry.get("id") == key_id] if isinstance(entries, list) else []
+        access = matching[0].get("access") if len(matching) == 1 else None
+        if status != 200 or not isinstance(access, dict) or access.get("projects") != "all":
+            fail("authorization", "system_scope_required", "当前全局凭据只限建项目或指定项目，不能证明系统访问范围；请由人类在 CDS 页面处理，不自行扩大权限。")
     checks.append({"stage": "authorization", "passed": True, "kind": identity.get("kind")})
     path = "/api/projects/" + urllib.parse.quote(project, safe="") if project else "/api/config"
     status, body, _ = request(path)
