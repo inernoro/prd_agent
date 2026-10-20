@@ -275,6 +275,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
     await store.init(); store.save(structuredClone(state.getState())); await store.flush();
     state = new StateService(file, undefined, store); state.load();
     const { run, service, coordinator, blocker } = await accepted();
+    const interrupt = vi.spyOn(coordinator, 'interruptAll');
     const source = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
     const start = source.search(/(?:async )?function scheduleDetachedCdsRestart/);
     const end = source.indexOf('async function flushBranchStateBeforeSuccess', start);
@@ -355,8 +356,14 @@ describe('已受理部署的持久输入与重启恢复', () => {
       else { expect(outcome?.message).toContain('已取消更新与重启'); expect(exit).not.toHaveBeenCalled(); atExit = mongo.snapshot(); }
       await closed;
       expect(Boolean(child?.pid)).toBe(hasPid); expect(errors).toEqual(hasPid ? [] : ['ENOENT']);
-      expect(service.get(run.id)?.status).toBe(preserve ? 'queued' : 'failed');
+      expect(interrupt).toHaveBeenCalledTimes(hasPid ? 1 : 0);
+      expect(service.get(run.id)?.status).toBe(preserve || !hasPid ? 'queued' : 'failed');
       expect(exit).toHaveBeenCalledTimes(shouldExit ? 1 : 0);
+      if (!hasPid) {
+        expect(blocker.isCurrent()).toBe(true);
+        expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
+        expect(state.getState().deploymentIntents![run.id]).toBeDefined();
+      }
       if (preserve) {
         await service.waitForAcceptance(run.id);
         expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
@@ -381,10 +388,10 @@ describe('已受理部署的持久输入与重启恢复', () => {
         durableStatus: durable.doc.status, intentPresent: Boolean(durable.executionIntent), restoredIds }));
       const saved = storage === 'healthy' || storage === 'delayed';
       expect({ status: durable.doc.status, intentPresent: Boolean(durable.executionIntent), restoredIds })
-        .toEqual(saved ? { status: 'failed', intentPresent: false, restoredIds: [] }
+        .toEqual(saved && hasPid ? { status: 'failed', intentPresent: false, restoredIds: [] }
           : { status: 'queued', intentPresent: true, restoredIds: [run.id] });
     } finally {
-      release(); write.mockRestore(); globalWrite.mockRestore();
+      release(); write.mockRestore(); globalWrite.mockRestore(); interrupt.mockRestore();
       for (const timer of timers) clearTimeout(timer);
       await closed;
       for (const fd of fds) fs.closeSync(fd);
@@ -395,12 +402,13 @@ describe('已受理部署的持久输入与重启恢复', () => {
 
   it.each([
     { name: '保存成功且有PID', flush: 'flushed', pid: true, status: 'queued' },
-    { name: '保存成功但真实ENOENT无PID', flush: 'flushed', pid: false, status: 'failed' },
-    { name: '真实保存失败且有PID', flush: 'failed', pid: true, status: 'failed' },
-    { name: '原保存超时且有PID', flush: 'timeout', pid: true, status: 'failed' },
+    { name: '保存成功但真实ENOENT无PID', flush: 'flushed', pid: false, status: 'queued' },
+    { name: '真实保存失败且有PID', flush: 'failed', pid: true, status: 'queued' },
+    { name: '原保存超时且有PID', flush: 'timeout', pid: true, status: 'queued' },
   ] as const)('实际重启调度门禁：$name', async scenario => {
     const record = vi.fn();
-    const { run, service, coordinator } = await accepted(undefined, { record });
+    const { run, service, coordinator, blocker } = await accepted(undefined, { record });
+    const originalIntent = structuredClone(state.getState().deploymentIntents![run.id]);
     const source = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
     const start = source.search(/(?:async )?function scheduleDetachedCdsRestart/);
     const end = source.indexOf('async function flushBranchStateBeforeSuccess', start);
@@ -485,6 +493,7 @@ describe('已受理部署的持久输入与重启恢复', () => {
       const closed = closeResult = await close!;
       expect(timedOut).toBe(false);
       const handedOff = scenario.flush === 'flushed' && scenario.pid;
+      expect(tap).toHaveBeenCalledTimes(handedOff ? 1 : 0);
       if (scenario.pid) { expect(Number.isSafeInteger(pidAtReturn) && pidAtReturn! > 0).toBe(true); expect(closed).toEqual({ code: handedOff ? 0 : 1, signal: null }); expect(errors).toEqual([]); }
       else { expect(pidAtReturn).toBeUndefined(); expect(errors).toEqual(['ENOENT']); }
       expect(outcome === null).toBe(handedOff); expect(exit).not.toHaveBeenCalled();
@@ -495,14 +504,25 @@ describe('已受理部署的持久输入与重启恢复', () => {
       } else {
         expect(timers).toEqual([]); expect(rollback).toHaveBeenCalledOnce();
         expect(releaseGate).toHaveBeenCalledOnce(); expect(restartWait).toHaveBeenLastCalledWith(null);
+        expect(blocker.isCurrent()).toBe(true);
+        expect(coordinator.getActive('b')?.operationId).toBe(blocker.operationId);
+        expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
+        expect(state.getState().deploymentIntents![run.id]).toEqual(originalIntent);
+        expect(service.get(run.id)?.failure).toBeUndefined();
       }
       expect(service.get(run.id)?.status).toBe(scenario.status);
-      expect(record.mock.calls.some(([event]) => event.operationId === run.operationId && event.action === 'branch.operation.deferred')).toBe(scenario.status === 'queued');
+      expect(record.mock.calls.some(([event]) => event.operationId === run.operationId && event.action === 'branch.operation.deferred')).toBe(handedOff);
       expect(coordinator.drainReady()).toEqual([]);
       release(); await write.catch(() => {}); rename?.mockRestore(); await state.flush();
       const persisted = JSON.parse(fs.readFileSync(file, 'utf8'));
       expect(persisted.deploymentRuns[run.id].status).toBe(scenario.status);
       expect(Boolean(persisted.deploymentIntents[run.id])).toBe(scenario.status === 'queued');
+      expect(persisted.deploymentIntents[run.id]).toEqual(originalIntent);
+      if (!handedOff) {
+        const ready = coordinator.completeAll(blocker, 'completed');
+        expect(ready).toMatchObject([{ operationId: run.operationId, generation: run.operationGeneration }]);
+        expect(coordinator.drainReady()).toEqual([]);
+      }
     } finally {
       try { if (child && !childClosed) child.kill('SIGKILL'); if (close) closeResult = await close; }
       finally {

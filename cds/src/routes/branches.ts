@@ -2638,9 +2638,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
 
       let permit: ReturnType<typeof prepareDetachedCdsRestart> | undefined;
+      let operationsInterrupted = false;
       try {
         try { permit = prepareDetachedCdsRestart(spawn, cdsDir, { ...process.env }, stdio); }
         catch (error) { safely('spawn-error', () => fs.appendFileSync(errorLogPath, `spawn error: ${(error as Error).message}\n`)); }
+        // 已知保存失败或没有子进程时，旧服务继续运行，不能先破坏其部署任务。
+        if (input.preserveQueued !== true || !permit?.hasChildPid) {
+          throw new Error('CDS 重启未获可靠交接许可，已取消更新与重启。请检查状态存储及重启脚本后重试。');
+        }
+        operationsInterrupted = Boolean(branchOperationCoordinator);
         branchOperationCoordinator?.interruptAll(
           `CDS restart requested by ${input.source}`, input.source,
           { normalShutdown: input.preserveQueued === true && permit?.hasChildPid === true },
@@ -2663,7 +2669,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } catch (error) {
         try {
           await permit?.cancel(); await input.rollback?.();
-          if (branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);
+          if (operationsInterrupted && branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);
         }
         finally {
           endSelfUpdateDrain();
@@ -24246,7 +24252,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
     try {
       const repoRoot = config.repoRoot;
-      checkpoint = await createSelfUpdateCheckpoint(shell, repoRoot, replaceDirectoriesAtomically);
 
       // Step 1: fetch latest
       send('fetch', 'running', '正在拉取远程更新...');
@@ -24341,6 +24346,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched).
         // main 可能已被应用 worktree 占用；共享 helper 会改用控制面专属 runtime 分支，
         // 不移动应用工作树使用的本地分支引用。
+        checkpoint = await createSelfUpdateCheckpoint(shell, repoRoot, replaceDirectoriesAtomically);
         const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, branch);
         if (!checkoutResult.ok) {
           const errMsg = checkoutResult.error || '未知错误';
@@ -24469,6 +24475,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         return;
       }
 
+      // 未指定分支的路径也只在首次实际改源码前备份，早期拒绝不得回滚既有修改。
+      checkpoint ??= await createSelfUpdateCheckpoint(shell, repoRoot, replaceDirectoriesAtomically);
       const resetResult = await shell.exec(
         `git reset --hard origin/${targetBranch}`,
         { cwd: repoRoot },
@@ -25143,7 +25151,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     try {
       const repoRoot = config.repoRoot;
       const cdsDir = path.join(repoRoot, 'cds');
-      checkpoint = await createSelfUpdateCheckpoint(shell, repoRoot, replaceDirectoriesAtomically);
 
       // Step 1: fetch
       send('fetch', 'running', '正在拉取远端 ref…');
@@ -25239,6 +25246,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // tracking. self-update does this right; we were missing it.
       // Caught by Cursor Bugbot #450 round 7 (HIGH).
       send('checkout', 'running', `切换到 ${target} 分支...`);
+      checkpoint = await createSelfUpdateCheckpoint(shell, repoRoot, replaceDirectoriesAtomically);
       const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, target);
       if (!checkoutResult.ok) {
         const errMsg = checkoutResult.error || '未知错误';

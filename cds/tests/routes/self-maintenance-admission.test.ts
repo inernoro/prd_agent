@@ -4,7 +4,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { EventEmitter, once } from 'node:events';
 import { setImmediate as nextTurn } from 'node:timers/promises';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { Writable } from 'node:stream';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -170,6 +170,62 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     expect.soft(shell.commands).toHaveLength(commands);
   }
 
+  it.each([
+    ['self-update', 'fetch'], ['self-force-sync', 'fetch'],
+    ['self-update', 'invalid-target'], ['self-force-sync', 'invalid-target'],
+  ] as const)('%s在%s早拒绝时保留真实Git的HEAD、分支与两层未提交修改，不做备份或回滚', async (endpoint, failure) => {
+    const env = { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C', TZ: 'UTC', GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: '/usr/bin/false' };
+    const git = (args: string[]) => execFileSync('/usr/bin/git', ['-C', root, ...args], {
+      env, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    git(['init', '--quiet', '--initial-branch=main']);
+    fs.writeFileSync(path.join(root, '.gitignore'), '/state.json*\n/.cds/\n/cds/\n');
+    fs.writeFileSync(path.join(root, 'tracked.txt'), 'committed tracked\n');
+    fs.writeFileSync(path.join(root, 'second.txt'), 'committed second\n');
+    git(['add', '--', '.gitignore', 'tracked.txt', 'second.txt']);
+    git(['-c', 'user.name=本轮Git夹具', '-c', 'user.email=owned-fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', '测试夹具基线']);
+    fs.writeFileSync(path.join(root, 'tracked.txt'), 'staged bytes\n'); git(['add', '--', 'tracked.txt']);
+    fs.writeFileSync(path.join(root, 'tracked.txt'), 'unstaged bytes after staging\n');
+    fs.writeFileSync(path.join(root, 'second.txt'), 'second unstaged bytes\n');
+    const snapshot = () => ({
+      head: git(['rev-parse', 'HEAD']).trim(), branch: git(['symbolic-ref', '--quiet', '--short', 'HEAD']).trim(),
+      status: git(['status', '--porcelain=v1', '-z', '--untracked-files=all']), indexEntries: git(['ls-files', '--stage', '-z']),
+      staged: git(['show', ':tracked.txt']), stagedDiff: git(['diff', '--cached', '--binary']), worktreeDiff: git(['diff', '--binary']),
+      tracked: fs.readFileSync(path.join(root, 'tracked.txt')), second: fs.readFileSync(path.join(root, 'second.txt')),
+      index: fs.readFileSync(path.join(root, '.git/index')),
+    });
+    const before = snapshot(); expect(before.status).toContain('MM tracked.txt');
+    expect(before.staged).toBe('staged bytes\n'); expect(before.tracked.toString()).toBe('unstaged bytes after staging\n');
+    const reads = new Map<string, string[]>([
+      ['git rev-parse --short HEAD', ['rev-parse', '--short', 'HEAD']],
+      ['git rev-parse HEAD', ['rev-parse', 'HEAD']],
+      ['git symbolic-ref --quiet --short HEAD', ['symbolic-ref', '--quiet', '--short', 'HEAD']],
+      ["git for-each-ref --sort=-committerdate --format='%(refname:short)%1f%(committerdate:iso8601-strict)%1f%(objectname:short)%1f%(subject)%1f%(symref)' refs/remotes/origin/",
+        ['for-each-ref', '--sort=-committerdate', '--format=%(refname:short)%1f%(committerdate:iso8601-strict)%1f%(objectname:short)%1f%(subject)%1f%(symref)', 'refs/remotes/origin/']],
+      [`git checkout -f -B 'main' ${before.head}`, ['checkout', '-f', '-B', 'main', before.head]],
+    ]);
+    transport = async (cmd, options, result) => {
+      expect(options?.cwd).toBe(cmd === './exec_cds.sh nginx-render' ? path.join(root, 'cds') : root);
+      if (cmd === 'git fetch --all --prune') return failure === 'fetch'
+        ? { ...ok(), exitCode: 1, stderr: 'fixture remote unavailable' } : ok();
+      const args = reads.get(cmd);
+      if (args) return ok(git(args));
+      if (cmd.startsWith('git ')) throw new Error('未声明的夹具Git命令: ' + cmd);
+      return result;
+    };
+    const backup = vi.spyOn(fs, 'mkdtempSync'), copy = vi.spyOn(fs.promises, 'cp');
+    const reply = await post(endpoint, { branch: failure === 'fetch' ? 'main' : 'invalid;target', force: true });
+    await nextTurn(); await Promise.allSettled(executions);
+    expect(reply.raw).toContain('event: error'); expect(reply.raw).not.toContain('event: done');
+    expect(reply.raw).toContain(failure === 'fetch' ? 'fixture remote unavailable' : '含不安全字符');
+    expect(snapshot()).toEqual(before);
+    expect(shell.commands.filter(cmd => /^git (checkout|reset)\b/.test(cmd))).toEqual([]);
+    expect(shell.commands.some(cmd => /pnpm|build-dist-esbuild|nginx-render/.test(cmd))).toBe(false);
+    expect(backup.mock.calls.filter(([name]) => String(name).startsWith(path.join(root, 'cds/.cds/restart-rollback-')))).toEqual([]);
+    expect(copy).not.toHaveBeenCalled(); expect(spawn).not.toHaveBeenCalled(); expect(process.exit).not.toHaveBeenCalled();
+  });
+
   it('dry-run先占用时四入口都拒绝，busy请求不释放原占用，完成后重新受理', async () => {
     const entered = gate(), release = gate(); let blocked = false;
     transport = async (cmd, _options, result) => {
@@ -263,10 +319,10 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     expect((await post('self-update-dry-run')).status).toBe(200);
   });
 
-  function holdFinalFlush() {
+  function holdFinalFlush(call = 2) {
     const entered = gate(), release = gate(), flush = state.flush.bind(state); let calls = 0;
     vi.spyOn(state, 'flush').mockImplementation(async () => {
-      if (++calls === 2) { entered.resolve(); await release.promise; }
+      if (++calls === call) { entered.resolve(); await release.promise; }
       return flush();
     });
     return { entered: entered.promise, release };
@@ -355,7 +411,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
   it.each(['self-restart', 'self-force-sync'] as const)('%s同步spawn失败取消重启，异步保存及回滚收尾后才释放', async endpoint => {
     fullWorkflow = true;
     vi.mocked(spawn).mockImplementation(() => { throw new Error('fixture synchronous spawn failure'); });
-    const { entered, fire } = observeRestartTimers(), finalFlush = holdFinalFlush();
+    const { entered, fire } = observeRestartTimers(), preFlush = holdFinalFlush(1);
     const rollingBack = gate(), rollback = gate();
     if (endpoint === 'self-force-sync') transport = async (cmd, _options, result) => {
       if (cmd === `git checkout -f --detach ${sha}`) { rollingBack.resolve(); await rollback.promise; }
@@ -363,17 +419,19 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     };
     let responded = false;
     const first = post(endpoint).then(reply => { responded = true; return reply; });
-    await entered;
+    await preFlush.entered;
+    // 首轮保存仍held；先等终态缓存原只读refresh结束，不把后台命令误记成兄弟写入。
+    while (['queued', 'running'].includes(selfStatusCache.getActiveJob()?.status ?? '')) {
+      await nextTurn();
+    }
     await allBusy();
     expect(responded).toBe(false);
-    fire(endpoint === 'self-force-sync' ? 0 : 500);
-    await finalFlush.entered;
-    expect(spawn).toHaveBeenCalledOnce();
+    preFlush.release.resolve(); await entered;
     expect(permitWrites).toEqual([]);
     expect(responded).toBe(false);
     expect(process.exit).not.toHaveBeenCalled();
     await allBusy();
-    finalFlush.release.resolve();
+    fire(endpoint === 'self-force-sync' ? 0 : 500);
     if (endpoint === 'self-force-sync') {
       await rollingBack.promise;
       expect(responded).toBe(false);
@@ -382,6 +440,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
       rollback.resolve();
     }
     const failure = await first;
+    expect(spawn).toHaveBeenCalledOnce();
     expect(failure.raw).toContain('event: error');
     expect(failure.raw).not.toContain('event: done');
     expect(process.exit).not.toHaveBeenCalled();
