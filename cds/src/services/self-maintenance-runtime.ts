@@ -10,6 +10,8 @@ import { maintenanceDirectoryIdentity, verifyMaintenanceFilesInput,
 
 // 与index.ts既有operation默认预算一致，显式投影才能在清理未终态时观察到期。
 const MAINTENANCE_FILES_TIMEOUT_MS = 15 * 60_000;
+// 仅限制同态诊断写放大，不改变五秒安全观察或任何执行/恢复预算。
+const MAINTENANCE_WARNING_INTERVAL_MS = 60_000;
 
 export type SelfMaintenanceSource = 'self-update' | 'self-force-sync' | 'self-restart' | 'self-update-dry-run';
 export type SelfMaintenancePhase = 'prepare' | 'checkpoint' | 'validate' | 'build' | 'drain' | 'flush'
@@ -38,6 +40,7 @@ interface Owner extends SelfMaintenanceOwner {
   controller: AbortController;
   jobs: Set<MaintenanceJob>;
   invariantFailure: boolean;
+  lastWarning?: { state: SelfMaintenanceSnapshot['state']; at: number };
 }
 export interface SelfMaintenanceSnapshot {
   id: string;
@@ -142,8 +145,14 @@ export class SelfMaintenanceRuntime {
     }
     const view = this.observe();
     if (view && !selfMaintenanceHealthy(view)) {
-      try { this.warn(view); }
-      catch { console.warn('[self-maintenance] CDS 维护写者停止尚未确认，请检查维护状态。'); }
+      const now = performance.now();
+      if (owner.lastWarning?.state !== view.state || now - owner.lastWarning.at >= MAINTENANCE_WARNING_INTERVAL_MS) {
+        owner.lastWarning = { state: view.state, at: now };
+        try { this.warn(view); }
+        catch { console.warn('[self-maintenance] CDS 维护写者停止尚未确认，请检查维护状态。'); }
+      }
+    } else {
+      owner.lastWarning = undefined;
     }
   }
 

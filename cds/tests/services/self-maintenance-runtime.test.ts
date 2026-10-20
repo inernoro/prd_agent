@@ -174,6 +174,69 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     }
   });
 
+  it('持续cleanup未知保留原五秒观察，但同态告警最多每分钟一次不淹没整日事件', async () => {
+    // 仅分类与告警时钟，不把故障注入或虚拟一天冒充真实OS未知停止/稳定性验收。
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const warn = vi.fn();
+    const instance = new SelfMaintenanceRuntime({ exec: vi.fn(),
+      execOwnedOperation: async () => { throw new OperationExecutionError('cleanup'); },
+    }, root, warn);
+    runtimes.push(instance);
+    const ticket = instance.acquire({ source: 'self-update', actor: 'warning-fixture' })!;
+    try {
+      await expect(instance.exec(ticket, 'private-command')).rejects.toMatchObject({ code: 'cleanup' });
+      expect(instance.observe()).toMatchObject({ state: 'cleanup-unconfirmed', unconfirmedJobCount: 1 });
+      vi.advanceTimersByTime(5000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(55_000);
+      expect.soft(warn).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(5000);
+      expect.soft(warn).toHaveBeenCalledTimes(2);
+      vi.advanceTimersByTime(24 * 60 * 60_000 - 65_000);
+      expect.soft(warn).toHaveBeenCalledTimes(1440);
+      expect(instance.observe()).toMatchObject({ state: 'cleanup-unconfirmed', unconfirmedJobCount: 1, stopRequested: true });
+      expect(instance.isHealthy()).toBe(false);
+      expect(instance.finish(ticket)).toBe(false);
+    } finally {
+      await instance.close();
+      vi.useRealTimers();
+    }
+  });
+
+  it('新维护票和取消转未知状态不受上一条同态提醒间隔压制', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    let fail!: (error: Error) => void;
+    const result = new Promise<never>((_resolve, reject) => { fail = reject; });
+    const warn = vi.fn();
+    const instance = new SelfMaintenanceRuntime({ exec: vi.fn(), execOwnedOperation: () => result }, root, warn);
+    runtimes.push(instance);
+    try {
+      const first = instance.acquire({ source: 'self-restart', actor: 'first-warning-fixture' })!;
+      instance.requestStop(first);
+      vi.advanceTimersByTime(5000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toMatchObject({ id: first.id, state: 'cancelling' });
+      expect(instance.finish(first)).toBe(true);
+      const next = instance.acquire({ source: 'self-force-sync', actor: 'next-warning-fixture' })!;
+      const pending = instance.exec(next, 'private-command');
+      const rejected = expect(pending).rejects.toMatchObject({ code: 'cleanup' });
+      instance.requestStop(next);
+      vi.advanceTimersByTime(5000);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[1][0]).toMatchObject({ id: next.id, state: 'cancelling' });
+      fail(new OperationExecutionError('cleanup'));
+      await rejected;
+      vi.advanceTimersByTime(5000);
+      expect(warn).toHaveBeenCalledTimes(3);
+      expect(warn.mock.calls[2][0]).toMatchObject({ id: next.id, state: 'cleanup-unconfirmed', unconfirmedJobCount: 1 });
+      expect(instance.finish(next)).toBe(false);
+    } finally {
+      fail(new OperationExecutionError('cleanup'));
+      await instance.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('source worker真实保存/恢复/删除固定五目录，保留pnpm原始链接并防止已恢复FS重放', async () => {
     seedFiles();
     const instance = runtime(pool()), ticket = instance.acquire({ source: 'self-update', actor: 'fixture' })!;
