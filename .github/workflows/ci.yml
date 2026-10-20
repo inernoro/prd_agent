@@ -903,9 +903,10 @@ jobs:
           import { ESLint } from 'eslint';
           const base = '0dd78d40dc7f9c90e3b023fb04f81b1de95a04f8';
           const expected = '1b906c5954834a172cd290dac7a68c0ec7f54fce';
-          const git = (...args) => execFileSync('git', args, {encoding: 'utf8'});
+          const git = (...args) => execFileSync('git', args, {encoding: 'utf8', cwd: '..'});
           if (git('rev-parse', 'HEAD').trim() !== expected) throw new Error('Candidate mismatch');
           const files = git('diff', '--name-only', '--diff-filter=ACMR', base, expected, '--', 'prd-admin/src').trim().split('\n').filter(p => /\.(ts|tsx)$/.test(p));
+          if (files.length < 1) throw new Error('No candidate files were linted');
           const eslint = new ESLint();
           let introduced = 0, total = 0, baseline = 0;
           for (const file of files) {
