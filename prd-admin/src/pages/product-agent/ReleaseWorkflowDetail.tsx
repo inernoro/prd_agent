@@ -1213,11 +1213,11 @@ function MemberChecks({ members, selected, onChange, pastedMatches, onChoosePast
         <div className="mb-2 text-xs font-medium text-token-secondary">已选成员（{selected.length}）</div>
         {selected.length === 0
           ? <p className="py-2 text-xs text-token-muted">尚未选择成员，请在下方搜索添加。</p>
-          : <div role="list" className="space-y-2" style={{ maxHeight: 200, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-              {selected.map((id) => <div role="listitem" key={id} className="flex items-center justify-between gap-4 rounded-md border border-token-subtle px-3 py-2">
-                <span className="min-w-0 break-words text-sm text-token-primary">{memberName(id)}</span>
-                <button type="button" aria-label={`移除成员 ${memberName(id)}`} onClick={() => onChange(selected.filter((value) => value !== id))} className="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-token-muted hover-bg-soft hover:text-[color:var(--semantic-danger-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
-                  <X size={12} />移除
+          : <div role="list" className="flex min-h-0 flex-wrap items-start gap-2" style={{ maxHeight: 200, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+              {selected.map((id) => <div role="listitem" key={id} className="inline-flex max-w-full items-center gap-1 rounded-md border border-token-subtle py-0.5 pl-2.5 pr-0.5">
+                <span title={memberName(id)} className="min-w-0 truncate text-xs text-token-primary">{memberName(id)}</span>
+                <button type="button" aria-label={`移除成员 ${memberName(id)}`} title={`移除成员 ${memberName(id)}`} onClick={() => onChange(selected.filter((value) => value !== id))} className="inline-flex shrink-0 items-center justify-center rounded p-1.5 text-token-muted hover-bg-soft hover:text-[color:var(--semantic-danger-text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2">
+                  <X size={12} aria-hidden="true" />
                 </button>
               </div>)}
             </div>}

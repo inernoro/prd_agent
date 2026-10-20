@@ -73,6 +73,19 @@ describe('正式申领企微成员批量识别', () => {
     expect(workflow).toContain('onChange(selected.filter((value) => value !== id))');
   });
 
+  it('已选成员使用可换行的紧凑标签，保留可访问的单人移除按钮', () => {
+    const selectedMembers = workflow.slice(workflow.indexOf('<section aria-label="已选项目成员"'), workflow.indexOf('<section aria-label="添加项目成员"'));
+    expect(selectedMembers).toContain('className="flex min-h-0 flex-wrap items-start gap-2"');
+    expect(selectedMembers).toContain('className="inline-flex max-w-full items-center gap-1');
+    expect(selectedMembers).toContain('min-w-0 truncate text-xs text-token-primary');
+    expect(selectedMembers).toContain('title={memberName(id)}');
+    expect(selectedMembers).toContain('aria-label={`移除成员 ${memberName(id)}`}');
+    expect(selectedMembers).toContain('onChange(selected.filter((value) => value !== id))');
+    expect(selectedMembers).toContain('<X size={12} aria-hidden="true" />');
+    expect(selectedMembers).not.toContain('justify-between');
+    expect(selectedMembers).not.toContain('/>移除');
+  });
+
   it('正式申领不提交另一份原文姓名，手动增删后由服务端按最终 ID 生成姓名', () => {
     const submission = workflow.slice(workflow.indexOf('const res = await createRelease('), workflow.indexOf('setBusy(false);', workflow.indexOf('const res = await createRelease(')));
     const beforeTemporary = submission.slice(0, submission.indexOf('...(temporary ? {'));
