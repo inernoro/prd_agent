@@ -33,7 +33,7 @@ class MongoCiContractTests(unittest.TestCase):
     def setUp(self):
         self.workflow = (ROOT / WORKFLOW).read_text(encoding="utf-8")
 
-    def executable_run(self, server, name):
+    def executable_run(self, server, name, working_directory=None):
         """只读当前单行/竖线 run 形状，命令注释不能充当执行证据。"""
         steps = re.findall(
             rf"(?ms)^      - name: {re.escape(name)}\n(.*?)(?=^      - name:|\Z)", server,
@@ -41,6 +41,8 @@ class MongoCiContractTests(unittest.TestCase):
         self.assertEqual(len(steps), 1, name)
         step = steps[0]
         self.assertNotRegex(step, r"(?m)^        (?:if|continue-on-error):")
+        if working_directory is not None:
+            self.assertEqual(re.findall(r"(?m)^        working-directory: (.+)$", step), [working_directory])
         runs = re.findall(r"(?m)^        run: (.+)\n((?:          .*\n|\n)*)", step)
         self.assertEqual(len(runs), 1, name)
         value, body = runs[0]
@@ -104,6 +106,14 @@ class MongoCiContractTests(unittest.TestCase):
         self.assertEqual(self.executable_run(layout, "MongoDB CI compatibility contract"), command)
         self.assertLess(layout.index("uses: actions/checkout@v4"), layout.index(f"run: {command}"))
         self.assertNotIn(f"run: {command}", release)
+        server = block(self.workflow, "server-build", 2)
+        self.assertEqual(re.findall(r"(?m)^    name: (.+)$", server), ["Server Build & Test"])
+        self.assertEqual(self.executable_run(server, "MongoDB CI compatibility contract",
+                                             working_directory="${{ github.workspace }}"), command)
+        self.assertLess(server.index("uses: actions/checkout@v4"), server.index(f"run: {command}"))
+        server_filters = block(self.workflow, "server", 12)
+        for path in (WORKFLOW, GUARD):
+            self.assertIn(f"- '{path}'", server_filters)
         filters = block(self.workflow, "release_scripts", 12)
         for path in (WORKFLOW, GUARD):
             self.assertIn(f"- '{path}'", filters)

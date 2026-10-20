@@ -61,6 +61,7 @@ jobs:
               - 'scripts/bundle-official-skills.mjs'
               - 'scripts/test-official-skill-bundles.mjs'
               - 'scripts/verify-dotnet-test-projects.sh'
+              - 'scripts/tests/mongo-ci-contract.test.py'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
@@ -408,6 +409,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: MongoDB CI compatibility contract
+        working-directory: ${{ github.workspace }}
+        run: python3 scripts/tests/mongo-ci-contract.test.py
 
       - name: MongoDB runtime versions
         run: |
