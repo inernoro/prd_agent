@@ -180,6 +180,62 @@ describe("地址设置真实请求链与隔离", () => {
       (await request("GET", endpoint, undefined, "owner", "bar")).status,
     ).toBe(403);
   });
+  it("审计按当前读者权限遮蔽占用方，保留管理员的原始取证记录", async () => {
+    const occupiedDraft = { ...draft, mode: "custom", customSubdomain: "occupied" };
+    const preview = await request("POST", `${endpoint}/preview`, occupiedDraft);
+    const target = preview.data.collisions.find((c: any) => c.projectId === "bar");
+    expect(target.href).toBeTruthy();
+    expect((await request("POST", `${endpoint}/visit-conflict`, { ...occupiedDraft, href: target.href })).status).toBe(200);
+    expect((await request("PUT", endpoint, { ...occupiedDraft, expectedVersion: version() })).status).toBe(409);
+    state.addProjectGrant({ id: "member-foo", principalId: "human:verified-owner", projectId: "foo", origin: "approved", grantedAt: new Date().toISOString(), grantedBy: "owner" });
+    const auditBefore = JSON.stringify(state.getProject("foo")!.previewAddressAudit);
+    const member = await request("GET", `${endpoint}/audit`, undefined, "member");
+    expect(member.status).toBe(200);
+    expect(JSON.stringify(member.data)).not.toContain("bar-master");
+    expect(JSON.stringify(member.data)).not.toContain('"projectId":"bar"');
+    expect(JSON.stringify(member.data)).not.toContain("project=bar");
+    expect(JSON.stringify(member.data)).toContain("其他项目");
+    const scopedOwner = await request("GET", `${endpoint}/audit`, undefined, "owner", "foo");
+    expect(JSON.stringify(scopedOwner.data)).not.toContain("bar-master");
+    expect(JSON.stringify((await request("GET", `${endpoint}/audit`)).data)).toContain("bar-master");
+    state.addProjectGrant({ id: "member-bar", principalId: "human:verified-owner", projectId: "bar", origin: "approved", grantedAt: new Date().toISOString(), grantedBy: "owner" });
+    expect(JSON.stringify((await request("GET", `${endpoint}/audit`, undefined, "member")).data)).toContain("bar-master");
+    state.revokeProjectGrant("member-bar", "owner");
+    expect(JSON.stringify((await request("GET", `${endpoint}/audit`, undefined, "member")).data)).not.toContain("bar-master");
+    expect(JSON.stringify(state.getProject("foo")!.previewAddressAudit)).toBe(auditBefore);
+  });
+  it.each([[false, "api"], [true, "api"], [false, "private"]] as const)("拒绝与同项目其他分支服务入口撞名（逆序=%s，子域=%s）", async (reverse, subdomain) => {
+    state.addBuildProfile({ id: "api-foo", projectId: "foo", name: "api", subdomain: "api", pathPrefixes: ["/api"], containerPort: 8080, webEntry: { name: "API", path: "/" } } as any);
+    if (subdomain === "private") state.setBranchProfileOverride("foo-develop", "api-foo", { subdomain });
+    if (reverse) state.getState().branches = Object.fromEntries(Object.entries(state.getState().branches).reverse());
+    const change = { ...draft, mode: "custom", customSubdomain: `develop-foo-${subdomain}` };
+    const preview = await request("POST", `${endpoint}/preview`, change);
+    expect(preview.data.collisions.some((c: any) => c.branchId === "foo-develop" && c.host === `develop-foo-${subdomain}.preview.test`)).toBe(true);
+    const saved = await request("PUT", endpoint, { ...change, expectedVersion: version() });
+    expect(saved.status).toBe(409);
+    expect(state.getProject("foo")!.previewAddresses?.main).toBeUndefined();
+  });
+  it.each(["custom", "branch"])("新分支默认入口不能抢占已保存地址（%s）", async (mode) => {
+    const change = mode === "custom" ? { ...draft, mode, customSubdomain: "main-bar" } : { ...draft, mode, projectSlug: "bar" };
+    expect((await request("PUT", endpoint, { ...change, expectedVersion: version() })).status).toBe(200);
+    expect(() => addBranch("bar", "main")).toThrow(/地址.*占用/);
+    expect(state.getBranch("bar-main")).toBeUndefined();
+    expect((new ProxyService(state) as any).resolveBranchEntry("main-bar")?.id).toBe("foo-main");
+    expect((await request("PUT", endpoint, { ...draft, expectedVersion: version() })).status).toBe(200);
+    expect(() => addBranch("bar", "main")).not.toThrow();
+    expect((new ProxyService(state) as any).resolveBranchEntry("main-bar")?.id).toBe("bar-main");
+  });
+  it("新分支的命名服务不能抢占短域，已有别名也受保护", async () => {
+    state.addBuildProfile({ id: "api-bar", projectId: "bar", name: "api", subdomain: "api", pathPrefixes: ["/api"], containerPort: 8080, webEntry: { name: "API", path: "/" } } as any);
+    expect((await request("PUT", endpoint, { ...draft, mode: "custom", customSubdomain: "main-bar-api", expectedVersion: version() })).status).toBe(200);
+    expect(() => addBranch("bar", "main")).toThrow(/地址.*占用/);
+    expect(state.getBranch("bar-main")).toBeUndefined();
+    expect((await request("PUT", endpoint, { ...draft, expectedVersion: version() })).status).toBe(200);
+    state.setBranchSubdomainAliases("foo-main", ["main-bar"]);
+    expect(() => addBranch("bar", "main")).toThrow(/地址.*占用/);
+    state.setBranchSubdomainAliases("foo-main", []);
+    expect(() => addBranch("bar", "main")).not.toThrow();
+  });
   it("草稿预览不修改任何项目或写审计", async () => {
     const before = JSON.stringify(state.getProjects());
     const result = await request("POST", `${endpoint}/preview`, {

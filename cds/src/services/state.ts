@@ -66,14 +66,14 @@ import type { StateBackingStore, StateSaveHint } from '../infra/state-store/back
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-delivery-retention.js';
-import { sanitizeProfileOverride } from './container.js';
+import { sanitizeProfileOverride, resolveEffectiveProfile } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { createReportObjectStore, type ReportObjectStore } from './report-object-store.js';
 import { buildCacheMounts } from './cache-catalog.js';
 import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
 import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
-import { projectBranchPreviewSlugs } from './preview-entrypoints.js';
+import { projectBranchPreviewSlugs, projectBranchPublishedHosts } from './preview-entrypoints.js';
 import {
   readActiveUpdate,
   writeActiveUpdate,
@@ -1277,6 +1277,33 @@ export class StateService {
     );
   }
 
+  /** A new default/named entry cannot take an existing explicitly assigned short address. */
+  assertBranchPreviewAddressAvailable(entry: BranchEntry): void {
+    const branches = this.getAllBranches();
+    const project = this.getProject(entry.projectId);
+    let proposedProject = project;
+    if (project && !project.mirror && !branches.some(b => b.projectId === entry.projectId && b.branch === entry.branch)) {
+      proposedProject = { ...project, previewAddresses: { ...project.previewAddresses } };
+      delete proposedProject.previewAddresses![entry.branch];
+    }
+    const profiles = this.getEffectiveProfilesForBranch(entry).map(p => resolveEffectiveProfile(p, entry));
+    // Empty roots compare DNS labels only; the shared publisher still supplies
+    // canonical, named-service and member encodings without inventing public URLs.
+    const proposed = new Set(projectBranchPublishedHosts(entry, proposedProject, profiles, ['']));
+    for (const owner of branches) {
+      const ownerProject = this.getProject(owner.projectId);
+      const explicit = ownerProject?.previewAddresses && Object.hasOwn(ownerProject.previewAddresses, owner.branch)
+        ? ownerProject.previewAddresses[owner.branch] : undefined;
+      const claimed = [
+        ...(explicit ? projectBranchPublishedHosts(owner, ownerProject,
+          this.getEffectiveProfilesForBranch(owner).map(p => resolveEffectiveProfile(p, owner)), ['']) : []),
+        ...(owner.subdomainAliases || []).map(alias => `${alias.trim().toLowerCase()}.`),
+      ];
+      const conflict = claimed.find(host => proposed.has(host));
+      if (conflict) throw new Error(`分支地址 "${conflict.slice(0, -1)}" 已被占用，请在占用项目修改地址后重试。`);
+    }
+  }
+
   addBranch(entry: BranchEntry): void {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
@@ -1291,6 +1318,7 @@ export class StateService {
     if (project && !project.mirror && !Object.values(this.state.branches).some(branch => branch.projectId === entry.projectId && branch.branch === entry.branch)) {
       this.releasePreviewAddress(project, entry.branch, entry.id, '重新创建分支前释放遗留地址配置');
     }
+    this.assertBranchPreviewAddressAvailable(entry);
     this.state.branches[entry.id] = entry;
   }
 

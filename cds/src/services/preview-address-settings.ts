@@ -15,6 +15,7 @@ import {
   occupiedHostOwners,
   projectBranchPublishedHosts,
 } from "./preview-entrypoints.js";
+import { resolveEffectiveProfile } from "./container.js";
 import { projectIdentityVersion } from "./project-identity-history.js";
 
 export interface PreviewAddressDraft {
@@ -211,7 +212,7 @@ export function addressCollisions(
     for (const host of projectBranchPublishedHosts(
       b,
       p,
-      state.getEffectiveProfilesForBranch(b),
+      state.getEffectiveProfilesForBranch(b).map(profile => resolveEffectiveProfile(profile, b)),
       roots,
     ))
       occupied.set(host, b.id);
@@ -239,35 +240,28 @@ export function addressCollisions(
         reason: "project-slug",
       });
   }
-  const claimed = new Map<string, string>();
-  for (const b of candidates) {
-    const profiles = state.getEffectiveProfilesForBranch(b);
-    const oldHosts = new Set(
-      projectBranchPublishedHosts(b, before, profiles, roots),
-    );
+  // Compare the complete proposed namespace, rather than letting iteration
+  // order decide whether an unchanged sibling service host is already claimed.
+  const proposed = candidates.map(b => {
+    const profiles = state.getEffectiveProfilesForBranch(b).map(profile => resolveEffectiveProfile(profile, b));
     const label = configuredPreviewSlug(b.branch, after, b.projectId);
     dnsLabel(label, "受影响分支的地址");
-    const primaryHosts = roots.map((root) => `${label}.${root}`);
-    const published = projectBranchPublishedHosts(b, after, profiles, roots);
+    return { b, oldHosts: new Set(projectBranchPublishedHosts(b, before, profiles, roots)),
+      primaryHosts: roots.map(root => `${label}.${root}`),
+      published: projectBranchPublishedHosts(b, after, profiles, roots) };
+  });
+  const owners = new Map<string, Set<string>>();
+  for (const { b, published } of proposed) for (const host of published) {
+    if (!owners.has(host)) owners.set(host, new Set());
+    owners.get(host)!.add(b.id);
+  }
+  for (const { b, oldHosts, primaryHosts, published } of proposed) {
     for (const host of published) {
-      const owner = occupied.get(host) || claimed.get(host);
-      if (
-        owner &&
-        owner !== b.id &&
-        (!oldHosts.has(host) || primaryHosts.includes(host))
-      )
-        collision.push({
-          host,
-          branchId: owner,
-          projectId: state.getBranch(owner)?.projectId,
-          reason: "occupied",
-        });
-      else if (
-        primaryHosts.includes(host) &&
-        /^(www|cds|admin|dashboard|switch|preview)\./.test(host)
-      )
+      const owner = occupied.get(host) || [...owners.get(host)!].find(id => id !== b.id);
+      if (owner && owner !== b.id && (!oldHosts.has(host) || primaryHosts.includes(host)))
+        collision.push({ host, branchId: owner, projectId: state.getBranch(owner)?.projectId, reason: "occupied" });
+      else if (primaryHosts.includes(host) && /^(www|cds|admin|dashboard|switch|preview)\./.test(host))
         collision.push({ host, reason: "reserved" });
-      claimed.set(host, b.id);
     }
   }
   return collision;

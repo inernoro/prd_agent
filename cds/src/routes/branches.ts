@@ -6375,6 +6375,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           applyProjectDefaultDeployModes(entry, expressDefaults, profiles);
         }
       }
+      stateService.assertBranchPreviewAddressAvailable(entry);
       await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
         await worktreeService.create(branchRepoRoot, branch, worktreePath);
         stateService.addBranch(entry);

@@ -131,6 +131,21 @@ export function createPreviewAddressRouter(deps: Deps): Router {
       };
     });
   }
+  function auditView(req: Request, record: PreviewAddressAudit): PreviewAddressAudit {
+    const collisionView = (value: unknown) => {
+      if (!value || typeof value !== "object") return value;
+      const c = value as Record<string, unknown>;
+      if (typeof c.projectId !== "string") return value;
+      const allowed = !assertProjectAccess(req as Parameters<typeof assertProjectAccess>[0], c.projectId)
+        && canHumanAccessProject(req, state, c.projectId);
+      return allowed ? value : { host: c.host, reason: c.reason, projectName: "其他项目" };
+    };
+    if (record.action === "visit-conflict") return { ...record, after: collisionView(record.after) };
+    const after = record.after as { collisions?: unknown[] } | undefined;
+    if (record.action === "rejected" && Array.isArray(after?.collisions))
+      return { ...record, after: { ...after, collisions: after.collisions.map(collisionView) } };
+    return record;
+  }
   async function audit(
     req: Request,
     p: Project,
@@ -207,7 +222,7 @@ export function createPreviewAddressRouter(deps: Deps): Router {
       if (before && offset === 0)
         throw new PreviewAddressError(400, "记录位置已变化，请刷新。");
       res.json({
-        records: all.slice(offset, offset + 50),
+        records: all.slice(offset, offset + 50).map(record => auditView(req, record)),
         nextCursor: all.length > offset + 50 ? all[offset + 49].id : null,
       });
     }),
