@@ -2,6 +2,9 @@ import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
+import { replaceDirectoriesAtomically, type AtomicDirectoryReplacement } from '../services/atomic-directory-replacement.js';
+import { SelfMaintenanceRuntime, type SelfMaintenanceOwner, type SelfMaintenanceSource } from '../services/self-maintenance-runtime.js';
+export { replaceDirectoriesAtomically, type AtomicDirectoryReplacement } from '../services/atomic-directory-replacement.js';
 import { serveContainerLogStream } from '../services/container-log-stream-response.js';
 import { projectResourceNamespace } from '../services/preview-slug.js';
 import http from 'node:http';
@@ -2039,6 +2042,8 @@ export interface RouterDeps {
   deploymentVersionService?: DeploymentVersionService;
   /** Generates the constrained managed delivery plan; compose projects bypass it. */
   managedProjectService?: ManagedProjectService;
+  /** 同一createServer的维护写者与状态投影；直接router消费者独立构造。 */
+  selfMaintenanceRuntime?: SelfMaintenanceRuntime;
 }
 
 export function shouldSkipFencedDeployCleanupForNewerRuntime(
@@ -2131,92 +2136,6 @@ async function resolveSelfUpdatePrebuiltRepoFullName(shell: IShellExecutor, repo
 function selfUpdatePrebuiltEnabled(): boolean {
   const raw = String(process.env.CDS_SELFUPDATE_PREBUILT || '').trim().toLowerCase();
   return !['0', 'false', 'off', 'no'].includes(raw);
-}
-
-export interface AtomicDirectoryReplacement {
-  currentPath: string;
-  nextPath: string;
-  /**
-   * 指定后保留 currentPath 的上一代。适用于内容哈希静态资源：
-   * 新 index.html 上线后，已打开的旧页面仍可以请求上一代懒加载模块。
-   */
-  previousPath?: string;
-}
-
-export function replaceDirectoriesAtomically(pairs: AtomicDirectoryReplacement[]): void {
-  const stamp = Date.now();
-  const backups = pairs.map((pair, idx) => ({
-    ...pair,
-    backupPath: `${pair.currentPath}.old.${stamp}.${idx}`,
-    previousBackupPath: pair.previousPath
-      ? `${pair.previousPath}.old.${stamp}.${idx}`
-      : undefined,
-    hadCurrent: fs.existsSync(pair.currentPath),
-    hadPrevious: Boolean(pair.previousPath && fs.existsSync(pair.previousPath)),
-    currentMoved: false,
-    nextMoved: false,
-  }));
-  try {
-    for (const pair of backups) {
-      if (!fs.existsSync(pair.nextPath)) {
-        throw new Error(`atomic replacement candidate missing: ${pair.nextPath}`);
-      }
-    }
-    for (const pair of backups) {
-      if (pair.previousPath) {
-        if (pair.hadPrevious && pair.previousBackupPath) {
-          fs.renameSync(pair.previousPath, pair.previousBackupPath);
-        }
-        if (pair.hadCurrent) {
-          fs.renameSync(pair.currentPath, pair.previousPath);
-          pair.currentMoved = true;
-        }
-      } else if (pair.hadCurrent) {
-        fs.renameSync(pair.currentPath, pair.backupPath);
-        pair.currentMoved = true;
-      }
-    }
-    for (const pair of backups) {
-      fs.renameSync(pair.nextPath, pair.currentPath);
-      pair.nextMoved = true;
-    }
-  } catch (err) {
-    for (const pair of [...backups].reverse()) {
-      try {
-        if (pair.nextMoved && fs.existsSync(pair.currentPath)) {
-          fs.rmSync(pair.currentPath, { recursive: true, force: true });
-        }
-        if (pair.previousPath) {
-          if (pair.currentMoved && fs.existsSync(pair.previousPath)) {
-            fs.renameSync(pair.previousPath, pair.currentPath);
-          }
-          if (pair.hadPrevious && pair.previousBackupPath && fs.existsSync(pair.previousBackupPath)) {
-            fs.renameSync(pair.previousBackupPath, pair.previousPath);
-          }
-        } else if (pair.currentMoved && fs.existsSync(pair.backupPath)) {
-          fs.renameSync(pair.backupPath, pair.currentPath);
-        }
-      } catch {
-        /* best-effort rollback */
-      }
-    }
-    throw err;
-  }
-  // 新产物已全部就位后才清理临时备份。清理失败不能反向触发回滚：
-  // rmSync 可能已部分删除备份，此时回滚反而会丢失已上线的完整产物。
-  for (const pair of backups) {
-    try {
-      if (pair.previousPath) {
-        if (pair.hadPrevious && pair.previousBackupPath) {
-          fs.rmSync(pair.previousBackupPath, { recursive: true, force: true });
-        }
-      } else if (pair.hadCurrent) {
-        fs.rmSync(pair.backupPath, { recursive: true, force: true });
-      }
-    } catch {
-      /* stale backup is safe to clean on the next maintenance pass */
-    }
-  }
 }
 
 export type WebDistValidation =
@@ -2377,6 +2296,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   if (branchOperationCoordinator && deploymentRunService) deploymentRunService.bindOperationCoordinator(branchOperationCoordinator);
   const router = Router();
+  const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(shell, config.repoRoot);
 
   // 预览实例统一守卫（Codex P2，2026-07-15）：分支容器变更动作（deploy /
   // 按服务 redeploy / stop / restart / pull）在预览实例没有真实容器，逐个
@@ -2449,19 +2369,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
   const RESTART_GATE_RELEASE_MS = 15_000;
 
   // 四个维护入口共享同一写入树；磁盘marker失败/过期和HTTP断开都不代表写者结束。
-  type SelfMaintenanceOwner = { restartScheduled: boolean };
-  let selfMaintenanceOwner: SelfMaintenanceOwner | null = null;
-  function acquireSelfMaintenance(active: ReturnType<StateService['getActiveSelfUpdate']>): SelfMaintenanceOwner | null {
-    if (selfMaintenanceOwner || isSelfUpdateBusy(active)) return null;
-    return selfMaintenanceOwner = { restartScheduled: false };
+  function acquireSelfMaintenance(req: Request, source: SelfMaintenanceSource, actor: string,
+    active: ReturnType<StateService['getActiveSelfUpdate']>): SelfMaintenanceOwner | null {
+    const identity = req as Request & { cdsRequestId?: string; cdsOperationId?: string };
+    return selfMaintenance.acquire({ source, actor,
+      requestId: identity.cdsRequestId,
+      operationId: identity.cdsOperationId,
+    }, isSelfUpdateBusy(active));
   }
   function releaseSelfMaintenance(owner: SelfMaintenanceOwner): boolean {
-    if (selfMaintenanceOwner !== owner) return false;
-    selfMaintenanceOwner = null;
-    return true;
+    return selfMaintenance.release(owner);
   }
   function finishSelfMaintenance(owner: SelfMaintenanceOwner): void {
-    if (!owner.restartScheduled) releaseSelfMaintenance(owner);
+    selfMaintenance.finish(owner);
   }
 
   async function drainDeploysBeforeSelfUpdateRestart(context: {
@@ -2547,13 +2467,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     actor?: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
-  }): Promise<void> {
+  }, maintenanceOwner: SelfMaintenanceOwner): Promise<void> {
     // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
     // 排空放在最前，避免等待期间新落的状态又没被 flush 到）。
+    selfMaintenance.setPhase(maintenanceOwner, 'drain');
     await drainDeploysBeforeSelfUpdateRestart({
       trigger: context.trigger, branch: context.branch, toSha: context.toSha,
       source: context.source, onProgress: context.onProgress,
     });
+    selfMaintenance.setPhase(maintenanceOwner, 'flush');
     const result = await waitForFlushWithTimeout(
       () => stateService.flush(),
       SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
@@ -2596,6 +2518,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     exitOnFailure?: boolean;
   }): void {
     input.maintenanceOwner.restartScheduled = true;
+    selfMaintenance.setPhase(input.maintenanceOwner, 'restart-scheduled');
     const launch = () => {
       const cdsDir = path.join(config.repoRoot, 'cds');
       const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
@@ -23824,6 +23747,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         ? { degraded: true, reason: payload.degraded.reason, message: payload.degraded.message, reasons: [payload.degraded.message] }
         : null,
       lastKnownGood: usingLastKnownGood ? { fromTs: lastKnownGood?.lastRefreshAt } : null,
+      selfMaintenance: selfMaintenance.observe(),
     });
   });
 
@@ -23983,12 +23907,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       resolveActorFromRequest(req) ||
       'unknown';
     const existingActive = stateService.getActiveSelfUpdate();
-    const maintenanceOwner = acquireSelfMaintenance(existingActive);
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-restart', actor, existingActive);
     if (!maintenanceOwner) {
       sendSSE(res, 'error', {
         code: 'self_update_busy',
         message: '已有 CDS 更新或重启正在进行，本次精确版本重启已拒绝。',
         activeSelfUpdate: existingActive,
+        selfMaintenance: selfMaintenance.observe(),
       });
       res.end();
       return;
@@ -24031,6 +23956,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       commitSelfRestartState();
       const drainTimeoutMs = resolveRestartDrainTimeoutFromRequest(req.body);
       if (drainTimeoutMs > 0) {
+        selfMaintenance.setPhase(maintenanceOwner, 'drain');
         sendSSE(res, 'step', {
           step: 'drain',
           status: 'running',
@@ -24058,7 +23984,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         actor,
         source: 'api.self-restart',
         onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
-      });
+      }, maintenanceOwner);
+      selfMaintenance.setPhase(maintenanceOwner, 'handoff');
       sendSSE(res, 'step', {
         step: 'restart',
         status: 'running',
@@ -24142,7 +24069,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     };
 
     const existingActive = stateService.getActiveSelfUpdate();
-    const maintenanceOwner = acquireSelfMaintenance(existingActive);
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-update', actor, existingActive);
     if (!maintenanceOwner) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
@@ -24155,6 +24082,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         raw: concurrencyDiagnosis.raw,
         stage: concurrencyDiagnosis.stage,
         activeSelfUpdate: existingActive,
+        selfMaintenance: selfMaintenance.observe(),
       });
       res.end();
       return;
@@ -24198,6 +24126,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     });
     commitSelfUpdateState();
     const send = (step: string, status: string, title: string) => {
+      selfMaintenance.step(maintenanceOwner, step);
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString() });
       // 同步 step + 顺手写一条 logTail,让前端面板看到具体阶段。
@@ -24882,7 +24811,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         actor,
         source: 'api.self-update',
         onProgress: (status, title) => send('drain-deploys', status, title),
-      });
+      }, maintenanceOwner);
 
       // Step 4: restart CDS via detached process
       // 自更新前段总耗时(从 startedAt 到 spawn 之前):验证 + git + web build。
@@ -24957,16 +24886,20 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   // Use case: operators (and CI) who want to verify a branch can
   // be self-updated before actually hitting the red button. Validation
   // writes dependencies/install/type-check stamps, so it shares maintenance admission.
-  router.post('/self-update-dry-run', async (_req, res) => {
-    const maintenanceOwner = acquireSelfMaintenance(stateService.getActiveSelfUpdate());
+  router.post('/self-update-dry-run', async (req, res) => {
+    const cdsUser = (req as { cdsUser?: { githubLogin?: string; login?: string; username?: string } }).cdsUser;
+    const actor = cdsUser?.githubLogin || cdsUser?.login || cdsUser?.username || resolveActorFromRequest(req) || 'unknown';
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-update-dry-run', actor, stateService.getActiveSelfUpdate());
     if (!maintenanceOwner) {
       res.status(409).json({ ok: false, error: 'self_update_busy',
-        message: '已有 CDS 维护请求正在进行，本次预检尚未开始；请待其结束后重试。' });
+        message: '已有 CDS 维护请求正在进行，本次预检尚未开始；请待其结束后重试。',
+        selfMaintenance: selfMaintenance.observe() });
       return;
     }
     const cdsDir = path.join(config.repoRoot, 'cds');
     try {
       const started = Date.now();
+      selfMaintenance.setPhase(maintenanceOwner, 'validate');
       const result = await validateBuildReadiness(shell, cdsDir);
       const durationMs = Date.now() - started;
       if (result.ok) {
@@ -25070,7 +25003,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (terminal) terminalStateCommitted = true;
     };
     const existingActive = stateService.getActiveSelfUpdate();
-    const maintenanceOwner = acquireSelfMaintenance(existingActive);
+    const maintenanceOwner = acquireSelfMaintenance(req, 'self-force-sync', actor, existingActive);
     if (!maintenanceOwner) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
@@ -25083,6 +25016,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         raw: concurrencyDiagnosis.raw,
         stage: concurrencyDiagnosis.stage,
         activeSelfUpdate: existingActive,
+        selfMaintenance: selfMaintenance.observe(),
       });
       res.end();
       return;
@@ -25103,6 +25037,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     });
     commitSelfUpdateState();
     const send = (step: string, status: string, title: string, extra?: Record<string, unknown>) => {
+      selfMaintenance.step(maintenanceOwner, step);
       timingRecorder.mark(step, status);
       sendSSE(res, 'step', { step, status, title, timestamp: new Date().toISOString(), ...(extra || {}) });
       const level: 'info' | 'warning' | 'error' =
@@ -25834,7 +25769,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         actor,
         source: 'api.self-force-sync',
         onProgress: (status, title) => send('drain-deploys', status, title),
-      });
+      }, maintenanceOwner);
 
       // * 2026-05-06 双模式 self-update 出口:
       // 不论 hot 还是 cold,都通过 process.exit + systemd Restart 重启进程。
