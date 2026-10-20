@@ -62,7 +62,7 @@ import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { filterByTracked } from './productRecordTrackStorage';
 import { useAuthStore } from '@/stores/authStore';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
-import { ReviewAgentPage } from '@/pages/review-agent';
+import { ReviewAgentPage } from './review/ReviewAgentPage';
 
 type Section = 'dashboard' | 'products' | 'requirements' | 'review' | 'features' | 'defects' | 'versions' | 'customers' | 'knowledge' | 'graph' | 'settings';
 
