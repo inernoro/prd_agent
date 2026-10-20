@@ -1,0 +1,23 @@
+{
+  "archive": "testing-tutorial-handoff.zip",
+  "source_commit": "fc36c33a3d445e989f7e8be07a6892fb0c7364ca",
+  "bytes": 144006670,
+  "sha256": "71f57c1c2021b0a938b61450926f9dcaef8eafd929e9bbfdd4ee0a363defd570",
+  "parts": [
+    {
+      "name": "testing-tutorial-handoff.zip.001",
+      "bytes": 50331648,
+      "sha256": "e30734b79c82df57359bb66f4f172184cfa2234b762c079e043885d0d4f4ff9f"
+    },
+    {
+      "name": "testing-tutorial-handoff.zip.002",
+      "bytes": 50331648,
+      "sha256": "253244e1ca4b1febbe0dc14210efee1198887afabfed12868a5002ca2ea3b8d0"
+    },
+    {
+      "name": "testing-tutorial-handoff.zip.003",
+      "bytes": 43343374,
+      "sha256": "a19769333a8b1a9219a0835dd8f655d97299b02cde2a3ed0ee6c4705227fa496"
+    }
+  ]
+}
