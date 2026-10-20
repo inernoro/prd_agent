@@ -17,14 +17,14 @@ import { AGENT_MISSION_DEFINITIONS, getAgentCapabilitiesForMission } from '../..
 describe('Agent public bootstrap through the real auth gate', () => {
   let server: http.Server;
   let origin: string;
+  let bootstrapDeps: Parameters<typeof createBootstrapRouter>[0];
   const validateSession = vi.fn().mockResolvedValue(null);
 
   beforeEach(async () => {
     const app = express();
     app.use(createGithubAuthMiddleware({ authService: { validateSession } as unknown as AuthService }));
-    app.use('/api', createBootstrapRouter({
-      repoRoot: path.resolve(process.cwd(), '..'), cdsUpstream: '', skillProxy: {} as SkillProxy,
-    }));
+    bootstrapDeps = { repoRoot: path.resolve(process.cwd(), '..'), cdsUpstream: '', skillProxy: {} as SkillProxy };
+    app.use('/api', createBootstrapRouter(bootstrapDeps));
     app.get('/api/private', (_req, res) => res.json({ secret: 'must-stay-private' }));
     server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -67,6 +67,25 @@ describe('Agent public bootstrap through the real auth gate', () => {
     expect(body.project).toBeUndefined();
     expect(body.authorizationKey).toBeUndefined();
     expect((await fetch(`${origin}/api/private`)).status).toBe(401);
+  });
+
+  it('TLS 在反代前终止时，安装和接入说明均使用已配置的公网 HTTPS 地址', async () => {
+    bootstrapDeps.publicBaseUrl = 'https://cds.example.test/';
+    for (const endpoint of ['/api/agent/setup.md?target=new&mission=projects', '/api/bootstrap/cds-only']) {
+      const response = await fetch(origin + endpoint, { headers: { 'x-forwarded-proto': 'http', 'x-forwarded-host': 'internal.example.test' } });
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).toContain('https://cds.example.test');
+      expect(text).not.toContain('http://internal.example.test');
+    }
+  });
+
+  it('公网配置缺失或不合法时保留原有反代地址解析，不输出配置中的凭据', async () => {
+    bootstrapDeps.publicBaseUrl = 'https://user:secret@invalid.test';
+    const response = await fetch(origin + '/api/bootstrap/cds-only', { headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'public.example.test' } });
+    const text = await response.text();
+    expect(text).toContain("CDS_ORIGIN='https://public.example.test'");
+    expect(text).not.toContain('user:secret');
   });
 
   it('anonymous installation includes current hashes for all companion skills and their references', async () => {
