@@ -175,8 +175,8 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
-        className="surface-tone-dark relative w-full max-w-xl rounded-2xl overflow-hidden flex flex-col border border-token-subtle"
-        style={{ background: 'rgba(12, 15, 28, 0.97)', maxHeight: '85vh' }}
+        className="relative w-full max-w-xl rounded-2xl overflow-hidden flex flex-col border border-token-subtle bg-token-card"
+        style={{ maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -362,7 +362,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
               onClick={handleSave}
               disabled={saving}
               className="flex items-center gap-1.5 text-sm px-4 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-50"
-              style={{ background: 'rgba(99,102,241,0.85)', color: 'white' }}
+              style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }}
             >
               <Save className="w-3.5 h-3.5" />
               {saving ? '保存中…' : '保存'}

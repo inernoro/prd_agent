@@ -104,7 +104,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
         className="relative w-full max-w-lg mx-4 rounded-2xl border border-token-subtle shadow-2xl"
-        style={{ background: 'var(--bg-primary, #1a1a2e)' }}
+        style={{ background: 'var(--panel-solid)' }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-token-subtle">
@@ -145,13 +145,13 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                         className="text-[10px] px-1.5 py-0.5 rounded font-medium"
                         style={{
                           background: wh.isEnabled ? 'rgba(34, 197, 94, 0.15)' : 'rgba(156, 163, 175, 0.15)',
-                          color: wh.isEnabled ? 'rgba(34, 197, 94, 0.9)' : 'rgba(156, 163, 175, 0.7)',
+                          color: wh.isEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)',
                         }}
                       >
                         {ReviewWebhookChannelLabels[wh.channel] || wh.channel}
                       </span>
                       {wh.name && <span className="text-xs text-token-secondary">{wh.name}</span>}
-                      <span className="text-[10px]" style={{ color: wh.isEnabled ? 'rgba(34,197,94,0.6)' : 'rgba(156,163,175,0.5)' }}>
+                      <span className="text-[10px]" style={{ color: wh.isEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)' }}>
                         {wh.isEnabled ? '已启用' : '已禁用'}
                       </span>
                       {wh.channel === 'wecom' && wh.mentionAll && (
@@ -165,7 +165,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                       </button>
                       <button onClick={() => handleToggle(wh)}
                         className="p-1 rounded hover-bg-soft cursor-pointer" title={wh.isEnabled ? '禁用' : '启用'}>
-                        <Bell className="w-3.5 h-3.5" style={{ color: wh.isEnabled ? 'rgba(34,197,94,0.7)' : 'rgba(156,163,175,0.5)' }} />
+                        <Bell className="w-3.5 h-3.5" style={{ color: wh.isEnabled ? 'var(--accent-fg-success)' : 'var(--text-muted)' }} />
                       </button>
                       <button onClick={() => handleDelete(wh.id)}
                         className="p-1 rounded hover-bg-soft cursor-pointer" title="删除">

@@ -87,6 +87,7 @@ public class DataSyncScopeCoverageTests
             "agent_api_keys", "console_sso_tickets", "external_authorizations", "workflow_secrets",
             "github_user_connections", "sessions", "openplatformapps", "invitecodes",
             "desktop_asset_keys", "peer_pairing_codes", "short_links",
+            "product_permission_configurations",
         };
         var leaked = mustNeverExport.Where(n => DataSyncScope.AllExportableCollections.Contains(n)).ToList();
         Assert.True(leaked.Count == 0, "凭据类集合出现在可导出清单里：" + string.Join(", ", leaked));

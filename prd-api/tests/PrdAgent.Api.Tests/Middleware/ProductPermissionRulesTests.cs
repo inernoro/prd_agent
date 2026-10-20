@@ -107,4 +107,27 @@ public class ProductPermissionRulesTests
         await middleware.Invoke(context, service.Object);
         Assert.True(called);
     }
+
+    [Theory]
+    [InlineData("[]", false)]
+    [InlineData("null", false)]
+    [InlineData("{\"entityType\":\"requirement\"}", true)]
+    [InlineData("{\"entityType\":\"feature\"}", false)]
+    public async Task RequestBodyMenuRoutingRejectsWrongShapeAndPreservesBodyForBinding(string json, bool allowed)
+    {
+        const string path = "/api/product/transition";
+        var scanner = new Mock<IAdminControllerScanner>();
+        scanner.Setup(x => x.GetRequiredPermission(path, "POST")).Returns(AdminPermissionCatalog.ProductAgentUse);
+        var service = new Mock<IAdminPermissionService>();
+        service.Setup(x => x.GetEffectivePermissionsAsync("u1", false, default)).ReturnsAsync(new[] { AdminPermissionCatalog.Access, AdminPermissionCatalog.ProductAgentUse,
+            ProductPermissionRules.Scoped, ProductPermissionRules.MenuPrefix + "requirements" });
+        var called = false;
+        var middleware = new AdminPermissionMiddleware(ctx => { called = true; Assert.Equal(0, ctx.Request.Body.Position); return Task.CompletedTask; }, NullLogger<AdminPermissionMiddleware>.Instance, scanner.Object);
+        var context = new DefaultHttpContext { User = new(new ClaimsIdentity(new[] { new Claim("sub", "u1") }, "test")) };
+        context.Request.Path = path; context.Request.Method = "POST"; context.Request.ContentType = "application/json";
+        context.Request.Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        await middleware.Invoke(context, service.Object);
+        Assert.Equal(allowed, called);
+        Assert.Equal(allowed ? 200 : 403, context.Response.StatusCode);
+    }
 }

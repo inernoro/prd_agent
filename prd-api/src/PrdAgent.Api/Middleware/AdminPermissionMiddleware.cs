@@ -234,7 +234,7 @@ public sealed class AdminPermissionMiddleware
                 try
                 {
                     using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
-                    if (body.RootElement.TryGetProperty("entityType", out var kind) && kind.ValueKind == JsonValueKind.String) entityType = kind.GetString();
+                    if (body.RootElement.ValueKind == JsonValueKind.Object && body.RootElement.TryGetProperty("entityType", out var kind) && kind.ValueKind == JsonValueKind.String) entityType = kind.GetString();
                 }
                 catch (JsonException) { /* 非法请求不获得菜单准入，交由拒绝路径返回。 */ }
                 finally { context.Request.Body.Position = 0; }

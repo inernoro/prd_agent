@@ -368,6 +368,7 @@ public static class DataSyncScope
     /// </summary>
     public static readonly IReadOnlyDictionary<string, string> Excluded = new Dictionary<string, string>
     {
+        ["product_permission_configurations"] = "产品管理权限覆盖快照：绑定本站账号及权限边界，跨实例复制会意外覆盖目标站授权；由目标站MAP管理员单独导入确认",
         ["account_data_transfers"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["active_task_absorb_preferences"] = "个人偏好（吸取建议时上次引用了哪几个知识库）：那几个知识库 Id 在目标站根本不存在，复制过去只会让人对着一堆空引用发愣",
         ["active_task_debts"] = "仓库派生数据：正文来自 doc/debt.*.md，目标站自己跑一次同步脚本就有，不需要搬。而且它的 Key 是业务唯一索引、_id 是随机 GUID —— 两个站各自同步过同一份台账时 Key 相同 _id 不同，同步引擎只按 _id 对账、撞业务唯一索引会中止整轮（见 DataSyncApply.IsIdCollision 的注释），搬它等于让跨实例同步在第一条共享债务上失败。归属与状态本就是各站自己的事实（设计上的 SSOT 划分），复制过去只会制造两本账",
