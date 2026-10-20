@@ -234,6 +234,9 @@ public class HostedSiteService : IHostedSiteService
     public byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html") =>
         RewritePublishedEntryHtml(htmlBytes, entryFile);
 
+    public byte[] PrepareTrustedPresentationHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html") =>
+        RewritePublishedEntryHtml(htmlBytes, entryFile, bridgeOnly: true);
+
     public async Task<HostedSite> CreateFromHtmlIdempotentAsync(
         string userId,
         byte[] htmlBytes,
@@ -4612,6 +4615,9 @@ public class HostedSiteService : IHostedSiteService
     internal static byte[] RewritePublishedEntryHtml(byte[] htmlBytes, string entryFile) =>
         InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, entryFile));
 
+    internal static byte[] RewritePublishedEntryHtml(byte[] htmlBytes, string entryFile, bool bridgeOnly) =>
+        InjectSlideNavCompat(RewriteAbsolutePathsInHtml(htmlBytes, entryFile), bridgeOnly);
+
     // ─────────────────────────────────────────────
     // 幻灯片翻页方向兼容垫片
     // ─────────────────────────────────────────────
@@ -4629,6 +4635,7 @@ public class HostedSiteService : IHostedSiteService
     // 注入块起始标记。注入块形如 {marker}<script>...</script>，剥离时从 marker 找到其后
     // 第一个 </script> 一并删除，因此升级垫片版本时旧块会被整体替换而非被「幂等跳过」。
     private const string SlideNavMarker = "<!--map-slide-nav-compat-->";
+    private const string SlideNavBridgeOnlyMarker = "<!--map-slide-nav-bridge-only-->";
 
     /// <summary>
     /// 给幻灯片类 HTML 注入翻页方向兼容垫片，让只认左右方向键的 PPT 导出页也能用
@@ -4685,9 +4692,14 @@ public class HostedSiteService : IHostedSiteService
         return SlideDeckSignatures.Any(re => re.IsMatch(head));
     }
 
-    private static byte[] InjectSlideNavCompat(byte[] htmlBytes)
+    private static byte[] InjectSlideNavCompat(byte[] htmlBytes, bool bridgeOnly = false)
     {
         var html = System.Text.Encoding.UTF8.GetString(htmlBytes);
+
+        // 可信 OpenDesign 演示稿已经浏览器质检证明自带导航。托管层只保留父窗口桥接，
+        // 不再叠加角落邀请条或键盘接管。标记随注入块一起移除，但先记住其语义，
+        // 保证后续走普通二参规范化时仍不会恢复第二套 UI。
+        bridgeOnly = bridgeOnly || html.Contains(SlideNavBridgeOnlyMarker, StringComparison.Ordinal);
 
         // 没有任何 HTML 结构信号（既无 </body> 也无 </html> 也无 <html）的内容不处理，
         // 避免把脚本塞进纯文本/JSON 等被误判为 text/html 的文件。
@@ -4715,10 +4727,11 @@ public class HostedSiteService : IHostedSiteService
         // 2) 插入当前版本注入块（剥离后重新定位锚点）
         var bodyIdx = html.LastIndexOf("</body>", StringComparison.OrdinalIgnoreCase);
         var htmlIdx = html.LastIndexOf("</html>", StringComparison.OrdinalIgnoreCase);
+        var compatScript = bridgeOnly ? SlideNavBridgeOnlyCompatScript : SlideNavCompatScript;
         string injected = bodyIdx >= 0
-            ? html[..bodyIdx] + SlideNavCompatScript + html[bodyIdx..]
-            : (htmlIdx >= 0 ? html[..htmlIdx] + SlideNavCompatScript + html[htmlIdx..]
-                            : html + SlideNavCompatScript);
+            ? html[..bodyIdx] + compatScript + html[bodyIdx..]
+            : (htmlIdx >= 0 ? html[..htmlIdx] + compatScript + html[htmlIdx..]
+                            : html + compatScript);
 
         return System.Text.Encoding.UTF8.GetBytes(injected);
     }
@@ -4773,6 +4786,16 @@ public class HostedSiteService : IHostedSiteService
     }
 
     // 注入的运行时脚本：自包含 IIFE，全部用单引号避免 C# verbatim 字符串的双引号转义。
+    private static readonly string SlideNavBridgeOnlyCompatScript = SlideNavCompatScript
+        .Replace(
+            SlideNavMarker,
+            SlideNavMarker + SlideNavBridgeOnlyMarker,
+            StringComparison.Ordinal)
+        .Replace(
+            "  function decide(){\n    if (decided) return;",
+            "  function decide(){\n    if (decided) return;\n    decided = true; driver = resolveDriver(); return;",
+            StringComparison.Ordinal);
+
     private const string SlideNavCompatScript = SlideNavMarker + @"<script>
 (function(){
   if (window.__mapSlideNavCompat) return;

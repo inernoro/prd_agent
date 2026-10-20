@@ -466,6 +466,7 @@ public sealed class OpenDesignServiceArtifactExecutor : IDesignArtifactExecutor,
                 ["baseRevision"] = workspace.BaseRevision,
                 ["maxInputBytes"] = workspace.MaxInputBytes,
                 ["maxOutputBytes"] = workspace.MaxOutputBytes,
+                ["maxPublicOutputBytes"] = workspace.MaxPublicOutputBytes ?? workspace.MaxOutputBytes,
                 ["allowedOutputPaths"] = new JsonArray(workspace.AllowedOutputPaths.Select(path => (JsonNode?)path).ToArray()),
                 // previewUrl 不传：服务按 resultCommitUrl 推导出同源的 /workspace/preview，与经 CDS 时一致。
             },

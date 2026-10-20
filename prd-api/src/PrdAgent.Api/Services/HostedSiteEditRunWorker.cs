@@ -337,6 +337,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             {
                 if (verifiedFiles == null)
                     throw new InvalidOperationException("OpenDesign 没有提交受信产物文件包，请重新生成");
+                if (run.Operation != DesignArtifactOperations.Edit
+                    || run.ArtifactType == DesignArtifactTypes.HtmlPpt)
+                {
+                    verifiedFiles = PrepareWorkspaceFilesForHosting(
+                        sites,
+                        verifiedFiles,
+                        html,
+                        trustedPresentation: run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                                             && run.Runtime == DesignArtifactRuntimes.OpenDesign
+                                             && browserQuality?.FinalHardPassed == true);
+                    html = Encoding.UTF8.GetString(Convert.FromBase64String(
+                        verifiedFiles.Single(file => file.Path == "index.html").ContentBase64));
+                }
                 await publicLifecycle.CommitManifestAsync(
                     run.Id,
                     verifiedFiles,
@@ -1422,11 +1435,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     internal static IReadOnlyList<HostedSiteVerifiedFile> PrepareVerifiedHostedSiteFiles(
         IHostedSiteService sites,
         IReadOnlyList<DesignWorkspaceFile> files,
-        string hardenedHtml)
+        string hardenedHtml,
+        bool trustedPresentation = false)
     {
         var verified = BuildVerifiedHostedSiteFiles(files, hardenedHtml).ToArray();
         var entryIndex = Array.FindIndex(verified, file => file.Path == "index.html");
-        var prepared = sites.PrepareHtmlForHosting(verified[entryIndex].Content, "index.html");
+        var prepared = trustedPresentation
+            ? sites.PrepareTrustedPresentationHtmlForHosting(verified[entryIndex].Content, "index.html")
+            : sites.PrepareHtmlForHosting(verified[entryIndex].Content, "index.html");
         verified[entryIndex] = new HostedSiteVerifiedFile(
             "index.html",
             prepared,
@@ -1434,6 +1450,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             "text/html");
         return verified;
     }
+
+    internal static IReadOnlyList<DesignWorkspaceFile> PrepareWorkspaceFilesForHosting(
+        IHostedSiteService sites,
+        IReadOnlyList<DesignWorkspaceFile> files,
+        string hardenedHtml,
+        bool trustedPresentation = false) =>
+        PrepareVerifiedHostedSiteFiles(sites, files, hardenedHtml, trustedPresentation)
+            .Select(file => new DesignWorkspaceFile(
+                file.Path,
+                Convert.ToBase64String(file.Content),
+                file.Sha256,
+                file.Content.LongLength,
+                file.MimeType))
+            .ToArray();
 
     internal static string HardenExecutorOutput(
         string rawHtml,

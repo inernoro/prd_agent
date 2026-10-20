@@ -38,6 +38,13 @@ public sealed class DesignArtifactPresentationInput
     /// <summary>用户在隔离编辑器里形成的非可信 HTML 提案；只能作为 OpenDesign edit 输入，不能直接发布。</summary>
     public string? ManualEditHtml { get; set; }
     public string? ManualEditHtmlHash { get; set; }
+
+    /// <summary>
+    /// 质量失败任务最后一份经服务器接收的只读候选。它只允许在 presentation-only restart 中作为
+    /// OpenDesign 的非最终起点；不能充当父稿、成功产物、发布版本或手动编辑提案。
+    /// </summary>
+    public string? RepairCandidateHtml { get; set; }
+    public string? RepairCandidateHtmlHash { get; set; }
 }
 
 /// <summary>
@@ -186,6 +193,16 @@ public class DesignArtifactRun
     /// <summary>HTML PPT 专用冻结输入；网页任务和历史任务保持 null。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactPresentationInput? PresentationInput { get; set; }
+
+    /// <summary>
+    /// 服务端认领过的 PPT 任务预算身份。仅受信 grant 服务写入；一旦存在，父链或来源追溯失败
+    /// 也必须拒绝发送，不能静默退回无保护的普通 grant。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? RuntimeBudgetScopeId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? PptCompletionId { get; set; }
 
     public string? TargetSiteId { get; set; }
 

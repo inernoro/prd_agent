@@ -395,7 +395,9 @@ public class MdToPptSourcePlanTests
         Assert.Contains("\"brief/source-plan.json\"", broker);
         Assert.Contains("requiredSlideIndexes = Enumerable.Range(1, run.PresentationInput.TargetPages)", broker);
         Assert.Contains("\"proposal/manual-edit.html\"", broker);
-        Assert.Contains("PresentationInput = source.PresentationInput", designArtifactsController);
+        Assert.Contains("PresentationInput = ClonePresentationInput(source.PresentationInput)", designArtifactsController);
+        Assert.Contains("RepairCandidateHtml = source.RepairCandidateHtml", designArtifactsController);
+        Assert.Contains("RepairCandidateHtmlHash = source.RepairCandidateHtmlHash", designArtifactsController);
     }
 
     [Theory]

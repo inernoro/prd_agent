@@ -39,6 +39,8 @@ export interface OutputPreflightInput {
   allowedOutputPaths: readonly string[];
   inputFiles: ReadonlyArray<{ path: string; sha256: string; size: number }>;
   maxOutputBytes: number;
+  /** 原始公开文件总量上限；旧调用方省略时沿用历史 maxOutputBytes。 */
+  maxPublicOutputBytes?: number;
 }
 
 /** 以不跟随符号链接的方式读一个普通文件；读到的不是普通文件就抛。 */
@@ -93,7 +95,9 @@ function runPreflight(input: OutputPreflightInput): void {
         fileCount += 1;
         totalBytes += stat.size;
         if (fileCount > MAX_OUTPUT_FILE_COUNT) throw new PreflightFailure('file_count');
-        if (totalBytes > input.maxOutputBytes) throw new PreflightFailure('total_bytes');
+        if (totalBytes > (input.maxPublicOutputBytes ?? input.maxOutputBytes)) {
+          throw new PreflightFailure('total_bytes');
+        }
         const target = path.join(input.outputDir, ...relative.split('/'));
         const targetRelative = path.relative(input.outputDir, target);
         if (targetRelative.startsWith('..') || path.isAbsolute(targetRelative)) throw new PreflightFailure('path_not_allowed', relative);

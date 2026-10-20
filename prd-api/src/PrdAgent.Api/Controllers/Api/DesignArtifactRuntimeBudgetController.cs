@@ -1,10 +1,12 @@
 using System.Security.Cryptography;
+using System.Reflection;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Core.Diagnostics;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Infrastructure.Database;
 
@@ -27,6 +29,13 @@ public sealed class DesignArtifactRuntimeBudgetController(
         var ownerId = this.GetRequiredUserId();
         var error = Validate(request);
         if (error is not null) return BadRequest(new { code = "task_budget_policy_invalid", error });
+        var actualCommit = ActualRuntimeCommit();
+        if (BuildIdentity.Compare(actualCommit, request.PptCompletion!.CandidateCommit) != BuildIdentity.MatchState.Match)
+            return Conflict(new
+            {
+                code = "task_budget_candidate_commit_mismatch",
+                error = "额度合同候选版本与当前受信服务二进制不一致，未激活任务",
+            });
         var tenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } configured
             ? configured
             : GatewayTenantDefaults.InternalTenantId;
@@ -69,6 +78,7 @@ public sealed class DesignArtifactRuntimeBudgetController(
             CreatedAt = now,
             UpdatedAt = now,
         };
+        record.PptCompletion = BuildCompletion(record, request, now);
         try { await scopes.InsertOneAsync(record, cancellationToken: ct); }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
@@ -125,8 +135,7 @@ public sealed class DesignArtifactRuntimeBudgetController(
         DateTime now,
         CancellationToken ct)
     {
-        var closed = await scopes.FindOneAndUpdateAsync(
-            Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+        var common = Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.Id, scopeId),
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.UserId, ownerId),
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.Status, "active"),
@@ -134,7 +143,28 @@ public sealed class DesignArtifactRuntimeBudgetController(
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Not(
                     Builders<GatewayRuntimeBudgetScopeRecord>.Filter.ElemMatch(
                         item => item.Reservations,
-                        reservation => reservation.Status == "reserved"))),
+                        reservation => reservation.Status == "reserved")));
+        var closed = await scopes.FindOneAndUpdateAsync(
+            Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+                common,
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne(item => item.PptCompletion, null)),
+            Builders<GatewayRuntimeBudgetScopeRecord>.Update
+                .Set(item => item.Status, "closed")
+                .Set(item => item.ClosedAt, now)
+                .Set(item => item.ClosedByUserId, ownerId)
+                .Set("PptCompletion.FutureHeldUsd", 0m)
+                .Set("PptCompletion.Status", GatewayPptCompletionStatuses.Closed)
+                .Set(item => item.UpdatedAt, now),
+            new FindOneAndUpdateOptions<GatewayRuntimeBudgetScopeRecord> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (closed is not null) return closed;
+
+        // 历史 scope 没有 Completion 子文档；不能对显式 null 父字段写子路径，否则 Mongo 会报
+        // Cannot create field。旧记录只关闭外层 scope，既有已花与未知用量原样保留。
+        return await scopes.FindOneAndUpdateAsync(
+            Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+                common,
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.PptCompletion, null)),
             Builders<GatewayRuntimeBudgetScopeRecord>.Update
                 .Set(item => item.Status, "closed")
                 .Set(item => item.ClosedAt, now)
@@ -142,13 +172,19 @@ public sealed class DesignArtifactRuntimeBudgetController(
                 .Set(item => item.UpdatedAt, now),
             new FindOneAndUpdateOptions<GatewayRuntimeBudgetScopeRecord> { ReturnDocument = ReturnDocument.After },
             ct);
-        return closed;
     }
 
     private bool IsAiSuper() => string.Equals(
         User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value,
         "1",
         StringComparison.Ordinal);
+
+    internal static string? ActualRuntimeCommit()
+    {
+        var informationalVersion = typeof(DesignArtifactRuntimeBudgetController).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        return BuildIdentity.ParseBakedCommit(informationalVersion);
+    }
 
     internal static string? Validate(ActivateDesignArtifactRuntimeBudgetRequest request)
     {
@@ -170,6 +206,36 @@ public sealed class DesignArtifactRuntimeBudgetController(
             || !BoundedRoute(request.ExpectedModel, 128)) return "任务物理路由无效";
         var expiry = request.ExpiresAt.ToUniversalTime();
         if (expiry <= DateTime.UtcNow.AddMinutes(5) || expiry > DateTime.UtcNow.AddDays(7)) return "任务预算有效期无效";
+        if (request.PptCompletion is null) return "PPT 完成阶段预算合同不能为空";
+        if (!Hex(request.PptCompletion.CandidateCommit, 40)) return "候选提交标识无效";
+        if (!ValidStage(request.PptCompletion.GenerationAndRepairs, request.MaxOutputTokens)
+            || !ValidStage(request.PptCompletion.ManualSave, request.MaxOutputTokens))
+            return "PPT 完成阶段上限无效";
+        if (request.PptCompletion.TailHeldUsd < 0
+            || request.PptCompletion.TailHeldUsd > request.AuthorizedLimitUsd)
+            return "PPT 尾部预留无效";
+        try
+        {
+            var policy = PolicyShell(request);
+            var generationUpper = GatewayPptCompletionBudgetMath.PerCallUpper(
+                policy,
+                request.PptCompletion.GenerationAndRepairs.MaxBodyUtf8Bytes,
+                request.PptCompletion.GenerationAndRepairs.MaxOutputTokens);
+            var manualUpper = GatewayPptCompletionBudgetMath.PerCallUpper(
+                policy,
+                request.PptCompletion.ManualSave.MaxBodyUtf8Bytes,
+                request.PptCompletion.ManualSave.MaxOutputTokens);
+            var envelope = checked(
+                request.PptCompletion.GenerationAndRepairs.MaxPhysicalCalls * generationUpper
+                + request.PptCompletion.ManualSave.MaxPhysicalCalls * manualUpper
+                + request.PptCompletion.TailHeldUsd);
+            if (request.ImmutableCarryUsd + envelope > request.AuthorizedLimitUsd)
+                return "PPT 完成阶段联合包络超过授权总额";
+        }
+        catch (OverflowException)
+        {
+            return "PPT 完成阶段联合包络无效";
+        }
         return null;
     }
 
@@ -188,7 +254,12 @@ public sealed class DesignArtifactRuntimeBudgetController(
            && string.Equals(existing.SourcePlanHash, request.SourcePlanHash.Trim(), StringComparison.OrdinalIgnoreCase)
            && string.Equals(existing.ExpectedLogicalModelPublicId, request.ExpectedLogicalModelPublicId.Trim(), StringComparison.OrdinalIgnoreCase)
            && string.Equals(existing.ExpectedProvider, request.ExpectedProvider.Trim(), StringComparison.OrdinalIgnoreCase)
-           && string.Equals(existing.ExpectedModel, request.ExpectedModel.Trim(), StringComparison.OrdinalIgnoreCase);
+           && string.Equals(existing.ExpectedModel, request.ExpectedModel.Trim(), StringComparison.OrdinalIgnoreCase)
+           && existing.PptCompletion is not null
+           && string.Equals(
+               existing.PptCompletion.ContractHash,
+               BuildCompletion(PolicyShell(request), request, existing.CreatedAt).ContractHash,
+               StringComparison.Ordinal);
 
     private static object Receipt(GatewayRuntimeBudgetScopeRecord scope) => new
     {
@@ -199,8 +270,11 @@ public sealed class DesignArtifactRuntimeBudgetController(
         immutableCarryUsd = scope.ImmutableCarryUsd,
         spentUsd = scope.SpentUsd,
         reservedUsd = scope.ReservedUsd,
+        futureHeldUsd = scope.PptCompletion?.FutureHeldUsd ?? 0m,
         authorizedLimitUsd = scope.AuthorizedLimitUsd,
-        remainingUsd = Math.Max(0m, scope.AuthorizedLimitUsd - scope.SpentUsd - scope.ReservedUsd),
+        remainingUsd = Math.Max(
+            0m,
+            scope.AuthorizedLimitUsd - scope.SpentUsd - scope.ReservedUsd - (scope.PptCompletion?.FutureHeldUsd ?? 0m)),
         maxOutputTokens = scope.MaxOutputTokens,
         pricing = new
         {
@@ -216,6 +290,23 @@ public sealed class DesignArtifactRuntimeBudgetController(
         expectedModel = scope.ExpectedModel,
         requestCount = scope.Reservations.Count,
         inFlightCount = scope.Reservations.Count(item => item.Status == "reserved"),
+        pptCompletion = scope.PptCompletion is null ? null : new
+        {
+            completionId = scope.PptCompletion.Id,
+            contractHash = scope.PptCompletion.ContractHash,
+            candidateCommit = scope.PptCompletion.CandidateCommit,
+            rootOutlineRunId = scope.PptCompletion.RootOutlineRunId,
+            generationRunId = scope.PptCompletion.GenerationRunId,
+            manualRunId = scope.PptCompletion.ManualRunId,
+            parentArtifactHash = scope.PptCompletion.ParentArtifactHash,
+            parentPackageHash = scope.PptCompletion.ParentPackageHash,
+            status = scope.PptCompletion.Status,
+            futureHeldUsd = scope.PptCompletion.FutureHeldUsd,
+            generationAndRepairs = StageReceipt(scope.PptCompletion.GenerationAndRepairs),
+            manualSave = StageReceipt(scope.PptCompletion.ManualSave),
+            tailHeldUsd = scope.PptCompletion.TailHeldUsd,
+            expiresAt = scope.PptCompletion.ExpiresAt,
+        },
         expiresAt = scope.ExpiresAt,
         closedAt = scope.ClosedAt,
     };
@@ -226,6 +317,89 @@ public sealed class DesignArtifactRuntimeBudgetController(
 
     private static bool BoundedRoute(string? value, int max)
         => !string.IsNullOrWhiteSpace(value) && value.Trim().Length <= max;
+
+    private static bool Hex(string? value, int length)
+        => value?.Trim().Length == length && value.Trim().All(Uri.IsHexDigit);
+
+    private static bool ValidStage(ActivatePptCompletionStageBudgetRequest stage, int scopeOutputCap)
+        => stage.MaxPhysicalCalls is > 0 and <= 256
+           && stage.MaxBodyUtf8Bytes is > 0 and <= 16_777_216
+           && stage.MaxOutputTokens is > 0
+           && stage.MaxOutputTokens <= scopeOutputCap;
+
+    private static GatewayRuntimeBudgetScopeRecord PolicyShell(ActivateDesignArtifactRuntimeBudgetRequest request)
+        => new()
+        {
+            InputUsdPerMillion = request.InputUsdPerMillion,
+            OutputUsdPerMillion = request.OutputUsdPerMillion,
+            LongContextThresholdTokens = request.LongContextThresholdTokens,
+            LongContextInputUsdPerMillion = request.LongContextInputUsdPerMillion,
+            LongContextOutputUsdPerMillion = request.LongContextOutputUsdPerMillion,
+            InputByteTokenMultiplier = 1,
+        };
+
+    private static GatewayPptCompletionBudgetRecord BuildCompletion(
+        GatewayRuntimeBudgetScopeRecord scope,
+        ActivateDesignArtifactRuntimeBudgetRequest request,
+        DateTime createdAt)
+    {
+        var input = request.PptCompletion!;
+        var generationUpper = GatewayPptCompletionBudgetMath.PerCallUpper(
+            scope, input.GenerationAndRepairs.MaxBodyUtf8Bytes, input.GenerationAndRepairs.MaxOutputTokens);
+        var manualUpper = GatewayPptCompletionBudgetMath.PerCallUpper(
+            scope, input.ManualSave.MaxBodyUtf8Bytes, input.ManualSave.MaxOutputTokens);
+        var generation = new GatewayPptCompletionStageBudgetRecord
+        {
+            MaxPhysicalCalls = input.GenerationAndRepairs.MaxPhysicalCalls,
+            MaxBodyUtf8Bytes = input.GenerationAndRepairs.MaxBodyUtf8Bytes,
+            MaxOutputTokens = input.GenerationAndRepairs.MaxOutputTokens,
+            PerCallUpperUsd = generationUpper,
+        };
+        var manual = new GatewayPptCompletionStageBudgetRecord
+        {
+            MaxPhysicalCalls = input.ManualSave.MaxPhysicalCalls,
+            MaxBodyUtf8Bytes = input.ManualSave.MaxBodyUtf8Bytes,
+            MaxOutputTokens = input.ManualSave.MaxOutputTokens,
+            PerCallUpperUsd = manualUpper,
+        };
+        var future = GatewayPptCompletionBudgetMath.FullEnvelope(generation, manual, input.TailHeldUsd);
+        var canonical = string.Join("\n", new[]
+        {
+            request.SourcePlanHash.Trim().ToLowerInvariant(), input.CandidateCommit.Trim().ToLowerInvariant(),
+            request.ExpectedLogicalModelPublicId.Trim().ToLowerInvariant(), request.ExpectedProvider.Trim().ToLowerInvariant(),
+            request.ExpectedModel.Trim().ToLowerInvariant(), request.InputUsdPerMillion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            request.OutputUsdPerMillion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            request.LongContextThresholdTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            request.LongContextInputUsdPerMillion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            request.LongContextOutputUsdPerMillion.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            generation.MaxPhysicalCalls.ToString(), generation.MaxBodyUtf8Bytes.ToString(), generation.MaxOutputTokens.ToString(),
+            manual.MaxPhysicalCalls.ToString(), manual.MaxBodyUtf8Bytes.ToString(), manual.MaxOutputTokens.ToString(),
+            input.TailHeldUsd.ToString(System.Globalization.CultureInfo.InvariantCulture), request.ExpiresAt.ToUniversalTime().ToString("O"),
+        });
+        var contractHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical))).ToLowerInvariant();
+        return new GatewayPptCompletionBudgetRecord
+        {
+            Id = "pptc_" + contractHash[..32],
+            ContractHash = contractHash,
+            CandidateCommit = input.CandidateCommit.Trim().ToLowerInvariant(),
+            StableSourceHash = request.SourcePlanHash.Trim().ToLowerInvariant(),
+            Status = GatewayPptCompletionStatuses.Pending,
+            FutureHeldUsd = future,
+            GenerationAndRepairs = generation,
+            ManualSave = manual,
+            TailHeldUsd = input.TailHeldUsd,
+            ExpiresAt = request.ExpiresAt.ToUniversalTime(),
+        };
+    }
+
+    private static object StageReceipt(GatewayPptCompletionStageBudgetRecord stage) => new
+    {
+        maxPhysicalCalls = stage.MaxPhysicalCalls,
+        usedPhysicalCalls = stage.UsedPhysicalCalls,
+        maxBodyUtf8Bytes = stage.MaxBodyUtf8Bytes,
+        maxOutputTokens = stage.MaxOutputTokens,
+        perCallUpperUsd = stage.PerCallUpperUsd,
+    };
 }
 
 public sealed class ActivateDesignArtifactRuntimeBudgetRequest
@@ -243,4 +417,20 @@ public sealed class ActivateDesignArtifactRuntimeBudgetRequest
     public string ExpectedProvider { get; set; } = string.Empty;
     public string ExpectedModel { get; set; } = string.Empty;
     public DateTime ExpiresAt { get; set; }
+    public ActivatePptCompletionBudgetRequest? PptCompletion { get; set; }
+}
+
+public sealed class ActivatePptCompletionBudgetRequest
+{
+    public string CandidateCommit { get; set; } = string.Empty;
+    public ActivatePptCompletionStageBudgetRequest GenerationAndRepairs { get; set; } = new();
+    public ActivatePptCompletionStageBudgetRequest ManualSave { get; set; } = new();
+    public decimal TailHeldUsd { get; set; }
+}
+
+public sealed class ActivatePptCompletionStageBudgetRequest
+{
+    public int MaxPhysicalCalls { get; set; }
+    public long MaxBodyUtf8Bytes { get; set; }
+    public int MaxOutputTokens { get; set; }
 }

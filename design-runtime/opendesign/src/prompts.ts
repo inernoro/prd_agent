@@ -104,6 +104,7 @@ export interface PresentationContract {
   theme: string;
   requiredSlideIndexes: number[];
   sourcePlan?: { path: string; contentHash: string };
+  repairCandidate?: { path: string; contentHash: string };
 }
 
 /**
@@ -212,6 +213,18 @@ export function parsePresentationContract(value: unknown): PresentationContract 
     }
     sourcePlan = { path: plan.path, contentHash: plan.contentHash };
   }
+  let repairCandidate: PresentationContract['repairCandidate'];
+  if (record.repairCandidate !== undefined) {
+    if (!record.repairCandidate || typeof record.repairCandidate !== 'object' || Array.isArray(record.repairCandidate)) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json presentationContract repairCandidate is invalid');
+    }
+    const candidate = record.repairCandidate as Record<string, unknown>;
+    if (candidate.path !== 'candidate/index.html' || typeof candidate.contentHash !== 'string'
+        || !/^[a-f0-9]{64}$/.test(candidate.contentHash)) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json presentationContract repairCandidate is invalid');
+    }
+    repairCandidate = { path: candidate.path, contentHash: candidate.contentHash };
+  }
   return {
     targetPages,
     sourceContentHash: digest('sourceContentHash'),
@@ -219,6 +232,7 @@ export function parsePresentationContract(value: unknown): PresentationContract 
     theme: typeof record.theme === 'string' ? record.theme.slice(0, 120) : '',
     requiredSlideIndexes: indexes as number[],
     sourcePlan,
+    repairCandidate,
   };
 }
 
@@ -403,7 +417,9 @@ export function buildPlatformRules(input: {
       'At 390px, prefer a readable vertical layout with natural scrolling when content needs more height. Never scale a desktop canvas down with transform or zoom to make it fit; effective rendered body text must remain at least 12px and fixed controls must not cover slide content.',
       'Treat the outline and source document as factual constraints. Preserve the subject of every percentage, threshold, date, example, and qualifier. Examples describe possibilities and must never be rewritten as mandatory policy. Do not invent facts or silently omit a frozen outline page.',
       presentation.sourcePlan
-        ? 'The server-owned source plan in /workspace/brief/source-plan.json assigns immutable source block IDs to slides. MAP has already derived /workspace/index.html as a non-final source scaffold containing every assigned block exactly once with its frozen visible content. Redesign that file in place: preserve every data-mdppt-source element, exact source body, assigned slide, and ordinary slide title while building a complete varied visual composition around them. Reuse the existing elements and IDs; do not spend the run retyping long source IDs or reproducing source text. Apply one coherent styling and navigation system across the complete file, then make only evidence-driven page corrections. Never replace it with a blank page, hide or duplicate a source slot, or treat the scaffold as a finished template; the runtime revalidates and rematerializes the frozen source before preview and every quality gate.'
+        ? presentation.repairCandidate
+          ? 'MAP restored /workspace/index.html from the same task\'s server-retained failed preview after verifying its frozen source contract. Treat it only as a non-final repair candidate: keep every data-mdppt-source element, exact source body, assigned slide, and ordinary slide title, then repair the proven layout and quality defects in place. Reuse the existing structure and assets; do not restart from a blank page, retype long source IDs, hide or duplicate source slots, or treat the retained preview as publishable. The runtime rematerializes the frozen source and reruns every deterministic, browser, package, and publication gate.'
+          : 'The server-owned source plan in /workspace/brief/source-plan.json assigns immutable source block IDs to slides. MAP has already derived /workspace/index.html as a non-final source scaffold containing every assigned block exactly once with its frozen visible content. Redesign that file in place: preserve every data-mdppt-source element, exact source body, assigned slide, and ordinary slide title while building a complete varied visual composition around them. Reuse the existing elements and IDs; do not spend the run retyping long source IDs or reproducing source text. Apply one coherent styling and navigation system across the complete file, then make only evidence-driven page corrections. Never replace it with a blank page, hide or duplicate a source slot, or treat the scaffold as a finished template; the runtime revalidates and rematerializes the frozen source before preview and every quality gate.'
         : 'No server source-slot plan is present; preserve the frozen source document without inventing or omitting facts.',
       'Use OpenDesign design-system resources for hierarchy, type, spacing, color, and motion. Pages must vary by content purpose while remaining one coherent deck. Do not reuse one narrow card layout for every slide and do not shrink text to hide overflow.',
       'All generated interaction code is presentation-local. It must not read cookies, localStorage, sessionStorage, parent-window state, MAP access tokens, or same-origin application APIs. It may only operate on this artifact DOM and its packaged relative assets.',

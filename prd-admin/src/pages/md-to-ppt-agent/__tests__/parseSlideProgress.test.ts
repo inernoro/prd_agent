@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   buildDeckPreviewPageDocs,
+  buildPptRepairIdempotencyKey,
   buildLiveSlideDoc,
   countDeckPages,
   estimatePages,
@@ -18,6 +22,8 @@ import {
   PptRuntimeLivePreview,
   PptRuntimeProgressHeader,
   isPreviewableDeck,
+  isRestartablePresentationQualityRun,
+  MdToPptAgentPage,
   resolveOutlineTargetPages,
   resolveNaturalPatchSlideIndex,
   recoverPatchParentRun,
@@ -26,6 +32,7 @@ import {
 } from '../MdToPptAgentPage';
 import { NextStepBar } from '../NextStepBar';
 import type { MdToPptRunDetail } from '@/services/real/mdToPptService';
+import { useAuthStore } from '@/stores/authStore';
 
 // 守护「生成等待面板逐页点亮」：从流式 HTML 里解析已闭合 <section> 的页标题，
 // 以及是否有正在绘制（已开口未闭合）的页。
@@ -307,6 +314,193 @@ describe('OpenDesign 运行态可见信息', () => {
   it('乱序阶段事件不会让累计调用次数回退', () => {
     const observed = [1, 18, 33, 20];
     expect(observed.reduce(mergeRuntimeModelCallCount, 0)).toBe(33);
+  });
+});
+
+describe('失败演示稿继续打磨', () => {
+  const qualityFailure = {
+    id: 'quality-failed-run',
+    status: 'error',
+    op: 'convert',
+    errorCode: 'design_browser_quality_rejected',
+    latestPreviewHtml: '<!doctype html><html><body><div class="reveal"><div class="slides"><section><h1>只读初稿</h1></section></div></div></body></html>',
+  } as MdToPptRunDetail & { errorCode: string };
+
+  it('只允许带冻结初稿的确定性质量失败进入权威 restart', () => {
+    expect(isRestartablePresentationQualityRun(qualityFailure)).toBe(true);
+    expect(isRestartablePresentationQualityRun({ ...qualityFailure, errorCode: 'task_failed' })).toBe(false);
+    expect(isRestartablePresentationQualityRun({ ...qualityFailure, latestPreviewHtml: '' })).toBe(false);
+    expect(isRestartablePresentationQualityRun({ ...qualityFailure, status: 'done' })).toBe(false);
+  });
+
+  it('继续打磨调用既有 restart 并轮询新 run，失败初稿不提前开放写操作', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
+    const handlerStart = source.indexOf('const handleContinuePolishing = useCallback');
+    const handlerEnd = source.indexOf('const handleRegenerateDeck = useCallback', handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+    expect(handlerStart).toBeGreaterThan(0);
+    expect(handler).toContain('restartDesignArtifactRun(sourceRunId, idempotencyKey)');
+    expect(handler).toContain('getMdToPptRun(restartedRunId)');
+    expect(handler).toContain("setArtifactPhase('generating')");
+    expect(handler).toContain("setArtifactPhase('done')");
+    expect(handler).toContain('isRestartablePresentationQualityRun(run)');
+    expect(handler).not.toContain('publishMdToPpt');
+    expect(source).toContain('data-testid="continue-polishing"');
+    expect(source).toContain("disabled={isStreaming || artifactPhase !== 'done'}");
+    expect(source).toContain('const canPublish = artifactPhase === \'done\' && Boolean(activeRunId)');
+  });
+
+  it('真实页面经 service 与 apiRequest 重挂载仍复用同一幂等键，并轮询新 run 到完成后才解锁', async () => {
+    vi.useFakeTimers();
+    const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+    const originalFetch = globalThis.fetch;
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = vi.fn();
+    const previousAuth = useAuthStore.getState();
+    useAuthStore.setState({ token: 'local-fixture-token', isAuthenticated: true });
+    sessionStorage.clear();
+    sessionStorage.setItem('md-to-ppt-chat-v1', JSON.stringify({
+      messages: [],
+      activeRunId: qualityFailure.id,
+      activeKnowledgeRefs: [],
+      pendingKbRefs: [],
+      launchImported: false,
+      theme: 'tech-dark',
+      templateId: null,
+      outlineDraft: null,
+    }));
+
+    const requests: Array<{ url: string; method: string; body: string }> = [];
+    let restartAttempts = 0;
+    let retryPolls = 0;
+    const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+    const failedRun = {
+      ...qualityFailure,
+      engine: 'openai',
+      runtime: 'open-design',
+      title: '失败初稿',
+      contentPreview: '',
+      html: '',
+      error: '发布前质量检查未通过',
+      progress: 82,
+      phaseMessage: '质量检查未通过',
+      runtimeModelCallCount: 14,
+      createdAt: '2026-10-21T00:00:00Z',
+      updatedAt: '2026-10-21T00:01:00Z',
+    };
+    const completedHtml = '<!doctype html><html><body><div class="reveal"><div class="slides"><section><h1>打磨完成</h1><p>完整正文</p></section></div></div></body></html>';
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = typeof init?.body === 'string' ? init.body : '';
+      requests.push({ url, method, body });
+      if (url.endsWith('/api/md-to-ppt/templates'))
+        return json({ success: true, data: [], error: null });
+      if (url.endsWith(`/api/md-to-ppt/runs/${qualityFailure.id}`))
+        return json({ success: true, data: failedRun, error: null });
+      if (url.endsWith(`/api/design-artifacts/runs/${qualityFailure.id}/restart`) && method === 'POST') {
+        restartAttempts += 1;
+        if (restartAttempts === 1)
+          return json({ success: false, data: null, error: { code: 'SERVER_UNAVAILABLE', message: '响应中断' } }, 503);
+        return json({ success: true, data: { runId: 'repair-run-1', status: 'queued' }, error: null });
+      }
+      if (url.endsWith('/api/md-to-ppt/runs/repair-run-1')) {
+        retryPolls += 1;
+        if (retryPolls === 1) {
+          return json({ success: true, data: {
+            id: 'repair-run-1', status: 'running', op: 'convert', engine: 'openai', runtime: 'open-design',
+            title: '继续打磨', contentPreview: '', html: '', progress: 45, phaseMessage: '正在设计',
+            runtimeModelCallCount: 1, createdAt: '2026-10-21T00:02:00Z', updatedAt: '2026-10-21T00:02:10Z',
+          }, error: null });
+        }
+        return json({ success: true, data: {
+          id: 'repair-run-1', status: 'done', op: 'convert', engine: 'openai', runtime: 'open-design',
+          title: '继续打磨', contentPreview: '', html: completedHtml, progress: 100, phaseMessage: '已完成',
+          runtimeModelCallCount: 2, createdAt: '2026-10-21T00:02:00Z', updatedAt: '2026-10-21T00:03:00Z',
+        }, error: null });
+      }
+      throw new Error(`unexpected fixture request: ${method} ${url}`);
+    }) as typeof fetch;
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let root: Root | undefined;
+    const flush = async () => {
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    };
+    const mount = async () => {
+      root = createRoot(host);
+      await act(async () => {
+        root?.render(createElement(MemoryRouter, { initialEntries: ['/md-to-ppt-agent'] }, createElement(MdToPptAgentPage)));
+      });
+      await flush();
+      await flush();
+    };
+    const clickContinue = async () => {
+      const button = host.querySelector('[data-testid="continue-polishing"]') as HTMLButtonElement | null;
+      expect(button).not.toBeNull();
+      await act(async () => button?.click());
+      await flush();
+    };
+
+    try {
+      await mount();
+      await clickContinue();
+      const firstPost = requests.find((item) => item.method === 'POST');
+      expect(firstPost?.url).toContain(`/api/design-artifacts/runs/${qualityFailure.id}/restart`);
+      expect(JSON.parse(firstPost?.body ?? '{}')).toEqual({
+        idempotencyKey: buildPptRepairIdempotencyKey(qualityFailure.id),
+      });
+      expect(host.textContent).toContain('AI服务暂时不可用');
+      expect(host.querySelector('[data-testid="continue-polishing"]')).not.toBeNull();
+
+      await act(async () => root?.unmount());
+      host.replaceChildren();
+      await mount();
+      await clickContinue();
+
+      const posts = requests.filter((item) => item.method === 'POST');
+      expect(posts).toHaveLength(2);
+      expect(JSON.parse(posts[1].body)).toEqual(JSON.parse(posts[0].body));
+      expect(host.textContent).toContain('通过全部检查前不能编辑或发布');
+      expect(host.querySelector('[data-testid="continue-polishing"]')).toBeNull();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      await flush();
+      expect(retryPolls).toBe(2);
+      expect(host.textContent).toContain('演示稿已生成');
+      const publish = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('发布为网页'));
+      const theme = [...host.querySelectorAll('button')].find((button) => button.textContent?.includes('换风格'));
+      expect(publish).toBeDefined();
+      expect((publish as HTMLButtonElement).disabled).toBe(false);
+      expect(theme).toBeDefined();
+      expect((theme as HTMLButtonElement).disabled).toBe(false);
+    } finally {
+      await act(async () => root?.unmount());
+      host.remove();
+      globalThis.fetch = originalFetch;
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+      useAuthStore.setState({
+        isAuthenticated: previousAuth.isAuthenticated,
+        user: previousAuth.user,
+        token: previousAuth.token,
+        refreshToken: previousAuth.refreshToken,
+        sessionKey: previousAuth.sessionKey,
+      });
+      sessionStorage.clear();
+      actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+      vi.useRealTimers();
+    }
   });
 });
 

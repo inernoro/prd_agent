@@ -206,6 +206,22 @@ export function materializePresentationSourcePlan(workspaceDir: string, html: st
         },
       );
     }
+    const assignedPageIndex = assignedPages.get(id);
+    const actualPageIndex = findContainingSlideIndex(materialized, slots[0].index ?? -1);
+    if (!assignedPageIndex || actualPageIndex !== assignedPageIndex) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        `Source block ${id} must remain on its assigned slide`,
+        false,
+        {
+          qualityIssueCode: 'source_slot_page_assignment_invalid',
+          sourceBlockId: id,
+          sourceBlockOrdinal: sourceBlockOffset + 1,
+          assignedPageIndex: assignedPageIndex ?? 0,
+          actualPageIndex: actualPageIndex ?? 0,
+        },
+      );
+    }
     const current = slots[0][1];
     if (current.trim() && current !== body) {
       throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `Source block ${id} was modified outside the frozen source contract`);
@@ -217,6 +233,50 @@ export function materializePresentationSourcePlan(workspaceDir: string, html: st
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'Presentation contains unknown or duplicate source slots');
   }
   return materialized;
+}
+
+function findContainingSlideIndex(html: string, offset: number): number | undefined {
+  if (offset < 0) return undefined;
+  const stack: Array<number | undefined> = [];
+  const tokenPattern = /<\/?section\b[^>]*>/gi;
+  for (const token of html.matchAll(tokenPattern)) {
+    if ((token.index ?? Number.MAX_SAFE_INTEGER) >= offset) break;
+    if (/^<\/section/i.test(token[0])) {
+      stack.pop();
+      continue;
+    }
+    const match = token[0].match(/\bdata-slide-index=["'](\d+)["']/i);
+    const index = match ? Number(match[1]) : undefined;
+    stack.push(Number.isSafeInteger(index) && Number(index) > 0 ? index : undefined);
+  }
+  return [...stack].reverse().find((value) => value !== undefined);
+}
+
+function preparePresentationRepairCandidate(workspaceDir: string): string | undefined {
+  const presentation = collectDesignTaskContext(workspaceDir).presentation;
+  const declared = presentation?.repairCandidate;
+  if (!declared) return undefined;
+  if (!presentation?.sourcePlan) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation repair candidate requires a frozen source plan');
+  }
+  const candidatePath = path.join(workspaceDir, ...declared.path.split('/'));
+  const candidateBytes = readRegularFileNoFollow(candidatePath, 1024 * 1024);
+  if (sha256(candidateBytes) !== declared.contentHash) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'candidate/index.html does not match its frozen contract');
+  }
+  const candidate = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(candidateBytes);
+  if (!candidate.trim() || candidate.includes(TEMPLATE_UNTOUCHED_MARKER)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation repair candidate is empty or still a source scaffold');
+  }
+  const externalReference = /(?:\b(?:src|href|poster|action)\s*=|\burl\s*\()\s*["']?(?!#|data:)([^"')\s>]+)/gi;
+  const match = externalReference.exec(candidate);
+  if (match) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      `presentation repair candidate is not self-contained: ${match[1].slice(0, 80)}`,
+    );
+  }
+  return materializePresentationSourcePlan(workspaceDir, candidate);
 }
 
 function traceableDeterministicQualityRejection(
@@ -466,15 +526,22 @@ export class DesignTaskExecutor {
       fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
       fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'), { mode: 0o644, flag: 'wx' });
     }
-    const sourcePlanSeed = editableSeeds.length === 0
+    const repairCandidateSeed = editableSeeds.length === 0
+      ? preparePresentationRepairCandidate(workspaceDir)
+      : undefined;
+    const sourcePlanSeed = editableSeeds.length === 0 && repairCandidateSeed === undefined
       && files.some((file) => file.path === 'brief/source-plan.json')
       ? buildPresentationSourceScaffold(workspaceDir)
       : undefined;
-    if (sourcePlanSeed !== undefined) {
-      fs.writeFileSync(path.join(workspaceDir, 'index.html'), sourcePlanSeed, { mode: 0o644, flag: 'wx' });
+    const initialIndex = repairCandidateSeed ?? sourcePlanSeed;
+    if (initialIndex !== undefined) {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), initialIndex, { mode: 0o644, flag: 'wx' });
     }
     this.chownForEngine(workspaceDir);
-    onStage('workspace_materialized', { fileCount: files.length });
+    onStage('workspace_materialized', {
+      fileCount: files.length,
+      repairCandidateRestored: repairCandidateSeed !== undefined,
+    });
     prepareWebPrototypeResources(
       {
         sourceDir: this.options.paths.webPrototypeSourceDir,
@@ -685,7 +752,7 @@ export class DesignTaskExecutor {
         if (
           designContext.presentation?.sourcePlan
           && fs.existsSync(reviewIndexPath)
-          && readRegularFileNoFollow(reviewIndexPath, transfer.maxOutputBytes).toString('utf8').includes(TEMPLATE_UNTOUCHED_MARKER)
+          && readRegularFileNoFollow(reviewIndexPath, transfer.maxPublicOutputBytes).toString('utf8').includes(TEMPLATE_UNTOUCHED_MARKER)
         ) {
           throw new AgentWorkspaceRuntimeError(
             'design_output_quality_rejected',
@@ -852,7 +919,6 @@ export class DesignTaskExecutor {
           const stableRunId = finalRunId;
           const stableOutcome = runOutcome;
           const stableDeliverableEntryFile = deliverableEntryFile;
-          const stableOutputs = collectedFiles.map((file) => ({ ...file }));
           const remainingRepairMs = budget.finalizationDeadline - Date.now();
           const allottedRepairMs = Math.min(budget.maximumQualityPassMs, remainingRepairMs);
           if (allottedRepairMs < budget.minimumQualityPassMs) {
@@ -907,7 +973,12 @@ export class DesignTaskExecutor {
               && !signal.aborted
               && Date.now() < executionDeadline;
             if (!repairBudgetExpired) throw repairError;
-            this.restoreOutputCheckpoint(transfer, stableOutputs);
+            // The timed-out repair may already have written a better, still non-final candidate.
+            // Persist that exact byte stream as a failed-run preview before workspace cleanup. A
+            // later presentation-only restart may use it only after revalidating the frozen source
+            // contract; it is never committed or treated as the previous successful artifact.
+            await previewPusher?.poll();
+            await previewPusher?.flush();
             finalRunId = stableRunId;
             runOutcome = stableOutcome;
             deliverableEntryFile = stableDeliverableEntryFile;
@@ -915,7 +986,8 @@ export class DesignTaskExecutor {
               kind: 'deterministic-quality-gate',
               attempt: qualityRepairAttempt + 1,
               allottedSeconds: Math.floor(allottedRepairMs / 1000),
-              retainedRunId: stableRunId,
+              retainedRunId: activeRunId,
+              repairCandidateCheckpointed: true,
               issueCodes: [repairReason.code],
             });
             throw traceableDeterministicQualityRejection(
@@ -1048,6 +1120,8 @@ export class DesignTaskExecutor {
             && !signal.aborted
             && Date.now() < executionDeadline;
           if (!repairBudgetExpired) throw error;
+          await previewPusher?.poll();
+          await previewPusher?.flush();
           this.restoreOutputCheckpoint(transfer, stableOutputs);
           finalRunId = stableRunId;
           runOutcome = stableOutcome;
@@ -1079,6 +1153,7 @@ export class DesignTaskExecutor {
               allottedSeconds: Math.floor(allottedRepairMs / 1000),
               issueCodes: evidence.issueCodes,
               retainedRunId: stableRunId,
+              repairCandidateCheckpointed: true,
             });
           }
           continue;
@@ -1152,8 +1227,8 @@ export class DesignTaskExecutor {
       const files = buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles, browserEvidenceFiles);
       assertPublicArtifactFileCount(files.length);
       const totalOutputBytes = files.reduce((total, file) => total + file.size, 0);
-      if (totalOutputBytes > transfer.maxOutputBytes) {
-        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxOutputBytes');
+      if (totalOutputBytes > transfer.maxPublicOutputBytes) {
+        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxPublicOutputBytes');
       }
       const commitBody = {
         schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
@@ -1332,6 +1407,7 @@ export class DesignTaskExecutor {
         allowedOutputPaths: transfer.allowedOutputPaths,
         inputFiles: prepared.inputFiles,
         maxOutputBytes: transfer.maxOutputBytes,
+        maxPublicOutputBytes: transfer.maxPublicOutputBytes,
       });
     } finally {
       this.options.daemon.thaw();
@@ -1369,8 +1445,8 @@ export class DesignTaskExecutor {
           );
         }
         total += stat.size;
-        if (total > transfer.maxOutputBytes) {
-          throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxOutputBytes');
+        if (total > transfer.maxPublicOutputBytes) {
+          throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxPublicOutputBytes');
         }
         const bytes = fs.readFileSync(absolute);
         results.push({

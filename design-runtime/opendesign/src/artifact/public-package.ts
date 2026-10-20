@@ -513,7 +513,7 @@ export function prepareCurrentArtifactSeeds(
       if (inputFiles.some((file) => file.path === seed.path)) throw new Error('editable copy conflicts with a frozen input');
     }
     assertPublicArtifactFileCount(seeds.length + 1);
-    if (seeds.reduce((total, file) => total + file.size, 0) > transfer.maxOutputBytes) throw new Error('current resources exceed the output size limit');
+    if (seeds.reduce((total, file) => total + file.size, 0) > transfer.maxPublicOutputBytes) throw new Error('current resources exceed the public output size limit');
     return seeds;
   } catch {
     throw new AgentWorkspaceRuntimeError(

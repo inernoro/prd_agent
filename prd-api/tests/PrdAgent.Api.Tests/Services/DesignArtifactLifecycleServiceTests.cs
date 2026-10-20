@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -1428,6 +1430,70 @@ public sealed class DesignArtifactLifecycleServiceTests
 
     [Fact]
     [Trait("Category", TestCategories.Integration)]
+    public async Task RemoteHtmlPptPublishBinding_ShouldRequireExactProducedIdentityAndTrustedPackageBytes()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var service = new DesignArtifactLifecycleService(fixture.Db, new InMemoryRunEventStore());
+        const string publishedHtml = "<!doctype html><html><body>trusted-presentation</body></html>";
+        var request = Session(
+            "strict-presentation-receipt",
+            DesignArtifactTypes.HtmlPpt,
+            DesignArtifactWorkspaceKinds.RemotePackage,
+            "open-design");
+        request.Capability.Runtime = DesignArtifactRuntimes.OpenDesign;
+        request = request with { Runtime = DesignArtifactRuntimes.OpenDesign };
+        var run = await service.CreateSessionAsync(request);
+        var manifest = ManifestForContent(
+            DesignArtifactTypes.HtmlPpt,
+            DesignArtifactSecurityProfiles.HtmlPptInteractive,
+            publishedHtml);
+        await TrustRemoteManifestAsync(fixture, run, manifest);
+        var committed = await service.CommitManifestAsync(new CommitDesignArtifactManifestRequest(
+            run.Id,
+            run.UserId,
+            Expected(run),
+            manifest,
+            Receipt(run, manifest)));
+        var completed = await service.CompleteAsync(new DesignArtifactLifecycleMutationRequest(
+            committed.Id,
+            committed.UserId,
+            Expected(committed)));
+        var revision = await InsertPublishedRevisionAsync(fixture, completed, publishedHtml);
+        var bind = new BindPublishedDesignArtifactRequest(
+            completed.Id,
+            completed.UserId,
+            Expected(completed),
+            revision.SiteId,
+            revision.Id,
+            "strict-presentation-operation",
+            completed.VersionBoundary!.PackageHash!);
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == completed.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.ProducedArtifactSiteId, null)
+                .Set(item => item.ProducedArtifactRevisionId, null));
+        await AssertInvalidContract(() => service.BindPublishedArtifactAsync(bind));
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == completed.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.ProducedArtifactSiteId, "wrong-site")
+                .Set(item => item.ProducedArtifactRevisionId, "wrong-revision"));
+        await AssertInvalidContract(() => service.BindPublishedArtifactAsync(bind));
+
+        await fixture.Db.DesignArtifactRuns.UpdateOneAsync(
+            item => item.Id == completed.Id,
+            Builders<DesignArtifactRun>.Update
+                .Set(item => item.ProducedArtifactSiteId, revision.SiteId)
+                .Set(item => item.ProducedArtifactRevisionId, revision.Id));
+        var bound = await service.BindPublishedArtifactAsync(bind);
+        Assert.Equal(revision.SiteId, bound.ArtifactSiteId);
+        Assert.Equal(revision.Id, bound.ArtifactRevisionId);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
     public async Task PublicContractApi_ShouldReadLegacyV1AndNeverExposeKeysBodiesOrEventPayload()
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
@@ -2038,7 +2104,16 @@ public sealed class DesignArtifactLifecycleServiceTests
                 SourcePlanJson = frozenSourcePlan,
                 SourcePlanHash = frozenSourcePlanHash,
                 Theme = "storytelling",
+                RepairCandidateHtml = "<!doctype html><html><body>受限修复候选</body></html>",
+                RepairCandidateHtmlHash = new string('r', 64),
             },
+        };
+        var sourceCompatibility = new MdToPptRun
+        {
+            Id = source.Id,
+            UserId = source.UserId,
+            ParentOutlineRunId = "outline-root",
+            ParentPlanContentHash = new string('p', 64),
         };
         var restarted = new DesignArtifactRun
         {
@@ -2055,12 +2130,25 @@ public sealed class DesignArtifactLifecycleServiceTests
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
         Assert.NotNull(method);
 
-        var compatibility = Assert.IsType<MdToPptRun>(method.Invoke(null, [source, restarted, now]));
+        var compatibility = Assert.IsType<MdToPptRun>(method.Invoke(null, [source, restarted, sourceCompatibility, now]));
         Assert.Equal(frozenSourcePlan, compatibility.SourcePlanJson);
         Assert.Equal(frozenSourcePlanHash, compatibility.SourcePlanHash);
         Assert.Equal(24, compatibility.SourcePlanPageCount);
+        Assert.Equal(sourceCompatibility.ParentOutlineRunId, compatibility.ParentOutlineRunId);
+        Assert.Equal(sourceCompatibility.ParentPlanContentHash, compatibility.ParentPlanContentHash);
+        Assert.Equal(source.PresentationInput.RepairCandidateHtml, restarted.PresentationInput?.RepairCandidateHtml);
         Assert.Equal(frozenSourcePlan, source.PresentationInput.SourcePlanJson);
         Assert.Equal(frozenSourcePlanHash, source.PresentationInput.SourcePlanHash);
+
+        var equivalence = typeof(DesignArtifactsController).GetMethod(
+            "IsEquivalentRestartCompatibility",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(equivalence);
+        Assert.True(Assert.IsType<bool>(equivalence.Invoke(null, [compatibility, compatibility])));
+        var conflictingSource = BuildCompatibilityForTest(compatibility, sourcePlanHash: new string('x', 64));
+        Assert.False(Assert.IsType<bool>(equivalence.Invoke(null, [compatibility, conflictingSource])));
+        var conflictingOwner = BuildCompatibilityForTest(compatibility, userId: "different-owner");
+        Assert.False(Assert.IsType<bool>(equivalence.Invoke(null, [compatibility, conflictingOwner])));
 
         var legacySource = new DesignArtifactRun
         {
@@ -2090,11 +2178,82 @@ public sealed class DesignArtifactLifecycleServiceTests
         };
 
         var legacyCompatibility = Assert.IsType<MdToPptRun>(
-            method.Invoke(null, [legacySource, legacyRestarted, now]));
+            method.Invoke(null, [legacySource, legacyRestarted, new MdToPptRun { Id = legacySource.Id }, now]));
         Assert.Equal(outline, legacyCompatibility.SourcePlanJson);
         Assert.Equal(outlineHash, legacyCompatibility.SourcePlanHash);
         Assert.Null(legacySource.PresentationInput.SourcePlanJson);
         Assert.Null(legacySource.PresentationInput.SourcePlanHash);
+    }
+
+    private static MdToPptRun BuildCompatibilityForTest(
+        MdToPptRun source,
+        string? userId = null,
+        string? sourcePlanHash = null) =>
+        new()
+        {
+            Id = source.Id,
+            UserId = userId ?? source.UserId,
+            Status = source.Status,
+            Engine = source.Engine,
+            Runtime = source.Runtime,
+            Provider = source.Provider,
+            ArtifactContractVersion = source.ArtifactContractVersion,
+            Theme = source.Theme,
+            Op = source.Op,
+            ParentOutlineRunId = source.ParentOutlineRunId,
+            ParentPlanContentHash = source.ParentPlanContentHash,
+            ParentRunId = source.ParentRunId,
+            ParentHtmlHash = source.ParentHtmlHash,
+            InputAuthority = source.InputAuthority,
+            UserSuppliedContentHash = source.UserSuppliedContentHash,
+            Title = source.Title,
+            ContentPreview = source.ContentPreview,
+            SourcePlanVersion = source.SourcePlanVersion,
+            SourcePlanPageCount = source.SourcePlanPageCount,
+            SourcePlanJson = source.SourcePlanJson,
+            SourcePlanHash = sourcePlanHash ?? source.SourcePlanHash,
+            Total = source.Total,
+            SourceSurface = source.SourceSurface,
+            KnowledgeReferences = source.KnowledgeReferences.ToList(),
+        };
+
+    [Fact]
+    public void PresentationRepairCandidate_ShouldBePackagedByteForByte_WithoutBecomingCurrentArtifact()
+    {
+        const string candidate = "<!doctype html><html><body><main><h1>待修复初稿</h1></main></body></html>";
+        var candidateHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(candidate))).ToLowerInvariant();
+        var run = new DesignArtifactRun
+        {
+            Id = "presentation-repair-package",
+            ArtifactType = DesignArtifactTypes.HtmlPpt,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            PresentationInput = new DesignArtifactPresentationInput
+            {
+                TargetPages = 34,
+                SourceContent = "冻结来源",
+                SourceContentHash = new string('c', 64),
+                OutlineJson = "{\"outline\":[]}",
+                OutlineHash = new string('o', 64),
+                SourcePlanJson = "{\"schemaVersion\":\"map-mdppt-source-plan-v2\",\"pages\":[]}",
+                SourcePlanHash = new string('s', 64),
+                RepairCandidateHtml = candidate,
+                RepairCandidateHtmlHash = candidateHash,
+            },
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var candidateFile = Assert.Single(package.Files, item => item.Path == "candidate/index.html");
+        Assert.Equal(candidate, Encoding.UTF8.GetString(Convert.FromBase64String(candidateFile.ContentBase64)));
+        Assert.Equal(candidateHash, candidateFile.Sha256);
+        Assert.DoesNotContain(package.Files, item => item.Path.StartsWith("current/", StringComparison.Ordinal));
+
+        var taskFile = Assert.Single(package.Files, item => item.Path == "brief/task.json");
+        using var task = JsonDocument.Parse(Convert.FromBase64String(taskFile.ContentBase64));
+        var repair = task.RootElement.GetProperty("presentationContract").GetProperty("repairCandidate");
+        Assert.Equal("server-retained-failed-preview", repair.GetProperty("authority").GetString());
+        Assert.Equal("candidate/index.html", repair.GetProperty("path").GetString());
+        Assert.Equal(candidateHash, repair.GetProperty("contentHash").GetString());
     }
 
     [Fact]
@@ -2195,6 +2354,171 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal(source.PresentationInput.ManualEditHtml, restarted.PresentationInput?.ManualEditHtml);
         Assert.Equal(source.PresentationInput.ManualEditHtmlHash, restarted.PresentationInput?.ManualEditHtmlHash);
         queue.Verify(item => item.EnqueueAsync(RunKinds.DesignArtifact, firstId!, CancellationToken.None), Times.Once);
+    }
+
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RestartRun_ShouldUseFailedPresentationPreviewAsRestrictedCandidate_AndKeepSourceError()
+    {
+        await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var sourcePlan = "{\"schemaVersion\":\"map-mdppt-source-plan-v2\",\"fingerprint\":\"frozen\",\"blocks\":[],\"pages\":[]}";
+        var sourcePlanHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sourcePlan))).ToLowerInvariant();
+        var outlineHash = new string('o', 64);
+        var parentOutline = new MdToPptRun
+        {
+            Id = "outline-root-quality-repair",
+            UserId = "owner-user",
+            Status = "done",
+            Op = "outline",
+            OutlineHash = outlineHash,
+            SourcePlanVersion = 2,
+            SourcePlanJson = sourcePlan,
+            SourcePlanHash = sourcePlanHash,
+        };
+        var failedPreview = "<!doctype html><html><body><main><div class=\"reveal\"><div class=\"slides\"><section><h1>待修复演示稿</h1></section></div></div></main></body></html>";
+        var source = new DesignArtifactRun
+        {
+            Id = "quality-failed-presentation",
+            DeploymentSlug = DeploymentScope.Current,
+            UserId = parentOutline.UserId,
+            ArtifactType = DesignArtifactTypes.HtmlPpt,
+            Operation = DesignArtifactOperations.Generate,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            Status = RunStatuses.Error,
+            RuntimeFailure = new DesignArtifactRuntimeFailure { Code = "design_browser_quality_rejected" },
+            LatestPreviewHtml = failedPreview,
+            LatestPreviewRevision = 2,
+            PresentationInput = new DesignArtifactPresentationInput
+            {
+                TargetPages = 34,
+                SourceContent = "冻结来源正文",
+                SourceContentHash = new string('c', 64),
+                OutlineJson = "{\"outline\":[]}",
+                OutlineHash = outlineHash,
+                SourcePlanJson = sourcePlan,
+                SourcePlanHash = sourcePlanHash,
+                Theme = "storytelling",
+            },
+        };
+        var compatibility = new MdToPptRun
+        {
+            Id = source.Id,
+            UserId = source.UserId,
+            Status = "error",
+            Op = "convert",
+            ParentOutlineRunId = parentOutline.Id,
+            ParentPlanContentHash = outlineHash,
+            SourcePlanVersion = 2,
+            SourcePlanPageCount = 34,
+            SourcePlanJson = sourcePlan,
+            SourcePlanHash = sourcePlanHash,
+        };
+        await fixture.Db.MdToPptRuns.InsertManyAsync([parentOutline, compatibility]);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(source);
+        var capability = new DesignArtifactProviderCapability(
+            DesignArtifactRuntimes.OpenDesign,
+            "OpenDesign",
+            DesignArtifactAdapterKinds.RemoteAgent,
+            DesignArtifactExecutionOwners.CdsRemoteAgent,
+            DesignArtifactIsolationModes.SessionContainer,
+            [DesignArtifactTypes.HtmlPpt],
+            [DesignArtifactOperations.Generate],
+            [DesignArtifactSourceSurfaces.HtmlPpt],
+            Configured: true,
+            Healthy: true,
+            Enabled: true,
+            Reason: null,
+            ConnectionId: "design-runtime");
+        var providers = new Mock<IDesignArtifactProviderCatalog>();
+        var providerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var providerArrivals = 0;
+        providers.Setup(item => item.FindAsync(source.UserId, DesignArtifactRuntimes.OpenDesign, CancellationToken.None))
+            .Returns(async () =>
+            {
+                if (Interlocked.Increment(ref providerArrivals) == 2)
+                    providerGate.TrySetResult();
+                await providerGate.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                return capability;
+            });
+        var queue = new Mock<IRunQueue>();
+        var controller = new DesignArtifactsController(
+            fixture.Db,
+            new InMemoryRunEventStore(),
+            queue.Object,
+            providers.Object,
+            Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+            new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
+            Mock.Of<IDesignArtifactCancellationCoordinator>(),
+            new ConfigurationBuilder().Build(),
+            Mock.Of<IHostedSiteService>());
+        controller.ControllerContext = new ControllerContext
+        {
+            HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", source.UserId)], "test")),
+            },
+        };
+
+        var request = new RestartDesignArtifactRunRequest { IdempotencyKey = "quality-repair-restart" };
+        var attempts = await Task.WhenAll(
+            controller.RestartRun(source.Id, request),
+            controller.RestartRun(source.Id, request));
+        var result = Assert.IsType<AcceptedResult>(attempts[0]);
+        Assert.IsType<AcceptedResult>(attempts[1]);
+        var restartedId = Data(result).GetProperty("runId").GetString();
+        Assert.Equal(restartedId, Data((AcceptedResult)attempts[1]).GetProperty("runId").GetString());
+        var restarted = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == restartedId).SingleAsync();
+        var restartedCompatibility = await fixture.Db.MdToPptRuns.Find(item => item.Id == restartedId).SingleAsync();
+        var persistedSource = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == source.Id).SingleAsync();
+
+        Assert.Equal(RunStatuses.Error, persistedSource.Status);
+        Assert.Null(persistedSource.PresentationInput?.RepairCandidateHtml);
+        Assert.Equal(failedPreview, restarted.PresentationInput?.RepairCandidateHtml);
+        Assert.Equal(
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(failedPreview))).ToLowerInvariant(),
+            restarted.PresentationInput?.RepairCandidateHtmlHash);
+        Assert.Equal(parentOutline.Id, restartedCompatibility.ParentOutlineRunId);
+        Assert.Equal(outlineHash, restartedCompatibility.ParentPlanContentHash);
+        Assert.Equal(sourcePlan, restartedCompatibility.SourcePlanJson);
+        queue.Verify(item => item.EnqueueAsync(RunKinds.DesignArtifact, restartedId!, CancellationToken.None), Times.Once);
+
+        // 确定性覆盖 compatibility 已成功、DesignArtifactRun 尚未写入的中断窗口：
+        // 同一幂等请求必须补齐唯一 Design run 并且只入队一次，而不是在 compatibility duplicate 处返回 500。
+        var windowSource = JsonSerializer.Deserialize<DesignArtifactRun>(JsonSerializer.Serialize(source))!;
+        windowSource.Id = "quality-failed-presentation-compat-only";
+        var windowCompatibility = JsonSerializer.Deserialize<MdToPptRun>(JsonSerializer.Serialize(compatibility))!;
+        windowCompatibility.Id = windowSource.Id;
+        await fixture.Db.MdToPptRuns.InsertOneAsync(windowCompatibility);
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(windowSource);
+
+        const string windowKey = "quality-repair-compat-window";
+        var windowKeyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(windowKey))).ToLowerInvariant();
+        var windowRestartedId = Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes($"{windowSource.Id}:{windowKeyHash}")))
+            .ToLowerInvariant()[..32];
+        var cloneMethod = typeof(DesignArtifactsController).GetMethod(
+            "CloneForRestart",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        var compatibilityMethod = typeof(DesignArtifactsController).GetMethod(
+            "BuildRestartedPresentationCompatibilityRun",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(cloneMethod);
+        Assert.NotNull(compatibilityMethod);
+        var expectedRestart = Assert.IsType<DesignArtifactRun>(cloneMethod.Invoke(
+            null,
+            [windowSource, capability, windowRestartedId, windowKeyHash, DateTime.UtcNow]));
+        var compatibilityOnly = Assert.IsType<MdToPptRun>(compatibilityMethod.Invoke(
+            null,
+            [windowSource, expectedRestart, windowCompatibility, DateTime.UtcNow]));
+        await fixture.Db.MdToPptRuns.InsertOneAsync(compatibilityOnly);
+
+        var recovered = Assert.IsType<AcceptedResult>(await controller.RestartRun(
+            windowSource.Id,
+            new RestartDesignArtifactRunRequest { IdempotencyKey = windowKey }));
+        Assert.Equal(windowRestartedId, Data(recovered).GetProperty("runId").GetString());
+        Assert.Equal(1, await fixture.Db.MdToPptRuns.CountDocumentsAsync(item => item.Id == windowRestartedId));
+        Assert.Equal(1, await fixture.Db.DesignArtifactRuns.CountDocumentsAsync(item => item.Id == windowRestartedId));
+        queue.Verify(item => item.EnqueueAsync(RunKinds.DesignArtifact, windowRestartedId, CancellationToken.None), Times.Once);
     }
 
     private static DesignArtifactsController Controller(
