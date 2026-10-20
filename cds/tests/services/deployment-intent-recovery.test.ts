@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fork, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { execFileSync, fork, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import vm from 'node:vm';
 import ts from 'typescript';
 import { fileURLToPath } from 'node:url';
@@ -10,12 +10,14 @@ import { StateService, MAX_DEPLOYMENT_RUNS_PER_PROJECT } from '../../src/service
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { BranchOperationCoordinator, pendingDeployBody } from '../../src/services/branch-operation-coordinator.js';
 import { captureDeploymentInput } from '../../src/services/deployment-input.js';
-import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import { flushAllJsonStateStores, JsonStateBackingStore, type JsonStateWriteEvent } from '../../src/infra/state-store/json-backing-store.js';
 import type { BranchOperationRequest } from '../../src/services/branch-operation-coordinator.js';
 import type { ServerEventLogSink } from '../../src/services/server-event-log-store.js';
 import { waitForFlushWithTimeout } from '../../src/services/bounded-flush.js';
 import { MongoSplitStateBackingStore, type ISplitMongoHandle } from '../../src/infra/state-store/mongo-split-store.js';
-import { CDS_RESTART_PERMIT_COMMAND, prepareDetachedCdsRestart } from '../../src/services/self-update-handoff.js';
+import { CDS_RESTART_PERMIT_COMMAND, createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../../src/services/self-update-handoff.js';
+import { replaceDirectoriesAtomically } from '../../src/routes/branches.js';
+import type { ExecResult } from '../../src/types.js';
 
 function fakeMongoForRestart(seed?: Map<string, any>[]) {
   const names = ['globalCollection', 'projectsCollection', 'branchesCollection', 'deploymentRunsCollection',
@@ -535,6 +537,142 @@ describe('已受理部署的持久输入与重启恢复', () => {
           status: service.get(run.id)?.status, intentPresent: Boolean(state.getState().deploymentIntents?.[run.id]),
           timers: timers.map(timer => timer.ms), exitCalls: exit.mock.calls.length, openedFds: fds.length, closedFds }));
       }
+    }
+  });
+
+  it('真实许可取消并等到子进程退出后，Git回滚失败仍恢复旧服务原合法待办并同代次领取一次', async () => {
+    await state.flush();
+    const writes: JsonStateWriteEvent[] = [];
+    state = new StateService(file, undefined, new JsonStateBackingStore(file, { onWrite: event => writes.push(event) }));
+    state.load();
+    const { run, service, coordinator, blocker } = await accepted();
+    await state.flush();
+    const originalIntent = structuredClone(state.getState().deploymentIntents![run.id]);
+    const cdsDir = path.join(dir, 'cds'), dist = path.join(cdsDir, 'dist', 'index.js');
+    const savedState = path.join(dir, 'state-before-restart.json'), marker = path.join(cdsDir, 'daemon-started');
+    const gitEnv = { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C', TZ: 'UTC',
+      GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null', GIT_TERMINAL_PROMPT: '0',
+      GIT_AUTHOR_NAME: 'CDS test', GIT_AUTHOR_EMAIL: 'cds@example.test',
+      GIT_COMMITTER_NAME: 'CDS test', GIT_COMMITTER_EMAIL: 'cds@example.test' };
+    const git = (...args: string[]) => execFileSync('/usr/bin/git', args, { cwd: dir, env: gitEnv, encoding: 'utf8', timeout: 30_000 }).trim();
+    git('init', '--initial-branch=before');
+    fs.writeFileSync(path.join(dir, 'source.txt'), 'old source');
+    git('add', 'source.txt'); git('commit', '-m', '测试回滚前版本');
+    const originalHead = git('rev-parse', 'HEAD');
+    fs.mkdirSync(path.dirname(dist), { recursive: true });
+    fs.writeFileSync(dist, 'old backend');
+    fs.writeFileSync(path.join(cdsDir, 'exec_cds.sh'), 'printf started > daemon-started\n', { mode: 0o600 });
+    const trace: string[] = [], fds = new Set<number>(), timers: { callback: () => void; ms: number }[] = [];
+    let child: ChildProcess | undefined, close: Promise<number | null> | undefined;
+    let childClosed = false, settled = false, timedOut = false, watchdog: ReturnType<typeof setTimeout> | undefined;
+    let rollbackGit: ExecResult | undefined;
+    const rollbackCommand = `git checkout -f -B 'before' ${originalHead}`;
+    const commands = new Map<string, string[]>([['git rev-parse HEAD', ['rev-parse', 'HEAD']],
+      ['git symbolic-ref --quiet --short HEAD', ['symbolic-ref', '--quiet', '--short', 'HEAD']],
+      [rollbackCommand, ['checkout', '-f', '-B', 'before', originalHead]]]);
+    const checkpoint = await createSelfUpdateCheckpoint({ async exec(command, options) {
+      expect(options).toEqual({ cwd: dir, timeout: 30_000 });
+      const argv = commands.get(command);
+      if (!argv) throw new Error(`unexpected rollback fixture command: ${command}`);
+      if (command === rollbackCommand) { expect(childClosed).toBe(true); trace.push('git-rollback'); }
+      try { return { stdout: git(...argv), stderr: '', exitCode: 0 }; }
+      catch (error) {
+        const failure = error as { status: number; stdout: string; stderr: string };
+        rollbackGit = { stdout: failure.stdout, stderr: failure.stderr, exitCode: failure.status };
+        return rollbackGit;
+      }
+    } }, dir, replaceDirectoriesAtomically);
+    fs.writeFileSync(path.join(dir, 'source.txt'), 'new source');
+    git('add', 'source.txt'); git('commit', '-m', '测试待撤销版本');
+    const updatedHead = git('rev-parse', 'HEAD');
+    expect(updatedHead).not.toBe(originalHead);
+    fs.writeFileSync(dist, 'new backend');
+    fs.writeFileSync(path.join(dir, '.git', 'index.lock'), 'owned rollback fault', { flag: 'wx', mode: 0o600 });
+    const source = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
+    const start = source.search(/(?:async )?function scheduleDetachedCdsRestart/);
+    const end = source.indexOf('async function flushBranchStateBeforeSuccess', start);
+    const gate = source.match(/^\s*const RESTART_GATE_RELEASE_MS = [^\n]+;/m);
+    const budget = source.match(/const SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS = (\d+);/);
+    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    expect(gate).not.toBeNull(); expect(budget?.[1]).toBe('1000');
+    const code = ts.transpileModule(`${gate![0]}\n${budget![0]}\n${source.slice(start, end)}\nscheduleDetachedCdsRestart;`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }, reportDiagnostics: true,
+    });
+    expect(code.diagnostics?.filter(item => item.category === ts.DiagnosticCategory.Error)).toEqual([]);
+    const exit = vi.fn(), maintenanceOwner = { restartScheduled: false };
+    const interrupt = vi.spyOn(coordinator, 'interruptAll');
+    const schedule = vm.runInNewContext(code.outputText, {
+      config: { repoRoot: dir }, path, stateService: state, waitForFlushWithTimeout, prepareDetachedCdsRestart,
+      process: { env: { PATH: '/usr/bin:/bin', TZ: 'UTC', LANG: 'C' }, exit }, console: { warn: vi.fn() },
+      getRestartWait: () => null, setRestartWait: vi.fn(), endSelfUpdateDrain: () => { trace.push('drain-open'); },
+      releaseSelfMaintenance: vi.fn(), branchOperationCoordinator: coordinator, deploymentRunService: service,
+      fs: { mkdirSync: fs.mkdirSync, appendFileSync: fs.appendFileSync,
+        openSync: (target: string, flags: fs.OpenMode) => {
+          expect(path.resolve(target).startsWith(`${dir}${path.sep}`)).toBe(true);
+          const fd = fs.openSync(target, flags); fds.add(fd); return fd;
+        },
+        closeSync: (fd: number) => { fs.closeSync(fd); fds.delete(fd); },
+      },
+      setTimeout: (callback: () => void, ms: number) => { timers.push({ callback, ms }); return { unref() {} }; },
+      spawn: (command: string, args: string[], options: SpawnOptions) => {
+        expect(command).toBe('bash'); expect(args).toEqual(['-p', '-c', CDS_RESTART_PERMIT_COMMAND]);
+        expect(options.cwd).toBe(cdsDir); expect(options.stdio?.[3]).toBe('pipe');
+        child = spawn(command, args, options);
+        close = new Promise(resolve => child!.once('close', code => { childClosed = true; trace.push('child-close'); resolve(code); }));
+        watchdog = setTimeout(() => { if (!childClosed) { timedOut = true; child!.kill('SIGKILL'); } }, 2000);
+        return child;
+      },
+    }, { timeout: 200 }) as (input: { branchLabel: string; source: string; maintenanceOwner: typeof maintenanceOwner;
+      preserveQueued: boolean; rollback: () => Promise<void> }) => Promise<void>;
+    try {
+      // 已确认的原JSON另存原字节；目录使最后一次真实rename报EISDIR，不替换flush实现。
+      fs.renameSync(file, savedState); fs.mkdirSync(file);
+      state.getState().nextPortIndex++; state.save([{ kind: 'global' }]);
+      const completion = schedule({ branchLabel: 'owned-rollback-failure', source: 'api.self-update', maintenanceOwner,
+        preserveQueued: true, rollback: async () => {
+          expect(childClosed).toBe(true); expect(settled).toBe(false); trace.push('rollback-start');
+          fs.rmdirSync(file); fs.renameSync(savedState, file);
+          await checkpoint.rollback();
+        },
+      }).then(() => null, error => error as Error).finally(() => { settled = true; trace.push('settled'); });
+      expect(timers.map(timer => timer.ms)).toEqual([0]); timers.shift()!.callback();
+      const outcome = await completion;
+      expect(outcome?.message).toContain('CDS 产物已恢复，但源码恢复失败');
+      expect(Number.isSafeInteger(child?.pid) && child!.pid! > 0).toBe(true);
+      expect(await close).toBe(1); expect(childClosed).toBe(true); expect(timedOut).toBe(false);
+      expect(trace.indexOf('child-close')).toBeLessThan(trace.indexOf('rollback-start'));
+      expect(trace.indexOf('git-rollback')).toBeLessThan(trace.indexOf('drain-open'));
+      expect(trace.indexOf('drain-open')).toBeLessThan(trace.indexOf('settled'));
+      expect(rollbackGit).toMatchObject({ exitCode: 128, stderr: expect.stringContaining('index.lock') });
+      expect(writes).toContainEqual(expect.objectContaining({ filePath: file, purpose: 'primary', phase: 'failed', errorCode: 'EISDIR' }));
+      expect(fs.readFileSync(dist, 'utf8')).toBe('old backend');
+      expect(git('rev-parse', 'HEAD')).toBe(updatedHead);
+      expect(fs.existsSync(marker)).toBe(false); expect(exit).not.toHaveBeenCalled();
+      expect(maintenanceOwner.restartScheduled).toBe(false); expect(timers).toEqual([]);
+      expect(interrupt).toHaveBeenCalledOnce(); expect(blocker.isCurrent()).toBe(false);
+      expect(service.get(run.id)?.status).toBe('queued'); expect(service.get(run.id)?.failure).toBeUndefined();
+      expect(state.getState().deploymentIntents![run.id]).toEqual(originalIntent);
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).deploymentIntents[run.id]).toEqual(originalIntent);
+      await service.waitForAcceptance(run.id);
+      expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
+      const ready = coordinator.drainReady();
+      expect(ready).toMatchObject([{ operationId: run.operationId, generation: run.operationGeneration }]);
+      expect(coordinator.drainReady()).toEqual([]);
+      const replay = { ...ready[0].request, pendingReplay: { operationId: ready[0].operationId, generation: ready[0].generation } };
+      expect(coordinator.getDeploymentInputForReplay(replay)?.configuredEnv.TOKEN).toBe('private-before');
+      expect(coordinator.begin(replay)).toMatchObject({ status: 'started', operationId: run.operationId, generation: run.operationGeneration });
+      expect(coordinator.begin(replay).status).toBe('rejected');
+      await service.claimQueued(run.id);
+      expect(JSON.parse(fs.readFileSync(file, 'utf8')).deploymentRuns[run.id].status).toBe('preparing');
+    } finally {
+      if (child && !childClosed) child.kill('SIGKILL');
+      await close; if (watchdog) clearTimeout(watchdog);
+      if (fs.existsSync(savedState)) { fs.rmdirSync(file); fs.renameSync(savedState, file); }
+      for (const fd of fds) fs.closeSync(fd);
+      interrupt.mockRestore();
+      console.info('[cds-owned-rollback-recovery-receipt]', JSON.stringify({ childPid: child?.pid ?? null, childClosed,
+        timedOut, trace, gitExitCode: rollbackGit?.exitCode, status: service.get(run.id)?.status,
+        waiting: coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!), exitCalls: exit.mock.calls.length }));
     }
   });
 

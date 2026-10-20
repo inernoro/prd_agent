@@ -2668,8 +2668,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         input.maintenanceOwner.restartScheduled = true;
       } catch (error) {
         try {
-          await permit?.cancel(); await input.rollback?.();
-          if (operationsInterrupted && branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);
+          // 先确认许可子进程已停，再恢复原合法待办；回滚失败不能跳过队列收尾。
+          await permit?.cancel();
+          try { await input.rollback?.(); }
+          finally {
+            if (operationsInterrupted && branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);
+          }
         }
         finally {
           endSelfUpdateDrain();
