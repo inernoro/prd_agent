@@ -17,12 +17,13 @@
  * 对端能看到请求头，拿到令牌就能回放到预览域名上豁免 LRU（Codex PR #1514 第二轮 P2）。
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 export const PROBE_MARKER_HEADER = 'x-cds-probe-token';
 
 /** 进程级令牌：只在内存里，重启即换。 */
 const probeMarkerToken = randomBytes(24).toString('hex');
+const probeMarkerFingerprint = createHash('sha256').update(probeMarkerToken).digest('hex');
 
 /** 探测请求要带的头：可信令牌 + 公开的 polling 分类头（后者只影响日志分类）。 */
 export function probeRequestHeaders(): Record<string, string> {
@@ -34,6 +35,11 @@ export function isTrustedProbeRequest(headers: Record<string, unknown> | undefin
   const raw = headers?.[PROBE_MARKER_HEADER];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return typeof value === 'string' && value.length > 0 && value === probeMarkerToken;
+}
+
+/** 仅 master 用于核验 forwarder 的不可回放收据；不导出原始令牌。 */
+export function isTrustedProbeFingerprint(fingerprint: string): boolean {
+  return fingerprint === probeMarkerFingerprint;
 }
 
 /** 转发给上游前抹掉令牌，分支容器里的代码拿不到它。 */
