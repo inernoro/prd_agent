@@ -35,6 +35,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -57,6 +59,9 @@ jobs:
         run: |
           pnpm -C cds exec tsc --noEmit
           pnpm -C cds/web exec tsc --noEmit
+
+      - name: Test CDS before publishing executable artifacts
+        run: pnpm -C cds test
 
       - name: Build backend (esbuild → cds/dist)
         run: |

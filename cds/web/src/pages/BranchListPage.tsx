@@ -319,7 +319,9 @@ interface ReleaseTargetSummary {
   isEnabled: boolean;
   projectIdentity?: { projectId: string; projectSlug: string; repository?: string };
   strategy?: {
-    mode: 'existing-script' | 'generated-compose' | 'generated-static';
+    mode: 'project-script' | 'managed-script' | 'existing-script' | 'generated-compose' | 'generated-static';
+    scriptFile?: string;
+    script?: string;
     command?: string;
     composeFile?: string;
     buildCommand?: string;
@@ -5862,6 +5864,12 @@ function releaseScriptsFromCommand(command?: string): string[] {
 }
 
 function releaseStepsFromTarget(target?: ReleaseTargetSummary): string[] {
+  if (target?.strategy?.mode === 'project-script') return [
+    `读取指定提交中的 ${target.strategy.scriptFile || 'cds-release.sh'}`,
+    '核对同提交 CI 和脚本正文哈希',
+    '执行项目脚本 check / deploy 并验证最终入口',
+  ];
+  if (target?.strategy?.mode === 'managed-script') return ['执行明确选择的 CDS 独立脚本', '核对脚本正文哈希并执行 check / deploy', '验证最终入口'];
   if (target?.strategy?.mode === 'generated-compose') {
     return [
       'CDS 生成 commit 隔离 worktree',

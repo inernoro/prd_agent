@@ -989,6 +989,8 @@ function draftFromTarget(target: ReleaseTarget): SiteDraft {
     deployCommand: ssh?.deployCommand || '',
     healthcheckUrl: ssh?.healthcheckUrl || '',
     strategyMode: strategy.mode,
+    scriptFile: strategy.scriptFile,
+    managedScript: strategy.script,
     composeFile: strategy.composeFile || 'compose.yml',
     composeProject: strategy.composeProject || `${target.projectId}-prod`,
     buildCommand: strategy.buildCommand || 'pnpm install --frozen-lockfile && pnpm build',

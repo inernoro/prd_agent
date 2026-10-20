@@ -10,10 +10,12 @@ import type { ReleaseRunProgressLike } from '@/lib/releaseSteps';
 import type { ReleaseCommitRail, ReleaseTargetCommitPosition } from '@/lib/releaseRail';
 import type { EnvironmentGroupLike } from '@/lib/releaseEnvironments';
 
-export type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'generated-static';
+export type ReleaseExecutionMode = 'project-script' | 'managed-script' | 'existing-script' | 'generated-compose' | 'generated-static';
 
 export interface ReleaseStrategy {
   mode: ReleaseExecutionMode;
+  scriptFile?: string;
+  script?: string;
   command?: string;
   composeFile?: string;
   composeProject?: string;
@@ -244,6 +246,8 @@ export interface SiteDraft {
   deployCommand: string;
   healthcheckUrl: string;
   strategyMode: ReleaseExecutionMode;
+  scriptFile?: string;
+  managedScript?: string;
   composeFile: string;
   composeProject: string;
   buildCommand: string;

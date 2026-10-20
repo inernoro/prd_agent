@@ -1,6 +1,6 @@
 ---
 name: cds-release
-description: 为任意 CDS 项目检测并配置正式发布。支持项目现有脚本、无脚本 Compose、无脚本静态站三种路径；强制项目级 Key、项目身份锁定、预检、最终入口验证、回滚与归档证据。用户提到正式发布、生产发布、无发布脚本、动态发布脚本、配置发布目标、发布中心混乱或跨项目发布时使用。
+description: 配置并验收 CDS 正式发布。默认执行项目 Git 中经 CI 验证的 cds-release.sh；CDS 独立脚本仅为明确选择的备选，旧部署类型仅兼容存量。强制项目级 Key、身份、同提交 CI、正文指纹、真实入口与回滚证据。
 ---
 
 # CDS 正式发布配置技能
@@ -8,6 +8,17 @@ description: 为任意 CDS 项目检测并配置正式发布。支持项目现�
 ## 目标
 
 把“某个分支能在 CDS 预览”推进为“该项目有一个身份明确、可重复、可回滚、可审计的正式发布目标”。本技能配置发布控制面，不把“容器 running”误报为发布完成。
+
+## 默认发布合同（优先于旧模式说明）
+
+新目标默认 `project-script`，文件名为 `cds-release.sh`：由项目提交到 Git，
+项目 CI 执行同一文件的 `check`，CDS 只在同一完整提交 CI 成功后执行
+该提交脚本的 `check / deploy`，记录脚本正文 SHA-256。资源或业务变化由
+项目同步修改脚本与回归，不能热改服务器、跳过检查或换旧模式绕过。
+只有明确选择时才使用 `managed-script`（CDS 独立保存、单独审查的备选）；
+项目文件缺失不能自动转备选。CDS 不推断项目应该怎样部署。
+
+下列旧模式仅为存量目标兼容，不能用于新目标的自动推荐。
 
 ## 适用边界
 
@@ -85,12 +96,11 @@ curl -sS \
 
 | 条件 | 策略 | 说明 |
 |---|---|---|
-| 仓库已有可信、可回滚的正式发布脚本 | `existing-script` | 复用项目 SSOT |
-| 没有脚本且检测到 Compose | `generated-compose` | CDS 为 commit 建隔离 worktree并动态执行 Compose |
-| 静态前端且能确认构建命令、产物目录 | `generated-static` | CDS 离线验证后原子切换 |
-| 三者都不成立 | 停止配置 | 明确缺少的能力，不拼凑危险命令 |
+| 默认 | `project-script` | 提交 `cds-release.sh` 并通过 CI；缺文件就修项目，不猜类型 |
+| 用户明确选择 CDS 独立脚本 | `managed-script` | 单独保存、审查，执行 check / deploy |
+| 已存在的旧目标 | 保留原模式或明确迁移 | 不静默改变存量行为 |
 
-如果现有脚本会直接清空在线目录、使用漂移 tag、没有最终入口验证，应选择动态安全路径或先修脚本，不能因为“脚本存在”就优先使用。
+如果项目脚本直接清空在线目录、使用漂移 tag 或没有最终入口验证，必须先修项目脚本并通过 CI，不得切旧部署模式绕过。
 
 ### 阶段 4：生成发布目标配置
 
@@ -102,7 +112,7 @@ curl -sS \
 - 当前项目远端 Git 仓库 `appPath`。
 - 最终公网 `healthcheckUrl`。
 - `environment=production` 与 `isCanonical=true`，除非明确配置临时或预发目标。
-- 三种策略之一。
+- 默认项目脚本，或用户明确选择的 CDS 独立脚本；存量目标按其兼容合同处理。
 
 调用：
 
@@ -137,6 +147,7 @@ curl -sS \
 - 发布策略完整。
 - SSH 目标可连接。
 - 现有脚本可执行，或动态发布依赖可用。
+- 新项目脚本必须存在于指定提交，正文语法有效，同提交 CI 成功；必须保存正文哈希，不用文件路径字符串哈希冒充。
 - 非首次发布时，当前线上入口可访问。
 - 有历史成功版本时，回滚版本可定位。
 
@@ -176,23 +187,22 @@ curl -sS \
 
 ## 端到端示例
 
-### 示例 A：项目已有脚本
+### 示例 A：新项目默认使用项目脚本
 
-输入：仓库检测到 `./fast.sh` 与 `./exec_dep.sh`。
+输入：项目已提交 `cds-release.sh`，且同一完整提交 CI 已测试该文件并成功。
 
 选择：
 
 ```json
 {
-  "mode": "existing-script",
-  "command": "./fast.sh && ./exec_dep.sh",
-  "detectedFrom": ["./fast.sh", "./exec_dep.sh"]
+  "mode": "project-script",
+  "scriptFile": "cds-release.sh"
 }
 ```
 
-预期：预检逐个验证脚本存在且可执行；发布记录保存命令哈希；最终公网表面全绿后才完成。
+预期：Git blob 与远端该提交文件正文一致；同提交 CI、Bash 语法和 check 通过后 deploy；记录正文哈希，最终公网表面全绿后完成。
 
-### 示例 B：项目没有脚本但有 Compose
+### 示例 B：存量 Compose 目标兼容（不得新建为默认）
 
 输入：仓库检测到 `compose.yml`，远端仓库为 `/opt/example`。
 
@@ -209,7 +219,7 @@ curl -sS \
 
 预期：CDS 以完整 commit 在仓库同级 `.cds-releases/<targetId>/worktrees/<releaseId>` 创建隔离 worktree，动态执行 Compose，原子更新 `current/previous`，不要求项目新增发布脚本，也不污染仓库状态。
 
-### 示例 C：静态项目没有发布脚本
+### 示例 C：存量静态目标兼容（不得新建为默认）
 
 输入：Vite 项目，构建命令为 `pnpm install --frozen-lockfile && pnpm build`，产物为 `dist`。
 
@@ -247,7 +257,7 @@ CDS 发布配置结果
 - 项目：<projectId> / <repository>
 - 分支与 commit：<branchId> / <full sha>
 - 目标：<targetId> / <production domain>
-- 策略：<existing-script | generated-compose | generated-static>
+- 策略：<project-script 默认 | managed-script 明确备选 | 旧模式存量兼容>
 - 身份校验：<pass/fail + evidence>
 - 预检：<pass/fail + first blocking reason>
 - 发布：<not started/running/success/failed>
