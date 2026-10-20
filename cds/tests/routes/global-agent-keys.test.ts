@@ -334,12 +334,36 @@ describe('Global Agent Keys — 统一授权作用域', () => {
       createdAt: new Date().toISOString(),
     });
 
+    stateService.addAccessRequest({
+      id: 'req-once', kind: 'bootstrap', projectId: '__new_project__',
+      agentName: 'Codex', purpose: '创建测试项目', pollTokenHash: 'unused',
+      status: 'approved', createdAt: new Date().toISOString(), issuedKeyId: 'once0001',
+      requestedProject: { name: 'Agent 申报名称' },
+    });
+    stateService.addAccessRequest({
+      id: 'unrelated', kind: 'bootstrap', projectId: '__new_project__',
+      agentName: 'Other', purpose: '其他项目', pollTokenHash: 'unused',
+      status: 'approved', createdAt: new Date().toISOString(), issuedKeyId: 'other-key',
+    });
+
+    const invalid = await request(server, 'POST', '/api/projects', { name: '' }, {
+      'X-AI-Access-Key': plaintext,
+    });
+    expect(invalid.status).toBe(400);
+    expect(stateService.getAccessRequest('req-once')?.createdProject).toBeUndefined();
+    expect(stateService.findGlobalAgentKeyForAuth(plaintext)).not.toBeNull();
+
     const create = await request(server, 'POST', '/api/projects', { name: 'One Time Project' }, {
       'X-AI-Access-Key': plaintext,
     });
     expect(create.status).toBe(201);
     expect(create.body.issuedProjectKey?.plaintext).toMatch(/^cdsp_/);
     expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
+    const receipt = stateService.getAccessRequest('req-once')?.createdProject;
+    expect(receipt).toEqual({
+      id: create.body.project.id, name: 'One Time Project', createdAt: create.body.project.createdAt,
+    });
+    expect(stateService.getAccessRequest('unrelated')?.createdProject).toBeUndefined();
   });
 
   it("projects:'all' key = 全权 admin：可操作现有项目，且建项目不再另发 key", async () => {

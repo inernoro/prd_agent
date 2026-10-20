@@ -41,6 +41,7 @@ export type CdsEventType =
   | 'access-request.created'
   | 'access-request.decided'
   | 'access-request.count'
+  | 'access-request.progress'
   // 2026-05-29:项目虚拟 cds-compose.yml 变更(approve/手动编辑/repo 同步)
   | 'project.config.changed'
   // 2026-05-28:infra flap 熔断告警(watchdog 自动停掉烂配置容器)
@@ -127,6 +128,7 @@ const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
   'access-request.created': false,
   'access-request.decided': false,
   'access-request.count': false,
+  'access-request.progress': false,
   'project.config.changed': false,
   'infra.flap.circuit-breaker': true,
   'preview.canary.alert': true,
@@ -207,6 +209,7 @@ const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
   'access-request.created': null,
   'access-request.decided': null,
   'access-request.count': null,
+  'access-request.progress': null,
   'project.config.changed': null,
   'infra.flap.circuit-breaker': { title: '基础设施反复重启已熔断', source: 'system', level: 'danger', link: 'status', actionLabel: '查看状态页' },
   'preview.canary.alert': { title: '预览入口探测失败', source: 'uptime', level: 'warning', link: 'status', actionLabel: '查看状态页' },

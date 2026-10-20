@@ -380,7 +380,7 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
  * 图片表单上传共用实现（FormData 不能走 apiRequest，会被 JSON 序列化）：
  * 首次 401 时刷新 token 重试一次。富文本图/日报图/评论图三个入口共用。
  */
-const uploadReportImageForm = async (path: string, file: File): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
+export const uploadReportImageForm = async (path: string, file: File): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
   const buildHeaders = (token: string | null | undefined) => {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;

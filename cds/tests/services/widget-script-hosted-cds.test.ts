@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import path from 'node:path';
 import { buildWidgetScript } from '../../src/widget-script.js';
 import { profileHostsPreviewInstance } from '../../src/services/preview-instance.js';
@@ -58,5 +59,33 @@ describe('接线守卫：父实例注入时真的判了，子实例真的让位�
     // pill 单独出现时的文案与父徽章同一套（都叫「CDS 托管 CDS」），不再是橙色警告
     expect(src).toContain('CDS 托管 CDS · 预览实例');
     expect(src).not.toContain('CDS 预览实例 — 仅用于验收 CDS 自身改动');
+  });
+});
+
+
+describe('预览角标运行版本刷新', () => {
+  it('打开页面后跟随最新运行版本，并在证据缺失时清除旧值', async () => {
+    const script = buildWidgetScript('b', 'main', 'a'.repeat(40));
+    const start = script.indexOf('function fetchBranchInfo(){');
+    const end = script.indexOf('function fetchContainerLog(', start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    let latest: string | null = 'b'.repeat(40);
+    const context: Record<string, unknown> = {
+      API: '/api', BRANCH_ID: 'b', commitSha: 'a'.repeat(40), syncState: { visible: false },
+      unwatchTitle: () => {},
+      fetch: async (url: string) => ({ ok: true, json: async () => url.endsWith('/branches')
+        ? { tabTitleEnabled: false, branches: [{ id: 'b', status: 'running', runningCommitSha: latest }] }
+        : { profiles: [] } }),
+    };
+    const refresh = () => new Promise<void>(resolve => {
+      context.render = resolve;
+      vm.runInNewContext(script.slice(start, end) + ';fetchBranchInfo();', context);
+    });
+    await refresh();
+    expect(context.commitSha).toBe(latest);
+    latest = null;
+    await refresh();
+    expect(context.commitSha).toBe('');
   });
 });

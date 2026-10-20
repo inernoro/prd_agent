@@ -117,8 +117,10 @@ export function createGithubAuthMiddleware(deps: {
   resolveAgentKey?: (req: Request) => unknown;
   /** HTTPS deployment flag; mirrors the value the auth routers use for Set-Cookie. */
   cookieSecure?: boolean;
+  /** 由前置专用能力门禁验证；不授予用户/机器身份或通用内部权限。 */
+  isPendingReplay?: (req: Request) => boolean;
 }) {
-  const { authService, resolveAgentKey, cookieSecure = false } = deps;
+  const { authService, resolveAgentKey, isPendingReplay, cookieSecure = false } = deps;
 
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
@@ -127,6 +129,8 @@ export function createGithubAuthMiddleware(deps: {
       next();
       return;
     }
+
+    if (isPendingReplay?.(req)) { next(); return; }
 
     const ssoIdentity = (req as Request & {
       cdsSsoIdentity?: {

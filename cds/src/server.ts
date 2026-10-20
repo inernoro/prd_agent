@@ -1,3 +1,4 @@
+import { internalPendingReplayAuth } from './services/internal-pending-replay-auth.js';
 import express from 'express';
 import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import { describeRestartWait, getRestartWait, resolveRestartStatus } from './services/self-restart-wait.js';
@@ -52,6 +53,8 @@ import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deplo
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { sha256Hex } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
+import { createCdsSystemDiagnosticsRouter } from './routes/cds-system-diagnostics.js';
+import { sseConnectionTrackerMiddleware, timeMainThreadSection } from './services/main-thread-diagnostics.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
 import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
 import { defaultEnvFilePath } from './services/env-file.js';
@@ -561,6 +564,8 @@ export interface ServerDeps {
    * worker abort 完成后再退出。
    */
   gracefulShutdown?: GracefulShutdownController;
+  /** Resources must settle before the shared execution pools close. */
+  registerResourceShutdown?: (close: () => Promise<void>) => void;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -1075,6 +1080,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /self-check': 'CDS 自检',
     'GET /host-stats': '获取主机状态',
     'GET /cds-system/perf-health': '运维健康观测',
+    'GET /cds-system/diagnostics/main-thread': '主线程诊断',
+    'POST /cds-system/diagnostics/cpu-profile': '采样主线程CPU',
     'GET /state-stream': '订阅状态流',
     'GET /activity-stream': '订阅活动流',
     'GET /cli-version': '获取 CLI 版本',
@@ -1833,6 +1840,10 @@ export function createServer(deps: ServerDeps): express.Express {
     ),
   );
   const deploymentRunService = new DeploymentRunService(deps.stateService);
+  if (deps.branchOperationCoordinator && deps.config.mode !== 'executor') {
+    const restored = deploymentRunService.restoreQueued(deps.branchOperationCoordinator);
+    if (restored.length) console.warn(`[deployment-run] 已恢复 ${restored.length} 个尚未执行的排队意图`);
+  }
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   const managedProjectService = new ManagedProjectService(deps.stateService);
   const aiExplanationEndpoint = String(process.env.CDS_AI_EXPLANATION_GATEWAY_URL || '').trim();
@@ -1963,6 +1974,10 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     next();
   });
+  // SSE 长连接计数（2026-10-08 卡顿复盘，药方第 1 步）：挂在所有路由之前，一处覆盖
+  // 全部 text/event-stream 端点；非 SSE 响应只多两个闭包。数据见
+  // GET /api/cds-system/diagnostics/main-thread 的 mainThread.sseOpen / sse。
+  app.use(sseConnectionTrackerMiddleware);
   // 密封存储初始化端点永远不接收客户端材料。必须在任何 body parser 和认证
   // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
   // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
@@ -2014,6 +2029,13 @@ export function createServer(deps: ServerDeps): express.Express {
     if (isDesignRuntimeModelProxyPath(req.path)) return next();
     return globalJsonParser(req, res, next);
   });
+
+  const pendingReplayGate = internalPendingReplayAuth.middleware({
+    coordinator: deps.branchOperationCoordinator,
+    projectForBranch: (id) => { const branch = deps.stateService.getBranch(id); return branch ? branch.projectId || 'default' : undefined; },
+  });
+  // 无效的专用签名先拒绝，不能回落到 legacy 内部标记或用户会话。
+  app.use(pendingReplayGate.gate);
 
   // ── Liveness / readiness probe (public, no auth) ──
   // Used by:
@@ -2716,6 +2738,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      isPendingReplay: pendingReplayGate.isTrusted,
       // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
       cookieSecure,
     }));
@@ -2766,6 +2789,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // When both basic auth and SSO are disabled the middleware is a no-op.
   if (authMode !== 'github') {
     app.use(async (req, res, next) => {
+      if (pendingReplayGate.isTrusted(req)) return next();
       const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
       if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
@@ -3918,6 +3942,10 @@ export function createServer(deps: ServerDeps): express.Express {
 
   function doBroadcastState(): void {
     if (stateClients.size === 0) return;
+    timeMainThreadSection('sse.state.broadcast', broadcastStateNow);
+  }
+
+  function broadcastStateNow(): void {
     lastBroadcastAt = Date.now();
     const state = deps.stateService.getState();
 
@@ -4617,6 +4645,7 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
     shell: deps.shell,
+    registerResourceShutdown: deps.registerResourceShutdown,
     serverEventLogStore: deps.serverEventLogStore,
   }));
   // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
@@ -4634,6 +4663,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
 
   app.use('/api', createReleasesRouter({
+    shell: deps.shell,
     stateService: deps.stateService,
     config: deps.config,
     // 与定时调度器共用同一个实例：settling 期的在途句柄只存在于实例内存里，
@@ -4740,6 +4770,7 @@ export function createServer(deps: ServerDeps): express.Express {
     masterPort: deps.config.masterPort,
   });
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
+  app.use('/api', createCdsSystemDiagnosticsRouter());
   // 离机备份（R2）配置入口，系统级。先实测再落盘、落盘后热生效，见 routes/cds-system-offsite-backup.ts。
   app.use('/api', createCdsSystemOffsiteBackupRouter());
   app.use('/api', createCdsSystemSealedStorageRouter({

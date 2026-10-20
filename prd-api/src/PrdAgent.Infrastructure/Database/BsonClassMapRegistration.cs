@@ -1010,6 +1010,18 @@ public static class BsonClassMapRegistration
                 cm.SetIgnoreExtraElements(true);
             });
         }
+
+        if (!BsonClassMap.IsClassMapRegistered(typeof(MonthlyReport)))
+        {
+            BsonClassMap.RegisterClassMap<MonthlyReport>(cm =>
+            {
+                cm.AutoMap();
+                cm.MapIdMember(x => x.Id)
+                    .SetSerializer(new StringOrObjectIdSerializer())
+                    .SetIdGenerator(GuidStringIdGenerator.Instance);
+                cm.SetIgnoreExtraElements(true);
+            });
+        }
     }
 
     private static void RegisterDocumentStore()

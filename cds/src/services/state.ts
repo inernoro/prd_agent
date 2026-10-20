@@ -2,6 +2,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
 import fs from 'node:fs';
+import { worktreePathActivity } from './worktree-path-activity.js';
+import { serviceRuntimeRefs } from './service-runtime.js';
 import type {
   DbLedgerEntry,
   CdsState,
@@ -48,6 +50,7 @@ import type {
   ScheduledJobRun,
   ScheduledJobAction,
   DeploymentRun,
+  PersistedDeploymentIntent,
   DeploymentVersion,
   ContainerTeardownTombstone,
   DeletedProjectWorktreeTombstone,
@@ -280,6 +283,7 @@ function emptyState(): CdsState {
     nextPortIndex: 0,
     logs: {},
     deploymentRuns: {},
+    deploymentIntents: {},
     deploymentVersions: {},
     containerLogArchives: {},
     defaultBranch: null,
@@ -358,6 +362,7 @@ export interface ProjectRemovalSummary {
 
 export class StateService {
   private state: CdsState = emptyState();
+  private readonly criticalDeploymentRunReferences = new Map<string, number>();
   private readonly filePath: string;
   private readonly repoRoot?: string;
   /** P3: the persistence seam. Mutable — setBackingStore() swaps it
@@ -663,6 +668,7 @@ export class StateService {
       if (!profile.cacheMounts) profile.cacheMounts = [];
 
       for (const cm of profile.cacheMounts) {
+        if (cm.kind === 'volume') continue;
         const updated = this.normalizeCacheHostPath(cm.hostPath);
         if (updated !== cm.hostPath) {
           cm.hostPath = updated;
@@ -1055,7 +1061,10 @@ export class StateService {
     // hints（2026-07-21 增量快照）：mutator 确定本次只改了哪块 state 时传入，
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
-    this.backingStore.save(this.state, hints);
+    // 未到日志批次阈值的发布尾部仍在内存；一次实体级保存不能把它误当已落盘。
+    const completeHints = this.pendingReleaseLogLines > 0 && hints?.length && !hints.some(hint => hint.kind === 'global')
+      ? [...hints, ...HINT_GLOBAL] : hints;
+    this.backingStore.save(this.state, completeHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
 
@@ -1068,9 +1077,22 @@ export class StateService {
   }
 
   async flush(): Promise<void> {
+    this.flushPendingReleaseLogs();
     const maybeFlush = (this.backingStore as { flush?: () => Promise<void> }).flush;
     if (typeof maybeFlush === 'function') {
       await maybeFlush.call(this.backingStore);
+    }
+  }
+
+  async flushDeploymentRun(id: string): Promise<void> {
+    this.criticalDeploymentRunReferences.set(id, (this.criticalDeploymentRunReferences.get(id) || 0) + 1);
+    try {
+      if (this.backingStore.flushDeploymentRun) await this.backingStore.flushDeploymentRun(id);
+      else await this.flush();
+    } finally {
+      const remaining = (this.criticalDeploymentRunReferences.get(id) || 1) - 1;
+      if (remaining) this.criticalDeploymentRunReferences.set(id, remaining);
+      else this.criticalDeploymentRunReferences.delete(id);
     }
   }
 
@@ -1258,6 +1280,8 @@ export class StateService {
     if (this.state.branches[entry.id]) {
       throw new Error(`分支 "${entry.id}" 已存在`);
     }
+    worktreePathActivity.assertClaimable([entry.worktreePath,
+      ...Object.values(entry.services || {}).map(s => s.sourceCheckoutPath).filter((p): p is string => !!p)]);
     // PR_B.1: 类型 `projectId: string` 已要求 caller 传入。这里仍然兜底到
     // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
     // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
@@ -1491,7 +1515,7 @@ export class StateService {
     const usedPorts = new Set<number>();
     for (const b of Object.values(this.state.branches)) {
       for (const svc of Object.values(b.services)) {
-        if (svc.hostPort) usedPorts.add(svc.hostPort);
+        for (const runtime of serviceRuntimeRefs(svc)) if (runtime.hostPort) usedPorts.add(runtime.hostPort);
       }
       // 复制集成员/专用隔离实例的端口同样保留（Codex 第二十五轮 P2）：stopped/
       // provisioning 成员不在 ss 可见集合里，分配序列绕回后会把它们保留的
@@ -1599,7 +1623,7 @@ export class StateService {
 
   // ── Deployment runs（分支部署唯一事实源）──
 
-  addDeploymentRun(run: DeploymentRun): DeploymentRun {
+  addDeploymentRun(run: DeploymentRun, intent?: PersistedDeploymentIntent): DeploymentRun {
     if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
     if (this.state.deploymentRuns[run.id]) {
       throw new Error(`DeploymentRun already exists: ${run.id}`);
@@ -1610,6 +1634,13 @@ export class StateService {
       throw new Error(`DeploymentRun project mismatch: ${run.projectId} != ${branch.projectId}`);
     }
     this.state.deploymentRuns[run.id] = run;
+    if (intent) {
+      if (intent.runId !== run.id || intent.operationId !== run.operationId || intent.generation !== run.operationGeneration) {
+        delete this.state.deploymentRuns[run.id];
+        throw new Error('Deployment intent does not match run identity');
+      }
+      (this.state.deploymentIntents ||= {})[run.id] = intent;
+    }
     branch.lastDeploymentRunId = run.id;
     this.pruneDeploymentRuns(run.projectId);
     // prune 只会删同 kind 的其他 run —— 删除检测靠 id 集，单实体 hint 足够覆盖。
@@ -1629,13 +1660,27 @@ export class StateService {
    */
   removeDeploymentRunsForBranch(branchId: string): number {
     const ids = Object.values(this.state.deploymentRuns || {}).filter((run) => run.branchId === branchId).map((run) => run.id);
-    for (const id of ids) delete this.state.deploymentRuns?.[id];
+    for (const id of ids) { delete this.state.deploymentRuns?.[id]; delete this.state.deploymentIntents?.[id]; }
     if (ids.length > 0) this.save([{ kind: 'deploymentRuns', id: ids[0] }]);
     return ids.length;
   }
 
   getDeploymentRun(id: string): DeploymentRun | undefined {
     return this.state.deploymentRuns?.[id];
+  }
+
+  /** 仅供执行恢复读取，不通过公开 run 投影暴露。 */
+  getDeploymentIntents(): PersistedDeploymentIntent[] {
+    return Object.values(this.state.deploymentIntents || {});
+  }
+
+  getDeploymentRunForOperation(operationId: string, generation: number): DeploymentRun | undefined {
+    // 写操作关联读取无需生成、过滤和排序整份历史列表。
+    for (const id in this.state.deploymentRuns || {}) {
+      const run = this.state.deploymentRuns![id];
+      if (run.operationId === operationId && run.operationGeneration === generation) return run;
+    }
+    return undefined;
   }
 
   getDeploymentRuns(filters: { projectId?: string; branchId?: string; status?: DeploymentRun['status'] } = {}): DeploymentRun[] {
@@ -1655,6 +1700,7 @@ export class StateService {
     const run = this.state.deploymentRuns?.[id];
     if (!run) throw new Error(`DeploymentRun not found: ${id}`);
     mutate(run);
+    if (run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') delete this.state.deploymentIntents?.[id];
     this.save([{ kind: 'deploymentRuns', id }]);
     return run;
   }
@@ -1667,8 +1713,10 @@ export class StateService {
     if (overflow <= 0) return;
     for (const run of runs) {
       if (overflow <= 0) break;
+      if (this.criticalDeploymentRunReferences.has(run.id)) continue;
       if (run.status !== 'running' && run.status !== 'failed' && run.status !== 'cancelled') continue;
       delete this.state.deploymentRuns?.[run.id];
+      delete this.state.deploymentIntents?.[run.id];
       overflow -= 1;
     }
   }
@@ -3279,7 +3327,7 @@ export class StateService {
       if (next) entry.expiresAt = next;
     }
     // Save is best-effort — a failed save here shouldn't block the request.
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save([{ kind: 'projects', id: projectId }]); } catch { /* ignore */ }
   }
 
   // ── 授权申请(Access Request)— 顶层队列,平行于 pendingImports ──
@@ -3413,7 +3461,7 @@ export class StateService {
     const entry = (this.state.globalAgentKeys || []).find((k) => k.id === keyId);
     if (!entry) return;
     entry.lastUsedAt = new Date().toISOString();
-    try { this.save(); } catch { /* ignore */ }
+    try { this.save(HINT_GLOBAL); } catch { /* ignore */ }
   }
 
   // ── Pending imports (agent-submitted CDS compose awaiting approval) ──
@@ -3596,6 +3644,7 @@ export class StateService {
   setBranchWorktreePath(branchId: string, worktreePath: string): void {
     const branch = this.state.branches[branchId];
     if (!branch) return;
+    worktreePathActivity.assertClaimable([worktreePath]);
     branch.worktreePath = worktreePath;
   }
 
@@ -4504,7 +4553,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.deployDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordDeployDuration save failed:', (err as Error).message);
     }
@@ -4567,7 +4616,7 @@ export class StateService {
     store.buckets[key] = next;
     this.state.releaseDurationSamples = store;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordReleaseDuration save failed:', (err as Error).message);
     }
@@ -4607,7 +4656,7 @@ export class StateService {
     list.push(delivery);
     this.state.githubWebhookDeliveries = pruneWebhookDeliveries(list);
     try {
-      this.save();
+      this.save([{ kind: 'webhookDeliveries' }]);
     } catch (err) {
       // 写盘失败不影响 webhook 主链路 - 顶多丢这条日志
       console.warn('[state] recordGithubWebhookDelivery save failed:', (err as Error).message);
@@ -4649,6 +4698,13 @@ export class StateService {
    * 读接口返回的是**存着的原样**（含密钥），只给服务端用；路由层负责脱敏后才出网
    * ——私钥、Bark key、自定义请求头的值一律不回给前端，那些是写了就不再读的东西。
    */
+  getAlarmIdentity(): import('./alarm-identity.js').AlarmIdentitySettings | undefined {
+    return this.state.alarmIdentity ? structuredClone(this.state.alarmIdentity) : undefined;
+  }
+  setAlarmIdentity(identity: import('./alarm-identity.js').AlarmIdentitySettings): void {
+    this.state.alarmIdentity = structuredClone(identity);
+    this.save();
+  }
   listAlarmChannels(): import('./alarm-route.js').AlarmChannelConfig[] {
     return [...(this.state.alarmChannels ?? [])];
   }

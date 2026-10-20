@@ -64,6 +64,20 @@ describe('ContainerService', () => {
     else process.env.CDS_BRANCH_NETWORK_ISOLATION = prevIsolation;
   });
 
+  function stubManagedIdentity() {
+    const target = '1234567890abcdef1234567890abcdef12345678', fixedId = `sha256:${'c'.repeat(64)}`;
+    let built = false, contractHash = '';
+    mock.addResponsePatternFirst(/git rev-parse HEAD/, () => ({ stdout: target, stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/docker commit (.*)/, (match) => { built = true; contractHash = match[1].match(/LABEL cds\.managed\.contract=([a-f0-9]{64})/)?.[1] || ''; return { stdout: fixedId, stderr: '', exitCode: 0 }; });
+    mock.addResponsePatternFirst(/docker image inspect(.*)/, (match) => {
+      if (!built) return { stdout: '', stderr: 'No such image', exitCode: 1 };
+      const labels = { 'org.opencontainers.image.revision': target, 'cds.managed.contract': contractHash };
+      return { stdout: JSON.stringify(match[1].includes('--format') ? labels : [{ Id: fixedId, Os: 'linux', Architecture: 'amd64', Config: { Labels: labels } }]), stderr: '', exitCode: 0 };
+    });
+    return fixedId;
+  }
+
   describe('runService', () => {
     // waitForContainerAlive polls with real setTimeout delays (5×3s).
     // Stub it out for tests that don't specifically test health-check behavior.
@@ -133,6 +147,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact-id', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'runtime-id', stderr: '', exitCode: 0 }));
       const runtime = makeService();
+      const fixedId = stubManagedIdentity();
 
       try {
         await service.runService({
@@ -161,13 +176,13 @@ describe('ContainerService', () => {
       expect(mock.commands.some((command) => command.includes('docker commit') && command.includes('cds-managed/p1-api:sha-'))).toBe(true);
       expect(mock.commands.some((command) => command.startsWith('docker pull'))).toBe(false);
       const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
-      expect(runCommand).toContain("'cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678'");
+      expect(runCommand).toContain(fixedId);
       expect(runCommand).toContain("sh -c 'pnpm start'");
       expect(runCommand).not.toContain(`-v '${tmp}':'/app'`);
-      expect(runtime.deployedImage).toBe('cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678');
+      expect(runtime.deployedImage).toBe(fixedId);
     });
 
-    it('rejects a pulled floating fallback image when its source revision changed and uses source build', async () => {
+    it('rejects a pulled floating fallback image when its source revision changed and preserves the current deployment without source build', async () => {
       const targetSha = 'a'.repeat(40);
       const staleSha = 'b'.repeat(40);
       const fallbackImage = 'ghcr.io/acme/api:branch-main';
@@ -190,7 +205,7 @@ describe('ContainerService', () => {
       const runtime = makeService();
       const outputs: string[] = [];
 
-      await service.runService(
+      await expect(service.runService(
         { ...makeEntry(), githubCommitSha: targetSha },
         makeProfile({
           dockerImage: `ghcr.io/acme/api:sha-${targetSha}`,
@@ -207,14 +222,92 @@ describe('ContainerService', () => {
           isComponentUnchangedSince: async () => false,
           onSourceCompileFallback: async () => {},
         },
-      );
+      )).rejects.toThrow('部署未转为源码编译');
 
       expect(mock.commands.some((command) => command.includes('org.opencontainers.image.revision'))).toBe(true);
       expect(outputs.join('')).toContain('无法证明与目标提交等价');
-      const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
-      expect(runCommand).toContain("'node:20-alpine'");
-      expect(runCommand).not.toContain(fallbackImage);
-      expect(runtime.deployedImage).toBe('node:20-alpine');
+      expect(mock.commands.some(command => /^docker (run|create|exec)|^docker rm -f cds-feature-a-api/.test(command))).toBe(false);
+    });
+
+    /*
+     * 方案甲（2026-10-08 mdimp）：项目关了 push 事件，CDS 记下的提交停在旧值，部署却 pull 到
+     * 最新代码。按旧提交找镜像扑空就回退宿主编译——而最新提交的镜像 CI 早就建好了。
+     */
+    describe('极速版先试刚 pull 到的提交的镜像', () => {
+      const recorded = 'a'.repeat(40);
+      const latest = 'b'.repeat(40);
+      const repo = 'ghcr.io/md-imp/mdimp/mdimp-admin-api';
+      const sourceProfile = () => makeProfile({ dockerImage: 'maven:3.9', command: 'mvn package && java -jar app.jar', activeDeployMode: 'dev' });
+      const expressProfile = () => makeProfile({
+        dockerImage: `${repo}:sha-${recorded}`,
+        command: '',
+        prebuiltImage: true,
+        sourceFallbackProfile: sourceProfile(),
+      });
+      const stubDocker = (available: (image: string) => boolean) => {
+        mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+        mock.addResponsePattern(/docker ps/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+        mock.addResponsePattern(/docker pull '?([^' ]+)'?/, (match) => (available(match[1])
+          ? { stdout: 'pulled', stderr: '', exitCode: 0 }
+          : { stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+        mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+        mock.addResponsePattern(/docker run/, () => ({ stdout: 'cid', stderr: '', exitCode: 0 }));
+      };
+
+      it('最新提交有 CI 镜像：直接用它，不回退编译，容器里的提交号也是最新的', async () => {
+        stubDocker((image) => image.endsWith(`sha-${latest}`));
+        const writeSpy = vi.spyOn(fs, 'writeFileSync');
+        const runtime = makeService();
+        const advanced: string[] = [];
+        let fellBack = false;
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, undefined, undefined, {
+          latestCommitSha: latest,
+          onLatestCommitImage: (sha) => advanced.push(sha),
+          onSourceCompileFallback: async () => { fellBack = true; },
+        });
+        expect(runtime.deployedImage).toBe(`${repo}:sha-${latest}`);
+        expect(advanced).toEqual([latest]);
+        expect(fellBack).toBe(false);
+        expect(mock.commands.some((c) => c.startsWith('docker pull') && c.includes(`sha-${recorded}`))).toBe(false);
+        const envFile = writeSpy.mock.calls.map((call) => String(call[1])).find((text) => text.includes('CDS_COMMIT_SHA=')) || '';
+        expect(envFile).toContain(`CDS_COMMIT_SHA=${latest}`);
+        writeSpy.mockRestore();
+      });
+
+      it('最新提交的镜像还没建好：退回 CDS 记录的提交，行为与改动前一致', async () => {
+        stubDocker((image) => image.endsWith(`sha-${recorded}`));
+        const runtime = makeService();
+        const advanced: string[] = [];
+        const outputs: string[] = [];
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, (c) => outputs.push(c), undefined, {
+          latestCommitSha: latest,
+          onLatestCommitImage: (sha) => advanced.push(sha),
+        });
+        expect(runtime.deployedImage).toBe(`${repo}:sha-${recorded}`);
+        expect(advanced).toEqual([]);
+        expect(outputs.join('')).toContain('CI 镜像还没就绪，改用 CDS 记录的提交');
+      });
+
+      it('两个提交都没有镜像：拒绝隐式源码编译，保留原模式', async () => {
+        stubDocker(() => false);
+        const runtime = makeService();
+        let fellBack = false;
+        await expect(service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime, undefined, undefined, {
+          latestCommitSha: latest,
+          onSourceCompileFallback: async () => { fellBack = true; },
+        })).rejects.toThrow('部署未转为源码编译');
+        expect(fellBack).toBe(false);
+        expect(runtime.deployedImage).toBeUndefined();
+        expect(mock.commands.some(command => /^docker (run|create|exec)|^docker rm -f cds-feature-a-api/.test(command))).toBe(false);
+      });
+
+      it('调用方没传最新提交（显式点名提交 / 不可变版本）：只拉记录的提交', async () => {
+        stubDocker(() => true);
+        const runtime = makeService();
+        await service.runService({ ...makeEntry(), githubCommitSha: recorded }, expressProfile(), runtime);
+        expect(runtime.deployedImage).toBe(`${repo}:sha-${recorded}`);
+        expect(mock.commands.some((c) => c.startsWith('docker pull') && c.includes(`sha-${latest}`))).toBe(false);
+      });
     });
 
     it('runs a proven fallback through its immutable revision image and records that exact image', async () => {
@@ -619,6 +712,7 @@ describe('ContainerService', () => {
       mock.addResponsePattern(/docker exec/, () => ({ stdout: 'build complete', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact-id', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker run/, () => ({ stdout: 'runtime-id', stderr: '', exitCode: 0 }));
+      stubManagedIdentity();
       __setWorkloadCgroupForTest({
         enabled: true, parent: 'system-cdsworkloads.slice', driver: 'systemd', weightManaged: true, reason: 'test',
       });
@@ -807,6 +901,22 @@ describe('ContainerService', () => {
       expect(mock.commands.some((c) => /docker rm(\s|$)/.test(c))).toBe(false);
     });
 
+    it.each(['command-failed', 'still-running', 'unavailable'])('停止未确认时%s必须失败，不能报告成功', async (mode) => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'isolated command unavailable', exitCode: mode === 'still-running' ? 0 : 1 }));
+      mock.addResponsePattern(/docker inspect/, () => mode === 'unavailable'
+        ? ({ stdout: '', stderr: 'isolated daemon unavailable', exitCode: 1 })
+        : ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64), State: { Status: 'running', Running: true } }]), stderr: '', exitCode: 0 }));
+      await expect(service.stop('cds-feature-a-api')).rejects.toThrow('停止结果未确认');
+    });
+
+    it('停止确认连接失败但随后实际读取已停止时允许确认同一结果', async () => {
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: 'acknowledgement unavailable', exitCode: 1 }));
+      mock.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify([{ Id: 'a'.repeat(64), State: { Status: 'exited', Running: false } }]), stderr: '', exitCode: 0 }));
+      await expect(service.stop('cds-feature-a-api')).resolves.toBeUndefined();
+    });
+
     it('records operationId and branch identity on stop events', async () => {
       const records: Array<{
         action: string;
@@ -983,6 +1093,30 @@ describe('ContainerService', () => {
   });
 
   describe('discoverAppContainersWithStatus', () => {
+    it('collects exit evidence without reading Docker environment variables', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({
+        stdout: 'c-api|exited|cds.branch.id=b,cds.profile.id=api\nc-web|running|cds.branch.id=b,cds.profile.id=web',
+        stderr: '', exitCode: 0,
+      }));
+      mock.addResponsePattern(/docker inspect --format/, () => ({
+        stdout: '/c-api|255|false|2026-10-01T00:45:59Z', stderr: '', exitCode: 0,
+      }));
+      const result = await service.discoverAppContainersWithStatus();
+      expect(result.containers.get('b/api')).toMatchObject({ exitCode: 255, oomKilled: false, finishedAt: '2026-10-01T00:45:59Z' });
+      expect(result.containers.get('b/web')?.exitCode).toBeUndefined();
+      expect(mock.commands[1]).not.toContain('Config.Env');
+      expect(mock.commands[1]).not.toContain('c-web');
+    });
+
+    it('keeps exit evidence unknown when inspection fails', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({
+        stdout: 'c-api|exited|cds.branch.id=b,cds.profile.id=api', stderr: '', exitCode: 0,
+      }));
+      const result = await service.discoverAppContainersWithStatus();
+      expect(result.ok).toBe(true);
+      expect(result.containers.get('b/api')?.exitCode).toBeUndefined();
+    });
+
     it('reports ok=false when docker ps fails so startup prune can fail closed', async () => {
       mock.addResponsePattern(/docker ps/, () => ({
         stdout: '',

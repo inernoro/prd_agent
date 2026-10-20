@@ -1,3 +1,4 @@
+import { type AlarmIdentity } from './alarm-identity.js';
 import { renderAlarmMessage } from './alarm-route.js';
 /**
  * map-notifier — 把存活监控的状态翻转送进 MAP 站内通知。
@@ -39,12 +40,20 @@ export interface MapNotifierConfig {
 }
 
 export interface MapNotifierAlert {
+  urgency?: 'urgent' | 'normal';
+  businessName?: string;
+  finding?: string;
+  identity?: AlarmIdentity;
+  assessment?: 'observation-unavailable' | 'check-failed';
+  affectedChecks?: number;
+  environmentLabel?: string;
   type: 'uptime.target.down' | 'uptime.target.recovered';
   targetId: string;
   targetName: string;
   projectId?: string;
   branchId?: string;
   probeUrl?: string;
+  boardUrl?: string;
   message: string;
   consecutiveFailures: number;
   detectedAt: string;
@@ -103,26 +112,15 @@ export function signCanonical(privateKeyPem: string, canonical: string): string 
  */
 export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificationPayload {
   const down = alert.type === 'uptime.target.down';
-  const metricMessage = alert.projectId === 'cds-self-monitor' ? renderAlarmMessage({ ...alert, projectId: alert.projectId, kind: down ? 'business-down' : 'business-recovered' }) : null;
-  const scope = [alert.projectId, alert.branchId].filter(Boolean).join(' / ');
-  const title = down
-    ? `监控告警：${alert.targetName} 不可用`
-    : `已恢复：${alert.targetName}`;
-  const lines = [
-    alert.message,
-    scope ? `范围：${scope}` : '',
-    down ? `连续失败 ${alert.consecutiveFailures} 次` : '',
-    down ? '下一步：打开监控中心看该目标的最近采样与故障时间线，确认是探测器问题还是服务真的挂了。' : '',
-  ].filter(Boolean);
-
+  const message = renderAlarmMessage({ ...alert, projectId: alert.projectId || '', kind: down ? 'business-down' : 'business-recovered' }, { boardUrl: alert.boardUrl });
   return {
     source: 'uptime-alert',
-    title: metricMessage?.title ?? title,
-    message: metricMessage?.body ?? lines.join('\n'),
-    level: down ? (metricMessage ? 'warning' : 'error') : 'info',
+    title: message.title,
+    message: message.body,
+    level: down ? alert.urgency === 'urgent' && alert.assessment !== 'observation-unavailable' ? 'error' : 'warning' : 'info',
     section: 'admin',
-    dedupKey: `uptime:${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
-    ...(alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),
+    dedupKey: `uptime:${alert.identity ? `${alert.identity.observer.id}:${alert.identity.subject.id}:` : ''}${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
+    ...(alert.boardUrl ? { actionLabel: '查看问题与处理建议', actionUrl: alert.boardUrl } : alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),
   };
 }
 

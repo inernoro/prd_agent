@@ -36,7 +36,6 @@ import {
   X,
   Layers,
   XCircle,
-  Zap,
   FolderInput,
   Pin,
   Users,
@@ -66,6 +65,7 @@ import { BranchGroupSuggestions, EMPTY_SUGGESTION_DRAFT, type BranchGroupSuggest
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { PrebuiltRuntimeIcon } from '@/components/branch/PrebuiltRuntimeIcon';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 
@@ -221,6 +221,8 @@ interface BranchSummary {
   lastStopReason?: string;
   lastStopSource?: 'user' | 'scheduler' | 'executor' | 'crash' | 'oom' | 'external' | 'cds' | 'webhook' | 'ai' | 'system';
   errorMessage?: string;
+  runningCommitSha?: string | null;
+  targetCommitSha?: string | null;
   commitSha?: string;
   subject?: string;
   builder?: {
@@ -259,10 +261,12 @@ interface BranchSummary {
     sourceProfiles: number;
     modes: string[];
     pendingPublish?: boolean;
-    /** 2026-06-23 极速版：任一 profile 走预构建镜像部署模式 */
+    /** 2026-06-23 极速版：**任一** profile 走预构建镜像部署模式（机制判断用，不能拿来展示「极速版」） */
     prebuilt?: boolean;
     /** 走极速版的 profile id；阶段条按这次正在部署的服务选步骤 */
     prebuiltProfileIds?: string[];
+    /** 2026-10-08 极速版覆盖程度：只有 all 才显示「极速版」与闪电 */
+    prebuiltCoverage?: 'all' | 'partial' | 'none';
     // P0 止血：期望态 vs 实际态漂移（后端 summarizeBranchDeployRuntime 计算）
     drift?: {
       expectedCount: number;
@@ -1026,7 +1030,8 @@ function pickDeployEstimate(
 /** 构建中卡片的模式标签：发布版 / 热加载（源码即热加载/dev 运行）。 */
 function deployModeLabel(branch: BranchSummary): string {
   // 极速版（CI 预构建）优先：它分类上属 release，但要细化标签让用户知道是「拉镜像非本机编译」。
-  if (branch.deployRuntime?.prebuilt === true) return '极速版';
+  // 只有全部服务都走预构建才叫极速版；部分极速的落到下面的「混合」。
+  if (isFullyPrebuilt(branch.deployRuntime)) return '极速版';
   const kind = branch.deployRuntime?.kind;
   if (kind === 'release') return '发布版';
   if (kind === 'mixed') return '混合';
@@ -1651,9 +1656,14 @@ function closePreviewTarget(target: PreviewTarget): void {
 }
 
 export function BranchListPage(): JSX.Element {
-  const canManageConsole = useCanManageConsole();
   const { projectId: projectIdParam } = useParams();
   const projectId = projectIdParam || projectIdFromQuery();
+  // 从授权回执或项目切换器进入另一项目时，不能保留旧项目的分支抽屉与在途页面状态。
+  return <ProjectBranchList key={projectId} projectId={projectId} />;
+}
+
+function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
+  const canManageConsole = useCanManageConsole();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const canOpenPreview = canUseConsolePreview(state.status === 'ok' ? state.previewMode : undefined, canManageConsole);
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
@@ -2322,6 +2332,20 @@ export function BranchListPage(): JSX.Element {
 
   // SSE 连接状态只用于故障兜底。在线状态不再渲染绿点,避免无意义状态噪音。
   const [sseConnected, setSseConnected] = useState(true);
+  useEffect(() => {
+    if (sseConnected) return;
+    // 控制面重启后 SSE 会主动关闭；低频读取权威快照，避免卡片永远停在构建中。
+    // 保留既有的手动重连入口，不恢复浏览器每 3 秒重连造成的请求风暴。
+    let inFlight = false;
+    const sync = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try { await refreshLiveBranches(); } finally { inFlight = false; }
+    };
+    void sync();
+    const timer = window.setInterval(() => { void sync(); }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [sseConnected, refreshLiveBranches]);
   /*
    * 卡片生命周期动效(2026-06-23 用户反馈「webhook 回收分支没有动效」):
    *   - 新分支(branch.created)→ enteringIds → 卡片淡入长出来
@@ -5072,12 +5096,12 @@ function BranchSearchDropdown({
             value={configSourceBranchId ?? ''}
             onChange={(event) => onChangeConfigSource(event.target.value || null)}
             className="min-w-0 flex-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
-            title="新建分支时从来源分支快照拷贝分支级配置;默认走项目模板(不派生)"
+            title="默认使用项目模板。派生会复制环境与额外服务，但保留项目极速默认；源码模式例外需创建后手动设置。额外服务仍可能使分支显示部分极速。"
           >
             <option value="">项目模板(默认,不派生)</option>
             {sourceCandidates.map((branch) => (
               <option key={branch.id} value={branch.id}>
-                派生自 {branch.branch}
+                派生自 {branch.branch}（保留项目极速默认）
               </option>
             ))}
           </select>
@@ -6645,10 +6669,12 @@ const BranchCard = memo(function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
-            {runtime?.prebuilt ? (
-              <Zap
-                className={`h-4 w-4 ${runtimeIconClass} ${isInterim ? 'animate-pulse' : ''}`}
-                aria-label={runtime.label}
+            {runtime && (runtime.prebuilt || branch.deployRuntime?.prebuiltCoverage === 'partial') ? (
+              <PrebuiltRuntimeIcon
+                partial={branch.deployRuntime?.prebuiltCoverage === 'partial'}
+                pending={runtime.kind === 'pending'}
+                label={runtime.label}
+                className={isInterim ? 'animate-pulse' : ''}
               />
             ) : runtime ? (
               <Rocket
@@ -7009,13 +7035,13 @@ const BranchCard = memo(function BranchCard({
         {ciFailedChip ? (
           <span
             className="inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
-            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，可切回源码编译或重试 CI 后再部署。`}
+            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}），旧版本仍在服务。点「CI 失败」打开分支详情，请查看 CI 日志，修复并重试 CI，通过后再部署。`}
           >
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onDetail(); }}
               className="inline-flex min-w-0 items-center gap-1 font-medium underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warn/40"
-              aria-label="CI 构建失败，打开分支详情切回源码编译"
+              aria-label="新版本 CI 失败，查看失败原因；旧版本仍在服务"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-warn" aria-hidden />
               <span className="min-w-0 truncate">CI 失败</span>
@@ -7561,8 +7587,8 @@ const BranchCard = memo(function BranchCard({
                 </span>
               </span>
             ) : footerSha ? (
-              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`commit ${footerSha}`}>
-                {footerSha}
+              <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；待发布目标 ${branch.targetCommitSha || '未确认'}`}>
+                运行 {branch.runningCommitSha?.slice(0, 7) || '未确认'}{branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? ` · 待发布 ${branch.targetCommitSha.slice(0, 7)}` : ''}
               </span>
             ) : null}
             {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject
@@ -7856,11 +7882,36 @@ function BranchMoreMenu({
 
 // BranchFailureHint 已删除：错误提醒并入卡片端口槽位的统一状态行（只一个提醒，2026-06-22 用户要求）。
 
+/**
+ * 整条分支是不是极速版（2026-10-08）：所有服务都走预构建镜像才算。
+ * deployRuntime.prebuilt 只表示「任一服务」，9 个服务里 1 个极速、8 个在宿主编译时它也是 true，
+ * 全部与部分分别用黄、蓝闪电；待生效不亮完成态闪电。旧后端沿用 prebuilt。
+ */
+function isFullyPrebuilt(runtime: BranchSummary['deployRuntime']): boolean {
+  if (!runtime) return false;
+  if (runtime.prebuiltCoverage) return runtime.prebuiltCoverage === 'all';
+  return runtime.prebuilt === true;
+}
+
 function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string; prebuilt?: boolean } | null {
   const runtime = branch.deployRuntime;
+  // 全部服务仍计入分母；辅助服务未标记预构建，不等于正在宿主编译。
+  if (runtime?.prebuiltCoverage === 'partial') {
+    const fast = runtime.prebuiltProfileIds?.length ?? 0;
+    const total = runtime.activeProfiles;
+    const ratio = `极速 ${fast}/${total}`;
+    return {
+      kind: runtime.pendingPublish ? 'pending' : 'mixed',
+      label: runtime.pendingPublish ? `混合 · ${ratio} · 待生效` : `混合 · ${ratio}`,
+      title: `${total} 个服务里 ${fast} 个配置为极速版（CI 预构建）；其余可能是依赖镜像、辅助服务或源码模式，不能据此判定正在宿主编译。${runtime.title ? ` ${runtime.title}` : ''}`,
+      className: runtime.pendingPublish
+        ? 'border-warn/40 bg-warn/10 text-warn'
+        : 'border-express-partial/35 bg-express-partial/10 text-express-partial',
+    };
+  }
   // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
-  // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
-  if (runtime?.prebuilt === true) {
+  // 全量已生效用黄闪电；部分用蓝闪电，待生效显示时钟。
+  if (runtime && isFullyPrebuilt(runtime)) {
     // 配置=极速版,但容器还没真正以极速版跑起来（force-align 后未重部署 / 重建中 / 还停着）
     // → 「极速版·待生效」橙色,别误显示绿/青的「已在跑」（Codex review）。
     if (runtime.pendingPublish) {
@@ -7877,7 +7928,7 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
       prebuilt: true,
       label: '极速版',
       title: runtime.title || '极速版（CI 预构建）：拉取 GitHub Actions 编译的镜像运行,CDS 不本机编译',
-      className: 'border-info/35 bg-info/10 text-info',
+      className: 'border-express-full/35 bg-express-full/10 text-express-full',
     };
   }
   if (runtime?.kind === 'release') {

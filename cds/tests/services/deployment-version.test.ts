@@ -55,6 +55,15 @@ describe('DeploymentVersionService', () => {
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it.each([
+    { buildTimeout: 30 }, { buildScope: ['src'] }, { cacheMounts: [{ hostPath: '/tmp/pnpm-cache', containerPath: '/cache' }] },
+    { fallbackImage: 'node:22' }, { localArtifact: true }, { dbScope: 'per-branch' as const }, { dbInit: 'clone' as const },
+    { sourceFallbackProfile: { ...profile(), command: 'node fallback.js' } },
+  ])('构建、回退或数据库配置改变不得并入同提交旧目标: %j', (changed) => {
+    const service = new DeploymentVersionService(stateService);
+    expect(service.computeConfigHash([{ ...profile(), ...changed }], {})).not.toBe(service.computeConfigHash([profile()], {}));
+  });
+
   it('creates an immutable content-addressed version and reuses the same identity', () => {
     const service = new DeploymentVersionService(stateService, () => new Date('2026-07-10T01:00:00.000Z'));
     branch.services.web = {
