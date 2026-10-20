@@ -46,3 +46,4 @@
 | fix | cds | 批量 SQL 逐条检查语句头，拒绝后续未知命令与 PostgreSQL 文件 COPY、lo_import/lo_export，保留正常事务与多结果执行 |
 | fix | cds | 为全部 CDS Node slim 运行镜像及源码启动路径声明 OpenSSL 依赖，CI 在预览运行镜像内实际生成并校验证书 |
 | fix | cds | 通行证复制等待超过 5 秒后释放按钮并说明前台与权限恢复动作，避免浏览器后台剪贴板等待锁住放行和撤销 |
+| fix | cds | 通行证复用 HTTP 剪贴板回退并校验复制结果，容器 Master 明确使用可达的宿主网络部署配置 |

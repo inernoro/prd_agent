@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { databaseFailure, type DatabaseFailure } from '@/lib/databaseFailure';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { DatabaseExecutionNotice } from '@/components/branch/DatabaseExecutionNotice';
 import { DatabasePassPanel } from '@/components/branch/DatabasePassPanel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -774,28 +775,6 @@ function failureKeyLogLines(lines: string[], max = 8): string[] {
     }
   });
   return Array.from(new Set(selected)).slice(-max);
-}
-
-async function copyTextToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // Browser permission policies can reject clipboard writes even on HTTPS.
-      // Fall through to the textarea path so the recovery button still works.
-    }
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  textarea.style.top = '0';
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand('copy');
-  document.body.removeChild(textarea);
 }
 
 /**
@@ -4413,7 +4392,7 @@ function ResourceConnection({
   }
   return (
     <div className="space-y-3">
-      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={value=>navigator.clipboard.writeText(value)} /> : null}
+      {infraLocalOnly && resource.branchId && ['MySQL','PostgreSQL','MongoDB'].includes(resource.runtime) ? <DatabasePassPanel branchId={resource.branchId} resourceId={resource.id} allowed={canTemporaryExternal} onCopy={copyTextToClipboard} /> : null}
       {rows.map((row) => (
         <div key={row.label} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3">
           <div className="mb-1 text-xs text-muted-foreground">{row.label}</div>
