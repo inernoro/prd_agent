@@ -29,7 +29,7 @@ name: Branch Image
 
 on:
   push:
-    branches: ["**"]
+    branches: ["**", "!codex/t-import-static-validation-20261020"]
   workflow_dispatch:
 
 env:
@@ -476,3 +476,4 @@ jobs:
           platforms: linux/amd64
           cache-from: type=gha,scope=branch-design-opendesign
           cache-to: type=gha,mode=max,scope=branch-design-opendesign
+
