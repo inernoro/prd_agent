@@ -255,6 +255,15 @@ describe("地址设置真实请求链与隔离", () => {
     expect((await request("PUT", endpoint, { ...change, expectedVersion: version() })).status).toBe(409);
     expect(state.getProject("foo")!.previewAddresses?.main).toBeUndefined();
   });
+  it.each(["develop", "foo-develop"])("保留同项目分支仍可访问的历史入口（%s）", async (label) => {
+    const proxy = new ProxyService(state) as any;
+    expect(proxy.resolveBranchEntry(label)?.id).toBe("foo-develop");
+    const change = { ...draft, mode: "custom", customSubdomain: label };
+    const preview = await request("POST", `${endpoint}/preview`, change);
+    expect(preview.data.collisions.some((c: any) => c.branchId === "foo-develop" && c.host === `${label}.preview.test`)).toBe(true);
+    expect((await request("PUT", endpoint, { ...change, expectedVersion: version() })).status).toBe(409);
+    expect(proxy.resolveBranchEntry(label)?.id).toBe("foo-develop");
+  });
   it("草稿预览不修改任何项目或写审计", async () => {
     const before = JSON.stringify(state.getProjects());
     const result = await request("POST", `${endpoint}/preview`, {

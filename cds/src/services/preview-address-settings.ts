@@ -207,9 +207,9 @@ export function addressCollisions(
   const branches = state.getAllBranches();
   const candidates = branches.filter((b) => b.projectId === before.id);
   const occupied = occupiedHostOwners(branches, roots);
-  for (const b of branches.filter((b) => b.projectId !== before.id)) {
+  for (const b of branches) {
     const p = state.getProject(b.projectId);
-    for (const host of projectBranchPublishedHosts(
+    if (b.projectId !== before.id) for (const host of projectBranchPublishedHosts(
       b,
       p,
       state.getEffectiveProfilesForBranch(b).map(profile => resolveEffectiveProfile(profile, b)),
