@@ -1107,10 +1107,15 @@ export async function validateBuildReadiness(
       ? '依赖校验中: pnpm install (cds + web 并行)'
       : '依赖校验中: pnpm install (cds)',
   });
-  const [installResult, webInstallResult] = await Promise.all([
+  const installs = [
     runPnpmInstallWithCache(shell, cdsDir),
     webExists ? runPnpmInstallWithCache(shell, webDir) : Promise.resolve(null),
-  ]);
+  ] as const;
+  const [installResult, webInstallResult] = await Promise.all(installs).catch(async (error) => {
+    // 首败不能让尚在写同一维护树的兄弟脱管；只等本轮原任务，不重试或重置预算。
+    await Promise.allSettled(installs);
+    throw error;
+  });
   timings['install_cds_ms'] = installResult._timing.ms;
   timings[installResult._timing.skipped ? 'install_cds_skipped' : 'install_cds_ran'] = 1;
   if (webInstallResult) {
@@ -1250,7 +1255,7 @@ export async function validateBuildReadiness(
     const result = await fn();
     return { result, ms: Date.now() - t0 };
   };
-  const [tscCdsTimed, tscWebTimed] = await Promise.all([
+  const checks = [
     timed<Awaited<ReturnType<typeof shell.exec>>>(() =>
       skipCdsTsc
         ? Promise.resolve({ exitCode: 0, stdout: '[skip] tsc cds (input sha unchanged)', stderr: '' })
@@ -1263,7 +1268,11 @@ export async function validateBuildReadiness(
             : shell.exec('./node_modules/.bin/tsc --noEmit', { cwd: webDir, timeout: webTscTimeoutMs }),
         )
       : Promise.resolve(null),
-  ]);
+  ] as const;
+  const [tscCdsTimed, tscWebTimed] = await Promise.all(checks).catch(async (error) => {
+    await Promise.allSettled(checks);
+    throw error;
+  });
   const tscResult = tscCdsTimed.result;
   const webTscResult = tscWebTimed?.result ?? null;
   timings['tsc_cds_ms'] = tscCdsTimed.ms;
@@ -2439,6 +2448,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
    */
   const RESTART_GATE_RELEASE_MS = 15_000;
 
+  // 四个维护入口共享同一写入树；磁盘marker失败/过期和HTTP断开都不代表写者结束。
+  type SelfMaintenanceOwner = { restartScheduled: boolean };
+  let selfMaintenanceOwner: SelfMaintenanceOwner | null = null;
+  function acquireSelfMaintenance(active: ReturnType<StateService['getActiveSelfUpdate']>): SelfMaintenanceOwner | null {
+    if (selfMaintenanceOwner || isSelfUpdateBusy(active)) return null;
+    return selfMaintenanceOwner = { restartScheduled: false };
+  }
+  function releaseSelfMaintenance(owner: SelfMaintenanceOwner): boolean {
+    if (selfMaintenanceOwner !== owner) return false;
+    selfMaintenanceOwner = null;
+    return true;
+  }
+  function finishSelfMaintenance(owner: SelfMaintenanceOwner): void {
+    if (!owner.restartScheduled) releaseSelfMaintenance(owner);
+  }
+
   async function drainDeploysBeforeSelfUpdateRestart(context: {
     trigger: string;
     branch?: string;
@@ -2566,9 +2591,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function scheduleDetachedCdsRestart(input: {
     branchLabel: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
+    maintenanceOwner: SelfMaintenanceOwner;
     delayMs?: number;
     exitOnFailure?: boolean;
   }): void {
+    input.maintenanceOwner.restartScheduled = true;
     const launch = () => {
       const cdsDir = path.join(config.repoRoot, 'cds');
       const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
@@ -2648,8 +2675,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
           setTimeout(() => process.exit(1), 1000);
         } else {
           // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
-          endSelfUpdateDrain();
-          setRestartWait(null);
+          if (releaseSelfMaintenance(input.maintenanceOwner)) {
+            endSelfUpdateDrain();
+            setRestartWait(null);
+          }
         }
         return;
       }
@@ -2662,9 +2691,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 503 + 红灯 CI —— 2026-07-28 实际中招一次。
       safely('gate-release-timer', () => {
         setTimeout(() => {
-          endSelfUpdateDrain();
-          setRestartWait(null);
-          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+          if (releaseSelfMaintenance(input.maintenanceOwner)) {
+            endSelfUpdateDrain();
+            setRestartWait(null);
+            console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+          }
         }, RESTART_GATE_RELEASE_MS).unref?.();
       });
       safely('interrupt-all', () => {
@@ -23952,7 +23983,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       resolveActorFromRequest(req) ||
       'unknown';
     const existingActive = stateService.getActiveSelfUpdate();
-    if (isSelfUpdateBusy(existingActive)) {
+    const maintenanceOwner = acquireSelfMaintenance(existingActive);
+    if (!maintenanceOwner) {
       sendSSE(res, 'error', {
         code: 'self_update_busy',
         message: '已有 CDS 更新或重启正在进行，本次精确版本重启已拒绝。',
@@ -24042,6 +24074,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       scheduleDetachedCdsRestart({
         branchLabel: branch,
         source: 'api.self-restart',
+        maintenanceOwner,
         delayMs: 500,
         exitOnFailure: true,
       });
@@ -24053,6 +24086,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         message: (err as Error).message,
       });
       res.end();
+    } finally {
+      finishSelfMaintenance(maintenanceOwner);
     }
   });
 
@@ -24106,6 +24141,26 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (terminal) terminalStateCommitted = true;
     };
 
+    const existingActive = stateService.getActiveSelfUpdate();
+    const maintenanceOwner = acquireSelfMaintenance(existingActive);
+    if (!maintenanceOwner) {
+      const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
+      stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
+      commitSelfUpdateState();
+      const concurrencyDiagnosis = diagnoseSelfUpdateFailure({ stage: 'concurrency', message });
+      sendSSE(res, 'error', {
+        message: formatSelfUpdateFailureMessage(concurrencyDiagnosis),
+        cause: concurrencyDiagnosis.cause,
+        nextAction: concurrencyDiagnosis.nextAction,
+        raw: concurrencyDiagnosis.raw,
+        stage: concurrencyDiagnosis.stage,
+        activeSelfUpdate: existingActive,
+      });
+      res.end();
+      return;
+    }
+    // 外层finally同时覆盖首次分支/SHA await和原流程的全部失败出口。
+    try {
     branch = resolveSelfUpdateTargetBranch(typeof branch === 'string' ? branch : '');
     if (!branch) {
       try {
@@ -24122,24 +24177,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       } catch {
         branch = 'main';
       }
-    }
-
-    const existingActive = stateService.getActiveSelfUpdate();
-    if (isSelfUpdateBusy(existingActive)) {
-      const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次请求已拒绝以避免并发构建串台`;
-      stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
-      commitSelfUpdateState();
-      const concurrencyDiagnosis = diagnoseSelfUpdateFailure({ stage: 'concurrency', message });
-      sendSSE(res, 'error', {
-        message: formatSelfUpdateFailureMessage(concurrencyDiagnosis),
-        cause: concurrencyDiagnosis.cause,
-        nextAction: concurrencyDiagnosis.nextAction,
-        raw: concurrencyDiagnosis.raw,
-        stage: concurrencyDiagnosis.stage,
-        activeSelfUpdate: existingActive,
-      });
-      res.end();
-      return;
     }
     if (existingActive) stateService.clearSelfUpdateActive();
 
@@ -24875,6 +24912,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       scheduleDetachedCdsRestart({
         branchLabel: branch || '',
         source: 'api.self-update',
+        maintenanceOwner,
         delayMs: 500,
         exitOnFailure: true,
       });
@@ -24902,6 +24940,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         commitSelfUpdateState(true);
       }
     }
+    } finally {
+      finishSelfMaintenance(maintenanceOwner);
+    }
   });
 
   // POST /api/self-update-dry-run — run the pre-restart validation
@@ -24914,10 +24955,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //   { ok: false, stage, error }        — blocking issue
   //
   // Use case: operators (and CI) who want to verify a branch can
-  // be self-updated before actually hitting the red button. No
-  // side effects — if you see { ok: true } you can confidently
-  // call /api/self-update next.
+  // be self-updated before actually hitting the red button. Validation
+  // writes dependencies/install/type-check stamps, so it shares maintenance admission.
   router.post('/self-update-dry-run', async (_req, res) => {
+    const maintenanceOwner = acquireSelfMaintenance(stateService.getActiveSelfUpdate());
+    if (!maintenanceOwner) {
+      res.status(409).json({ ok: false, error: 'self_update_busy',
+        message: '已有 CDS 维护请求正在进行，本次预检尚未开始；请待其结束后重试。' });
+      return;
+    }
     const cdsDir = path.join(config.repoRoot, 'cds');
     try {
       const started = Date.now();
@@ -24960,6 +25006,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         stage: 'unknown',
         error: (err as Error).message,
       });
+    } finally {
+      finishSelfMaintenance(maintenanceOwner);
     }
   });
 
@@ -25022,7 +25070,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (terminal) terminalStateCommitted = true;
     };
     const existingActive = stateService.getActiveSelfUpdate();
-    if (isSelfUpdateBusy(existingActive)) {
+    const maintenanceOwner = acquireSelfMaintenance(existingActive);
+    if (!maintenanceOwner) {
       const message = `已有更新正在进行(${existingActive?.trigger || 'unknown'} · ${existingActive?.step || 'starting'}),本次强制更新已拒绝以避免并发构建串台`;
       stateService.appendSelfUpdateLog('warning', `[concurrency] ${message} actor=${actor}`);
       commitSelfUpdateState();
@@ -25038,6 +25087,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       res.end();
       return;
     }
+    try {
     if (existingActive) stateService.clearSelfUpdateActive();
     // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
     const startedAt = Date.now();
@@ -25655,7 +25705,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           shell.exec('./node_modules/.bin/tsc --noEmit', { cwd: cdsDir, timeout: 120_000 }),
         );
       }
-      const buildResults = await Promise.all(tasks);
+      const buildResults = await Promise.all(tasks).catch(async (error) => {
+        await Promise.allSettled(tasks);
+        throw error;
+      });
       const esbuildRes = buildResults[0];
       const tscCheckRes = skipTscInBuild ? null : buildResults[1];
       const buildElapsed = ((Date.now() - buildStartedAt) / 1000).toFixed(1);
@@ -25809,6 +25862,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       scheduleDetachedCdsRestart({
         branchLabel: target,
         source: 'api.self-force-sync',
+        maintenanceOwner,
       });
     } catch (err) {
       const catchDiagnosis = diagnoseSelfUpdateFailure({ stage: 'unknown', raw: (err as Error).message });
@@ -25834,6 +25888,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!terminalStateCommitted) {
         commitSelfUpdateState(true);
       }
+    }
+    } finally {
+      finishSelfMaintenance(maintenanceOwner);
     }
   });
 
