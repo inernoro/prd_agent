@@ -29,11 +29,15 @@ export async function verifyProjectReleaseCI(
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) return { ok: false, message: `无法读取项目发布 CI ${workflow}（HTTP ${response.status}），不能以镜像构建代替` };
-    const body = await response.json() as { workflow_runs?: Array<{ id: number; run_attempt?: number; head_sha: string; head_branch: string; path: string; status: string; conclusion: string | null; head_repository?: { full_name: string } }> };
-    const run = (body.workflow_runs || []).filter(r => r.head_sha === sha && r.head_branch === branch.branch
+    const body = await response.json() as { total_count?: number; workflow_runs?: Array<{ id: number; run_attempt?: number; updated_at?: string; run_started_at?: string; head_sha: string; head_branch: string; path: string; status: string; conclusion: string | null; head_repository?: { full_name: string } }> };
+    if ((body.total_count || 0) > (body.workflow_runs || []).length) return { ok: false, message: '项目 CI 记录未完整返回，无法证明最新结论，未放行发布' };
+    const matching = (body.workflow_runs || []).filter(r => r.head_sha === sha && r.head_branch === branch.branch
       && r.path?.split('@')[0] === `.github/workflows/${workflow}`
-      && r.head_repository?.full_name.toLowerCase() === repo.toLowerCase())
-      .sort((a,b) => b.id-a.id || (b.run_attempt || 0)-(a.run_attempt || 0))[0];
+      && r.head_repository?.full_name.toLowerCase() === repo.toLowerCase());
+    const updated = (run: typeof matching[number]) => Date.parse(run.updated_at || run.run_started_at || '');
+    if (matching.some(run => !Number.isFinite(updated(run)))) return { ok: false, message: '项目 CI 缺少有效运行时间证据，未放行发布' };
+    // Rerunning an older run retains its ID: latest state update, not largest ID.
+    const run = matching.sort((a,b) => updated(b)-updated(a) || b.id-a.id || (b.run_attempt || 0)-(a.run_attempt || 0))[0];
     const ok = run?.status === 'completed' && run.conclusion === 'success';
     return { ok, message: `${workflow} · ${sha.slice(0,12)} · ${run ? `run=${run.id}.${run.run_attempt || 1} ${run.status}/${run.conclusion || '等待结果'}` : '没有同分支、同提交的 CI 记录'}；该工作流必须验证发布脚本 check` };
   } catch {
