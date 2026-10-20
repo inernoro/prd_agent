@@ -37,8 +37,8 @@ import { decideProjectScope, resolveProjectScope } from './project-scope.js';
  * cds.yml 等其它工作流的完成事件误触发（那时镜像还没 push 到 ghcr）。
  * 后续可做成 project 级配置以泛化到任意 public 仓库（见 doc/debt.cds.ci-prebuilt.md）。
  */
-const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
-const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
+export const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
+export const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
 
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before

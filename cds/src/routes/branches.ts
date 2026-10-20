@@ -153,7 +153,7 @@ import { isPreviewInstance, profileHostsPreviewInstance } from '../services/prev
 import { buildPreviewMirror, findMirrorLeaks, replayPreviewMirrorSeries, writePreviewMirror } from '../services/preview-mirror.js';
 import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
-import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
+import { preparePrebuiltImageClaim, verifyPrebuiltWorkflowRun } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -12631,6 +12631,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!plan.ok) {
       res.status(plan.status).json({ error: plan.error, message: plan.message });
       return;
+    }
+
+    const project = stateService.getProject(entry.projectId || 'default');
+    let authorization: string | undefined;
+    try {
+      const token = githubApp && project?.githubInstallationId
+        ? await githubApp.getInstallationToken(project.githubInstallationId)
+        : stateService.getGithubDeviceAuth(project?.githubCredentialUserId)?.token;
+      authorization = token ? `Bearer ${token}` : undefined;
+    } catch {
+      res.status(503).json({ error: 'ci_evidence_unavailable', message: '暂时无法核对项目的 GitHub 回执，未认领镜像；请稍后重试。' }); return;
+    }
+    const evidence = await verifyPrebuiltWorkflowRun({
+      repository: project?.githubRepoFullName || entry.githubRepoFullName || '',
+      branch: entry.branch, commitSha, workflowRunUrl: plan.patch.ciWorkflowRunUrl, authorization,
+    });
+    if (!evidence.ok) {
+      res.status(evidence.status).json({ error: evidence.error, message: evidence.message }); return;
+    }
+    const current = stateService.getBranch(id);
+    if (!current || current !== entry || current.ciTargetSha !== plan.previous.ciTargetSha
+      || current.githubCommitSha !== plan.previous.githubCommitSha) {
+      res.status(409).json({ error: 'ci_target_changed', message: '核对期间分支目标已更新，未覆盖新状态；请重试。' }); return;
     }
 
     if (!dryRun) {
