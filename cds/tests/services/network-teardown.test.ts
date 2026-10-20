@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { processNetworkTeardowns, type NetworkTeardownState } from '../../src/services/network-teardown.js';
+import { processNetworkTeardowns, branchTeardownNetworkNames, type NetworkTeardownState } from '../../src/services/network-teardown.js';
 import { branchAppNetworkName } from '../../src/services/branch-network.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
@@ -7,7 +7,7 @@ function fixture() {
   const name = branchAppNetworkName('removed-project-long-branch-' + 'x'.repeat(100));
   let tasks = [{ name, projectId: 'removed' }];
   const projects: Array<{ id: string; dockerNetwork?: string }> = [];
-  const branches: Array<{ id: string }> = [];
+  const branches: Array<{ id: string; replacementNetworks?: string[] }> = [];
   const state: NetworkTeardownState = {
     getNetworkTeardowns: () => tasks,
     removeNetworkTeardown: (name, projectId) => { tasks = tasks.filter(t => t.name !== name || t.projectId !== projectId); },
@@ -23,6 +23,21 @@ function fixture() {
 }
 
 describe('删除项目网络补偿', () => {
+  it('同时登记基础网与本分支持久化替换网，去重并拒绝无关网络', () => {
+    const base = branchAppNetworkName('branch');
+    const replacement = `${base.slice(0, 27)}-r-${'b'.repeat(32)}`;
+    expect(branchTeardownNetworkNames({ id: 'branch', replacementNetworks: [replacement, replacement, 'foreign', `${base}-r-invalid`] }))
+      .toEqual([base, replacement]);
+  });
+  it('空替换网已被其他现存分支认领时也不删除', async () => {
+    const f = fixture();
+    const other = { id: 'new-owner', replacementNetworks: [] as string[] };
+    const name = `${branchAppNetworkName(other.id).slice(0, 27)}-r-${'b'.repeat(32)}`;
+    other.replacementNetworks.push(name); f.branches.push(other);
+    f.state.getNetworkTeardowns = () => [{ name, projectId: 'removed' }];
+    await processNetworkTeardowns(f.shell, f.state);
+    expect(f.shell.commands).toEqual([]);
+  });
   it('删除精确快照内的空网络，按 ID 删除而不是按可复用的名称', async () => {
     const f = fixture();
     await processNetworkTeardowns(f.shell, f.state);

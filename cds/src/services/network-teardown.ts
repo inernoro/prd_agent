@@ -1,17 +1,25 @@
 import type { IShellExecutor } from '../types.js';
 import { branchAppNetworkName } from './branch-network.js';
 
+/** 基础网与零停机替换网均来自该分支的持久化台账，禁止扩大为全局扫描。 */
+export function branchTeardownNetworkNames(branch: { id: string; replacementNetworks?: string[] }): string[] {
+  const base = branchAppNetworkName(branch.id);
+  const prefix = `${base.slice(0, 27)}-r-`;
+  return [...new Set([base, ...(branch.replacementNetworks || []).filter(name =>
+    name.startsWith(prefix) && /^[a-f0-9]{32}$/.test(name.slice(prefix.length)))])];
+}
+
 export interface NetworkTeardownState {
   getNetworkTeardowns(): Array<{ name: string; projectId: string }>;
   removeNetworkTeardown(name: string, projectId: string): void;
   getProjects(): Array<{ id: string; dockerNetwork?: string }>;
-  getAllBranches(): Array<{ id: string }>;
+  getAllBranches(): Array<{ id: string; replacementNetworks?: string[] }>;
 }
 
 /** 删除项目的网络补偿；不强拆端点、不 prune，按 inspect 得到的 ID 删除防止同名重建。 */
 export async function processNetworkTeardowns(shell: IShellExecutor, state: NetworkTeardownState): Promise<void> {
   const owned = (name: string) => state.getProjects().some(p => p.dockerNetwork === name)
-    || state.getAllBranches().some(b => branchAppNetworkName(b.id) === name);
+    || state.getAllBranches().some(b => branchTeardownNetworkNames(b).includes(name));
   for (const item of state.getNetworkTeardowns()) {
     if (state.getProjects().some(p => p.id === item.projectId)) continue;
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(item.name)) continue;

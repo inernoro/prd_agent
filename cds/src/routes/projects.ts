@@ -1,5 +1,4 @@
-import { branchAppNetworkName } from '../services/branch-network.js';
-import { processNetworkTeardowns } from '../services/network-teardown.js';
+import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { bootstrapRepository } from '../services/bootstrap-target.js';
 /**
  * Projects API router.
@@ -4283,7 +4282,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     stateService.addDeletedProjectWorktreeBucket(project.id);
     // 先记录分支隔离网；cascade 后分支归属消失，不能再从 state 推回网络清单。
     stateService.addNetworkTeardowns([
-      ...projectBranches.map(b => ({ name: branchAppNetworkName(b.id), projectId: project.id })),
+      ...projectBranches.flatMap(b => branchTeardownNetworkNames(b).map(name => ({ name, projectId: project.id }))),
     ]);
 
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
@@ -4300,7 +4299,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       for (const containerName of teardownContainers) {
         try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
       }
-      for (const b of projectBranches) stateService.removeNetworkTeardown(branchAppNetworkName(b.id), project.id);
+      for (const b of projectBranches) for (const name of branchTeardownNetworkNames(b)) stateService.removeNetworkTeardown(name, project.id);
       res.status(500).json({
         error: 'state_save_failed',
         message: (err as Error).message,

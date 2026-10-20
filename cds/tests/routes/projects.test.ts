@@ -1359,6 +1359,7 @@ describe('Projects router (P4 Part 2)', () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'cascade-b1',
+        replacementNetworks: ['cds-br-cascade-b1-r-' + 'a'.repeat(32)],
         projectId: pid,
         branch: 'main',
         worktreePath: '/tmp/wt-1',
@@ -1437,7 +1438,7 @@ describe('Projects router (P4 Part 2)', () => {
       const del = await request(server, 'DELETE', '/api/projects/' + pid);
       expect(del.status).toBe(200);
       expect(del.body.cascade.branches.sort()).toEqual(['cascade-b1', 'cascade-b2']);
-      expect(stateService.getNetworkTeardowns().map(n => n.name).sort()).toEqual(['cds-br-cascade-b1', 'cds-br-cascade-b2']);
+      expect(stateService.getNetworkTeardowns().map(n => n.name).sort()).toEqual(['cds-br-cascade-b1', 'cds-br-cascade-b1-r-' + 'a'.repeat(32), 'cds-br-cascade-b2']);
       expect(stateService.getNetworkTeardowns().every(n => n.projectId === pid)).toBe(true);
       expect(del.body.cascade.buildProfiles.sort()).toEqual(['cascade-p1', 'cascade-p2']);
       expect(del.body.cascade.infraServices).toEqual(['cascade-i1']);
