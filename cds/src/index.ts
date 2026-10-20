@@ -2588,6 +2588,7 @@ const localMemoryBranches = stateService.getAllBranches().filter(branch =>
   config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
 restoreDeploymentMemoryReservations(localMemoryBranches, branch => stateService.getEffectiveProfilesForBranch(branch));
 const memoryRecovery = await containerService.reconcileDeploymentMemoryReservations(localMemoryBranches, {
+  recoveredOnly: true,
   // 旧CLI结束不等于daemon创建结束；无不可变CID时不能凭一次缺席释放未知创建责任。
   creationSettled: (_owner, runtime) => Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
 });
@@ -2837,6 +2838,23 @@ const resourceShutdownTasks = new Set<() => Promise<void>>();
 let dashboardHttpServer: http.Server | null = null;
 let workerHttpServer: http.Server | null = null;
 let shutdownInProgress = false;
+// 首轮盘点有读取上限。后台仅续扫原冷恢复预约，不把新操作的额度当历史尾项释放。
+let memoryReconciliationRunning = false;
+const deploymentMemoryReconciler = setInterval(() => {
+  if (shutdownInProgress || memoryReconciliationRunning) return;
+  memoryReconciliationRunning = true;
+  const localBranches = stateService.getAllBranches().filter(branch =>
+    config.mode === 'executor' || !isRemoteExecutorOwned(branch.executorId));
+  void containerService.reconcileDeploymentMemoryReservations(localBranches, {
+    recoveredOnly: true,
+    creationSettled: (_owner, runtime) => !shutdownInProgress && Boolean(runtime.containerId && /^[a-f0-9]{64}$/.test(runtime.containerId)),
+  }).then(result => {
+    if (result.released.length) console.log(`[deployment-memory] 后台已核实释放 ${result.released.length} 项历史预约`);
+  }).catch(() => console.warn('[deployment-memory] 后台盘点未确认，保留历史预约'))
+    .finally(() => { memoryReconciliationRunning = false; });
+}, 60_000);
+deploymentMemoryReconciler.unref?.();
+
 
 // ── Warm-pool scheduler (v3.1) ──
 // Disabled unless cds.config.json { "scheduler": { "enabled": true, ... } }.
@@ -4746,6 +4764,7 @@ async function shutdown(signal: string): Promise<void> {
   // Stop capability producers immediately, while observation and reserved cleanup
   // slots remain available; cancelling a CLI alone cannot revoke daemon creation.
   const resourceShutdown = Promise.allSettled([...resourceShutdownTasks].map(close => close()));
+  clearInterval(deploymentMemoryReconciler);
   if (masterMemoryMonitor) clearInterval(masterMemoryMonitor);
   if (buildGateWatchdog) clearInterval(buildGateWatchdog);
   if (staleDeployDispatchReconciler) clearInterval(staleDeployDispatchReconciler);

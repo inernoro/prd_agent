@@ -699,11 +699,13 @@ export class ContainerStopUnconfirmedError extends Error {
 }
 
 export class ContainerService {
+  private recoveredMemoryAfterKey?: string;
   private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
 
   /** 冷恢复与已确认结束的创建共用同一真实盘点；未知或在途创建不能仅凭缺席快照释放。 */
   async reconcileDeploymentMemoryReservations(branches: readonly BranchEntry[], options: {
     creationSettled: (owner: DeploymentPhaseOwner, runtime: import('../types.js').ServiceRuntimeRef) => boolean;
+    recoveredOnly?: boolean;
   } = { creationSettled: () => false }): Promise<{ released: string[]; retained: string[] }> {
     const deadline = performance.now() + 15_000;
     let checked = 0;
@@ -721,16 +723,17 @@ export class ContainerService {
       const remaining = deadline - performance.now();
       if (checked >= 64 || remaining <= 0) return false;
       checked += 1;
+      if (options.recoveredOnly) this.recoveredMemoryAfterKey = key;
       const unused = await this.isDeploymentRuntimeUnused(item.entry, item.profileId, item.runtime, Math.min(5000, remaining));
       return unused && options.creationSettled(owner, item.runtime);
-    });
+    }, { recoveredOnly: options.recoveredOnly, afterKey: options.recoveredOnly ? this.recoveredMemoryAfterKey : undefined });
   }
 
   private async isDeploymentRuntimeUnused(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, timeoutMs = 5000, activationSettled = false): Promise<boolean> {
     const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"restarting":{{json .State.Restarting}},"status":{{json .State.Status}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}}}';
     const result = await this.shell.exec(`docker inspect --format ${this.shellQuote(format)} ${this.shellQuote(runtime.containerId || runtime.containerName)}`,
       { timeout: Math.max(1, Math.floor(timeoutMs)), executionLane: 'observation' });
-    if (result.exitCode !== 0) return isDockerNoSuchContainer(result);
+    if (result.exitCode !== 0) return /No such (?:container|object):/i.test(combinedOutput(result));
     let value: { id?: string; running?: boolean; restarting?: boolean; status?: string; project?: string; branch?: string; profile?: string };
     try { value = JSON.parse(result.stdout); } catch { return false; }
     return typeof value?.id === 'string' && /^[a-f0-9]{64}$/.test(value.id)
