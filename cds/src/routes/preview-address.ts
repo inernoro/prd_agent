@@ -116,10 +116,7 @@ export function createPreviewAddressRouter(deps: Deps): Router {
         );
       return {
         reason: c.reason,
-        host:
-          c.host.endsWith(`.${root}`) || c.reason === "project-slug"
-            ? c.host
-            : c.host.split(".")[0] + `.${root}`,
+        host: c.host,
         projectName: allowed ? owner!.aliasName || owner!.name : "其他项目",
         ...(allowed
           ? {
