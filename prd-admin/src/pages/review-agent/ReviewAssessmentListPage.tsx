@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ListOrdered, Upload, ChevronRight, ChevronLeft, CheckCircle, XCircle, Clock, FileSpreadsheet } from 'lucide-react';
+import { ArrowLeft, Upload, ChevronRight, ChevronLeft, FileSpreadsheet } from 'lucide-react';
+import { Button } from '@/components/design/Button';
+import { SectionShell } from '@/components/agent-shell/AgentFullscreenLayout';
+import { OverviewDataTable, TruncateCell } from '@/pages/product-agent/overviewDataTable';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { listAssessments, createAssessment } from '@/services';
 import type { RequirementAssessmentRun } from '@/services';
@@ -8,20 +11,13 @@ import { useReviewNavigation } from './reviewNavigation';
 
 const PAGE_SIZE = 20;
 
-function getStatusDisplay(run: RequirementAssessmentRun): { label: string; color: string; icon: React.ReactNode } {
-  switch (run.status) {
-    case 'Done':
-      return { label: '已完成', color: 'text-emerald-400/80', icon: <CheckCircle className="w-3.5 h-3.5" /> };
-    case 'Error':
-      return { label: '失败', color: 'text-red-400/80', icon: <XCircle className="w-3.5 h-3.5" /> };
-    case 'Running':
-      return { label: '评估中', color: 'text-blue-400/80', icon: <MapSpinner size={14} /> };
-    case 'Queued':
-      return { label: '等待评估', color: 'text-[color:var(--accent-fg-amber)]', icon: <Clock className="w-3.5 h-3.5" /> };
-    default:
-      return { label: '待评估', color: 'text-[color:var(--accent-fg-blue)]', icon: <FileSpreadsheet className="w-3.5 h-3.5" /> };
-  }
-}
+const ASSESSMENT_STATUS: Record<string, { label: string; color: string }> = {
+  Done: { label: '已完成', color: 'text-[color:var(--accent-fg-success)]' },
+  Error: { label: '失败', color: 'text-[color:var(--accent-fg-danger)]' },
+  Running: { label: '评估中', color: 'text-[color:var(--accent-fg-blue)]' },
+  Queued: { label: '等待评估', color: 'text-[color:var(--accent-fg-amber)]' },
+  Draft: { label: '待评估', color: 'text-token-secondary' },
+};
 
 export function ReviewAssessmentListPage() {
   const navigate = useNavigate();
@@ -34,16 +30,20 @@ export function ReviewAssessmentListPage() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState('');
   const [dragOver, setDragOver] = useState(false);
 
   const loadData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
-    const res = await listAssessments(page, PAGE_SIZE);
-    if (res.success && res.data) {
-      setItems(res.data.items);
-      setTotal(res.data.total);
-    }
-    if (!silent) setLoading(false);
+    try {
+      const res = await listAssessments(page, PAGE_SIZE);
+      if (res.success && res.data) {
+        setItems(res.data.items);
+        setTotal(res.data.total);
+        setLoadError('');
+      } else setLoadError(res.error?.message ?? '需求评估加载失败，请重试。');
+    } catch { setLoadError('需求评估加载失败，请检查网络后重试。'); }
+    finally { if (!silent) setLoading(false); }
   }, [page]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -65,45 +65,24 @@ export function ReviewAssessmentListPage() {
     }
     setUploading(true);
     setUploadError(null);
-    const res = await createAssessment(file);
-    setUploading(false);
-    if (res.success && res.data) {
-      navigate(reviewNav.assessment(res.data.run.id));
-    } else {
-      setUploadError(res.error?.message ?? '上传解析失败，请重试');
-    }
+    try {
+      const res = await createAssessment(file);
+      if (res.success && res.data) navigate(reviewNav.assessment(res.data.run.id));
+      else setUploadError(res.error?.message ?? '上传解析失败，请重试');
+    } catch { setUploadError('上传失败，请检查网络后重新上传。'); }
+    finally { setUploading(false); }
   };
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-6">
-      {/* 页头 */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate(reviewNav.requirementHome)}
-            className="p-2 rounded-lg bg-token-nested border border-token-subtle hover-bg-soft transition-colors"
-            title={reviewNav.inProductManagement ? '返回需求' : '返回产品评审'}
-          >
-            <ArrowLeft className="w-4 h-4 text-token-secondary" />
-          </button>
-          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
-            <ListOrdered className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold text-token-primary">需求评估</h1>
-            <p className="text-sm text-token-muted mt-0.5">上传 Excel 需求表，AI 按八因子规则评估并给出优先级排序</p>
-          </div>
-        </div>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploading}
-          className="flex items-center gap-1.5 text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 rounded-lg px-4 py-2 transition-colors"
-        >
-          {uploading ? <MapSpinner size={14} /> : <Upload className="w-4 h-4" />}
-          {uploading ? '正在解析...' : '上传需求表'}
-        </button>
+    <SectionShell title="需求评估" count={loading ? undefined : total} desc="上传 Excel 需求表，AI 按八因子规则评估并给出优先级排序" actions={
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={() => navigate(reviewNav.requirementHome)} aria-label={reviewNav.inProductManagement ? '返回需求' : '返回产品评审'}><ArrowLeft size={14} /><span className="hidden sm:inline">{reviewNav.inProductManagement ? '返回需求' : '返回产品评审'}</span></Button>
+        <Button size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>{uploading ? <MapSpinner size={14} /> : <Upload size={14} />}{uploading ? '正在解析…' : '上传需求表'}</Button>
+      </div>
+    }>
+      <div className="flex min-h-full min-w-0 flex-col gap-4">
         <input
           ref={fileInputRef}
           type="file"
@@ -111,95 +90,67 @@ export function ReviewAssessmentListPage() {
           className="hidden"
           onChange={e => { handleFile(e.target.files?.[0]); e.target.value = ''; }}
         />
-      </div>
 
       {uploadError && (
-        <div className="mb-4 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-sm text-red-400">
+        <div role="alert" className="rounded-lg border border-token-subtle bg-token-nested px-4 py-3 text-sm text-[color:var(--accent-fg-danger)]">
           {uploadError}
         </div>
       )}
+      {loadError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-token-subtle bg-token-nested px-4 py-3 text-sm text-[color:var(--accent-fg-danger)]"><span>{loadError}</span><Button size="sm" onClick={() => void loadData()}>重试</Button></div>}
 
       {/* 拖拽上传区（空列表时作为主引导） */}
-      {!loading && items.length === 0 && (
-        <div
+      {!loading && !loadError && items.length === 0 && (
+        <button type="button" disabled={uploading}
           onDragOver={e => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={e => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]); }}
           onClick={() => fileInputRef.current?.click()}
-          className={`cursor-pointer text-center py-14 rounded-2xl border-2 border-dashed transition-colors ${
-            dragOver ? 'border-indigo-500/60 bg-indigo-500/5' : 'border-token-subtle bg-token-nested'
+          className={`flex min-h-64 w-full flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-6 text-center transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 disabled:cursor-wait ${
+            dragOver ? 'border-[var(--accent-fg-blue)] bg-token-input' : 'border-token-subtle bg-token-nested hover-bg-soft'
           }`}
         >
-          <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 flex items-center justify-center mx-auto mb-4">
-            <FileSpreadsheet className="w-7 h-7 text-[color:var(--accent-fg-blue)]" />
-          </div>
-          <p className="text-sm text-token-primary font-medium">点击或拖拽上传需求表（.xls / .xlsx）</p>
-          <p className="text-xs text-token-muted mt-2 max-w-md mx-auto">
+          {uploading ? <MapSpinner size={24} /> : <FileSpreadsheet size={24} className="text-token-muted" />}
+          <span className="text-sm text-token-primary font-medium">{uploading ? '正在上传并解析需求表…' : '点击或拖拽上传需求表（.xls / .xlsx）'}</span>
+          <span className="max-w-xl text-xs leading-6 text-token-secondary">
             上传即自动评估，无需任何配置。表格建议包含需求名称与详细描述，
             反馈客户/次数、客户等级、是否签约、期望时间等信息越全，评估依据越充分
-          </p>
-        </div>
+          </span>
+        </button>
       )}
 
       {/* 任务列表 */}
       {loading ? (
-        <MapSectionLoader />
+        <MapSectionLoader text="正在加载需求评估…" />
       ) : items.length > 0 && (
-        <div className="space-y-2">
-          {items.map(run => {
-            const statusInfo = getStatusDisplay(run);
-            return (
-              <button
-                key={run.id}
-                onClick={() => navigate(reviewNav.assessment(run.id))}
-                className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-xl px-5 py-4 text-left transition-colors group"
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-token-primary truncate group-hover:text-[color:var(--accent-fg-blue)] transition-colors">
-                    {run.title}
-                  </p>
-                  <div className="flex items-center gap-3 text-xs text-token-muted mt-1">
-                    <span>{run.fileName}</span>
-                    <span>·</span>
-                    <span>{run.itemCount > 0 ? `${run.itemCount} 条需求` : `${run.totalRowCount} 行数据`}</span>
-                    <span>·</span>
-                    <span>{new Date(run.createdAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                  </div>
-                </div>
-                {run.status === 'Running' && run.itemCount > 0 && (
-                  <span className="text-xs text-token-muted flex-shrink-0">{run.scoredCount}/{run.itemCount}</span>
-                )}
-                <div className={`flex items-center gap-1.5 text-xs flex-shrink-0 ${statusInfo.color}`}>
-                  {statusInfo.icon}
-                  {statusInfo.label}
-                </div>
-                <ChevronRight className="w-4 h-4 text-token-muted group-hover:text-[var(--text-primary)] transition-colors flex-shrink-0" />
-              </button>
-            );
-          })}
-        </div>
+        <OverviewDataTable tableKey="requirement-assessments" rows={items} onRowClick={(run) => navigate(reviewNav.assessment(run.id))} columns={[
+          { key: 'title', header: '评估任务', defaultWidth: 320, render: (run) => <button type="button" className="w-full truncate text-left text-sm text-token-primary hover:underline" onClick={(event) => { event.stopPropagation(); navigate(reviewNav.assessment(run.id)); }}>{run.title}</button> },
+          { key: 'file', header: '需求表', defaultWidth: 240, render: (run) => <TruncateCell text={run.fileName} className="text-xs text-token-secondary" /> },
+          { key: 'count', header: '需求数量', defaultWidth: 100, render: (run) => <span className="text-xs text-token-secondary">{run.itemCount > 0 ? `${run.itemCount} 条` : `${run.totalRowCount} 行`}</span> },
+          { key: 'status', header: '状态', defaultWidth: 120, render: (run) => { const status = ASSESSMENT_STATUS[run.status] ?? ASSESSMENT_STATUS.Draft; return <span className={`inline-flex items-center gap-1.5 text-xs ${status.color}`}>{run.status === 'Running' && <MapSpinner size={14} />}{status.label}</span>; } },
+          { key: 'progress', header: '进度', defaultWidth: 100, render: (run) => <span className="text-xs text-token-secondary">{run.itemCount > 0 ? `${run.scoredCount} / ${run.itemCount}` : '-'}</span> },
+          { key: 'created', header: '创建时间', defaultWidth: 160, render: (run) => <span className="text-xs text-token-muted">{new Date(run.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span> },
+        ]} />
       )}
 
       {/* 分页 */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-3 mt-6">
-          <button
+        <div className="mt-auto flex flex-wrap items-center justify-end gap-3 border-t border-token-subtle pt-4">
+          <Button size="sm" aria-label="上一页"
             disabled={page <= 1}
             onClick={() => setPage(p => p - 1)}
-            className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
           >
             <ChevronLeft className="w-4 h-4 text-token-secondary" />
-          </button>
-          <span className="text-sm text-token-secondary">第 {page} / {totalPages} 页</span>
-          <button
+          </Button>
+          <span className="text-xs text-token-secondary">共 {total} 条，第 {page} / {totalPages} 页</span>
+          <Button size="sm" aria-label="下一页"
             disabled={page >= totalPages}
             onClick={() => setPage(p => p + 1)}
-            className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
           >
             <ChevronRight className="w-4 h-4 text-token-secondary" />
-          </button>
+          </Button>
         </div>
       )}
-    </div>
+      </div>
+    </SectionShell>
   );
 }

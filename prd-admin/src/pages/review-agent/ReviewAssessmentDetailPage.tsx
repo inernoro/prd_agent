@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useReviewNavigation } from './reviewNavigation';
-import { ArrowLeft, ListOrdered, Download, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Download, RefreshCw, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/design/Button';
+import { SectionShell } from '@/components/agent-shell/AgentFullscreenLayout';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { connectSse } from '@/lib/useSseStream';
 import {
@@ -16,9 +18,9 @@ import type {
 } from '@/services';
 
 const TIER_STYLES: Record<string, string> = {
-  P0: 'bg-indigo-500/15 text-[color:var(--accent-fg-blue)] border-indigo-500/30',
-  P1: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  P2: 'bg-amber-500/15 text-[color:var(--accent-fg-amber)] border-amber-500/30',
+  P0: 'bg-token-nested text-[color:var(--accent-fg-blue)] border-token-subtle',
+  P1: 'bg-token-nested text-[color:var(--accent-fg-success)] border-token-subtle',
+  P2: 'bg-token-nested text-[color:var(--accent-fg-amber)] border-token-subtle',
   P3: 'bg-token-nested text-token-muted border-token-subtle',
 };
 
@@ -148,12 +150,11 @@ export function ReviewAssessmentDetailPage() {
     }
   };
 
-  if (loading) return <div className="max-w-5xl mx-auto px-4 py-6"><MapSectionLoader /></div>;
+  const backAction = <Button size="sm" variant="ghost" onClick={() => navigate(reviewNav.assessments)}><ArrowLeft size={14} />返回需求评估</Button>;
+  if (loading) return <SectionShell title="需求评估" actions={backAction}><MapSectionLoader text="正在加载评估结果…" /></SectionShell>;
   if (!run) {
     return (
-      <div className="max-w-5xl mx-auto px-4 py-16 text-center text-sm text-token-muted">
-        评估任务不存在或无权限查看
-      </div>
+      <SectionShell title="需求评估" actions={backAction}><div className="rounded-lg border border-token-subtle bg-token-nested p-6 text-sm text-token-secondary">评估任务不存在或无权限查看</div></SectionShell>
     );
   }
 
@@ -171,7 +172,13 @@ export function ReviewAssessmentDetailPage() {
   }, {});
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6">
+    <SectionShell title={run.title} desc={`${run.fileName} · 工作表 ${run.sheetName} · ${run.itemCount > 0 ? `${run.itemCount} 条需求` : `${run.totalRowCount} 行数据`}${run.truncated ? `（原表 ${run.totalRowCount} 行，超出单次上限已截取）` : ''}`} actions={
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <Button size="sm" variant="ghost" onClick={() => navigate(reviewNav.assessments)} aria-label="返回需求评估列表"><ArrowLeft size={14} /><span className="hidden sm:inline">返回需求评估</span></Button>
+        {isDone && <Button size="sm" onClick={() => downloadAssessmentReport(run.id, run.title)}><Download size={14} />导出报告</Button>}
+      </div>
+    }>
+      <div className="flex min-h-full min-w-0 flex-col">
       {/* 模型可见性（顶部低饱和展示） */}
       {modelInfo && (
         <div className="text-[11px] text-token-muted font-mono mb-2">
@@ -179,59 +186,25 @@ export function ReviewAssessmentDetailPage() {
         </div>
       )}
 
-      {/* 页头 */}
-      <div className="flex items-center justify-between mb-6 gap-3">
-        <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={() => navigate(reviewNav.assessments)}
-            className="p-2 rounded-lg bg-token-nested border border-token-subtle hover-bg-soft transition-colors flex-shrink-0"
-            title="返回需求评估列表"
-          >
-            <ArrowLeft className="w-4 h-4 text-token-secondary" />
-          </button>
-          <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
-            <ListOrdered className="w-5 h-5 text-[color:var(--accent-fg-blue)]" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold text-token-primary truncate">{run.title}</h1>
-            <p className="text-sm text-token-muted mt-0.5 truncate">
-              {run.fileName} · 工作表 {run.sheetName}
-              {run.itemCount > 0 ? ` · ${run.itemCount} 条需求` : ` · ${run.totalRowCount} 行数据`}
-              {run.truncated && `（原表 ${run.totalRowCount} 行，超出单次上限已截取）`}
-            </p>
-          </div>
-        </div>
-        {isDone && (
-          <button
-            onClick={() => downloadAssessmentReport(run.id, run.title)}
-            className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors flex-shrink-0"
-          >
-            <Download className="w-3.5 h-3.5" />
-            导出报告
-          </button>
-        )}
-      </div>
-
       {/* 错误提示 */}
       {isError && (
-        <div className="mb-5 flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30">
-          <div className="flex items-center gap-2 text-sm text-red-400 min-w-0">
+        <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-token-subtle bg-token-nested px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2 text-sm text-[color:var(--accent-fg-danger)]">
             <AlertTriangle className="w-4 h-4 flex-shrink-0" />
             <span className="truncate">{streamError ?? run.errorMessage ?? '评估失败'}</span>
           </div>
-          <button
+          <Button size="sm"
             onClick={handleRerun}
-            className="flex items-center gap-1.5 text-sm text-white bg-red-600/80 hover:bg-red-500 rounded-lg px-3 py-1.5 transition-colors flex-shrink-0"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             重试（已评分条目保留）
-          </button>
+          </Button>
         </div>
       )}
 
       {/* 进行中：进度 */}
       {inProgress && (
-        <div className="mb-5 bg-token-nested border border-token-subtle rounded-xl p-5">
+        <div role="status" aria-live="polite" className="mb-4 rounded-lg border border-token-subtle bg-token-nested p-4">
           <div className="flex items-center gap-3 mb-3">
             <MapSpinner size={16} />
             <span className="text-sm text-token-primary">
@@ -248,8 +221,8 @@ export function ReviewAssessmentDetailPage() {
               <>
                 <div className="h-1.5 rounded-full bg-token-input overflow-hidden">
                   <div
-                    className="h-full bg-indigo-500 rounded-full transition-all duration-700"
-                    style={{ width: `${Math.round((p.done / p.total) * 100)}%` }}
+                    className="h-full rounded-full transition-all duration-700"
+                    style={{ width: `${Math.round((p.done / p.total) * 100)}%`, background: 'var(--accent-fg-blue)' }}
                   />
                 </div>
                 <div className="text-xs text-token-muted mt-2">
@@ -263,26 +236,26 @@ export function ReviewAssessmentDetailPage() {
 
       {/* Done：结论概览 */}
       {isDone && (
-        <div className="mb-5 space-y-3">
+        <div className="mb-4 space-y-3">
           <div className="flex flex-wrap gap-2">
             {(['P0', 'P1', 'P2', 'P3'] as const).map(tier => (
-              <div key={tier} className={`px-3 py-2 rounded-lg border text-sm ${TIER_STYLES[tier]}`}>
+              <div key={tier} className={`rounded-md border px-2.5 py-1.5 text-xs ${TIER_STYLES[tier]}`}>
                 {tier} <span className="font-semibold">{tierCounts[tier] ?? 0}</span> 条
               </div>
             ))}
             {orderedItems.some(x => x.isContractualOverride) && (
-              <div className="px-3 py-2 rounded-lg border border-indigo-500/30 bg-indigo-500/10 text-sm text-[color:var(--accent-fg-blue)]">
+              <div className="rounded-md border border-token-subtle bg-token-nested px-2.5 py-1.5 text-xs text-[color:var(--accent-fg-blue)]">
                 签约置顶 <span className="font-semibold">{orderedItems.filter(x => x.isContractualOverride).length}</span> 条
               </div>
             )}
             {orderedItems.some(x => x.reasonablenessVerdict === '不合理') && (
-              <div className="px-3 py-2 rounded-lg border border-red-500/30 bg-red-500/10 text-sm text-[color:var(--accent-fg-danger)]">
+              <div className="rounded-md border border-token-subtle bg-token-nested px-2.5 py-1.5 text-xs text-[color:var(--accent-fg-danger)]">
                 评论判定不合理 <span className="font-semibold">{orderedItems.filter(x => x.reasonablenessVerdict === '不合理').length}</span> 条
               </div>
             )}
           </div>
           {run.globalMissingHints.length > 0 && (
-            <div className="px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-[color:var(--accent-fg-amber)] space-y-1">
+            <div className="space-y-1 rounded-lg border border-token-subtle bg-token-nested px-4 py-3 text-xs text-[color:var(--accent-fg-amber)]">
               {run.globalMissingHints.map((hint, i) => (
                 <p key={i}>{hint}</p>
               ))}
@@ -293,10 +266,10 @@ export function ReviewAssessmentDetailPage() {
 
       {/* 结果表（进行中实时增长 / 完成后按优先级排序） */}
       {(orderedItems.length > 0 || failedItems.length > 0) && (
-        <div className="bg-token-nested border border-token-subtle rounded-xl overflow-hidden">
+        <div className="overflow-hidden rounded-lg border border-token-subtle">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
+            <table className="w-full min-w-[680px] table-fixed text-sm">
+              <thead className="bg-token-nested">
                 <tr className="text-xs text-token-secondary border-b border-token-subtle">
                   <th className="text-left px-4 py-2.5 font-medium w-16">{isDone ? '优先级' : '行号'}</th>
                   <th className="text-left px-4 py-2.5 font-medium">需求</th>
@@ -321,7 +294,7 @@ export function ReviewAssessmentDetailPage() {
             </table>
           </div>
           {failedItems.length > 0 && (
-            <div className="px-4 py-3 border-t border-token-subtle text-xs text-red-400/90">
+            <div className="px-4 py-3 border-t border-token-subtle text-xs text-[color:var(--accent-fg-danger)]">
               {failedItems.length} 条需求评估失败未纳入排序：
               {failedItems.map(x => `第 ${x.rowIndex} 行「${x.name}」`).join('、')}
               {isDone && '，可点击上方重试补评'}
@@ -329,7 +302,8 @@ export function ReviewAssessmentDetailPage() {
           )}
         </div>
       )}
-    </div>
+      </div>
+    </SectionShell>
   );
 }
 
@@ -351,14 +325,14 @@ function ItemRow({
     <>
       <tr
         onClick={onToggle}
-        className="border-b border-token-subtle/50 hover-bg-soft cursor-pointer transition-colors"
+        className="border-b border-token-subtle hover-bg-soft cursor-pointer transition-colors"
       >
         <td className="px-4 py-3 text-token-primary font-medium">
           {isDone ? (
             <span className="inline-flex items-center gap-1.5">
               {item.priority}
               {item.isContractualOverride && (
-                <span className="text-[10px] text-[color:var(--accent-fg-blue)] border border-indigo-500/30 bg-indigo-500/10 rounded px-1">置顶</span>
+                <span className="rounded border border-token-subtle bg-token-nested px-1 text-[10px] text-[color:var(--accent-fg-blue)]">置顶</span>
               )}
             </span>
           ) : (
@@ -366,28 +340,28 @@ function ItemRow({
           )}
         </td>
         <td className="px-4 py-3">
-          <p className="text-token-primary truncate max-w-[320px]">
+          <p title={item.name} className="text-token-primary truncate">
             {isUnreasonable && (
-              <span className="text-[10px] text-[color:var(--accent-fg-danger)] border border-red-500/30 bg-red-500/10 rounded px-1 mr-1.5 align-middle">不合理</span>
+              <span className="mr-1.5 rounded border border-token-subtle bg-token-nested px-1 text-[10px] text-[color:var(--accent-fg-danger)] align-middle">不合理</span>
             )}
             {item.name}
           </p>
           {item.conclusion && (
-            <p className="text-xs text-token-muted mt-0.5 truncate max-w-[400px]">{item.conclusion}</p>
+            <p title={item.conclusion} className="text-xs text-token-secondary mt-0.5 truncate">{item.conclusion}</p>
           )}
         </td>
         <td className="px-4 py-3 text-right text-token-primary font-mono">{item.totalScore}</td>
         <td className="px-4 py-3"><TierChip tier={item.tier} /></td>
         <td className="px-4 py-3 text-right text-xs text-token-muted">{item.confidencePercent}%</td>
         <td className="px-2 py-3 text-token-muted">
-          {expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          <button type="button" aria-expanded={expanded} aria-label={`${expanded ? '收起' : '展开'}${item.name}的评估依据`} onClick={(event) => { event.stopPropagation(); onToggle(); }} className="rounded p-1 hover-bg-soft focus-visible:outline focus-visible:outline-2">{expanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}</button>
         </td>
       </tr>
       {expanded && (
-        <tr className="border-b border-token-subtle/50">
+        <tr className="border-b border-token-subtle">
           <td colSpan={6} className="px-4 py-4 bg-token-card">
             {item.reasonablenessVerdict && (
-              <p className={`text-xs mb-3 ${isUnreasonable ? 'text-red-300' : 'text-emerald-300'}`}>
+              <p className={`text-xs mb-3 ${isUnreasonable ? 'text-[color:var(--accent-fg-danger)]' : 'text-[color:var(--accent-fg-success)]'}`}>
                 合理性判定：{item.reasonablenessVerdict}
                 {isUnreasonable && <span className="text-token-muted">（已强制 P3 并排序置底）</span>}
                 {item.reasonablenessEvidence && (
@@ -397,7 +371,7 @@ function ItemRow({
             )}
             <table className="w-full text-xs mb-3">
               <thead>
-                <tr className="text-token-secondary border-b border-token-subtle/60">
+                <tr className="text-token-secondary border-b border-token-subtle">
                   <th className="text-left py-1.5 pr-3 font-medium w-32">因子</th>
                   <th className="text-right py-1.5 pr-3 font-medium w-16">锚点</th>
                   <th className="text-right py-1.5 pr-3 font-medium w-16">得分</th>
@@ -406,7 +380,7 @@ function ItemRow({
               </thead>
               <tbody>
                 {item.factorScores.map(f => (
-                  <tr key={f.key} className="border-b border-token-subtle/30">
+                  <tr key={f.key} className="border-b border-token-subtle">
                     <td className="py-1.5 pr-3 text-token-primary">{f.name}</td>
                     <td className="py-1.5 pr-3 text-right font-mono text-token-secondary">{f.anchor}/{anchorScale}</td>
                     <td className="py-1.5 pr-3 text-right font-mono text-token-secondary">{f.weightedScore}</td>

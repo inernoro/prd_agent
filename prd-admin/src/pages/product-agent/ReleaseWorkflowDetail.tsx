@@ -2,12 +2,16 @@
  * 正式版本申领 / 详情 — 基础信息 + 需求 + 功能 + 缺陷四标签页。
  * 路由：/product-agent/p/:productId/release/:id（id=new 为新建）
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
+import { ItemSearchSelect } from '@/components/ItemSearchSelect';
+import { loadProductVersionList } from '@/lib/productVersionList';
+import { ReleasePlanPicker } from './ReleasePlanPicker';
+import { toProductOptions } from './comboboxOptions';
 import { Dialog } from '@/components/ui/Dialog';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { getUserCards } from '@/services/real/teams';
@@ -25,6 +29,7 @@ import {
   listTracedDefects,
   updateReleaseFeatureManifest,
   type TracedDefect,
+  type VersionApplicationProduct,
 } from '@/services/real/productAgent';
 import type {
   Feature,
@@ -84,6 +89,9 @@ export function ReleaseWorkflowDetail({
   onClose,
   onCreated,
   temporary: temporaryOverride,
+  availableInitiations,
+  applicationProducts,
+  onApplicationProductChange,
 }: {
   productId: string;
   releaseId: string;
@@ -91,6 +99,9 @@ export function ReleaseWorkflowDetail({
   onClose?: () => void;
   onCreated?: (release: ProductRelease, autoCopied: boolean) => void;
   temporary?: boolean;
+  availableInitiations?: ProductInitiation[];
+  applicationProducts?: VersionApplicationProduct[];
+  onApplicationProductChange?: (productId: string) => void;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -118,6 +129,7 @@ export function ReleaseWorkflowDetail({
   const [userDisplayNames, setUserDisplayNames] = useState<Map<string, string>>(new Map());
   const [tracedDefects, setTracedDefects] = useState<TracedDefect[]>([]);
   const [loadError, setLoadError] = useState('');
+  const loadSequence = useRef(0);
 
   const [initiationId, setInitiationId] = useState('');
   const [manualTCode, setManualTCode] = useState('');
@@ -147,16 +159,22 @@ export function ReleaseWorkflowDetail({
   const [message, setMessage] = useState('');
 
   const approved = useMemo(
-    () => initiations.filter((item) => item.status === 'approved' && item.tCode),
-    [initiations],
+    () => (availableInitiations ?? initiations).filter((item) => item.status === 'approved' && item.tCode),
+    [initiations, availableInitiations],
   );
   const selectedInitiation = approved.find((item) => item.id === initiationId);
   const featureById = useMemo(() => new Map(features.map((f) => [f.id, f])), [features]);
   const readOnly = !isNew && release?.status === 'released';
 
   const reload = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
     setLoadError('');
+    if (isNew) {
+      setInitiations([]); setRequirements([]); setMembers([]); setFeatures([]); setTracedDefects([]);
+      setManifest([]); setBaselineManifest([]); setPreviousReleaseId(null); setPreviousVCode(null);
+      if (!productId) { setLoading(false); return; }
+    }
     const [initRes, reqRes, memRes, featRes, defRes] = await Promise.all([
       listInitiations(productId, 'all'),
       listRequirements(productId),
@@ -164,6 +182,7 @@ export function ReleaseWorkflowDetail({
       listFeatures(productId),
       listTracedDefects(productId),
     ]);
+    if (sequence !== loadSequence.current) return;
     if (initRes.success) setInitiations(initRes.data.items);
     if (reqRes.success) setRequirements(reqRes.data.items);
     if (memRes.success) setMembers(memRes.data.members);
@@ -172,13 +191,14 @@ export function ReleaseWorkflowDetail({
 
     if (isNew) {
       const inheritRes = await getInheritReleaseManifest(productId);
+      if (sequence !== loadSequence.current) return;
       if (inheritRes.success) {
         setPreviousReleaseId(inheritRes.data.previousReleaseId);
         setPreviousVCode(inheritRes.data.previousVCode ?? null);
         const items = inheritRes.data.items ?? [];
         setManifest(items);
         setBaselineManifest(items);
-      }
+      } else setLoadError(inheritRes.error?.message ?? '应用版本资料加载失败，请重试。');
     } else {
       let releaseData: ProductRelease | null = null;
       const relRes = await getRelease(releaseId);
@@ -226,7 +246,13 @@ export function ReleaseWorkflowDetail({
   }, [isNew, productId, releaseId]);
 
   useEffect(() => {
-    void reload();
+    const request = reload();
+    const sequence = loadSequence.current;
+    void request.catch(() => {
+      if (sequence !== loadSequence.current) return;
+      setLoadError('应用资料加载失败，请重新选择方案或应用后重试。'); setLoading(false);
+    });
+    return () => { loadSequence.current += 1; };
   }, [reload]);
 
   useEffect(() => {
@@ -318,7 +344,7 @@ export function ReleaseWorkflowDetail({
     return userDisplayNames.get(userId) ?? memberNameMap.get(userId) ?? userId;
   };
 
-  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId, canUseProduct);
+  const { workflow: reqWorkflow } = useEffectiveWorkflow('requirement', productId, canUseProduct && Boolean(productId));
   const isRecordDetail = !isNew && !!release;
   const isPendingWorkflow = isRecordDetail && release?.status === 'announcement_pending';
   const canCompleteRelease = isPendingWorkflow && release?.sourceType !== 'import';
@@ -343,10 +369,27 @@ export function ReleaseWorkflowDetail({
     [release, userDisplayNames, members],
   );
 
+  const changeApplication = (id: string) => {
+    if (!onApplicationProductChange) return;
+    if (id !== productId) {
+      setExtraIds([]); setTeamIds(ownerId ? [ownerId] : []); setShowRequirementPicker(false);
+      setManifest([]); setBaselineManifest([]); setPreviousReleaseId(null); setPreviousVCode(null);
+      setRequirements([]); setFeatures([]); setMembers([]); setTracedDefects([]);
+      setLoading(Boolean(id));
+    }
+    onApplicationProductChange(id);
+  };
   const chooseInitiation = (id: string) => {
     setInitiationId(id);
     const source = approved.find((item) => item.id === id);
-    if (!source) return;
+    if (onApplicationProductChange) {
+      changeApplication(source?.productId ?? '');
+    }
+    if (!source) {
+      setPlanName(''); setPlanUrl(''); setDemandSource(''); setRequirementDescription('');
+      setDepartmentName(''); setOwnerName(''); setProjectMembers('');
+      return;
+    }
     setProjectType(source.projectType);
     setVersionType(source.versionType);
     setPlanName(source.planName);
@@ -360,7 +403,8 @@ export function ReleaseWorkflowDetail({
 
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
     if (parsed.tCode) {
-      const source = approved.find((item) => item.tCode?.toUpperCase() === parsed.tCode?.toUpperCase());
+      const matches = approved.filter((item) => item.tCode?.toUpperCase() === parsed.tCode?.toUpperCase());
+      const source = matches.length === 1 ? matches[0] : undefined;
       if (source) {
         setSourceMode('initiation');
         chooseInitiation(source.id);
@@ -369,6 +413,7 @@ export function ReleaseWorkflowDetail({
         setSourceMode('manual_t');
         setManualTCode(parsed.tCode);
         setInitiationId('');
+        changeApplication('');
       }
     }
     if (parsed.projectType) setProjectType(parsed.projectType);
@@ -394,6 +439,10 @@ export function ReleaseWorkflowDetail({
   };
 
   const saveNew = async () => {
+    if (loadError || loading || !productId || (!temporary && sourceMode === 'initiation' && selectedInitiation?.productId !== productId)) {
+      setMessage('请先选择方案以回填所属应用；手工 T 号请在表单中选择应用。');
+      return;
+    }
     if (!releaseAt || !trainingAt || Number.isNaN(new Date(`${trainingAt}+08:00`).getTime())) {
       setMessage('请填写上线日期和预计培训时间');
       return;
@@ -466,7 +515,8 @@ export function ReleaseWorkflowDetail({
     else setRelease(res.data);
   };
 
-  const basicInvalid = !ownerId || !releaseAt || !trainingAt || !isGlobalOpen || teamIds.length === 0
+  const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || !trainingAt || !isGlobalOpen || teamIds.length === 0
+    || (!temporary && sourceMode === 'initiation' && selectedInitiation?.productId !== productId)
     || (temporary ? extraIds.length === 0 : sourceMode === 'manual_t' ? !manualTCode.trim() || !planName.trim() : !initiationId);
   const manifestInvalid = activeManifest.length === 0;
   const releaseDisplayTitle = useMemo(() => {
@@ -477,7 +527,7 @@ export function ReleaseWorkflowDetail({
       || '正式版本';
   }, [release]);
 
-  if (loading) return <MapSectionLoader text="正在加载版本详情…" />;
+  if (loading && !(isNew && applicationProducts)) return <MapSectionLoader text="正在加载版本详情…" />;
 
   if (!isNew && !release) {
     return (
@@ -496,6 +546,7 @@ export function ReleaseWorkflowDetail({
 
   return (
     <div className="flex flex-col gap-4">
+      {loading && isNew && applicationProducts && <p role="status" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />正在回填所属应用的需求、成员和版本资料…</p>}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className={onClose ? 'sr-only' : 'text-lg font-semibold text-token-primary'}>
@@ -675,21 +726,28 @@ export function ReleaseWorkflowDetail({
                       setSourceMode(mode);
                       if (mode === 'manual_t') setInitiationId('');
                       else setManualTCode('');
+                      if (onApplicationProductChange) {
+                        changeApplication(''); setInitiationId('');
+                      }
                     }}>
                       <option value="initiation">选择已通过立项</option>
                       <option value="manual_t">手工填写 T 号（旧记录兜底）</option>
                     </Select>
                   </Field>
                   {sourceMode === 'initiation' ? (
-                    <Field label="立项号 *">
-                      <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
+                    <Field label={applicationProducts ? '立项方案 *' : '立项号 *'}>
+                      {applicationProducts ? <ReleasePlanPicker plans={approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
                         <option value="">请选择</option>
                         {approved.map((i) => <option key={i.id} value={i.id}>{i.tCode} · {i.planName}</option>)}
-                      </Select>
+                      </Select>}
                     </Field>
                   ) : (
                     <Field label="手工 T 号 *"><Input value={manualTCode} onChange={(e) => setManualTCode(e.target.value)} placeholder="T1.2.3" /></Field>
                   )}
+                  {applicationProducts && <Field label={sourceMode === 'manual_t' ? '所属应用 *' : '所属应用（方案自动回填）'}>
+                    {sourceMode === 'manual_t' ? <ItemSearchSelect value={productId} onChange={changeApplication} options={toProductOptions(applicationProducts)} placeholder="手工 T 号请选择所属应用" countUnit="个应用" />
+                      : <div role="status" className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{applicationProducts.find((product) => product.id === productId)?.name ?? '选择方案后自动回填'}</div>}
+                  </Field>}
                   {selectedInitiation && (
                     <InfoBox>
                       <b>方案：</b>{selectedInitiation.planName}<br />
@@ -780,6 +838,7 @@ export function ReleaseWorkflowDetail({
       )}
 
       {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
+      {loadError && <div role="alert" className="rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">{loadError}</div>}
 
       <div className="flex justify-end gap-2 border-t border-token-subtle pt-4">
         {isRecordDetail ? (
@@ -1136,13 +1195,36 @@ function MemberChecks({ members, selected, onChange }: {
   );
 }
 
-export function ReleaseApplicationDialog({ productId, onClose, onChanged, temporary = false }: {
+export function ReleaseApplicationDialog({ productId, onClose, onChanged, temporary = false, applicationProducts }: {
   productId: string;
   onClose: () => void;
   onChanged?: () => void | Promise<void>;
   temporary?: boolean;
+  applicationProducts?: VersionApplicationProduct[];
 }) {
   const [issued, setIssued] = useState<{ release: ProductRelease; autoCopied: boolean } | null>(null);
+  const planBased = !temporary && Boolean(applicationProducts);
+  const [applicationProductId, setApplicationProductId] = useState(planBased ? '' : productId);
+  const [planSources, setPlanSources] = useState<ProductInitiation[] | undefined>(undefined);
+  const [plansLoading, setPlansLoading] = useState(planBased);
+  const [plansError, setPlansError] = useState('');
+  const [plansAttempt, setPlansAttempt] = useState(0);
+  const [planProgress, setPlanProgress] = useState({ completed: 0, total: 0 });
+  useEffect(() => {
+    if (!planBased || !applicationProducts) return;
+    let active = true;
+    setPlansLoading(true); setPlansError('');
+    void loadProductVersionList(applicationProducts.map((product) => product.id), (id) => listInitiations(id, 'all'), {
+      isCurrent: () => active,
+      onProgress: (completed, total) => { if (active) setPlanProgress({ completed, total }); },
+    }).then((result) => {
+      if (!active) return;
+      if (result.failedProductIds.length) setPlansError(`有 ${result.failedProductIds.length} 个应用的方案加载失败，请重试后选择。`);
+      else setPlanSources(result.items);
+      setPlansLoading(false);
+    }).catch(() => { if (active) { setPlansError('方案加载失败，请重试。'); setPlansLoading(false); } });
+    return () => { active = false; };
+  }, [applicationProducts, planBased, plansAttempt]);
   const close = () => {
     onClose();
     if (issued) void onChanged?.();
@@ -1157,15 +1239,18 @@ export function ReleaseApplicationDialog({ productId, onClose, onChanged, tempor
       {issued && <p role="status" className="mb-3 rounded-lg border border-cyan-400/25 bg-cyan-400/5 px-3 py-2 text-sm text-token-secondary">
         {issued.release.vCode} 已生成{issued.autoCopied ? '并自动复制' : '，可在下方手动复制'}。
       </p>}
-      <ReleaseWorkflowDetail
+      {plansLoading ? <MapSectionLoader text={`正在加载可选方案（${planProgress.completed}/${planProgress.total} 个应用）…`} /> : plansError ? <div role="alert" className="rounded-lg border border-token-subtle bg-token-nested p-4 text-sm text-token-secondary">{plansError}<button type="button" className="ml-3 hover:underline" onClick={() => setPlansAttempt((attempt) => attempt + 1)}>重试</button></div> : <ReleaseWorkflowDetail
         key={issued?.release.id ?? 'new'}
-        productId={productId}
+        productId={issued?.release.productId ?? applicationProductId}
+        availableInitiations={issued ? undefined : planSources}
+        applicationProducts={issued || !planBased ? undefined : applicationProducts}
+        onApplicationProductChange={issued || !planBased ? undefined : setApplicationProductId}
         releaseId={issued?.release.id ?? 'new'}
         isNew={!issued}
         temporary={temporary}
         onClose={close}
         onCreated={(release, autoCopied) => setIssued({ release, autoCopied })}
-      />
+      />}
     </div>}
   />;
 }

@@ -254,12 +254,13 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
           ? <ReleaseTable productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} />
           : <InitiationTable productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} />)}
     </div>
-    {dialog && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
+    {dialog && dialog !== 'release' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
       <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
       <ItemSearchSelect value="" onChange={setActionProductId} options={toProductOptions(products)} placeholder="输入产品名称或编号搜索" countUnit="个产品" />
     </Modal>}
     {dialog === 'initiation' && actionProductId && <InitiationApplication productId={actionProductId} onClose={() => setDialog(null)} onChanged={reload} />}
-    {(dialog === 'release' || dialog === 'temporary') && actionProductId && <ReleaseApplicationDialog productId={actionProductId} temporary={dialog === 'temporary'} onClose={() => setDialog(null)} onChanged={reload} />}
+    {dialog === 'release' && <ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => setDialog(null)} onChanged={reload} />}
+    {dialog === 'temporary' && actionProductId && <ReleaseApplicationDialog productId={actionProductId} temporary onClose={() => setDialog(null)} onChanged={reload} />}
     {importKind && isAdmin && <VersionWorkflowImportDialog kind={importKind} products={products} fixedProductId={productId || undefined}
       onClose={() => setImportKind(null)} onImported={async () => { setImportKind(null); await reload(); }} />}
     {archive && <Modal title={archive === 'legacy' ? '全域旧登记记录（只读）' : '全域历史存档'} onClose={() => setArchive(null)} width="max-w-6xl">
