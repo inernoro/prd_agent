@@ -87,6 +87,8 @@ export function findPreset(key: string): BootstrapPreset | undefined {
 }
 
 export interface BootstrapRouterDeps {
+  /** Explicit operator-configured public origin, including the external TLS scheme. */
+  publicBaseUrl?: string;
   skillProxy: SkillProxy;
   /** 上游公共 CDS，供自托管实例在本地技能目录缺失时兜底取 CDS 技能包。 */
   cdsUpstream: string;
@@ -483,8 +485,14 @@ echo ""
 export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
   const router = Router();
 
-  /** 解析对外可见的 CDS 地址，供脚本内嵌；优先反代头，兜底请求 host。 */
+  /** 公网配置优先；未配置时兼容反代头和请求 host。 */
   const resolveOrigin = (req: import('express').Request): string => {
+    if (deps.publicBaseUrl) {
+      try {
+        const configured = new URL(deps.publicBaseUrl);
+        if (['https:', 'http:'].includes(configured.protocol) && !configured.username && !configured.password) return configured.origin;
+      } catch { /* Invalid legacy configuration must not leak into generated scripts. */ }
+    }
     const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() || req.protocol || 'https';
     const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
     return host ? `${proto}://${host}` : deps.cdsUpstream;

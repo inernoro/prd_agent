@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DeploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
+import { DeploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
+
+import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import type { BranchEntry } from '../../src/types.js';
 
 describe('部署阶段容量准入', () => {
   it('拉取满额不阻塞就绪和清理；失败及重复归还不会泄漏名额', async () => {
@@ -73,5 +76,51 @@ describe('部署阶段容量准入', () => {
     expect(budget.memorySnapshot()[0].pids).toBe(64);
     pids = 192; budget.pump(); const release = await next; release();
     budget.releaseMemory('warming'); budget.releaseMemory('next');
+  });
+});
+
+
+describe('重启后的部署内存预留', () => {
+  const id = 'a'.repeat(64);
+  function fixture(status: string, receipt: Record<string, unknown> = {}) {
+    const branch = { id: 'branch', projectId: 'project', services: { web: {
+      profileId: 'web', containerName: 'old-web', containerId: id, creationIssued: true,
+      hostPort: 10001, status: 'error',
+    } } } as unknown as BranchEntry;
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker inspect/, () => ({ stdout: JSON.stringify({ id, status, project: 'project', branch: 'branch', profile: 'web', ...receipt }), stderr: '', exitCode: 0 }));
+    const budget = new DeploymentPhaseBudget(() => 2000);
+    return { branch, shell, budget };
+  }
+
+  it.each(['exited', 'dead'])('已核实停止的旧容器 %s 不恢复预留，新的项目能够启动', async status => {
+    const f = fixture(status);
+    await restoreDeploymentMemoryReservations([f.branch], () => [], { shell: f.shell, budget: f.budget });
+    expect(f.budget.memorySnapshot()).toEqual([]);
+    const release = await f.budget.acquire('start', { projectId: 'new-project' }, { memoryMB: 600, reservationKey: 'new-web' });
+    release(); f.budget.releaseMemory('new-web');
+    expect(f.shell.commands).toHaveLength(1);
+    expect(f.shell.commands[0]).toMatch(/^docker inspect /);
+    expect(f.branch.services.web.status).toBe('error');
+  });
+
+  it.each(['running', 'created', 'restarting'])('未完成的 %s 容器仍保留启动余量', async status => {
+    const f = fixture(status);
+    await restoreDeploymentMemoryReservations([f.branch], () => [], { shell: f.shell, budget: f.budget });
+    expect(f.budget.memorySnapshot()).toHaveLength(1);
+  });
+
+  it.each([{ id: 'b'.repeat(64) }, { project: 'other' }, { branch: 'other' }, { profile: 'other' }])('停止证据身份不一致时保持预留 %j', async receipt => {
+    const f = fixture('exited', receipt);
+    await restoreDeploymentMemoryReservations([f.branch], () => [], { shell: f.shell, budget: f.budget });
+    expect(f.budget.memorySnapshot()).toHaveLength(1);
+  });
+
+  it('无法读取 Docker 时保持未知运行的预留，不执行清理', async () => {
+    const f = fixture('exited');
+    f.shell.addResponsePatternFirst(/docker inspect/, () => ({ stdout: '', stderr: 'daemon unavailable', exitCode: 1 }));
+    await restoreDeploymentMemoryReservations([f.branch], () => [], { shell: f.shell, budget: f.budget });
+    expect(f.budget.memorySnapshot()).toHaveLength(1);
+    expect(f.shell.commands.every(command => command.startsWith('docker inspect '))).toBe(true);
   });
 });
