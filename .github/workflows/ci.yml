@@ -382,7 +382,8 @@ jobs:
     name: Server Build & Test
     needs: changes
     if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 临时兼容：Ubuntu 24.04 runner 的 Linux 6.19+ 内核被当前 Mongo 8.0 拒绝启动。
+    runs-on: ubuntu-22.04
     services:
       mongodb:
         image: mongo:8.0
@@ -402,6 +403,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: MongoDB runtime versions
+        run: |
+          uname -r
+          docker exec "${{ job.services.mongodb.id }}" mongosh --quiet --eval \
+            'const v = db.version(); print("MongoDB " + v); if (!/^8[.]0[.]/.test(v) || db.adminCommand({ ping: 1 }).ok !== 1) quit(1);'
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
