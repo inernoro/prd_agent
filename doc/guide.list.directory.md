@@ -229,6 +229,7 @@
 - [PRD Agent 快速部署 · 指南](./guide.platform.quickstart.md) `guide.platform.quickstart`
 - [冒烟测试 · 指南](./guide.platform.smoke-tests.md) `guide.platform.smoke-tests`
 - [MAP 自动化测试五步法 · 指南](./guide.platform.testing.methodology.md) `guide.platform.testing.methodology`
+- [MAP 自动化测试教程口播与节奏 · 指南](./guide.platform.testing.script.md) `guide.platform.testing.script`
 - [PRD Agent 全平台 · 指南](./guide.prd-agent.operations.md) `guide.prd-agent.operations`
 - [PRD Agent 使用 · 指南](./guide.prd-agent.md) `guide.prd-agent`
 - [周报功能完整 · 指南](./guide.report-agent.weekly.md) `guide.report-agent.weekly`

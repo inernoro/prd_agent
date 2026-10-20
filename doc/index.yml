@@ -227,6 +227,7 @@ docs:
   guide.platform.quickstart: "PRD Agent 快速部署 · 指南"
   guide.platform.smoke-tests: "冒烟测试 · 指南"
   guide.platform.testing.methodology: "MAP 自动化测试五步法 · 指南"
+  guide.platform.testing.script: "MAP 自动化测试教程口播与节奏 · 指南"
   guide.prd-agent.operations: "PRD Agent 全平台 · 指南"
   guide.prd-agent: "PRD Agent 使用 · 指南"
   guide.report-agent.weekly: "周报功能完整 · 指南"
