@@ -1,5 +1,5 @@
 import { releaseCenterHref } from './release-center-links.js';
-import type { AgentRoleId } from './agent-setup.js';
+import type { AgentRoleId, CdsConnectTarget } from './agent-setup.js';
 
 export type AgentMissionScope = 'system' | 'project';
 
@@ -69,6 +69,7 @@ export interface AgentMissionDefinition {
   id: AgentPageContextId;
   categoryId: AgentMissionCategoryId;
   scope: AgentMissionScope;
+  connectTargets?: readonly CdsConnectTarget['kind'][];
   icon: AgentMissionIconKey;
   shortLabel: string;
   cardDescription: string;
@@ -366,6 +367,8 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
   },
   projects: {
     id: 'projects',
+    // Project discovery covers both the system overview and explicit repository onboarding.
+    connectTargets: ['system', 'new', 'existing'],
     requiredSkills: ['cds-deploy-pipeline', 'preview-url'],
     categoryId: 'integrate',
     scope: 'system',

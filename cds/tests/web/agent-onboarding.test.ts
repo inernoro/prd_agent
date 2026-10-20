@@ -83,13 +83,10 @@ describe('CDS Agent 接入口令', () => {
     expect(url.searchParams.get('skills')).not.toContain('cds-release');
   });
 
-  it('上手助手页签不落到 system 目标，口令始终带得上 connect --new-project', () => {
-    // 从 /project-list 打开时 mapSelection 默认是 system（该页 mission scope 即 system）。
-    // 若原样传给上手助手，口令走的是「不运行 connect --project、不创建项目」那一支，
-    // 零基础用户复制到的口令恰好缺了解环的那一步。
+  it('上手助手保留系统目标，新项目由项目入口明确选择', () => {
     const fromProjectList = resolveAgentConnectTarget({
       tab: 'starter',
-      selection: { kind: 'system' },
+      selection: initialAgentConnectSelection([], createAgentMissionContext('projects')),
       effectiveProjectId: '',
     });
     expect(fromProjectList).toEqual({ kind: 'new' });
@@ -97,10 +94,10 @@ describe('CDS Agent 接入口令', () => {
       buildCdsAgentPrompt({ cdsOrigin: 'https://cds.example', target: fromProjectList }),
     ).toContain('target=new');
 
-    // cds-self 这类系统项目也不能顶替上手助手的接入目标
+    // 系统设置任务切换页签不能变成新建项目，也不能借 CDS Self 顶替。
     expect(
       resolveAgentConnectTarget({ tab: 'starter', selection: { kind: 'system' }, effectiveProjectId: 'cds-self' }),
-    ).toEqual({ kind: 'new' });
+    ).toEqual({ kind: 'system' });
 
     // 用户在上手助手上主动选「连接已有项目」时仍然尊重选择
     expect(

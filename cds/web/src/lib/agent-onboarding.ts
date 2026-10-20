@@ -148,20 +148,15 @@ export function initialAgentConnectSelection(projects: AgentProjectIdentity[], c
 /**
  * 「接入 Agent」弹窗里，当前页签 + 目标选择 → 口令要写哪种接入目标。
  *
- * 关键一条：**上手助手页签不允许落到 system 目标**。从 /project-list 打开时
- * mapSelection 默认是 system（该页 mission scope 就是 system），而 system 分支的
- * 口令明确写着「不运行 connect --project、不生成占位项目命令」——复制出来的口令
- * 于是恰好缺了 connect --new-project，也就是解开「没有密钥建不了项目 / 没有项目
- * 用不上密钥」这个环的那一步。上手助手是零基础用户的主路径，必须默认走新建项目。
+ * 页签只改变展示方式，不改变用户选定的授权范围。
+ * 项目入口由 initialAgentConnectSelection 明确选择 new；系统任务始终保持 system。
  */
 export function resolveAgentConnectTarget(input: {
   tab: string;
   selection: AgentConnectSelection;
   effectiveProjectId: string;
 }): CdsConnectTarget {
-  const selection = input.tab === 'starter' && input.selection.kind === 'system'
-    ? ({ kind: 'new' } as const)
-    : input.selection;
+  const selection = input.selection;
   if (selection.kind === 'new') return { kind: 'new' };
   if (selection.kind === 'system') return { kind: 'system' };
   return { kind: 'existing', projectId: selection.projectId };

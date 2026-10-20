@@ -89,6 +89,19 @@ try {
     assert.equal(url.searchParams.get('target'), 'system');
     assert.equal(url.searchParams.has('project'), false);
     console.log(`PASS ${width}: system task stays system with CDS Self present`);
+    await dialog.getByRole('button', { name: '上手助手', exact: true }).click();
+    const starter = dialog.locator('[data-agent-starter="true"]');
+    await starter.getByRole('button').filter({ hasText: /经验/ }).first().click();
+    await starter.getByRole('button').filter({ hasText: /产品|前端|后端|全栈|测试|运维/ }).first().click();
+    await starter.getByRole('button', { name: '确认这些技能', exact: true }).click();
+    await starter.getByRole('button', { name: '生成我的上手包', exact: true }).click();
+    await starter.getByRole('button', { name: '复制启动提示词', exact: true }).click();
+    const startup = await page.evaluate(() => navigator.clipboard.readText());
+    url = new URL([...startup.matchAll(/https?:\/\/[^，\s]+/g)].map(match => match[0]).find(link => link.includes('/api/agent/setup.md?')));
+    assert.equal(url.searchParams.get('target'), 'system');
+    assert.equal(url.searchParams.get('mission'), 'auth');
+    assert.equal(url.searchParams.has('project'), false);
+    console.log(`PASS ${width}: Starter preserves system SSO scope through the actual clipboard`);
     await page.keyboard.press('Escape');
 
     dialog = await open('/branches/not-visible');

@@ -42,6 +42,12 @@ export function parseAgentSetupSelection(query: Record<string, unknown>): AgentS
   const skills = [...new Set(String(query.skills ?? 'cds').split(','))];
   if (!skills.length || skills.some((key) => !(CDS_SKILL_KEYS as readonly string[]).includes(key))) return null;
   const target: CdsConnectTarget = kind === 'existing' ? { kind, projectId: project as string } : { kind: kind as 'new' | 'system' };
+  if (query.mission) {
+    const mission = AGENT_MISSION_DEFINITIONS[query.mission as AgentPageContextId];
+    const compatible = mission.connectTargets?.includes(target.kind)
+      ?? (mission.scope === 'system' ? target.kind === 'system' : target.kind !== 'system');
+    if (!compatible) return null;
+  }
   return {
     target,
     skills: query.mission ? getAgentSetupSkillKeys(target, query.mission as AgentPageContextId) : skills as CdsSkillKey[],

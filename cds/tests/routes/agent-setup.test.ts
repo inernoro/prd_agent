@@ -85,7 +85,8 @@ describe('Agent public bootstrap through the real auth gate', () => {
   });
 
   it.each(Object.values(AGENT_MISSION_DEFINITIONS))('retains every required skill for mission $id', async mission => {
-    const response = await fetch(`${origin}/api/agent/setup.json?target=existing&project=proj-a&mission=${mission.id}`);
+    const target = mission.scope === 'system' ? 'target=system' : 'target=existing&project=proj-a';
+    const response = await fetch(`${origin}/api/agent/setup.json?${target}&mission=${mission.id}`);
     expect(response.status).toBe(200);
     const body = await response.json();
     const required = [...new Set([
@@ -172,6 +173,25 @@ describe('Agent public bootstrap through the real auth gate', () => {
     'target[toString]=bad',
   ])('rejects malformed selections rather than reflecting instructions: %s', async (query) => {
     expect((await fetch(`${origin}/api/agent/setup.md?${query}`)).status).toBe(400);
+  });
+
+  it.each([
+    'target=new&mission=auth',
+    'target=existing&project=proj-a&mission=auth',
+    'target=system&mission=branches',
+  ])('rejects contradictory mission scopes in both stages: %s', async query => {
+    for (const stage of ['connect', 'task']) {
+      for (const format of ['md', 'json']) {
+        expect((await fetch(`${origin}/api/agent/setup.${format}?${query}&stage=${stage}`)).status).toBe(400);
+      }
+    }
+  });
+
+  it.each(['projects', 'project-onboarding'])('preserves the explicit first-project workflow: %s', async mission => {
+    const response = await fetch(`${origin}/api/agent/setup.md?target=new&mission=${mission}`);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('--new-project --create-project');
+    expect((await fetch(`${origin}/api/agent/setup.md?target=new&mission=${mission}&stage=task`)).status).toBe(200);
   });
 
   it('public discovery is GET-only and does not open sibling routes', async () => {

@@ -105,7 +105,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, projectsLoad
     effectiveProjectId,
   );
   const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://cds.invalid';
-  // 目标解析（含「上手助手不许落到 system」那条）收在 agent-onboarding 里，
+  // 页签切换保持明确目标；统一解析收在 agent-onboarding 里，
   // 由 agent-onboarding.test.ts 直接断言行为，避免这段判断只能靠扫源码验证。
   const target: CdsConnectTarget = resolveAgentConnectTarget({
     tab: active,
