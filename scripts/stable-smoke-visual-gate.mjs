@@ -40,6 +40,12 @@ function escapeCell(value) {
   return String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', '<br>');
 }
 
+function evidenceScope(caption) {
+  const text = String(caption || '未说明证明内容').trim();
+  if (/不证明|不能证明/.test(text)) return text;
+  return `${text}；本图只证明当前可见状态，不能单独证明后端持久化、清理回读或正式环境结果。`;
+}
+
 function interventionLabel(status) {
   if (status === '通过') return '否';
   if (status === '需补证' || status === '未执行') return '是：质量负责人补齐证据';
@@ -673,7 +679,7 @@ export function renderVisualGateReport(result) {
       '',
       '| 序号 | 环境 | 验收场景 | 主验收状态 | 类型 | 自动检查 | 人工视觉 | 严格结论 | 是否需干预 | 主题 | 设备 | 真实面包屑 | 证明内容 | 查看截图 | 测试方法 |',
       '|---:|---|---|---|---|---|---|---|---|---|---|---|---|---|---|',
-      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${environmentLabel(item.environment)} | ${escapeCell(item.scenario)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.automatedStatus)} | ${escapeCell(item.manualStatus)} | ${escapeCell(item.status)} | ${escapeCell(interventionLabel(item.status))} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(item.caption)} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
+      ...module.evidenceRows.map((item, index) => `| ${index + 1} | ${environmentLabel(item.environment)} | ${escapeCell(item.scenario)} | ${escapeCell(item.primaryState)} | ${escapeCell(item.testType)} | ${escapeCell(item.automatedStatus)} | ${escapeCell(item.manualStatus)} | ${escapeCell(item.status)} | ${escapeCell(interventionLabel(item.status))} | ${escapeCell(item.theme)} | ${escapeCell(item.viewportClass)} | ${escapeCell(item.breadcrumb)} | ${escapeCell(evidenceScope(item.caption))} | [查看](${item.evidenceAnchor}) | ${item.methodAnchor ? `[查看](${item.methodAnchor})` : '未绑定'} |`),
       ...(module.evidenceRows.length === 0 ? ['| 0 | 未取证 | 无 | 未执行 | 未执行 | 未记录 | 未记录 | 未执行 | 是：质量负责人补齐证据 | 未执行 | 未执行 | 未执行 | 未采集证据 | 无 | [查看方法](#visual-method-' + module.id + ') |'] : []),
       '',
     ]),
@@ -683,7 +689,7 @@ export function renderVisualGateReport(result) {
       `<a id="${item.evidenceAnchor.replace(/^#/, '')}"></a>`,
       `### ${module.name} · ${item.primaryState}`,
       '',
-      `${item.caption}。严格结论：${item.status}。`,
+      `${evidenceScope(item.caption)}。严格结论：${item.status}。`,
       '',
       item.path ? `![${escapeCell(`${module.name}-${item.primaryState}`)}](<${item.path}>)` : '截图文件未绑定，需干预。',
       '',

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { loadBusinessContract, readPools, persistRunExperience, updatePools, pendingRetests } from '../stable-smoke-memory.mjs';
+import { loadBusinessContract, readPools, persistRunExperience, updatePools, pendingRetests, renderExperienceSummary } from '../stable-smoke-memory.mjs';
 import { buildPlan, loadCatalog, parseMatrixCases, parseActiveRegressions } from '../stable-smoke-plan.mjs';
 import { buildVisualPlan } from '../stable-smoke-visual-plan.mjs';
 import { validateVisualEvidence } from '../stable-smoke-visual-gate.mjs';
@@ -85,6 +85,19 @@ test('原通知缺陷沿用编号并记持续阻塞，不虚构多个产品事�
   assert.equal(state.defects[0].status, 'blocked');
   const historical = updatePools({ defects: [{ defectId: 'DEF-STSMK-NOTIFY-001', environment: 'production', status: 'blocked', firstRunId: '历史源未提供，禁止用导入轮次替代' }] }, { ...input, notification: { status: 'blocked' } }, contract);
   assert.match(historical.defects.find(item => item.defectId === 'DEF-STSMK-NOTIFY-001').firstRunId, /历史源未提供/);
+});
+test('主管报告经验摘要明确列出缺陷连续台账和下一轮起点', () => {
+  const state = updatePools({}, input, contract);
+  const markdown = renderExperienceSummary(state);
+  assert.match(markdown, /## 未关闭缺陷/);
+  assert.match(markdown, /## 缺陷变化总览/);
+  assert.match(markdown, /## 本轮新缺陷/);
+  assert.match(markdown, /## 本轮验证关闭/);
+  assert.match(markdown, /## 验收债务变化/);
+  assert.match(markdown, /## 下一轮起点/);
+  assert.match(markdown, /DEF-STSMK-PRODUCTION-VIS-009/);
+  assert.match(markdown, /VIS-009/);
+  assert.match(markdown, /按环境内去重 caseId 计数，和按 defectId 计数的未关闭缺陷不是同一分母/);
 });
 
 test('REG-stsmk-report-risk-001 报告归档拒收导致未投递，不能更新原通知配置缺陷', () => {

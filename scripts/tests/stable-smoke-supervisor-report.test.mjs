@@ -74,7 +74,8 @@ test('CDS 断言失败保留失败事实，不将未诊断分类升级为真实�
   const report = renderSupervisorReport(restrictedRunFixture());
   assert.match(report, /主管结论：不通过/);
   assert.match(report, /1 项不通过、1 项未执行/);
-  assert.match(report, /参考图没有进入请求/);
+  assert.match(report, /JPEG 参考图已生成产物/);
+  assert.match(report, /关闭条件：原 VIS-003/);
   assert.match(report, /分类与根因待诊断/);
   assert.doesNotMatch(report, /真实业务失败/);
 });
@@ -98,7 +99,7 @@ test('缺少未执行原因时明确待诊断，不猜正式身份或自动化�
   assert.doesNotMatch(report, /正式合成身份未就绪|共用身份前置未完成|准备正式验收身份后补测/);
 });
 
-test('不通过项使用实际环境且缺少失败详情时不把预期断言冒充实际错误', () => {
+test('不通过项使用实际环境并给出用户影响和可判定关闭条件', () => {
   const report = renderSupervisorReport({
     plan,
     matrixMarkdown: matrix,
@@ -110,7 +111,8 @@ test('不通过项使用实际环境且缺少失败详情时不把预期断言�
   assert.match(intervention, /P1 \| 正式环境 \| 1 项/);
   assert.doesNotMatch(intervention, /\| CDS \|/);
   const abnormal = report.split('## 未通过与未执行逐项清单')[1].split('## 逐项验收账本')[0];
-  assert.match(abnormal, /失败详情缺失，分类与根因待诊断/);
+  assert.match(abnormal, /JPEG 参考图已生成产物/);
+  assert.match(abnormal, /连续两次证明字段为 image\[\]/);
   assert.doesNotMatch(abnormal, /参考图进入请求/);
 });
 
@@ -200,4 +202,25 @@ test('单环境执行时主管模块表明确标记另一环境未选择', () =>
   assert.match(report, /身份与访问 .* 通过（1 通过，0 失败，0 未执行） \| 未选择 \|/);
   assert.doesNotMatch(report, /未选择.*通过（0 通过，0 失败，0 未执行）/);
   assert.doesNotMatch(report, /\| 无 \| 双环境 \|/);
+});
+
+test('主管首屏优先正式环境并把稳定通过与重试通过分开', () => {
+  const report = renderSupervisorReport({
+    plan,
+    matrixMarkdown: matrix,
+    runId: 'stsmk-manager-order',
+    rows: [
+      { caseId: 'CORE-001', environment: 'cds', status: 'pass', durationMs: 10, error: '' },
+      { caseId: 'CORE-001', environment: 'production', status: 'pass', durationMs: 10, error: '', hadFailedAttempt: true },
+      { caseId: 'VIS-003', environment: 'production', status: 'not-run', durationMs: 0, error: '' },
+    ],
+    notRunLedger: [{ caseId: 'VIS-003', environment: 'production', reasonCode: 'production-safety-restricted', reason: '安全门限制为只读' }],
+    selectedEnvironments: ['cds', 'production'],
+  });
+  assert.match(report, /\| 稳定通过 \| 1\/3 \|/);
+  assert.match(report, /\| 重试后通过 \| 1\/3 \|/);
+  assert.match(report, /正式环境本轮已执行 1\/2 项/);
+  const coverage = report.split('## 执行覆盖账本')[1].split('## 需干预事项')[0];
+  assert.ok(coverage.indexOf('| 正式环境 |') < coverage.indexOf('| CDS |'));
+  assert.match(coverage, /production-safety-restricted \| 1 \| CDS 出现高风险失败与清理未知，正式写入矩阵按安全门保持未启动/);
 });

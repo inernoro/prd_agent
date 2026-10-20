@@ -138,13 +138,50 @@ export function updatePools(previous, { runId, profile = 'routine', commit = '',
 
 export function renderExperienceSummary(state) {
   const recent = state.hotspots.filter(item => item.recent);
+  const currentRunId = state.changes?.runId || '';
+  const openDefects = state.defects.filter(item => item.status !== 'verified');
+  const newDefects = state.defects.filter(item => item.firstRunId === currentRunId);
+  const verifiedThisRun = state.defects.filter(item => item.latestRunId === currentRunId && item.status === 'verified');
+  const debtChanges = newDefects.filter(item => ['test', 'report', 'evidence', '待诊断'].includes(item.classification));
+  const countBy = (rows, select) => rows.reduce((counts, row) => {
+    const key = select(row);
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  const statusCounts = countBy(openDefects, item => item.status);
+  const environmentCounts = countBy(openDefects, item => item.environment || 'unknown');
+  const productionRetests = state.changes?.pendingRetests?.production?.length || 0;
+  const cdsRetests = state.changes?.pendingRetests?.cds?.length || 0;
+  const cell = (value) => String(value || '未记录').replaceAll('|', '／').replace(/\s+/g, ' ').trim();
   const labels = { pass: '通过', fail: '失败', flaky: '重试通过，不稳定', blocked: '阻塞', 'not-run': '未完成或本轮未安排' };
   return [
     '## 三池经验回填', '',
     `本轮保留 ${state.hotspots.length} 项长期关注，近期重点 ${recent.length} 项；历史事件按轮次、环境、原用例去重。候选方法未验证前不作为根因或已生效能力。`, '',
     '| 重要功能 | 正式环境 | CDS | 最近重点 |', '|---|---|---|---|',
     ...state.hotspots.map(item => `| ${item.featureId} ${item.title} | ${labels[item.latest.find(row => row.environment === 'production')?.status] || '未执行'} | ${labels[item.latest.find(row => row.environment === 'cds')?.status] || '未执行'} | ${item.sustainedBlocked ? '持续阻塞，需恢复' : item.recent ? '优先复验原问题' : '长期关注'} |`), '',
-    `常见手段 ${state.methods.filter(item => item.category === '常见手段').length} 项；待验证补充 ${state.methods.filter(item => item.status === '待验证').length} 项。未关闭问题 ${state.defects.filter(item => item.status !== 'verified').length} 项，下一轮仍按原编号复验，不自动关闭。`, '',
+    `常见手段 ${state.methods.filter(item => item.category === '常见手段').length} 项；待验证补充 ${state.methods.filter(item => item.status === '待验证').length} 项。未关闭问题 ${openDefects.length} 项，下一轮仍按原编号复验，不自动关闭。`, '',
+    '## 缺陷变化总览', '',
+    '| 指标 | 数量 | 说明 |', '|---|---:|---|',
+    `| 未关闭缺陷 | ${openDefects.length} | 状态：${Object.entries(statusCounts).map(([key, value]) => `${key} ${value}`).join('、')}；环境：${Object.entries(environmentCounts).map(([key, value]) => `${key} ${value}`).join('、')} |`,
+    `| 本轮新缺陷 | ${newDefects.length} | 按首次发现 runId 统计，不重编号历史缺陷 |`,
+    `| 本轮验证关闭 | ${verifiedThisRun.length} | 只有原失败、边界、回归、视觉与清理同时满足才计入 |`,
+    `| 验收债务变化 | +${debtChanges.length} | 新增且分类为 test、report、evidence 或待诊断的缺陷 |`,
+    `| 下一轮复验项 | ${productionRetests + cdsRetests} | 正式环境 ${productionRetests}、CDS ${cdsRetests}；这里按环境内去重 caseId 计数，和按 defectId 计数的未关闭缺陷不是同一分母；unknown 环境缺陷保留在台账但不自动映射环境复验项 |`, '',
+    '## 未关闭缺陷', '',
+    '| defectId | 状态 | 环境 | 原 caseId | 已知根因 | 下一步 |', '|---|---|---|---|---|---|',
+    ...(openDefects.length > 0
+      ? openDefects.map(item => `| ${cell(item.defectId)} | ${cell(item.status)} | ${cell(item.environment)} | ${cell((item.caseIds || []).join('、'))} | ${cell(item.rootCause)} | ${cell(item.nextAction || item.closingCondition)} |`)
+      : ['| 无 | 无 | 无 | 无 | 无 | 无 |']), '',
+    '## 本轮新缺陷', '',
+    newDefects.length > 0 ? newDefects.map(item => `- ${cell(item.defectId)}：${cell(item.classification)}，关联 ${cell((item.caseIds || []).join('、'))}。`).join('\n') : '无。', '',
+    '## 本轮验证关闭', '',
+    verifiedThisRun.length > 0 ? verifiedThisRun.map(item => `- ${cell(item.defectId)}：已满足原关闭条件。`).join('\n') : '无；本轮没有缺陷达到自动关闭条件。', '',
+    '## 验收债务变化', '',
+    debtChanges.length > 0
+      ? `新增 ${debtChanges.length} 项待做红绿闭环的验收债务：${debtChanges.map(item => cell(item.defectId)).join('、')}。`
+      : '没有新增验收债务；既有待验证方法继续保留。', '',
+    '## 下一轮起点', '',
+    `正式环境待复验 ${productionRetests} 项，CDS 待复验 ${cdsRetests} 项。先按未关闭 defectId 复跑原 caseId，再做受影响模块回归、视觉取证与清理回读。`, '',
   ].join('\n');
 }
 

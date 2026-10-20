@@ -892,6 +892,51 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         self.assertIn("本轮没有业务失败项。", content)
         self.assertNotIn('<article class="business-failure-card">', content)
 
+    def test_stable_and_flaky_counts_drive_the_first_screen_and_defect_continuity(self):
+        content = archive_report.build_interactive_html(
+            "稳定冒烟 · 分账报告",
+            "fail",
+            """
+## 结论与处理顺序
+
+| 指标 | 数量 |
+|---|---:|
+| 计划测试 | 180 |
+| 已完成 | 69 |
+| 稳定通过 | 51 |
+| 重试后通过 | 10 |
+| 失败 | 8 |
+| 未执行 | 111 |
+
+## 双环境覆盖差异
+
+| 环境 | 计划 | 已完成 | 稳定通过 | 重试后通过 | 失败 | 未执行 | 业务结论 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 正式环境 | 115 | 7 | 7 | 0 | 0 | 108 | 只读基线可用，写入矩阵未启动 |
+
+## 缺陷变化总览
+
+| 指标 | 数量 | 说明 |
+|---|---:|---|
+| 未关闭缺陷 | 115 | defectId 计数；CDS 59、正式环境 50、unknown 6 |
+| 本轮新缺陷 | 2 | 原编号连续追踪 |
+| 本轮验证关闭 | 0 | 无 |
+| 验收债务变化 | +2 | 新增两项 |
+| 下一轮复验项 | 110 | caseId 计数；正式环境 52、CDS 58，与缺陷数不是同一分母 |
+""",
+            [],
+            figure_srcs={},
+        )
+        self.assertIn("计划 180 项，完成 69 项；稳定通过 51 项、重试后通过 10 项、失败 8 项、未执行 111 项", content)
+        self.assertIn("正式环境：完成 7/115", content)
+        self.assertIn("未关闭缺陷：115", content)
+        self.assertIn("下一轮复验项：110", content)
+        self.assertNotIn("尚未取得结构化统计", content)
+
+    def test_every_evidence_caption_states_what_it_cannot_prove(self):
+        caption = archive_report._evidence_caption({"name": "01-proof", "caption": "页面显示生成结果"})
+        self.assertIn("不能单独证明后端持久化、清理回读或正式环境结果", caption)
+
     @staticmethod
     def body(gap_heading: str) -> str:
         return f"""

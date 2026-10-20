@@ -75,9 +75,9 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /功能未执行 112 项与截图不能证明业务结果 112 张是两个独立维度/);
   assert.match(page, /本轮数字相同纯属巧合/);
   assert.match(page, /## 双环境覆盖差异/);
-  assert.match(page, /\| CDS \| 103 \| 78 \| 47 \| 31 \| 25 \|/);
+  assert.match(page, /\| CDS \| 103 \| 78 \| 47 \| 0 \| 31 \| 25 \|/);
   assert.match(page, /CDS 本轮完成 78\/103，仍有 25 项未执行/);
-  assert.match(page, /\| 正式环境 \| 88 \| 1 \| 1 \| 0 \| 87 \|/);
+  assert.match(page, /\| 正式环境 \| 88 \| 1 \| 1 \| 0 \| 0 \| 87 \|/);
   assert.match(page, /录音无法转写（语音识别资源不可用） \| 2 \|/);
   assert.match(page, /GW-001、REC-003|REC-003、GW-001/);
   assert.doesNotMatch(page, /expect\(|Expected:|Received:/);

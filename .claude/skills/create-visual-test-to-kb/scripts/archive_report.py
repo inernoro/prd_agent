@@ -325,9 +325,11 @@ def _evidence_action(shot):
 
 def _evidence_caption(shot, fallback="截图"):
     action = _evidence_action(shot)
-    if action:
-        return action["caption"]
-    return shot.get("caption") or shot.get("name") or fallback
+    caption = action["caption"] if action else shot.get("caption") or shot.get("name") or fallback
+    caption = str(caption).strip()
+    if not re.search(r"(?:不能|不|不可|不得).{0,8}证明", caption):
+        caption += "；本图只证明当前可见状态，不能单独证明后端持久化、清理回读或正式环境结果"
+    return caption
 
 
 def _figure_number(name):
@@ -809,10 +811,23 @@ def _business_decision_summary(markdown):
     }
     if "未执行" not in values and "功能未执行" in values:
         values["未执行"] = values["功能未执行"]
-    required = ("计划测试", "已完成", "通过", "失败", "未执行")
+    required = ("计划测试", "已完成", "失败", "未执行")
     if any(not re.fullmatch(r"\d+", values.get(field, "")) for field in required):
         return None
+    if re.fullmatch(r"\d+", values.get("稳定通过", "")):
+        stable_pass = int(values["稳定通过"])
+        flaky_pass = int(values.get("重试后通过", "0")) if re.fullmatch(r"\d+", values.get("重试后通过", "0")) else 0
+        total_pass = stable_pass + flaky_pass
+    elif re.fullmatch(r"\d+", values.get("通过", "")):
+        total_pass = int(values["通过"])
+        flaky_pass = int(values.get("重试后通过", "0")) if re.fullmatch(r"\d+", values.get("重试后通过", "0")) else 0
+        stable_pass = total_pass - flaky_pass
+    else:
+        return None
+    if stable_pass < 0:
+        raise RuntimeError("结论与处理顺序统计不守恒：重试后通过不能大于通过")
     counts = {field: int(values[field]) for field in required}
+    counts.update({"稳定通过": stable_pass, "重试后通过": flaky_pass, "通过": total_pass})
     if counts["通过"] + counts["失败"] + counts["未执行"] != counts["计划测试"]:
         raise RuntimeError("结论与处理顺序统计不守恒：通过 + 失败 + 未执行必须等于计划测试")
     if counts["通过"] + counts["失败"] != counts["已完成"]:
@@ -838,6 +853,19 @@ def _business_decision_summary(markdown):
         "visual_headers": visual_headers,
         "failure_headers": failure_headers,
         "environment_headers": environment_headers,
+    }
+
+
+def _defect_change_summary(markdown):
+    """Extract defect continuity counts for the first-screen decision card."""
+    _, rows = _table_records(markdown, "缺陷变化总览")
+    return {
+        _plain_cell(row.get("指标", "")): {
+            "count": _plain_cell(row.get("数量", "")),
+            "note": _plain_cell(row.get("说明", "")),
+        }
+        for row in rows
+        if _plain_cell(row.get("指标", ""))
     }
 
 
@@ -2475,6 +2503,7 @@ def build_interactive_html(
     unclassified_summary = verdict in {"fail", "conditional"} and not problem_items and not row_gap_count
     reviewer_summary = _reviewer_summary(markdown_content)
     business_summary = _business_decision_summary(markdown_content)
+    defect_changes = _defect_change_summary(markdown_content)
     report_time = _extract_report_time(markdown_content)
     report_time_html = (
         f'<time class="dl-item">报告时间 · {html.escape(report_time)}</time>' if report_time else ""
@@ -2555,7 +2584,8 @@ def build_interactive_html(
         summary_cards = [
             ("计划测试", str(counts["计划测试"]), "本轮合同项", "accent", metric_target("逐项验收账本"), "all"),
             ("已完成", str(counts["已完成"]), "通过 + 失败", "accent", metric_target("逐项验收账本"), "completed"),
-            ("通过", str(counts["通过"]), "业务断言成立", "pass", metric_target("逐项验收账本"), "pass"),
+            ("稳定通过", str(counts["稳定通过"]), "首轮业务断言成立", "pass", metric_target("逐项验收账本"), "pass"),
+            ("重试后通过", str(counts["重试后通过"]), "不计入稳定通过", "risk" if counts["重试后通过"] else "pass", metric_target("逐项验收账本"), "flaky"),
             ("失败", str(counts["失败"]), "需要处理和复测", "fail" if counts["失败"] else "pass", metric_target("逐项验收账本"), "fail"),
             ("功能未执行", str(counts["未执行"]), "不能按通过计算", "gap" if counts["未执行"] else "pass", metric_target("逐项验收账本"), "not-run"),
         ]
@@ -2631,14 +2661,15 @@ def build_interactive_html(
             name = html.escape(_plain_cell(row.get("环境", "")) or "未标注环境")
             planned = html.escape(_plain_cell(row.get("计划", "")) or "0")
             completed = html.escape(_plain_cell(row.get("已完成", "")) or "0")
-            passed = html.escape(_plain_cell(row.get("通过", "")) or "0")
+            stable_passed = html.escape(_plain_cell(row.get("稳定通过", "")) or _plain_cell(row.get("通过", "")) or "0")
+            flaky_passed = html.escape(_plain_cell(row.get("重试后通过", "")) or "0")
             failed = html.escape(_plain_cell(row.get("失败", "")) or "0")
             not_run = html.escape(_plain_cell(row.get("未执行", "")) or "0")
             conclusion = html.escape(_plain_cell(row.get("业务结论", "")))
             environment_cards.append(
                 '<article class="environment-coverage-card">'
                 f'<strong>{name}：完成 {completed}/{planned}</strong>'
-                f'<span>通过 {passed}，失败 {failed}，未执行 {not_run}</span>'
+                f'<span>稳定通过 {stable_passed}，重试后通过 {flaky_passed}，失败 {failed}，未执行 {not_run}</span>'
                 f'<small>{conclusion}</small>'
                 '</article>'
             )
@@ -2646,6 +2677,22 @@ def build_interactive_html(
             '<div class="environment-coverage">' + "".join(environment_cards) + '</div>'
             if environment_cards else ""
         )
+        defect_change_html = ""
+        if defect_changes:
+            preferred = ("未关闭缺陷", "本轮新缺陷", "本轮验证关闭", "验收债务变化", "下一轮复验项")
+            change_cards = []
+            for key in preferred:
+                item = defect_changes.get(key)
+                if not item:
+                    continue
+                change_cards.append(
+                    '<article class="environment-coverage-card">'
+                    f'<strong>{html.escape(key)}：{html.escape(item["count"] or "未记录")}</strong>'
+                    f'<small>{html.escape(item["note"] or "未说明口径")}</small>'
+                    '</article>'
+                )
+            if change_cards:
+                defect_change_html = '<h3>缺陷连续台账</h3><div class="environment-coverage">' + "".join(change_cards) + '</div>'
         visual_html = ""
         if visual:
             inconclusive_visual_count = visual.get("不能证明业务结果", 0)
@@ -2693,10 +2740,11 @@ def build_interactive_html(
             '<div class="focus-kicker">第一步：确认结论</div>'
             f'<h2>{release_text}</h2>'
             f'<p class="decision-lead">计划 {counts["计划测试"]} 项，完成 {counts["已完成"]} 项；'
-            f'通过 {counts["通过"]} 项、失败 {counts["失败"]} 项、未执行 {counts["未执行"]} 项。'
+            f'稳定通过 {counts["稳定通过"]} 项、重试后通过 {counts["重试后通过"]} 项、失败 {counts["失败"]} 项、未执行 {counts["未执行"]} 项。'
             f'完成率 {completion_rate:.1f}%，已执行通过率 {executed_pass_rate:.1f}%。</p>'
             f'{decision_steps_html}'
             f'{environment_html}'
+            f'{defect_change_html}'
             f'{visual_html}'
             '<h3>第三步：按失败类型处理，再按原项复测</h3>'
             f'<div class="business-failure-grid">{failure_html}</div>'

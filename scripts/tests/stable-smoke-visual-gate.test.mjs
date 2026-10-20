@@ -370,6 +370,7 @@ test('主管报告逐张列出结果、面包屑、截图和测试方法', () =>
   assert.match(report, /\[查看\]\(#visual-method-visual\)/);
   assert.match(report, /## 视觉证据图片/);
   assert.match(report, /!\[视觉创作-结果\]\(<.*visual-gate-fixtures-.*\/evidence-\d+\.png>\)/);
+  assert.match(report, /本图只证明当前可见状态，不能单独证明后端持久化、清理回读或正式环境结果/);
   assert.match(report, /## 视觉测试方法/);
 });
 

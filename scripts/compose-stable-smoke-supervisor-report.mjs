@@ -444,13 +444,13 @@ export function renderBusinessDecisionPage(
     '|---|---:|---|',
     `| 计划测试 | ${counts.planned} | 本轮合同要求覆盖的环境与验收项 |`,
     `| 已完成 | ${counts.completed} | 已经得到明确通过或失败结果 |`,
-    `| 通过 | ${counts.passed} | 真实业务断言成立 |`,
+    `| 稳定通过 | ${counts.passed - counts.flaky} | 首轮真实业务断言成立 |`,
     `| 重试后通过 | ${counts.flaky} | 首轮失败仍需定位，不能算稳定通过 |`,
     `| 失败 | ${counts.failed} | 真实业务断言不成立，需要处理后复测 |`,
       `| 功能未执行 | ${counts.notRun} | 因身份、模型、安全限制或步骤缺失没有运行，不能算通过 |`,
     `| 完成率 | ${pct(counts.completionRate)} | 已完成 ÷ 计划测试 |`,
-    `| 已执行通过率 | ${pct(counts.executedPassRate)} | 通过 ÷ 已完成 |`,
-    `| 统计校验 | ${counts.balanced ? '守恒' : '不一致'} | 通过 + 失败 + 未执行必须等于计划测试 |`,
+    `| 已执行通过率 | ${pct(counts.executedPassRate)} | 稳定通过与重试后通过之和 ÷ 已完成 |`,
+    `| 统计校验 | ${counts.balanced ? '守恒' : '不一致'} | 稳定通过 + 重试后通过 + 失败 + 未执行必须等于计划测试 |`,
     '| 统计来源 | 权威执行汇总 | 首屏只按实际执行记录计数；原始合同账本可保留重复映射行 |',
     '',
   ];
@@ -458,10 +458,10 @@ export function renderBusinessDecisionPage(
     lines.push(
       '## 双环境覆盖差异',
       '',
-      '| 环境 | 计划 | 已完成 | 通过 | 失败 | 未执行 | 业务结论 |',
-      '|---|---:|---:|---:|---:|---:|---|',
-      ...(cdsCoverage ? [`| CDS | ${cdsCoverage.planned} | ${cdsCoverage.completed} | ${cdsCoverage.passed} | ${cdsCoverage.failed} | ${cdsCoverage.notRun} | CDS 本轮完成 ${cdsCoverage.completed}/${cdsCoverage.planned}，仍有 ${cdsCoverage.notRun} 项未执行 |`] : []),
-      ...(productionCoverage ? [`| 正式环境 | ${productionCoverage.planned} | ${productionCoverage.completed} | ${productionCoverage.passed} | ${productionCoverage.failed} | ${productionCoverage.notRun} | ${productionConclusion} |`] : []),
+      '| 环境 | 计划 | 已完成 | 稳定通过 | 重试后通过 | 失败 | 未执行 | 业务结论 |',
+      '|---|---:|---:|---:|---:|---:|---:|---|',
+      ...(cdsCoverage ? [`| CDS | ${cdsCoverage.planned} | ${cdsCoverage.completed} | ${cdsCoverage.passed - (cdsCoverage.flaky || 0)} | ${cdsCoverage.flaky || 0} | ${cdsCoverage.failed} | ${cdsCoverage.notRun} | CDS 本轮完成 ${cdsCoverage.completed}/${cdsCoverage.planned}，仍有 ${cdsCoverage.notRun} 项未执行 |`] : []),
+      ...(productionCoverage ? [`| 正式环境 | ${productionCoverage.planned} | ${productionCoverage.completed} | ${productionCoverage.passed - (productionCoverage.flaky || 0)} | ${productionCoverage.flaky || 0} | ${productionCoverage.failed} | ${productionCoverage.notRun} | ${productionConclusion} |`] : []),
       '',
     );
   }
