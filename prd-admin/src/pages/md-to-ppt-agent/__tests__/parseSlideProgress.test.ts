@@ -201,7 +201,12 @@ describe('OpenDesign 运行态可见信息', () => {
 
     const fixtureOutput = process.env.PPT_RUNTIME_FIXTURE_OUTPUT;
     if (fixtureOutput) {
-      const panel = renderToStaticMarkup(createElement('main', { 'data-provenance': 'captured-runtime-fields-only' },
+      const fixturePreviewPath = process.env.PPT_RUNTIME_FIXTURE_PREVIEW_HTML;
+      const fixturePreviewHtml = fixturePreviewPath
+        ? readFileSync(fixturePreviewPath, 'utf8')
+        : captured.previewHtml;
+      const fixturePreviewPages = countDeckPages(fixturePreviewHtml);
+      const panel = renderToStaticMarkup(createElement('main', { 'data-provenance': 'captured-runtime-fields-and-preview-html' },
         createElement(PptRuntimeProgressHeader, {
           stageText: captured.phaseMessage,
           elapsedSec: 465,
@@ -211,10 +216,10 @@ describe('OpenDesign 运行态可见信息', () => {
           processProgress: captured.progress,
           hasPreview: true,
         }),
-        createElement('iframe', {
-          title: 'OpenDesign 捕获预览',
-          sandbox: 'allow-scripts',
-          srcDoc: captured.previewHtml,
+        createElement(PptRuntimeLivePreview, {
+          html: fixturePreviewHtml,
+          pageNumber: fixturePreviewPages,
+          allowScripts: true,
         }),
         createElement(NextStepBar, {
           onPublish: () => undefined,
