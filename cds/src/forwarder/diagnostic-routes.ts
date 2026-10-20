@@ -107,6 +107,10 @@ export function createDiagnosticRouter(opts: DiagnosticRouterOptions): Router {
       res.status(403).json({ error: 'forbidden' });
       return;
     }
+    if (req.query.view === 'preview-activity') {
+      res.status(200).json({ previewActivity: opts.proxy.getPreviewActivity() });
+      return;
+    }
     const stats = opts.proxy.getStats();
     res.status(200).json({
       totalRequests: stats.totalRequests,

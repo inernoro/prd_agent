@@ -268,6 +268,12 @@ describe('forwarder活动收据的有限资格与恢复', () => {
     expect(source('index.ts')).toContain('schedulerService.setPreviewActivitySource(() => readForwarderPreviewActivity(diagnosticsPort), isTrustedProbeFingerprint)');
     expect(source('forwarder-main.ts')).toContain('isPrivateForwarderDiagnostic(req)');
     expect(source('forwarder-main.ts')).toContain('JSON.stringify(proxy.getStats())');
+    const native = source('forwarder-main.ts');
+    const nativeStats = native.slice(native.indexOf("if (url === '/__forwarder/stats')"),
+      native.indexOf("if (url === '/__forwarder/active')"));
+    expect(nativeStats).toContain("parsedUrl.searchParams.get('view') === 'preview-activity'");
+    expect(nativeStats.indexOf('proxy.getPreviewActivity()')).toBeGreaterThan(nativeStats.indexOf('if (!isLoopback)'));
+    expect(nativeStats.indexOf('proxy.getPreviewActivity()')).toBeLessThan(nativeStats.indexOf('proxy.getStats()'));
     expect(source('forwarder-main.ts')).toContain('proxy.reconcilePreviewActivityRoutes(routes)');
     expect(source('forwarder/diagnostic-routes.ts')).toContain('previewActivity: stats.previewActivity');
     expect(source('forwarder/diagnostic-routes.ts')).toContain('opts.watcher.onChange(routes => opts.proxy.reconcilePreviewActivityRoutes(routes))');

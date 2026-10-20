@@ -221,7 +221,7 @@ describe('MongoSplitStateBackingStore', () => {
     else expect(handle.deploymentRuns.docs.has('unrelated-run')).toBe(true);
   });
 
-  it('配对run保存后global仍挂起时已确认受理，不等待无关状态写入', async () => {
+  it.each([false, true])('配对run保存后global仍挂起时已确认受理，不等待无关状态写入：全局依赖反例=%s', async waitForGlobal => {
     const { handle, state, begin } = await acceptedRunFixture();
     (state.getState() as any).nextPortIndex = 123; state.save([{ kind: 'global' }]);
     let release!: () => void, started!: () => void;
@@ -229,9 +229,22 @@ describe('MongoSplitStateBackingStore', () => {
     const entered = new Promise<void>((resolve) => { started = resolve; });
     const original = handle.global.replaceOne.bind(handle.global);
     vi.spyOn(handle.global, 'replaceOne').mockImplementationOnce(async (...args) => { started(); await hold; return original(...args); });
-    let accepted = false; const run = begin().then((value) => { accepted = true; return value; });
-    try { await entered; await Promise.resolve(); expect(accepted).toBe(true); }
-    finally { release(); await run; await state.flush(); }
+    let accepted = false;
+    const run = begin().then(async value => {
+      // 反例只在夹具边界增加真实全局依赖，检验判据能够拒绝它；不修改生产实现。
+      if (waitForGlobal) await state.flush();
+      accepted = true; return value;
+    });
+    let turn: ReturnType<typeof setImmediate> | undefined;
+    try {
+      await entered;
+      // 断言受理不依赖仍未释放的全局写入，不约束内部 Promise continuation 层数。
+      const completed = await Promise.race([run.then(() => true), new Promise<boolean>(resolve => {
+        turn = setImmediate(() => resolve(false));
+      })]);
+      expect(completed).toBe(!waitForGlobal);
+      expect(accepted).toBe(!waitForGlobal);
+    } finally { if (turn) clearImmediate(turn); release(); await run; await state.flush(); }
   });
 
   it('前置分支写入失败不得确认或持久保存部署意图', async () => {
