@@ -7,7 +7,7 @@
 制作顺序：
 
 1. `official_tts.py`调用官方Speech API准备短样试听，凭据只走安全环境配置或无回显输入。`batch_official_tts.py`在试听确认后并发合成，按实际采样数产生字幕边界。用户已拒绝旧本地中文配音，`synthesize_narration.py`只保留历史复现，禁止用于课程交付。官方API发送原中文与英文产品名，不使用旧本地谐音替换。
-2. `build_segments.py`读取实际音频构建独立项目。输出根提供`audio`、初始化的`template`、原始`source-assets`；`--shared-assets`提供手绘运行时、字体与手臂原素材。旧绝对路径缺失时从输出根取得对应音频和截图。
+2. `build_segments.py`读取实际音频构建独立项目。输出根提供`audio`、初始化的`template`、原始`source-assets`；`--shared-assets`提供字体与手臂原素材。手绘运行时与逐幕绘图由本目录维护。旧绝对路径缺失时从输出根取得对应音频和截图。
 3. `render_segments.py --root`只渲染已经构建的段。完整浏览器检查零错误、已判读的警告、成片音视频格式和完整解码通过后才记为成功。相同输入与文件哈希才复用缓存。
 4. `finalize_segments.py --root`核对成片版本与哈希，生成JSON和离线JS清单，从实际MP4抽取教材同帧。全部九段未齐时默认拒绝完整交付；`--partial`用于制作过程中更新预览。
 5. `build_review.py`和`build_textbook.py`均使用`--root`、`--repo`及实际`--link-record`，生成相同段号的审阅页和教材。最终截图齐全后打印PDF。
@@ -18,3 +18,13 @@
 官方配音调用只需Python标准库与FFmpeg，不安装本地声音模型。`narration-requirements.txt`与`narration-models.json`仅留旧配音的历史复现记录。构建另需fontTools 4.61.1，渲染使用固定HyperFrames 0.8.171、Chromium与FFmpeg。媒体及其原素材放交付/制作归档，不提交到仓库。
 
 公开地址、登录跳转、登录后的目标页面核验分开记录。现有平台实录缺口见`doc/debt.platform.md`，不得将路径示意、教学组件数据或技术检查称为真实平台验收通过。机器配音听感与真人独立跟做仍由审阅和试学判断。
+
+## 逐幕手绘与画面修订
+
+`storyboard_diagrams.py`与`storyboard_chapter2.py`为每个绘图幕独立设计语义图形及口播锚点：身份关系、凭据链路、评审循环、分流、鱼骨诊断、SSOT依赖树等。未设计的新幕直接报错，禁止退回通用双框箭头。`handdraw-runtime.js`按句子锚点逐阶段描线，标签随对应笔画出现，抬笔时不连线，阅读时手臂让出画面。
+
+正式配音未完成时，可明确使用`build_segments.py --visual-only --timings-from <已有projects目录>`与`render_segments.py --visual-only`制作无声画面修订；沿用既有字幕时间点，不读取、拷贝或混入已拒绝的旧声音。默认正式配音门禁保持不变。新官方音频到位后必须重新对齐绘图与字幕。
+
+分段缓存包含本段生成的实际图形与字幕；另一段的绘图实现变化不会仅因共享绘图库文件变化而使本段缓存失效。公共样式或绘图运行时变化则需要重新检查所有受影响段。教材使用最终阅读停顿的同帧，避免固定十秒抽帧得到未画完的图。
+
+回归检查：`python3 -m unittest discover -s scripts/tests -p test_tutorial_storyboard_contract.py`。它约束几何重复、口播锚点、标签与笔画关联及未知幕拒绝；真实笔尖、文字碰撞、任意seek和成片仍需浏览器与视频验证。

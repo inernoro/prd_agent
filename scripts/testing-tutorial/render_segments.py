@@ -130,12 +130,12 @@ def normalize_audio_tail(sid, path):
             'note': '仅音轨补静音或截尾到视频长度，视频流copy，不改变画面'}
 
 
-def validate_media(sid, path, expected_duration):
+def validate_media(sid, path, expected_duration, visual_only=False):
     info = probe(path)
     video = [s for s in info['streams'] if s.get('codec_type') == 'video']
     audio = [s for s in info['streams'] if s.get('codec_type') == 'audio']
-    if len(video) != 1 or not audio:
-        raise RuntimeError('成片必须有一条视频和至少一条中文音轨')
+    if len(video) != 1 or (audio if visual_only else not audio):
+        raise RuntimeError('无声审阅版不得含音轨' if visual_only else '成片必须有一条视频和至少一条中文音轨')
     v = video[0]
     n, d = map(float, v['avg_frame_rate'].split('/'))
     duration = float(info['format']['duration'])
@@ -148,7 +148,7 @@ def validate_media(sid, path, expected_duration):
     timing_path = ROOT / 'projects' / sid / 'timing.json'
     timing = json.loads(timing_path.read_text()) if timing_path.is_file() else {}
     required_voice_end = max((float(c['end']) for c in timing.get('captions', [])), default=0)
-    if any(x <= 0 or abs(x - video_duration) > .06 for x in audio_durations) or max(audio_durations) < required_voice_end - .25:
+    if not visual_only and (any(x <= 0 or abs(x - video_duration) > .06 for x in audio_durations) or max(audio_durations) < required_voice_end - .25):
         raise RuntimeError('音轨时长异常或没有覆盖最后一句口播')
     decode_log = ROOT / 'logs' / f'{sid}-decode.log'
     run_logged(['ffmpeg', '-v', 'error', '-i', path, '-f', 'null', '-'], ROOT, decode_log)
@@ -180,12 +180,14 @@ def extract_frames(sid, path, duration):
     return results
 
 
-def render_one(sid, allowed, dry_run=False):
+def render_one(sid, allowed, dry_run=False, visual_only=False):
     project = ROOT / 'projects' / sid
     manifest_path = project / 'build-manifest.json'
     if not re.fullmatch(r'c\d+-s\d+', sid) or not manifest_path.is_file():
         raise RuntimeError(f'{sid}没有完整已build工程')
     manifest = json.loads(manifest_path.read_text())
+    if bool(manifest.get('visual_only')) != visual_only:
+        raise RuntimeError('构建与渲染的无声审阅模式不一致')
     if manifest.get('id') != sid or not manifest.get('content_key') or not (project / 'index.html').is_file():
         raise RuntimeError(f'{sid}的build清单不完整')
     duration = float(manifest['duration_seconds'])
@@ -214,8 +216,8 @@ def render_one(sid, allowed, dry_run=False):
                               '--quality', 'standard', '--strict', '--output', pending],
                              project, ROOT / 'logs' / f'{sid}-render.log')
         emit(sid, 'decoding')
-        tail_alignment = normalize_audio_tail(sid, pending)
-        media = validate_media(sid, pending, duration)
+        tail_alignment = {'changed':False,'reason':'无声画面审阅，不生成或复用已拒绝的配音'} if visual_only else normalize_audio_tail(sid, pending)
+        media = validate_media(sid, pending, duration, visual_only)
         frames = extract_frames(sid, pending, duration)
         if inputs_hash(project) != input_hash:
             raise RuntimeError('渲染期间源素材变化，拒绝复用本次结果；请按新build重跑')
@@ -225,7 +227,8 @@ def render_one(sid, allowed, dry_run=False):
                   'video': str(target.relative_to(ROOT)), 'video_sha256': sha(target),
                   'bytes': target.stat().st_size, 'render_seconds': elapsed,
                   'expected_duration_seconds': duration, 'check': check, 'media': media, 'frames': frames, 'audio_tail_alignment': tail_alignment,
-                  'scope': '本地字幕配音视频技术校验；不证明登录界面、内容正确性或真人跟做已通过'}
+                  'visual_only':visual_only,
+                  'scope': '本地无声画面审阅技术校验；正式配音待完成' if visual_only else '本地字幕配音视频技术校验；不证明登录界面、内容正确性或真人跟做已通过'}
         save(record_path, record)
         (ROOT / 'evidence' / f'{sid}-render-failure.json').unlink(missing_ok=True)
         emit(sid, 'passed', video=record['video'], seconds=elapsed)
@@ -241,12 +244,13 @@ def main():
     parser.add_argument('--jobs', type=int, choices=(1, 2), default=1)
     parser.add_argument('--allow-warning', action='append', default=[], help='Explicitly reviewed extra warning code')
     parser.add_argument('--dry-run', action='store_true', help='Verify build inventory and hashes without running checks/render')
+    parser.add_argument('--visual-only', action='store_true', help='Explicit silent picture revision; keeps the rejected-voice block in place')
     parser.add_argument('--root', type=Path, default=ROOT, help='Production root containing projects/videos/evidence')
     parser.add_argument('--cli', type=Path, default=CLI, help='Local cached HyperFrames CLI; also supports HYPERFRAMES_CLI env')
     a = parser.parse_args()
     ROOT = a.root.resolve(); CLI = a.cli.resolve()
     pause = ROOT / 'evidence' / 'audio-review-rejection.json'
-    if not a.dry_run and pause.is_file() and json.loads(pause.read_text()).get('rendering_paused'):
+    if not a.dry_run and not a.visual_only and pause.is_file() and json.loads(pause.read_text()).get('rendering_paused'):
         parser.error('当前中文配音已被用户否决，渲染暂停；更换配音并明确恢复前禁止新增渲染。')
     if not CLI.is_file(): parser.error('本机HyperFrames CLI不存在，不联网替代')
     for name in ('videos', 'logs', 'evidence'):
@@ -257,7 +261,7 @@ def main():
     allowed = {'nested_structure_needs_subcomposition', *a.allow_warning}
     results = []
     with ThreadPoolExecutor(max_workers=a.jobs) as pool:
-        work = {pool.submit(render_one, sid, allowed, a.dry_run): sid for sid in ids}
+        work = {pool.submit(render_one, sid, allowed, a.dry_run, a.visual_only): sid for sid in ids}
         for future in as_completed(work):
             sid = work[future]
             try:

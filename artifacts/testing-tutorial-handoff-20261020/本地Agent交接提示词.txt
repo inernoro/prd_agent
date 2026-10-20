@@ -1,3 +1,10 @@
+最新补充：手绘重制（优先于下方旧制作状态）
+用户发现原版反复出现“两个圈和一根横线”，明确要求“去做到位”。第一、二章的内容认可不代表认可旧画面。
+现已将26个绘图幕逐幕改为不同的语义图形：身份关系、仓库归属、策略条件、凭据断点、意见分流、复审循环、数量去重、技能依赖、登录回跳、报告适配、触发接线、故障鱼骨、SSOT消费者与证据核对等；不允许通用两框模板只换字。
+图形按口播短句分阶段绘制，标签随对应笔画出现，阅读时手臂退出；不声称按汉字笔顺书写。33幕浏览器QA已通过，26套path几何互不重复，三处压字已修复；实际MP4和教材以本次delivery-manifest与校验记录为准。
+本包仍为无声画面审阅版，官方中文配音、真实平台实录与真人跟做仍未完成。后续请先出官方中文短样，确认后使用新绘图源码与实际配音逐句时间重新构建，同步字幕与教材，不用整段变速冒充语义同步。
+先看visual-materials/preview.mp4的六幕加速摘编，再看各个完整分段、同帧教材及手绘重制说明.txt。
+
 你是接手续作的本地 Agent。请直接接着做，不重新策划课程，也不要让我手动操作代码、逐项搬文件或重新解释背景。先阅读本提示词，再检查压缩包与本地仓库。用户希望尽快得到第一、二章的正式中文配音视频及同源教材。以下“用户原话”是关键摘录，其余为已核实的结构化交接，不是逐字聊天全文。密钥已刻意剔除。
 
 一、用户原始目标与受众
@@ -53,7 +60,7 @@ J. 真实历史PR1281：8轮、23条Codex机器人非回复行内发现评论，
 2. 检查本地官方API可达性和安全凭据。用户已经明确授权所有必要网络请求与官方配音调用，不要再让用户做代码、反复批同一权限。仍遵守本地实际网络策略，不绕过安全控制。
 3. 用OpenAI官方Speech API https://api.openai.com/v1/audio/speech 生成15–30秒标准普通话试听。当前准备模型gpt-4o-mini-tts、voice coral，仅是准备方案，可按官方当前支持核验。发送原文，不要用旧Kokoro谐音替换词；例如不要把Codex写成“扣德克斯”。先让用户确认声音能自然讲中文。
 4. 用户试听确认后，batch_official_tts.py可4并发处理31幕/102句，按实际WAV采样数记录字幕边界并拼音轨。它有试听批准门；不要伪造批准文件或把prepare-only当API成功。
-5. 优先复用现有无声画面快速替换，不重新花30分钟逐帧渲染。fast_official_voice_replace.py按旧timing逐幕取画面，以新实际音频长度重排、用y900–1020纸色遮旧字幕及旧进度条，保留来源与footer，烧录新ASS中文字幕，再拼段/章。该脚本仅做过2秒遮罩/字体冒烟，完整官方音频替换尚未实测；请检查变速手绘是否自然、字幕是否对齐，必要时只重渲受影响段。不要把小样成功扩称全量成功。
+5. 使用新逐幕绘图源码，以官方音频的实际句子时间构建图形与字幕。fast_official_voice_replace.py仅保留为旧快速替换原型，做过2秒遮罩/字体冒烟，完整替换未实测；不默认用于本次重制，不能靠整幕变速代替逐句语义同步。
 6. 原有9段编号稳定，画面/文字意见只改对应段，校验其他段缓存与版本不变。正式新配音后教材时间点、同帧、审阅清单、章合辑和ZIP必须一起更新。
 7. 本地可访问真实平台后补关键实录与圈注。先确认实际地址与账户，再操作；无前置条件不剪成成功。配置/登录/密钥都由Agent处理或仅在用户必须确认的授权页面交回人，不让用户操作终端或编辑文件。
 8. 交第一二章供审阅，其他章节保留稿件，不擅自开始渲染。
@@ -61,7 +68,7 @@ J. 真实历史PR1281：8轮、23条Codex机器人非回复行内发现评论，
 五、压缩包目录与仓库位置
 归档根就是原制作根的可搬迁版本；请在本地选择一个工作目录解压，由你自行恢复绝对路径依赖，不要让用户改。
 - repository-changes/：本任务全部25个仓库文件的最新快照。
-- git/changes.patch：从本任务基线f2dfcfd95到fc36c33a3的完整binary-safe diff。
+- git/changes.patch：从本任务基线f2dfcfd95到本次源文件快照的完整diff，排除artifacts二进制分片；git/README.md说明历史bundle范围。
 - git/changes.bundle：本任务9个提交的增量Git bundle，要求本地已有基线f2dfcfd95；优先核对后由你导入隔离分支，不要求用户执行命令。不满足基线时用快照/补丁对照合并，不能盲目覆盖。
 - git/change-log.txt及changed-files.json：9提交与变更文件清单。
 - scripts/testing-tutorial/：课程工具源码（与仓库快照对应）。
@@ -88,7 +95,7 @@ J. 真实历史PR1281：8轮、23条Codex机器人非回复行内发现评论，
 - 真正账户与线上CDS链路、真人独立跟做仍待补证。
 
 七、源码与工作流约束
-仓库：inernoro/prd_agent；分支codex/testing-methodology-tutorial；HEAD fc36c33a3。本任务9提交从da6da238b到fc36c33a3，基线f2dfcfd95，工作区交接时干净。
+仓库：inernoro/prd_agent；分支codex/testing-methodology-tutorial；权威当前版本见PR #1731最新提交。原9个制作提交从da6da238b到fc36c33a3，基线f2dfcfd95；后续分片和重制提交请以GitHub历史为准。
 主文档：doc/guide.platform.testing.methodology.md、doc/guide.platform.testing.script.md、doc/plan.platform.testing.tutorial.md。完整范围见这些稿件，别用本提示词替代完整文案。
 关键工具：course.json（42卡9部分的历史完整课预算，101分钟不作为目标）；production.json（仅前两章33幕）；build_segments.py；build_review.py；build_textbook.py；finalize_segments.py；official_tts.py；batch_official_tts.py；render_segments.py（已加拒绝配音暂停门）；preflight.py；serve_materials.py。
 全项目禁止emoji，包括回复、教材、提交。使用pnpm；中文commit。未经用户明确要求不创建PR、不合并；代码/文案源修改完成后检查再commit+push。视频/模型/虚拟环境不塞Git。地址使用真实权威来源；当前CDS预览网络未通时不拼域名。以实际源码与最近AGENTS规则为准。
