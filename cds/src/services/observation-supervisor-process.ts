@@ -74,6 +74,7 @@ function startSupervisor(): void {
       concurrency = message.concurrency; launch(); return;
     }
     if (message.type === 'restart-after-startup-deadline') {
+      if (!Number.isSafeInteger(message.generation) || message.generation < 1 || message.generation !== generation) return;
       if (child) void recover(child);
       else if (!closing && !recovering) send({ type: 'factory-cleaned', generation, supervisorMetrics: metrics() });
       return;
