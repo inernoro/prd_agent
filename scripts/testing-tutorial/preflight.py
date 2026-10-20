@@ -25,6 +25,11 @@ def audit(course, ledger, evidence_dir):
             for key in ("title", "where", "action", "expected", "recovery", "sources"):
                 if not step.get(key):
                     errors.append(f"{sid} 缺少 {key}")
+            if course.get("execution_model"):
+                if step.get("command_kind") in {"shell", "comment"}:
+                    errors.append(f"{sid} 把技术命令或PR操作交给学员；应改成给Agent的自然语言任务")
+                if step.get("operator") not in {"agent", "human_browser"}:
+                    errors.append(f"{sid} 没有说明由Agent执行还是由人确认页面")
             for name in step.get("needs", []):
                 if name not in inputs:
                     errors.append(f"{sid} 输入没有取得方式：{name}")

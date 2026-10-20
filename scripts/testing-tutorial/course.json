@@ -1,9 +1,9 @@
 {
   "schema": 1,
   "title": "用Codex做好一次测试交付",
-  "audience": "会用Codex、测试经验少的开发者",
+  "audience": "会向Agent下达任务、不操作代码、测试经验少的项目使用者",
   "date": "2026-10-20",
-  "duration": 4800,
+  "duration": 5160,
   "preserve_baseline": "656e5b303",
   "delivery": "讲解与可跟做粗样；所有演示数据与未验证项必须可见标注",
   "inputs": [
@@ -58,19 +58,20 @@
         {
           "id": "I01",
           "title": "选一个真实问题",
-          "where": "自己的任务卡",
-          "action": "写下谁、在什么条件下、做什么、应该得到什么。",
+          "where": "当前项目的Agent对话框",
+          "action": "用一句话告诉Agent：谁在什么条件下做什么，应该得到什么。",
           "expected": "一句能观察结果的预期，不用“正常”“没问题”代替。",
           "recovery": "说不清预期时，先确认产品要求；不要让当前代码决定正确答案。",
           "sources": [
             "doc/guide.platform.testing.methodology.md"
           ],
           "proof": "content",
-          "command": "",
+          "command": "我要验证一个问题：用户完成授权后，回到页面点击探测，应该看到连接可用；服务重启后仍然可用。请先用普通话复述我的目标，不让我填写代码、版本号或命令。",
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         }
       ]
     },
@@ -82,33 +83,34 @@
       "steps": [
         {
           "id": "P01",
-          "title": "填写任务卡",
-          "where": "项目根目录与当前测试环境",
-          "action": "记录本轮目标、目标提交、环境实际运行提交、测试账号和练习数据。",
-          "expected": "能回答测的是哪份代码，以及是否与目标一致。",
-          "recovery": "不同版本先记录差异；不能拿新版本画面证明旧版本。",
+          "title": "让Agent整理这次要测的事",
+          "where": "已经选中目标项目的Agent对话框",
+          "action": "发送准备指令，让Agent自动整理目标、范围和版本。你只确认它理解的业务目标是否正确。",
+          "expected": "Agent返回“要测什么、打开哪个页面、如何判断成功、还有什么缺条件”；版本由Agent查询。",
+          "recovery": "目标理解错了就用一句话纠正；不要让学员去终端查版本或手工填写技术字段。",
           "sources": [
             "doc/guide.platform.testing.methodology.md"
           ],
           "proof": "content",
-          "command": "git rev-parse HEAD",
+          "command": "请替我准备本轮测试。我只负责说明目标和确认结果，不操作代码或终端。读取当前项目规则、任务和实际运行环境，自行确认仓库、分支、目标版本、运行版本、测试身份和数据，生成简短测试记录。先告诉我：这次测什么、在哪个页面看结果、看到什么才算成功、还缺什么。能自行查到的信息自行查，不让我填写技术字段。",
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "shell"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "P02",
-          "title": "确认入口与权限",
-          "where": "应用首页与CDS项目",
-          "action": "用已有授权确认应用可登录、目标入口可点击、CDS报告项目可访问。",
-          "expected": "开始前就知道应用账号与CDS归档权限分别是否具备。",
-          "recovery": "401查登录；403查项目权限；502/503查环境状态。不要把环境失败记为产品失败。",
+          "title": "让Agent检查能否开始，并给出可打开入口",
+          "where": "同一个Agent对话 → Agent返回的实际页面链接",
+          "action": "让Agent检查应用和CDS是否可访问、当前身份能否完成测试及查收报告，再打开它实际验证过的链接。",
+          "expected": "每条链接附页面名称、实际到达页面、验证时间、是否需要登录；人只确认业务页面和必要授权。",
+          "recovery": "到登录页就标记“需要登录”，不能说目标页面已核验；权限不足说明找谁授权；无法访问先停在准备阶段。",
           "sources": [
             ".claude/skills/create-visual-test-to-kb/SKILL.md"
           ],
           "proof": "pending",
-          "command": "",
+          "command": "请检查这次测试能否开始。使用已有安全配置，分别核对应用入口、应用测试身份和CDS报告项目权限。先实际打开目标地址，确认到达正确页面；再返回可点击链接、页面名称、验证时间和我接下来要点击的位置。需要我登录或授权时只引导该动作，不索要密码、Token，不让我执行代码。不把HTTP成功、登录页或本机演示当成目标页面可用。",
           "needs": [
             "应用入口",
             "CDS入口",
@@ -116,23 +118,88 @@
           ],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         }
       ]
     },
     {
       "id": "review",
       "title": "第一章：Codex代码审查",
-      "duration": 900,
-      "goal": "能开启PR评审，确认实际审过本次提交，并处理一条发现。",
+      "duration": 1260,
+      "goal": "能连接并授权自己的仓库、开启评审，让Agent修复后反复复审至最新版本无开放P0/P1，并查看缺陷分析。",
       "steps": [
         {
+          "id": "R00",
+          "title": "从当前账户连接GitHub",
+          "where": "当前Codex账户的仓库连接流程；入口从https://chatgpt.com/进入",
+          "action": "在当前Codex项目或仓库选择器找到Connect to GitHub；若当前界面从Settings → Plugins → GitHub发起，按实际入口连接。",
+          "expected": "进入GitHub授权流程，账户与要使用的仓库身份一致。",
+          "recovery": "工作区禁止连接时找管理员；通用GitHub插件显示Connected或能读取文件，不能单独证明Codex的写入与评审授权已生效。",
+          "command": "https://chatgpt.com/",
+          "sources": [
+            "https://help.openai.com/en/articles/11145903-connecting-github-to-chatgpt",
+            "https://help.openai.com/en/articles/20001494-connecting-and-managing-app-accounts-in-chatgpt",
+            "https://help.openai.com/en/articles/11390924"
+          ],
+          "command_kind": "url",
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [
+            "练习仓库"
+          ],
+          "hold": 8,
+          "operator": "human_browser"
+        },
+        {
+          "id": "R00A",
+          "title": "给自己的仓库安装连接应用",
+          "where": "https://github.com/apps/chatgpt-codex-connector → Install或Configure",
+          "action": "确认发布者openai，选择仓库所属个人或组织；选择Only select repositories并勾选自己的目标仓库，按页面完成安装或申请。",
+          "expected": "安装目标与仓库选对；组织要求审批时，明确处于等待管理员批准。",
+          "recovery": "组织仓库不在个人账户下；不要为省事要求开放全部仓库，也不要把申请中当已授权。",
+          "command": "https://github.com/apps/chatgpt-codex-connector",
+          "sources": [
+            "https://github.com/apps/chatgpt-codex-connector",
+            "https://help.openai.com/en/articles/11390924"
+          ],
+          "command_kind": "url",
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [
+            "练习仓库"
+          ],
+          "hold": 8,
+          "operator": "human_browser"
+        },
+        {
+          "id": "R00B",
+          "title": "返回Codex确认授权生效",
+          "where": "安装完成后的回跳页面 → 当前Agent项目或仓库选择器",
+          "action": "完成流程出现的用户授权，返回发起连接的账户与工作区；让Agent确认能读到你刚选择的仓库。",
+          "expected": "自己的目标仓库可选择，Agent实际读到了项目规则；继续到评审设置确认同一仓库可配置，不能只凭通用GitHub读取判定成功。",
+          "recovery": "看不到仓库先查安装账户、组织审批、仓库勾选和当前连接身份；重新载入后再查，不让学员复制凭据。",
+          "command": "请确认我刚连接的GitHub账户能访问我的目标仓库。实际读取项目规则并回报仓库全名与读取结果；如果不行，指出缺少的是应用安装、仓库选择、组织审批还是用户授权，给我该流程的实际入口和下一步点击。",
+          "sources": [
+            "https://help.openai.com/en/articles/11145903-connecting-github-to-chatgpt",
+            "https://help.openai.com/en/articles/11390924"
+          ],
+          "command_kind": "prompt",
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [
+            "练习仓库"
+          ],
+          "hold": 8,
+          "operator": "agent"
+        },
+        {
           "id": "R01",
-          "title": "找到设置入口",
-          "where": "已登录的ChatGPT工作区",
-          "action": "打开配套官方设置链接，确认账户、工作区和仓库。",
-          "expected": "能看到所选仓库的代码评审设置。",
-          "recovery": "看不到仓库，先查GitHub连接、仓库授权与账号的push/admin权限。",
+          "title": "打开代码评审设置并找到自己的仓库",
+          "where": "https://chatgpt.com/settings/code-review → Repositories → 搜索自己的仓库",
+          "action": "先打开地址，再确认账户与工作区；搜索刚才授权的仓库全名，点击对应仓库行。",
+          "expected": "看到自己仓库的评审设置；能说明如何换成另一个仓库复用。",
+          "recovery": "若跳到首页或登录页，先登录正确账户再重开；看不到仓库先回到连接、安装与授权步骤。",
           "sources": [
             "https://chatgpt.com/settings/code-review",
             "https://learn.chatgpt.com/docs/third-party/github"
@@ -144,7 +211,8 @@
           ],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "url"
+          "command_kind": "url",
+          "operator": "human_browser"
         },
         {
           "id": "R02",
@@ -157,45 +225,91 @@
             "https://learn.chatgpt.com/docs/third-party/github"
           ],
           "proof": "pending",
-          "command": "",
+          "command": "请帮我核对当前仓库的代码评审是否正确启用：仓库Automatic review、是否Follow personal preferences、个人Automatic review和Review trigger分别是什么。你能读取实际页面就据实核对；需要我点击时只说当前页面的具体位置。不要把自动审批操作权限当成代码评审开关，不要未经我确认扩大授权范围。",
           "needs": [],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "R03",
-          "title": "确认评审真正完成",
+          "title": "让Agent触发评审，并打开真实结果",
           "where": "练习PR → 评审记录",
-          "action": "自动路径用符合配置的PR事件；手动路径使用@codex review。等待实际评审结果，核对提交。",
-          "expected": "区分完成但无发现、未执行、执行失败；自动与手动分别记录。",
+          "action": "让Agent跟进已有练习PR，按实际设置验证自动触发；需要手动复审时由Agent发布@codex review。",
+          "expected": "Agent给出实际PR与本轮评审结果链接、被审版本和完成状态；打开链接能看见对应结果。",
           "recovery": "排查事件是否匹配、额度、连接和运行错误；手动成功不能证明自动开关生效。",
           "sources": [
             "https://learn.chatgpt.com/docs/third-party/github"
           ],
           "proof": "pending",
-          "command": "@codex review",
+          "command": "请跟进当前已有练习PR的代码评审，返回实际PR链接、评审结果链接、被审提交与运行状态。验证自动开关时用匹配策略的事件单独记录；需要手动请求时，请在这条已有PR发布 @codex review，并等到实际完成。没有已有PR时先报告，不擅自创建PR。不能用“已请求”、额度失败或空白结果代替完成。",
           "needs": [],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "comment"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "R04",
           "title": "把发现变成可复现场景",
           "where": "一条与本轮目标有关的评审发现",
-          "action": "读出触发条件、用户影响、代码位置和复现方法，再分类处理。",
+          "action": "让Agent解释一条真实发现：什么情况触发、用户会怎样、如何复现。人确认是否影响本轮目标。",
           "expected": "得到一条可验证场景，或保留明确范围的无发现记录。",
           "recovery": "扩大范围的建议另记；没有调用证据的推测先补证据。",
           "sources": [
             "doc/guide.platform.testing.methodology.md"
           ],
           "proof": "content",
-          "command": "",
+          "command": "请把本轮评审的真实发现转成可复现场景。用普通话解释触发条件、用户影响、实际证据和复测办法，按仓库规则区分直接缺陷、扩范围建议和无证据推测。代码定位由你完成，我只确认业务目标与影响。",
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
+        },
+        {
+          "id": "R05",
+          "title": "让Agent修复，再审到无开放P0/P1",
+          "where": "同一条PR → Agent修复与复审记录",
+          "action": "让Agent修复有效缺陷、运行相关测试、更新同一分支，再对最新版本重新请求评审；每轮保留数量与证据。",
+          "expected": "最新版本完成复审；开放P0=0且P1=0，已修项有复测证据；有修复就必须有修复后的新一轮。",
+          "recovery": "未运行、额度失败、只关闭评论、只提交修复或只审旧版本都不算完成；复审不断扩范围时按规则暂停升级，仍不能报通过。",
+          "command": "请对当前已有PR执行“评审→核实有效缺陷→修复→相关测试→提交同一分支→重新评审”。每次修复后必须让最新提交再接受评审，直到实际完成的一轮中没有未解决P0/P1；其他级别按项目规则处理。每轮列出提交、发现数、有效问题数、已修并复测数、待复测数、开放P0/P1及结果链接。相同问题跨轮去重，不靠改等级、关评论或改测试预期制造零缺陷。遇到权限、额度或范围熔断，清楚报告阻塞且不宣布完成，不擅自合并。",
+          "sources": [
+            "doc/rule.acceptance.map-enterprise.md",
+            "AGENTS.md",
+            "https://learn.chatgpt.com/docs/third-party/github"
+          ],
+          "command_kind": "prompt",
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [
+            "练习仓库"
+          ],
+          "hold": 8,
+          "operator": "agent"
+        },
+        {
+          "id": "R06",
+          "title": "在OpenAI页面看缺陷数量分析",
+          "where": "https://chatgpt.com/settings/usage?tab=analytics",
+          "action": "打开用户确认的分析页，核对账户、日期范围和页面实际提供的评审指标；让Agent解释数量，并与同一PR每轮记录对照。",
+          "expected": "能指出评审活动、发现数量及实际可见的严重级分布；单次问题详情回到本轮PR评审结果。",
+          "recovery": "累计发现数不等于当前未解决数；没有数据先查日期、范围与更新情况。登录后界面未核验前，不声称有某个筛选器或数字。",
+          "command": "https://chatgpt.com/settings/usage?tab=analytics",
+          "sources": [
+            "https://chatgpt.com/settings/usage?tab=analytics",
+            "https://learn.chatgpt.com/docs/enterprise/usage-insights"
+          ],
+          "command_kind": "url",
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [
+            "练习仓库"
+          ],
+          "hold": 8,
+          "operator": "human_browser"
         }
       ]
     },
@@ -223,7 +337,8 @@
           ],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "V02",
@@ -241,7 +356,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "local",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "V03",
@@ -258,7 +374,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "local",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "V03B",
@@ -279,7 +396,8 @@
             "实际入口"
           ],
           "hold": 8,
-          "required_proof": "live"
+          "required_proof": "live",
+          "operator": "agent"
         },
         {
           "id": "V04",
@@ -300,7 +418,8 @@
           ],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "V05",
@@ -317,7 +436,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "V06",
@@ -334,7 +454,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "V07",
@@ -355,7 +476,8 @@
           ],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "V08",
@@ -372,7 +494,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         }
       ]
     },
@@ -385,42 +508,44 @@
         {
           "id": "U01",
           "title": "先观察一个失败",
-          "where": "配套练习包 → practice-project/shipping-before",
-          "action": "运行“达到10件免运费”的修复前测试，读出输入10、预期0、实际6。",
-          "expected": "退出码非零且是预期断言失败，不是命令启动失败。",
+          "where": "Agent对话 → 配套练习包",
+          "action": "把修复前练习交给Agent运行，让它读回输入10、预期0、实际6；人观察为何失败。",
+          "expected": "Agent返回真正失败的业务断言：输入10件、应免运费、实际收了6元；运行环境本身可用。",
           "recovery": "缺依赖、语法错误或路径错误先修测试环境；不能算复现缺陷。",
           "sources": [
             "doc/guide.platform.testing.script.md"
           ],
           "proof": "pending",
-          "command": "node --test shipping.test.mjs",
+          "command": "请在配套练习包的shipping-before运行已有单元测试。由你查目录和执行命令，我不操作终端。告诉我输入、预期、实际和真正失败原因，并给出原始结果；环境或启动失败不算抓到缺陷。",
           "needs": [],
           "hold": 8,
           "required_proof": "local",
-          "command_kind": "shell"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "U02",
           "title": "修复与相邻边界",
-          "where": "配套练习包 → practice-project/shipping-after",
-          "action": "把超过10改成达到10，保持断言，重跑同一测试，再检查9、10、11件。",
+          "where": "同一个Agent对话 → 隔离练习副本",
+          "action": "让Agent按达到10件免运费的规则修复、保留原断言重跑，并补9、10、11件边界；人读结果。",
           "expected": "原失败用例转绿，相邻边界通过；没有改预期迎合实现。",
           "recovery": "仍失败就读实际值；不要删除失败用例或添加跳过。",
           "sources": [
             "doc/guide.platform.testing.script.md"
           ],
           "proof": "pending",
-          "command": "node --test shipping.test.mjs boundary.test.mjs",
+          "command": "请在隔离练习副本按“达到10件免运费”修复实现，保留原失败断言重跑，再验证9、10、11件。你完成代码和命令操作，给我修复前后同一断言的结果与边界表，不改预期迎合实现、不跳过用例。",
           "needs": [],
           "hold": 8,
           "required_proof": "local",
-          "command_kind": "shell"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "U03",
           "title": "案例一：地址规则与多出口",
           "where": "CDS地址规则和现有防漂移测试",
-          "action": "先运行已有测试；在仓库外隔离副本接回一个旧地址生成出口，再运行同一守卫。",
+          "action": "让Agent先运行已有测试；在仓库外隔离副本接回一个旧地址生成出口，再运行同一守卫。",
           "expected": "旧出口被指出且测试失败；恢复后通过。共享函数单测与消费者检查分开解释。",
           "recovery": "未看到目标失败原因就不算演练通过；合法旧链接解析不要误删。",
           "sources": [
@@ -428,17 +553,18 @@
             "cds/tests/services/preview-slug.test.ts"
           ],
           "proof": "pending",
-          "command": "",
+          "command": "请由你在仓库外隔离副本完成此卡的基线、单处消费者破坏和恢复演练，给我三段实际结果与用户影响解释。我不编辑文件或执行命令；不破坏共享或线上环境，不把环境失败当成目标断言失败。",
           "needs": [],
           "hold": 8,
           "required_proof": "local",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "U04",
           "title": "案例二：片长与双语标题",
           "where": "MAP首页影片及现有测试",
-          "action": "在隔离副本把中文标题的{duration}写回旧秒数，运行现有测试，再恢复重跑。",
+          "action": "让Agent在隔离副本把中文标题的{duration}写回旧秒数，运行现有测试，再恢复重跑。",
           "expected": "只破坏一个使用方也被测试抓到；英文仍正确不能掩盖中文错误。",
           "recovery": "只比较两个读取同一常量的值不够，还要确认消费者实际使用权威源。",
           "sources": [
@@ -446,17 +572,18 @@
             "prd-admin/src/pages/home/film/filmTimeline.ts"
           ],
           "proof": "pending",
-          "command": "",
+          "command": "请由你在仓库外隔离副本完成此卡的基线、单处消费者破坏和恢复演练，给我三段实际结果与用户影响解释。我不编辑文件或执行命令；不破坏共享或线上环境，不把环境失败当成目标断言失败。",
           "needs": [],
           "hold": 8,
           "required_proof": "local",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "U05",
           "title": "检查测试有没有接上工作流",
           "where": "项目测试命令和CI",
-          "action": "列出规则来源、所有相关消费者、守住它们的测试，以及真正执行这些测试的工作流。",
+          "action": "让Agent列出规则来源、所有相关消费者、守住它们的测试，以及真正执行这些测试的工作流。",
           "expected": "能指出规则正确、使用方接入、测试执行分别由什么证据支持。",
           "recovery": "没有消费者或CI证据就保留缺口；复发先查版本环境再归因。",
           "sources": [
@@ -464,11 +591,12 @@
             ".github/workflows/ci.yml"
           ],
           "proof": "content",
-          "command": "",
+          "command": "请核对当前规则的权威来源、所有真实使用方、对应测试，以及实际执行这些测试的工作流。给我一张“同一条规则怎样走到每个出口”的说明和证据，未接入或未执行处保留缺口。",
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         }
       ]
     },
@@ -493,7 +621,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "J02",
@@ -513,7 +642,8 @@
           ],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "J03",
@@ -530,7 +660,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         }
       ]
     },
@@ -545,17 +676,18 @@
           "title": "逐项检查五类证据",
           "where": "交付卡",
           "action": "对照代码审查、视觉、单元、联合与规范，逐项读回范围、版本、结果和证据。",
-          "expected": "每项有证据或明确状态；不是所有格子都必须写通过。",
+          "expected": "每项有证据或明确状态；评审最新版本无开放P0/P1且复测完成，未执行不能写通过。",
           "recovery": "命令没跑写未执行；环境错误、覆盖不足和产品失败分别记录。",
           "sources": [
             "doc/guide.platform.testing.methodology.md"
           ],
           "proof": "content",
-          "command": "",
+          "command": "请按五步法整理交付结果：你实际审了、测了什么，证据在哪，还有哪些未执行。代码评审必须给最新提交的完成结果、开放P0/P1和修复后复审记录；没有证据不准写通过。返回我能打开并复查的页面链接。",
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         },
         {
           "id": "S02",
@@ -572,7 +704,8 @@
           "needs": [],
           "hold": 8,
           "required_proof": "live",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         }
       ]
     },
@@ -586,18 +719,19 @@
           "id": "E01",
           "title": "交出一份可复查结果",
           "where": "新的相似问题",
-          "action": "独立填写预期、版本、范围，执行适用检查，交付结果与证据。",
+          "action": "独立向Agent说明另一个问题，让Agent整理记录、执行检查并交付；人确认目标、必要授权和结果。",
           "expected": "能解释测了什么、没测什么、发现什么；他人能复查。",
           "recovery": "记录所有依赖提示的位置；它们是课程要补的步骤，不归咎于学员。",
           "sources": [
             "doc/guide.platform.testing.script.md"
           ],
           "proof": "content",
-          "command": "",
+          "command": "这次换一个问题，请沿相同五步法执行。我负责描述业务目标与确认结果，你负责版本查询、代码、测试、修复与复审。先复述目标；最后给实际验证过的入口、每项证据、未解决P0/P1和覆盖缺口。",
           "needs": [],
           "hold": 8,
           "required_proof": "content",
-          "command_kind": "prompt"
+          "command_kind": "prompt",
+          "operator": "agent"
         }
       ]
     }
@@ -610,5 +744,7 @@
       "学员能说明结果和预期的差异",
       "学员能完成对应练习并交出有效证据"
     ]
-  }
+  },
+  "execution_model": "人描述目标、登录授权、打开已核验页面确认结果；Agent查版本、生成任务记录、操作代码、运行测试、修复及复审。",
+  "revision": "2026-10-20：按用户评审改为Agent执行，补连接与授权、复审闭环、缺陷分析；视觉章节等待用户评审。"
 }
