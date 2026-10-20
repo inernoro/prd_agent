@@ -125,7 +125,7 @@ describe('GET /api/branches/:id/db-probe', () => {
     expect(server).toContain("'GET /branches/:id/db-probe'");
     expect(server).toMatch(/\[\/\^GET \\\/branches\\\/\[\^\/\]\+\\\/db-probe\$\/, '[^']+'\]/);
     expect(server).toContain('createDbProbeRouter(');
-    const registry = fs.readFileSync(path.join(CDS_ROOT, 'web/src/lib/agent-mission-registry.ts'), 'utf8');
+    const registry = fs.readFileSync(path.join(CDS_ROOT, 'src/shared/agent-mission-registry.ts'), 'utf8');
     expect(registry).toContain("'db-probe.ts'");
   });
 });

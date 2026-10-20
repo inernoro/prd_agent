@@ -334,6 +334,28 @@ describe('Branch Routes', () => {
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it('authenticated skill export ships the same file integrity manifest as anonymous installation', async () => {
+    const skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+    const root = path.join(tmpDir, '.claude/skills');
+    for (const skill of skills) {
+      fs.mkdirSync(path.join(root, skill), { recursive: true });
+      fs.writeFileSync(path.join(root, skill, 'SKILL.md'), `current ${skill}`);
+    }
+    fs.mkdirSync(path.join(root, 'cds/cli'));
+    fs.writeFileSync(path.join(root, 'cds/cli/cdscli.py'), 'VERSION = "9.8.7"\n');
+    const response = await fetch(`http://127.0.0.1:${config.masterPort}/api/export-skill`);
+    expect(response.status).toBe(200);
+    const archive = Buffer.from(await response.arrayBuffer());
+    const entries = execFileSync('tar', ['-tzf', '-'], { input: archive, encoding: 'utf8' }).trim().split('\n');
+    const name = entries.find(entry => entry.endsWith('/skills/cds/cli/cds-skill-manifest.json'))!;
+    expect(name).toBeTruthy();
+    const manifest = JSON.parse(execFileSync('tar', ['-xzOf', '-', name], { input: archive, encoding: 'utf8' }));
+    expect(manifest).toMatchObject({ version: '9.8.7', skills });
+    for (const skill of skills) {
+      expect(manifest.files[`${skill}/SKILL.md`]).toBe(createHash('sha256').update(`current ${skill}`).digest('hex'));
+    }
+  });
+
   function readyArtifactFixture() {
     const images = new Map<string, unknown>();
     mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));

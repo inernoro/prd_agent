@@ -26,6 +26,7 @@ import { createProjectsRouter, assertProjectAccess, isBranchGroupsSaveRequest } 
 import { createPendingImportRouter } from './routes/pending-import.js';
 import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
+import { isPublicAgentSetupRoute } from './shared/agent-setup.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createCredentialSelfCheckRouter } from './routes/credential-self-check.js';
@@ -1027,6 +1028,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
     'GET /bootstrap/presets': '列出初始化预设',
+    'GET /agent/setup.md': '读取智能体接入与任务说明',
+    'GET /agent/setup.json': '读取智能体接入版本与技能选择',
     'GET /skills/bundles': '列出角色套装',
     'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
@@ -1561,6 +1564,7 @@ function broadcastAiPairing(event: string, data: unknown) {
  * 整个特性走不通。集中在这里,避免两处网关各写一份导致漂移。
  */
 function isPublicAccessRequestRoute(method: string, path: string): boolean {
+  if (isPublicAgentSetupRoute(method, path)) return true;
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;

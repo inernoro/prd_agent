@@ -1,13 +1,7 @@
-export const DEFAULT_RELEASE_CENTER_PROJECT_ID = 'prd-agent';
+import { DEFAULT_RELEASE_CENTER_PROJECT_ID } from '../../../src/shared/release-center-links';
+export { DEFAULT_RELEASE_CENTER_PROJECT_ID, releaseCenterHref } from '../../../src/shared/release-center-links';
 export const DEFAULT_RELEASE_HEALTH_PATH = '/api/health';
-
 const LAST_RELEASE_CENTER_PROJECT_KEY = 'cds:lastReleaseCenterProjectId';
-
-export function releaseCenterHref(projectId?: string | null): string {
-  const normalized = (projectId || '').trim();
-  if (!normalized || normalized === DEFAULT_RELEASE_CENTER_PROJECT_ID) return '/release-center';
-  return `/release-center?project=${encodeURIComponent(normalized)}`;
-}
 
 export function initialReleaseCenterProject(searchParams: URLSearchParams, storage?: Storage): string {
   const queryProject = searchParams.get('project')?.trim();

@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { parseCdsCompose } from '../../src/services/compose-parser.js';
 import { resolveEffectiveProfile } from '../../src/services/container.js';
 import type { BranchEntry } from '../../src/types.js';
+import { CDS_SKILL_KEYS } from '../../src/shared/agent-setup.js';
+import { decideProjectScope, resolveProjectScope } from '../../src/services/project-scope.js';
 
 describe('CDS Self 预构建预览契约', () => {
   it('导入真实 compose 后能按精确 SHA 解析隔离运行模式', () => {
@@ -18,6 +20,11 @@ describe('CDS Self 预构建预览契约', () => {
     expect(effective.dockerImage).toBe(`ghcr.io/inernoro/prd_agent/cds-preview:sha-${'a'.repeat(40)}`);
     expect(effective.command).toBe('cd /app/cds && node dist/index.js');
     expect(effective.env).toMatchObject({ CDS_PREVIEW_INSTANCE: '1', CDS_STORAGE_MODE: 'json', CDS_REPO_ROOT: '/app' });
-    expect(effective.buildScope).toEqual(['cds/**', '.github/workflows/cds-prebuilt.yml']);
+    const inputs = ['cds/**', '.github/workflows/cds-prebuilt.yml', ...CDS_SKILL_KEYS.map(key => `.claude/skills/${key}/**`)];
+    expect(profile.buildScope).toEqual(inputs);
+    expect(effective.buildScope).toEqual(inputs);
+    for (const key of CDS_SKILL_KEYS) {
+      expect(decideProjectScope(resolveProjectScope(parsed.buildProfiles), [`.claude/skills/${key}/SKILL.md`]).matched).toBe(true);
+    }
   });
 });

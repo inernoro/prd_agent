@@ -48,7 +48,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Optional
 
-VERSION = "0.16.10"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.17.6"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -198,7 +198,7 @@ def _cds_base() -> str:
     if not host:
         die("CDS_HOST 未设置。请 export CDS_HOST=cds.miduo.org，"
             "或先跑一次 `cdscli identity save --host <CDS 主机>`", code=1)
-    if not host.startswith("http"):
+    if "://" not in host:
         # 本机/localhost/IP 默认 http(无 TLS),公网域名默认 https
         # 用户可以显式 export CDS_HOST=http://xxx 或 https://xxx 覆盖。
         is_local = (
@@ -211,7 +211,15 @@ def _cds_base() -> str:
             or host.startswith("172.")
         )
         host = ("http://" if is_local else "https://") + host
-    return host.rstrip("/")
+    try:
+        parsed = urllib.parse.urlsplit(host)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None):
+            raise ValueError("invalid CDS host")
+        parsed.port  # Reject malformed or out-of-range ports before opening a URL.
+    except ValueError:
+        die("CDS_HOST 必须使用有效的 HTTP/HTTPS 主机地址，且不能包含用户名或密码。", code=1)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, parsed.fragment)).rstrip("/")
 
 
 def _safe_identity_env(*names: str, max_length: int) -> str:
@@ -259,9 +267,15 @@ def _auth_headers() -> dict[str, str]:
     return h
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def _request(method: str, path: str, body: Any = None, timeout: int = 15,
              extra_headers: dict[str, str] | None = None,
-             fatal_network_errors: bool = True) -> tuple[int, Any, dict[str, str]]:
+             fatal_network_errors: bool = True,
+             follow_redirects: bool = True) -> tuple[int, Any, dict[str, str]]:
     """Low-level HTTP: returns (status, parsed_json_or_text, headers).
 
     每个请求都带 X-CdsCli-Version 头，服务端如响应 X-Cds-Cli-Latest 就
@@ -282,7 +296,8 @@ def _request(method: str, path: str, body: Any = None, timeout: int = 15,
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, method=method, data=data, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        open_request = urllib.request.urlopen if follow_redirects else urllib.request.build_opener(_NoRedirectHandler()).open
+        with open_request(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
             parsed: Any = raw
             try:
@@ -595,8 +610,8 @@ def cmd_auth_check(args: argparse.Namespace) -> None:
     die(f"认证失败: {status} {body}", code=2)
 
 
-def cmd_auth_inspect(args: argparse.Namespace) -> None:
-    """只输出凭据来源、目标和作用域摘要，永不输出密钥。"""
+def _credential_summary() -> dict[str, Any]:
+    """共享的脱敏凭据来源判据；接入自检与 auth inspect 必须一致。"""
     local = _load_local_credentials()
     local_host = str(local.get("host") or "").strip()
     local_project = str(local.get("projectId") or "").strip()
@@ -619,12 +634,16 @@ def cmd_auth_inspect(args: argparse.Namespace) -> None:
         candidate = value.strip().rstrip("/")
         if not candidate:
             return ""
-        if not candidate.startswith(("http://", "https://")):
+        if "://" not in candidate:
             is_local = candidate.startswith((
                 "localhost", "127.", "0.0.0.0", "[::1]", "192.168.", "10.", "172.",
             ))
             candidate = ("http://" if is_local else "https://") + candidate
-        return candidate.lower()
+        try:
+            return _setup_origin(candidate)
+        except (ValueError, TypeError):
+            # Invalid origins remain visible to the target validation stage.
+            return candidate.lower()
 
     if explicit_host and local_host and comparable_host(explicit_host) != comparable_host(local_host):
         conflicts.append("host")
@@ -663,6 +682,13 @@ def cmd_auth_inspect(args: argparse.Namespace) -> None:
         },
         "conflicts": conflicts,
     }
+    return summary
+
+
+def cmd_auth_inspect(args: argparse.Namespace) -> None:
+    """只输出凭据来源、目标和作用域摘要，永不输出密钥。"""
+    summary = _credential_summary()
+    conflicts = summary["conflicts"]
     if conflicts and getattr(args, "strict", False):
         die(
             f"凭据来源冲突: {', '.join(conflicts)}。请先明确当前仓库要操作的 CDS 主机和项目。",
@@ -670,6 +696,160 @@ def cmd_auth_inspect(args: argparse.Namespace) -> None:
             extra={"credentialSummary": summary},
         )
     ok(summary, note="凭据摘要已脱敏" + (f"，发现来源冲突: {', '.join(conflicts)}" if conflicts else ""))
+
+
+def _setup_origin(value: str) -> str:
+    candidate = value.strip().rstrip("/")
+    if "://" not in candidate:
+        candidate = "https://" + candidate
+    parsed = urllib.parse.urlsplit(candidate)
+    if (parsed.scheme not in ("http", "https") or not parsed.hostname
+            or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment):
+        raise ValueError("invalid origin")
+    port = parsed.port
+    host = parsed.hostname.lower()
+    if ":" in host:
+        host = "[" + host + "]"
+    if port and (parsed.scheme, port) not in (("https", 443), ("http", 80)):
+        host += ":" + str(port)
+    return parsed.scheme + "://" + host
+
+
+def cmd_setup_check(args: argparse.Namespace) -> None:
+    """接入验收：只读实测，不因配置存在就声称连接成功，绝不打印响应原文。"""
+    checks: list[dict[str, Any]] = []
+
+    def fail(stage: str, reason: str, action: str) -> None:
+        checks.append({"stage": stage, "passed": False, "reason": reason, "nextStep": action})
+        die("接入自检未通过：" + action, code=2,
+            extra={"data": {"connected": False, "checks": checks}})
+
+    def request(path: str) -> tuple[int, Any, dict[str, str]]:
+        response = _request("GET", path, timeout=10, fatal_network_errors=False, follow_redirects=False)
+        if response[0] in (301, 302, 303, 307, 308):
+            fail("host", "unexpected_redirect", "目标接口发生重定向，已停止继续发送凭据；先核对 CDS 主机与代理配置，不重新授权。")
+        return response
+
+    summary = _credential_summary()
+    if summary["conflicts"]:
+        fail("credentials", "credential_conflict", "先解决环境与仓库的凭据来源冲突，不要重新授权。")
+    if not _auth_headers().get("X-AI-Access-Key"):
+        fail("credentials", "missing_credentials",
+             "系统 CLI 没有可复用凭据，请由人类在已登录的 CDS 页面处理，不申请项目权限或自行提权。"
+             if getattr(args, "system", False) else "当前没有可复用凭据；按接入说明发起 CDS 页面授权。")
+    try:
+        expected_host = _setup_origin(args.host)
+        actual_host = _setup_origin(_cds_base())
+    except (ValueError, TypeError):
+        fail("host", "invalid_host", "使用接入页面提供的 CDS 主机地址。")
+        return
+    if expected_host != actual_host:
+        fail("host", "host_mismatch", "当前凭据属于另一台 CDS，先确认目标；尚未发送任何请求。")
+    project = str(getattr(args, "project", "") or "").strip()
+    if getattr(args, "project", None) is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", project):
+        fail("project", "invalid_project", "使用创建或查询项目后返回的真实项目 ID，不使用空值或占位参数。")
+    if project and summary["projectId"] and project != summary["projectId"]:
+        fail("project", "project_mismatch", "当前仓库绑定了其他项目，先确认项目范围；尚未发送任何请求。")
+    checks.append({"stage": "credentials", "passed": True})
+
+    skill_keys = ("cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url")
+    selected = [key.strip() for key in args.skills.split(",")]
+    if not selected or any(key not in skill_keys for key in selected):
+        fail("skills", "unknown_skill", "从接入页面重新复制当前任务的技能选择。")
+    skills_root = Path(__file__).resolve().parents[2]
+    missing = [key for key in skill_keys if not (skills_root / key / "SKILL.md").is_file()]
+    if missing:
+        fail("skills", "incomplete_bundle", "完整技能包缺少 " + "、".join(missing) + "；重新安装或运行 cdscli update。")
+    try:
+        bundle = json.loads(Path(__file__).with_name("cds-skill-manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fail("skills", "bundle_manifest_unavailable", "完整技能包的 manifest 缺失或不可读；重新安装或运行 cdscli update，不重新授权。")
+        return
+    if (not isinstance(bundle, dict) or bundle.get("format") != "agent-skills"
+            or not isinstance(bundle.get("skills"), list)
+            or any(not isinstance(key, str) for key in bundle["skills"])
+            or set(bundle["skills"]) != set(skill_keys)):
+        fail("skills", "invalid_bundle_manifest", "技能包 manifest 未覆盖完整五技能；重新安装完整包，不重新授权。")
+    if bundle.get("version") != VERSION:
+        fail("skills", "stale_bundle", "技能包与核心 CLI 版本不一致；统一更新完整五技能包，不只复制核心 CLI。")
+    file_hashes = bundle.get("files")
+    required_files = [key + "/SKILL.md" for key in skill_keys] + ["cds/cli/cdscli.py"]
+    if not isinstance(file_hashes, dict) or any(name not in file_hashes for name in required_files):
+        fail("skills", "invalid_bundle_manifest", "技能包缺少完整文件摘要；重新安装或运行 cdscli update。")
+    for name, digest in file_hashes.items():
+        relative = Path(name)
+        if (relative.is_absolute() or ".." in relative.parts or len(relative.parts) < 2
+                or relative.parts[0] not in skill_keys or not isinstance(digest, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+            fail("skills", "invalid_bundle_manifest", "技能包文件摘要无效；重新安装完整包。")
+        candidate = skills_root / relative
+        try:
+            candidate.resolve().relative_to(skills_root.resolve())
+            matches = candidate.is_file() and hashlib.sha256(candidate.read_bytes()).hexdigest() == digest
+        except (OSError, ValueError):
+            matches = False
+        if not matches:
+            fail("skills", "bundle_content_mismatch", "技能内容与 manifest 不一致，可能为混装或旧版；统一更新完整五技能包，不重新授权。")
+    checks.append({"stage": "skills", "passed": True, "loadOnly": selected})
+
+    print("接入自检：核对服务端协议与版本。", file=sys.stderr)
+    status, manifest, _ = request("/api/agent/setup.json")
+    if status != 200 or not isinstance(manifest, dict) or manifest.get("version") != "cds-agent-setup.v1":
+        fail("protocol", "setup_unavailable", "CDS 接入协议不可用，请确认服务版本和网络。")
+    remote_version = manifest.get("cliVersion")
+    minimum_version = manifest.get("minCliVersion")
+    if any(not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value)
+           for value in (remote_version, minimum_version)):
+        fail("version", "version_unavailable", "服务端无法确认技能版本，请恢复技能包分发后重试。")
+    if _version_compare(VERSION, remote_version) < 0 or _version_compare(VERSION, minimum_version) < 0:
+        fail("version", "stale_cli", "当前 CLI 版本落后，运行 cdscli update 后重新自检。")
+    checks.append({"stage": "version", "passed": True, "local": VERSION, "remote": remote_version})
+
+    print("接入自检：验证凭据与目标的真实只读访问。", file=sys.stderr)
+    status, identity, _ = request("/api/credentials/self-check")
+    if status != 200 or not isinstance(identity, dict):
+        fail("authorization", "check_unavailable", "凭据自检不可用，请确认网络后重试。")
+    if identity.get("status") != "active":
+        reason = str(identity.get("status"))
+        recovery = {
+            "revoked": "凭据已被吊销，停止复用旧凭据，按 CDS 页面批准流程重新连接。",
+            "expired": "凭据已过期，按 CDS 页面批准流程重新连接。",
+            "principal-disabled": "凭据所属账号已停用，请由系统所有者恢复账号；不要反复申请新凭据。",
+            "grant-revoked": "目标项目的授权已撤销，请由项目所有者恢复授权后再自检。",
+            "never-issued": "当前 CDS 不认识这把凭据，先核对主机与凭据来源，再决定是否重新连接。",
+            "not-checkable": "当前 CDS 无法确认此凭据状态，请先检查服务版本与身份服务，不要反复重新授权。",
+            "malformed": "凭据格式无效，请按 CDS 页面批准流程重新连接，不手工拼写凭据。",
+        }
+        fail("authorization", reason if reason in recovery else "invalid_response",
+             recovery.get(reason, "凭据自检返回无法识别的结果，请先确认服务版本与网络。"))
+    if project and identity.get("projectId") and identity["projectId"] != project:
+        fail("authorization", "project_mismatch", "凭据被绑定到其他项目，停止当前操作并确认目标。")
+    if not project and identity.get("kind") not in ("static", "global"):
+        fail("authorization", "system_scope_required", "当前凭据不能证明系统访问范围，请由人类在 CDS 页面处理。")
+    if not project and identity.get("kind") == "global":
+        key_id = identity.get("keyId")
+        if not isinstance(key_id, str) or not key_id:
+            fail("authorization", "system_scope_required", "无法确认全局凭据的系统作用域，请由人类在 CDS 页面处理。")
+        status, key_metadata, _ = request("/api/global-agent-keys")
+        entries = key_metadata.get("keys") if isinstance(key_metadata, dict) else None
+        matching = [entry for entry in entries if isinstance(entry, dict) and entry.get("id") == key_id] if isinstance(entries, list) else []
+        access = matching[0].get("access") if len(matching) == 1 else None
+        if status != 200 or not isinstance(access, dict) or access.get("projects") != "all":
+            fail("authorization", "system_scope_required", "当前全局凭据只限建项目或指定项目，不能证明系统访问范围；请由人类在 CDS 页面处理，不自行扩大权限。")
+    checks.append({"stage": "authorization", "passed": True, "kind": identity.get("kind")})
+    path = "/api/projects/" + urllib.parse.quote(project, safe="") if project else "/api/config"
+    status, body, _ = request(path)
+    if status != 200 or not isinstance(body, dict):
+        fail("access", "access_denied" if status in (401, 403) else "target_unavailable",
+             "目标只读访问未通过，请确认目标存在且当前凭据具有权限。")
+    if project:
+        resolved = body.get("project", body)
+        if not isinstance(resolved, dict) or resolved.get("id") != project:
+            fail("access", "target_mismatch", "服务端返回的项目与目标不一致，停止当前操作。")
+    checks.append({"stage": "access", "passed": True, "status": status})
+    ok({"connected": True, "host": expected_host, "projectId": project or None,
+        "scope": "project" if project else "system-read", "checks": checks},
+       note="接入自检通过；只证明当前目标的只读访问，业务执行仍需独立验收。")
 
 
 _PROJECT_SENSITIVE_FIELDS = (
@@ -9370,6 +9550,14 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("health", help="CDS /healthz").set_defaults(func=cmd_health)
+
+    setup_check = sub.add_parser("setup-check", help="只读验证技能、凭据、目标项目与真实接入")
+    setup_check.add_argument("--host", required=True, help="接入页面指定的 CDS 主机")
+    setup_target = setup_check.add_mutually_exclusive_group(required=True)
+    setup_target.add_argument("--project", help="目标项目 ID（新建后使用服务端返回的 ID）")
+    setup_target.add_argument("--system", action="store_true", help="系统只读任务，不代入项目")
+    setup_check.add_argument("--skills", default="cds", help="当前任务需要加载的技能，逗号分隔")
+    setup_check.set_defaults(func=cmd_setup_check)
 
     auth = sub.add_parser("auth", help="认证").add_subparsers(dest="sub", required=True)
     ai = auth.add_parser("inspect", help="脱敏检查凭据来源、主机、项目与作用域")

@@ -13,6 +13,7 @@ COPY dist ./dist
 COPY web/dist ./web/dist
 COPY web-legacy ./web-legacy
 COPY src/services/preview-demo-snapshot.json ./src/services/preview-demo-snapshot.json
+COPY agent-skills /app/.claude/skills
 COPY cds-prebuilt-manifest.json ./cds-prebuilt-manifest.json
 # 独立 JSON 状态；不挂宿主 Docker socket，也不携带父实例配置或密钥。
 RUN mkdir -p /app/.cds && chown -R node:node /app

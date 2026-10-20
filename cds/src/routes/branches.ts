@@ -1,5 +1,6 @@
 import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
+import { buildCdsSkillManifest } from '../services/cds-skill-manifest.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
 import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import { internalPendingReplayAuth } from '../services/internal-pending-replay-auth.js';
@@ -22126,12 +22127,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
       await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
-      const skillManifest = {
+      let skillManifest: object = {
         format: 'agent-skills',
         version: readBundledCdsCliVersion(config.repoRoot) || 'unknown',
         skills: skillsToCopy,
         generatedAt: new Date().toISOString(),
       };
+      if (!useLegacy) {
+        try { skillManifest = await buildCdsSkillManifest(path.join(packDir, 'skills')); }
+        catch (error) {
+          await fs.promises.rm(packDir, { recursive: true, force: true });
+          throw error;
+        }
+      }
       const skillManifestJson = JSON.stringify(skillManifest, null, 2) + '\n';
       await fs.promises.writeFile(path.join(packDir, 'manifest.json'), skillManifestJson, 'utf-8');
       if (!useLegacy) {

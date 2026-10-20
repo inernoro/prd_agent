@@ -16,8 +16,8 @@ const deferred = <T>() => { let resolve!: (value: T) => void; const promise = ne
 
 function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; queued?: boolean; imageFailure?: string; emptyCidFile?: boolean;
   removingReplies?: number; neverCompletesRemoval?: boolean; removeFailure?: boolean; delayedRemovalReply?: boolean; keepRemovalVisible?: boolean; delayedRemovalMs?: number;
-  earlyRemovalExpiry?: 'deadline' | 'cancelled' } = {}) {
-  const accepted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
+  earlyRemovalExpiry?: 'deadline' | 'cancelled'; cleanupBudgetMs?: number; cleanupPollMs?: number } = {}) {
+  const accepted = deferred<void>(); const removalStarted = deferred<void>(); const calls: Array<{ command: string; options?: ExecOptions }> = [];
   const events: any[] = []; let visible = false; let pendingName = ''; let operationId = ''; let journalAtAdmission: any;
   const containerId = 'a'.repeat(64); let aborted = false, removalAttempts = 0;
   const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-probe-cancel-'));
@@ -53,6 +53,7 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
       if (command.startsWith('docker kill')) return result('', 'container is not running', 1);
       if (command.startsWith('docker rm -f')) {
         removalAttempts++;
+        removalStarted.resolve();
         if (config.earlyRemovalExpiry && removalAttempts === 1) throw new OperationExecutionError(config.earlyRemovalExpiry);
         if (config.delayedRemovalMs) {
           if (!visible) return result('', `No such container: ${containerId}`, 1);
@@ -76,10 +77,10 @@ function fixture(visibleAfterCancel: boolean, config: { foreignOwner?: boolean; 
   };
   if (config.queued) shell.execOwnedOperation = (command, options) => shell.exec(command, options);
   const runtime = new AgentWorkspaceSessionRuntime(shell, { rootDir, instanceId: 'cancel-owner', autoPullImage: false,
-    // 新增原窗交界控制保留原作者60/5，既有18例继续使用已继承的300/20。
-    probeCleanupTimeoutMs: config.earlyRemovalExpiry ? 60 : cleanupBudgetMs,
-    probeCleanupPollMs: config.earlyRemovalExpiry ? 5 : cleanupPollMs, serverEventLogStore: { record: event => events.push(event) } });
-  return { runtime, shell, accepted, calls, events, rootDir, containerId, reveal: () => { visible = true; },
+    // 真实 IO 场景沿用 main 的 300/20；受控时钟场景和原窗交界场景保留 60/5。
+    probeCleanupTimeoutMs: config.cleanupBudgetMs ?? (config.earlyRemovalExpiry ? 60 : cleanupBudgetMs),
+    probeCleanupPollMs: config.cleanupPollMs ?? (config.earlyRemovalExpiry ? 5 : cleanupPollMs), serverEventLogStore: { record: event => events.push(event) } });
+  return { runtime, shell, accepted, removalStarted, calls, events, rootDir, containerId, reveal: () => { visible = true; },
     get journalAtAdmission() { return journalAtAdmission; }, get aborted() { return aborted; }, get visible() { return visible; } };
 }
 
@@ -128,18 +129,38 @@ describe('capability probe cancellation reconciliation', () => {
   });
 
   it('uses the fixed confirmed-resource window after one step expires, without extending any step or reissuing a name', async () => {
-    const f = fixture(true, { delayedRemovalMs: cleanupBudgetMs + 100 });
+    vi.useFakeTimers();
+    // Node's native AbortSignal.timeout does not follow Vitest's clock.
+    // Keep cancellation and Date.now on the same deterministic timeline.
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(milliseconds => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), milliseconds);
+      return controller.signal;
+    });
+    const f = fixture(true, { delayedRemovalMs: 80, cleanupBudgetMs: 60, cleanupPollMs: 5 });
     try {
       const probe = f.runtime.capability(true); await f.accepted.promise;
-      await expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined(); await probe;
+      const closing = expect(f.runtime.closeCapabilityProbes()).resolves.toBeUndefined();
+      f.reveal();
+      // Real journal IO completes before advancing time. CI scheduling must
+      // not consume the deliberately tiny 60ms cleanup budget in this test.
+      await f.removalStarted.promise;
+      await vi.advanceTimersByTimeAsync(60);
+      expect(f.visible).toBe(true);
+      expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmation-window.started')).toBe(true);
+      await vi.advanceTimersByTimeAsync(25);
+      await closing; await probe;
       const window = f.events.find(event => event.action === 'agent.probe.cleanup.confirmation-window.started');
-      expect(window.details.confirmationDeadline - window.details.originalDeadline).toBe(cleanupBudgetMs);
+      expect(window.details.confirmationDeadline - window.details.originalDeadline).toBe(60);
       const steps = f.events.filter(event => event.action === 'agent.probe.cleanup.step.requested');
-      expect(steps.every(event => event.details.deadline - event.details.requestedAt > 0 && event.details.deadline - event.details.requestedAt <= cleanupBudgetMs)).toBe(true);
+      expect(steps.every(event => event.details.deadline - event.details.requestedAt > 0 && event.details.deadline - event.details.requestedAt <= 60)).toBe(true);
       expect(f.calls.filter(call => call.command.startsWith('docker rm -f')).every(call => call.command === `docker rm -f '${f.containerId}'`)).toBe(true);
       expect(f.events.some(event => event.action === 'agent.probe.cleanup.confirmed')).toBe(true);
       expect(f.visible).toBe(false);
-    } finally { fs.rmSync(f.rootDir, { recursive: true, force: true }); }
+    } finally {
+      timeout.mockRestore(); vi.clearAllTimers(); vi.useRealTimers();
+      fs.rmSync(f.rootDir, { recursive: true, force: true });
+    }
   });
 
   it('a delayed removal reply with the exact CID still present remains unconfirmed at the original deadline', async () => {
