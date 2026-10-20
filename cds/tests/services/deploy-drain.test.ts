@@ -118,6 +118,39 @@ describe('排空流程', () => {
     await drainInFlightDeploys({ ...deps, onWait: (p) => seen.push(p.map((r) => r.id)) });
     expect(seen[0]).toEqual(['a']);
   });
+
+  it('静默部署从首判到每轮复核，心跳失效仍等原owner终态', async () => {
+    const stale = run('waiter', 'building', new Date(T0 - 16 * 60_000).toISOString());
+    const { deps, waits } = mkDeps([[stale], [stale], [{ ...stale, status: 'running' }]]);
+    const observed: Array<{ ids: string[]; now: number }> = [];
+    const out = await drainInFlightDeploys({ ...deps,
+      onWait: pending => observed.push({ ids: pending.map(item => item.id), now: deps.now() }),
+    });
+    expect(out).toMatchObject({ drained: true, skipped: false, waitedMs: 2000 });
+    expect(observed).toEqual([{ ids: ['waiter'], now: T0 }, { ids: ['waiter'], now: T0 + 1000 }]);
+    expect(waits).toEqual([1000, 1000]);
+    expect(stale.status).toBe('building');
+  });
+
+  it('持续未终态等待仍受原排空上限约束，资格未知不能生成重启许可', async () => {
+    const stale = run('waiter', 'building', new Date(T0 - 16 * 60_000).toISOString());
+    const { deps } = mkDeps([[stale]], 3000);
+    expect(await drainInFlightDeploys(deps))
+      .toMatchObject({ drained: false, skipped: false, waitedMs: 3000, remaining: ['waiter'] });
+    expect(pendingRunsToDrain([stale], T0)).toEqual([stale]);
+    const unknown = { ...stale, heartbeatAt: 'unknown' };
+    expect(pendingRunsToDrain([unknown], T0)).toEqual([unknown]);
+  });
+
+  it('deployment终态不能复活，release运行中不能借部署终态放行', () => {
+    const heartbeatAt = new Date(T0 - 16 * 60_000).toISOString();
+    const terminals = [run('done', 'running', heartbeatAt), run('failed', 'failed', heartbeatAt),
+      run('cancelled', 'cancelled', heartbeatAt)];
+    const release = { ...run('release', 'running', heartbeatAt), kind: 'release' as const };
+    expect(pendingRunsToDrain(terminals, T0)).toEqual([]);
+    expect(pendingRunsToDrain([...terminals, release], T0)).toEqual([release]);
+    expect(pendingRunsToDrain([{ ...release, status: 'success' }], T0)).toEqual([]);
+  });
 });
 
 describe('排空窗口闸门（第三十六轮 P1）', () => {

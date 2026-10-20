@@ -238,6 +238,11 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
       res.end(JSON.stringify({ error: 'forbidden' }));
       return true;
     }
+    if (parsedUrl.searchParams.get('view') === 'preview-activity') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ previewActivity: proxy.getPreviewActivity() }));
+      return true;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(proxy.getStats()));
     return true;

@@ -291,9 +291,61 @@ export class WorktreeService {
     branch: string,
     maxAttempts = 3,
     repoRoot = cwd,
+    control?: { shell: IShellExecutor; resolveEnv: (provider: () => Promise<ExecOptions['env'] | undefined>) => Promise<ExecOptions['env'] | undefined> },
   ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
-    const env = await this.gitEnvProvider?.(cwd);
-    return withRepositoryMutation(repoRoot, () => fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts, env }));
+    const provider = async () => this.gitEnvProvider?.(cwd);
+    const env = control ? await control.resolveEnv(provider) : await provider();
+    return withRepositoryMutation(repoRoot, () => fetchWithLockRetry(control?.shell ?? this.shell, cwd, branch, { maxAttempts, env }));
+  }
+
+  /** 只准备原 origin 的完整对象；调用者仍须独立证明构建输入等价。 */
+  async ensureCommitAvailable(repoRoot: string, fullSha: string, assertCurrent: () => void,
+    remainingMs: () => number): Promise<string> {
+    if (!repoRoot || !/^[0-9a-f]{40}$/i.test(fullSha) || typeof assertCurrent !== 'function'
+      || typeof remainingMs !== 'function') throw new Error('提交对象准备需要明确仓库、完整提交与有效资格');
+    assertCurrent();
+    if (!this.shell.execOwnedOperation) throw new Error('提交对象准备的归属执行能力不可用');
+    const initial = remainingMs();
+    if (!Number.isFinite(initial) || initial <= 0) throw new Error('提交对象准备已超时');
+    const deadline = performance.now() + initial;
+    const check = () => {
+      assertCurrent();
+      const timeout = Math.floor(Math.min(remainingMs(), deadline - performance.now()));
+      if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('提交对象准备已超时');
+      return timeout;
+    };
+    const qualified: IShellExecutor = { exec: async (command, options) => {
+      const timeout = check();
+      let cleanupUnknown = false;
+      try { return await this.shell.execOwnedOperation!(command, { ...options, timeout,
+        beforeStart: () => { options?.beforeStart?.(); check(); } });
+      } catch (error) {
+        // 未知清理须先进入原mutation围栏，不能被失效资格覆盖。
+        cleanupUnknown = (error as { code?: string } | null)?.code === 'cleanup';
+        throw error;
+      } finally { if (!cleanupUnknown) check(); }
+    } };
+    const withinBudget = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const timeout = check(); let timer: ReturnType<typeof setTimeout> | undefined;
+      try { return await Promise.race([operation(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('提交对象准备已超时')), timeout);
+      })]);
+      } finally { clearTimeout(timer); check(); }
+    };
+    const resolveEnv = async (provider: () => Promise<ExecOptions['env'] | undefined>) => {
+      try { return await withinBudget(provider); }
+      catch { check(); throw new Error('提交对象认证暂不可用'); }
+    };
+    const sha = fullSha.toLowerCase();
+    const resolve = () => qualified.exec(`git rev-parse --verify '${sha}^{commit}'`, { cwd: repoRoot });
+    let resolved = await resolve();
+    if (resolved.exitCode !== 0) {
+      const fetched = await withinBudget(() => this.fetchWithLockRetry(repoRoot, sha, 1, repoRoot, { shell: qualified, resolveEnv }));
+      if (fetched.exitCode === 0) resolved = await resolve();
+    }
+    check();
+    if (resolved.exitCode !== 0 || resolved.stdout.trim().toLowerCase() !== sha) throw new Error('目标提交不可用，请确认完整提交及仓库访问权限');
+    return sha;
   }
 
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {

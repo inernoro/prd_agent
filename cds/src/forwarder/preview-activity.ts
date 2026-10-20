@@ -89,14 +89,14 @@ export function isPrivateForwarderDiagnostic(req: http.IncomingMessage): boolean
     && /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i.test(req.headers.host ?? '');
 }
 
-/** 复用原 /__forwarder/stats 回环 GET；固定目标、总时限和体积，不阻塞数据面。 */
+/** 原回环 GET 只请求有限活动投影；旧 forwarder 忽略 query 时仍受相同体积和时限约束。 */
 export function readForwarderPreviewActivity(port: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       reject(new Error('预览活动诊断端口无效'));
       return;
     }
-    const req = http.get({ host: '127.0.0.1', port, path: '/__forwarder/stats' }, res => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/__forwarder/stats?view=preview-activity' }, res => {
       let bytes = 0;
       const chunks: Buffer[] = [];
       res.on('data', (chunk: Buffer) => {

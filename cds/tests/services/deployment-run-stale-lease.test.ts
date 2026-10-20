@@ -1,11 +1,15 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BranchOperationCoordinator, BranchOperationSupersededError, type BranchOperationRequest } from '../../src/services/branch-operation-coordinator.js';
 import { DeploymentRunService } from '../../src/services/deployment-run.js';
 import { DeploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import { StateService } from '../../src/services/state.js';
+import { drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
+  DRAIN_GATE_MAX_HOLD_MS, resolveSelfUpdateDrainTimeoutMs, SelfUpdateRestartBlockedError,
+  selfUpdateDrainBlockReason } from '../../src/services/deploy-drain.js';
 
 describe('部署心跳过期后的精确租约回收', () => {
   let directory: string;
@@ -190,6 +194,35 @@ describe('部署心跳过期后的精确租约回收', () => {
     } finally { controller.abort(); await waiting; now.mockRestore(); }
   });
 
+  it('真实16分钟start等待同时约束收割与排空，原排空预算内不能当作无在途', async () => {
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => clock.getTime());
+    const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
+    runs = new DeploymentRunService(state, { now: () => new Date(clock), isExecutionWaiting: (run, at) =>
+      Boolean(run.operationId && run.operationGeneration !== undefined
+        && (budget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt || 0) > at.getTime()) });
+    runs.bindOperationCoordinator(coordinator);
+    const old = await trackedDeployment(), heartbeat = old.run.heartbeatAt;
+    const waiting = budget.acquire('start', { projectId: 'p1', branchId: 'b1', profileId: 'api',
+      operationId: old.lease.operationId, operationGeneration: old.lease.generation }, {
+      check: () => old.lease.assertCurrent('排空阶段资格'), signal: controller.signal,
+    }).catch(() => undefined);
+    try {
+      clock = new Date(clock.getTime() + 16 * 60_000);
+      expect(budget.waitingOperation(old.lease.operationId, old.lease.generation)?.deadlineAt).toBeGreaterThan(clock.getTime());
+      expect(runs.reconcileInterrupted()).toEqual([]);
+      const out = await drainInFlightDeploys({ listRuns: () => runs.list(), now: () => clock.getTime(),
+        sleep: async ms => { clock = new Date(clock.getTime() + ms); }, timeoutMs: 1000 });
+      expect(out).toMatchObject({ drained: false, skipped: false, remaining: [old.run.id], waitedMs: 1000 });
+      expect(old.run.heartbeatAt).toBe(heartbeat); expect(old.lease.isCurrent()).toBe(true);
+      coordinator.completeAll(old.lease, 'completed');
+      expect(runs.hasQualifiedExecutionWait(old.run.id, clock)).toBe(false);
+      expect(await drainInFlightDeploys({ listRuns: () => runs.list(), now: () => clock.getTime(),
+        sleep: async () => { throw new Error('零等待不得轮询'); }, timeoutMs: 0 }))
+        .toMatchObject({ drained: false, remaining: [old.run.id] });
+      budget.pump(); await waiting;
+    } finally { controller.abort(); await waiting; now.mockRestore(); }
+  });
+
   it('旧预算中没有资格check的队列不能生成等待事实或阻止收割', async () => {
     const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
     runs = new DeploymentRunService(state, { now: () => new Date(clock), isExecutionWaiting: run =>
@@ -215,15 +248,46 @@ describe('部署心跳过期后的精确租约回收', () => {
     expect(old.lease.isCurrent()).toBe(true);
   });
 
-  it('生产装配实际传递原代次并查询同一阶段队列，不能只在测试注入等待判据', () => {
+  it('生产装配实际传递原代次并查询同一阶段队列，不能只在测试注入等待判据', async () => {
     const server = fs.readFileSync(new URL('../../src/server.ts', import.meta.url), 'utf8');
     const routes = fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8');
     expect(server).toContain('deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration)?.deadlineAt');
+    for (const endpoint of ['/self-restart', '/self-update', '/self-force-sync']) {
+      const start = routes.indexOf(`router.post('${endpoint}',`);
+      const drain = routes.indexOf('await drainDeploysBeforeSelfUpdateRestart({', start);
+      expect(start).toBeGreaterThan(0); expect(drain).toBeGreaterThan(start);
+      expect(routes.indexOf('const restartFlush = await flushSelfUpdateStateBeforeRestart({', start)).toBeGreaterThan(drain);
+      if (endpoint !== '/self-restart') {
+        expect(routes.indexOf('checkpoint = await createSelfUpdateCheckpoint(', start)).toBeGreaterThan(drain);
+        expect(routes.indexOf("await shell.exec('git fetch --all --prune'", start)).toBeGreaterThan(drain);
+      }
+    }
     const leasedLaunches = (routes.match(/await runServiceWithPortRetry\(\{[\s\S]*?\n\s*\}\);/g) || [])
       .filter(call => call.includes('assertBranchOperationCurrent(branchOperationLease'));
     expect(leasedLaunches).toHaveLength(2);
     for (const call of leasedLaunches) expect(call).toContain('operationGeneration: branchOperationLease?.generation');
     expect(routes).toContain('operationGeneration: options.operationGeneration');
+    const start = routes.indexOf('  async function drainDeploysBeforeSelfUpdateRestart(');
+    const end = routes.indexOf('  async function flushSelfUpdateStateBeforeRestart(', start);
+    expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
+    const compiled = ts.transpileModule(routes.slice(start, end), { reportDiagnostics: true,
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } });
+    expect(compiled.diagnostics?.filter(item => item.category === ts.DiagnosticCategory.Error)).toEqual([]);
+    const setWait = vi.fn(), now = vi.spyOn(Date, 'now').mockImplementation(() => clock.getTime());
+    const actualDrain = new Function('stateService', 'branchOperationCoordinator', 'setRestartWait', 'serverEventLogStore',
+      'drainInFlightDeploys', 'beginSelfUpdateDrain', 'endSelfUpdateDrain', 'collectDrainableRuns', 'DRAIN_GATE_MAX_HOLD_MS',
+      'resolveSelfUpdateDrainTimeoutMs', 'SelfUpdateRestartBlockedError', `${compiled.outputText}\nreturn drainDeploysBeforeSelfUpdateRestart;`)(
+      state, coordinator, setWait, undefined, drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain,
+      collectDrainableRuns, DRAIN_GATE_MAX_HOLD_MS, resolveSelfUpdateDrainTimeoutMs, SelfUpdateRestartBlockedError);
+    const active = coordinator.begin({ ...request, kind: 'pull' });
+    try {
+      expect(active.status).toBe('started'); expect(runs.list()).toEqual([]);
+      await expect(actualDrain({ trigger: 'manual', source: 'api.self-update', timeoutMs: 0 }))
+        .rejects.toMatchObject({ code: 'self_update_restart_cancelled', remaining: [`operation:${active.operationId}`], waitedMs: 0 });
+      expect(coordinator.getActiveOperations().map(operation => operation.operationId)).toEqual([active.operationId]);
+      expect(setWait).toHaveBeenLastCalledWith(null);
+      expect(selfUpdateDrainBlockReason(clock.getTime())).toBeNull();
+    } finally { endSelfUpdateDrain(); now.mockRestore(); }
   });
 
   it('实际装配每分钟续扫冷预约、不重入，并在退出后保留未确认责任', async () => {
