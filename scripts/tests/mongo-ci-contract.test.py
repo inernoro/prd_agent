@@ -7,6 +7,10 @@
 
 from pathlib import Path
 import re
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 
 
@@ -94,7 +98,12 @@ class MongoCiContractTests(unittest.TestCase):
         release = block(self.workflow, "release-script-test", 2)
         self.assertIn("needs.changes.outputs.release_scripts == 'true'", release)
         self.assertNotIn("services:", release)
-        self.assertIn(f"run: python3 {GUARD}", release)
+        layout = block(self.workflow, "repository-layout", 2)
+        self.assertNotRegex(layout, r"(?m)^    (?:needs|if|services|continue-on-error):")
+        command = f"python3 {GUARD}"
+        self.assertEqual(self.executable_run(layout, "MongoDB CI compatibility contract"), command)
+        self.assertLess(layout.index("uses: actions/checkout@v4"), layout.index(f"run: {command}"))
+        self.assertNotIn(f"run: {command}", release)
         filters = block(self.workflow, "release_scripts", 12)
         for path in (WORKFLOW, GUARD):
             self.assertIn(f"- '{path}'", filters)
@@ -109,6 +118,71 @@ class MongoCiContractTests(unittest.TestCase):
             self.assertIn(required, body)
         self.assertNotRegex(body, r"(?m)^        (?:if|continue-on-error):")
         self.assertNotRegex(body, r"(?i)printenv|\bsecrets\b|process\.env")
+
+    def aggregate_script(self):
+        summary = block(self.workflow, "ci-status", 2)
+        self.assertRegex(summary, r"(?m)^    if: always\(\)$")
+        needs = re.findall(r"(?m)^    needs: \[([^\]]+)\]$", summary)
+        self.assertEqual(len(needs), 1)
+        jobs = [job.strip() for job in needs[0].split(",")]
+        self.assertIn("repository-layout", jobs)
+        self.assertNotIn("release-script-test", jobs)
+        source = re.search(r"(?ms)^      - name: Check CI status\n        run: \|\n(.*)\Z", summary)
+        self.assertIsNotNone(source)
+        return textwrap.dedent(source.group(1))
+
+    def aggregate_result(self, script, layout_result, release_result="success"):
+        main = "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+        values = {main: "false", "needs.repository-layout.result": layout_result,
+                  "needs.release-script-test.result": release_result}
+        for output in ("server", "admin", "desktop", "cds", "design_runtime", "docs", "acceptance_report"):
+            values[f"needs.changes.outputs.{output}"] = "true"
+            values[f"needs.changes.outputs.{output} == 'true' || ({main})"] = "true"
+        for job in ("server-build", "admin-build", "desktop-check", "cds-build",
+                    "design-runtime-test", "docs-readability", "acceptance-report-gate"):
+            values[f"needs.{job}.result"] = "success"
+        def render(match):
+            expression = match.group(1).strip()
+            self.assertIn(expression, values)
+            return values[expression]
+        rendered = re.sub(r"\$\{\{(.*?)\}\}", render, script)
+        self.assertNotIn("${{", rendered)
+        return subprocess.run(["bash", "--noprofile", "--norc", "-e", "-o", "pipefail"],
+                              input=rendered, text=True, capture_output=True, check=False, timeout=10)
+
+    def test_aggregate_shell_requires_layout_not_the_whole_release_job(self):
+        script = self.aggregate_script()
+        for result in ("success", "failure", "cancelled", "skipped"):
+            with self.subTest(layout=result):
+                actual = self.aggregate_result(script, result)
+                self.assertEqual(actual.returncode, 0 if result == "success" else 1,
+                                 actual.stdout + actual.stderr)
+                self.assertIn("All required checks passed!" if result == "success" else
+                              f"Repository layout: {result}", actual.stdout)
+        # release 整批仍不是新阻断条件；本次只借用原 layout 消费者。
+        self.assertEqual(self.aggregate_result(script, "success", "failure").returncode, 0)
+        mutant = script.replace('"$layout_ok" == "true" && ', "", 1)
+        self.assertNotEqual(mutant, script)
+        # 摘掉真实最终消费者后，失败会实际漏成 exit0；上面的正常断言必须能抓住它。
+        self.assertEqual(self.aggregate_result(mutant, "failure").returncode, 0)
+
+    def test_guard_process_rejects_real_old_runner_fixture_without_recursion(self):
+        with tempfile.TemporaryDirectory(prefix="mongo-ci-contract-") as directory:
+            fixture = Path(directory)
+            guard = fixture / GUARD
+            guard.parent.mkdir(parents=True)
+            guard.write_bytes(Path(__file__).read_bytes())
+            workflow = fixture / WORKFLOW
+            workflow.parent.mkdir(parents=True)
+            target = "MongoCiContractTests.test_real_server_job_preserves_database_build_and_test_contract"
+            for runner, expected in (("ubuntu-22.04", 0), ("ubuntu-latest", 1)):
+                with self.subTest(runner=runner):
+                    workflow.write_text(self.workflow.replace("runs-on: ubuntu-22.04",
+                                                             f"runs-on: {runner}", 1), encoding="utf-8")
+                    actual = subprocess.run([sys.executable, str(guard), target], text=True,
+                                            capture_output=True, check=False, timeout=10)
+                    self.assertEqual(actual.returncode, expected, actual.stdout + actual.stderr)
+                    self.assertIn("Ran 1 test", actual.stderr)
 
 
 if __name__ == "__main__":

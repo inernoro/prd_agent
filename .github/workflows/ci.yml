@@ -234,6 +234,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
+
       - name: Root layout contract
         run: python3 scripts/tests/test_root_layout_contract.py
 
@@ -309,9 +312,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: MongoDB CI compatibility contract
-        run: python3 scripts/tests/mongo-ci-contract.test.py
 
       - name: Static release layout
         run: sh scripts/tests/static-release-layout.test.sh
