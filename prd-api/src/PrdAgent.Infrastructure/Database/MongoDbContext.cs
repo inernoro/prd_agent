@@ -63,6 +63,8 @@ public class MongoDbContext
     }
 
     public IMongoCollection<User> Users => _database.GetCollection<User>("users");
+    public IMongoCollection<ProductPermissionConfiguration> ProductPermissionConfigurations =>
+        _database.GetCollection<ProductPermissionConfiguration>("product_permission_configurations");
     public IMongoCollection<BsonDocument> ConsoleSsoTickets =>
         _database.GetCollection<BsonDocument>("console_sso_tickets");
     /// <summary>本站作为「源站」签发的一次性数据导出授权（含导出令牌散列）</summary>

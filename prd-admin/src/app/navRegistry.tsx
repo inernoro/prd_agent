@@ -14,6 +14,7 @@
 
 import { lazy, type ReactElement } from 'react';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
+import { ProductPermissionGate, ProductReviewPermissionGate } from '@/pages/product-agent/ProductPermissionGate';
 
 // ── 页面组件（lazy 加载） ─────────────────────────────────
 const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/VisualAgentFullscreenPage'));
@@ -146,16 +147,16 @@ function shellGuarded(perm: string | string[], el: ReactElement): ReactElement {
 function fullscreenGuarded(perm: string | string[], el: ReactElement): ReactElement {
   return (
     <RequireAuth>
-      <RequirePermission perm={perm}>{el}</RequirePermission>
+      <RequirePermission perm={perm}>{(Array.isArray(perm) ? perm : [perm]).some((key) => key.startsWith('product-agent.')) ? <ProductPermissionGate>{el}</ProductPermissionGate> : el}</RequirePermission>
     </RequireAuth>
   );
 }
 
 function productReviewGuarded(section: 'review' | 'requirements', el: ReactElement): ReactElement {
   return fullscreenGuarded('product-agent.use',
-    <RequirePermission perm="review-agent.use">
+    <ProductReviewPermissionGate permission="review-agent.use">
       <OverviewShell sectionOverride={section}>{el}</OverviewShell>
-    </RequirePermission>);
+    </ProductReviewPermissionGate>);
 }
 
 // ── 注册表正文 ─────────────────────────────────────────────
@@ -640,9 +641,9 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     placement: 'fullscreen',
     permission: 'product-agent.use',
     element: productReviewGuarded('review',
-      <RequirePermission perm="review-agent.view-all">
+      <ProductReviewPermissionGate permission="review-agent.view-all">
         <ReviewAgentAllPage />
-      </RequirePermission>),
+      </ProductReviewPermissionGate>),
   },
   {
     path: '/product-agent/requirements/assessments',

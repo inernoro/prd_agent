@@ -8,9 +8,9 @@ import { Button } from '@/components/design/Button';
 import { SectionShell } from '@/components/agent-shell/AgentFullscreenLayout';
 import { OverviewDataTable, TruncateCell } from '@/pages/product-agent/overviewDataTable';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
-import { getAllReviewSubmissions, getReviewSubmitters } from '@/services';
-import type { ReviewSubmission } from '@/services';
-import { ReviewLeaderboardView } from '@/pages/review-agent/components/ReviewLeaderboardView';
+import { getAllReviewSubmissions, getReviewSubmitters } from '@/services/real/productReviewApi';
+import type { ReviewSubmission } from '@/services/real/productReviewApi';
+import { ReviewLeaderboardView } from './components/ReviewLeaderboardView';
 
 function getStatusInfo(item: ReviewSubmission): { label: string; color: string; icon: React.ReactNode } {
   if (item.status === 'Done') {

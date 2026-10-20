@@ -75,6 +75,8 @@ public class ProductAgentController : ControllerBase
     /// </summary>
     private async Task<bool> IsProductApplicationAdminAsync(string userId)
     {
+        if (HasPermission(ProductPermissionRules.Scoped) || HasPermission(ProductPermissionRules.MapAdmin))
+            return HasPermission(AdminPermissionCatalog.ProductAgentAdmin);
         var settings = await GetProductAgentSettingsAsync();
         return settings == null
             ? HasPermission(AdminPermissionCatalog.ProductAgentAdmin)
@@ -1600,7 +1602,7 @@ public class ProductAgentController : ControllerBase
 
             try
             {
-                if (row.PlannedTrainingMinutes < 0)
+                if (request.Kind == "release" && row.PlannedTrainingMinutes < 0)
                 {
                     errors.Add(new { row = index + 2, message = "预计培训时长必须是非负整数分钟" });
                     snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "预计培训时长必须是非负整数分钟" });

@@ -12,11 +12,11 @@ import {
   rerunAssessment,
   getAssessmentStreamUrl,
   downloadAssessmentReport,
-} from '@/services';
+} from '@/services/real/productReviewApi';
 import type {
   RequirementAssessmentRun,
   RequirementAssessmentItem,
-} from '@/services';
+} from '@/services/real/productReviewApi';
 
 const TIER_STYLES: Record<string, string> = {
   P0: 'bg-token-nested text-[color:var(--accent-fg-blue)] border-token-subtle',

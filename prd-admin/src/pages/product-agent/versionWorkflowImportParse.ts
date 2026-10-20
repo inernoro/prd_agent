@@ -79,7 +79,7 @@ function findHeaderIndex(matrix: string[][], kind: VersionWorkflowImportKind): n
 
 function indexOfHeader(headers: string[], ...names: string[]): number {
   const normalized = headers.map(normalizeHeader);
-  return normalized.findIndex((header) => names.some((name) => {
+  return normalized.findIndex((header) => Boolean(header) && names.some((name) => {
     const key = normalizeHeader(name);
     return header.includes(key) || key.includes(header);
   }));
@@ -165,7 +165,9 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
   const requirementSourceIndex = indexOfHeader(headers, '需求来源');
   const platformIndex = indexOfHeader(headers, '平台');
   const contractPartyIndex = indexOfHeader(headers, '合同签订方');
-  const trainingMinutesIndex = indexOfHeader(headers, '预计培训时长', '培训时长', '预计培训时间');
+  const trainingMinutesIndex = kind === 'release'
+    ? indexOfHeader(headers, '预计培训时长', '培训时长', '预计培训时间')
+    : -1;
 
   const codeIndex = kind === 'release'
     ? indexOfHeader(headers, '正式版本号', 'v号', 'v 号', 'v上线号', '上线号')
