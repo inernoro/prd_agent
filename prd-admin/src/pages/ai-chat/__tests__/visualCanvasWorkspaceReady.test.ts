@@ -7,6 +7,7 @@ import ts from 'typescript';
 import { describe, expect, it, vi } from 'vitest';
 import * as persistence from '../../../lib/visualAgentCanvasPersist';
 import * as scheduling from '../../../lib/canvasSaveSchedule';
+import * as canvasLabels from '../../../lib/canvasElementLabels';
 
 // 执行 TSX 内真正的 boot、放置、提交和自动保存回调；只替换 React/DOM/API 边界。
 // 这不是复制一份简化业务实现，也不代替公网真实鼠标、保存和刷新验收。
@@ -68,6 +69,7 @@ function setup() {
   let resolveDetail!: (value: unknown) => void;
   const detail = new Promise(resolve => { resolveDetail = resolve; });
   const context = vm.createContext({
+    ...canvasLabels,
     module: { exports: null }, ...persistence, ...scheduling,
     workspaceId: 'stsmk-local-readiness', workspaceIdRef: { current: 'stsmk-local-readiness' },
     workspace: null, booting: true, workspaceReady: false, workspaceReadyRef: { current: false },

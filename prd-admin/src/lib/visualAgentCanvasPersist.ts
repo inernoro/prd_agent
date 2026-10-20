@@ -16,6 +16,7 @@
  */
 
 import type { LayerContentKind } from './layerContentAnalysis';
+import { CANVAS_GENERATOR_LABEL } from './canvasElementLabels';
 
 // ============ 类型定义 ============
 
@@ -458,7 +459,7 @@ export function persistedV1ToCanvas(
       out.push({
         key: id,
         createdAt: Date.now(),
-        prompt: String(el.prompt ?? el.name ?? 'Image Generator'),
+        prompt: String(el.prompt ?? el.name ?? CANVAS_GENERATOR_LABEL),
         src: '',
         status: 'done',
         kind: 'generator',
