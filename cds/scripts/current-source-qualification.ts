@@ -77,6 +77,17 @@ const onlinePreservedTree = '50cb59ecaeea326c268db33be9c3088bbaea0ea3';
 const onlinePreservedWebTree = 'c412f4a163ffab7b6ec5fcf83078bea0fe4b027a';
 const preservedHead = '78f3dbc35d5d15db4aeb9ce9e13448a344d0d295';
 const preservedTree = '05120e9adc192ec7da6b37013ae35e746f8aa471';
+const historicalS1Head = 'f9d1d0be191f9b96f9589b044ae5319311694f1a';
+const historicalS1Tree = '23030fb46cd3cf76ff96f1ad6b9efcb30766850a';
+const historicalS1ScriptBlob = '3b0c80a097ff2618ee95a8516af775b8da031f44';
+const onlineBackendPredecessorHead = 'f72c415bdcdbba147d7920c74bf45a224ba86201';
+const onlineBackendHead = 'd7e2f0f63b3fcb9706df1887f97355c528e88c42';
+const onlineBackendTree = 'd57410754469cd8c74961ae34c666aa227f47977';
+const onlineBackendWebTree = 'cd7668d52b3ceee00b3ef6bb494ca464491dd010';
+// P为正常双父保留提交；历史S1与新current执行身份分账。
+const currentPreservedHead = '0f54128b048eea7369715050bafa46961af38efa';
+const currentPreservedTree = 'badca0b8a1ab30c711c33d3f09ef93315bb18c0a';
+const currentPreservedSourceTree = '91e819cf76ae37f5afebb034d4b9be5be860caec';
 // 分层固定历史、维护、功能H、已上线9acc与保留层C，不扩大任何旧黄金允许范围。
 const maintenanceManifest = [
   ['M', '.claude/skills/cds/SKILL.md'],
@@ -177,6 +188,29 @@ const preservedManifest = [
   ['M', 'doc/guide.cds.tutorial.md', '439822680f95f4fe32323952339964882c6b7dcd'],
 ] as const;
 
+// d7线上后端与P保留层共用有限17路径；P只替换双方追加的债务blob。
+const onlineBackendManifest = [
+  ['M', '.claude/skills/cds/cli/cdscli.py', '0dc9849a190257b14bcbbbf712c4d140828f2b4f'],
+  ['M', '.claude/skills/cds/tests/test_cdscli_connect.py', '059d054ca5d1b3f4a9de046c29969e6d10c31c79'],
+  ['M', 'cds/src/routes/access-requests.ts', 'df579bc0ea8ea731d3164a532dad88da85ccc176'],
+  ['M', 'cds/src/routes/projects.ts', '53656c6bcada8aa3d7e9067f9eb12feadb17fcac'],
+  ['M', 'cds/src/server.ts', '618e3dba66a9d708a8a60bd964262e9aa476cf59'],
+  ['A', 'cds/src/services/network-teardown.ts', '5adcd82c3b608901a843e5a37bb033bef8cd78df'],
+  ['M', 'cds/src/services/orphan-container-reaper.ts', 'c51d8f00a761b55cdc48765d84cc59ec5c551f5d'],
+  ['M', 'cds/src/services/state.ts', 'd974e0bc7c881fabb04ccc3335758fa351159571'],
+  ['M', 'cds/src/types.ts', '4a928bddba06f5d3b76778a43b41bb7cc69d965a'],
+  ['M', 'cds/tests/routes/access-requests.test.ts', 'ac29b0194777133e0105edc1e33cdc54fa06c5ce'],
+  ['M', 'cds/tests/routes/projects.test.ts', '198e3c31421027f1e30f67e592c7d69745eb1203'],
+  ['A', 'cds/tests/services/network-teardown.test.ts', 'c256e541aaea45dc71fa0cef6b1f682be89652d4'],
+  ['A', 'cds/tests/web/project-availability.test.ts', '952a6fbca06c59d808a8a5a0b25290471cc4a688'],
+  ['A', 'cds/web/src/lib/project-availability.ts', 'c7aa77b8f5c584ff775dd3e6a4c5038b72e79ccf'],
+  ['M', 'cds/web/src/pages/BranchListPage.tsx', 'e7ce82339d6ce056b65119604e6a83d43511ae0e'],
+  ['A', 'changelogs/2026-10-20_cds-silent-closure-retest.md', '0c5873c66566a32ec5bb1f53f5e3162c653cf4ad'],
+  ['M', 'doc/debt.cds.md', 'deac29650b72ef5cc61a13526c4b229c5b339e90'],
+] as const;
+const currentPreservedManifest = onlineBackendManifest.map(([status, name, blob]) =>
+  [status, name, name === 'doc/debt.cds.md' ? '187276b42d3bca40226dc28eb2995c1602b1e3e4' : blob] as const);
+
 // 两个原入口先取回参考版本；原生导入先核执行身份，函数内再核报告身份。
 if (process.env.GITHUB_ACTIONS === 'true') {
   const nativeHead = execFileSync('/usr/bin/git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -191,7 +225,7 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
   report.executionTree = git(['rev-parse', `${actualHead}^{tree}`]);
   report.githubSha = process.env.GITHUB_SHA ?? null;
   if (native || report.githubSha !== null) assert.equal(report.githubSha, actualHead, 'Actions提交必须对应实际检出提交');
-  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead, widgetStreamQualifiedHead, widgetTerminalFixHead, previewActivityHead, frozenIntegrationHead, diagnosticInstrumentationHead, receiptEvidenceHead, memoryRescanHead, latestMaintenanceHead, preColdIntegrationHead, coldReviewFixBase, coldReviewFixHead, coldIntegratedQualifiedHead, tutorialMaintenanceHead, tutorialIntegratedHead, tutorialQualificationFixedHead, capacityHintHead, structuredColdHead, structuredColdValidatedHead, structuredIntegratedHead, cleanupWindowFixBase, cleanupWindowFixHead, cleanupIntegratedHead, schedulerTouchHead, markerSummaryHead, historicalMarkerIntegrationHead, maintenanceHead, functionalHead, onlinePreservedHead, preservedHead], { stdio: 'pipe', timeout: 120000 });
+  if (native) execFileSync('/usr/bin/git', ['fetch', '--depth', '1', 'origin', previousQualifiedHead, inheritedProductionHead, memoryStageHead, onboardingProductionHead, notificationProductionHead, cpuStageHead, coldRecoveryBase, coldRecoveryHead, latestProductionHead, queueProductionHead, localQueueProductionHead, alarmQueueProductionHead, cleanupQualificationProductionHead, cleanupPublishedHead, combinedProductionHead, widgetStreamQualifiedHead, widgetTerminalFixHead, previewActivityHead, frozenIntegrationHead, diagnosticInstrumentationHead, receiptEvidenceHead, memoryRescanHead, latestMaintenanceHead, preColdIntegrationHead, coldReviewFixBase, coldReviewFixHead, coldIntegratedQualifiedHead, tutorialMaintenanceHead, tutorialIntegratedHead, tutorialQualificationFixedHead, capacityHintHead, structuredColdHead, structuredColdValidatedHead, structuredIntegratedHead, cleanupWindowFixBase, cleanupWindowFixHead, cleanupIntegratedHead, schedulerTouchHead, markerSummaryHead, historicalMarkerIntegrationHead, maintenanceHead, functionalHead, onlinePreservedHead, preservedHead, historicalS1Head, onlineBackendPredecessorHead, onlineBackendHead, currentPreservedHead], { stdio: 'pipe', timeout: 120000 });
   const changedSince = (from: string, to: string): string[] => execFileSync('/usr/bin/git', ['diff', '--name-only', from, to, '--', ':(top)cds/src'],
     { encoding: 'utf8' }).trim().split('\n').filter(Boolean).sort();
   report.previousQualifiedHead = previousQualifiedHead;
@@ -457,14 +491,77 @@ export function assertCurrentSourceQualification(expectedPreviousSources: readon
   assert.deepEqual(preserved.sources, []);
   assert.deepEqual(preserved.web, pathsUnder(preservedManifest, 'cds/web/'));
   assert.deepEqual(preserved.blobs, preservedManifest.map(([, name, blob]) => `${name}\t${blob}`).sort());
+  // 旧S1的资格完整固化为历史，不把新current字段倒写成旧13路的执行身份。
+  const historicalS1 = {
+    head: historicalS1Head,
+    tree: tree(historicalS1Head),
+    sourceTree: tree(historicalS1Head, 'cds/src'),
+    webTree: tree(historicalS1Head, 'cds/web'),
+    parents: rawParents(historicalS1Head),
+    files: changedFiles(preservedHead, historicalS1Head),
+    sources: changedSince(preservedHead, historicalS1Head),
+    web: changedWeb(preservedHead, historicalS1Head),
+    scriptBlob: git(['rev-parse', `${historicalS1Head}:cds/scripts/current-source-qualification.ts`]),
+  };
+  report.historicalS1Qualification = historicalS1;
+  assert.equal(historicalS1.tree, historicalS1Tree);
+  assert.equal(historicalS1.sourceTree, functionalSourceTree);
+  assert.equal(historicalS1.webTree, onlinePreservedWebTree);
+  assert.deepEqual(historicalS1.parents, [preservedHead]);
+  assert.deepEqual(historicalS1.files, ['M\tcds/scripts/current-source-qualification.ts']);
+  assert.deepEqual(historicalS1.sources, []);
+  assert.deepEqual(historicalS1.web, []);
+  assert.equal(historicalS1.scriptBlob, historicalS1ScriptBlob);
+  const onlineBackend = {
+    head: onlineBackendHead,
+    tree: tree(onlineBackendHead),
+    sourceTree: tree(onlineBackendHead, 'cds/src'),
+    webTree: tree(onlineBackendHead, 'cds/web'),
+    parents: rawParents(onlineBackendHead),
+    predecessorHead: onlineBackendPredecessorHead,
+    predecessorParents: rawParents(onlineBackendPredecessorHead),
+    files: changedFiles(onlinePreservedHead, onlineBackendHead),
+    sources: changedSince(onlinePreservedHead, onlineBackendHead),
+    web: changedWeb(onlinePreservedHead, onlineBackendHead),
+    blobs: manifestBlobs(onlineBackendHead, onlineBackendManifest),
+  };
+  report.onlineBackendQualification = onlineBackend;
+  assert.equal(onlineBackend.tree, onlineBackendTree);
+  assert.equal(onlineBackend.webTree, onlineBackendWebTree);
+  assert.deepEqual(onlineBackend.parents, [onlineBackendPredecessorHead]);
+  assert.deepEqual(onlineBackend.predecessorParents, [onlinePreservedHead]);
+  assert.deepEqual(onlineBackend.files, onlineBackendManifest.map(([status, name]) => `${status}\t${name}`).sort());
+  assert.deepEqual(onlineBackend.sources, pathsUnder(onlineBackendManifest, 'cds/src/'));
+  assert.deepEqual(onlineBackend.web, pathsUnder(onlineBackendManifest, 'cds/web/'));
+  assert.deepEqual(onlineBackend.blobs, onlineBackendManifest.map(([, name, blob]) => `${name}\t${blob}`).sort());
+  const currentPreserved = {
+    head: currentPreservedHead,
+    tree: tree(currentPreservedHead),
+    sourceTree: tree(currentPreservedHead, 'cds/src'),
+    webTree: tree(currentPreservedHead, 'cds/web'),
+    parents: rawParents(currentPreservedHead),
+    files: changedFiles(historicalS1Head, currentPreservedHead),
+    sources: changedSince(historicalS1Head, currentPreservedHead),
+    web: changedWeb(historicalS1Head, currentPreservedHead),
+    blobs: manifestBlobs(currentPreservedHead, currentPreservedManifest),
+  };
+  report.currentOnlinePreservedQualification = currentPreserved;
+  assert.equal(currentPreserved.tree, currentPreservedTree);
+  assert.equal(currentPreserved.sourceTree, currentPreservedSourceTree);
+  assert.equal(currentPreserved.webTree, onlineBackendWebTree);
+  assert.deepEqual(currentPreserved.parents, [historicalS1Head, onlineBackendHead]);
+  assert.deepEqual(currentPreserved.files, currentPreservedManifest.map(([status, name]) => `${status}\t${name}`).sort());
+  assert.deepEqual(currentPreserved.sources, pathsUnder(currentPreservedManifest, 'cds/src/'));
+  assert.deepEqual(currentPreserved.web, pathsUnder(currentPreservedManifest, 'cds/web/'));
+  assert.deepEqual(currentPreserved.blobs, currentPreservedManifest.map(([, name, blob]) => `${name}\t${blob}`).sort());
   report.currentParents = rawParents(actualHead);
-  report.currentQualificationFiles = changedFiles(preservedHead, actualHead);
-  report.currentQualificationSources = changedSince(preservedHead, actualHead);
-  report.currentQualificationWeb = changedWeb(preservedHead, actualHead);
-  assert.deepEqual(report.currentParents, [preservedHead]);
+  report.currentQualificationFiles = changedFiles(currentPreservedHead, actualHead);
+  report.currentQualificationSources = changedSince(currentPreservedHead, actualHead);
+  report.currentQualificationWeb = changedWeb(currentPreservedHead, actualHead);
+  assert.deepEqual(report.currentParents, [currentPreservedHead]);
   assert.deepEqual(report.currentQualificationFiles, ['M\tcds/scripts/current-source-qualification.ts']);
   assert.deepEqual(report.currentQualificationSources, []);
   assert.deepEqual(report.currentQualificationWeb, []);
-  assert.equal(tree(actualHead, 'cds/src'), functionalSourceTree);
-  assert.equal(tree(actualHead, 'cds/web'), onlinePreservedWebTree);
+  assert.equal(tree(actualHead, 'cds/src'), currentPreservedSourceTree);
+  assert.equal(tree(actualHead, 'cds/web'), onlineBackendWebTree);
 }
