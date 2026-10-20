@@ -1257,6 +1257,67 @@ export function buildLiveSlideDoc(headAssets: string, sectionHtml: string): stri
   );
 }
 
+/**
+ * 把完整演示稿拆成可安全静态预览的单页文档。
+ * OpenDesign 成品可能由脚本在启动时给首屏加 active/present；生成期预览不应先执行脚本，
+ * 因此 Reveal 结构统一复用现有静态单页构建器，锚定结构只激活当前页。
+ */
+export function buildDeckPreviewPageDocs(html: string): string[] {
+  if (!html || typeof DOMParser === 'undefined') return [];
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const slides = Array.from(doc.querySelectorAll('.slide')).filter((el) => {
+      const cls = (el.getAttribute('class') || '').split(/\s+/);
+      return cls.includes('slide') && !el.parentElement?.closest('.slide');
+    });
+    if (slides.length >= 2) {
+      const headHtml = doc.head?.innerHTML ?? '';
+      const bodyClass = doc.body?.getAttribute('class') ?? '';
+      return slides.map((el) => {
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.classList.add('active', 'is-active');
+        return `<!DOCTYPE html><html><head>${headHtml}</head><body class="${bodyClass}"><div class="deck">${clone.outerHTML}</div></body></html>`;
+      });
+    }
+    const sections = Array.from(doc.querySelectorAll('.reveal .slides > section'));
+    if (sections.length > 0) {
+      const assets = extractHeadAssets(html);
+      return sections.map((section) => buildLiveSlideDoc(assets, section.outerHTML));
+    }
+    return slides.length === 1 ? [html] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 原始文档通过可见性门，或每个已识别页面经现有静态单页构建后都通过同一门，才允许预览。
+ * 这只决定 HTML 能否进入只读展示；完成、编辑、保存和发布仍由后端终态与质量门授权。
+ */
+export function isPreviewableDeck(html: string): boolean {
+  if (looksLikeDeck(html)) return true;
+  const pageDocs = buildDeckPreviewPageDocs(html);
+  return pageDocs.length > 0 && pageDocs.every(looksLikeDeck);
+}
+
+export function selectRuntimeLivePreviewDoc({
+  pagesTotal,
+  pagesLiveDoc,
+  legacyLiveDoc,
+  previewPageDocs,
+  previewPageIndex,
+}: {
+  pagesTotal: number;
+  pagesLiveDoc: string;
+  legacyLiveDoc: string;
+  previewPageDocs: string[];
+  previewPageIndex: number;
+}): string {
+  return pagesTotal > 0
+    ? pagesLiveDoc
+    : legacyLiveDoc || previewPageDocs[previewPageIndex] || '';
+}
+
 // 读取 sessionStorage（安全）
 function loadSession(key: string): SessionState | null {
   try {
@@ -1778,43 +1839,19 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   // 双结构通吃：锚定 deck（顶层 .slide 块，复用自带 <head> 样式）与
   // 旧版 reveal deck（.reveal .slides > section，复用 buildLiveSlideDoc 静态铺版）。
   // 历史载入 / 新生成都通用，不依赖生成期的 frameHead。
-  const deckThumbDocs = useMemo(() => {
-    if (!generatedHtml) return [] as string[];
-    try {
-      const doc = new DOMParser().parseFromString(generatedHtml, 'text/html');
-      const slides = Array.from(doc.querySelectorAll('.slide')).filter((el) => {
-        const cls = (el.getAttribute('class') || '').split(/\s+/);
-        return cls.includes('slide') && !el.parentElement?.closest('.slide');
-      });
-      if (slides.length >= 2) {
-        const headHtml = doc.head?.innerHTML ?? '';
-        const bodyClass = doc.body?.getAttribute('class') ?? '';
-        return slides.map((el) => {
-          const clone = el.cloneNode(true) as HTMLElement;
-          clone.classList.add('active', 'is-active');
-          return `<!DOCTYPE html><html><head>${headHtml}</head><body class="${bodyClass}"><div class="deck">${clone.outerHTML}</div></body></html>`;
-        });
-      }
-      const sections = Array.from(doc.querySelectorAll('.reveal .slides > section'));
-      if (sections.length > 0) {
-        const assets = extractHeadAssets(generatedHtml);
-        return sections.map((s) => buildLiveSlideDoc(assets, s.outerHTML));
-      }
-      return slides.length === 1
-        ? [generatedHtml]
-        : [];
-    } catch {
-      return [];
-    }
-  }, [generatedHtml]);
+  const deckThumbDocs = useMemo(() => buildDeckPreviewPageDocs(generatedHtml), [generatedHtml]);
   const previewPageDocs = deckThumbDocs;
   const previewPageCount = countDeckPages(generatedHtml);
   const runtimePreviewPageIndex = liveSlideSel != null && previewPageDocs[liveSlideSel]
     ? liveSlideSel
     : Math.max(0, previewPageDocs.length - 1);
-  const runtimeLivePreviewDoc = pagesTotal > 0
-    ? pagesLiveDoc
-    : liveDoc || previewPageDocs[runtimePreviewPageIndex] || '';
+  const runtimeLivePreviewDoc = selectRuntimeLivePreviewDoc({
+    pagesTotal,
+    pagesLiveDoc,
+    legacyLiveDoc: liveDoc,
+    previewPageDocs,
+    previewPageIndex: runtimePreviewPageIndex,
+  });
   const runtimeLivePreviewPageIndex = pagesTotal > 0
     ? pagesLiveIdx
     : liveDoc ? liveIdx : runtimePreviewPageIndex;
@@ -2085,7 +2122,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       } else if (run.status === 'error') {
         const parent = await recoverPatchParentRun(run);
         if (cancelled) return;
-        if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+        if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
           hasRuntimePreviewRef.current = true;
           setGeneratedHtml(run.latestPreviewHtml);
           setArtifactSiteUrl('');
@@ -2104,7 +2141,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         // 计时基准 = 服务端 run.createdAt（服务器权威性：刷新后显示真实已等待时长）
         genStartAtRef.current = new Date(run.createdAt).getTime();
         setArtifactPhase('generating');
-        if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+        if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
           hasRuntimePreviewRef.current = true;
           setGeneratedHtml(run.latestPreviewHtml);
           setArtifactSiteUrl('');
@@ -2226,7 +2263,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         setSlidePos({ cur: d.cur, total: d.total });
         restoreSlideRef.current = d.cur - 1;
       }
-      if (d.type === 'map-ppt-html' && typeof d.html === 'string' && looksLikeDeck(d.html)) {
+      if (d.type === 'map-ppt-html' && typeof d.html === 'string' && isPreviewableDeck(d.html)) {
         editedHtmlRef.current = d.html;
         setDirtyEdits(true);
       }
@@ -2282,7 +2319,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── 编辑产物：取最新 HTML（编辑模式下优先未提交的编辑稿）
   const latestHtml = useCallback(() => {
-    return editedHtmlRef.current && looksLikeDeck(editedHtmlRef.current)
+    return editedHtmlRef.current && isPreviewableDeck(editedHtmlRef.current)
       ? editedHtmlRef.current
       : generatedHtml;
   }, [generatedHtml]);
@@ -2667,7 +2704,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             return;
           }
           if (run.status === 'error') {
-            if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+            if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
               hasRuntimePreviewRef.current = true;
               setGeneratedHtml(run.latestPreviewHtml);
               setArtifactSiteUrl('');
@@ -2680,10 +2717,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               )
             );
             setIsProcessing(false);
-            setArtifactPhase(run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml) ? 'error' : 'idle');
+            setArtifactPhase(run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml) ? 'error' : 'idle');
             return;
           }
-          if (run.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+          if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
             hasRuntimePreviewRef.current = true;
             setGeneratedHtml(run.latestPreviewHtml);
             setArtifactSiteUrl('');
@@ -2768,7 +2805,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             : message));
         },
         onPreview: (preview) => {
-          if (!mountedRef.current || !looksLikeDeck(preview.html)) return;
+          if (!mountedRef.current || !isPreviewableDeck(preview.html)) return;
           hasRuntimePreviewRef.current = true;
           setGeneratedHtml(preview.html);
           setArtifactSiteUrl('');
@@ -2777,7 +2814,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         onDone: (result) => {
           if (!mountedRef.current) return;
           const html = result.html;
-          if (!looksLikeDeck(html)) {
+          if (!isPreviewableDeck(html)) {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === genMsg.id
@@ -2851,7 +2888,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 );
                 return;
               }
-              if (run?.latestPreviewHtml && looksLikeDeck(run.latestPreviewHtml)) {
+              if (run?.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
                 hasRuntimePreviewRef.current = true;
                 setGeneratedHtml(run.latestPreviewHtml);
                 setArtifactSiteUrl('');
@@ -3034,7 +3071,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             : message));
         },
         onPreview: (preview) => {
-          if (!mountedRef.current || !looksLikeDeck(preview.html)) return;
+          if (!mountedRef.current || !isPreviewableDeck(preview.html)) return;
           // 手动草稿在任务成功前始终留在隔离编辑器中；预览事件不能覆盖用户尚未落成的修改。
           if (manualEditHtml) return;
           hasRuntimePreviewRef.current = true;
@@ -3043,7 +3080,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         },
         onDone: (result) => {
           const html = result.html;
-          if (!looksLikeDeck(html)) {
+          if (!isPreviewableDeck(html)) {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === patchMsg.id
@@ -3109,7 +3146,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       setEditMode(false);
       return;
     }
-    if (!looksLikeDeck(editedHtml) || !activeRunId) {
+    if (!isPreviewableDeck(editedHtml) || !activeRunId) {
       toast.error('无法保存编辑', '当前草稿不完整或缺少来源版本，草稿仍保留在编辑器中。');
       return;
     }
@@ -3277,7 +3314,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const run = await getMdToPptRun(summary.id);
       if (!mountedRef.current) return;
       setHistoryOpeningId(null);
-      if (!run || !run.html || !looksLikeDeck(run.html)) {
+      if (!run || !run.html || !isPreviewableDeck(run.html)) {
         pushMsg({ role: 'assistant', content: `历史记录「${summary.title || '未命名'}」没有可用的 PPT 产物（状态：${run?.status ?? '未知'}）。`, phase: 'error' });
         return;
       }
@@ -3384,7 +3421,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       toast.warning('暂不能发布', publishDisabledReason ?? '演示稿完成质量检查后才能发布。');
       return;
     }
-    if (!looksLikeDeck(base)) {
+    if (!isPreviewableDeck(base)) {
       toast.error('无法发布', '当前 PPT 内容不完整，请保留现有版本并重新生成或精修。');
       return;
     }
@@ -3808,10 +3845,22 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-sm font-semibold text-token-primary">
-                    {isStreaming ? '正在生成' : generatedHtml ? '演示稿已生成' : '对话进行中'}
+                    {isStreaming
+                      ? '正在生成'
+                      : artifactPhase === 'error' && generatedHtml
+                        ? '任务未完成 · 只读初稿'
+                        : generatedHtml
+                          ? '演示稿已生成'
+                          : '对话进行中'}
                   </div>
                   <div className="mt-1 text-xs text-token-muted">
-                    {isStreaming ? `已运行 ${elapsedSec}s，页面会持续更新` : generatedHtml ? '可继续精修、预览或发布为网页' : '继续输入即可调整方向'}
+                    {isStreaming
+                      ? `已运行 ${elapsedSec}s，页面会持续更新`
+                      : artifactPhase === 'error' && generatedHtml
+                        ? '初稿未通过检查，不能编辑、保存或发布'
+                        : generatedHtml
+                          ? '可继续精修、预览或发布为网页'
+                          : '继续输入即可调整方向'}
                   </div>
                 </div>
                 {isStreaming && (
@@ -3859,7 +3908,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     </div>
                   )}
                   <div className="mt-2 text-[10px] leading-relaxed text-token-muted">
-                    8 页会按 4 路并行生成；首批页面返回前，主要耗时在模型生成单页 HTML 和片段校验。
+                    OpenDesign 正在设计并检查演示稿；初稿仅供只读查看，检查完成后才能编辑、保存或发布。
                   </div>
                   <PptRuntimeLivePreview
                     html={runtimeLivePreviewDoc}
@@ -4853,7 +4902,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                           </button>
                         )}
                         <span className="px-2 py-0.5 rounded text-[10px] bg-token-nested text-token-secondary tabular-nums">
-                          实况 · 第 {effLiveIdx + 1} 页{liveSlideSel == null ? '（跟随最新）' : ''}
+                          设计中初稿 · 尚未通过检查 · 只读 · 第 {effLiveIdx + 1} 页{liveSlideSel == null ? '（跟随最新）' : ''}
                         </span>
                       </div>
                     </>

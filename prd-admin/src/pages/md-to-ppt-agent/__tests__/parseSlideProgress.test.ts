@@ -1,8 +1,11 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
+  buildDeckPreviewPageDocs,
   buildLiveSlideDoc,
   countDeckPages,
   estimatePages,
@@ -14,10 +17,12 @@ import {
   parseSlideProgress,
   PptRuntimeLivePreview,
   PptRuntimeProgressHeader,
+  isPreviewableDeck,
   resolveOutlineTargetPages,
   resolveNaturalPatchSlideIndex,
   recoverPatchParentRun,
   resolveRecoveredDeckState,
+  selectRuntimeLivePreviewDoc,
 } from '../MdToPptAgentPage';
 import { NextStepBar } from '../NextStepBar';
 import type { MdToPptRunDetail } from '@/services/real/mdToPptService';
@@ -84,8 +89,8 @@ describe('estimatePages', () => {
   });
 
   it('大纲、确认与生成请求都把附件作为独立字段发送，不拼回普通需求 content', () => {
-    const page = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
-    const service = readFileSync(new URL('../../../services/real/mdToPptService.ts', import.meta.url), 'utf8');
+    const page = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
+    const service = readFileSync(resolve(process.cwd(), 'src/services/real/mdToPptService.ts'), 'utf8');
     const outlineRequestStart = page.indexOf('const cleanup = streamMdToPptOutline({');
     const outlineRequestEnd = page.indexOf('onKnowledgeResolved:', outlineRequestStart);
     const outlineRequest = page.slice(outlineRequestStart, outlineRequestEnd);
@@ -151,6 +156,70 @@ describe('countDeckPages', () => {
 });
 
 describe('OpenDesign 运行态可见信息', () => {
+  it('脚本初始化导航的真实 Reveal 预览通过事件接受、拆页和桌面选择链', () => {
+    const padding = '冻结来源正文'.repeat(80);
+    const previewHtml = `<!doctype html><html><head><style>
+      .slides>section{display:none;height:100%}
+      .slides>section.present{display:flex}
+    </style></head><body><div class="reveal"><div class="slides">
+      <section><h1>第一页</h1><p>${padding}</p></section>
+      <section><h1>第二页</h1><p>${padding}</p></section>
+    </div></div><script>document.querySelector('.slides>section')?.classList.add('present')</script></body></html>`;
+    expect(looksLikeDeck(previewHtml)).toBe(false);
+    expect(isPreviewableDeck(previewHtml)).toBe(true);
+    const generatedHtml = isPreviewableDeck(previewHtml) ? previewHtml : '';
+    const previewPageDocs = buildDeckPreviewPageDocs(generatedHtml);
+    expect(previewPageDocs).toHaveLength(2);
+    expect(previewPageDocs.every(looksLikeDeck)).toBe(true);
+    expect(selectRuntimeLivePreviewDoc({
+      pagesTotal: 0,
+      pagesLiveDoc: '',
+      legacyLiveDoc: '',
+      previewPageDocs,
+      previewPageIndex: 1,
+    })).toContain('第二页');
+    expect(isPreviewableDeck(`<!doctype html><html><head></head><body><main><section style="display:none"><p>${padding}</p></section></main></body></html>`)).toBe(false);
+    const staticHiddenReveal = `<!doctype html><html><head><style>.slides>section{display:none}</style></head><body><div class="reveal"><div class="slides"><section><p>${padding}</p></section></div></div></body></html>`;
+    expect(isPreviewableDeck(staticHiddenReveal)).toBe(true);
+    expect(buildDeckPreviewPageDocs(staticHiddenReveal).every(looksLikeDeck)).toBe(true);
+    expect(isPreviewableDeck('<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section></section></div></div></body></html>')).toBe(false);
+
+    const capturedPreviewPath = process.env.PPT_RUNTIME_REAL_PREVIEW_HTML;
+    if (capturedPreviewPath) {
+      const capturedPreview = readFileSync(capturedPreviewPath, 'utf8');
+      expect(looksLikeDeck(capturedPreview)).toBe(false);
+      expect(isPreviewableDeck(capturedPreview)).toBe(true);
+      const capturedPages = buildDeckPreviewPageDocs(capturedPreview);
+      expect(capturedPages).toHaveLength(34);
+      expect(capturedPages.every(looksLikeDeck)).toBe(true);
+      expect(selectRuntimeLivePreviewDoc({
+        pagesTotal: 0,
+        pagesLiveDoc: '',
+        legacyLiveDoc: '',
+        previewPageDocs: capturedPages,
+        previewPageIndex: 33,
+      })).not.toBe('');
+    }
+  });
+
+  it('空预览与 legacy 实况优先级保持不变', () => {
+    expect(isPreviewableDeck('')).toBe(false);
+    expect(selectRuntimeLivePreviewDoc({
+      pagesTotal: 0,
+      pagesLiveDoc: '',
+      legacyLiveDoc: '<html>legacy</html>',
+      previewPageDocs: ['<html>runtime</html>'],
+      previewPageIndex: 0,
+    })).toBe('<html>legacy</html>');
+    expect(selectRuntimeLivePreviewDoc({
+      pagesTotal: 2,
+      pagesLiveDoc: '<html>parallel</html>',
+      legacyLiveDoc: '<html>legacy</html>',
+      previewPageDocs: ['<html>runtime</html>'],
+      previewPageIndex: 0,
+    })).toBe('<html>parallel</html>');
+  });
+
   it('无 legacy 帧时仍把 OpenDesign 运行中 HTML 渲染为只读未验收预览', () => {
     const previewHtml = '<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>运行中初稿</h1></section></div></div></body></html>';
     const html = renderToStaticMarkup(createElement(PptRuntimeLivePreview, {
@@ -279,7 +348,7 @@ describe('自然语言单页精修识别', () => {
   });
 
   it('将自然语言解析的页码传给服务端，不退化为整稿精修', () => {
-    const source = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
     expect(source).toContain('slideIndex: effectiveSlideIndex ?? undefined');
     expect(source).not.toMatch(/streamMdToPptPatch\(\{[\s\S]*?\n\s*slideIndex,\n/);
   });

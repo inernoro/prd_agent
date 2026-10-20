@@ -106,15 +106,32 @@ describe('PPT 文档导航就绪合同', () => {
 
   it('生成态展示 OpenDesign 真实预览并以服务端进度和模型调用次数为准', () => {
     expect(source).toContain('const previewPageCount = countDeckPages(generatedHtml)');
-    expect(source).toContain('const runtimeLivePreviewDoc = pagesTotal > 0');
+    expect(source).toContain('const deckThumbDocs = useMemo(() => buildDeckPreviewPageDocs(generatedHtml), [generatedHtml])');
+    expect(source).toContain('const runtimeLivePreviewDoc = selectRuntimeLivePreviewDoc({');
     expect(source).toContain('const effLiveDoc = runtimeLivePreviewDoc');
     expect(source).toContain('<PptRuntimeLivePreview');
     expect(source).toContain('html={runtimeLivePreviewDoc}');
     expect(source).toContain('尚未通过检查 · 只读');
-    expect(source).toContain("{isStreaming ? '正在生成' : generatedHtml ? '演示稿已生成' : '对话进行中'}");
+    expect(source).toContain('设计中初稿 · 尚未通过检查 · 只读 · 第 {effLiveIdx + 1} 页');
+    expect(source).toContain("? '任务未完成 · 只读初稿'");
+    expect(source).toContain("? '初稿未通过检查，不能编辑、保存或发布'");
+    expect(source).toContain('OpenDesign 正在设计并检查演示稿；初稿仅供只读查看，检查完成后才能编辑、保存或发布。');
+    expect(source).not.toContain('8 页会按 4 路并行生成');
     expect(source).toContain('setArtifactProgress(phase.progress)');
     expect(source).toContain('setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, phase.runtimeModelCallCount))');
     expect(source).toContain('模型调用 {runtimeModelCallCount} 次');
+  });
+
+  it('OpenDesign 预览判定覆盖事件、终态、恢复、历史、编辑与发布消费端', () => {
+    expect(source.match(/!mountedRef\.current \|\| !isPreviewableDeck\(preview\.html\)/g)).toHaveLength(2);
+    expect(source.match(/if \(!isPreviewableDeck\(html\)\)/g)).toHaveLength(2);
+    expect(source).toContain('run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)');
+    expect(source).toContain("d.type === 'map-ppt-html' && typeof d.html === 'string' && isPreviewableDeck(d.html)");
+    expect(source).toContain('editedHtmlRef.current && isPreviewableDeck(editedHtmlRef.current)');
+    expect(source).toContain('!isPreviewableDeck(editedHtml) || !activeRunId');
+    expect(source).toContain('!run || !run.html || !isPreviewableDeck(run.html)');
+    expect(source).toContain('if (!isPreviewableDeck(base))');
+    expect(source.match(/looksLikeDeck\(/g)).toHaveLength(2);
   });
 
   it('质量拒绝后保留预览但不能从前端发起发布', () => {

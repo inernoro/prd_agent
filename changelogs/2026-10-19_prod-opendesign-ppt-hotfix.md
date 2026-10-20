@@ -21,3 +21,4 @@
 | fix | design-runtime | 区分来源中的命名空间状态标签与真正未完成占位符，并在浏览器质量门拒绝挤入装饰槽的不可读冻结正文 |
 | fix | design-runtime | 由冻结来源计划预置非最终演示稿内容骨架，再交由 OpenDesign 原位设计并保留全部质量门 |
 | fix | prd-admin | 在网页 PPT 生成期间展示 OpenDesign 已产出的只读初稿，并明确标注尚未通过质量检查 |
+| fix | prd-admin | 兼容由脚本初始化首屏的 OpenDesign 演示稿预览，并统一生成、恢复、编辑与发布的可预览判定 |
