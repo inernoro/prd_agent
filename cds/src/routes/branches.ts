@@ -1,3 +1,4 @@
+import { createPreviewAddressRouter } from './preview-address.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
 import { prepareServiceReplacement, commitServiceReplacements, preserveReplacementNames, reserveServiceReplacements, replacementLaunchEntry } from '../services/service-replacement.js';
@@ -17077,6 +17078,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (b.id === requestingBranchId) return true;
     return b.profileOverrides?.[serviceId]?.subdomain === undefined;
   });
+
+  router.use(createPreviewAddressRouter({ stateService, config, serverEventLogStore, getEntries: computeBranchWebEntries }));
 
   router.get('/branches/:id/web-entry-config', (req, res) => {
     const { id } = req.params;

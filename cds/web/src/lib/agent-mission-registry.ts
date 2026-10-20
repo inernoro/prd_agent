@@ -156,6 +156,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['user-project-access', '人类账号项目授权', 'user-project-access.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '仅系统所有者通过用户管理页分配和撤销项目访问，不允许普通用户或 Agent 自行提权'],
   ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
   ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],
+  ['preview-address', '分支地址、项目 slug 与独立子域', 'preview-address.ts', 'project', 'human-only', 'write', 'guided', 'preview-url', '', '仅已认证且有项目访问权的人类可查看，保存与验证仅系统所有者；唯一性校验、版本锁和审计由服务端执行，Agent 不得伪造会话或修改他人项目'],
   ['bootstrap', '项目初始化与技能分发', 'bootstrap.ts', 'system', 'public', 'read-only', 'direct', 'cds', '', '匿名只读：发引导脚本与代理 MAP 技能包，不签发凭据也不碰项目数据'],
   ['bug-reports', '快捷提 bug 与缺陷转发', 'bug-reports.ts', 'system', 'system', 'write', 'direct', 'cds', '', '缺陷系统凭据只在服务端读取；未配置转发时只做本地留存，不得声称已同步'],
   ['bridge', '页面 Bridge 与导航握手', 'bridge.ts', 'project', 'protocol-token', 'protocol', 'protocol-only', 'cds', '', '使用 Bridge 会话令牌和页面批准，不作为万能浏览器控制接口'],
