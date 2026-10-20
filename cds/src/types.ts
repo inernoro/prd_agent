@@ -3755,7 +3755,31 @@ export interface ProjectIdentityRecord {
   after: ProjectIdentitySnapshot;
 }
 
+export interface PreviewAddressOverride {
+  /** DNS-facing name only; Git branch/resource identity never changes. */
+  branchName?: string;
+  projectSlug?: string;
+  customSubdomain?: string;
+}
+
+export interface PreviewAddressAudit {
+  id: string;
+  at: string;
+  actor: string;
+  requestId?: string;
+  branchId: string;
+  action: 'save' | 'verify' | 'visit-conflict' | 'rejected' | 'release' | 'preview';
+  scope: 'branch' | 'project';
+  result: string;
+  before?: unknown;
+  after?: unknown;
+}
+
 export interface Project {
+  /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */
+  previewAddresses?: Record<string, PreviewAddressOverride>;
+  /** Append-only address/verification audit. Never accepted from request bodies. */
+  previewAddressAudit?: PreviewAddressAudit[];
   /** 独立于活动日志保留的设置变更记录；baseline 只证明观察时的状态。 */
   identityHistory?: ProjectIdentityRecord[];
   /** 父实例镜像来的只读项目（预览实例专用） */
