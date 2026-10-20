@@ -400,7 +400,7 @@ export function ReleaseWorkflowDetail({
     if (!source) {
       setPlanName(''); setPlanUrl(''); setDemandSource(''); setRequirementDescription('');
       setDepartmentName(''); setOwnerName('');
-      if (!pastedMembers.matches.length) setProjectMembers('');
+      if (temporary) setProjectMembers('');
       return;
     }
     setProjectType(source.projectType);
@@ -411,7 +411,7 @@ export function ReleaseWorkflowDetail({
     setRequirementDescription(source.requirementDescription ?? '');
     setDepartmentName(source.departmentName ?? '');
     setOwnerName(source.ownerName ?? '');
-    if (!pastedMembers.matches.length) setProjectMembers((source.projectMemberNames ?? []).join('、'));
+    if (temporary) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
@@ -449,9 +449,9 @@ export function ReleaseWorkflowDetail({
       if (matchedOwner) setOwnerId(matchedOwner.userId);
     }
     if (parsed.projectMemberNames?.length) {
-      setProjectMembers(parsed.projectMemberNames.join('、'));
       if (!temporary) pastedMembers.identify(parsed.projectMemberNames);
       else {
+        setProjectMembers(parsed.projectMemberNames.join('、'));
         const matchedIds = members.filter((member) => parsed.projectMemberNames?.includes(member.displayName)).map((member) => member.userId);
         if (matchedIds.length) setTeamIds(matchedIds);
       }
@@ -488,8 +488,8 @@ export function ReleaseWorkflowDetail({
       planUrl: planUrl.trim() || undefined,
       departmentName: departmentName.trim() || undefined,
       ownerName: ownerName.trim() || undefined,
-      projectMemberNames: projectMembers.split(/[、,，;；]/).map((name) => name.trim()).filter(Boolean),
       ...(temporary ? {
+        projectMemberNames: projectMembers.split(/[、,，;；]/).map((name) => name.trim()).filter(Boolean),
         requirementDescription: requirementDescription.trim() || undefined,
         contractParty: contractParty.trim() || undefined,
       } : {}),
@@ -808,7 +808,7 @@ export function ReleaseWorkflowDetail({
               <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field>
               <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
               <Field label="产品负责人名称"><Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} /></Field>
-              <Field label="项目组成员名称"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="企微通知中的姓名，用顿号分隔" /></Field>
+              {temporary && <Field label="项目组成员名称"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="企微通知中的姓名，用顿号分隔" /></Field>}
               {temporary && <Field label="合同签订方"><Input value={contractParty} onChange={(e) => setContractParty(e.target.value)} /></Field>}
               {temporary && <Field label="项目需求描述"><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>}
               <Field label="备注"><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>

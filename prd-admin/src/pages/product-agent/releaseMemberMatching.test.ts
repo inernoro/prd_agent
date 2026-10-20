@@ -58,9 +58,29 @@ describe('正式申领企微成员批量识别', () => {
     expect(hook).toContain('Math.min(4, pending.length)');
     expect(hook).toContain('if (current !== sequence.current) return;');
     expect(workflow).toContain('if (temporary) setTeamIds(ownerId ? [ownerId] : []);');
-    expect(workflow).toContain('if (!pastedMembers.matches.length) setProjectMembers');
+    expect(workflow).toContain('if (temporary) setProjectMembers');
     expect(workflow).toContain('pastedMembers.pendingCount > 0');
     expect(workflow).toContain('对应多位成员，请选择');
+  });
+
+  it('正式申领只有一处成员区，识别与手动增删共用选中 ID 名单', () => {
+    expect(workflow.match(/aria-label="项目组成员"/g)).toHaveLength(1);
+    expect(workflow).toContain('{temporary && <Field label="项目组成员名称">');
+    expect(workflow).toContain('useReleasePastedMembers(isNew && !temporary, addTeamMembers)');
+    expect(workflow).toContain('setTeamIds((previous) => mergeMemberIds(previous, ids))');
+    expect(workflow).toContain('selected={teamIds} onChange={setTeamIds}');
+    expect(workflow).toContain('<UserSearchSelect value=""');
+    expect(workflow).toContain('onChange(selected.filter((value) => value !== id))');
+  });
+
+  it('正式申领不提交另一份原文姓名，手动增删后由服务端按最终 ID 生成姓名', () => {
+    const submission = workflow.slice(workflow.indexOf('const res = await createRelease('), workflow.indexOf('setBusy(false);', workflow.indexOf('const res = await createRelease(')));
+    const beforeTemporary = submission.slice(0, submission.indexOf('...(temporary ? {'));
+    const afterTemporary = submission.slice(submission.indexOf('} : {}),') + '} : {}),'.length);
+    expect(beforeTemporary).not.toContain('projectMemberNames:');
+    expect(afterTemporary).not.toContain('projectMemberNames:');
+    expect(afterTemporary).toContain('teamMemberIds: teamIds');
+    expect(submission).toMatch(/\.\.\.\(temporary \? \{\s+projectMemberNames:/);
   });
 });
 
