@@ -3766,7 +3766,7 @@ export interface PreviewAddressAudit {
   actor: string;
   requestId?: string;
   branchId: string;
-  action: 'save' | 'verify' | 'visit-conflict' | 'rejected';
+  action: 'save' | 'verify' | 'visit-conflict' | 'rejected' | 'release' | 'preview';
   scope: 'branch' | 'project';
   result: string;
   before?: unknown;
@@ -3774,7 +3774,7 @@ export interface PreviewAddressAudit {
 }
 
 export interface Project {
-  /** Server-owned address overrides keyed by the unchanged Git ref. */
+  /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */
   previewAddresses?: Record<string, PreviewAddressOverride>;
   /** Append-only address/verification audit. Never accepted from request bodies. */
   previewAddressAudit?: PreviewAddressAudit[];

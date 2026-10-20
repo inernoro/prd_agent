@@ -58,7 +58,7 @@ export function previewAddressVersion(
         overrides: project.previewAddresses,
         branches: branches
           .filter((b) => b.projectId === project.id)
-          .map((b) => [b.id, b.branch])
+          .map((b) => [b.id, b.branch, b.createdAt])
           .sort(),
       }),
     )

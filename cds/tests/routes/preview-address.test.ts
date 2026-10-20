@@ -15,6 +15,7 @@ import type { BranchEntry, CdsConfig, Project } from "../../src/types.js";
 
 let dir: string, state: StateService, server: http.Server;
 let probe = vi.fn();
+let entryPath = "";
 const endpoint = "/api/branches/foo-main/preview-address";
 const draft = {
   mode: "branch",
@@ -84,6 +85,7 @@ function addBranch(project: string, branch: string, aliases: string[] = []) {
   } as BranchEntry);
 }
 beforeEach(async () => {
+  entryPath = "";
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "cds-address-"));
   state = new StateService(path.join(dir, "state.json"));
   state.load();
@@ -150,7 +152,7 @@ beforeEach(async () => {
             entry.branch,
             state.getProject(entry.projectId),
             entry.projectId,
-          ).url,
+          ).url + entryPath,
         },
       ],
     }),
@@ -188,6 +190,99 @@ describe("地址设置真实请求链与隔离", () => {
     expect(result.data.changes).toHaveLength(2);
     expect(result.data.projectSlugAfter).toBe("next");
     expect(JSON.stringify(state.getProjects())).toBe(before);
+  });
+  it("不保存预览打开当前分支而非草稿或别人的域名，不生成占用，记录可信审计", async () => {
+    const before = structuredClone(state.getProject("foo"));
+    const expectedVersion = version();
+    const result = await request("POST", `${endpoint}/open-preview`, {
+      ...draft, mode: "custom", customSubdomain: "occupied", actor: "forged",
+    });
+    expect(result.status).toBe(200);
+    expect(result.data.url).toBe("https://main-foo.preview.test");
+    expect(result.data.draftUrl).toBe("https://occupied.preview.test");
+    expect(state.getProject("foo")!.previewAddresses).toEqual(before!.previewAddresses);
+    expect(state.getProject("foo")!.slug).toBe(before!.slug);
+    expect(version()).toBe(expectedVersion);
+    expect(probe).not.toHaveBeenCalled();
+    expect(state.getProject("foo")!.previewAddressAudit!.at(-1)).toMatchObject({ action: "preview", actor: "user:verified-owner" });
+    expect((await request("POST", `${endpoint}/open-preview`, draft, "none")).status).toBe(403);
+    expect((await request("POST", `${endpoint}/open-preview`, draft, "owner", "bar")).status).toBe(403);
+  });
+  it("不保存预览使用服务端已发布入口的落地路径", async () => {
+    entryPath = "/start";
+    const result = await request("POST", `${endpoint}/open-preview`, { ...draft, branchName: "unsaved" });
+    expect(result.status).toBe(200);
+    expect(result.data.url).toBe("https://main-foo.preview.test/start");
+    expect(state.getProject("foo")!.previewAddresses?.main).toBeUndefined();
+  });
+  it("停止保留短域，删除释放给其他项目；墓碑和历史审计不占用，重建不恢复旧短域", async () => {
+    const custom = { ...draft, mode: "custom", customSubdomain: "released-name" };
+    expect((await request("PUT", endpoint, { ...custom, expectedVersion: version() })).status).toBe(200);
+    state.getBranch("foo-main")!.status = "stopped";
+    const other = "/api/branches/bar-master/preview-address";
+    expect((await request("POST", `${other}/preview`, custom)).data.collisions.length).toBeGreaterThan(0);
+    state.recordRemovedBranch({ previewSlug: "released-name", branchId: "foo-main", projectId: "foo", branch: "main", removedAt: new Date().toISOString(), reason: "abandoned" } as any);
+    state.removeBranch("foo-main");
+    await state.flush();
+    expect(state.getProject("foo")!.previewAddresses?.main).toBeUndefined();
+    expect(state.getProject("foo")!.previewAddressAudit!.at(-1)).toMatchObject({ action: "release", branchId: "foo-main" });
+    expect((await request("GET", endpoint)).status).toBe(404);
+    const candidate = await request("POST", `${other}/preview`, custom);
+    expect(candidate.data.collisions).toEqual([]);
+    const saved = await request("PUT", other, { ...custom, expectedVersion: candidate.data.version });
+    expect(saved.status).toBe(200);
+    addBranch("foo", "main");
+    expect((await request("GET", endpoint)).data.url).toBe("https://main-foo.preview.test");
+    const reloaded = new StateService(path.join(dir, "state.json"));
+    reloaded.load();
+    expect(reloaded.getProject("foo")!.previewAddresses?.main).toBeUndefined();
+    expect(reloaded.getProject("bar")!.previewAddresses?.master?.customSubdomain).toBe("released-name");
+    const proxy = new ProxyService(state) as any;
+    expect(proxy.resolveBranchEntry("released-name")?.id).toBe("bar-master");
+    const publisher = new ForwarderRoutePublisher({ state, rootDomains: ["preview.test"], outputPath: path.join(dir, "routes.json") } as any);
+    expect([...new Set((publisher as any).buildRoutes().filter((r: any) => r.host === "released-name.preview.test").map((r: any) => r.branchId))]).toEqual(["bar-master"]);
+  });
+  it("重启清理旧孤立配置且保留存活分支与审计；重复重启不重复释放", async () => {
+    state.updateProject("foo", { previewAddresses: { main: { customSubdomain: "live-name" }, deleted: { customSubdomain: "ghost-name" }, deleted2: { customSubdomain: "ghost-two" } } });
+    await state.flush();
+    const reloaded = new StateService(path.join(dir, "state.json"));
+    reloaded.load(); await reloaded.flush();
+    expect(reloaded.getProject("foo")!.previewAddresses).toEqual({ main: { customSubdomain: "live-name" } });
+    expect(reloaded.getProject("foo")!.previewAddressAudit!.filter(r => r.action === "release")).toHaveLength(2);
+    reloaded.load();
+    expect(reloaded.getProject("foo")!.previewAddressAudit!.filter(r => r.action === "release")).toHaveLength(2);
+  });
+  it("删除后同名重建属于新分支，旧弹窗的保存版本失效", async () => {
+    const oldVersion = version();
+    state.removeBranch("foo-main");
+    addBranch("foo", "main");
+    state.getBranch("foo-main")!.createdAt = "2099-01-01T00:00:00.000Z";
+    const result = await request("PUT", endpoint, { ...draft, mode: "custom", customSubdomain: "stale-name", expectedVersion: oldVersion });
+    expect(result.status).toBe(409);
+    expect(state.getProject("foo")!.previewAddresses?.main).toBeUndefined();
+  });
+  it("保存落盘期间分支被删除，即使保存失败回滚也不能复活短域占用", async () => {
+    const originalFlush = state.flush.bind(state);
+    vi.spyOn(state, "flush").mockImplementationOnce(async () => {
+      state.removeBranch("foo-main");
+      throw new Error("disk failed while branch was deleted");
+    }).mockImplementation(originalFlush);
+    const result = await request("PUT", endpoint, { ...draft, mode: "custom", customSubdomain: "race-name", expectedVersion: version() });
+    expect(result.status).toBe(503);
+    expect(state.getBranch("foo-main")).toBeUndefined();
+    expect(state.getProject("foo")!.previewAddresses?.main).toBeUndefined();
+    expect(state.getProject("foo")!.previewAddressAudit!.some(r => r.action === "release")).toBe(true);
+    const other = await request("POST", "/api/branches/bar-master/preview-address/preview", { ...draft, mode: "custom", customSubdomain: "race-name" });
+    expect(other.data.collisions).toEqual([]);
+  });
+  it("新建同名分支清除运行期间导入的遗留配置，镜像分支保留源实例地址", () => {
+    state.updateProject("foo", { previewAddresses: { late: { customSubdomain: "ghost-name" } } });
+    addBranch("foo", "late");
+    expect(state.getProject("foo")!.previewAddresses?.late).toBeUndefined();
+    state.getProject("bar")!.mirror = { source: "parent-cds", capturedAt: new Date().toISOString() } as any;
+    state.updateProject("bar", { previewAddresses: { mirrored: { customSubdomain: "source-name" } } });
+    addBranch("bar", "mirrored");
+    expect(state.getProject("bar")!.previewAddresses?.mirrored?.customSubdomain).toBe("source-name");
   });
   it("仅分支保存后发布器采用新地址，项目 slug 与另一分支保持不变", async () => {
     const result = await request("PUT", endpoint, {

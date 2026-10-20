@@ -699,7 +699,11 @@ export class ProxyService {
         Date.parse(branch.lastDeployAt || '') || 0,
       );
       const tombAt = tomb ? (Date.parse(tomb.removedAt || '') || 0) : 0;
-      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tomb && tombAt >= liveSince) {
+      // A released hostname can now belong to a different existing branch whose
+      // creation predates this tombstone. History never overrides its new owner.
+      const tombOwnsBranch = tomb && tomb.projectId === branch.projectId
+        && (tomb.branchId ? tomb.branchId === branch.id : tomb.branch === branch.branch);
+      if (this.onBranchGone && this.isHtmlNavigationRequest(req) && tombOwnsBranch && tombAt >= liveSince) {
         this.onBranchGone(tomb.previewSlug || branch.id, req, res);
         return;
       }

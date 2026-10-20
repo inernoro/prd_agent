@@ -146,7 +146,8 @@ export function createPreviewAddressRouter(deps: Deps): Router {
       at: new Date().toISOString(),
       branchId: b.id,
     };
-    const latest = state.getProject(p.id)!;
+    const latest = state.getProject(p.id);
+    if (!latest) throw new PreviewAddressError(404, "项目已删除，请返回项目列表。");
     state.updateProject(
       p.id,
       { previewAddressAudit: [...(latest.previewAddressAudit || []), record] },
@@ -231,6 +232,29 @@ export function createPreviewAddressRouter(deps: Deps): Router {
         projectSlugAfter: next.slug,
         collisions: conflictView(req, p, next),
       });
+    }),
+  );
+  router.post(
+    "/branches/:id/preview-address/open-preview",
+    route(async (req, res) => {
+      const { p, b } = context(req);
+      const draft = parseAddressDraft(req.body);
+      const next = planPreviewAddress(p, b, draft);
+      if (!root) throw new PreviewAddressError(400, "尚未配置公开预览域名，请先完成 CDS 入口设置。");
+      const url = deps.getEntries(b, root)[0]?.url;
+      if (!url) throw new PreviewAddressError(409, "本分支尚无可预览入口，请先配置服务入口。");
+      const draftUrl = buildPreviewUrlForProject(root, b.branch, next, p.id).url;
+      const openedVersion = previewAddressVersion(p, state.getAllBranches());
+      await audit(req, p, b, {
+        action: "preview", scope: "branch", result: "已请求分支页面预览，未保存地址或占用新域名",
+        before: url, after: { url, draftUrl },
+      });
+      // Only open the currently published entry, including its configured landing
+      // path. Draft hostnames are never activated or used as navigation targets.
+      const current = context(req);
+      if (current.b !== b || previewAddressVersion(current.p, state.getAllBranches()) !== openedVersion)
+        throw new PreviewAddressError(409, "分支或地址已变化，请重新进入地址设置后预览。");
+      res.json({ url, draftUrl, message: "新地址保存后生效。本次打开当前分支页面，不占用草稿域名。" });
     }),
   );
   router.put(
@@ -338,7 +362,8 @@ export function createPreviewAddressRouter(deps: Deps): Router {
           message: record.result,
           details: { ...record },
         });
-        const saved = state.getProject(p.id)!;
+        const { p: saved, b: currentBranch } = context(req);
+        if (currentBranch !== b) throw new PreviewAddressError(409, "分支已重新创建，请重新进入地址设置。");
         res.json({
           ...view(req, saved, b),
           message: "配置已保存，正在检查公开入口。",

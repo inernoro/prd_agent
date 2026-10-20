@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  Eye,
   Check,
   History,
   LoaderCircle,
@@ -135,6 +136,7 @@ export function WebEntryConfigDialog({
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [openingPreview, setOpeningPreview] = useState(false);
   const [checks, setChecks] = useState<Verification[]>([]);
   const [auditOpen, setAuditOpen] = useState(false);
   const [records, setRecords] = useState<Audit[]>([]);
@@ -152,6 +154,7 @@ export function WebEntryConfigDialog({
     setPreview(null);
     setChecks([]);
     setBusy(false);
+    setOpeningPreview(false);
     setRecords([]);
     setAuditOpen(false);
     try {
@@ -322,6 +325,26 @@ export function WebEntryConfigDialog({
       setError(errorText(err));
       setBusy(false);
       if (auditOpen) void loadAudit();
+    }
+  }
+  async function openPreview() {
+    if (!draft || openingPreview) return;
+    const target = window.open("about:blank", "_blank");
+    if (!target) { setError("浏览器阻止了新窗口，请允许弹出窗口后重试。"); return; }
+    target.opener = null;
+    const run = generation.current;
+    setOpeningPreview(true);
+    setError("");
+    try {
+      const result = await apiRequest<{ url: string }>(`${base}/open-preview`, { method: "POST", body: draft });
+      if (run !== generation.current) { target.close(); return; }
+      target.location.href = result.url;
+      if (auditOpen) void loadAudit();
+    } catch (err) {
+      target.close();
+      if (run === generation.current) setError(errorText(err));
+    } finally {
+      if (run === generation.current) setOpeningPreview(false);
     }
   }
   async function jump(collision: Collision) {
@@ -544,7 +567,15 @@ export function WebEntryConfigDialog({
                     </strong>
                     <span>.{config.rootDomain}</span>
                   </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-3 border-t pt-3">
+                    <Button type="button" variant="outline" size="sm" disabled={busy || openingPreview || invalid} onClick={() => void openPreview()}>
+                      {openingPreview ? <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Eye className="mr-1.5 h-3.5 w-3.5" />}
+                      {openingPreview ? "正在打开预览…" : "预览分支页面（不保存）"}
+                    </Button>
+                    <p className="text-[0.6875rem] text-muted-foreground">新地址保存后生效；预览打开当前分支，不占用新域名。</p>
+                  </div>
                 </section>
+                <p className="text-[0.6875rem] text-muted-foreground">地址配置随本分支保存。删除分支会释放其专属地址；历史审计保留，不占用域名。停止分支会保留地址。</p>
                 {(previewError || invalid) && (
                   <p className="text-xs text-destructive" role="alert">
                     {previewError ||
