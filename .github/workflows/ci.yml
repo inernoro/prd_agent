@@ -382,7 +382,8 @@ jobs:
     name: Server Build & Test
     needs: changes
     if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
+    # 仅此隔离验证分支固定运行机；Mongo 8在最新运行机的6.19内核上启动前即拒绝运行。
+    runs-on: ubuntu-22.04
     services:
       mongodb:
         image: mongo:8.0
