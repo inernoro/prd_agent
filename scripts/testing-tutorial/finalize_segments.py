@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--root',type=Path,required=True)
 p.add_argument('--partial',action='store_true')
+p.add_argument('--version',default='20261020-第一二章审阅版1',help='交付清单版本，不改变逐段内容哈希')
 a=p.parse_args();root=a.root.resolve()
 spec=json.loads((root/'segments.json').read_text());entries=[];frames=[];pending=[]
 for seg in spec['segments']:
@@ -31,7 +32,7 @@ for seg in spec['segments']:
    provenance.write_text(json.dumps(wanted,ensure_ascii=False,indent=2)+'\n')
   frames.append(wanted)
 if pending and not a.partial:raise SystemExit('仍有未交付视频：'+', '.join(pending))
-manifest={'schema':1,'version':'20261020-第一二章审阅版1','goal':spec['goal'],'source_commit':spec['source_commit'],
+manifest={'schema':1,'version':a.version,'goal':spec['goal'],'source_commit':spec['source_commit'],
  'updated_at':datetime.now(timezone.utc).isoformat(),'status':'complete_review_copy' if not pending else 'partial_rendering',
  'segments':entries,'pending_segments':pending,'actual_total_seconds':sum(x['actual_duration_seconds'] for x in entries),
  'chapters':[{'chapter':c,'complete':all(x['id'] in {e['id'] for e in entries} for x in spec['segments'] if x['chapter']==c),
