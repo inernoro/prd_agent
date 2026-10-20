@@ -753,6 +753,57 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             .CountDocumentsAsync(item => item.Id == issued.Id));
     }
 
+    [DesignScopeMongoFact]
+    public async Task HtmlPptConvertAndManualEdit_InheritOneFrozenTaskBudgetScope()
+    {
+        var outline = new MdToPptRun
+        {
+            Id = "outline-budget-root", UserId = "owner", Op = "outline", Status = "done",
+            SourcePlanHash = new string('a', 64),
+        };
+        var convert = new MdToPptRun
+        {
+            Id = "convert-budget-child", UserId = "owner", Op = "convert", Status = "done",
+            ParentOutlineRunId = outline.Id,
+        };
+        var manual = new MdToPptRun
+        {
+            Id = "manual-budget-child", UserId = "owner", Op = "manual-edit", Status = "running",
+            ParentRunId = convert.Id,
+        };
+        await _db.MdToPptRuns.InsertManyAsync(new[] { outline, convert, manual });
+        await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .InsertOneAsync(new GatewayRuntimeBudgetScopeRecord
+            {
+                Id = "scope-ppt-chain", TenantId = GatewayTenantDefaults.InternalTenantId,
+                RootOutlineRunId = outline.Id, UserId = "owner", SourcePlanHash = outline.SourcePlanHash,
+                Status = "active", MaxOutputTokens = 8192, ExpiresAt = Now.AddHours(1),
+            });
+        var designRun = Run(manual.Id, RunStatuses.Running);
+        designRun.Operation = DesignArtifactOperations.Edit;
+        designRun.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        designRun.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "default-chat-curated" };
+        await InsertAsync(designRun, CurrentScope);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://gateway",
+            ["LlmGateway:InternalTenantId"] = GatewayTenantDefaults.InternalTenantId,
+        }).Build();
+        var environment = new Mock<IHostEnvironment>();
+        environment.SetupGet(item => item.EnvironmentName).Returns("Production");
+        var service = new DesignArtifactGatewayGrantService(_gateway, _db, configuration, environment.Object);
+
+        var issued = await service.IssueAsync(designRun, Now.AddMinutes(15), default);
+        var grant = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .Find(item => item.Id == issued.Id)
+            .SingleAsync();
+
+        Assert.Equal("scope-ppt-chain", grant.BudgetScopeId);
+        Assert.Equal(8192, grant.BudgetMaxOutputTokens);
+        Assert.Equal(AppCallerRegistry.MdToPptAgent.Generation.Patch, grant.AppCallerCode);
+        Assert.Equal(new string('a', 64), outline.SourcePlanHash);
+    }
+
     private static DesignArtifactRun Run(string id, string status) => new()
     {
         Id = id, UserId = "owner", Status = status, CreatedAt = Now.AddMinutes(-10), UpdatedAt = Now.AddMinutes(-5),

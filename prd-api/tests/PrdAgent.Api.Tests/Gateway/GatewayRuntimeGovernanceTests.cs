@@ -1,6 +1,9 @@
 using System.Reflection;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,11 +19,388 @@ using PrdAgent.LlmGatewayHost;
 using Shouldly;
 using Xunit;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Services.MdToPpt;
 
 namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class GatewayRuntimeGovernanceTests
 {
+    [Fact]
+    public async Task TaskBudget_ActivationRejectsOrdinaryCallerBeforeDatabaseAccess()
+    {
+        var controller = new DesignArtifactRuntimeBudgetController(
+            null!,
+            new ConfigurationBuilder().Build(),
+            NullLogger<DesignArtifactRuntimeBudgetController>.Instance)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext
+                {
+                    User = new ClaimsPrincipal(new ClaimsIdentity(
+                        [new Claim(ClaimTypes.NameIdentifier, "user-a")],
+                        "test")),
+                },
+            },
+        };
+
+        var result = await controller.Activate(new ActivateDesignArtifactRuntimeBudgetRequest(), CancellationToken.None);
+
+        result.ShouldBeOfType<ForbidResult>();
+    }
+
+    [Fact]
+    public void TaskBudget_ActivationRequiresFrozenRouteTieredRatesAndExactOutputCap()
+    {
+        var request = new ActivateDesignArtifactRuntimeBudgetRequest
+        {
+            SourcePlanHash = new string('a', 64), ImmutableCarryUsd = 34.493745m, AuthorizedLimitUsd = 50m,
+            InputUsdPerMillion = 4m, OutputUsdPerMillion = 20m,
+            LongContextThresholdTokens = 272_000, LongContextInputUsdPerMillion = 8m,
+            LongContextOutputUsdPerMillion = 30m, MaxOutputTokens = 8192,
+            ExpectedLogicalModelPublicId = "default-chat-curated", ExpectedProvider = "apiyi-openai",
+            ExpectedModel = "gpt-5.6-sol", ExpiresAt = DateTime.UtcNow.AddDays(1),
+        };
+
+        DesignArtifactRuntimeBudgetController.Validate(request).ShouldBeNull();
+        request.MaxOutputTokens = 8193;
+        DesignArtifactRuntimeBudgetController.Validate(request).ShouldBe("输出硬上限必须为 8192");
+        request.MaxOutputTokens = 8192;
+        request.LongContextThresholdTokens = 0;
+        DesignArtifactRuntimeBudgetController.Validate(request).ShouldBe("长上下文估算费率无效");
+        request.LongContextThresholdTokens = 272_000;
+        request.ExpectedProvider = string.Empty;
+        DesignArtifactRuntimeBudgetController.Validate(request).ShouldBe("任务物理路由无效");
+    }
+
+    [Fact]
+    public async Task TaskBudget_ConcurrentRunsShareOneAtomicCapAndUnknownUsageIsNotFree()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var budgets = scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        await budgets.InsertOneAsync(new GatewayRuntimeBudgetScopeRecord
+        {
+            Id = "scope-a", TenantId = "tenant-a", RootOutlineRunId = "outline-a", UserId = "user-a",
+            SourcePlanHash = new string('a', 64), ImmutableCarryUsd = 34m, AuthorizedLimitUsd = 34.4m,
+            SpentUsd = 34m, InputUsdPerMillion = 4m, OutputUsdPerMillion = 20m,
+            LongContextThresholdTokens = 272_000,
+            LongContextInputUsdPerMillion = 8m,
+            LongContextOutputUsdPerMillion = 30m,
+            InputByteTokenMultiplier = 1, MaxOutputTokens = 8_192, ExpiresAt = DateTime.UtcNow.AddHours(1),
+            ExpectedLogicalModelPublicId = "default-chat-curated",
+            ExpectedProvider = "apiyi-openai",
+            ExpectedModel = "gpt-5.6-sol",
+        });
+        var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
+        var grants = new[]
+        {
+            ProtectedGrant("grant-a", "run-generate"),
+            ProtectedGrant("grant-b", "run-manual"),
+        };
+        await scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .InsertManyAsync(grants);
+
+        var decisions = await Task.WhenAll(grants.Select((grant, index) => counter.TryReserveAsync(
+            grant,
+            new GatewayRuntimeGrantCallRequest(
+                $"request-{index}", 10_000, 8_192,
+                "default-chat-curated", "apiyi-openai", "gpt-5.6-sol"),
+            CancellationToken.None)));
+
+        decisions.Count(item => item.Allowed).ShouldBe(1);
+        decisions.Count(item => item.ErrorCode == "GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED").ShouldBe(1);
+        var winner = decisions.Select((item, index) => (item, index)).Single(x => x.item.Allowed);
+        await counter.FinalizeAsync(grants[winner.index], $"request-{winner.index}", null, "transport-failed", CancellationToken.None);
+        var stored = await budgets.Find(x => x.Id == "scope-a").SingleAsync();
+        stored.ReservedUsd.ShouldBe(0m);
+        stored.SpentUsd.ShouldBe(34.220224m);
+        stored.Reservations.Single().Status.ShouldBe("settled-unknown");
+
+        static GatewayRuntimeGrantRecord ProtectedGrant(string id, string runId) => new()
+        {
+            Id = id, KeyHash = $"hash-{id}", TenantId = "tenant-a", RunId = runId,
+            UserId = "user-a", AppCallerCode = "md-to-ppt-agent.html-generate::chat",
+            MaxCalls = 256, ExpiresAt = DateTime.UtcNow.AddHours(1), BudgetScopeId = "scope-a",
+            BudgetMaxOutputTokens = 8_192,
+        };
+    }
+
+    [Fact]
+    public async Task TaskBudget_UnboundGrantKeepsExistingCallOnlyBehavior()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "unbound", KeyHash = "hash-unbound", TenantId = "tenant-a", RunId = "run-a",
+            AppCallerCode = "generate-html::chat", MaxCalls = 1, ExpiresAt = DateTime.UtcNow.AddHours(1),
+        };
+        await scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants").InsertOneAsync(grant);
+        var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
+
+        var decision = await counter.TryReserveAsync(
+            grant, new GatewayRuntimeGrantCallRequest("request-a", 100, 100), CancellationToken.None);
+
+        decision.Allowed.ShouldBeTrue();
+        (await scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+            .CountDocumentsAsync(_ => true)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task TaskBudget_FreshOutlineClaimsExactSourceAndRejectsMismatchBeforeGatewayRequest()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var now = DateTime.UtcNow;
+        var budgets = scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        await budgets.InsertManyAsync(new[]
+        {
+            PendingScope("scope-exact", "owner-a", new string('a', 64), now.AddHours(1)),
+            PendingScope("scope-other", "owner-a", new string('b', 64), now.AddHours(1)),
+            PendingScope("scope-expired", "owner-b", new string('c', 64), now.AddMinutes(-1)),
+            PendingScope("scope-closed", "owner-c", new string('d', 64), now.AddHours(1), "closed"),
+        });
+
+        var outline = new MdToPptRun
+        {
+            Id = "outline-a", UserId = "owner-a", Op = "outline", SourcePlanHash = new string('a', 64),
+        };
+        (await MdToPptController.ClaimPendingTaskBudgetAsync(
+            budgets, "tenant-a", outline, now, CancellationToken.None)).ShouldBe("scope-exact");
+        // 同一 run 在进程重启后重进认领逻辑仍返回原 scope，不会退成无保护发送。
+        (await MdToPptController.ClaimPendingTaskBudgetAsync(
+            budgets, "tenant-a", outline, now, CancellationToken.None)).ShouldBe("scope-exact");
+
+        var mismatch = await Should.ThrowAsync<MdToPptSourcePlanException>(() =>
+            MdToPptController.ClaimPendingTaskBudgetAsync(
+                budgets,
+                "tenant-a",
+                new MdToPptRun { Id = "outline-mismatch", UserId = "owner-a", Op = "outline", SourcePlanHash = new string('e', 64) },
+                now,
+                CancellationToken.None));
+        mismatch.Code.ShouldBe("task_budget_source_mismatch");
+
+        var expired = await Should.ThrowAsync<MdToPptSourcePlanException>(() =>
+            MdToPptController.ClaimPendingTaskBudgetAsync(
+                budgets,
+                "tenant-a",
+                new MdToPptRun { Id = "outline-expired", UserId = "owner-b", Op = "outline", SourcePlanHash = new string('c', 64) },
+                now,
+                CancellationToken.None));
+        expired.Code.ShouldBe("task_budget_inactive");
+
+        // 已显式关闭的旧 scope 不会永久挂住同一用户的以后任务；其他 owner 也不受影响。
+        (await MdToPptController.ClaimPendingTaskBudgetAsync(
+            budgets,
+            "tenant-a",
+            new MdToPptRun { Id = "outline-closed", UserId = "owner-c", Op = "outline", SourcePlanHash = new string('d', 64) },
+            now,
+            CancellationToken.None)).ShouldBeNull();
+        (await MdToPptController.ClaimPendingTaskBudgetAsync(
+            budgets,
+            "tenant-a",
+            new MdToPptRun { Id = "outline-unrelated", UserId = "owner-z", Op = "outline", SourcePlanHash = new string('e', 64) },
+            now,
+            CancellationToken.None)).ShouldBeNull();
+
+        static GatewayRuntimeBudgetScopeRecord PendingScope(
+            string id, string owner, string hash, DateTime expiry, string status = "active") => new()
+        {
+            Id = id, TenantId = "tenant-a", UserId = owner, SourcePlanHash = hash,
+            RootOutlineRunId = string.Empty, Status = status, ExpiresAt = expiry,
+        };
+    }
+
+    [Fact]
+    public async Task TaskBudget_LongContextUsesHigherTierAndTrustedUsageSettlesWithoutCacheDiscount()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var budgets = scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        await budgets.InsertOneAsync(BudgetScope("scope-long", authorized: 50m));
+        var grants = scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        var grant = ProtectedGrant("grant-long", "run-long", "scope-long");
+        await grants.InsertOneAsync(grant);
+        var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
+
+        var admission = await counter.TryReserveAsync(
+            grant,
+            new GatewayRuntimeGrantCallRequest(
+                "request-long", 272_001, 8192,
+                "default-chat-curated", "apiyi-openai", "gpt-5.6-sol"),
+            CancellationToken.None);
+
+        admission.Allowed.ShouldBeTrue();
+        var reserved = await budgets.Find(item => item.Id == "scope-long").SingleAsync();
+        reserved.Reservations.Single().PricingTier.ShouldBe("long-context");
+        reserved.Reservations.Single().InputTokenUpperBound.ShouldBe(276_097);
+        reserved.Reservations.Single().ReservedUsd.ShouldBe(2.454536m);
+
+        await counter.FinalizeAsync(
+            grant,
+            "request-long",
+            new GatewayTokenUsage { InputTokens = 50_858, CacheReadInputTokens = 50_000, OutputTokens = 6_432 },
+            "succeeded",
+            CancellationToken.None);
+        var settled = await budgets.Find(item => item.Id == "scope-long").SingleAsync();
+        settled.ReservedUsd.ShouldBe(0m);
+        // 可靠 usage 按实际 50,858 输入落回标准档；cached input 不享额外折扣，也不重复计费。
+        settled.SpentUsd.ShouldBe(34.332072m);
+        settled.Reservations.Single().SettledUsd.ShouldBe(0.332072m);
+        settled.Reservations.Single().Status.ShouldBe("settled");
+    }
+
+    [Fact]
+    public async Task TaskBudget_OutlineConvertAndManualShareScopeAndEachRetryNeedsANewReservation()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var budgets = scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        await budgets.InsertOneAsync(BudgetScope("scope-chain", authorized: 50m));
+        var grants = scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        var convert = ProtectedGrant("grant-convert", "convert-a", "scope-chain");
+        var manual = ProtectedGrant("grant-manual", "manual-a", "scope-chain");
+        manual.AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Patch;
+        await grants.InsertManyAsync(new[] { convert, manual });
+        var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
+        var outlineRequest = new GatewayTaskBudgetRequest(
+            "scope-chain", "tenant-a", "user-a", "outline-a",
+            AppCallerRegistry.MdToPptAgent.Generation.Outline, "outline:outline-a", "request-outline",
+            20_000, 8192, "default-chat-curated", "apiyi-openai", "gpt-5.6-sol", "offering-a");
+
+        (await counter.TryReserveTaskAsync(outlineRequest, CancellationToken.None)).Allowed.ShouldBeTrue();
+        await counter.FinalizeTaskAsync(
+            outlineRequest, new GatewayTokenUsage { InputTokens = 10_000, OutputTokens = 1_000 },
+            "succeeded", CancellationToken.None);
+        (await counter.TryReserveAsync(convert,
+            new GatewayRuntimeGrantCallRequest(
+                "request-convert", 30_000, 8192,
+                "default-chat-curated", "apiyi-openai", "gpt-5.6-sol"),
+            CancellationToken.None)).Allowed.ShouldBeTrue();
+        await counter.FinalizeAsync(convert, "request-convert", null, "failed", CancellationToken.None);
+        (await counter.TryReserveAsync(manual,
+            new GatewayRuntimeGrantCallRequest(
+                "request-manual", 25_000, 8192,
+                "default-chat-curated", "apiyi-openai", "gpt-5.6-sol"),
+            CancellationToken.None)).Allowed.ShouldBeTrue();
+        await counter.FinalizeAsync(manual, "request-manual", null, "cancelled", CancellationToken.None);
+
+        var duplicate = await counter.TryReserveAsync(manual,
+            new GatewayRuntimeGrantCallRequest(
+                "request-manual", 25_000, 8192,
+                "default-chat-curated", "apiyi-openai", "gpt-5.6-sol"),
+            CancellationToken.None);
+        duplicate.Allowed.ShouldBeFalse();
+        duplicate.ErrorCode.ShouldBe("GATEWAY_RUNTIME_TASK_REQUEST_DUPLICATE");
+        var retry = await counter.TryReserveAsync(manual,
+            new GatewayRuntimeGrantCallRequest(
+                "request-manual-retry", 25_000, 8192,
+                "default-chat-curated", "apiyi-openai", "gpt-5.6-sol"),
+            CancellationToken.None);
+        retry.Allowed.ShouldBeTrue();
+
+        var stored = await budgets.Find(item => item.Id == "scope-chain").SingleAsync();
+        stored.Reservations.Select(item => item.RequestId).ShouldBe(new[]
+        {
+            "request-outline", "request-convert", "request-manual", "request-manual-retry",
+        });
+        stored.Reservations.Single(item => item.RequestId == "request-convert").Status.ShouldBe("settled-unknown");
+        stored.Reservations.Single(item => item.RequestId == "request-manual").Status.ShouldBe("settled-unknown");
+        stored.ReservedUsd.ShouldBeGreaterThan(0m);
+    }
+
+    [Fact]
+    public async Task TaskBudget_RouteMismatchIsRejectedBeforeReservation()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var budgets = scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        await budgets.InsertOneAsync(BudgetScope("scope-route", authorized: 50m));
+        var grants = scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        var grant = ProtectedGrant("grant-route", "convert-route", "scope-route");
+        await grants.InsertOneAsync(grant);
+        var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
+
+        var admission = await counter.TryReserveAsync(
+            grant,
+            new GatewayRuntimeGrantCallRequest(
+                "request-wrong-route", 30_000, 8192,
+                "default-chat-curated", "other-provider", "gpt-5.6-sol"),
+            CancellationToken.None);
+
+        admission.Allowed.ShouldBeFalse();
+        admission.ErrorCode.ShouldBe("GATEWAY_RUNTIME_TASK_ROUTE_MISMATCH");
+        var stored = await budgets.Find(item => item.Id == "scope-route").SingleAsync();
+        stored.Reservations.ShouldBeEmpty();
+        stored.ReservedUsd.ShouldBe(0m);
+        (await grants.Find(item => item.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task TaskBudget_CloseRefusesInflightAndPreservesSpentAndUnknownSettlements()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var budgets = scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        var record = BudgetScope("scope-close", authorized: 50m);
+        record.ReservedUsd = 1.25m;
+        record.Reservations.Add(new GatewayRuntimeBudgetReservationRecord
+        {
+            RequestId = "request-running", GrantId = "grant", Status = "reserved", ReservedUsd = 1.25m,
+        });
+        await budgets.InsertOneAsync(record);
+
+        (await DesignArtifactRuntimeBudgetController.CloseScopeAsync(
+            budgets, "scope-close", "user-a", DateTime.UtcNow, CancellationToken.None)).ShouldBeNull();
+        await budgets.UpdateOneAsync(
+            item => item.Id == "scope-close",
+            Builders<GatewayRuntimeBudgetScopeRecord>.Update
+                .Set(item => item.ReservedUsd, 0m)
+                .Set("Reservations.0.Status", "settled-unknown")
+                .Set("Reservations.0.SettledUsd", 1.25m)
+                .Set(item => item.SpentUsd, 35.25m));
+
+        var closedAt = DateTime.UtcNow;
+        var closed = await DesignArtifactRuntimeBudgetController.CloseScopeAsync(
+            budgets, "scope-close", "user-a", closedAt, CancellationToken.None);
+
+        closed.ShouldNotBeNull();
+        closed!.Status.ShouldBe("closed");
+        closed.SpentUsd.ShouldBe(35.25m);
+        closed.Reservations.Single().Status.ShouldBe("settled-unknown");
+        closed.Reservations.Single().SettledUsd.ShouldBe(1.25m);
+        closed.ClosedByUserId.ShouldBe("user-a");
+        (await DesignArtifactRuntimeBudgetController.CloseScopeAsync(
+            budgets, "scope-close", "other-user", DateTime.UtcNow, CancellationToken.None)).ShouldBeNull();
+    }
+
+    private static GatewayRuntimeBudgetScopeRecord BudgetScope(string id, decimal authorized) => new()
+    {
+        Id = id, TenantId = "tenant-a", RootOutlineRunId = "outline-a", UserId = "user-a",
+        SourcePlanHash = new string('a', 64), ImmutableCarryUsd = 34m, AuthorizedLimitUsd = authorized,
+        SpentUsd = 34m, InputUsdPerMillion = 4m, OutputUsdPerMillion = 20m,
+        LongContextThresholdTokens = 272_000, LongContextInputUsdPerMillion = 8m,
+        LongContextOutputUsdPerMillion = 30m, InputByteTokenMultiplier = 1, MaxOutputTokens = 8192,
+        ExpectedLogicalModelPublicId = "default-chat-curated", ExpectedProvider = "apiyi-openai",
+        ExpectedModel = "gpt-5.6-sol", ExpiresAt = DateTime.UtcNow.AddHours(1),
+    };
+
+    private static GatewayRuntimeGrantRecord ProtectedGrant(string id, string runId, string scopeId) => new()
+    {
+        Id = id, KeyHash = $"hash-{id}", TenantId = "tenant-a", RunId = runId,
+        UserId = "user-a", AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+        MaxCalls = 256, ExpiresAt = DateTime.UtcNow.AddHours(1), BudgetScopeId = scopeId,
+        BudgetMaxOutputTokens = 8192,
+    };
     [Fact]
     public void PromptPolicy_MergesPrefixRequestAndSuffixInFixedOrder()
     {
@@ -1867,7 +2247,10 @@ public sealed class GatewayRuntimeGovernanceTests
             requestPath: "/gw/v1/responses");
         (await grants.Find(x => x.Id == "grant-1").SingleAsync()).CallCount.ShouldBe(0);
         var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
-        var reserved = await counter.TryReserveAsync(allowed.RuntimeGrant!, CancellationToken.None);
+        var reserved = await counter.TryReserveAsync(
+            allowed.RuntimeGrant!,
+            new GatewayRuntimeGrantCallRequest("runtime-request-1", 128, 8_192),
+            CancellationToken.None);
         var exhausted = await authorizer.AuthorizeAsync(
             key, "different-legacy-key", "map", caller, "gw-native", "invoke", null, CancellationToken.None,
             requestPath: "/gw/v1/responses");

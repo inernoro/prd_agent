@@ -67,6 +67,7 @@ public class MdToPptController : ControllerBase
         + "缺字段或漏 id 的大纲会被服务端整份作废，必须重来。";
 
     private readonly MongoDbContext _db;
+    private readonly LlmGatewayDataContext _gatewayData;
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
@@ -75,6 +76,7 @@ public class MdToPptController : ControllerBase
     private readonly IHostedSiteService _siteService;
     private readonly IHtmlPptPublishCoordinator _publishCoordinator;
     private readonly ILogger<MdToPptController> _logger;
+    private readonly string _gatewayTenantId;
 
     // PPT 系统提示词（按风格主题生成不同设计系统）。
 
@@ -197,6 +199,7 @@ public class MdToPptController : ControllerBase
 
     public MdToPptController(
         MongoDbContext db,
+        LlmGatewayDataContext gatewayData,
         ILlmGateway gateway,
         ILLMRequestContextAccessor llmRequestContext,
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
@@ -204,9 +207,11 @@ public class MdToPptController : ControllerBase
         IHtmlPptOpenDesignRunService openDesignRuns,
         IHostedSiteService siteService,
         IHtmlPptPublishCoordinator publishCoordinator,
+        IConfiguration configuration,
         ILogger<MdToPptController> logger)
     {
         _db = db;
+        _gatewayData = gatewayData;
         _gateway = gateway;
         _llmRequestContext = llmRequestContext;
         _knowledgeSnapshots = knowledgeSnapshots;
@@ -214,6 +219,9 @@ public class MdToPptController : ControllerBase
         _openDesignRuns = openDesignRuns;
         _siteService = siteService;
         _publishCoordinator = publishCoordinator;
+        _gatewayTenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
         _logger = logger;
     }
 
@@ -518,6 +526,17 @@ public class MdToPptController : ControllerBase
             sourcePlanPageCount: sourcePlan != null ? targetPages : 0,
             sourcePlanJson: sourcePlanCatalog,
             sourcePlanHash: sourcePlanCatalog == null ? null : ComputeTextHash(sourcePlanCatalog));
+        string? taskBudgetScopeId;
+        try
+        {
+            taskBudgetScopeId = await ClaimPendingTaskBudgetAsync(run, CancellationToken.None);
+        }
+        catch (MdToPptSourcePlanException ex)
+        {
+            await PersistRunErrorAsync(run, ex.Message, ex.Code);
+            await WriteEventAsync("error", new { message = ex.Message, code = ex.Code, runId = run.Id });
+            return;
+        }
         await WriteEventAsync("run", new
         {
             runId = run.Id,
@@ -573,7 +592,7 @@ public class MdToPptController : ControllerBase
             RunId: run.Id));
 
         var gatewayRequest = BuildGatewayOutlineRequest(
-            systemPrompt, userContent, requestId, userId, run.Id, 90);
+            systemPrompt, userContent, requestId, userId, run.Id, 90, taskBudgetScopeId);
 
         var fullText = new StringBuilder();
         var lineBuf = new StringBuilder();   // 当前未闭合行
@@ -2174,7 +2193,8 @@ public class MdToPptController : ControllerBase
         string requestId,
         string userId,
         string runId,
-        int timeoutSeconds)
+        int timeoutSeconds,
+        string? taskBudgetScopeId = null)
     {
         return new GatewayRequest
         {
@@ -2197,10 +2217,76 @@ public class MdToPptController : ControllerBase
                 RunId = runId,
                 SessionId = runId,
                 UserId = userId,
+                TaskBudgetScopeId = taskBudgetScopeId,
                 SourceSystem = "map",
                 IngressProtocol = "gw-native",
             },
         };
+    }
+
+    private async Task<string?> ClaimPendingTaskBudgetAsync(MdToPptRun run, CancellationToken ct)
+        => await ClaimPendingTaskBudgetAsync(
+            _gatewayData.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes"),
+            _gatewayTenantId,
+            run,
+            DateTime.UtcNow,
+            ct);
+
+    internal static async Task<string?> ClaimPendingTaskBudgetAsync(
+        IMongoCollection<GatewayRuntimeBudgetScopeRecord> scopes,
+        string tenantId,
+        MdToPptRun run,
+        DateTime now,
+        CancellationToken ct)
+    {
+        if (run.Op != "outline" || string.IsNullOrWhiteSpace(run.SourcePlanHash)) return null;
+        var claimed = await scopes.FindOneAndUpdateAsync(
+            Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.UserId, run.UserId),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.TenantId, tenantId),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.SourcePlanHash, run.SourcePlanHash),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.RootOutlineRunId, string.Empty),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.Status, "active"),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Gt(item => item.ExpiresAt, now)),
+            Builders<GatewayRuntimeBudgetScopeRecord>.Update
+                .Set(item => item.RootOutlineRunId, run.Id)
+                .Set(item => item.UpdatedAt, now),
+            new FindOneAndUpdateOptions<GatewayRuntimeBudgetScopeRecord> { ReturnDocument = ReturnDocument.After },
+            ct);
+        if (claimed is null)
+        {
+            var matchingScope = await scopes.Find(
+                    Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+                        Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.UserId, run.UserId),
+                        Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.TenantId, tenantId),
+                        Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.SourcePlanHash, run.SourcePlanHash),
+                        Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne(item => item.Status, "closed")))
+                .SortByDescending(item => item.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+            if (matchingScope is not null)
+            {
+                if (matchingScope.Status == "active"
+                    && matchingScope.ExpiresAt > now
+                    && matchingScope.RootOutlineRunId == run.Id)
+                    return matchingScope.Id;
+                throw new MdToPptSourcePlanException(
+                    "task_budget_inactive",
+                    "本次任务的额度保护已被其他运行认领、已过期或异常，未发送模型请求；请由管理员核对任务额度");
+            }
+            var pendingForOwner = await scopes.CountDocumentsAsync(
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+                    Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.UserId, run.UserId),
+                    Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.TenantId, tenantId),
+                    Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.RootOutlineRunId, string.Empty),
+                    Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.Status, "active"),
+                    Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Gt(item => item.ExpiresAt, now)),
+                cancellationToken: ct);
+            if (pendingForOwner > 0)
+                throw new MdToPptSourcePlanException(
+                    "task_budget_source_mismatch",
+                    "本次任务的冻结资料与额度授权不一致，未发送模型请求；请保留原资料重新开始");
+        }
+        return claimed?.Id;
     }
 
     internal static string ComputeSourcePlanHash(IReadOnlyList<DesignKnowledgeSnapshot> sources,

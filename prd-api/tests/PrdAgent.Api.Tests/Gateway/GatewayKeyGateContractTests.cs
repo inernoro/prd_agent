@@ -259,6 +259,103 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task NativeResponses_TaskBudgetDenialOccursAfterPhysicalCapAndBeforeProviderSend()
+    {
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "grant-budget-denied",
+            TenantId = "tenant-test",
+            KeyPrefix = "gwrg_test",
+            KeyHash = "hash",
+            RunId = "ppt-run",
+            UserId = "ppt-owner",
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate,
+            Environment = "production",
+            Model = "default-chat-curated",
+            BudgetScopeId = "scope-ppt",
+            BudgetMaxOutputTokens = 8192,
+            MaxCalls = 32,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(10),
+        };
+        var counter = new CapturingRuntimeGrantCallCounter
+        {
+            RuntimeAdmission = new(
+                false, StatusCodes.Status429TooManyRequests,
+                "GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED",
+                "runtime task budget is insufficient before send"),
+        };
+        await using var app = BuildHostWithGateway(
+            NativeResponsesGateway(
+                NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated"),
+                handler),
+            keyAuthorizer: new CapturingScopedKeyAuthorizer(_ => true, runtimeGrant: grant),
+            runtimeGrantCallCounter: counter);
+        await app.StartAsync();
+        try
+        {
+            var body = JsonNode.Parse("""
+            {
+              "model":"default-chat-curated",
+              "store":false,
+              "input":"build the deck",
+              "max_output_tokens":99999
+            }
+            """)!.AsObject();
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(body, "ppt-budget-denied"));
+
+            response.StatusCode.ShouldBe(HttpStatusCode.TooManyRequests);
+            handler.Count.ShouldBe(0);
+            counter.CallCount.ShouldBe(1);
+            counter.LastRuntimeRequest.ShouldNotBeNull();
+            counter.LastRuntimeRequest!.EffectiveMaxOutputTokens.ShouldBe(8192);
+            counter.LastRuntimeRequest.LogicalModelPublicId.ShouldBe("default-chat-curated");
+            counter.LastRuntimeRequest.Model.ShouldBe("gpt-5.6-sol");
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task ChatStream_TaskBudgetDenialOccursAfterPhysicalBodyAndBeforeProviderSend()
+    {
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var gateway = NativeResponsesGateway(
+            NativeResponsesResolver(model: "gpt-5.6-sol", logicalModelPublicId: "default-chat-curated"),
+            handler);
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.MdToPptAgent.Generation.Outline,
+            ModelType = ModelTypes.Chat,
+            ExpectedModel = "default-chat-curated",
+            Stream = true,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "plan" }),
+                ["max_tokens"] = 8192,
+            },
+            Context = new GatewayRequestContext { RequestId = "outline-budget-denied", TenantId = "tenant-test" },
+        };
+        GatewayPhysicalAdmissionContext? observed = null;
+
+        var chunks = new List<GatewayStreamChunk>();
+        await foreach (var chunk in gateway.StreamWithAdmissionAsync(request, (physical, _) =>
+        {
+            observed = physical;
+            return Task.FromResult<GatewayStreamChunk?>(GatewayStreamChunk.Fail(
+                "任务额度不足，未发送模型请求",
+                "GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED"));
+        })) chunks.Add(chunk);
+
+        handler.Count.ShouldBe(0);
+        observed.ShouldNotBeNull();
+        observed!.RequestBodyUtf8Bytes.ShouldBeGreaterThan(0);
+        observed.EffectiveMaxOutputTokens.ShouldBe(8192);
+        observed.LogicalModelPublicId.ShouldBe("default-chat-curated");
+        chunks.ShouldHaveSingleItem().ErrorCode.ShouldBe("GATEWAY_RUNTIME_TASK_BUDGET_EXCEEDED");
+    }
+
+    [Fact]
     public async Task NativeResponses_TwoToolRoundsPreserveRawStreamAndTrustedAttribution()
     {
         const string first = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_native\",\"status\":\"in_progress\"}}\n\n";
@@ -4019,18 +4116,61 @@ public class GatewayKeyGateContractTests
     private sealed class CapturingRuntimeGrantCallCounter : IGatewayRuntimeGrantCallCounter
     {
         public int CallCount { get; private set; }
+        public GatewayRuntimeGrantCallRequest? LastRuntimeRequest { get; private set; }
+        public int TaskReserveCount { get; private set; }
+        public int TaskFinalizeCount { get; private set; }
+        public GatewayTaskBudgetRequest? LastTaskRequest { get; private set; }
+        public GatewayRuntimeGrantCallAdmission RuntimeAdmission { get; set; } = new(
+            true, StatusCodes.Status200OK, string.Empty, "runtime grant call reserved");
+        public GatewayRuntimeGrantCallAdmission TaskAdmission { get; set; } = new(
+            true, StatusCodes.Status200OK, string.Empty, "task budget reserved");
+        public GatewayTaskBudgetPolicy TaskPolicy { get; set; } = new(
+            "scope-test", 8192, "default-chat-curated", "apiyi-openai", "gpt-5.6-sol");
 
         public Task<GatewayRuntimeGrantCallAdmission> TryReserveAsync(
             GatewayRuntimeGrantRecord grant,
+            GatewayRuntimeGrantCallRequest request,
             CancellationToken ct)
         {
             CallCount++;
-            return Task.FromResult(new GatewayRuntimeGrantCallAdmission(
-                true,
-                StatusCodes.Status200OK,
-                string.Empty,
-                "runtime grant call reserved"));
+            LastRuntimeRequest = request;
+            return Task.FromResult(RuntimeAdmission);
         }
+
+        public Task FinalizeAsync(
+            GatewayRuntimeGrantRecord grant,
+            string requestId,
+            GatewayTokenUsage? usage,
+            string outcomeCode,
+            CancellationToken ct) => Task.CompletedTask;
+
+        public Task<GatewayRuntimeGrantCallAdmission> TryReserveTaskAsync(
+            GatewayTaskBudgetRequest request,
+            CancellationToken ct)
+        {
+            TaskReserveCount++;
+            LastTaskRequest = request;
+            return Task.FromResult(TaskAdmission);
+        }
+
+        public Task FinalizeTaskAsync(
+            GatewayTaskBudgetRequest request,
+            GatewayTokenUsage? usage,
+            string outcomeCode,
+            CancellationToken ct)
+        {
+            TaskFinalizeCount++;
+            return Task.CompletedTask;
+        }
+
+        public Task<GatewayTaskBudgetPolicy?> ResolveTaskPolicyAsync(
+            string scopeId,
+            string tenantId,
+            string userId,
+            string runId,
+            string appCallerCode,
+            CancellationToken ct)
+            => Task.FromResult<GatewayTaskBudgetPolicy?>(TaskPolicy with { ScopeId = scopeId });
     }
 
     private sealed class TeamScopedTestAuthorizer : IGatewayScopedKeyAuthorizer

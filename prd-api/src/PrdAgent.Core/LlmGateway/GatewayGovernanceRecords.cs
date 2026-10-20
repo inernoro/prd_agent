@@ -138,9 +138,73 @@ public sealed class GatewayRuntimeGrantRecord
     public bool RequireDeclaredParameters { get; set; }
     public int MaxCalls { get; set; } = 256;
     public int CallCount { get; set; }
+    /// <summary>仅显式运维绑定的任务预算作用域；null 表示沿用既有运行授权行为。</summary>
+    public string? BudgetScopeId { get; set; }
+    /// <summary>任务预算允许的单请求输出硬上限；由网关在 token policy 之后再次收紧。</summary>
+    public int? BudgetMaxOutputTokens { get; set; }
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? LastUsedAt { get; set; }
+}
+
+/// <summary>
+/// 一次受权 PPT 任务链共享的发送前预算。它不替代租户月预算，也不参与未显式绑定的请求。
+/// </summary>
+[BsonIgnoreExtraElements]
+public sealed class GatewayRuntimeBudgetScopeRecord
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string TenantId { get; set; } = string.Empty;
+    public string RootOutlineRunId { get; set; } = string.Empty;
+    public string UserId { get; set; } = string.Empty;
+    public string SourcePlanHash { get; set; } = string.Empty;
+    [BsonRepresentation(BsonType.Decimal128)] public decimal ImmutableCarryUsd { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal AuthorizedLimitUsd { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal SpentUsd { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal ReservedUsd { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal InputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal OutputUsdPerMillion { get; set; }
+    public long LongContextThresholdTokens { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal LongContextInputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal LongContextOutputUsdPerMillion { get; set; }
+    public int InputByteTokenMultiplier { get; set; } = 4;
+    public int MaxOutputTokens { get; set; }
+    public string ExpectedLogicalModelPublicId { get; set; } = string.Empty;
+    public string ExpectedProvider { get; set; } = string.Empty;
+    public string ExpectedModel { get; set; } = string.Empty;
+    public string Status { get; set; } = "active";
+    public string ActivatedByUserId { get; set; } = string.Empty;
+    public List<GatewayRuntimeBudgetReservationRecord> Reservations { get; set; } = new();
+    public DateTime ExpiresAt { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? ClosedAt { get; set; }
+    public string? ClosedByUserId { get; set; }
+}
+
+[BsonIgnoreExtraElements]
+public sealed class GatewayRuntimeBudgetReservationRecord
+{
+    public string RequestId { get; set; } = string.Empty;
+    public string GrantId { get; set; } = string.Empty;
+    public string RunId { get; set; } = string.Empty;
+    public string AppCallerCode { get; set; } = string.Empty;
+    public long RequestBodyUtf8Bytes { get; set; }
+    public long InputTokenUpperBound { get; set; }
+    public int MaxOutputTokens { get; set; }
+    public string LogicalModelPublicId { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string Model { get; set; } = string.Empty;
+    public string? OfferingId { get; set; }
+    public string PricingTier { get; set; } = "standard";
+    [BsonRepresentation(BsonType.Decimal128)] public decimal InputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal OutputUsdPerMillion { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal ReservedUsd { get; set; }
+    [BsonRepresentation(BsonType.Decimal128)] public decimal? SettledUsd { get; set; }
+    public string Status { get; set; } = "reserved";
+    public string? Detail { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
 [BsonIgnoreExtraElements]

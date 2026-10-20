@@ -774,8 +774,21 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     }
 
     /// <inheritdoc />
-    public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
+    public IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
         GatewayRequest request,
+        CancellationToken ct = default)
+        => StreamCoreAsync(request, null, ct);
+
+    /// <inheritdoc />
+    public IAsyncEnumerable<GatewayStreamChunk> StreamWithAdmissionAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>> admit,
+        CancellationToken ct = default)
+        => StreamCoreAsync(request, admit ?? throw new ArgumentNullException(nameof(admit)), ct);
+
+    private async IAsyncEnumerable<GatewayStreamChunk> StreamCoreAsync(
+        GatewayRequest request,
+        Func<GatewayPhysicalAdmissionContext, CancellationToken, Task<GatewayStreamChunk?>>? admit,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         if (!TryValidateAppCaller(request.AppCallerCode, request.ModelType, out var error))
@@ -818,7 +831,11 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
             var gatewayTransport = request.Context?.GatewayTransport ?? GatewayTransports.Http;
             var providerAttempts = BuildProviderAttempts(resolution, gatewayTransport);
-            var retryResolutions = GetProviderRetryResolutions(resolution, request);
+            // 任务预算是一次物理发送一次预占；受保护请求不在同一逻辑调用内静默切换供应商。
+            // 首个候选失败后由上层产生新的 requestId 重试并重新预占，未绑定请求保持既有 fallback。
+            var retryResolutions = admit is null
+                ? GetProviderRetryResolutions(resolution, request)
+                : new List<ModelResolutionResult> { resolution };
             var httpClient = CreateOutboundClient(request.Context?.TenantId);
             httpClient.Timeout = TimeSpan.FromSeconds(request.TimeoutSeconds);
             HttpResponseMessage? rawResponse = null;
@@ -893,6 +910,38 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     : BuildOfferingEndpoint(resolution.ApiUrl!, resolution.OfferingEndpointPath);
                 var httpRequest = adapter.BuildHttpRequest(endpoint, resolution.ApiKey, requestBody, request.EnablePromptCache);
                 ApplyOpenRouterAttribution(httpRequest, resolution.ApiUrl, request.AppCallerCode);
+
+                if (admit is not null)
+                {
+                    var effectiveMaxOutputTokens = new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }
+                        .Select(name => requestBody[name] is { } node && TryReadInt(node, out var value) && value > 0
+                            ? value
+                            : int.MaxValue)
+                        .Min();
+                    if (effectiveMaxOutputTokens == int.MaxValue)
+                    {
+                        yield return GatewayStreamChunk.Fail(
+                            "任务输出上限未在物理请求中生效",
+                            "GATEWAY_RUNTIME_TASK_OUTPUT_CAP_INVALID");
+                        yield break;
+                    }
+                    var finalBody = requestBody.ToJsonString();
+                    var admissionError = await admit(
+                        new GatewayPhysicalAdmissionContext(
+                            request.Context?.RequestId ?? string.Empty,
+                            Encoding.UTF8.GetByteCount(finalBody),
+                            effectiveMaxOutputTokens,
+                            resolution.LogicalModelPublicId ?? string.Empty,
+                            resolution.ActualPlatformName ?? resolution.ActualPlatformId ?? string.Empty,
+                            resolution.ActualModel ?? string.Empty,
+                            resolution.OfferingId),
+                        ct);
+                    if (admissionError is not null)
+                    {
+                        yield return admissionError;
+                        yield break;
+                    }
+                }
 
                 if (logId == null)
                 {
