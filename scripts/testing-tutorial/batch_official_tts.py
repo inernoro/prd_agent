@@ -9,7 +9,7 @@ Use OPENAI_API_KEY or --prompt-key (no echo); no credential argument is accepted
 """
 from pathlib import Path
 import argparse, array, concurrent.futures, getpass, hashlib, importlib.util
-import io, json, os, re, threading, time, urllib.error, urllib.request, wave
+import io, json, os, re, struct, threading, time, urllib.error, urllib.request, wave
 
 ROOT = Path(__file__).resolve().parent
 ENGINE = 'openai-speech'
@@ -38,12 +38,29 @@ def save_json(path, value):
 
 
 def wav_data(body):
+    # Speech responses can use RIFF/data size 0xffffffff because their length
+    # was unknown when streaming began. Only that explicit convention permits
+    # deriving the frame count from the completed HTTP response.
+    streamed = False
+    if body[:4] == b'RIFF' and body[8:12] == b'WAVE' and body[4:8] == b'\xff' * 4:
+        offset = 12
+        while offset + 8 <= len(body):
+            kind = body[offset:offset + 4]
+            size = struct.unpack_from('<I', body, offset + 4)[0]
+            if kind == b'data':
+                streamed = size == 0xffffffff
+                break
+            offset += 8 + size + (size & 1)
     with wave.open(io.BytesIO(body), 'rb') as f:
         channels, width, rate, frames = f.getnchannels(), f.getsampwidth(), f.getframerate(), f.getnframes()
         if f.getcomptype() != 'NONE' or width != 2 or channels not in (1, 2) or frames <= 0:
             raise ValueError('Speech response is not nonempty PCM16 WAV')
         raw = f.readframes(frames)
-        if len(raw) != frames * channels * width:
+        if streamed:
+            if not raw or len(raw) % (channels * width):
+                raise ValueError('Speech streaming WAV has incomplete PCM frames')
+            frames = len(raw) // (channels * width)
+        elif len(raw) != frames * channels * width:
             raise ValueError('Speech WAV is truncated')
     return (channels, width, rate), frames, raw
 

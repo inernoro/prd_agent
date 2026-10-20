@@ -1,28 +1,28 @@
 {
   "archive": "testing-tutorial-handoff.zip",
   "edition": "逐幕手绘重制",
-  "bytes": 168382621,
-  "sha256": "316539e4759455c9602d97d408ab346a4dd03bc53257c16b6deb904b3cd081ea",
+  "bytes": 168642623,
+  "sha256": "63098a5484eb3e7a70ee9f98dcef298489f36cdc06e9f38a7dd5f04bf84e6446",
   "parts": [
     {
       "name": "testing-tutorial-handoff.zip.001",
       "bytes": 50331648,
-      "sha256": "d491ad9bf170403921457499836075525bdda6b690c8106d63bb74fbfbff4ea4"
+      "sha256": "9ed598966139c1767774abb79502bfd537abd30b68110452ed390fd1d6561dfb"
     },
     {
       "name": "testing-tutorial-handoff.zip.002",
       "bytes": 50331648,
-      "sha256": "837e6e0424891eb053963d9781f4eae0e93099e2f5d705e43ebc3ba28e8d45ff"
+      "sha256": "51e4f5fd05884e778de1c410694de97ba5b19fc5b69db8ce29996e7406b4e6b8"
     },
     {
       "name": "testing-tutorial-handoff.zip.003",
       "bytes": 50331648,
-      "sha256": "fed88f12f20c9649892a3a5009b975507935bce47af6b34048a6f55736525d9d"
+      "sha256": "7e60756f4fe75035fcd57bd4e3710c54620657560c9d220d461f41ada1911a3f"
     },
     {
       "name": "testing-tutorial-handoff.zip.004",
-      "bytes": 17387677,
-      "sha256": "d433134497447074eea9af1bc75f9cd9a9f8ca8e2b3065b738be428d4544a7b7"
+      "bytes": 17647679,
+      "sha256": "cc72d4766a574f50fedd32561eb5a67c5a75418360448e8459ef27e617b9fcdc"
     }
   ]
 }
