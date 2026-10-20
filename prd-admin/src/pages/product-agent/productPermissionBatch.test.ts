@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { AdminUser } from '@/types/admin';
 import type { AdminUserAuthzSnapshot } from '@/services/contracts/authz';
-import { hasPermissionEditConflict, loadAllPermissionUsers, toggleVisiblePeople } from './productPermissionBatch';
+import { hasPermissionEditConflict, hasUnrestrictedPermissions, loadAllPermissionUsers, permissionCheckboxValue } from './productPermissionBatch';
+import { mergePermissionOverrides } from './productPermissionEditing';
 import people from './ProductPermissionPeople.tsx?raw';
 
 const user = (id: string) => ({ userId: id, username: id, displayName: id, role: 'PM', status: 'Active', createdAt: '' } as AdminUser);
@@ -34,9 +35,26 @@ describe('权限人员批量配置', () => {
     expect(calls).toBe(1);
     expect(users).toEqual([]);
   });
-  it('搜索全选与取消只改变当前结果，并保留隐藏的选择', () => {
-    expect(toggleVisiblePeople(['hidden', 'a'], ['a', 'b'], true)).toEqual(['hidden', 'a', 'b']);
-    expect(toggleVisiblePeople(['hidden', 'a', 'b'], ['a', 'b'], false)).toEqual(['hidden']);
+  it('勾选显示角色和个人例外的实际权限，而不是选人状态', () => {
+    expect(permissionCheckboxValue(baseline, [], 'product-agent.use')).toBe(true);
+    expect(permissionCheckboxValue({ ...baseline, permAllow: [] }, ['product-agent.use'], 'product-agent.use')).toBe(true);
+    expect(permissionCheckboxValue({ ...baseline, permDeny: ['product-agent.use'] }, ['product-agent.use'], 'product-agent.use')).toBe(false);
+    expect(permissionCheckboxValue(baseline, [], 'review-agent.use')).toBe(false);
+  });
+  it('勾选保存清除该项禁止并授予权限，其他权限不变', () => {
+    const result = mergePermissionOverrides({ ...baseline, permDeny: ['product-agent.use', 'assets.write'] }, { 'product-agent.use': 'allow' });
+    expect(result.permAllow).toEqual(['logs.read', 'product-agent.use']);
+    expect(result.permDeny).toEqual(['assets.write']);
+  });
+  it('取消勾选保存移除该项权限，即使原角色授予也不误显示为已取消', () => {
+    const result = mergePermissionOverrides(baseline, { 'product-agent.use': 'deny' });
+    expect(permissionCheckboxValue({ ...baseline, permAllow: result.permAllow ?? [], permDeny: result.permDeny ?? [] }, ['product-agent.use'], 'product-agent.use')).toBe(false);
+  });
+  it('超级权限显示勾选并由系统维护，不假装可取消', () => {
+    expect(hasUnrestrictedPermissions(baseline, ['super'])).toBe(true);
+    expect(permissionCheckboxValue(baseline, ['super'], 'review-agent.use')).toBe(true);
+    expect(hasUnrestrictedPermissions({ ...baseline, permAllow: ['super'] }, [])).toBe(true);
+    expect(hasUnrestrictedPermissions({ ...baseline, permDeny: ['super'] }, ['super'])).toBe(false);
   });
   it('仅编辑字段和角色冲突阻止覆盖，其他应用变化不阻止合并', () => {
     expect(hasPermissionEditConflict(baseline, { ...baseline, permAllow: [...baseline.permAllow, 'assets.use'] }, ['product-agent.use'])).toBe(false);
@@ -47,8 +65,12 @@ describe('权限人员批量配置', () => {
     const both = { ...baseline, permDeny: ['product-agent.use'] };
     expect(hasPermissionEditConflict(both, { ...both, permAllow: ['logs.read'] }, ['product-agent.use'])).toBe(true);
   });
-  it('选择不是授权，保存仍重新读取并只合并显式调整，失败草稿保留', () => {
-    expect(people).toContain('aria-label="全选当前搜索结果"');
+  it('权限复选框直接形成保存草稿，不再选择人员或授权模式', () => {
+    expect(people).not.toContain('<select');
+    expect(people).not.toContain('selectedIds');
+    expect(people).not.toContain('对选中人员设置');
+    expect(people).toContain('stage(editableIds, definition.key, event.target.checked)');
+    expect(people).toContain("checked ? 'allow' : 'deny'");
     expect(people).toContain('mergePermissionOverrides(latest.data, changes[id])');
     expect(people).toContain('hasPermissionEditConflict(snapshots[id], latest.data');
     expect(people).toContain('失败项仍保留待修改状态');

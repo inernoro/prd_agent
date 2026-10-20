@@ -100,7 +100,7 @@ function PermissionAssignments({ tab, catalog, roles }: { tab: 'menu' | 'functio
     </div>
     <section className="min-w-0 rounded-lg border border-token-subtle p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
-        <div><h3 className="text-sm font-semibold text-token-primary">{entry?.label}</h3><p className="mt-1 text-xs leading-6 text-token-secondary">{entry?.note ?? '勾选人员后批量配置，也可以直接调整单人的权限。'}</p></div>
+        <div><h3 className="text-sm font-semibold text-token-primary">{entry?.label}</h3><p className="mt-1 text-xs leading-6 text-token-secondary">{entry?.note ?? '勾选对应权限，保存后生效。'}</p></div>
       </div>
       {entry && entry.permissions.length === 0 ? <Notice title="当前没有独立授权项" text={entry.note ?? '该页面沿用已有的访问规则。'} /> : entry && <ProductPermissionPeople key={entry.key} permissionKeys={entry.permissions} catalog={catalog} roles={roles} onBusyChange={setSaving} onSaved={refreshMyPermissions} />}
     </section>

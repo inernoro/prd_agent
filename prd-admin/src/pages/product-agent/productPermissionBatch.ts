@@ -25,9 +25,14 @@ export async function loadAllPermissionUsers(
   return [];
 }
 
-export function toggleVisiblePeople(selected: string[], visibleIds: string[], checked: boolean): string[] {
-  const visible = new Set(visibleIds);
-  return checked ? [...new Set([...selected, ...visibleIds])] : selected.filter((id) => !visible.has(id));
+export function hasUnrestrictedPermissions(snapshot: AdminUserAuthzSnapshot, rolePermissions: string[]): boolean {
+  return !snapshot.permDeny.includes('super') && (rolePermissions.includes('super') || snapshot.permAllow.includes('super'));
+}
+
+/** 显示现有授权结果；继承角色不要求用户再选择一种操作模式。 */
+export function permissionCheckboxValue(snapshot: AdminUserAuthzSnapshot, rolePermissions: string[], key: string): boolean {
+  return hasUnrestrictedPermissions(snapshot, rolePermissions) ||
+    (!snapshot.permDeny.includes(key) && (rolePermissions.includes(key) || snapshot.permAllow.includes(key)));
 }
 
 /** 检查原始允许/禁止两侧，避免隐藏的双重例外变化被模式归一化掩盖。 */

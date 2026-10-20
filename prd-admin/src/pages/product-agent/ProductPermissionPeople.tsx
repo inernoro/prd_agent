@@ -7,11 +7,9 @@ import type { AdminUser } from '@/types/admin';
 import type { AdminPermissionDef, AdminUserAuthzSnapshot, SystemRoleDto } from '@/services/contracts/authz';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { useAuthStore } from '@/stores/authStore';
-import { mergePermissionOverrides, permissionOverride, type PermissionOverride } from './productPermissionEditing';
-import { hasPermissionEditConflict, loadAllPermissionUsers, toggleVisiblePeople } from './productPermissionBatch';
+import { mergePermissionOverrides, type PermissionOverride } from './productPermissionEditing';
+import { hasPermissionEditConflict, hasUnrestrictedPermissions, loadAllPermissionUsers, permissionCheckboxValue } from './productPermissionBatch';
 
-const selectClass = 'rounded-md border border-token-subtle bg-token-nested px-2 py-1.5 text-xs text-token-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2';
-const MODE_LABELS: Record<PermissionOverride, string> = { inherit: '继承角色', allow: '额外允许', deny: '明确禁止' };
 type Changes = Record<string, Record<string, PermissionOverride>>;
 
 export function ProductPermissionPeople({ permissionKeys, catalog, roles, onBusyChange, onSaved }: {
@@ -27,7 +25,6 @@ export function ProductPermissionPeople({ permissionKeys, catalog, roles, onBusy
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [snapshots, setSnapshots] = useState<Record<string, AdminUserAuthzSnapshot>>({});
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [changes, setChanges] = useState<Changes>({});
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -40,7 +37,6 @@ export function ProductPermissionPeople({ permissionKeys, catalog, roles, onBusy
   const current = useRef(0);
   const saveLock = useRef(false);
   const retryLock = useRef(false);
-  const allCheckbox = useRef<HTMLInputElement>(null);
   const definitions = permissionKeys.map((key) => catalog.find((item) => item.key === key));
   const missingDefinition = definitions.some((definition) => !definition);
 
@@ -49,7 +45,7 @@ export function ProductPermissionPeople({ permissionKeys, catalog, roles, onBusy
     const alive = () => current.current === sequence;
     if (!canReadUsers) { setLoading(false); return; }
     setLoading(true); setError(''); setUsers([]); setSnapshots({}); setRowErrors({});
-    setChanges({}); setSelectedIds([]); setResult(''); setProgress('正在读取人员目录…');
+    setChanges({}); setResult(''); setProgress('正在读取人员目录…');
     void (async () => {
       try {
         const directory = await loadAllPermissionUsers(async (page, pageSize) => {
@@ -89,28 +85,37 @@ export function ProductPermissionPeople({ permissionKeys, catalog, roles, onBusy
     const keyword = query.trim().toLocaleLowerCase();
     return users.filter((user) => `${user.displayName} ${user.username}`.toLocaleLowerCase().includes(keyword));
   }, [users, query]);
-  const selectableIds = visible.filter((user) => Boolean(snapshots[user.userId]) && !rowErrors[user.userId]).map((user) => user.userId);
-  const allChecked = selectableIds.length > 0 && selectableIds.every((id) => selectedIds.includes(id));
-  const partlyChecked = selectableIds.some((id) => selectedIds.includes(id)) && !allChecked;
-  useEffect(() => { if (allCheckbox.current) allCheckbox.current.indeterminate = partlyChecked; }, [partlyChecked]);
+  const rolePermissionsFor = (snapshot: AdminUserAuthzSnapshot) => roles.find((role) => role.key === snapshot.effectiveSystemRoleKey)?.permissions ?? [];
+  const editableIds = visible.filter((user) => {
+    const snapshot = snapshots[user.userId];
+    return snapshot && !rowErrors[user.userId] && !hasUnrestrictedPermissions(snapshot, rolePermissionsFor(snapshot));
+  }).map((user) => user.userId);
+  const checkedFor = (id: string, key: string) => {
+    const snapshot = snapshots[id];
+    if (!snapshot) return false;
+    const pending = changes[id]?.[key];
+    return pending ? pending === 'allow' : permissionCheckboxValue(snapshot, rolePermissionsFor(snapshot), key);
+  };
   const dirtyIds = Object.keys(changes).filter((id) => Object.keys(changes[id]).length > 0);
 
-  const stage = useCallback((ids: string[], key: string, mode: PermissionOverride) => {
+  const stage = useCallback((ids: string[], key: string, checked: boolean) => {
     setResult('');
     setChanges((previous) => {
       const next = { ...previous };
       ids.forEach((id) => {
         const snapshot = snapshots[id];
         if (!snapshot) return;
+        const rolePermissions = roles.find((role) => role.key === snapshot.effectiveSystemRoleKey)?.permissions ?? [];
+        if (hasUnrestrictedPermissions(snapshot, rolePermissions)) return;
         const edits = { ...next[id] };
-        if (mode === permissionOverride(snapshot, key)) delete edits[key];
-        else edits[key] = mode;
+        if (checked === permissionCheckboxValue(snapshot, rolePermissions, key)) delete edits[key];
+        else edits[key] = checked ? 'allow' : 'deny';
         if (Object.keys(edits).length === 0) delete next[id];
         else next[id] = edits;
       });
       return next;
     });
-  }, [snapshots]);
+  }, [snapshots, roles]);
 
   const save = async () => {
     if (saveLock.current || retryLock.current || dirtyIds.length === 0 || missingDefinition) return;
@@ -186,32 +191,30 @@ export function ProductPermissionPeople({ permissionKeys, catalog, roles, onBusy
         <Search size={14} className="text-token-muted" />
         <input aria-label="搜索配置人员" placeholder="搜索姓名或账号" value={query} disabled={saving} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent py-2 text-sm text-token-primary outline-none" />
       </label>
-      <span className="text-xs text-token-muted">共 {users.length} 人，已选 {selectedIds.length} 人，待保存 {dirtyIds.length} 人</span>
+      <span className="text-xs text-token-muted">共 {users.length} 人，待保存 {dirtyIds.length} 人</span>
       <Button size="sm" disabled={saving || loading || retrying} onClick={() => { if (dirtyIds.length === 0 || window.confirm('重新加载会丢弃未保存的权限调整，是否继续？')) setReloadKey((value) => value + 1); }}><RefreshCw size={14} />重新加载</Button>
       <Button size="sm" variant="primary" disabled={saving || loading || retrying || dirtyIds.length === 0} onClick={() => void save()}>{saving ? <MapSpinner size={14} /> : <Save size={14} />}保存 {dirtyIds.length} 人</Button>
     </div>
     {(loading || saving) && <p role="status" aria-live="polite" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />{progress}</p>}
     {error && <p role="alert" className="text-sm text-[color:var(--accent-fg-danger)]">{error}</p>}
     {result && <p role="status" className="text-sm text-token-secondary">{result}</p>}
-    <div className="flex flex-wrap items-center gap-3 rounded-md border border-token-subtle bg-token-nested p-3">
-      <label className="flex items-center gap-2 text-sm text-token-primary"><input ref={allCheckbox} type="checkbox" aria-label="全选当前搜索结果" checked={allChecked} disabled={loading || saving || selectableIds.length === 0} onChange={(event) => setSelectedIds((previous) => toggleVisiblePeople(previous, selectableIds, event.target.checked))} className="h-4 w-4" />{query.trim() ? '全选搜索结果' : '全选人员'}</label>
-      <button type="button" disabled={saving || selectedIds.length === 0} onClick={() => setSelectedIds([])} className="text-xs text-token-secondary hover:underline disabled:opacity-40">取消全部选择</button>
-      {definitions.map((definition) => definition && <label key={definition.key} className="flex flex-wrap items-center gap-2 text-xs text-token-secondary">{definition.name}<select aria-label={`批量设置${definition.name}`} className={selectClass} value="" disabled={loading || saving || selectedIds.length === 0} onChange={(event) => stage(selectedIds.filter((id) => Boolean(snapshots[id]) && !rowErrors[id]), definition.key, event.target.value as PermissionOverride)}><option value="" disabled>对选中人员设置</option>{Object.entries(MODE_LABELS).map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}</select></label>)}
-    </div>
-    <p className="text-xs leading-5 text-token-muted">勾选只选择操作对象，不会直接授权。批量设置及单人调整均需保存后生效；“继承角色”清除此项个人例外。超级管理员不受个人例外限制。切换菜单或页签将丢弃未保存调整。</p>
+    <p className="text-xs leading-5 text-token-muted">勾选表示有权限，点击保存后生效。表头全选只修改当前搜索结果。超级权限由系统维护，不能在此取消。</p>
     {loading && users.length === 0 ? <MapSectionLoader text="正在读取完整人员列表…" /> : <div className="max-h-[560px] overflow-auto rounded-md border border-token-subtle">
       <table className="w-full text-left text-sm">
-        <thead className="sticky top-0 bg-token-nested text-xs text-token-secondary"><tr><th scope="col" className="w-12 px-3 py-3">选择</th><th scope="col" className="px-3 py-3">人员</th><th scope="col" className="px-3 py-3">角色</th>{definitions.map((definition) => definition && <th scope="col" key={definition.key} className="px-3 py-3">{definition.name}</th>)}<th scope="col" className="px-3 py-3">状态</th></tr></thead>
+        <thead className="sticky top-0 bg-token-nested text-xs text-token-secondary"><tr><th scope="col" className="px-3 py-3">人员</th><th scope="col" className="px-3 py-3">角色</th>{definitions.map((definition) => {
+          if (!definition) return null;
+          const checkedCount = editableIds.filter((id) => checkedFor(id, definition.key)).length;
+          return <th scope="col" key={definition.key} className="px-3 py-3"><label className="inline-flex items-center gap-2"><input type="checkbox" aria-label={`全选当前搜索结果的${definition.name}`} ref={(element) => { if (element) element.indeterminate = checkedCount > 0 && checkedCount < editableIds.length; }} checked={editableIds.length > 0 && checkedCount === editableIds.length} disabled={loading || saving || retrying || editableIds.length === 0} onChange={(event) => stage(editableIds, definition.key, event.target.checked)} className="h-4 w-4" />{definition.name} · 全选</label></th>;
+        })}<th scope="col" className="px-3 py-3">状态</th></tr></thead>
         <tbody className="divide-y divide-token-subtle">{visible.map((user) => {
           const snapshot = snapshots[user.userId];
           const rowError = rowErrors[user.userId];
           const role = roles.find((item) => item.key === snapshot?.effectiveSystemRoleKey);
           return <tr key={user.userId} className="hover-bg-soft">
-            <td className="px-3 py-3"><input type="checkbox" aria-label={`选择${user.displayName || user.username}`} checked={selectedIds.includes(user.userId)} disabled={loading || saving || !snapshot || Boolean(rowError)} onChange={(event) => setSelectedIds((previous) => toggleVisiblePeople(previous, [user.userId], event.target.checked))} className="h-4 w-4" /></td>
             <td className="px-3 py-3 text-token-primary"><span className="block">{user.displayName || user.username}</span><span className="text-xs text-token-muted">{user.username}{user.status === 'Disabled' ? ' · 已禁用' : ''}</span></td>
             <td className="px-3 py-3 text-xs text-token-secondary">{snapshot ? role?.name ?? snapshot.effectiveSystemRoleKey : '待读取'}</td>
-            {definitions.map((definition) => definition && <td key={definition.key} className="px-3 py-3">{snapshot ? <select className={selectClass} aria-label={`${user.displayName || user.username}的${definition.name}`} disabled={loading || saving || Boolean(rowError)} value={changes[user.userId]?.[definition.key] ?? permissionOverride(snapshot, definition.key)} onChange={(event) => stage([user.userId], definition.key, event.target.value as PermissionOverride)}>{Object.entries(MODE_LABELS).map(([mode, label]) => <option key={mode} value={mode}>{label}</option>)}</select> : <span className="text-xs text-token-muted">待读取</span>}</td>)}
-            <td className="max-w-64 px-3 py-3 text-xs text-token-secondary">{rowError ? <><p role="alert">{rowError}</p><button type="button" disabled={saving || loading} onClick={() => void retryPerson(user.userId)} className="mt-1 hover:underline">重新读取此人权限（清除此人草稿）</button></> : changes[user.userId] ? '待保存' : snapshot ? role?.permissions.includes('super') ? '超级权限不受例外限制' : '已读取' : '待读取'}</td>
+            {definitions.map((definition) => definition && <td key={definition.key} className="px-3 py-3">{snapshot ? <input type="checkbox" aria-label={`${user.displayName || user.username}的${definition.name}`} disabled={loading || saving || retrying || Boolean(rowError) || hasUnrestrictedPermissions(snapshot, role?.permissions ?? [])} checked={checkedFor(user.userId, definition.key)} onChange={(event) => stage([user.userId], definition.key, event.target.checked)} className="h-4 w-4" /> : <span className="text-xs text-token-muted">待读取</span>}</td>)}
+            <td className="max-w-64 px-3 py-3 text-xs text-token-secondary">{rowError ? <><p role="alert">{rowError}</p><button type="button" disabled={saving || loading || retrying} onClick={() => void retryPerson(user.userId)} className="mt-1 hover:underline">重新读取此人权限（清除此人草稿）</button></> : changes[user.userId] ? '待保存' : snapshot ? hasUnrestrictedPermissions(snapshot, role?.permissions ?? []) ? '超级权限由系统维护' : '已读取' : '待读取'}</td>
           </tr>;
         })}</tbody>
       </table>
