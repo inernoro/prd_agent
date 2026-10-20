@@ -4576,6 +4576,7 @@ export function createServer(deps: ServerDeps): express.Express {
   // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
   // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
   app.use('/api', createBootstrapRouter({
+    publicBaseUrl: deps.config.publicBaseUrl,
     skillProxy: new SkillProxy({
       mapBase: process.env.CDS_MAP_BASE?.trim() || '',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
