@@ -268,11 +268,11 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
           ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} />
           : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} />)}
     </div>
-    {dialog && dialog !== 'release' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
+    {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
       <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
       <ItemSearchSelect value="" onChange={setActionProductId} options={toProductOptions(products)} placeholder="输入产品名称或编号搜索" countUnit="个产品" />
     </Modal>}
-    {dialog === 'initiation' && actionProductId && <InitiationApplication productId={actionProductId} onClose={() => setDialog(null)} onChanged={reload} />}
+    {dialog === 'initiation' && <InitiationApplication productId={actionProductId} applicationProducts={products} onClose={() => setDialog(null)} onChanged={reload} />}
     {dialog === 'release' && <ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => setDialog(null)} onChanged={reload} />}
     {dialog === 'temporary' && actionProductId && <ReleaseApplicationDialog productId={actionProductId} temporary onClose={() => setDialog(null)} onChanged={reload} />}
     {importKind && isAdmin && <VersionWorkflowImportDialog kind={importKind} products={products} fixedProductId={productId || undefined}
@@ -288,9 +288,12 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   </div>;
 }
 
-function InitiationApplication({ productId, seed, onClose, onChanged }: {
+function InitiationApplication({ productId, applicationProducts, seed, onClose, onChanged }: {
   productId: string; seed?: ProductInitiation; onClose: () => void; onChanged: () => Promise<void>;
+  applicationProducts?: VersionApplicationProduct[];
 }) {
+  const [applicationProductId, setApplicationProductId] = useState(productId);
+  const memberProductId = seed?.productId ?? applicationProductId;
   const [members, setMembers] = useState<ProductMember[] | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -298,23 +301,28 @@ function InitiationApplication({ productId, seed, onClose, onChanged }: {
     let active = true;
     setMembers(null);
     setError('');
-    void listProductMembers(productId).then((result) => {
+    if (!memberProductId) { setMembers([]); return; }
+    void listProductMembers(memberProductId).then((result) => {
       if (!active) return;
       if (result.success) setMembers(result.data.members);
       else setError(result.error?.message ?? '产品成员加载失败，请重试。');
     }).catch(() => { if (active) setError('产品成员加载失败，请重试。'); });
     return () => { active = false; };
-  }, [productId, attempt]);
-  const memberNotice = !members ? <div className="mb-3">
+  }, [memberProductId, attempt]);
+  const memberNotice = memberProductId && !members ? <div className="mb-3">
     {error ? <div role="alert" className="text-sm text-token-secondary">{error}<button type="button" className="ml-2 hover:underline" onClick={() => setAttempt((value) => value + 1)}>重试</button></div>
       : <p role="status" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />正在加载可选成员，可以先填写基础信息…</p>}
   </div> : null;
-  return <InitiationWizard key={productId} productId={productId} requirements={[]} members={members ?? []} seed={seed} onClose={onClose} onChanged={onChanged} memberNotice={memberNotice} />;
+  return <InitiationWizard key={seed?.id ?? 'new'} productId={memberProductId} applicationProducts={applicationProducts}
+    onApplicationProductChange={applicationProducts ? setApplicationProductId : undefined}
+    requirements={[]} members={members ?? []} seed={seed} onClose={onClose} onChanged={onChanged} memberNotice={memberNotice} />;
 }
 
-export function InitiationWizard({ productId, members, onClose, onChanged, seed, memberNotice }: {
+export function InitiationWizard({ productId, applicationProducts, onApplicationProductChange, members, onClose, onChanged, seed, memberNotice }: {
   memberNotice?: ReactNode;
   productId: string;
+  applicationProducts?: VersionApplicationProduct[];
+  onApplicationProductChange?: (productId: string) => void;
   requirements: Requirement[];
   members: ProductMember[];
   onClose: () => void;
@@ -425,9 +433,11 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
   );
 
   useEffect(() => {
-    void listVersionApplicationProducts().then((res) => {
-      if (res.success) setCatalogProducts(res.data.items);
-    });
+    if (applicationProducts) return;
+    void listVersionApplicationProducts().then((res) => { if (res.success) setCatalogProducts(res.data.items); });
+  }, [applicationProducts]);
+
+  useEffect(() => {
     void listProductVersionReviewSources().then((res) => {
       if (res.success) setReviewSources(res.data.items);
     });
@@ -442,9 +452,16 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
     });
   }, [step]);
 
+  useEffect(() => {
+    if (!item) onApplicationProductChange?.(linkedProductId);
+  }, [item, linkedProductId, onApplicationProductChange]);
+
+  const availableProducts = applicationProducts ?? catalogProducts;
+  // 新建时以表单所选应用作为接口所属产品；既有记录仍沿用原归属和权限边界。
+  const canSelectApplication = canUseProduct || Boolean(applicationProducts && !item);
   const productOptions = useMemo(
-    () => toProductOptions(canUseProduct ? catalogProducts : catalogProducts.filter((product) => product.id === productId)),
-    [canUseProduct, catalogProducts, productId],
+    () => toProductOptions(canSelectApplication ? availableProducts : availableProducts.filter((product) => product.id === productId)),
+    [canSelectApplication, availableProducts, productId],
   );
 
   const basePayload = () => ({
@@ -473,7 +490,7 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
   };
 
   const saveStep1 = async () => {
-    if (!linkedProductId.trim()) return setMessage('请选择产品');
+    if (!linkedProductId.trim()) return setMessage('请选择所属应用');
     if (!planName.trim()) return setMessage('请填写方案名称');
     if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
     if (!demandSource.trim()) return setMessage('请填写需求来源');
@@ -484,7 +501,7 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
     const editable = item && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
     const res = editable && item
       ? await updateInitiation(item.id, payload)
-      : await createInitiation(productId, payload);
+      : await createInitiation(applicationProducts ? linkedProductId : productId, payload);
     setBusy(false);
     if (!res.success) return setMessage(res.error?.message ?? '保存失败');
     setItem(res.data); setStep(res.data.reviewPassed ? 3 : 2); setMessage('');
@@ -606,9 +623,9 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
       setPlanName(parsed.planName);
       const match = reviewSources.find((source) => source.title.replace(/\s+/g, '') === parsed.planName?.replace(/\s+/g, ''));
       if (match) setReviewSubmissionId(match.id);
-      const productMatches = catalogProducts.filter((product) =>
-        (canUseProduct || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
-      if (parsed.matchedApplicationId && catalogProducts.some((product) => product.id === parsed.matchedApplicationId && (canUseProduct || product.id === productId))) setLinkedProductId(parsed.matchedApplicationId);
+      const productMatches = availableProducts.filter((product) =>
+        (canSelectApplication || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
+      if (parsed.matchedApplicationId && availableProducts.some((product) => product.id === parsed.matchedApplicationId && (canSelectApplication || product.id === productId))) setLinkedProductId(parsed.matchedApplicationId);
       else if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
     }
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
@@ -635,14 +652,14 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
       </Field>
       <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
       {projectType === 'custom' && <Field label="客户来源 *"><Input value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
-      <Field label="产品 *" full>
+      <Field label="所属应用 *" full>
         <ItemSearchSelect
           value={linkedProductId}
           onChange={setLinkedProductId}
           options={productOptions}
-          placeholder="搜索产品名称或编号"
-          countUnit="个产品"
-          emptyText="暂无产品"
+          placeholder="搜索应用名称或编号"
+          countUnit="个应用"
+          emptyText="暂无可选应用"
         />
       </Field>
       <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} onBlur={() => {
@@ -721,7 +738,7 @@ export function InitiationWizard({ productId, members, onClose, onChanged, seed,
       </div>
       <div className="flex gap-2">
         <Secondary onClick={onClose} disabled={reviewRunning}>取消</Secondary>
-      {step === 1 && <Primary onClick={saveStep1} disabled={busy}>{busy ? '保存中...' : '下一步'}</Primary>}
+      {step === 1 && <Primary onClick={saveStep1} disabled={busy || !linkedProductId.trim()}>{busy ? '保存中...' : '下一步'}</Primary>}
       {step === 2 && (
         <Primary onClick={runReview} disabled={busy || !file}>
           {reviewRunning && <Loader2 size={14} className="animate-spin" />}

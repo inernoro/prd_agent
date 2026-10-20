@@ -19,7 +19,7 @@ describe('正式申领按方案选择应用', () => {
     expect(filterReleasePlans([...plans, { ...plans[0], id: 'no-code', tCode: '' }], '', '').map((item) => item.id)).toEqual(['a', 'b']);
   });
   it('直接打开正式申领，不先打开产品选择弹框，筛选只用于找方案', () => {
-    expect(versions).toContain("dialog && dialog !== 'release' && !actionProductId");
+    expect(versions).toContain("dialog === 'temporary' && !actionProductId");
     expect(versions).toContain('productId="" applicationProducts={products}');
     expect(picker).toContain('搜索方案名称或 T 号');
     expect(picker).toContain('按应用筛选方案');
