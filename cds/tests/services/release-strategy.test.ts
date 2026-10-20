@@ -33,8 +33,10 @@ describe('release strategy discovery and generation', () => {
       projectSlug: 'proj-a',
       repository: 'owner/proj-a',
     });
-    expect(result.recommendedMode).toBe('existing-script');
+    expect(result.recommendedMode).toBe('project-script');
     expect(result.candidates.map((candidate) => candidate.mode)).toEqual([
+      'project-script',
+      'managed-script',
       'existing-script',
       'generated-compose',
       'generated-static',
