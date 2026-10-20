@@ -158,18 +158,19 @@ public sealed class GatewayRuntimeGovernanceTests
         await using var scope = testDatabase;
         var now = DateTime.UtcNow;
         var budgets = scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        var exact = Plan("# 发布资料\n\n必须保留完整条件。");
+        var other = Plan("# 另一份资料\n\n不得认领本任务额度。");
+        var expiredPlan = Plan("# 已过期资料\n\n额度作用域已过期。");
+        var closedPlan = Plan("# 已关闭资料\n\n历史任务已关闭。");
         await budgets.InsertManyAsync(new[]
         {
-            PendingScope("scope-exact", "owner-a", new string('a', 64), now.AddHours(1)),
-            PendingScope("scope-other", "owner-a", new string('b', 64), now.AddHours(1)),
-            PendingScope("scope-expired", "owner-b", new string('c', 64), now.AddMinutes(-1)),
-            PendingScope("scope-closed", "owner-c", new string('d', 64), now.AddHours(1), "closed"),
+            PendingScope("scope-exact", "owner-a", exact.Fingerprint, now.AddHours(1)),
+            PendingScope("scope-other", "owner-a", other.Fingerprint, now.AddHours(1)),
+            PendingScope("scope-expired", "owner-b", expiredPlan.Fingerprint, now.AddMinutes(-1)),
+            PendingScope("scope-closed", "owner-c", closedPlan.Fingerprint, now.AddHours(1), "closed"),
         });
 
-        var outline = new MdToPptRun
-        {
-            Id = "outline-a", UserId = "owner-a", Op = "outline", SourcePlanHash = new string('a', 64),
-        };
+        var outline = Outline("outline-a", "owner-a", exact.Json);
         (await MdToPptController.ClaimPendingTaskBudgetAsync(
             budgets, "tenant-a", outline, now, CancellationToken.None)).ShouldBe("scope-exact");
         // 同一 run 在进程重启后重进认领逻辑仍返回原 scope，不会退成无保护发送。
@@ -180,7 +181,7 @@ public sealed class GatewayRuntimeGovernanceTests
             MdToPptController.ClaimPendingTaskBudgetAsync(
                 budgets,
                 "tenant-a",
-                new MdToPptRun { Id = "outline-mismatch", UserId = "owner-a", Op = "outline", SourcePlanHash = new string('e', 64) },
+                Outline("outline-mismatch", "owner-a", Plan("# 未授权资料\n\n指纹必须不一致。").Json),
                 now,
                 CancellationToken.None));
         mismatch.Code.ShouldBe("task_budget_source_mismatch");
@@ -189,7 +190,7 @@ public sealed class GatewayRuntimeGovernanceTests
             MdToPptController.ClaimPendingTaskBudgetAsync(
                 budgets,
                 "tenant-a",
-                new MdToPptRun { Id = "outline-expired", UserId = "owner-b", Op = "outline", SourcePlanHash = new string('c', 64) },
+                Outline("outline-expired", "owner-b", expiredPlan.Json),
                 now,
                 CancellationToken.None));
         expired.Code.ShouldBe("task_budget_inactive");
@@ -198,15 +199,63 @@ public sealed class GatewayRuntimeGovernanceTests
         (await MdToPptController.ClaimPendingTaskBudgetAsync(
             budgets,
             "tenant-a",
-            new MdToPptRun { Id = "outline-closed", UserId = "owner-c", Op = "outline", SourcePlanHash = new string('d', 64) },
+            Outline("outline-closed", "owner-c", closedPlan.Json),
             now,
             CancellationToken.None)).ShouldBeNull();
         (await MdToPptController.ClaimPendingTaskBudgetAsync(
             budgets,
             "tenant-a",
-            new MdToPptRun { Id = "outline-unrelated", UserId = "owner-z", Op = "outline", SourcePlanHash = new string('e', 64) },
+            Outline("outline-unrelated", "owner-z", Plan("# 普通未绑定任务\n\n保持既有路径。").Json),
             now,
             CancellationToken.None)).ShouldBeNull();
+
+        var invalid = await Should.ThrowAsync<MdToPptSourcePlanException>(() =>
+            MdToPptController.ClaimPendingTaskBudgetAsync(
+                budgets,
+                "tenant-a",
+                new MdToPptRun
+                {
+                    Id = "outline-invalid", UserId = "owner-a", Op = "outline",
+                    SourcePlanVersion = MdToPptSourcePlan.Version,
+                    SourcePlanHash = MdToPptSourcePlan.Hash("{}"), SourcePlanJson = "{}",
+                },
+                now,
+                CancellationToken.None));
+        invalid.Code.ShouldBe("source_plan_invalid");
+
+        var missing = await Should.ThrowAsync<MdToPptSourcePlanException>(() =>
+            MdToPptController.ClaimPendingTaskBudgetAsync(
+                budgets,
+                "tenant-a",
+                new MdToPptRun
+                {
+                    Id = "outline-missing", UserId = "owner-a", Op = "outline",
+                    SourcePlanVersion = MdToPptSourcePlan.Version,
+                    SourcePlanHash = new string('f', 64), SourcePlanJson = null,
+                },
+                now,
+                CancellationToken.None));
+        missing.Code.ShouldBe("source_plan_missing");
+
+        var tampered = Outline("outline-tampered", "owner-a", exact.Json);
+        tampered.SourcePlanHash = new string('0', 64);
+        var bindingMismatch = await Should.ThrowAsync<MdToPptSourcePlanException>(() =>
+            MdToPptController.ClaimPendingTaskBudgetAsync(
+                budgets, "tenant-a", tampered, now, CancellationToken.None));
+        bindingMismatch.Code.ShouldBe("source_plan_binding_mismatch");
+        (await scope.Context.LlmRequestLogs.CountDocumentsAsync(_ => true)).ShouldBe(0);
+
+        static (string Json, string Fingerprint) Plan(string markdown)
+        {
+            var plan = MdToPptSourcePlan.Create(markdown, Array.Empty<DesignKnowledgeSnapshot>());
+            return (plan.SerializeCatalog(), plan.Fingerprint);
+        }
+
+        static MdToPptRun Outline(string id, string owner, string json) => new()
+        {
+            Id = id, UserId = owner, Op = "outline", SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanHash = MdToPptSourcePlan.Hash(json), SourcePlanJson = json,
+        };
 
         static GatewayRuntimeBudgetScopeRecord PendingScope(
             string id, string owner, string hash, DateTime expiry, string status = "active") => new()

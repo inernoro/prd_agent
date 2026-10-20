@@ -131,12 +131,31 @@ internal sealed class MdToPptSourcePlan
         new FrozenCatalog(SchemaVersion, Fingerprint, Blocks,
             pages.Select((page, index) => new FrozenPage(index + 1, page.Hash, page.DisplayTitle, page.Blocks)).ToList()));
 
+    /// <summary>
+    /// 额度作用域绑定的是冻结来源内容身份，不是 catalog/bound/overlay JSON 的版本哈希。
+    /// JSON 哈希仍先逐字节校验，随后才从受控 schema 中恢复稳定 fingerprint。
+    /// </summary>
+    internal static string RestoreFingerprint(string? json, string? documentHash)
+    {
+        if (string.IsNullOrWhiteSpace(json) || string.IsNullOrWhiteSpace(documentHash))
+            throw Invalid("source_plan_missing", "冻结来源目录缺失，请重新上传资料并生成大纲");
+        var actualHash = Hash(json);
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(actualHash),
+                Encoding.UTF8.GetBytes(documentHash)))
+            throw Invalid("source_plan_binding_mismatch", "冻结来源目录校验失败，请重新上传资料并生成大纲");
+        return RestoreCatalog(json).Fingerprint;
+    }
+
     internal static MdToPptSourcePlan RestoreCatalog(string json)
     {
         FrozenCatalog? frozen;
         try { frozen = JsonSerializer.Deserialize<FrozenCatalog>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); }
         catch (JsonException) { throw Invalid("source_plan_invalid", "冻结来源目录无法读取，请重新上传资料并生成大纲"); }
-        if (frozen == null || frozen.SchemaVersion != SchemaVersion || frozen.Blocks.Count == 0)
+        if (frozen == null
+            || frozen.SchemaVersion != SchemaVersion
+            || string.IsNullOrWhiteSpace(frozen.Fingerprint)
+            || frozen.Blocks is not { Count: > 0 })
             throw Invalid("source_plan_invalid", "冻结来源目录版本无效，请重新上传资料并生成大纲");
         var plan = new MdToPptSourcePlan(frozen.Blocks.ToList().AsReadOnly());
         if (!CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(plan.Fingerprint), Encoding.UTF8.GetBytes(frozen.Fingerprint)))

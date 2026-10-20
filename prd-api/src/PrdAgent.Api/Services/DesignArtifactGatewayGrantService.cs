@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Api.Services.MdToPpt;
 
 namespace PrdAgent.Api.Services;
 
@@ -134,15 +135,33 @@ public sealed class DesignArtifactGatewayGrantService : IDesignArtifactGatewayGr
                 && item.Op == "outline"
                 && item.Status == "done")
             .FirstOrDefaultAsync(ct);
-        if (root is null || string.IsNullOrWhiteSpace(root.SourcePlanHash)) return null;
+        if (root is null) return null;
+        if (root.SourcePlanVersion == 0
+            && string.IsNullOrWhiteSpace(root.SourcePlanJson)
+            && string.IsNullOrWhiteSpace(root.SourcePlanHash))
+            return null;
+        if (root.SourcePlanVersion != MdToPptSourcePlan.Version)
+            throw new MdToPptSourcePlanException(
+                "source_plan_invalid",
+                "冻结来源目录版本无效，不能在无额度保护的情况下继续设计任务");
+        var sourceFingerprint = MdToPptSourcePlan.RestoreFingerprint(root.SourcePlanJson, root.SourcePlanHash);
         var now = DateTime.UtcNow;
-        return await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
+        var scopes = _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes");
+        var matched = await scopes
             .Find(item => item.RootOutlineRunId == root.Id
                           && item.UserId == run.UserId
-                          && item.SourcePlanHash == root.SourcePlanHash
+                          && item.SourcePlanHash == sourceFingerprint
                           && item.Status == "active"
                           && item.ExpiresAt > now)
             .FirstOrDefaultAsync(ct);
+        if (matched is not null) return matched;
+        var boundScope = await scopes.Find(item => item.RootOutlineRunId == root.Id && item.UserId == run.UserId)
+            .FirstOrDefaultAsync(ct);
+        if (boundScope is not null)
+            throw new MdToPptSourcePlanException(
+                "task_budget_inactive",
+                "本次任务的额度保护已关闭、过期或与冻结来源不一致，未发送模型请求");
+        return null;
     }
 
     public async Task<DesignArtifactGatewayGrantUsage> ObserveAsync(

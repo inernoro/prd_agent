@@ -2239,12 +2239,21 @@ public class MdToPptController : ControllerBase
         DateTime now,
         CancellationToken ct)
     {
-        if (run.Op != "outline" || string.IsNullOrWhiteSpace(run.SourcePlanHash)) return null;
+        if (run.Op != "outline") return null;
+        if (run.SourcePlanVersion == 0
+            && string.IsNullOrWhiteSpace(run.SourcePlanJson)
+            && string.IsNullOrWhiteSpace(run.SourcePlanHash))
+            return null;
+        if (run.SourcePlanVersion != MdToPptSourcePlan.Version)
+            throw new MdToPptSourcePlanException(
+                "source_plan_invalid",
+                "冻结来源目录版本无效，请重新上传资料并生成大纲");
+        var sourceFingerprint = MdToPptSourcePlan.RestoreFingerprint(run.SourcePlanJson, run.SourcePlanHash);
         var claimed = await scopes.FindOneAndUpdateAsync(
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.UserId, run.UserId),
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.TenantId, tenantId),
-                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.SourcePlanHash, run.SourcePlanHash),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.SourcePlanHash, sourceFingerprint),
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.RootOutlineRunId, string.Empty),
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.Status, "active"),
                 Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Gt(item => item.ExpiresAt, now)),
@@ -2259,7 +2268,7 @@ public class MdToPptController : ControllerBase
                     Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
                         Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.UserId, run.UserId),
                         Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.TenantId, tenantId),
-                        Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.SourcePlanHash, run.SourcePlanHash),
+                        Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(item => item.SourcePlanHash, sourceFingerprint),
                         Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne(item => item.Status, "closed")))
                 .SortByDescending(item => item.CreatedAt)
                 .FirstOrDefaultAsync(ct);

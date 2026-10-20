@@ -756,27 +756,57 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     [DesignScopeMongoFact]
     public async Task HtmlPptConvertAndManualEdit_InheritOneFrozenTaskBudgetScope()
     {
+        var catalog = MdToPptSourcePlan.Create(
+            "# 发布资料\n\n必须保留完整条件。",
+            Array.Empty<DesignKnowledgeSnapshot>());
+        var boundJson = catalog.SerializeBound(catalog.Bind(new[]
+        {
+            new MdToPptOutlinePageDto
+            {
+                Title = "发布资料",
+                SourceBlockIds = catalog.Blocks.Select(block => block.Id).ToList(),
+            },
+        }, 1));
+        var parentHtml = "<html><body><p>原版说明</p>" + string.Join(string.Empty, catalog.Blocks.Select(block =>
+            $"<div data-mdppt-source=\"{block.Id}\">{block.Html}</div>")) + "</body></html>";
+        var proposalHtml = parentHtml
+            .Replace("原版说明", "用户修改后的说明", StringComparison.Ordinal)
+            .Replace("必须保留完整条件。", "必须完整保留发布条件。", StringComparison.Ordinal);
+        var overlayJson = MdToPptSourcePlan.ApplyManualEditOverlay(
+            boundJson, parentHtml, proposalHtml, out _);
+        Assert.NotEqual(MdToPptSourcePlan.Hash(boundJson), MdToPptSourcePlan.Hash(overlayJson));
+        Assert.Equal(catalog.Fingerprint, MdToPptSourcePlan.RestoreFingerprint(
+            overlayJson, MdToPptSourcePlan.Hash(overlayJson)));
         var outline = new MdToPptRun
         {
             Id = "outline-budget-root", UserId = "owner", Op = "outline", Status = "done",
-            SourcePlanHash = new string('a', 64),
+            SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = boundJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
         };
         var convert = new MdToPptRun
         {
             Id = "convert-budget-child", UserId = "owner", Op = "convert", Status = "done",
             ParentOutlineRunId = outline.Id,
+            SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = boundJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(boundJson),
         };
         var manual = new MdToPptRun
         {
             Id = "manual-budget-child", UserId = "owner", Op = "manual-edit", Status = "running",
             ParentRunId = convert.Id,
+            ParentOutlineRunId = outline.Id,
+            SourcePlanVersion = MdToPptSourcePlan.Version,
+            SourcePlanJson = overlayJson,
+            SourcePlanHash = MdToPptSourcePlan.Hash(overlayJson),
         };
         await _db.MdToPptRuns.InsertManyAsync(new[] { outline, convert, manual });
         await _gateway.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
             .InsertOneAsync(new GatewayRuntimeBudgetScopeRecord
             {
                 Id = "scope-ppt-chain", TenantId = GatewayTenantDefaults.InternalTenantId,
-                RootOutlineRunId = outline.Id, UserId = "owner", SourcePlanHash = outline.SourcePlanHash,
+                RootOutlineRunId = outline.Id, UserId = "owner", SourcePlanHash = catalog.Fingerprint,
                 Status = "active", MaxOutputTokens = 8192, ExpiresAt = Now.AddHours(1),
             });
         var designRun = Run(manual.Id, RunStatuses.Running);
@@ -801,7 +831,20 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         Assert.Equal("scope-ppt-chain", grant.BudgetScopeId);
         Assert.Equal(8192, grant.BudgetMaxOutputTokens);
         Assert.Equal(AppCallerRegistry.MdToPptAgent.Generation.Patch, grant.AppCallerCode);
-        Assert.Equal(new string('a', 64), outline.SourcePlanHash);
+        Assert.Equal(MdToPptSourcePlan.Hash(boundJson), outline.SourcePlanHash);
+        Assert.Equal(catalog.Fingerprint, MdToPptSourcePlan.RestoreCatalog(boundJson).Fingerprint);
+
+        var grantCount = await _gateway.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(_ => true);
+        await _db.MdToPptRuns.UpdateOneAsync(
+            item => item.Id == outline.Id,
+            Builders<MdToPptRun>.Update.Set(item => item.SourcePlanHash, new string('0', 64)));
+        var mismatch = await Assert.ThrowsAsync<MdToPptSourcePlanException>(() =>
+            service.IssueAsync(designRun, Now.AddMinutes(15), default));
+        Assert.Equal("source_plan_binding_mismatch", mismatch.Code);
+        Assert.Equal(grantCount, await _gateway.Database
+            .GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(_ => true));
     }
 
     private static DesignArtifactRun Run(string id, string status) => new()
