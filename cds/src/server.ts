@@ -76,6 +76,7 @@ import { collectControlPlanePressure } from './services/control-plane-pressure.j
 import type { UptimeCycleHealth } from './services/uptime-monitor.js';
 import type { OffHostAuditBreakerState } from './services/offhost-audit-log.js';
 import { GitHubAppClient } from './services/github-app-client.js';
+import { verifyProjectReleaseCI } from './services/project-release-ci.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
 import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
@@ -1908,7 +1909,9 @@ export function createServer(deps: ServerDeps): express.Express {
   }
   // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
-  const releaseService = new ReleaseService(deps.stateService);
+  const releaseService = new ReleaseService(deps.stateService, {
+    verifyProjectCI: (branch, sha, strategy) => verifyProjectReleaseCI(deps.stateService.getProject(branch.projectId), githubAppClient, branch, sha, strategy),
+  });
   const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
   // 远端现场巡检（阶段三 · 记账）：另起一个 starter 而不塞进上面的收割器 —— 收割器

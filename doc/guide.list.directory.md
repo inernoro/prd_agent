@@ -18,6 +18,8 @@
 
 ## 文档列表
 
+- [CDS 项目发布脚本 · 指南](./guide.cds.release-scripts.md) `guide.cds.release-scripts`
+
 ### 一、产品规格
 
 - [cds-compose 契约 · SSOT · 规格](./spec.cds.compose-contract.md) `spec.cds.compose-contract`

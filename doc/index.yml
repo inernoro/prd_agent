@@ -19,6 +19,7 @@ folders:
     name: 七、报告与周报
 
 docs:
+  guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格
   spec.cds.compose-contract: "cds-compose 契约 · SSOT · 规格"
   spec.cds.map-pairing-protocol: "CDS 与 MAP 配对协议 · 规格"
