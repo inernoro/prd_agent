@@ -3,7 +3,7 @@
   "title": "用Codex做好一次测试交付",
   "audience": "会向Agent下达任务、不操作代码、测试经验少的项目使用者",
   "date": "2026-10-20",
-  "duration": 5160,
+  "duration": 6060,
   "preserve_baseline": "656e5b303",
   "delivery": "讲解与可跟做粗样；所有演示数据与未验证项必须可见标注",
   "inputs": [
@@ -46,6 +46,18 @@
     {
       "name": "隔离环境",
       "hint": "可以安全创建与清理练习数据的环境"
+    },
+    {
+      "name": "报告交付位置",
+      "hint": "由Agent读取本项目约定，明确平台/桌面/其他位置、访问路径和读者权限；当前内置非CDS目标先适配再验证"
+    },
+    {
+      "name": "登录策略",
+      "hint": "由Agent识别本系统账号、SSO/跳转/会话和需要人接手的授权点，不让用户填技术配置"
+    },
+    {
+      "name": "风格基准",
+      "hint": "由Agent读取本项目主题、组件、导航、桌面移动及错误反馈规范"
     }
   ],
   "chapters": [
@@ -316,23 +328,23 @@
     },
     {
       "id": "visual",
-      "title": "第二章：视觉验收技能到CDS查收",
-      "duration": 1080,
-      "goal": "能取得并接入技能，发起验收，并查收同一份在线报告。",
+      "title": "第二章：视觉验收从接入到问题闭环",
+      "duration": 1440,
+      "goal": "能从MAP或CDS取得技能，交Agent安装并本地化，触发验收、读懂报告并将缺陷变为永久回归。",
       "steps": [
         {
           "id": "V01",
-          "title": "取得正确技能",
-          "where": "MAP首页 → 海鲜市场 → 搜索",
-          "action": "搜索create-visual-test-to-kb，点击卡片查看SKILL.md里的名称和版本，关闭详情后点击下载图标；若出现“拿来吧”命名框，确认后检查ZIP能打开且含技能正文。",
-          "expected": "得到实际ZIP文件；简称/create-visual-to-kb不当作已存在的命令。",
-          "recovery": "搜不到时核对正式名称与实例；本地已有时先核对版本。不要猜平台域名。",
+          "title": "选一种方式取得视觉验收技能",
+          "where": "实际MAP海鲜市场，或CDS的“接入Agent”入口",
+          "action": "MAP可下载ZIP后拖给Codex；CDS可在上手助手选中技能并复制启动提示词，再让Agent取得技能包。",
+          "expected": "知道两条真实获取路径；安装由Agent完成，用户不用解压或编辑文件。",
+          "recovery": "来源、版本与名称不清先让Agent核对；CDS复制启动提示词不代表技能已经安装。",
           "sources": [
             ".claude/skills/findmapskills/SKILL.md",
             "prd-admin/src/pages/marketplace/MarketplacePage.tsx"
           ],
           "proof": "pending",
-          "command": "",
+          "command": "请从我当前可访问的MAP或CDS取得create-visual-test-to-kb视觉验收技能。先核对实际来源与版本，再由你下载并安装；如果我已把ZIP拖进对话，请直接检查这个包。保留已有修改，缺条件先说明，不让我操作代码或解压目录。",
           "needs": [
             "MAP入口"
           ],
@@ -342,18 +354,38 @@
           "operator": "agent"
         },
         {
+          "id": "V01A",
+          "title": "从CDS复制启动提示词交给Agent",
+          "where": "CDS → 接入Agent → 上手助手 → 技能 → 打开技能库",
+          "action": "按弹窗选经验和角色，在技能库搜索“视觉验收归档”，确认选择并生成上手包，复制启动提示词给Codex。",
+          "expected": "Agent得到选择结果；随后自行下载并实际读取技能，不能把复制成功当安装成功。",
+          "recovery": "CDS“海鲜市场”页签目前没有搜索和逐技能下载按钮；不要在该页找不存在的按钮。",
+          "command": "请按我从当前CDS复制的启动提示词接入。所选视觉验收技能缺失时，由你通过当前CDS提供的权威技能下载接口取得并安装，核对依赖和读取结果。只拿到技能名称不算安装完成，不让我拼URL或手工解压。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            "cds/web/src/components/SkillDownloadDialog.tsx",
+            "cds/web/src/components/AgentStarterTab.tsx",
+            "cds/src/services/skill-proxy.ts"
+          ],
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [],
+          "hold": 8
+        },
+        {
           "id": "V02",
-          "title": "解压到正确目录",
-          "where": "自己的项目根目录",
-          "action": "Codex安装到.agents/skills，Claude Code安装到.claude/skills。先查看ZIP根结构，再解压，保留已修改文件。",
-          "expected": "技能目录下面直接有SKILL.md；同包测试设计和场景编排两项依赖也存在。",
-          "recovery": "多了一层压缩包目录就调整；缺依赖时重新取完整包。不要覆盖已有本地修改。",
+          "title": "拖入ZIP，或复制一句话让Agent安装",
+          "where": "当前目标项目的Codex对话框",
+          "action": "把刚下载的ZIP拖进当前项目对话，或复制获取指令给Agent；等它安装并回报实际读取结果。",
+          "expected": "Agent核对包与依赖并装入当前宿主支持的项目位置；人看到安装结果即可。",
+          "recovery": "已有修改不能直接覆盖；只有文件下载成功、未被当前会话读取，还不能说接入完成。",
           "sources": [
             ".claude/skills/findmapskills/SKILL.md",
             "scripts/skill-bundles.json"
           ],
           "proof": "pending",
-          "command": "请先检查下载的技能ZIP内部目录结构，再安装到当前项目的 .agents/skills/。保留已有本地修改；安装后核对 create-visual-test-to-kb、acceptance-test-design、acceptance-scenario-orchestrator 三个目录下的 SKILL.md 都存在。",
+          "command": "请安装我拖入的视觉验收技能ZIP到当前项目。由你检查包内容、当前宿主支持的技能位置及依赖，保留已有本地修改。完成后实际读取技能正文、测试设计和场景编排依赖，告诉我版本和结果；不用教我手工解压、复制目录或编辑代码。",
           "needs": [],
           "hold": 8,
           "required_proof": "local",
@@ -365,7 +397,7 @@
           "title": "确认工具真的看见技能",
           "where": "重新加载后的Codex会话",
           "action": "先让Codex读取技能正文，报告name和所需依赖路径。必要时新开会话。",
-          "expected": "工具返回实际读取的内容，而非凭技能名字概述。",
+          "expected": "Agent实际读到技能正文及依赖；接下来还要适配本项目，不能马上宣布已经能验收。",
           "recovery": "目录存在但工具不可见时，核对当前工作目录、宿主技能目录与会话重载。",
           "sources": [
             ".claude/skills/findmapskills/SKILL.md"
@@ -380,16 +412,16 @@
         },
         {
           "id": "V03B",
-          "title": "先检查验收环境",
-          "where": "当前Codex会话与独立验收环境",
-          "action": "按技能检查Python 3、Playwright与Chromium、应用登录、CDS项目归档权限，以及cdscli或明确的预览地址配置。凭据从安全配置读取。",
-          "expected": "逐项说明已具备或缺项，知道需要补什么；条件齐全后再发起验收。",
+          "title": "让Agent检查本项目的验收前提",
+          "where": "Agent对话 → 本项目规则与现有环境",
+          "action": "让Agent检查浏览器、应用入口、目标版本、登录与报告权限；人只处理需要自己登录或授权的环节。",
+          "expected": "检查结果写清可执行、待人授权、缺环境三类，先修好前提再开测。",
           "recovery": "缺工具按项目规则安装；缺账号或项目权限时补对应授权配置。没有cdscli时使用已核对的实际入口配置，不手算域名。",
           "sources": [
             ".claude/skills/create-visual-test-to-kb/SKILL.md"
           ],
           "proof": "pending",
-          "command": "请按 create-visual-test-to-kb 的前置要求检查当前环境，逐项列出工具、浏览器、应用登录、CDS项目归档权限、cdscli或预览地址配置是否齐全及缺项处理。只检查配置存在性和可用性，不输出密码、Token或Key，暂不执行验收。",
+          "command": "请检查当前项目能否执行视觉验收。工具、浏览器、版本、实际入口、系统登录和报告读取/写入权限由你核对；需要我登录或确认权限时指向实际页面，不索要密码。先返回准备结果和缺项处理，不把登录页或本机示意当目标功能已核验。",
           "command_kind": "prompt",
           "needs": [
             "CDS入口",
@@ -402,38 +434,77 @@
         },
         {
           "id": "V04",
-          "title": "填齐验收输入",
-          "where": "任务卡 → 技能配置与安全凭据",
-          "action": "填写功能、目标提交、实际入口、验收范围与CDS归属项目；分别确认应用登录和归档权限。",
-          "expected": "没有仍未填写的占位值；截图与临时产物在仓库外。",
-          "recovery": "缺权限只补对应权限；不要把密码、Key写进提示词、视频或仓库。",
+          "title": "先适配本项目的登录、风格和导航",
+          "where": "Agent读取的本项目规范 → 适配结果读回",
+          "action": "用业务话说明本系统的特殊要求，让Agent对照已有登录策略、主题组件、导航与设备规范做本地化。",
+          "expected": "Agent说清怎样登录、从哪进入、按什么风格与设备检查；安装成功与适配成功分开。",
+          "recovery": "不要让Agent把MAP登录字段、主题或菜单照搬到其他系统；与实际项目不符先修适配。",
           "sources": [
             ".claude/skills/create-visual-test-to-kb/SKILL.md"
           ],
           "proof": "pending",
-          "command": "",
+          "command": "请把视觉验收技能适配到当前项目。先读取本系统现有规则，识别登录/SSO/授权回跳和会话策略、真实导航、主题组件、桌面与移动规范。由你调整项目适配，保留技能通用规则，避免另抄一套判据。用我看得懂的话读回“怎么登录、从哪进入、按什么风格测、报告放哪”，缺条件不要宣布可用。",
           "needs": [
-            "目标提交",
-            "实际入口",
-            "CDS项目"
+            "登录策略",
+            "风格基准"
           ],
           "hold": 8,
           "required_proof": "live",
           "command_kind": "prompt",
           "operator": "agent"
+        },
+        {
+          "id": "V04A",
+          "title": "明确报告放哪、谁能查收",
+          "where": "Agent对话 → 当前项目交付约定",
+          "action": "告诉Agent报告实际放CDS、桌面还是其他系统，由它检查现有支持、完成所需适配并验证读者可访问。",
+          "expected": "交付位置、进入路径、可读身份和正式完成标准清楚；有不支持项先说明。",
+          "recovery": "当前包正式归档内置CDS-only；桌面和其他系统需专门适配，不能仅改开关就称能用。",
+          "command": "请先确认本项目正式验收报告应该放在哪里、谁来看、从哪里进入，以及是否需要登录。我可能使用CDS、桌面或其他平台，以本项目约定为准。检查当前技能归档能力，不支持的目标先列缺口并完成独立适配与读回验证；不强推CDS，也不把本地诊断模式当正式桌面交付。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            ".claude/skills/create-visual-test-to-kb/scripts/archive_report.py"
+          ],
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [
+            "报告交付位置"
+          ],
+          "hold": 8
+        },
+        {
+          "id": "V04B",
+          "title": "选择什么时候触发验收",
+          "where": "Agent任务要求、已配置的项目流程或手动发起",
+          "action": "可直接说“验收这个功能”、使用/验收，或在任务开头约定写完后执行；PR、定时、发布前触发需先验证自动化已配置。",
+          "expected": "知道自己用了哪一种触发、测哪个版本，能看到实际开始与最终结果。",
+          "recovery": "把触发规则写进文案不等于自动化已启用；纯文档或无界面的变更按风险选择适合证据。",
+          "command": "本次功能完成后，请先按项目要求跑必要的低成本检查；可用预览就绪后自动执行视觉验收，最后给报告。现在请确认这只是当前任务约定，还是仓库/PR/定时流程已实际配置；未配置的不要说已自动启用。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            ".claude/skills/create-visual-test-to-kb/SKILL.md",
+            ".claude/skills/acceptance-scenario-orchestrator/SKILL.md"
+          ],
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [],
+          "hold": 8
         },
         {
           "id": "V05",
-          "title": "发起并观察验收",
-          "where": "Codex会话 → 浏览器真实入口",
-          "action": "让技能先读取规范、设计场景，再从首页点击进入目标功能，执行动作并记录结果。",
-          "expected": "证据对应操作与预期；适用主题与独立触控移动路径按技能要求覆盖。",
-          "recovery": "入口点不到如实保留；环境或脚本失败要与产品失败分开。",
+          "title": "适配通过后，当场让Agent跑一轮",
+          "where": "同一个Agent对话 → 当前项目真实页面",
+          "action": "发出验收任务，看Agent按真实入口操作、截图、逐项判断并交付报告。",
+          "expected": "出现实际执行过程、页面证据与同轮报告；失败也如实保留，不用旧录屏代替当次结果。",
+          "recovery": "环境、登录、适配或归档受阻，就停在对应分支；不能剪成自动化已经通过。",
           "sources": [
             ".claude/skills/create-visual-test-to-kb/SKILL.md"
           ],
           "proof": "pending",
-          "command": "请使用本项目的 create-visual-test-to-kb 技能。先检查任务卡里的功能、版本、入口和CDS项目是否齐全，再读取权威规范、设计场景、走真实入口取证并归档。缺条件时明确阻塞，不编造结果或链接。",
+          "command": "本项目适配检查通过后，请对我刚确认的功能和本轮版本执行一次视觉验收。先设计场景，再从真实首页按导航进入，按项目风格覆盖适用主题、桌面与触控移动以及成功/等待/失败/恢复。展示实际执行进度，记录每项预期、实际和截图，按已确认的项目交付位置归档并实际打开。遇到问题保留证据和阻塞，不复用另一版本的通过结果。",
           "needs": [],
           "hold": 8,
           "required_proof": "live",
@@ -441,18 +512,39 @@
           "operator": "agent"
         },
         {
+          "id": "V05A",
+          "title": "把验收问题变成工程改进",
+          "where": "Agent给出的失败证据 → 修复、回归与复验",
+          "action": "让Agent先分清产品、测试脚本、环境登录、适配归档与需求不清，再按原因修复，并把可复现问题固化为适合的回归。",
+          "expected": "缺陷有复现、影响和证据；代码/测试/规则/CI的改进有对应原因，修复后同场景复验。",
+          "recovery": "不能重试到绿就删失败，也不能为一个缺陷复制第二套SSOT；有覆盖缺口就写没测出来。",
+          "command": "验收遇到问题时，请保留版本、步骤、预期、实际和截图，先判断产品缺陷、测试脚本问题、环境/登录问题、项目适配/归档问题或预期不清。核实后按原因修复，给可重现的缺陷补回归；共享规则只改权威源并检查所有出口，稳定后接到应执行的CI/触发流程。重跑同一场景和受影响路径，报告保留原失败与关闭证据；没有实际修复不准改成通过。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            "doc/rule.acceptance.map-enterprise.md",
+            ".claude/rules/predicate-and-wiring-discipline.md"
+          ],
+          "proof": "pending",
+          "required_proof": "live",
+          "needs": [],
+          "hold": 8
+        },
+        {
           "id": "V06",
-          "title": "确认线上归档完成",
-          "where": "技能返回结果 → 本轮报告链接",
-          "action": "等待CDS归档结果，打开返回的真实深链，核对正文与证据可以访问。",
-          "expected": "获得实际在线报告，版本和本轮一致；链接检查通过。",
-          "recovery": "本地HTML与/tmp文件只是中间产物；网络或归档失败时保持未完成。",
+          "title": "确认报告到了本项目约定的位置",
+          "where": "Agent返回的实际报告位置与访问方式",
+          "action": "核对报告目的地、版本、读者权限、正文和证据；CDS项目继续验证线上深链，其他目标按适配后约定查收。",
+          "expected": "本项目要求的读者能够读到同一份报告与证据，且正式交付与临时草稿明确区分。",
+          "recovery": "当前技能内置的本地诊断模式仍是草稿；非CDS正式交付未适配或未验证时，保持未完成。",
           "sources": [
             ".claude/skills/create-visual-test-to-kb/SKILL.md"
           ],
           "proof": "pending",
-          "command": "",
-          "needs": [],
+          "command": "请确认本轮报告已按当前项目约定交付。给我实际可打开的位置、从系统哪里进入、读者权限和本轮版本；实际检查正文、截图与内部链接。CDS继续使用正式归档与打开校验；桌面或其他系统只有完成专门交付适配并验证后才能报正式完成，不把内置本地诊断草稿换个名字交付。",
+          "needs": [
+            "报告交付位置"
+          ],
           "hold": 8,
           "required_proof": "live",
           "command_kind": "prompt",
@@ -460,17 +552,17 @@
         },
         {
           "id": "V07",
-          "title": "从平台找到同一份报告",
-          "where": "CDS首页 → 侧栏“报告”（展开后“验收报告”）→ 项目/文件夹",
-          "action": "从正常导航进入“报告”，选择正确项目和文件夹，在“报告台账”里点击本轮标题，打开同一报告。",
-          "expected": "读出目标版本、实测版本、结论、截图、失败项与未覆盖项；证据能打开。",
-          "recovery": "先清筛选、核对项目及登录身份；403查项目权限，不反复重跑产品测试。",
+          "title": "打开报告，判断它能否支持结论",
+          "where": "当前项目实际报告入口；本项目示例为CDS“验收报告”",
+          "action": "先看版本与测试范围，再看产品结论、已测/未测、失败项与截图；逐项对照动作、预期、实际及问题标注。",
+          "expected": "能发现版本不符、没测却写通过、截图不对应、关键证据缺失、已知P0/P1却放行等问题。",
+          "recovery": "先查身份、项目和筛选；报告缺证先判结论不足，不能只看绿色标题或截图总数。",
           "sources": [
             "cds/web/src/components/layout/AppShell.tsx",
             "cds/web/src/pages/ReportsPage.tsx"
           ],
           "proof": "pending",
-          "command": "",
+          "command": "请带我查阅本轮报告。先返回已验证的入口和逐步点击位置，再按版本范围、产品结论、执行覆盖、失败/未执行、截图和关闭条件逐项读回。每个“通过”指向证据；每个问题说明用户怎样触发、后果、责任层与复测方式。当前项目在CDS时从侧栏验收报告找到同一份正文，不只展示列表。",
           "needs": [
             "CDS入口",
             "本轮报告深链"
@@ -484,8 +576,8 @@
           "id": "V08",
           "title": "暂停：自己走一遍",
           "where": "自己的项目",
-          "action": "独立完成获取、安装识别、输入、执行、平台查收；记录第一次卡住的位置。",
-          "expected": "能交出同一版本的报告链接，解释通过和未覆盖分别是什么。",
+          "action": "换一个自己的功能，把获取或已有技能、项目适配、触发验收、读报告和反馈闭环完整交给Agent执行。",
+          "expected": "能说明报告在哪、怎样登录、按什么风格测、何时触发、发现问题后如何修复和回归。",
           "recovery": "需要讲师临时补步骤的位置，记入教程修改清单。",
           "sources": [
             "doc/guide.platform.testing.script.md"
@@ -503,9 +595,50 @@
     {
       "id": "unit",
       "title": "第三章：单元测试与SSOT对齐",
-      "duration": 1200,
-      "goal": "能让原缺陷先失败再通过，并检查规则的所有使用方。",
+      "duration": 1440,
+      "goal": "能读懂各模块测试数量与边界，把一次统计定义对齐到所有消费者、回归检查和真实执行流程。",
       "steps": [
+        {
+          "id": "U00",
+          "title": "先看真实测试统计，分清计数口径",
+          "where": "本次测试统计页 → Agent返回的来源",
+          "action": "让Agent按主系统、LLMGW、CDS盘点，并把测试文件数、静态声明、实际收集、实际执行通过分别列出。",
+          "expected": "每个数字有日期、版本、范围、口径和来源；没跑不能算通过，跨目录共享测试不重复加总。",
+          "recovery": "命名文件数不等于用例总数；动态参数、跳过、CI过滤和网关跨目录回归需要单列。",
+          "command": "请刷新当前仓库的测试统计：主系统各模块、LLMGW与CDS分别有多少测试文件、静态用例声明、运行器实际收集和本次执行结果。每个数字带版本、范围、口径与来源；拿不到就写未知，不把静态扫描说成执行通过。LLMGW跨主系统目录的共享测试要标归属、不要重复相加。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            "prd-api/tests/PrdAgent.Tests/PrdAgent.Tests.csproj",
+            "cds/vitest.config.ts",
+            "prd-admin/package.json",
+            "llmgw/web/package.json"
+          ],
+          "proof": "pending",
+          "required_proof": "local",
+          "needs": [],
+          "hold": 8
+        },
+        {
+          "id": "U00A",
+          "title": "这些测试具体守住了什么",
+          "where": "测试统计 → 代表性业务规则与证据映射",
+          "action": "请Agent选授权、路由/计费、预览地址和用户页面等实际测试，说明它们检查的规则、漏掉的风险与何时会执行。",
+          "expected": "能把数量连到用户风险，说明只对覆盖且执行过的场景降低复发风险，不能保证永远不出错。",
+          "recovery": "不靠总数或覆盖率宣称没有bug；没运行、没连工作流或mock范围外仍是缺口。",
+          "command": "请把统计中的代表性测试对应到实际用户风险：测试哪条规则、哪些消费者、什么变化会导致失败、在哪条工作流实际执行，以及没覆盖什么。用业务话解释，不只读文件名和总数，不承诺这些问题永远不会出现。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            ".github/workflows/ci.yml",
+            "cds/tests/services/preview-url-skill-drift.test.ts",
+            "prd-admin/src/lib/__tests__/landingFilm.test.ts"
+          ],
+          "proof": "content",
+          "required_proof": "content",
+          "needs": [],
+          "hold": 8
+        },
         {
           "id": "U01",
           "title": "先观察一个失败",
@@ -598,6 +731,25 @@
           "required_proof": "content",
           "command_kind": "prompt",
           "operator": "agent"
+        },
+        {
+          "id": "U06",
+          "title": "统计数字也只能有一份定义",
+          "where": "同一份统计清单 → 页面、教程与交付报告",
+          "action": "让Agent统一模块归属、文件/用例/执行口径和去重规则；页面、讲义与报告消费同一清单，再演示口径漂移会怎样被发现。",
+          "expected": "真实统计页与同一清单一致；隔离副本单个数字写回旧数会失败，恢复通过；把文件数改叫通过数也会被指出。",
+          "recovery": "运行器没有收集成功就保留未知；不能复制一份常量让两个出口自证一致。",
+          "command": "请把本轮测试统计作为统一清单管理，明确模块范围、文件/声明/收集/执行的区别和共享测试去重规则。页面、讲义和交付报告使用同一来源；检查另一个出口写回旧数或改口径时能否被发现。缺少采集或执行证据就写未知，不用数字0兜底。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            ".claude/rules/predicate-and-wiring-discipline.md",
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "pending",
+          "required_proof": "local",
+          "needs": [],
+          "hold": 8
         }
       ]
     },
@@ -693,10 +845,10 @@
         {
           "id": "S02",
           "title": "检查报告是否可查收",
-          "where": "CDS在线报告",
-          "action": "从最终链接打开正文、截图和内部链接，核对权限、版本及未覆盖项。",
+          "where": "本项目CDS报告；其他系统按已适配的正式交付位置",
+          "action": "从Agent核验的实际位置读正文、截图和内部链接，核对读者权限、版本及未覆盖项。",
           "expected": "收件人在应有权限内能读到同一份结果，未执行项有补跑入口和关闭条件。",
-          "recovery": "打不开就保持交付未完成；不拿本机文件替代正式验收。",
+          "recovery": "打不开或未完成正式交付适配，就保持未完成；不能把当前内置诊断草稿当作正式报告。",
           "sources": [
             ".claude/skills/create-visual-test-to-kb/SKILL.md"
           ],
@@ -735,6 +887,75 @@
           "operator": "agent"
         }
       ]
+    },
+    {
+      "id": "closing",
+      "title": "收尾：何时用什么方法，开发按什么顺序",
+      "duration": 300,
+      "goal": "能按风险选择方法、说明每步解决的问题，并把发现回流到下一次开发。",
+      "steps": [
+        {
+          "id": "C01",
+          "title": "按问题选方法，别只记技能名",
+          "where": "方法场景速查表 → 当前Agent任务",
+          "action": "想查遗漏用MECE风险拆分/risk；模拟反向检查用/verify；真实人员跟做用/uat；追整条链用/trace，跨层字段再用/deep-trace。",
+          "expected": "知道每种方法解决什么问题，AI模拟审查和真人验收分开，不把未存在的/mece或/humen说成现有命令。",
+          "recovery": "/uat清单生成不等于真人已验收；MECE不等于证明覆盖全部风险。",
+          "command": "请按当前问题选最合适的方法：用/risk做不重不漏的风险拆分，用/verify模拟人工反向质疑，用/trace追真实用户到数据的链路，必要时用/deep-trace检查跨层接缝；需要真正的人试用则准备/uat清单。先说明为什么选、输出是什么、还需什么证据，不把AI模拟当真人完成。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            ".claude/skills/risk-matrix/SKILL.md",
+            ".claude/skills/human-verify/SKILL.md",
+            ".claude/skills/acceptance-checklist/SKILL.md",
+            ".claude/skills/flow-trace/SKILL.md",
+            ".claude/skills/deep-trace/SKILL.md"
+          ],
+          "proof": "content",
+          "required_proof": "content",
+          "needs": [],
+          "hold": 8
+        },
+        {
+          "id": "C02",
+          "title": "真实开发按这个顺序走",
+          "where": "业务目标 → 风险与链路 → 实现与验证 → 交付",
+          "action": "人确认目标；Agent查风险/链路与SSOT，带回归实现，跑低成本检查，代码评审修复再审，预览就绪后融合视觉与联合测试，最后报告与真人跟做。",
+          "expected": "能解释教学章节顺序与实际执行顺序的区别；失败回到对应层修复，更新后重跑受影响验证。",
+          "recovery": "不先跑昂贵浏览器来发现明显构建错误；也不拿单测绿替代真实用户路径。",
+          "command": "请按真实开发顺序执行当前任务：目标与成功标准→风险/链路和SSOT→实现并准备回归→必要构建和单测→代码评审修复复审→可用预览上的视觉与联合验证→修复并重跑→报告查收→适用的真人验收。按风险裁剪方法，说明依赖和证据；失败回到对应环节，不跳过未完成项。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            "AGENTS.md",
+            ".claude/rules/cds-first-verification.md",
+            "doc/guide.platform.testing.methodology.md"
+          ],
+          "proof": "content",
+          "required_proof": "content",
+          "needs": [],
+          "hold": 8
+        },
+        {
+          "id": "C03",
+          "title": "把本课收成一次真实交付",
+          "where": "本轮目标、各类证据与未完成项",
+          "action": "回顾从哪里触发、用了什么方法、解决什么用户问题；交付可打开报告、修复后证据和下一步，不用“全绿”代替解释。",
+          "expected": "能说清五类方法各负责什么，以及哪些已证明、哪些仍未知；下一次同类问题有回归可守。",
+          "recovery": "不会因为看过教程或运行过技能就称已经掌握；没有真实证据的范围继续保留。",
+          "command": "请用一页总结这次真实任务：从哪个环节触发，各用了什么测试方法、各解决什么风险，实际开发按什么顺序执行，问题如何修复并进入回归，最终报告在哪，哪些还没验证。每个完成结论指向证据，未解决P0/P1和未执行项显式保留。",
+          "command_kind": "prompt",
+          "operator": "agent",
+          "sources": [
+            "doc/guide.platform.testing.methodology.md",
+            "doc/rule.acceptance.map-enterprise.md"
+          ],
+          "proof": "content",
+          "required_proof": "content",
+          "needs": [],
+          "hold": 8
+        }
+      ]
     }
   ],
   "trial": {
@@ -747,5 +968,5 @@
     ]
   },
   "execution_model": "人描述目标、登录授权、打开已核验页面确认结果；Agent查版本、生成任务记录、操作代码、运行测试、修复及复审。",
-  "revision": "2026-10-20：按用户评审改为Agent执行，补连接与授权、复审闭环、缺陷分析；视觉章节等待用户评审。"
+  "revision": "2026-10-20：视觉双途径获取与项目适配、触发与工程反馈，测试统计及保护范围，方法场景与真实开发顺序收尾。"
 }
