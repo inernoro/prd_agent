@@ -146,7 +146,7 @@ export function AppealSubmitDialog({
           <style>{`
             .appeal-editor:empty::before {
               content: attr(data-placeholder);
-              color: rgba(255,255,255,0.3);
+              color: var(--text-muted);
               pointer-events: none;
             }
             .appeal-editor img {
