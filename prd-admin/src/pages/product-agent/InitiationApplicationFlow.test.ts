@@ -45,4 +45,37 @@ describe('内部版本在申领表单内选择应用', () => {
     expect(application).toContain('parsed.matchedApplicationId && availableProducts.some');
     expect(application).toContain('setLinkedProductId(parsed.matchedApplicationId)');
   });
+
+  it('选择评审方案先清空旧应用，仅接受服务端唯一识别且当前可选的结果', () => {
+    const choose = application.slice(application.indexOf('const chooseReviewSource ='), application.indexOf('const basePayload'));
+    expect(application).toContain('onChange={(event) => chooseReviewSource(event.target.value)}');
+    expect(choose.indexOf("setLinkedProductId('')")).toBeLessThan(choose.indexOf('parseProductVersionMessage('));
+    expect(choose).toContain("parseProductVersionMessage('internal', `产品立项方案名称：${source.title}`)");
+    expect(choose).toContain('response.data.result.matchedApplicationId');
+    expect(choose).toContain('productOptionsRef.current.some((option) => option.id === applicationId)');
+    expect(choose).not.toContain('productMatches');
+    expect(choose).not.toContain('setLinkedProductId(productId)');
+  });
+
+  it('快速换方案或退出表单后，旧请求不再回填或结束新请求的识别状态', () => {
+    expect(application).toContain('const sequence = ++reviewApplicationSequence.current');
+    expect(application).toContain('if (sequence !== reviewApplicationSequence.current) return;');
+    expect(application).toContain('const sequence = reviewApplicationSequence.current;');
+    expect(application).toContain('sequence !== reviewApplicationSequence.current || !response.success');
+    expect(application).toContain('if (sequence === reviewApplicationSequence.current) setReviewApplicationMatching(false)');
+    expect(application).toContain('useEffect(() => () => { reviewApplicationSequence.current += 1; }, [])');
+  });
+
+  it('手选应用、编辑标题或重新粘贴会取消当前方案的自动回填，保留人工操作', () => {
+    expect(application).toContain('onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }}');
+    expect(application).toContain('onChange={(e) => { cancelReviewApplicationLookup(); setPlanName(e.target.value); }}');
+    expect(application).toMatch(/const applyParsedMessage = [\s\S]*?=> \{\s+cancelReviewApplicationLookup\(\);/);
+    expect(application).toContain('reviewApplicationSequence.current += 1;');
+  });
+
+  it('识别失败留空且提示手选，等待状态不阻止手动选择', () => {
+    expect(application).toContain('暂时无法识别方案所属应用，请手动选择所属应用后继续。');
+    expect(application).toContain('正在识别方案所属应用，也可手动选择。');
+    expect(application).not.toContain('disabled={reviewApplicationMatching}');
+  });
 });

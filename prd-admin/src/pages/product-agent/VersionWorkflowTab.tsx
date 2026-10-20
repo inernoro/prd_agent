@@ -360,6 +360,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewSubmissionId ?? '');
   const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string }>>([]);
   const [canUseAllReviews, setCanUseAllReviews] = useState(false);
+  const reviewApplicationSequence = useRef(0);
+  const [reviewApplicationMatching, setReviewApplicationMatching] = useState(false);
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
   const [file, setFile] = useState<File | null>(null);
   const [meeting, setMeeting] = useState(false);
@@ -467,6 +469,40 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     () => toProductOptions(canSelectApplication ? availableProducts : availableProducts.filter((product) => product.id === productId)),
     [canSelectApplication, availableProducts, productId],
   );
+  const productOptionsRef = useRef(productOptions);
+  productOptionsRef.current = productOptions;
+
+  useEffect(() => () => { reviewApplicationSequence.current += 1; }, []);
+
+  const cancelReviewApplicationLookup = () => {
+    reviewApplicationSequence.current += 1;
+    setReviewApplicationMatching(false);
+  };
+
+  const chooseReviewSource = (id: string) => {
+    const sequence = ++reviewApplicationSequence.current;
+    setReviewSubmissionId(id);
+    setLinkedProductId('');
+    setReviewApplicationMatching(false);
+    const source = reviewSources.find((entry) => entry.id === id);
+    if (!source) return;
+    setPlanName(source.title);
+    setMessage('');
+    setReviewApplicationMatching(true);
+    void parseProductVersionMessage('internal', `产品立项方案名称：${source.title}`).then((response) => {
+      if (sequence !== reviewApplicationSequence.current) return;
+      if (!response.success) {
+        setMessage('暂时无法识别方案所属应用，请手动选择所属应用后继续。');
+        return;
+      }
+      const applicationId = response.data.result.matchedApplicationId;
+      if (applicationId && productOptionsRef.current.some((option) => option.id === applicationId)) setLinkedProductId(applicationId);
+    }).catch(() => {
+      if (sequence === reviewApplicationSequence.current) setMessage('暂时无法识别方案所属应用，请手动选择所属应用后继续。');
+    }).finally(() => {
+      if (sequence === reviewApplicationSequence.current) setReviewApplicationMatching(false);
+    });
+  };
 
   const basePayload = () => ({
     linkedProductId,
@@ -620,6 +656,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   };
 
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
+    cancelReviewApplicationLookup();
     if (parsed.projectType) setProjectType(parsed.projectType);
     if (parsed.versionType) setVersionType(parsed.versionType);
     if (parsed.demandSource) setDemandSource(parsed.demandSource);
@@ -644,12 +681,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
       <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} />
       <Field label="已通过的产品评审记录（选填，可跳过重复评审）" full>
-        <Select value={reviewSubmissionId} onChange={(event) => {
-          const id = event.target.value;
-          setReviewSubmissionId(id);
-          const source = reviewSources.find((entry) => entry.id === id);
-          if (source) setPlanName(source.title);
-        }}>
+        <Select value={reviewSubmissionId} onChange={(event) => chooseReviewSource(event.target.value)}>
           <option value="">新上传方案并进行 Agent 评审</option>
           {reviewSources.map((source) => <option key={source.id} value={source.id}>{source.title}</option>)}
         </Select>
@@ -660,18 +692,20 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       <Field label="所属应用 *" full>
         <ItemSearchSelect
           value={linkedProductId}
-          onChange={setLinkedProductId}
+          onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }}
           options={productOptions}
           placeholder="搜索应用名称或编号"
           countUnit="个应用"
           emptyText="暂无可选应用"
         />
+        {reviewApplicationMatching && <p role="status" className="mt-1.5 flex items-center gap-2 text-xs text-token-muted"><MapSpinner size={14} />正在识别方案所属应用，也可手动选择。</p>}
       </Field>
-      <Field label="方案名称 *"><Input value={planName} onChange={(e) => setPlanName(e.target.value)} onBlur={() => {
+      <Field label="方案名称 *"><Input value={planName} onChange={(e) => { cancelReviewApplicationLookup(); setPlanName(e.target.value); }} onBlur={() => {
+        const sequence = reviewApplicationSequence.current;
         const entered = planName;
         if (!entered.trim()) return;
         void parseProductVersionMessage('internal', `产品立项方案名称：${entered}`).then((response) => {
-          if (!response.success || !response.data.result.planName || planNameRef.current !== entered) return;
+          if (sequence !== reviewApplicationSequence.current || !response.success || !response.data.result.planName || planNameRef.current !== entered) return;
           const parsed = response.data.result;
           setPlanName((previous) => previous === entered ? parsed.planName! : previous);
         }).catch(() => { /* 提交时仍由同一服务端规则清洗，不因预览失败丢失输入。 */ });
