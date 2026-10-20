@@ -1,6 +1,29 @@
 import * as XLSX from 'xlsx';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseProductImportCsv, parseProductImportXlsxBuffer } from './productImportParse';
+
+describe('bundled product import templates', () => {
+  it('offers the same 23 unique applications in CSV and Excel, including the latest additions', () => {
+    const csvPath = fileURLToPath(new URL('../../../public/templates/product-import-initial-apps.csv', import.meta.url));
+    const xlsxPath = fileURLToPath(new URL('../../../public/templates/product-import-initial-apps.xlsx', import.meta.url));
+    const csvRows = parseProductImportCsv(readFileSync(csvPath, 'utf8'));
+    const buffer = readFileSync(xlsxPath);
+    const xlsxRows = parseProductImportXlsxBuffer(Uint8Array.from(buffer).buffer);
+
+    expect(csvRows).toHaveLength(23);
+    expect(xlsxRows).toEqual(csvRows);
+    expect(new Set(csvRows.map((row) => row.name.toLowerCase())).size).toBe(23);
+    expect(csvRows.every((row) => row.grade === '应用')).toBe(true);
+    expect(csvRows.map((row) => row.name)).toEqual(expect.arrayContaining([
+      '商户助手小程序', 'IMP助手', 'AI运营简报', 'BDE AI应用底座',
+    ]));
+    const dialog = readFileSync(fileURLToPath(new URL('./ProductImportDialog.tsx', import.meta.url)), 'utf8');
+    expect(dialog).toContain(`一键加载初始模板（${csvRows.length} 个应用）`);
+    expect(dialog).toContain("fetch(TEMPLATE_XLSX, { cache: 'no-store' })");
+  });
+});
 
 describe('parseProductImportCsv', () => {
   it('maps product name and grade columns', () => {
