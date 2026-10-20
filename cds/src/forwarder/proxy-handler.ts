@@ -838,6 +838,11 @@ export class ProxyHandler {
     });
   }
 
+  /** 调度只读有限收据，不构造随公网 Host 基数增长的完整统计。 */
+  getPreviewActivity(): PreviewActivitySnapshot {
+    return this.previewActivity.snapshot();
+  }
+
   getStats(): ProxyStats & { previewActivity: PreviewActivitySnapshot } {
     return { ...this.stats.snapshot(), previewActivity: this.previewActivity.snapshot() };
   }

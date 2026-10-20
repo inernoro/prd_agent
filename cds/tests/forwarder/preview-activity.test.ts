@@ -80,8 +80,9 @@ async function fixture() {
     jsonFallbackPath: '/dev/null', saveSnapshot: false, logger: {} });
   const app = express();
   app.use(createDiagnosticRouter({ watcher, proxy }));
-  app.use((req, res) => { void proxy.handle(req, res, { _id: 'file-route', host: 'file.example.invalid',
-    upstreamPort, branchId: 'file', profileId: 'api', weight: 100, healthState: 'running' }); });
+  app.use((req, res) => { void proxy.handle(req, res, req.headers.host === 'file.example.invalid'
+    ? { _id: 'file-route', host: 'file.example.invalid', upstreamPort, branchId: 'file',
+      profileId: 'api', weight: 100, healthState: 'running' } : null); });
   const port = await listen(http.createServer(app));
   const headers = probeRequestHeaders();
   const marker = headers[PROBE_MARKER_HEADER];
@@ -89,6 +90,18 @@ async function fixture() {
   return { state, scheduler, cooled, port, headers, marker, proxy, logs, arrivals, waitForArrival,
     release: () => release?.(), access: (url: string, extra: Record<string, string> = {}, method?: string) =>
       request(port, url, { host: 'file.example.invalid', ...extra }, method) };
+}
+
+async function growHostStats(port: number): Promise<void> {
+  // 真实无路由 HTTP 请求进入 StatsCollector；不修改统计字段或伪造响应体。
+  for (let index = 0; index < 300; index++) {
+    const result = await request(port, '/unknown', { host: `unknown-${index}.${'a'.repeat(7168)}.invalid` });
+    expect(result.status).toBe(503);
+  }
+  const stats = await request(port, '/__forwarder/stats');
+  expect(stats.status).toBe(200);
+  expect(Buffer.byteLength(stats.body)).toBeGreaterThan(2 * 1024 * 1024);
+  expect(Object.keys(JSON.parse(stats.body).requestsByHost)).toHaveLength(301);
 }
 
 describe('真实forwarder访问到master调度时钟', () => {
@@ -131,6 +144,61 @@ describe('真实forwarder访问到master调度时钟', () => {
     expect(f.cooled).toEqual(['quiet']);
   });
 
+  it.each(['tick', 'wake'] as const)('完整统计超过2MiB仍读取有限活动，%s按真实时间只降温闲置分支', async decision => {
+    const f = await fixture();
+    await f.access('/api/document-store/stores');
+    const userAt = f.proxy.getStats().previewActivity.branches[0].userAt;
+    await growHostStats(f.port);
+    await f.access('/api/version', f.headers);
+    const receipt = await readForwarderPreviewActivity(f.port);
+    expect(receipt).toMatchObject({ version: 1, branches: [{ branchId: 'file', userAt }] });
+    const projected = await request(f.port, '/__forwarder/stats?view=preview-activity');
+    expect(projected.status).toBe(200);
+    expect(Object.keys(JSON.parse(projected.body))).toEqual(['previewActivity']);
+    expect(Buffer.byteLength(projected.body)).toBeLessThan(2 * 1024 * 1024);
+    expect(projected.body.includes(f.marker)).toBe(false);
+    if (decision === 'wake') {
+      f.scheduler.setMaxHotBranches(2);
+      f.state.addBranch({ id: 'new', projectId: 'default', branch: 'codex/new', services: {},
+        status: 'idle', heatState: 'cold', worktreePath: '/unused', createdAt: new Date().toISOString() });
+      const woken: string[] = [];
+      f.scheduler.setWakeFn(async id => { woken.push(id); });
+      await f.scheduler.wake('new');
+      expect(woken).toEqual(['new']);
+      expect(f.scheduler.getSnapshot().capacityUsage).toEqual({ current: 2, max: 2 });
+    } else await f.scheduler.tick();
+    expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('ready');
+    expect(f.cooled).toEqual(['quiet']);
+    expect(Date.parse(f.state.getBranch('file')!.lastAccessedAt!)).toBe(userAt);
+  });
+
+  it('旧诊断忽略投影参数时仍读真实有限统计；旧统计过大则保持unknown并拒绝容量唤醒', async () => {
+    const f = await fixture();
+    await f.access('/api/document-store/stores');
+    const userAt = f.proxy.getStats().previewActivity.branches[0].userAt;
+    const legacyPort = await listen(http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(f.proxy.getStats()));
+    }));
+    f.scheduler.setPreviewActivitySource(() => readForwarderPreviewActivity(legacyPort), isTrustedProbeFingerprint);
+    await f.scheduler.tick();
+    expect(f.scheduler.getSnapshot().previewActivity?.status).toBe('ready');
+    expect(f.cooled).toEqual(['quiet']);
+    expect(Date.parse(f.state.getBranch('file')!.lastAccessedAt!)).toBe(userAt);
+    await growHostStats(f.port);
+    await f.scheduler.tick();
+    expect(f.scheduler.getSnapshot().previewActivity).toMatchObject({ status: 'unknown', reason: 'read-failed' });
+    f.state.addBranch({ id: 'new', projectId: 'default', branch: 'codex/new', services: {},
+      status: 'idle', heatState: 'cold', worktreePath: '/unused', createdAt: new Date().toISOString() });
+    const woken: string[] = [];
+    f.scheduler.setWakeFn(async id => { woken.push(id); });
+    await expect(f.scheduler.wake('new')).rejects.toThrow('预览访问状态暂不可确认');
+    expect(woken).toEqual([]);
+    expect(f.cooled).toEqual(['quiet']);
+    expect(f.state.getBranch('new')!.heatState).toBe('cold');
+    expect(Date.parse(f.state.getBranch('file')!.lastAccessedAt!)).toBe(userAt);
+  });
+
   it('九个公开marker经真实HTTP收据不阻断其他分支调度，真probe仍不续用户时间', async () => {
     const f = await fixture();
     const markers = Array.from({ length: 10 }, (_, index) => index.toString(16).padStart(48, '0'))
@@ -171,6 +239,7 @@ describe('真实forwarder访问到master调度时钟', () => {
     const f = await fixture();
     await f.access('/api/version', f.headers);
     expect((await f.access('/__forwarder/stats')).status).toBe(403);
+    expect((await f.access('/__forwarder/stats?view=preview-activity', { 'x-forwarded-for': '127.0.0.1' })).status).toBe(403);
     const health = await f.access('/__forwarder/healthz');
     expect(health.status).toBe(200);
     const fingerprints = f.proxy.getStats().previewActivity.branches.flatMap(branch => branch.markers.map(marker => marker.fingerprint));
