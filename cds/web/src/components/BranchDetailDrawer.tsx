@@ -2814,7 +2814,6 @@ export function BranchDetailDrawer({
                     }}
                     onCopy={async (value) => {
                       await navigator.clipboard.writeText(value);
-                      onToast?.('已复制');
                     }}
                   />
                 ) : null}

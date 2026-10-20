@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Copy, Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest } from '@/lib/api';
-import { databasePassState } from '@/lib/databasePassState';
+import { copyDatabasePassCredentials, databasePassState } from '@/lib/databasePassState';
 
 interface Pass {
   id:string;username:string;database:string;runtime:string;host:string;port?:number;
@@ -66,8 +66,8 @@ export function DatabasePassPanel({branchId,resourceId,allowed,onCopy}:{branchId
       <div className="flex flex-wrap gap-2">
         <Button size="sm" variant="outline" disabled={!!busy||!['prepared','active'].includes(current.status)} onClick={()=>void run('copy',async(isCurrent)=>{
           const credentials=await apiRequest<Record<string,unknown>>(`${base}/${current.id}/credentials`);
-          if(!isCurrent())return;await onCopy(JSON.stringify(credentials,null,2));return '连接信息已复制，包含独立账号、密码与TLS CA。请将tlsCa保存为证书文件，并在客户端开启证书验证。';
-        })}><Copy/>复制连接信息</Button>
+          if(!isCurrent())return;await copyDatabasePassCredentials(()=>onCopy(JSON.stringify(credentials,null,2)));return '连接信息已复制，包含独立账号、密码与TLS CA。请将tlsCa保存为证书文件，并在客户端开启证书验证。';
+        })}>{busy==='copy'?<Loader2 className="animate-spin"/>:<Copy/>}{busy==='copy'?'正在复制':'复制连接信息'}</Button>
         <Button size="sm" disabled={!!busy||current.status!=='prepared'} onClick={()=>void run('activate',async()=>{
           await apiRequest(`${base}/${current.id}/activate`,{method:'POST',body:{}});return '已放行该通行证的白名单，到期会断连回收。复制成功不代表客户端已连接。';
         })}>{busy==='activate'?<Loader2 className="animate-spin"/>:null}放行当前白名单</Button>
