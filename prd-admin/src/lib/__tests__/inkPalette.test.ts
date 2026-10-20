@@ -484,7 +484,7 @@ describe('米多墨系色带（首页三端不许发紫）', () => {
     // 每一份都各自漂移、各自配错前景色，而且**抄过去就脱离了守卫视野**——
     // 判据只认得出名字，认不出色值。所以直接禁掉色值副本：
     // 官网里除 SSOT 所在的 heroGradient.ts（2026-09-29 从 HeroSection 挪出，断循环引用）外，不许再出现这三个色标。
-    const { HERO_GRADIENT_STOPS } = await import('../../pages/home/sections/HeroSection');
+    const { HERO_GRADIENT_STOPS } = await import('../../pages/home/sections/heroGradient');
     const offenders: string[] = [];
 
     // 判的是「整条渐变被抄走」，不是「用了其中一个颜色」：单独用 #D97757 当光晕
