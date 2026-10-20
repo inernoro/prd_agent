@@ -294,13 +294,14 @@
           "id": "R06",
           "title": "在OpenAI页面看缺陷数量分析",
           "where": "https://chatgpt.com/settings/usage?tab=analytics",
-          "action": "打开用户确认的分析页，核对账户、日期范围和页面实际提供的评审指标；让Agent解释数量，并与同一PR每轮记录对照。",
+          "action": "打开分析页，先看账户和日期，再看实际提供的指标；对照配套8轮历史记录，区分发现评论、去重缺陷和当前未解决数。",
           "expected": "能指出评审活动、发现数量及实际可见的严重级分布；单次问题详情回到本轮PR评审结果。",
           "recovery": "累计发现数不等于当前未解决数；没有数据先查日期、范围与更新情况。登录后界面未核验前，不声称有某个筛选器或数字。",
           "command": "https://chatgpt.com/settings/usage?tab=analytics",
           "sources": [
             "https://chatgpt.com/settings/usage?tab=analytics",
-            "https://learn.chatgpt.com/docs/enterprise/usage-insights"
+            "https://learn.chatgpt.com/docs/enterprise/usage-insights",
+            "https://github.com/inernoro/prd_agent/pull/1281"
           ],
           "command_kind": "url",
           "proof": "pending",

@@ -83,7 +83,7 @@ def main():
     if not (out / "create-visual-test-to-kb-repository-bundle.zip").is_file():
         text = text.replace('<a href="create-visual-test-to-kb-repository-bundle.zip" download>仓库备用技能包</a>',
                             '<span>备用包未生成，请从实际平台取得技能。</span>')
-    optional = [("操作卡.pdf", "可打印操作卡")]
+    optional = [("操作卡.pdf", "可打印操作卡"), ("评审数量案例.txt", "真实评审数量案例")]
     if (out / "视觉验收跟做粗样.mp4").is_file():
         optional.append(("视频观看.html", "4分钟视频样段"))
     for filename, label in optional:
