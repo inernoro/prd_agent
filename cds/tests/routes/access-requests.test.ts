@@ -233,6 +233,65 @@ describe('Access Requests (被动授权 · 最短路径)', () => {
     expect(deliverAgain.body).toEqual({ status: 'approved', delivered: true });
   });
 
+  it('超时申请不能晚批，列表与轮询均不再显示可批准授权', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'Timeout', repository: 'https://github.com/acme/demo' }, waitSeconds: 10,
+    });
+    const id = init.body.requestId;
+    expect(Date.parse(stateService.getAccessRequest(id)!.expiresAt!) - Date.now()).toBeLessThanOrEqual(10_000);
+    stateService.updateAccessRequest(id, { expiresAt: new Date(Date.now() - 1).toISOString() });
+    const approve = await request(server, 'POST', `/api/access-requests/${id}/approve`, {});
+    expect(approve.status).toBe(409);
+    expect(stateService.getGlobalAgentKeys()).toHaveLength(0);
+    const poll = await request(server, 'GET', `/api/bootstrap-access-requests/${id}`, undefined, { 'X-Poll-Token': init.body.pollToken });
+    expect(poll.body.status).toBe('expired');
+    expect((await request(server, 'GET', '/api/access-requests')).body.pendingCount).toBe(0);
+  });
+
+  it('批准未领取后超时会撤销密钥并清空明文，不能用于创建项目', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'Timeout', repository: 'https://github.com/acme/demo' },
+    });
+    const id = init.body.requestId;
+    await request(server, 'POST', `/api/access-requests/${id}/approve`, {});
+    const plaintext = stateService.getAccessRequest(id)!.issuedKeyPlaintext!;
+    stateService.updateAccessRequest(id, { expiresAt: new Date(Date.now() - 1).toISOString() });
+    expect(stateService.findGlobalAgentKeyForAuth(plaintext)).toBeNull();
+    expect(stateService.getAccessRequest(id)).toMatchObject({ status: 'expired' });
+    expect(stateService.getAccessRequest(id)!.issuedKeyPlaintext).toBeUndefined();
+  });
+
+  it('取消仅认本申请票据，批准前后均能收口，不能撤销已经创建的项目', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'Cancel', repository: 'https://github.com/acme/demo' },
+    });
+    const id = init.body.requestId;
+    const route = `/api/bootstrap-access-requests/${id}`;
+    expect((await request(server, 'DELETE', route, undefined, { 'X-Poll-Token': 'wrong' })).status).toBe(403);
+    await request(server, 'POST', `/api/access-requests/${id}/approve`, {});
+    const delivered = await request(server, 'GET', route, undefined, { 'X-Poll-Token': init.body.pollToken });
+    expect((await request(server, 'DELETE', route, undefined, { 'X-Poll-Token': init.body.pollToken })).status).toBe(200);
+    expect(stateService.findGlobalAgentKeyForAuth(delivered.body.authorizationKey)).toBeNull();
+    expect((await request(server, 'POST', `/api/access-requests/${id}/approve`, {})).status).toBe(409);
+    stateService.updateAccessRequest(id, { status: 'approved', createdProject: { id: 'real', name: 'Cancel', createdAt: new Date().toISOString() } });
+    expect((await request(server, 'DELETE', route, undefined, { 'X-Poll-Token': init.body.pollToken })).status).toBe(409);
+    expect(stateService.getAccessRequest(id)!.status).toBe('approved');
+  });
+
+  it('领取但未建项目的一次凭据有硬过期，正常全局凭据不新增期限', async () => {
+    const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
+      requestedProject: { name: 'Abandoned', repository: 'https://github.com/acme/demo' },
+    });
+    const id = init.body.requestId;
+    await request(server, 'POST', `/api/access-requests/${id}/approve`, {});
+    const delivered = await request(server, 'GET', `/api/bootstrap-access-requests/${id}`, undefined, { 'X-Poll-Token': init.body.pollToken });
+    const entry = stateService.getGlobalAgentKeys().find(k => k.id === stateService.getAccessRequest(id)!.issuedKeyId)!;
+    expect(entry.expiresAt).toBeTruthy();
+    entry.expiresAt = new Date(Date.now() - 1).toISOString();
+    expect(stateService.findGlobalAgentKeyForAuth(delivered.body.authorizationKey)).toBeNull();
+    expect(stateService.getAccessRequest(id)!.status).toBe('expired');
+  });
+
   it('申请目标只保留项目名和脱敏仓库，不采信客户端创建回执', async () => {
     const init = await request(server, 'POST', '/api/bootstrap-access-requests', {
       agentName: 'Codex',

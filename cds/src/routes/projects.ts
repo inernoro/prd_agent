@@ -1,3 +1,5 @@
+import { branchAppNetworkName } from '../services/branch-network.js';
+import { processNetworkTeardowns } from '../services/network-teardown.js';
 import { bootstrapRepository } from '../services/bootstrap-target.js';
 /**
  * Projects API router.
@@ -4279,6 +4281,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
     // 至少墓碑还在，回收路径不断。
     stateService.addDeletedProjectWorktreeBucket(project.id);
+    // 先记录分支隔离网；cascade 后分支归属消失，不能再从 state 推回网络清单。
+    stateService.addNetworkTeardowns([
+      ...projectBranches.map(b => ({ name: branchAppNetworkName(b.id), projectId: project.id })),
+    ]);
 
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
     // belonging to this project so deleting a project no longer leaves
@@ -4294,6 +4300,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       for (const containerName of teardownContainers) {
         try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
       }
+      for (const b of projectBranches) stateService.removeNetworkTeardown(branchAppNetworkName(b.id), project.id);
       res.status(500).json({
         error: 'state_save_failed',
         message: (err as Error).message,
@@ -4328,6 +4335,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       } catch (err) {
         console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
       }
+      await processNetworkTeardowns(shell, stateService);
       if (dockerNetwork) {
         const result = await removeDockerNetwork(dockerNetwork);
         if (!result.ok) {
@@ -4340,7 +4348,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         `[projects] 项目 ${project.id} 物理清理完成: ${teardownContainers.length} 个容器` +
         (dockerNetwork ? ` + 网络 ${dockerNetwork}` : ''),
       );
-    })();
+    })().catch(err => console.warn(`[projects] 网络清理稍后重试: ${(err as Error).message}`));
 
     const totalCascade =
       summary.branches.length +

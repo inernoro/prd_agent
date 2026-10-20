@@ -1,3 +1,4 @@
+import { projectUnavailable } from '../lib/project-availability.js';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
@@ -504,6 +505,7 @@ interface FocusBranchEventDetail {
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
+  | { status: 'unavailable'; message: string }
   | {
       status: 'ok';
       project: ProjectSummary;
@@ -1967,6 +1969,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
       ]);
+      const unavailable = projectResult.status === 'rejected' ? projectUnavailable(projectResult.reason) : null;
+      if (unavailable) {
+        setState({ status: 'unavailable', message: unavailable });
+        return;
+      }
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
           // 边缘 / CDN 抖动,静默保留缓存
@@ -2072,6 +2079,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         canManageConsole ? apiRequest<{ services: InfraServiceSummary[] }>(infraUrl) : Promise.resolve({ services: [] }),
         apiRequest<{ profiles: BuildProfileSummary[] }>(profilesUrl),
       ]);
+      const unavailable = projectResult.status === 'rejected' ? projectUnavailable(projectResult.reason) : null;
+      if (unavailable) {
+        setState({ status: 'unavailable', message: unavailable });
+        return;
+      }
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
           return;
@@ -2083,6 +2095,10 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             message: `分支列表刷新失败，已保留上次可用内容。${message}`,
           }).state
           : { status: 'error', message });
+        return;
+      }
+      if (projectResult.status === 'rejected' && branchesResult.value.branches.length === 0) {
+        setState({ status: 'error', message: `项目读取失败，请刷新重试。${readableError(projectResult.reason)}` });
         return;
       }
       const branchesRes = branchesResult.value;
@@ -4151,6 +4167,15 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             {/* 骨架屏镜像真实分支卡网格(cds-branch-card-grid + 固定 15.25rem 卡形状),
                 加载完成时无缝切到真数据;不再用通用的几行横条骨架。 */}
             <BranchListSkeleton />
+          </div>
+        ) : null}
+        {state.status === 'unavailable' ? (
+          <div className="mt-6 rounded-lg border border-border bg-card p-6" role="status">
+            <h2 className="text-lg font-semibold">项目不可用</h2>
+            <p className="mt-2 text-sm text-muted-foreground">{state.message}</p>
+            <Button asChild variant="outline" size="sm" className="mt-4">
+              <Link to="/project-list">返回项目列表</Link>
+            </Button>
           </div>
         ) : null}
         {state.status === 'error' ? (

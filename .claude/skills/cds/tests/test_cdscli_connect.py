@@ -557,3 +557,34 @@ def test_recovery_ticket_is_private_while_writing_and_failure_leaves_no_secret_f
     with pytest.raises(OSError): run_command(['connect', '--host', 'https://cds.example', '--recover'])
     assert not list((workspace / '.cds').glob('*.tmp'))
     assert not (workspace / '.cds/identity-recovery.json').exists()
+
+
+@pytest.mark.parametrize("interrupt", [False, True])
+def test_bootstrap_wait_timeout_or_interrupt_cancels_only_own_request(workspace, monkeypatch, interrupt):
+    subprocess.run(["git", "remote", "add", "origin", "https://github.com/example/demo.git"], check=True)
+    calls = []
+    ticks = [0]
+    monkeypatch.setattr(cdscli.time, "monotonic", lambda: ticks[0])
+    def sleep(_seconds):
+        if interrupt:
+            raise KeyboardInterrupt()
+        ticks[0] += 12
+    monkeypatch.setattr(cdscli.time, "sleep", sleep)
+    def fake_request(method, path, body=None, extra_headers=None, **kwargs):
+        calls.append((method, path, extra_headers))
+        if method == "POST":
+            assert body["waitSeconds"] == 10
+            return 201, {"requestId": "r", "pollToken": "poll"}, {}
+        assert extra_headers == {"X-Poll-Token": "poll"}
+        return 200, {"status": "pending"}, {}
+    monkeypatch.setattr(cdscli, "_request", fake_request)
+    argv = ["connect", "--host", "https://cds.example", "--new-project", "--create-project", "demo", "--timeout", "10"]
+    if interrupt:
+        with pytest.raises(KeyboardInterrupt):
+            run_command(argv)
+    else:
+        code, output = run_command(argv)
+        assert code == 2
+        assert "poll" not in output
+    assert calls[-1] == ("DELETE", "/api/bootstrap-access-requests/r", {"X-Poll-Token": "poll"})
+    assert not (workspace / ".cds/credentials.json").exists()
