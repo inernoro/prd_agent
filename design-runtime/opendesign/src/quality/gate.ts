@@ -107,6 +107,36 @@ const inertButtonLocationHint = (details: Record<string, unknown> | undefined): 
 
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
+  if (error.code === 'design_output_quality_rejected'
+    && error.details?.qualityIssueCode === 'source_slot_cardinality_invalid') {
+    const sourceBlockId = typeof error.details.sourceBlockId === 'string'
+      && /^sb-[a-f0-9]{64}$/.test(error.details.sourceBlockId)
+      ? error.details.sourceBlockId
+      : undefined;
+    const sourceBlockOrdinal = typeof error.details.sourceBlockOrdinal === 'number'
+      && Number.isSafeInteger(error.details.sourceBlockOrdinal)
+      && error.details.sourceBlockOrdinal > 0
+      ? error.details.sourceBlockOrdinal
+      : undefined;
+    const assignedPageIndex = typeof error.details.assignedPageIndex === 'number'
+      && Number.isSafeInteger(error.details.assignedPageIndex)
+      && error.details.assignedPageIndex > 0
+      ? error.details.assignedPageIndex
+      : undefined;
+    const slotCount = typeof error.details.slotCount === 'number'
+      && Number.isSafeInteger(error.details.slotCount)
+      && error.details.slotCount >= 0
+      && error.details.slotCount <= 1000
+      ? error.details.slotCount
+      : undefined;
+    if (sourceBlockId && sourceBlockOrdinal && slotCount !== undefined) {
+      const observed = error.details.slotCountTruncated === true ? `at least ${slotCount}` : String(slotCount);
+      return {
+        code: 'source_slot_cardinality_invalid',
+        instruction: `Frozen source block ${sourceBlockId} (source block ${sourceBlockOrdinal}${assignedPageIndex ? `, assigned slide ${assignedPageIndex}` : ''}) requires exactly one empty <div data-mdppt-source="${sourceBlockId}"></div> marker, but the artifact contained ${observed}. Restore that one empty marker on its assigned slide, then inspect every frozen block marker and correct every occurrence of the same cardinality violation in this repair pass. Do not copy, rewrite, fill, hide, or delete the frozen source text; the runtime materializes it before preview and quality checks.`,
+      };
+    }
+  }
   if (message === 'index.html omitted a required fact from the frozen design brief') {
     return {
       code: 'required_fact_missing',

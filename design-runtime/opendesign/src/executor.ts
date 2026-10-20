@@ -80,7 +80,8 @@ import {
 } from './workspace/transfer.js';
 
 interface FrozenPptSourceBlock { Id: string; Html: string }
-interface FrozenPptSourcePlan { SchemaVersion: string; Blocks: FrozenPptSourceBlock[]; Pages: Array<{ Blocks: FrozenPptSourceBlock[] }> }
+interface FrozenPptSourcePage { Index?: number; Blocks: Array<{ Id: string }> }
+interface FrozenPptSourcePlan { SchemaVersion: string; Blocks: FrozenPptSourceBlock[]; Pages: FrozenPptSourcePage[] }
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -111,12 +112,36 @@ export function materializePresentationSourcePlan(workspaceDir: string, html: st
   if (expected.size !== plan.Blocks.length || [...expected].some(([id, body]) => !/^sb-[a-f0-9]{64}$/.test(id) || typeof body !== 'string')) {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source blocks are invalid');
   }
+  const assignedPages = new Map<string, number>();
+  for (const [pageOffset, page] of plan.Pages.entries()) {
+    const pageIndex = Number.isSafeInteger(page.Index) && Number(page.Index) > 0
+      ? Number(page.Index)
+      : pageOffset + 1;
+    for (const block of Array.isArray(page.Blocks) ? page.Blocks : []) {
+      if (block && typeof block.Id === 'string' && !assignedPages.has(block.Id)) {
+        assignedPages.set(block.Id, pageIndex);
+      }
+    }
+  }
   let materialized = html;
-  for (const [id, body] of expected) {
+  for (const [sourceBlockOffset, [id, body]] of [...expected.entries()].entries()) {
     const idPattern = escapeRegex(id);
     const slots = [...materialized.matchAll(new RegExp(`<div\\s+data-mdppt-source=["']${idPattern}["']\\s*>([\\s\\S]*?)<\\/div>`, 'gi'))];
     if (slots.length !== 1) {
-      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `Source block ${id} must have exactly one visible slot`);
+      const assignedPageIndex = assignedPages.get(id);
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        `Source block ${id} must have exactly one matching slot marker`,
+        false,
+        {
+          qualityIssueCode: 'source_slot_cardinality_invalid',
+          sourceBlockId: id,
+          sourceBlockOrdinal: sourceBlockOffset + 1,
+          ...(assignedPageIndex ? { assignedPageIndex } : {}),
+          slotCount: Math.min(slots.length, 1000),
+          slotCountTruncated: slots.length > 1000,
+        },
+      );
     }
     const current = slots[0][1];
     if (current.trim() && current !== body) {
@@ -708,8 +733,9 @@ export class DesignTaskExecutor {
               sha256: sha256(materialized),
             };
             collectedFiles = collectedFiles.map((file) => file.path === 'index.html' ? indexFile! : file);
-            fs.writeFileSync(currentIndexPath, materialized);
-            this.chownForEngine(currentIndexPath);
+            const materializedIndexPath = path.join(this.options.paths.workspaceDir, 'index.html');
+            fs.writeFileSync(materializedIndexPath, materialized);
+            this.chownForEngine(materializedIndexPath);
           }
           hardenedHtml = checkArtifactQuality(
             materializedHtml,
