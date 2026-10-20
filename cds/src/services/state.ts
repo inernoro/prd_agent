@@ -5016,6 +5016,10 @@ export class StateService {
     return `${projectId}:${branchId}:${resourceId}`;
   }
 
+  getAllResourceExternalAccess(): ResourceExternalAccessPolicy[] {
+    return Object.values(this.state.resourceExternalAccess || {});
+  }
+
   getResourceExternalAccess(projectId: string, branchId: string, resourceId: string): ResourceExternalAccessPolicy | undefined {
     const key = this.resourcePolicyKey(projectId, branchId, resourceId);
     return (this.state.resourceExternalAccess || {})[key];

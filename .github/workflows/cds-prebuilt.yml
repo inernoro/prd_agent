@@ -124,6 +124,16 @@ jobs:
 
       - name: Smoke CDS preview runtime
         run: |
+          docker run --pull=never --rm -i --entrypoint sh \
+            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }} -e <<'OPENSSL_SMOKE'
+          set -eu
+          openssl_smoke_dir="$(mktemp -d)"
+          trap 'rm -rf "$openssl_smoke_dir"' EXIT
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 \
+            -subj '/CN=CDS runtime smoke' -addext 'subjectAltName=IP:127.0.0.1' \
+            -keyout "$openssl_smoke_dir/key.pem" -out "$openssl_smoke_dir/cert.pem" >/dev/null 2>&1
+          openssl x509 -in "$openssl_smoke_dir/cert.pem" -noout -checkend 86400
+          OPENSSL_SMOKE
           docker run --pull=never -d --name cds-preview-smoke --memory 768m --cpus 1 \
             -p 127.0.0.1:19900:9900 \
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}/cds-preview:sha-${{ github.sha }}

@@ -178,7 +178,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['github-webhook', 'GitHub App、仓库绑定与 Webhook', 'github-webhook.ts', 'mixed', 'system', 'write', 'guided', 'cds', '', 'Webhook 回调由 HMAC 鉴权，不作为普通调用工具'],
   ['infra-backup', '基础设施备份与恢复', 'infra-backup.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '恢复前必须确认备份、目标资源、影响范围和回滚点'],
   ['infra-credential-rotation', '基础设施凭据轮换', 'infra-credential-rotation.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '仅在密封存储就绪、维护作业排空并完成可恢复备份后轮换；必须验证旧凭据撤销和业务就绪'],
-  ['infra-data', '基础设施数据与 Schema', 'infra-data.ts', 'project', 'project', 'write', 'guided', 'cds', '', '查询默认只读，初始化 SQL 和写查询需要额外批准'],
+  ['infra-data', '基础设施数据与 Schema', 'infra-data.ts', 'project', 'project', 'write', 'guided', 'cds', 'db', 'db query 默认只读；db execute 将具体项目、分支、数据库资源和 SQL 提交系统所有者批准，db status 读取结果，机器不能自批'],
   ['legacy-cleanup', '遗留数据清理', 'legacy-cleanup.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '只允许先查看状态，再由人类明确批准清理或重命名'],
   ['managed-projects', '托管项目目录', 'managed-projects.ts', 'system', 'system', 'write', 'direct', 'cds', '', '托管目录和普通项目身份需要分别核对'],
   ['notices', '服务端站内信账本', 'notices.ts', 'mixed', 'system', 'write', 'direct', 'cds', '', '账本记录发布失败、生产掉线等告警；外发未配置时状态是「未外发」，不得当作已通知到人'],
