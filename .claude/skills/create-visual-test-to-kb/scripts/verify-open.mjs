@@ -10,15 +10,16 @@
 // 用法：PWPATH=$(npm root -g)/playwright node verify-open.mjs <url> "<标题或正文里必现的一段文字>" [最少图片数=1]
 //   例：node verify-open.mjs https://<cds-host>/r/<report-id> "SaaS空间模型" 4
 // 默认最多尝试 3 次（首试 + 2 次重试），并打印每次结果；用 VERIFY_OPEN_MAX_ATTEMPTS=1 可关闭重试。
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const PW = process.env.PWPATH || '/opt/node22/lib/node_modules/playwright';
-const { chromium } = require(PW);
+import { loadPlaywright } from './playwright-runtime.mjs';
+import { expandCompleteReport, isConfiguredCdsTargetHost } from './report-view.mjs';
+const { chromium } = loadPlaywright();
 
 const url = process.argv[2];
 const mustText = process.argv[3] || '';
 const minImg = parseInt(process.argv[4] || '1', 10);
-const requiredTexts = process.argv.slice(5).map((value) => value.trim()).filter(Boolean);
+const trailingArgs = process.argv.slice(5).map((value) => value.trim()).filter(Boolean);
+const requireInteractiveReport = trailingArgs.includes('--require-interactive-report');
+const requiredTexts = trailingArgs.filter((value) => value !== '--require-interactive-report');
 if (!url) { console.error('用法: node verify-open.mjs <shareUrl> "<必现文字>" [最少图片数]'); process.exit(64); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const maxAttempts = Math.max(1, parseInt(process.env.VERIFY_OPEN_MAX_ATTEMPTS || '3', 10) || 3);
@@ -45,16 +46,16 @@ const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, 
 const cdsAccessKey = (process.env.CDS_PROJECT_KEY || process.env.AI_ACCESS_KEY || '').trim();
 let targetHost = '';
 try { targetHost = new URL(url).host; } catch {}
-const isCdsHost = (host) => /(^|\.)cds\.miduo\.org$/i.test(host || '');
+const trustedTargetHost = isConfiguredCdsTargetHost(targetHost, process.env.CDS_HOST || '');
 // 关键：ctx.setExtraHTTPHeaders 会给 context 内「所有」请求带上 header，
 // 报告页里的外链图片 / iframe / 三方子资源都会被附上密钥，造成密钥泄漏到非 CDS host。
-// 改用 route 逐请求判定：仅当该请求的 host 是目标 CDS host 时才注入密钥头。
-if (cdsAccessKey && isCdsHost(targetHost)) {
+// 改用 route 逐请求判定：只有报告目标与 CDS_HOST 精确同主机，且子请求仍在该主机时才注入密钥头。
+if (cdsAccessKey && trustedTargetHost) {
   await ctx.route('**/*', async (route) => {
     const req = route.request();
     let reqHost = '';
     try { reqHost = new URL(req.url()).host; } catch {}
-    if (isCdsHost(reqHost)) {
+    if (reqHost.toLowerCase() === targetHost.toLowerCase()) {
       const headers = { ...req.headers(), 'x-ai-access-key': cdsAccessKey };
       await route.continue({ headers });
     } else {
@@ -83,6 +84,8 @@ async function waitForRenderedContent(text, minImages) {
   const deadline = Date.now() + settleTimeoutMs;
   let snapshot = { text: '', imgCount: 0 };
   while (Date.now() < deadline) {
+    const expanded = await expandCompleteReport(page);
+    if (expanded) console.log(`  已真实点击完整版：${expanded} 个报告`);
     snapshot = await inspectRenderedContent();
     const hasText = text ? snapshot.text.includes(text) : snapshot.text.trim().length > 200;
     const hasRequiredTexts = requiredTexts.every((required) => snapshot.text.includes(required));
@@ -96,7 +99,12 @@ async function auditInteractiveReports() {
   const reports = [];
   for (const frame of page.frames()) {
     try {
-      if (await frame.locator('#reportBody').count() === 0) continue;
+      const reportBodyCount = await frame.locator('#reportBody').count();
+      const internalLinkCount = await frame.locator('a[href^="#"]').count();
+      // P0 只读稳定冒烟按合同归档为 Markdown，不会带交互 HTML
+      // 专属的 #reportBody。没有内部链接时是合法的零项审计；一旦页面存在
+      // 内部链接，仍必须逐个检查目标并真实点击。
+      if (reportBodyCount === 0 && internalLinkCount === 0) continue;
       const staticAudit = await frame.evaluate(() => {
         const links = Array.from(document.querySelectorAll('a[href^="#"]'))
           .map((link) => ({
@@ -109,18 +117,15 @@ async function auditInteractiveReports() {
           try { id = decodeURIComponent(id); } catch { return true; }
           return document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length !== 1;
         });
-        return { linkCount: links.length, broken };
+        return { links, linkCount: links.length, broken };
       });
 
       const clickErrors = [];
-      const links = frame.locator('a[href^="#"]');
-      const count = await links.count();
       let clicked = 0;
       const clickedTargets = new Set();
-      for (let index = 0; index < count; index += 1) {
-        const link = links.nth(index);
-        const href = await link.getAttribute('href');
-        if (!href || href.length <= 1 || !(await link.isVisible())) continue;
+      for (const linkSnapshot of staticAudit.links) {
+        const href = linkSnapshot.href;
+        if (!href || href.length <= 1) continue;
         let targetId = href.slice(1);
         try { targetId = decodeURIComponent(targetId); } catch {
           clickErrors.push(`${href}: 锚点编码无效`);
@@ -128,28 +133,70 @@ async function auditInteractiveReports() {
         }
         if (clickedTargets.has(targetId)) continue;
         clickedTargets.add(targetId);
-        const targetCount = await frame.evaluate(
+        // srcDoc 报告在 hash 变化时可能被外层 React 重建。每次点击前都从当前
+        // 活动 frame 重新解析链接与目标，避免继续操作已经失效的旧 locator。
+        let activeFrame = null;
+        let activeLink = null;
+        let liveLinkFound = false;
+        for (const candidate of page.frames()) {
+          try {
+            const candidateLink = candidate.locator(`a[href=${JSON.stringify(href)}]`).first();
+            if (await candidateLink.count() === 1) {
+              liveLinkFound = true;
+            }
+            if (liveLinkFound && await candidateLink.isVisible()) {
+              activeFrame = candidate;
+              activeLink = candidateLink;
+              break;
+            }
+          } catch {
+            // frame 正在重建时忽略本次候选，继续寻找当前活动 frame。
+          }
+        }
+        if (!activeFrame || !activeLink) {
+          // 折叠目录中的链接会参与目标唯一性与断链静态审计，但用户当前看不见，
+          // 不属于“当前视口可见链接真实点击”的交互集合。只有链接从活动文档
+          // 完全消失才是 iframe 重建或正文丢失，需要判失败。
+          if (liveLinkFound) continue;
+          clickErrors.push(`${linkSnapshot.text || href}: 链接在点击前已不可见`);
+          continue;
+        }
+        const targetCount = await activeFrame.evaluate(
           (id) => document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length,
           targetId,
         );
         if (targetCount !== 1) continue;
-        const label = ((await link.innerText().catch(() => '')) || href).trim().replace(/\s+/g, ' ').slice(0, 80);
+        const label = linkSnapshot.text || href;
         try {
-          await link.click({ timeout: 5000 });
+          await activeLink.click({ timeout: 5000 });
           clicked += 1;
-          await sleep(50);
-          const targetVisible = await frame.evaluate((id) => {
-            const target = document.getElementById(id);
-            if (!target) return false;
-            const rect = target.getBoundingClientRect();
-            return rect.top >= -2 && rect.top < window.innerHeight;
-          }, targetId);
+          // 报告页启用了平滑滚动，50ms 只会看到动画刚起步，容易把真实可用的
+          // 锚点误报成失败。仍坚持“点击后目标进入当前视口”的强断言，但给浏览器
+          // 一个有限的动画完成窗口，不用固定 sleep 猜时序。
+          const visibilityDeadline = Date.now() + 2500;
+          let targetVisible = false;
+          while (!targetVisible && Date.now() < visibilityDeadline) {
+            for (const candidate of page.frames()) {
+              try {
+                targetVisible = await candidate.evaluate((id) => {
+                  const target = document.getElementById(id);
+                  if (!target) return false;
+                  const rect = target.getBoundingClientRect();
+                  return rect.top >= -2 && rect.top < window.innerHeight;
+                }, targetId);
+                if (targetVisible) break;
+              } catch {
+                // frame 正在重建时下一轮重新解析。
+              }
+            }
+            if (!targetVisible) await sleep(50);
+          }
           if (!targetVisible) clickErrors.push(`${label}: 点击后目标 #${targetId} 未进入可视区`);
         } catch (error) {
           clickErrors.push(`${label}: ${error && error.message ? error.message.split('\n')[0] : String(error)}`);
         }
       }
-      reports.push({ ...staticAudit, clicked, clickErrors });
+      reports.push({ ...staticAudit, links: undefined, clicked, clickErrors });
     } catch (error) {
       reports.push({ linkCount: 0, clicked: 0, broken: [], clickErrors: [String(error)] });
     }
@@ -162,7 +209,9 @@ async function auditInteractiveReports() {
     clicked: reports.reduce((sum, report) => sum + (report.clicked || 0), 0),
     broken,
     clickErrors,
-    ok: reports.length > 0 && broken.length === 0 && clickErrors.length === 0,
+    ok: broken.length === 0
+      && clickErrors.length === 0
+      && (!requireInteractiveReport || reports.length > 0),
   };
 }
 
@@ -202,7 +251,7 @@ try {
       const result = await runAttempt(attempt);
       attempts.push(result);
       console.log(`  第${attempt}次：标题命中=${result.hasText}  当前运行标识命中=${result.hasRequiredTexts}  图片数=${result.imgCount}(需≥${result.minImg})  死页提示=${result.dead}`);
-      console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
+      console.log(`  第${attempt}次交互：报告=${result.interaction.reportCount}  需交互报告=${requireInteractiveReport}  内部链接=${result.interaction.linkCount}  已点击=${result.interaction.clicked}  断链=${result.interaction.broken.length}  点击失败=${result.interaction.clickErrors.length}`);
       if (result.interaction.broken.length) {
         console.log(`  断链明细：${result.interaction.broken.map((item) => `${item.text || item.href} -> ${item.href}`).join(' | ')}`);
       }

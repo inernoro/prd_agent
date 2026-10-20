@@ -40,6 +40,7 @@ const strip = (src: string) =>
 
 const PAGE = 'src/pages/visual-agent/VisualAgentWorkspaceListPage.tsx';
 const BACKDROP_PANEL = 'src/components/visual-agent/BackdropSettings.tsx';
+const EDITOR = 'src/pages/ai-chat/AdvancedVisualAgentTab.tsx';
 
 describe('预设行六格都能点', () => {
   const page = strip(read(PAGE));
@@ -77,6 +78,15 @@ describe('看着能点的必须能点', () => {
     expect(slot).not.toContain('pointer-events-none');
     // 剥完注释还剩真代码。
     expect(slot).toContain('aria-label="选择参考图"');
+  });
+
+  it('工具菜单承诺的 H 和 V 快捷键都有真实处理器', () => {
+    const editor = strip(read(EDITOR));
+    const shortcuts = editor.slice(editor.indexOf('const isH ='), editor.indexOf('// Cmd/Ctrl+A'));
+    expect(shortcuts).toContain("setActiveTool('hand')");
+    expect(shortcuts).toContain("setActiveTool('select')");
+    expect(shortcuts).toContain("e.code === 'KeyH'");
+    expect(shortcuts).toContain("e.code === 'KeyV'");
   });
 });
 

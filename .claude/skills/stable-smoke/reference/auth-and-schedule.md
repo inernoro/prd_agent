@@ -55,7 +55,7 @@ scripts/stable-smoke-login.sh \
 |---|---|---|---|
 | CDS | `preview-url` 返回的当前主分支入口；`STABLE_SMOKE_CDS_BASE_URL` 只作本地显式固定值 | `STABLE_SMOKE_CDS_SIGNING_KEY_ID` + `STABLE_SMOKE_CDS_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_CDS_USER` |
 | 正式 | `STABLE_SMOKE_PROD_BASE_URL` 由部署环境注入；独立允许值 `STABLE_SMOKE_PROD_ALLOWED_BASE_URL` 由凭据登记表对应的 Keychain / Secret Store 注入 | `STABLE_SMOKE_PROD_SIGNING_KEY_ID` + `STABLE_SMOKE_PROD_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_PROD_USER` |
-| MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL`、`STABLE_SMOKE_NOTIFY_SOURCE` 均由部署环境注入 | `STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID` + `STABLE_SMOKE_NOTIFY_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID`；首次可用服务端固定的 `STABLE_SMOKE_NOTIFY_TARGET_USERNAME` 安全解析 |
+| MAP 通知 | `STABLE_SMOKE_NOTIFY_BASE_URL`、`STABLE_SMOKE_NOTIFY_SOURCE` 均由部署环境注入 | `STABLE_SMOKE_NOTIFY_SIGNING_KEY_ID` + `STABLE_SMOKE_NOTIFY_SIGNING_PRIVATE_KEY` | `STABLE_SMOKE_NOTIFY_USER` + `STABLE_SMOKE_NOTIFY_TARGET_USER_ID`；首次由服务端把固定用户名 `inernoro` 安全解析为真实 userId |
 
 双环境默认使用 RSA-PSS 签名身份：服务端只保存公钥，私钥只存在自动化执行机安全凭据库。签名绑定请求方法、路径、正文哈希、账号、时间戳与一次性 nonce；时间窗口为两分钟，nonce 使用数据库唯一约束防重放；签名认证只允许合成登录票据、模型网关短票据和定向通知三个端点。模型网关不再保存巡检长期密码：MAP 签发 60 秒单次票据，LLMGW 只自动补齐缺失账号或成员关系；人工停用、角色漂移和连续失败必须熔断。旧的全局 `AI_ACCESS_KEY` 与网关固定密码仅作存量兼容，不再作为稳定冒烟的首选凭据。
 
@@ -77,13 +77,15 @@ Codex 桌面端创建本地自动化 `stable-smoke-48h`：
 - 任务先读取项目主工作区最新代码和功能台账，再执行 `/稳测 all`。GitHub Actions 与本调度无关。
 - 首次创建后必须立即手动运行一次；之后每 48 小时由本机 Codex 自动化唤醒。
 
+每个 48 小时批次默认 routine，以正式环境完整安全矩阵为主体。先独立执行正式 `CORE-001` 只读基线，再检查 CDS 的 F01、F05、F08、F17、F18 核心子集及有来源的定向复验。正式业务按自身身份与依赖独立执行，不要求 CDS 功能或14位视觉先通过；CDS P0、污染、清理失败和实质清理未知仍熔断正式写入。CDS 准备阶段未启动的阻塞独立记账，不得与启动后缺结果混淆；失败的清理旅程无可靠回读时继续只读。记录当前实际部署版本，不要求先发布工具分支。full 全量双环境是专项，保留完整 CDS 前置，不是例行默认。
+
 人工执行或排查前先运行只读预检：
 
 ```bash
 node scripts/stable-smoke-run.mjs --preflight
 ```
 
-只检查 CDS 环境与正式环境的权威地址、身份和部署版本，不创建测试资源、不调用创作模型。只查 CDS 环境时增加 `--cds-only`，只查正式环境时增加 `--production-only`。非预检模式下，`--production-only` 永远只执行正式环境只读健康检查；任何正式环境写入旅程必须在同一轮先完成 CDS 验证。预检失败必须输出审核者可执行的阻塞项，禁止展示代码堆栈；参数不确定时运行 `node scripts/stable-smoke-run.mjs --help`。
+只检查 CDS 环境与正式环境的权威地址、身份和部署版本，不创建测试资源、不调用创作模型。只查 CDS 环境时增加 `--cds-only`，只查正式环境时增加 `--production-only`。非预检模式下，`--production-only` 永远只执行正式环境只读健康检查；routine 正式完整安全业务走常规双环境命令并独立判定，full 写入仍须先完成同轮 CDS 门禁。预检失败必须输出审核者可执行的阻塞项，禁止展示代码堆栈；参数不确定时运行 `node scripts/stable-smoke-run.mjs --help`。
 
 ## 每轮报告
 

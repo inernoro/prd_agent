@@ -110,7 +110,8 @@ public class DocumentTextlessUploadContractTests
         Assert.True(gatewayIndex > preparingIndex);
         Assert.Contains("chunk.type === 'progress' && chunk.message", literaryPage);
         Assert.Contains("setRawMarkerOutput(chunk.message)", literaryPage);
-        Assert.Contains("firstVisibleProgressMs", stableSmoke);
+        Assert.Contains("const startedAt = Date.now();", stableSmoke);
+        Assert.Contains("Date.now() - startedAt", stableSmoke);
         Assert.Contains("toBeLessThan(2_000)", stableSmoke);
         Assert.Contains("refId: 3", stableSmoke);
         Assert.Contains("imageRefs = run.ImageRefs?.Select", imageGen);

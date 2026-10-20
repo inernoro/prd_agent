@@ -16,6 +16,9 @@ test('视觉取证计划逐模块展开为148条有路径的任务', () => {
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'identity-profile' && slot.scenario === '登录')?.entryPath, '/login');
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'identity-profile' && slot.scenario === '会话')?.entryPath, '/');
   assert.ok(plan.slots.filter((slot) => slot.moduleId === 'single-image-creation').every((slot) => slot.entryPath === '/visual-agent'));
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'errors-progress-responsive' && slot.scenario === '超长文案')?.entryPath, '/document-store');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'errors-progress-responsive' && slot.scenario === '滚动')?.entryPath, '/document-store');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'errors-progress-responsive' && slot.scenario === '移动端弹窗与滚动')?.entryPath, '/');
 });
 
 test('双环境视觉计划展开为296个互不复用的环境验收位', () => {
@@ -51,6 +54,7 @@ test('本轮视觉计划固化运行标识、提交和取证开始时间', () =>
     .every((slot) => slot.pageOrigin === 'https://gateway-preview.example.test'));
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '登录')?.entryPath, '/login');
   assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '调用日志对应')?.entryPath, '/logs');
+  assert.equal(plan.slots.find((slot) => slot.moduleId === 'image-model-routing' && slot.scenario === '前台选择')?.theme, 'dark');
   const report = renderVisualPlan(plan);
   assert.match(report, /运行标识：stsmk-20260811/);
   assert.match(report, /取证开始：2026-08-11T14:00:00.000Z/);
@@ -72,13 +76,13 @@ test('正式环境只读健康检查不生成无关的完整视觉矩阵', () =>
     captureStartedAt: '2026-08-11T14:00:00.000Z',
     scope: 'production-read-only',
     environmentOrigins: { production: 'https://map.example.test' },
-    gatewayEnvironmentOrigins: { production: 'https://gateway.example.test' },
   });
   assert.equal(plan.schemaVersion, '3.0');
   assert.equal(plan.scope, 'production-read-only');
   assert.equal(plan.plannedScreenshotTarget, 0);
   assert.deepEqual(plan.modules, []);
   assert.deepEqual(plan.slots, []);
+  assert.deepEqual(plan.gatewayEnvironmentOrigins, {});
   const report = renderVisualPlan(plan);
   assert.match(report, /完整视觉门禁不适用/);
   assert.match(report, /不代表完整视觉验收通过/);
@@ -109,7 +113,9 @@ test('主管清单不展示内部源码路径或执行命令', () => {
   assert.match(report, /方图与宽图进度边界/);
   assert.match(report, /是否需干预/);
   assert.match(report, /逐模块视觉取证任务/);
-  assert.match(report, /登录、权限与头像 · 0\/14 项完成/);
+  assert.match(report, /运行前冻结的计划基线，不代表本轮执行结果/);
+  assert.match(report, /计划快照状态/);
+  assert.match(report, /登录、权限与头像 · 14 项计划基线/);
   assert.equal((report.match(/需要执行并取证/g) || []).length, 148);
   assert.doesNotMatch(report, /node scripts|prd-admin\/|e2e\//);
 });

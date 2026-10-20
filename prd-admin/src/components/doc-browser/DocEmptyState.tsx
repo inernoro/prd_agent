@@ -1,4 +1,4 @@
-import { Plus, Upload, Rss } from 'lucide-react';
+import { Plus, Upload, Rss, Video } from 'lucide-react';
 
 // 知识库空状态 + 首访引导（纯展示组件）
 // 颜色全部走 CSS 变量，保证暗/亮主题都清晰；禁止任何 emoji 字符。
@@ -8,6 +8,7 @@ export interface DocEmptyStateProps {
   description?: string; // 默认 "汇总文档，按结论与时间归档，支持全文搜索与标签筛选。"
   onCreateDocument?: () => void;
   onUploadFile?: () => void;
+  onOpenVideoParser?: () => void;
   onAddSubscription?: () => void;
 }
 
@@ -40,11 +41,12 @@ export function DocEmptyState(props: DocEmptyStateProps) {
     description = '汇总文档，按结论与时间归档，支持全文搜索与标签筛选。',
     onCreateDocument,
     onUploadFile,
+    onOpenVideoParser,
     onAddSubscription,
   } = props;
 
   // 至少有一个回调时才渲染 CTA 行
-  const hasCta = !!(onCreateDocument || onUploadFile || onAddSubscription);
+  const hasCta = !!(onCreateDocument || onUploadFile || onOpenVideoParser || onAddSubscription);
 
   return (
     <div
@@ -125,6 +127,7 @@ export function DocEmptyState(props: DocEmptyStateProps) {
           {onUploadFile && (
             <button
               type="button"
+              data-tour-id="doc-empty-upload-file"
               onClick={onUploadFile}
               className="inline-flex items-center gap-1.5 transition-colors"
               style={{
@@ -140,6 +143,27 @@ export function DocEmptyState(props: DocEmptyStateProps) {
             >
               <Upload size={15} />
               上传文件
+            </button>
+          )}
+          {onOpenVideoParser && (
+            <button
+              type="button"
+              data-tour-id="doc-empty-video-parser"
+              onClick={onOpenVideoParser}
+              className="inline-flex items-center gap-1.5 transition-colors"
+              style={{
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-faint)',
+                borderRadius: 8,
+                padding: '7px 14px',
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: 'pointer',
+              }}
+            >
+              <Video size={15} />
+              解析短视频
             </button>
           )}
           {onAddSubscription && (

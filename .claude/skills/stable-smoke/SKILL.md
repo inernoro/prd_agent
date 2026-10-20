@@ -1,6 +1,6 @@
 ---
 name: stable-smoke
-version: 1.12.0
+version: 1.14.0
 description: 'Runs a recurring dual-environment synthetic regression suite for critical PRD Agent journeys and converts every escaped defect into a permanent smoke case. Trigger words: "/稳测", "稳定冒烟", "每两日测试", "stable smoke", "synthetic monitoring".'
 ---
 
@@ -10,7 +10,7 @@ description: 'Runs a recurring dual-environment synthetic regression suite for c
 >
 > 行业归类：Synthetic Monitoring；本项目中文名：稳定冒烟。
 
-每 48 小时对 CDS 环境和正式环境执行同一套关键用户旅程。CDS 环境是独立的验证环境，不称为“测试环境”；正式环境固定为 `https://map.ebcone.net`。CDS 环境负责完整写入、异常和恢复；正式环境只在专用合成账号与专用数据域内执行限额写入。任何线上或验收逃逸问题，首次修复时必须新增永久回归用例。
+每 48 小时以正式环境的重要产品功能为主体。阅读与执行合同是 `doc/spec.platform.core-business-checklist.md`、`doc/guide.platform.core-business-acceptance.md` 与 `doc/guide.platform.core-business-history.md`，三池规则见 `doc/rule.platform.acceptance-memory.md`。正式固定为 `https://map.ebcone.net`；CDS 是独立环境，不称为“测试环境”。例行默认 routine：CDS 仅 F01、F05、F08、F17、F18 五个核心功能及有来源的定向复验，正式执行完整安全矩阵。记录当前实际版本用于追溯，不要求先发布工具分支或取得指定业务版本。完整双环境回归显式使用 full，不是 48 小时默认。
 
 业务功能线和面包屑见 [reference/business-function-catalog.json](reference/business-function-catalog.json)，详细用例见 [reference/test-matrix.md](reference/test-matrix.md)，问题沉淀格式见 [reference/regression-ledger.md](reference/regression-ledger.md)，合成登录和调度操作见 [reference/auth-and-schedule.md](reference/auth-and-schedule.md)，非敏感身份状态与安全存储引用见 [reference/credential-registry.json](reference/credential-registry.json)。涉及登录、部署或自动化运行时必须先读取凭据登记表，禁止凭会话记忆猜测当前账号状态。
 
@@ -39,13 +39,13 @@ description: 'Runs a recurring dual-environment synthetic regression suite for c
 /稳测 login environment=cds returnUrl=/visual-agent minutes=3
 ```
 
-无参数时等价于 `/稳测 all`，必须先 CDS 环境、后正式环境。
+无参数使用 `node scripts/stable-smoke-run.mjs --profile routine --capture-visual`：先独立保存正式只读基线，CDS 仅执行五项核心与有来源的复验，正式完整安全矩阵按自身身份与依赖独立执行。CDS 功能或视觉未通过本身不是正式开测前置；P0、污染、清理失败和实质清理未知风险仍限制正式只读。CDS 已有分支默认 main，canonical id 从项目分支账本读取，入口仅经权威 `branch preview-url` 命令取得。工具分支尚未部署不得阻止检查当前线上功能。需要 full 专项时显式传 `--profile full`，保留完整 CDS 前置。
 
 ## 强制规则
 
 1. 环境地址只能来自权威配置。CDS 环境调用 `preview-url`；正式环境读取已配置的生产目标。缺失时报告阻塞，禁止拼接或猜域名。
 2. 正式环境使用专用合成账号、专用知识库、专用工作区和 `stsmk-` 数据前缀，禁止读取、修改或删除真实用户数据。
-3. CDS 环境跑完整正向、负向、故障恢复和清理；正式环境跑健康检查、最小真实产物和清理，不做破坏性故障注入。
+3. 正式只读基线先行；例行 CDS 只跑五个核心功能与原问题定向项，正式完整安全集合独立执行，不要求 CDS 功能或视觉先通过。CDS P0、污染、清理失败或实质清理未知仍熔断正式写入；各环境自身身份、模型与依赖不满足时仍须停止对应业务。完整 CDS 前置、故障恢复和故障注入归 full 专项；正式禁止破坏性故障注入。
 4. 测试不能只断言 HTTP 200。必须断言业务状态、阶段进度、最终产物、用户可读错误和清理结果。
 5. 每个长任务都要断言阶段持续变化，静止等待超过 2 秒视为体验失败。
 6. 每个失败最多做一次确定性重试。重试通过仍记为 `flaky`，不得改成通过后静默。
@@ -62,26 +62,30 @@ description: 'Runs a recurring dual-environment synthetic regression suite for c
 17. 视觉验收必须运行 `scripts/stable-smoke-visual-gate.mjs`。采集文件和可审核证据分开统计；可审核不等于通过。截图总量、模块下限、关键状态、产品实际支持的主题、桌面或真实触控移动端、证据元数据和页面判定必须同时通过。当前 prd-admin 业务页只支持暗色，LLMGW 控制台覆盖明暗主题；不得通过强制浏览器配色伪造产品不支持的主题。缺少逐张绑定的历史截图只算采集文件，不得显示为有效证据。
 18. 主管报告必须自动生成双环境逐项验收账本。异常项置顶，逐项显示人类可读的验收项名称、测试类型、完整面包屑、结论、责任人和可点击测试方法；caseId、命令、接口与日志只能进入技术附录。正式环境共用身份阻塞可在异常区合并为一条，但完整账本不得省略任何受影响项。
 19. 视觉报告必须生成逐张证据账本。每张图都要显示所属模块、唯一主验收状态、冒烟/功能/视觉/回归类型、自动检查、人工视觉、严格结论、主题、设备、真实面包屑、证明内容、截图跳转和测试方法跳转；一张图不能替多个主状态核销。任一字段缺失时该图不计入可审核证据，模块视觉状态为未执行或需干预。
-20. 全面视觉复测的可审核证据硬下限为 148 张，按十个模块分别核算；单图视觉创作和多图视觉创作各不少于 18 张。主管报告必须给出每个模块的采集文件数、可审核证据数、计划数、状态结果和“查看全部截图”链接，禁止只展示每模块首图让审核者误以为只有十几张。
-21. 完整 `/稳测` 禁止直接用空 manifest 进入视觉门禁。必须先用固定 runId 执行 `--dry-run` 生成仅含 CDS 的 `visual-plan.json`，再调用 `/验收` 的真人浏览器 harness 逐项取证，并通过 `--visual-manifest` 交给主运行器。只有 CDS 功能、清理和视觉门禁全部通过后，运行器才可生成 `visual-plan-production.json`；正式环境取证必须使用该计划，并通过 `--production-visual-manifest` 进入最终双环境门禁。缺少清单或路径不存在时必须在对应阶段前阻断；只有正式环境单独只读检查可使用空清单并判定视觉不适用。
+20. full 全面视觉复测的可审核证据硬下限为每环境 148 张，按十个模块分别核算；routine 使用固定正式安全状态和 CDS 核心状态合同，不套用 full 数量，也不得自行删减 routine 计划。主管报告必须给出每个模块的采集文件数、可审核证据数、计划数、状态结果和“查看全部截图”链接，禁止用采集数量掩盖缺失状态。
+21. routine/full 禁止用空 manifest 伪装视觉通过。默认 `--profile routine --capture-visual` 按冻结计划使用真人 harness 取证；也可先 dry-run 冻结后提供分环境 manifest。routine 正式视觉计划独立核销37位，CDS 核心14位欠证仍记本环境未通过，不因其功能或视觉缺口阻断正式业务；实质安全风险仍熔断。full 保留完整 CDS 功能、清理与视觉前置。缺图、缺路径阻断本环境验收结论，不得把普通附件或历史图冒充本轮清单。`--production-only` 仍然永远只读，不是业务写入入口。
 22. 双环境矩阵必须保留每个 caseId 的 CDS 与正式环境策略，分别生成必跑集合、grep 和覆盖账本。正式环境不得执行标记为“不主动”“不改正式配置”的用例；仅标记为“轮换”的用例按模块和固定 commit 确定性选择一条。用户定向 grep 只能缩小本环境允许集合，不能越权重新加入 CDS 专属故障或计费动作。
 23. 任何稳定冒烟验收报告必须归档到 CDS 验收中心，并以线上直达深链通过 `verify-open` 后才算完成。`/tmp`、`file://`、本机 HTML 和 Markdown 只能是生成过程中的临时草稿，不得作为报告入口、通知链接或交付结果。CDS 归档或打开校验失败时，必须标记验收链路失败并保持未完成，不得回退本地交付。
 24. 每轮测试结束后的最终回复必须给出“验收结果表”，至少包含“标题、导航链接、验收图片、验收状态”四列。导航链接必须是本轮实际验证过的业务入口或 CDS 线上报告深链；验收图片必须是可点击的线上图片或线上报告中的对应证据入口，禁止使用 `/tmp`、`file://` 或本机路径。每个验收项逐行列出，状态只允许 `pass` 或 `fail`；缺少导航、缺少图片、未走真人业务路径或证据未通过 `verify-open` 时，该行只能标记为 `fail`。整轮仍可按既有规则判定为 `conditional`，但表内受影响的具体项目必须落为 `fail`，不得用 `conditional` 掩盖证据缺口。
 25. 矩阵里每一条「一次请求、只读、无副作用」的轻用例，必须**同时**成为一条 6 小时常设监控。登记方式不是往仓库里加声明文件，而是**让被监控的服务在自己的自检端点上申报**（`cds:monitor` 自描述段，`intervalSeconds: 21600`，协议见 `doc/spec.platform.monitor-discovery.md`），再在监控中心把那个端点插上。本技能是 48 小时全量复测，常设探针是它的高频补集：**两者共用同一份判据，只是跑的频率不同**，禁止各写一份判据后各自漂移。新增永久回归用例（规则 7）时同步判断它是不是轻用例，是就一并申报。这条直接治「一测试就发现问题、系统却迟迟不反馈」——最坏情况下故障存活 6 小时，而不是等到下一轮人工复测。跨语言契约由 `scripts/tests/test_monitor_discovery_contract.py` 每次 CI 校验（挂在无 path filter 的 job 上）；规则 SSOT 是 `.claude/rules/degradation-must-alarm.md`。
 
-## 每轮工作流
+## 例行三池闭环
+
+每轮开始先读 automation memory 的未关闭缺陷，再读取三份 F 编号文档和持久三池状态。计划生成器消费原 caseId 的未关闭复验项；热点不能增加正式禁止操作，也不自动把 CDS 变成全量。每轮实际结果经 `scripts/stable-smoke-memory.mjs` 原子保存并回读，包括失败、阻塞与 flaky；报告附同一 F 编号评分表及经验变化。常见方法与待验证补充分层，未知根因不得晋升事实，同轮重试不增加事故频次，成功不自动关闭原缺陷。回填失败属于执行链失败，不能声称“已记住”。手机入口使用首页“生图”真实触控进入，再点击本轮项目，不沿用桌面名称或直接打开项目路由。
+
+## full 专项工作流
 
 ```text
 Stable Smoke Progress:
 - [ ] 1. 生成 runId，加载矩阵与回归台账
-- [ ] 2. 解析 CDS 环境和正式环境权威地址
-- [ ] 3. 检查凭据、模型、配额、存储与外部依赖
-- [ ] 4. 使用相同 runId 执行 `--dry-run`，冻结 commit 与 CDS 视觉计划
+- [ ] 2. 核对正式目标与独立允许地址，先执行 `--production-only` 的 `CORE-001` 只读基线并独立保存结果
+- [ ] 3. 解析 CDS 权威地址，检查双环境凭据、模型、配额、存储与外部依赖
+- [ ] 4. 使用相同批次标识执行 `--dry-run`，冻结 commit 与 CDS 视觉计划
 - [ ] 5. 调用 `/验收` 浏览器 harness 逐项核销 CDS 视觉计划并产出 manifest
 - [ ] 6. 通过 `--visual-manifest` 启动主运行器，在 CDS 环境执行完整矩阵、清理和视觉门禁
 - [ ] 7. 仅在门禁解锁后，按 `visual-plan-production.json` 采集正式环境 manifest
-- [ ] 8. 通过 `--production-visual-manifest` 完成正式环境矩阵与双环境视觉门禁
-- [ ] 9. 比对双环境能力、文案、阶段和产物
+- [ ] 8. 通过 `--production-visual-manifest` 完成正式环境限额写入矩阵与双环境视觉门禁
+- [ ] 9. 汇总时正式环境可用性结论置顶，再比对双环境能力、文案、阶段和产物
 - [ ] 10. 对失败做一次确定性重试并分类，将新问题写入回归台账
 - [ ] 11. 按模块将报告、截图、日志和 requestId 归档到 CDS 验收中心
 - [ ] 12. 对 CDS 线上直达深链执行 `verify-open`，确认正文、证据和可点击内链全部可用
@@ -96,7 +100,7 @@ Stable Smoke Progress:
 
 ### 2. CDS 环境
 
-按 `reference/test-matrix.md` 跑全量：入口、上传、阶段进度、结果、取消、重试、断网恢复、幂等、错误文案、移动端和清理。允许使用专用依赖模拟故障，禁止影响共享数据。
+例行只按五项核心合同及原问题定向复验。full 专项才按 `reference/test-matrix.md` 跑完整异常、取消、断网、幂等与恢复，禁止影响共享数据。
 
 ### 3. 正式环境
 
@@ -147,8 +151,9 @@ Stable Smoke Progress:
 
 - 自动化名称：`stable-smoke-48h`。
 - 周期：每 48 小时一次，Asia/Shanghai 02:17 启动；同一时刻只允许一轮运行。
-- 顺序：CDS 环境全量完成后，再运行正式环境安全矩阵。
-- 闸门：CDS 环境出现 P0、数据污染或清理失败时，正式环境只跑只读健康检查，跳过写入并把整轮判为 fail。
+- 顺序：正式只读基线先行；routine 正式完整安全矩阵独立执行，CDS 五项核心独立记账。full 专项保留完整 CDS 前置。
+- 主次：正式业务为主结论；CDS 仅核心安全与原缺陷定向验证，不因无关专项覆盖缺口阻塞正式业务。P0、污染或清理风险仍限制正式只读。
+- 闸门：CDS 环境出现 P0、数据污染、清理失败或实质清理未知时，正式环境只跑只读健康检查，跳过写入并保持整轮未通过。真实失败的清理旅程不能因 finally 无报错、标签或手造状态被推定已清理；CDS 未启动的独立阻塞与启动后结果丢失必须区分。
 - 超时：单模块 30 分钟，整轮 120 分钟；超时按失败处理，不继续播放进度文案。
 - 通知：成功只归档；conditional 或 fail 必须发送模块、caseId、环境、requestId、证据和恢复动作。
 - 通知实现：`scripts/stable-smoke-notify.mjs` 只调用 MAP `/api/dashboard/notifications/events`，缺少目标用户 ID 时拒绝发送，避免误发全员。
@@ -170,7 +175,7 @@ node scripts/stable-smoke-visual-plan.mjs --output-json <visual-plan.json> --out
 node scripts/stable-smoke-visual-gate.mjs --plan <visual-plan.json> --manifest <manifest.json> --output-json <visual-gate.json> --output-md <visual-gate.md>
 ```
 
-先生成 148 条逐项取证任务，再由浏览器取证逐行核销。每张截图必须从取证 harness 自动写入与视觉计划一致的 `runId`、`commit` 和 `capturedAt`；旧运行、旧提交、早于本轮取证起点或未来时间的截图不得计入。需要在首轮报告后补齐真人证据时，使用相同 `--run-id` 复跑，运行器会在提交与环境均未变化时保留原视觉计划和取证起点；提交或环境变化时必须开启新一轮。门禁非零退出时，主管报告必须把对应模块标为“不通过 / 部分通过 / 未执行 / 需干预”，不得用采集文件数量覆盖关键状态缺口。合并报告时必须把 `visual-gate.md` 的模块覆盖、逐张视觉证据账本和视觉测试方法一并写入主管报告。
+先按 profile 生成逐项取证任务：routine 为固定安全子集，full 每环境 148 项；再由浏览器取证逐行核销。每张截图必须从 harness 自动写入本轮 `runId`、工具 `commit` 和 `capturedAt`；实际业务部署版本另记，不混淆二者。旧运行、早于取证起点或未来截图不得计入。补证只在工具提交与环境均未变化时复用同一 runId；变化后开启新轮。门禁非零时逐模块标明“不通过 / 部分通过 / 未执行 / 需干预”，不得用数量覆盖状态缺口。主管报告合并模块覆盖、逐张账本与测试方法。
 
 ```markdown
 # 稳定冒烟报告 · {runId}
@@ -232,7 +237,7 @@ Verdict: pass | conditional | fail
 `reference/business-function-catalog.json` 是机器可读 SSOT，`scripts/stable-smoke-plan.mjs` 负责三件事：
 
 1. 校验功能线的面包屑、双环境策略、caseId、清理和回滚字段完整。
-2. 48 小时任务固定纳入全量；PR 按代码路径纳入受影响功能线并追加 active 永久回归。
+2. 48 小时正式安全矩阵保留全量，CDS 仅核心与有来源的定向项；PR 专项按代码路径纳入受影响功能线和相关 active 永久回归。
 3. 把 `catalogVersion`、commit、功能线和 caseId 固定成本地计划产物，报告必须引用同一版本。
 
 功能线的 `automationStatus` 只能是 `planned`、`entry`、`contract`、`contract-and-entry` 或 `journey`。只要必跑功能仍为 `planned`，整轮最多为 conditional，不能用入口可达冒充业务旅程通过。

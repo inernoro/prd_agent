@@ -1,5 +1,14 @@
 namespace PrdAgent.Core.Models;
 
+public static class ShortVideoMaterialRunStatus
+{
+    public const string Queued = "queued";
+    public const string Running = "running";
+    public const string Done = "done";
+    public const string Failed = "failed";
+    public const string Cancelled = "cancelled";
+}
+
 /// <summary>
 /// 短视频素材解析运行记录。
 /// </summary>
@@ -16,6 +25,15 @@ public class ShortVideoMaterialRun
     /// 后台 Worker 只领取属于自己实例（或历史无主 null/空）的 run，避免共享 Mongo 下多容器互抢。
     /// </summary>
     public string? OwnerInstanceId { get; set; }
+
+    /// <summary>
+    /// 当前处理租约。Worker 领取时生成，终态提交或失败时清空；恢复与删除后，旧 Worker
+    /// 的延迟写入必须因 token 不匹配而被拒绝。
+    /// </summary>
+    public string? ProcessingToken { get; set; }
+
+    /// <summary>用户请求取消。运行中的 Worker 观察到后取消外部调用、清理本次产物并落取消终态。</summary>
+    public bool CancelRequested { get; set; }
 
     /// <summary>原始短视频链接</summary>
     public string VideoUrl { get; set; } = string.Empty;
@@ -47,9 +65,9 @@ public class ShortVideoMaterialRun
     /// <summary>解析过程说明</summary>
     public string? ParserMessage { get; set; }
 
-    /// <summary>状态：queued / running / done / failed。默认 queued——绝不能默认 running，
+    /// <summary>状态：queued / running / done / failed / cancelled。默认 queued——绝不能默认 running，
     /// 否则任何缺省/反序列化出的 run 会被当成"处理中"却永远没人 claim/recover，变成僵尸卡死。</summary>
-    public string Status { get; set; } = "queued";
+    public string Status { get; set; } = ShortVideoMaterialRunStatus.Queued;
 
     /// <summary>阶段记录</summary>
     public List<ShortVideoMaterialStage> Stages { get; set; } = new();

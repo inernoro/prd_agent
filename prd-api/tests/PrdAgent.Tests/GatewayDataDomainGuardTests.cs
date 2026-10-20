@@ -1689,6 +1689,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LegacyOwnerScope.Build<ShortVideoMaterialRun>", shortVideoWorker);
         Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", documentWorker);
         Assert.Contains(".Set(r => r.OwnerInstanceId, instanceId)", shortVideoWorker);
+        Assert.Contains("RenewProcessingLeaseAsync", shortVideoWorker);
+        Assert.Contains("ProcessingLeaseHeartbeatInterval", shortVideoWorker);
+        Assert.Contains("current.ProcessingToken == processingToken", shortVideoWorker);
+        Assert.Contains("authorityStop.Cancel()", shortVideoWorker);
+        Assert.Contains("processor.ProcessAsync(run.Id, leaseAuthorityStop.Token)", shortVideoWorker);
+        Assert.Contains("ExecuteVideoDownloaderAsync(", shortVideoWorker);
+        Assert.Contains("authorityToken", shortVideoWorker);
+        Assert.Contains("CleanupRunArtifactsAsync(runId)", shortVideoWorker);
+        Assert.Contains("DeleteDownloadedVideoIfUnreferencedAsync(videoMaterial)", shortVideoWorker);
+        Assert.Contains("Filter.Ne(r => r.ProcessingToken, (string?)null)", shortVideoWorker);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveWatchdogTimeout(config)", watchdog);
         Assert.Contains("TranscriptRunTimingPolicy.ResolveAsrProcessingDeadline(configuration)", worker);
         Assert.Contains("while (!ct.IsCancellationRequested)", transcriptController);
@@ -1746,6 +1756,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("SceneItemStatus.Submitting", videoService);
         Assert.Contains("FindOneAndUpdateAsync", videoWorker);
         Assert.Contains("Scenes.{sceneIdx}.JobId", videoWorker);
+    }
+
+    [Fact]
+    public void VideoGenerationQueues_AreFencedByDeploymentScope()
+    {
+        var model = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/VideoGenModels.cs");
+        var service = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/VideoGenService.cs");
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+
+        Assert.True(
+            Regex.Matches(model, "public string\\? DeploymentSlug \\{ get; set; \\}").Count >= 2,
+            "视频 Run 与导出任务都必须持久化部署作用域");
+        Assert.True(
+            Regex.Matches(service, "DeploymentSlug = DeploymentScope.Current").Count >= 3,
+            "直出、分镜与导出入队都必须写入当前部署作用域");
+        Assert.Contains("CurrentBranchDeploymentFilter<VideoGenRun>(nameof(VideoGenRun.DeploymentSlug))", service);
+        Assert.Contains("CurrentBranchDeploymentFilter<VideoExportTask>(nameof(VideoExportTask.DeploymentSlug))", service);
+        Assert.Contains("fb.Eq(fieldName, currentScope)", service);
+        Assert.Contains("fb.Regex(fieldName, revisionPrefix)", service);
+        Assert.Contains("var queueScope = fb.Eq(x => x.Status, VideoGenRunStatus.Queued)", worker);
+        Assert.Contains("queueScope & fb.Eq(x => x.Id, pending.Id)", worker);
+        Assert.Contains("& fb.Eq(x => x.DeploymentSlug, DeploymentScope.Current);", worker);
+        Assert.Contains("Builders<VideoExportTask>.Filter.Eq(x => x.DeploymentSlug, DeploymentScope.Current)", worker);
+        Assert.Contains("x.DeploymentSlug == DeploymentScope.Current", worker);
     }
 
     [Fact]

@@ -325,9 +325,11 @@ def _evidence_action(shot):
 
 def _evidence_caption(shot, fallback="截图"):
     action = _evidence_action(shot)
-    if action:
-        return action["caption"]
-    return shot.get("caption") or shot.get("name") or fallback
+    caption = action["caption"] if action else shot.get("caption") or shot.get("name") or fallback
+    caption = str(caption).strip()
+    if not re.search(r"(?:不能|不|不可|不得).{0,8}证明", caption):
+        caption += "；本图只证明当前可见状态，不能单独证明后端持久化、清理回读或正式环境结果"
+    return caption
 
 
 def _figure_number(name):
@@ -809,10 +811,23 @@ def _business_decision_summary(markdown):
     }
     if "未执行" not in values and "功能未执行" in values:
         values["未执行"] = values["功能未执行"]
-    required = ("计划测试", "已完成", "通过", "失败", "未执行")
+    required = ("计划测试", "已完成", "失败", "未执行")
     if any(not re.fullmatch(r"\d+", values.get(field, "")) for field in required):
         return None
+    if re.fullmatch(r"\d+", values.get("稳定通过", "")):
+        stable_pass = int(values["稳定通过"])
+        flaky_pass = int(values.get("重试后通过", "0")) if re.fullmatch(r"\d+", values.get("重试后通过", "0")) else 0
+        total_pass = stable_pass + flaky_pass
+    elif re.fullmatch(r"\d+", values.get("通过", "")):
+        total_pass = int(values["通过"])
+        flaky_pass = int(values.get("重试后通过", "0")) if re.fullmatch(r"\d+", values.get("重试后通过", "0")) else 0
+        stable_pass = total_pass - flaky_pass
+    else:
+        return None
+    if stable_pass < 0:
+        raise RuntimeError("结论与处理顺序统计不守恒：重试后通过不能大于通过")
     counts = {field: int(values[field]) for field in required}
+    counts.update({"稳定通过": stable_pass, "重试后通过": flaky_pass, "通过": total_pass})
     if counts["通过"] + counts["失败"] + counts["未执行"] != counts["计划测试"]:
         raise RuntimeError("结论与处理顺序统计不守恒：通过 + 失败 + 未执行必须等于计划测试")
     if counts["通过"] + counts["失败"] != counts["已完成"]:
@@ -838,6 +853,19 @@ def _business_decision_summary(markdown):
         "visual_headers": visual_headers,
         "failure_headers": failure_headers,
         "environment_headers": environment_headers,
+    }
+
+
+def _defect_change_summary(markdown):
+    """Extract defect continuity counts for the first-screen decision card."""
+    _, rows = _table_records(markdown, "缺陷变化总览")
+    return {
+        _plain_cell(row.get("指标", "")): {
+            "count": _plain_cell(row.get("数量", "")),
+            "note": _plain_cell(row.get("说明", "")),
+        }
+        for row in rows
+        if _plain_cell(row.get("指标", ""))
     }
 
 
@@ -1903,6 +1931,58 @@ def _severity_class(severity):
     return ""
 
 
+def _warning_review_for(shot, warning):
+    """返回与当前告警精确绑定的人工复核，避免截图级复核覆盖同图其他告警。"""
+    reviews = shot.get("warningReviews")
+    if reviews is not None:
+        if not isinstance(reviews, list):
+            raise ValueError("warningReviews 必须是逐条复核数组")
+        matches = []
+        for review in reviews:
+            if not isinstance(review, dict) or not str(review.get("warning") or "").strip():
+                raise ValueError("warningReviews 每项必须包含原始 warning")
+            if str(review["warning"]) == str(warning):
+                matches.append(review)
+        if len(matches) > 1:
+            raise ValueError("同一 warning 只能有一条人工复核")
+        return matches[0] if matches else None
+
+    review = shot.get("warningReview")
+    if review is not None:
+        warnings = [str(item) for item in (shot.get("warnings") or [])]
+        if len(warnings) != 1 or warnings[0] != str(warning):
+            raise ValueError("同图存在多条告警时禁止使用截图级 warningReview，请改用逐条 warningReviews")
+    return review
+
+
+def _reviewed_warning(shot, warning):
+    """保留原始捕获等级；仅凭已确认、可定位且逐条匹配的诊断分类呈现风险。"""
+    review = _warning_review_for(shot, warning)
+    if review is None:
+        return _severity_from_text(warning), warning
+    if not isinstance(review, dict) or not all(
+        str(review.get(key) or "").strip()
+        for key in ("severity", "classification", "defectId", "reason")
+    ):
+        raise ValueError("warningReview 必须包含严重级、分类、defectId与确认依据")
+    severity = review["severity"]
+    if severity not in {"P0", "P1", "P2", "P3"} or review["classification"] not in {
+        "product", "test", "test/infrastructure", "configuration", "environment",
+    }:
+        raise ValueError("warningReview 严重级或分类非法")
+    detail = (
+        f'已确认 {severity} · {review["classification"]} · {review["defectId"]}：'
+        f'{review["reason"]}；原始捕获等级（非产品严重级）：{warning}'
+    )
+    return severity, detail
+
+
+def _verdict_label(verdict, markdown):
+    if verdict == "conditional" and _coverage_gap_count(markdown) > 0:
+        return "未完成，不放行"
+    return {"pass": "通过", "conditional": "原则性通过", "fail": "不通过"}.get(verdict, verdict)
+
+
 def _plain_cell_text(value):
     """把表格单元格里的 markdown 标记压成纯文本。
 
@@ -2050,7 +2130,8 @@ def _collect_problem_items(markdown, manifest):
         label = f"图{num.upper()}" if num else (shot.get("name") or "截图")
         cap = _evidence_caption(shot, label)
         for warning in shot.get("warnings") or []:
-            add(_severity_from_text(warning), f"{label} · {cap}", warning, anchor)
+            severity, detail = _reviewed_warning(shot, warning)
+            add(severity, f"{label} · {cap}", detail, anchor)
 
     order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     return sorted(items, key=lambda it: order.get(it["severity"], 9))
@@ -2381,11 +2462,16 @@ def build_interactive_html(
     for technical_state, readable_state in _EVIDENCE_STATE_TRANSLATIONS.items():
         render_markdown = render_markdown.replace(technical_state, readable_state)
     problem_items = _collect_problem_items(render_markdown, manifest)
-    problem_anchors = {
-        it["anchor"]: it["severity"]
-        for it in problem_items
-        if it.get("anchor")
-    }
+    severity_rank = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    problem_anchors = {}
+    for item in problem_items:
+        anchor = item.get("anchor")
+        severity = item.get("severity")
+        if not anchor or not severity:
+            continue
+        current = problem_anchors.get(anchor)
+        if current is None or severity_rank.get(severity, 9) < severity_rank.get(current, 9):
+            problem_anchors[anchor] = severity
     body_html = _decorate_problem_figures(markdown_to_html(render_markdown), problem_anchors)
     body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
     section_navigation = _collect_section_navigation(render_markdown, problem_items)
@@ -2407,14 +2493,17 @@ def build_interactive_html(
     defect_section_anchor = section_anchor(r"^(?:\d+\.\s*)?缺陷清单(?:[（(]P0-P3[）)])?(?:\s|$)")
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
-        "conditional": ("原则性通过", "conditional"),
+        "conditional": (_verdict_label(verdict, markdown_content), "conditional"),
         "fail": ("不通过", "fail"),
     }.get(verdict, (verdict, "unknown"))
     row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
     row_risk_count = sum(1 for it in problem_items if it.get("severity") in {"P1", "P2"})
     row_gap_count = _coverage_gap_count(markdown_content)
+    # 未解析到结构化项不等于没有问题；非通过报告不能把未知统计渲染为绿色零。
+    unclassified_summary = verdict in {"fail", "conditional"} and not problem_items and not row_gap_count
     reviewer_summary = _reviewer_summary(markdown_content)
     business_summary = _business_decision_summary(markdown_content)
+    defect_changes = _defect_change_summary(markdown_content)
     report_time = _extract_report_time(markdown_content)
     report_time_html = (
         f'<time class="dl-item">报告时间 · {html.escape(report_time)}</time>' if report_time else ""
@@ -2436,8 +2525,14 @@ def build_interactive_html(
         src = html.escape(raw_src, quote=True)
         thumb = f'<img src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
         nav_thumb = f'<img class="nav-thumb" src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
-        warnings = " ".join(str(w) for w in (shot.get("warnings") or []))
-        severity = problem_anchors.get(anchor) or _severity_from_text(warnings)
+        warnings = [str(w) for w in (shot.get("warnings") or [])]
+        reviewed_severities = [_reviewed_warning(shot, warning)[0] for warning in warnings]
+        warning_severity = min(
+            (item for item in reviewed_severities if item),
+            key=lambda item: severity_rank.get(item, 9),
+            default="",
+        )
+        severity = problem_anchors.get(anchor) or warning_severity
         status_class = _severity_class(severity)
         nav_class = f' class="is-{status_class}"' if status_class else ""
         card_class = f"evidence-card is-{status_class}" if status_class else "evidence-card"
@@ -2489,7 +2584,8 @@ def build_interactive_html(
         summary_cards = [
             ("计划测试", str(counts["计划测试"]), "本轮合同项", "accent", metric_target("逐项验收账本"), "all"),
             ("已完成", str(counts["已完成"]), "通过 + 失败", "accent", metric_target("逐项验收账本"), "completed"),
-            ("通过", str(counts["通过"]), "业务断言成立", "pass", metric_target("逐项验收账本"), "pass"),
+            ("稳定通过", str(counts["稳定通过"]), "首轮业务断言成立", "pass", metric_target("逐项验收账本"), "pass"),
+            ("重试后通过", str(counts["重试后通过"]), "不计入稳定通过", "risk" if counts["重试后通过"] else "pass", metric_target("逐项验收账本"), "flaky"),
             ("失败", str(counts["失败"]), "需要处理和复测", "fail" if counts["失败"] else "pass", metric_target("逐项验收账本"), "fail"),
             ("功能未执行", str(counts["未执行"]), "不能按通过计算", "gap" if counts["未执行"] else "pass", metric_target("逐项验收账本"), "not-run"),
         ]
@@ -2506,9 +2602,9 @@ def build_interactive_html(
     else:
         summary_cards = [
             ("已采集截图", str(len(manifest)), "可审核不等于通过", "accent" if manifest else "gap", metric_target("evidence-gallery")),
-            ("P0 定位项", str(row_fail_count), "阻断证据", "fail" if row_fail_count else "pass", metric_target(defect_section_anchor or "reportBody")),
-            ("P1-P2 风险", str(row_risk_count), "风险定位", "risk" if row_risk_count else "pass", metric_target(defect_section_anchor or "reportBody")),
-            ("缺口", str(row_gap_count), "未覆盖与弱相关", "gap" if row_gap_count else "pass", metric_target(gap_section_anchor or "reportBody")),
+            ("P0 定位项", "未统计" if unclassified_summary else str(row_fail_count), "请核对正文" if unclassified_summary else "阻断证据", "gap" if unclassified_summary else "fail" if row_fail_count else "pass", metric_target(defect_section_anchor or "reportBody")),
+            ("P1-P2 风险", "未统计" if unclassified_summary else str(row_risk_count), "请核对正文" if unclassified_summary else "风险定位", "gap" if unclassified_summary else "risk" if row_risk_count else "pass", metric_target(defect_section_anchor or "reportBody")),
+            ("缺口", "未统计" if unclassified_summary else str(row_gap_count), "请核对正文" if unclassified_summary else "未覆盖与弱相关", "gap" if unclassified_summary or row_gap_count else "pass", metric_target(gap_section_anchor or "reportBody")),
             ("表格行", str(table_count), "原始审计数据", "", metric_target("reportBody")),
         ]
     summary_fragments = []
@@ -2565,14 +2661,15 @@ def build_interactive_html(
             name = html.escape(_plain_cell(row.get("环境", "")) or "未标注环境")
             planned = html.escape(_plain_cell(row.get("计划", "")) or "0")
             completed = html.escape(_plain_cell(row.get("已完成", "")) or "0")
-            passed = html.escape(_plain_cell(row.get("通过", "")) or "0")
+            stable_passed = html.escape(_plain_cell(row.get("稳定通过", "")) or _plain_cell(row.get("通过", "")) or "0")
+            flaky_passed = html.escape(_plain_cell(row.get("重试后通过", "")) or "0")
             failed = html.escape(_plain_cell(row.get("失败", "")) or "0")
             not_run = html.escape(_plain_cell(row.get("未执行", "")) or "0")
             conclusion = html.escape(_plain_cell(row.get("业务结论", "")))
             environment_cards.append(
                 '<article class="environment-coverage-card">'
                 f'<strong>{name}：完成 {completed}/{planned}</strong>'
-                f'<span>通过 {passed}，失败 {failed}，未执行 {not_run}</span>'
+                f'<span>稳定通过 {stable_passed}，重试后通过 {flaky_passed}，失败 {failed}，未执行 {not_run}</span>'
                 f'<small>{conclusion}</small>'
                 '</article>'
             )
@@ -2580,6 +2677,22 @@ def build_interactive_html(
             '<div class="environment-coverage">' + "".join(environment_cards) + '</div>'
             if environment_cards else ""
         )
+        defect_change_html = ""
+        if defect_changes:
+            preferred = ("未关闭缺陷", "本轮新缺陷", "本轮验证关闭", "验收债务变化", "下一轮复验项")
+            change_cards = []
+            for key in preferred:
+                item = defect_changes.get(key)
+                if not item:
+                    continue
+                change_cards.append(
+                    '<article class="environment-coverage-card">'
+                    f'<strong>{html.escape(key)}：{html.escape(item["count"] or "未记录")}</strong>'
+                    f'<small>{html.escape(item["note"] or "未说明口径")}</small>'
+                    '</article>'
+                )
+            if change_cards:
+                defect_change_html = '<h3>缺陷连续台账</h3><div class="environment-coverage">' + "".join(change_cards) + '</div>'
         visual_html = ""
         if visual:
             inconclusive_visual_count = visual.get("不能证明业务结果", 0)
@@ -2599,6 +2712,7 @@ def build_interactive_html(
         release_failed = (
             verdict == "fail"
             or counts["失败"] > 0
+            or counts["未执行"] > 0
             or visual.get("明确不通过", 0) > 0
         )
         release_conditional = (
@@ -2626,10 +2740,11 @@ def build_interactive_html(
             '<div class="focus-kicker">第一步：确认结论</div>'
             f'<h2>{release_text}</h2>'
             f'<p class="decision-lead">计划 {counts["计划测试"]} 项，完成 {counts["已完成"]} 项；'
-            f'通过 {counts["通过"]} 项、失败 {counts["失败"]} 项、未执行 {counts["未执行"]} 项。'
+            f'稳定通过 {counts["稳定通过"]} 项、重试后通过 {counts["重试后通过"]} 项、失败 {counts["失败"]} 项、未执行 {counts["未执行"]} 项。'
             f'完成率 {completion_rate:.1f}%，已执行通过率 {executed_pass_rate:.1f}%。</p>'
             f'{decision_steps_html}'
             f'{environment_html}'
+            f'{defect_change_html}'
             f'{visual_html}'
             '<h3>第三步：按失败类型处理，再按原项复测</h3>'
             f'<div class="business-failure-grid">{failure_html}</div>'
@@ -2719,11 +2834,11 @@ def build_interactive_html(
             cards_html = (
                 f'<div class="problem-card is-{fallback_class}">'
                 f'<strong><span>{fallback_badge}</span>请查看正文风险与缺口清单</strong>'
-                f'<p>报告 Verdict 为{html.escape(verdict_cn)}，但未抽取到结构化重点项。</p>'
+                f'<p>报告 Verdict 为{html.escape(verdict_cn)}，尚未取得结构化统计；未统计不等于没有风险或缺口，请核对正文。</p>'
                 f'{fallback_link}</div>'
             )
         if verdict == "conditional":
-            focus_kicker = "原则性通过重点"
+            focus_kicker = "未完成项与风险" if row_gap_count else "原则性通过重点"
             focus_title = "先看这里：风险证据和未覆盖项"
         else:
             focus_kicker = "不通过定位"
@@ -4646,8 +4761,8 @@ def main():
         raise SystemExit(str(error)) from error
     now = datetime.datetime.now().astimezone()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
-    verdict_cn = {"pass": "通过", "conditional": "原则性通过", "fail": "不通过"}.get(a.verdict, a.verdict)
     body = ensure_report_time(open(a.report_md, encoding="utf-8").read().lstrip(), dt)
+    verdict_cn = _verdict_label(a.verdict, body)
     title, a.report_kind, a.report_date = build_report_title(a, cfg, now, body)
     # 项目由 projectId、状态由 verdict、操作方式与档位由 metadata/tags 表达，不再挤占标题。
     tags = [t for t in [verdict_cn, a.report_kind, a.type, a.tier] if (t or "").strip()]

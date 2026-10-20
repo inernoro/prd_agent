@@ -15,6 +15,7 @@ const base = {
   caseId: 'REG-multi-image-001',
   recovery: '暂停异常模型并通过 CDS 回滚 previous 版本',
   reportUrl: 'https://reports.example.test/stsmk-123',
+  verifiedReport: { status: 'passed', runId: 'stsmk-123', reportUrl: 'https://reports.example.test/stsmk-123' },
   isTest: false,
 };
 
@@ -48,6 +49,27 @@ test('缺少目标用户时拒绝全局通知', () => {
   assert.ok(validateNotificationOptions({ ...base, targetUserId: '' }).some((item) => item.includes('拒绝发送全局通知')));
 });
 
+test('无同轮验真回执不得发送，另轮或另地址也不能冒充', async () => {
+  for (const proof of [undefined, { ...base.verifiedReport, runId: 'other-run' }, { ...base.verifiedReport, reportUrl: 'https://other.test' }]) {
+    await assert.rejects(sendNotification({ ...base, verifiedReport: proof }, () => { throw Error('不应发送'); }), /verify-open/);
+  }
+});
+
+test('固定用户名不被陈旧本机ID覆盖，错误ID回读仍拒绝送达', async () => {
+  let payload;
+  await assert.rejects(sendNotification({ ...base, targetUsername: 'inernoro' }, async (_url, init) => {
+    payload = JSON.parse(init.body);
+    return new Response(JSON.stringify({ success: true, data: { notification: { id: 'n', targetUserId: 'wrong-user' } } }));
+  }), /核对目标用户/);
+  assert.equal(payload.targetUsername, 'inernoro');
+  assert.equal(payload.targetUserId, undefined);
+});
+
+test('缺少或损坏的通知地址会在发请求前给出明确配置错误', () => {
+  assert.ok(validateNotificationOptions({ ...base, baseUrl: '' }).includes('缺少通知地址'));
+  assert.ok(validateNotificationOptions({ ...base, baseUrl: 'not-a-url' }).includes('通知地址不是有效 URL'));
+});
+
 test('通过结果只归档，不发送通知', async () => {
   const result = await sendNotification({ ...base, verdict: 'pass' }, () => {
     throw new Error('不应发出请求');
@@ -78,7 +100,7 @@ test('签名通知使用固定用户名且接受服务端解析后的真实用�
     ...base,
     accessKey: '',
     targetUserId: '',
-    targetUsername: 'admin',
+    targetUsername: 'inernoro',
     signingKeyId: 'prod-rsa-2026-08',
     signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }),
   }, async (url, init) => {
@@ -93,7 +115,7 @@ test('签名通知使用固定用户名且接受服务端解析后的真实用�
   });
 
   assert.equal(result.targetUserId, 'admin-user-id');
-  assert.equal(captured.body.targetUsername, 'admin');
+  assert.equal(captured.body.targetUsername, 'inernoro');
   assert.equal(captured.body.targetUserId, undefined);
   assert.equal(captured.init.headers['X-Stable-Smoke-Key-Id'], 'prod-rsa-2026-08');
   assert.equal(captured.init.headers['X-AI-Access-Key'], undefined);

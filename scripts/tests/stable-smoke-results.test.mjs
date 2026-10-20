@@ -20,7 +20,7 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
       specs: [{
         title: '[CORE-001] 首页可用',
         tags: ['cleanup'],
-        tests: [{ results: [{ status: 'failed', duration: 10 }, { status: 'passed', duration: 20 }] }],
+        tests: [{ results: [{ status: 'failed', duration: 10, stdout: [{ text: 'HTTP 502 https://cds.example/assets/app.js' }] }, { status: 'passed', duration: 20 }] }],
       }],
     }],
   };
@@ -35,7 +35,55 @@ test('从 Playwright 报告提取 caseId 和最终结果', () => {
     retryCount: 1,
     hadFailedAttempt: true,
     attemptErrors: [],
+    attemptDiagnostics: ['HTTP 502 https://cds.example/assets/app.js'],
   }]);
+});
+
+test('REG-stsmk-account-scope-001 原用例明确skip的安全原因进入not-run账本且不改变分母', () => {
+  const reason = '验收债务：正式只观察自然失败，禁止构造不存在的引用；本项未执行。';
+  const report = { suites: [{ specs: [{
+    title: '[MVIS-010] 多图失败恢复',
+    tests: [{ results: [{ status: 'skipped', duration: 0, annotations: [
+      { type: 'skip', description: reason }, { type: 'skip', description: reason },
+      { type: 'note', description: '其它注解不得覆盖未执行原因' },
+    ] }] }],
+  }] }] };
+  const collected = collectPlaywrightCases(report, 'production');
+  assert.equal(collected[0].status, 'not-run');
+  assert.equal(collected[0].skipReason, reason);
+  const rows = reconcileCaseCoverage({ production: ['MVIS-010', 'LIT-004'] }, collected, ['production']);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.filter(row => row.status === 'not-run').length, 2);
+  const ledger = buildNotRunLedger(rows, { production: true });
+  assert.equal(ledger[0].reasonCode, 'explicit-test-skip');
+  assert.equal(ledger[0].reason, reason);
+  assert.doesNotMatch(ledger[0].command, /--production-only/);
+  assert.doesNotMatch(ledger[0].command, /--cds-only/);
+  assert.equal(ledger[1].reasonCode, 'automation-case-missing');
+  const cds = buildNotRunLedger([{ ...rows[0], environment: 'cds' }], { cds: true })[0];
+  assert.match(cds.command, /--cds-only/);
+});
+
+test('REG-stsmk-account-scope-001 正式恢复路径按冻结profile核销核心或专项，不重新要求例行CDS全量', () => {
+  const [row] = buildNotRunLedger([{ caseId: 'VIS-002', environment: 'production', status: 'not-run' }], {
+    production: true, productionRestricted: true, productionSafetyGate: { reasons: ['本轮核心视觉欠证'] },
+  });
+  assert.match(row.command, /routine.*五.*核心/);
+  assert.match(row.command, /full.*专项/);
+  assert.doesNotMatch(row.command, /完成 CDS 全量|--production-only/);
+});
+
+test('REG-stsmk-account-scope-001 skip注解不能覆盖正常通过、重试事实或真实错误', () => {
+  const annotation = { type: 'skip', description: '不得误归因的过往注解' };
+  for (const [results, expected] of [
+    [[{ status: 'passed', annotations: [annotation] }], { status: 'pass', retryCount: 0, hadFailedAttempt: false, error: '' }],
+    [[{ status: 'failed', error: { message: '首次失败' }, annotations: [annotation] }, { status: 'passed', annotations: [annotation] }], { status: 'pass', retryCount: 1, hadFailedAttempt: true, error: '' }],
+    [[{ status: 'failed', error: { message: '真实失败' }, annotations: [annotation] }], { status: 'fail', retryCount: 0, hadFailedAttempt: false, error: '真实失败' }],
+  ]) {
+    const row = collectPlaywrightCases({ suites: [{ specs: [{ title: '[CORE-001] 首页', tests: [{ results }] }] }] }, 'production')[0];
+    for (const [key, value] of Object.entries(expected)) assert.equal(row[key], value);
+    assert.equal(row.skipReason, undefined);
+  }
 });
 
 test('同一条真实旅程可为多个相关 caseId 提供共同证据', () => {

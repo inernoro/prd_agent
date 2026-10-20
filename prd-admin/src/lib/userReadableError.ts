@@ -59,8 +59,10 @@ const IDENTIFIER_DIAGNOSTIC_PATTERNS = [
 const USER_MESSAGE_ALLOWLIST = new Map<string, ReadonlySet<string>>([
   ['INVALID_FORMAT', new Set([
     '文件内容无法解析',
+    '文件无法解析，请确认文件未损坏并重新选择',
     '文件格式不受支持，请更换文件后重试。',
     '头像上传未完成，请稍后重新上传。',
+    '当前短视频地址无法读取，请确认视频已经公开、没有过期并允许访问；检查完成后重新粘贴完整链接，如仍然失败请更换另一个公开视频链接后重试。',
   ])],
   ['AVATAR_SOURCE_UNAVAILABLE', new Set([
     '当前头像无法用于生成，请重新上传一张清晰图片后重试。',

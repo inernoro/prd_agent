@@ -6,6 +6,7 @@ import {
   parseFunctionalExecutionCounts,
   renderBusinessDecisionPage,
   renderHumanReadableAcceptanceDesign,
+  synthesizeReviewerOverview,
 } from '../compose-stable-smoke-supervisor-report.mjs';
 
 test('失败详情包含表格分隔符时仍保持单元格边界', () => {
@@ -49,6 +50,7 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
     passed: 48,
     failed: 31,
     notRun: 112,
+    flaky: 0,
     completionRate: 79 / 191 * 100,
     executedPassRate: 48 / 79 * 100,
     balanced: true,
@@ -69,13 +71,13 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /\| 完成率 \| 41\.4% \|/);
   assert.match(page, /\| 已执行通过率 \| 60\.8% \|/);
   assert.match(page, /\| 已采集且可审核 \| 148 \| 图片、路径、时间和方法字段齐全，不等于验收通过 \|/);
-  assert.match(page, /\| 能直接证明通过 \| 36 \|/);
+  assert.match(page, /\| 能直接证明通过 \| 36 \| 截图呈现目标视觉状态，不替代功能、清理和正式环境写入验证 \|/);
   assert.match(page, /功能未执行 112 项与截图不能证明业务结果 112 张是两个独立维度/);
   assert.match(page, /本轮数字相同纯属巧合/);
   assert.match(page, /## 双环境覆盖差异/);
-  assert.match(page, /\| CDS \| 103 \| 78 \| 47 \| 31 \| 25 \|/);
+  assert.match(page, /\| CDS \| 103 \| 78 \| 47 \| 0 \| 31 \| 25 \|/);
   assert.match(page, /CDS 本轮完成 78\/103，仍有 25 项未执行/);
-  assert.match(page, /\| 正式环境 \| 88 \| 1 \| 1 \| 0 \| 87 \|/);
+  assert.match(page, /\| 正式环境 \| 88 \| 1 \| 1 \| 0 \| 0 \| 87 \|/);
   assert.match(page, /录音无法转写（语音识别资源不可用） \| 2 \|/);
   assert.match(page, /GW-001、REC-003|REC-003、GW-001/);
   assert.doesNotMatch(page, /expect\(|Expected:|Received:/);
@@ -83,6 +85,33 @@ test('结论与处理顺序使用用例级守恒口径并解释截图证明力',
   assert.match(page, /2026-08-15 18:21（北京时间）前/);
   assert.match(page, /补齐语音识别成员，交付一条可打开且刷新仍存在的转录笔记/);
   assert.match(page, /查看逐项失败结果/);
+});
+
+test('老板首屏单列重试后通过并正确归因 CDS 清理波动', () => {
+  const page = renderBusinessDecisionPage('', `
+## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|---|---|
+| CDS | 跨模块 | 清理门禁 | 冒烟 | 首页 → 网页托管 → 清理回读 | 不通过 | CDS 静态资源网关 502、CDS 控制面网关 504 导致清理旅程首轮失败、确定性重试通过 | CDS 与运行平台负责人 | [查看](#method-common-004) |
+`, '', {
+    runId: 'stsmk-20261012-1315-final-e646',
+    coverage: { total: 250, passed: 138, failed: 1, notRun: 111, flaky: 10 },
+  }, 'fail');
+  assert.match(page, /稳定通过 128 项、重试后通过 10 项、失败 1 项、未执行 111 项/);
+  assert.match(page, /首轮分别遭遇 CDS 静态资源网关 502 与控制面网关 504/);
+  assert.match(page, /CDS 与运行平台负责人/);
+});
+
+test('REG-stsmk-report-risk-001 清理欠证不得编造本轮没有的网关错误', () => {
+  const page = renderBusinessDecisionPage('', `
+## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 问题或关闭条件 | 负责人 | 查看方法 |
+|---|---|---|---|---|---|---|---|---|
+| CDS | 跨模块 | 清理门禁 | 冒烟 | 首页 → 文件上传 → 清理回读 | 不通过 | 清理旅程首轮失败；业务没有通过，独立回读缺证 | 巡检负责人 | [查看](#method-common-004) |
+`, '', {runId:'stsmk-no-fabrication',coverage:{total:1,passed:0,failed:1,notRun:0,flaky:0}}, 'fail');
+  assert.doesNotMatch(page, /静态资源网关 502|控制面网关 504|确定性重试通过/);
 });
 
 test('功能未执行与视觉缺口数量不同时不得声称数字相同', () => {
@@ -359,7 +388,7 @@ test('功能报告缺少处理流程时自动生成双账本首屏', () => {
   assert.match(report, /## 处理流程/);
   assert.match(report, /## 结论与处理顺序/);
   assert.match(report, /\| 已完成 \| 14 \|/);
-  assert.match(report, /功能验收 \| 12\/20 通过，2 不通过，6 未执行/);
+  assert.match(report, /功能验收 \| 12\/20 稳定通过，0 重试后通过，2 不通过，6 未执行/);
   assert.match(report, /截图证据 \| 已采集 148\/148；状态判定为 通过 125，不通过 9，需补证 7，需干预 7/);
   assert.ok(report.indexOf('## 处理流程') < report.indexOf('## 模块验收总览'));
   assert.doesNotMatch(report, /老板先看|主管先看|主管报告|主管结论|主管动作/);
@@ -458,6 +487,86 @@ test('验收报告使用真实技术附录链接替换占位地址', () => {
   const report = composeSupervisorReport(functional, '# 视觉\n', '', '', 'https://cds.example/reports?id=1');
   assert.doesNotMatch(report, /example\.invalid/);
   assert.match(report, /https:\/\/cds\.example\/reports\?id=1/);
+});
+
+test('主管报告为只读 Markdown 中的内部导航补齐真实锚点', () => {
+  const functional = `# 报告
+
+## 模块验收总览
+
+| 模块 | 查看步骤 | 查看缺陷 | 查看方法 |
+|---|---|---|---|
+| 只读检查 | [查看](#逐模块视觉取证任务) | [查看](#视觉异常证据索引) | [查看](#关联测试方法) |
+
+## 关联测试方法
+
+- 只读健康检查
+
+## 逐模块视觉取证任务
+
+本轮不要求截图。`;
+  const report = composeSupervisorReport(functional, '# 视觉\n');
+
+  for (const target of ['关联测试方法', '逐模块视觉取证任务', '视觉异常证据索引']) {
+    assert.match(report, new RegExp(`<a id="${target}"></a>`));
+  }
+  assert.match(report, /本轮没有可列出的视觉异常证据/);
+});
+
+test('正式环境只读报告在正文固化运行身份并移除无必要的内部跳转', () => {
+  const functional = `# 核心业务稳定验收主管报告 · baseline-run
+
+> 主管结论：通过。共 1 项，1 项通过、0 项不通过、0 项未执行。
+
+## 业务功能线与面包屑
+
+| 模块 | 真实业务路径 | CDS | 正式环境 | 是否需干预 |
+|---|---|---|---|---|
+| 身份与访问 | 首页与静态资源 | 未选择 | 通过（1 通过，0 失败，0 未执行） | 否 |
+
+## 未通过与未执行逐项清单
+
+| 环境 | 模块 | 验收项 | 结果 |
+|---|---|---|---|
+| 正式环境 | 全部模块 | 无 | 通过 |
+
+## 逐项验收账本
+
+| 环境 | 模块 | 验收项 | 结果 | 查看方法 |
+|---|---|---|---|---|
+| 正式环境 | 身份与访问 | 首页与静态资源 | 通过 | [查看](#method-core-001) |
+
+## 关联测试方法
+
+<a id="method-core-001"></a>
+### 首页与静态资源
+`;
+  const gate = `# 视觉门禁
+
+结论：不适用
+
+## 模块覆盖
+
+| 模块 | 视觉结论 | 真实面包屑 | 采集文件 | 可审核证据 | 状态结果 | 关键状态 | 缺口 | 查看全部截图 | 测试方法 |
+|---|---|---|---:|---:|---|---|---|---|---|
+| 正式环境只读健康检查 | 不适用 | 登录页 → 系统健康检查 | 0 | 0/0 | 无视觉验收位 | 0/0 | 无 | 不适用 | 不适用 |
+`;
+  const summary = {
+    runId: 'baseline-run',
+    commit: 'abc123',
+    productionSafetyGate: { restricted: true, reasons: ['正式环境只读基线'] },
+    environmentCoverage: [{ environment: 'production', planned: 1, completed: 1, passed: 1, failed: 0, notRun: 0 }],
+    coverage: { total: 1, passed: 1, failed: 0, notRun: 0, visual: { verdict: '不适用' } },
+  };
+  const report = composeSupervisorReport(functional, gate, gate, '', '', summary);
+  assert.match(report, /运行标识：baseline-run；固定提交：abc123/);
+  assert.doesNotMatch(report, /\]\(#[^)]+\)/);
+  const overview = synthesizeReviewerOverview(
+    functional.split('## 未通过与未执行逐项清单')[0],
+    gate.split('## 模块覆盖')[1],
+    summary,
+  );
+  assert.match(overview, /正式环境只读健康检查[^\n]*\| 通过 \| 通过 \| 不适用 \| 无 \| 否 \|/);
 });
 
 test('视觉门禁报告会合成满足归档准入字段的模块总览', () => {

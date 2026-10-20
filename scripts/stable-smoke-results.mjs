@@ -3,6 +3,12 @@ const CASE_ID_PATTERN = /\[((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|
 export function collectPlaywrightCases(report, environment) {
   const rows = [];
 
+  function outputText(output) {
+    if (typeof output?.text === 'string') return output.text;
+    if (typeof output?.body === 'string') return output.body;
+    return '';
+  }
+
   function collectSuites(suites = []) {
     for (const suite of suites) {
       for (const spec of suite.specs || []) {
@@ -15,11 +21,23 @@ export function collectPlaywrightCases(report, environment) {
         const attemptErrors = results
           .map((item) => item?.error?.message || '')
           .filter(Boolean);
+        const attemptDiagnostics = [...new Set(results.flatMap((item) => [
+          ...(item?.stdout || []),
+          ...(item?.stderr || []),
+        ])
+          .map(outputText)
+          .flatMap((value) => [...value.matchAll(/HTTP\s+(5\d{2})\s+(https?:\/\/\S+)/gi)]
+            .map((match) => `HTTP ${match[1]} ${match[2]}`)))];
         const status = rawStatus === 'passed'
           ? 'pass'
           : rawStatus === 'skipped' || rawStatus === 'not-run'
             ? 'not-run'
             : 'fail';
+        // 当前 Playwright JSON reporter 把运行时 test.skip 的说明写入最后一次 result.annotations。
+        // 只在真正未执行时消费，不能把旧注解套到通过、flaky 或真实失败上。
+        const skipReason = status === 'not-run' ? [...new Set((finalResult?.annotations || [])
+          .filter(annotation => annotation?.type === 'skip' && typeof annotation.description === 'string')
+          .map(annotation => annotation.description.trim()).filter(Boolean))].join('；') : '';
         for (const match of matches) {
           rows.push({
             caseId: match[1].toUpperCase(),
@@ -28,10 +46,12 @@ export function collectPlaywrightCases(report, environment) {
             tags: Array.isArray(spec.tags) ? [...spec.tags] : [],
             status,
             durationMs: results.reduce((sum, item) => sum + (item.duration || 0), 0),
-            error: finalResult?.error?.message || '',
+            error: finalResult?.error?.message || skipReason,
+            ...(skipReason ? { skipReason } : {}),
             retryCount: Math.max(0, results.length - 1),
             hadFailedAttempt: priorResults.some((item) => !['passed', 'skipped'].includes(item?.status)),
             attemptErrors,
+            attemptDiagnostics,
           });
         }
       }
@@ -106,6 +126,10 @@ export function reconcileCaseCoverage(
         || existing.status === 'fail'
         || row.status === 'fail',
       attemptErrors: messages,
+      attemptDiagnostics: [...new Set([
+        ...(existing.attemptDiagnostics || []),
+        ...(row.attemptDiagnostics || []),
+      ])],
     });
   }
   const reconciled = [];
@@ -146,6 +170,7 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
       const permittedReadOnlyProbe = productionRestricted
         && permittedReadOnlyCaseIds.includes(String(row.caseId).toUpperCase());
       const blockedByProductionSafetyGate = productionRestricted && !permittedReadOnlyProbe;
+      const explicitSkipReason = typeof row.skipReason === 'string' ? row.skipReason.trim() : '';
       const productionRestrictionReason = [
         ...(reportAvailability.productionSafetyGate?.reasons || []),
         reportAvailability.productionRestrictionReason,
@@ -154,11 +179,13 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
         ? 'production-read-only-evidence-missing'
         : blockedByProductionSafetyGate
         ? 'production-safety-restricted'
+        : explicitSkipReason ? 'explicit-test-skip'
         : reportAvailable ? 'automation-case-missing' : 'environment-report-missing';
       const reason = permittedReadOnlyProbe
         ? `正式环境安全门已允许只读检查 ${row.caseId}，但执行报告中没有该用例的真实步骤或结果。`
         : blockedByProductionSafetyGate
         ? `正式环境安全门限制为只读检查，写入旅程未运行。原因：${productionRestrictionReason}。`
+        : explicitSkipReason ? explicitSkipReason
         : reportAvailable
         ? '本环境已有执行报告，但没有该 caseId 的真实步骤或执行证据。'
         : isProduction
@@ -168,7 +195,9 @@ export function buildNotRunLedger(rows, reportAvailability = {}) {
       const command = permittedReadOnlyProbe
         ? '运行 node scripts/stable-smoke-run.mjs --production-only，重新取得正式环境只读健康检查的真实执行证据'
         : blockedByProductionSafetyGate
-        ? '先按安全门原因完成 CDS 全量复测与覆盖闭环，再运行 node scripts/stable-smoke-run.mjs 完成正式环境安全矩阵'
+        ? '先按安全门原因和本轮冻结profile核销CDS必测范围（routine为五项核心，full为专项全量）、视觉和清理；再以同一profile运行 node scripts/stable-smoke-run.mjs --capture-visual 完成正式环境安全矩阵'
+        : explicitSkipReason
+        ? `先按未执行原因补齐合规前置或真实安全变体，保持原caseId及冻结profile；再运行 node scripts/stable-smoke-run.mjs${environmentFlag ? ` ${environmentFlag}` : ''} --capture-visual，正式写入仍须通过同轮CDS核心或专项、视觉与清理门禁`
         : reportAvailable
         ? `先在 e2e/specs/stable-smoke.spec.ts 实现 [${row.caseId}]，再运行 node scripts/stable-smoke-run.mjs${environmentFlag ? ` ${environmentFlag}` : ''} --grep "\\[${row.caseId}\\]"`
         : isProduction

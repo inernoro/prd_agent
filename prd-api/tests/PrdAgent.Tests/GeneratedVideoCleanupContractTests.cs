@@ -52,8 +52,20 @@ public class GeneratedVideoCleanupContractTests
         Assert.Contains("DeletionArtifacts", service);
         Assert.Contains("VideoAssetMutationLease.AcquireAsync", service);
         Assert.Contains("VideoAssetMutationLease.AcquireAsync", worker);
+        Assert.Contains("registerStoredAssetAsync", ReadRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/CapsuleExecutor.cs"));
+        Assert.Contains("VideoAssetMutationLease.ContentKey", ReadRepoFile(
+            "prd-api/src/PrdAgent.Api/Services/ShortVideoMaterialWorker.cs"));
         Assert.Contains("ResumePendingDeletionAsync", worker);
         Assert.Contains("DeletionCleanupAttemptedAt", worker);
+        Assert.Contains("WatchRunCancellationAsync", worker);
+        Assert.Contains("requestCancellation.Token", worker);
+        Assert.Contains("Project(x => x.CancelRequested)", worker);
+        Assert.Contains("catch (OperationCanceledException) when (requestCancellation.IsCancellationRequested)", worker);
+        Assert.Contains("await CancelRunAsync(run);", worker);
+        Assert.Contains("VideoGenRunStatus.Queued or VideoGenRunStatus.Editing", service);
+        Assert.Contains(".Set(x => x.Status, VideoGenRunStatus.Cancelled)", service);
+        Assert.Contains("await PublishEventAsync(runId, \"run.cancelled\"", service);
         Assert.Contains("var cleanupToken = CancellationToken.None", service);
         Assert.True(
             service.IndexOf("DeletionRequestedAt", StringComparison.Ordinal)
@@ -83,4 +95,6 @@ public class GeneratedVideoCleanupContractTests
 
         throw new FileNotFoundException($"Cannot locate repository file: {relativePath}");
     }
+
+    private static string ReadRepoFile(string relativePath) => File.ReadAllText(LocateRepoFile(relativePath));
 }

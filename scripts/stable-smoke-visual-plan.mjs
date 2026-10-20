@@ -4,6 +4,12 @@ import { pathToFileURL } from 'node:url';
 
 const DEFAULT_CATALOG = '.claude/skills/stable-smoke/reference/visual-evidence-catalog.json';
 
+// 48 小时例行计划只核销真实核心状态；完整发布/专项验收仍使用 full 的 148 项合同。
+export const routineVisualSequences = {
+  cds: { 'identity-profile': [1, 2], 'recording-audio': [4, 9, 11], 'file-parsing': [4, 7, 11], 'single-image-creation': [3, 5, 8, 10, 14, 16] },
+  production: { 'identity-profile': [1, 2], 'recording-audio': [4, 9, 11, 12], 'file-parsing': [4, 7, 11, 12], 'short-video-parsing': [1, 6, 8], 'literary-creation': [5, 7, 9], 'single-image-creation': [3, 5, 8, 10, 14, 16], 'multi-image-creation': [2, 3, 8, 11, 14], 'video-creation': [4, 6, 9, 11], 'image-model-routing': [7, 8, 9], 'errors-progress-responsive': [4, 5, 10] },
+};
+
 function readArg(argv, name, fallback = '') {
   const index = argv.indexOf(name);
   return index >= 0 ? argv[index + 1] || fallback : fallback;
@@ -62,12 +68,22 @@ function resolveSlotBinding(module, state, environmentOrigins, gatewayEnvironmen
       ? gatewayEnvironmentOrigins[environment]
       : environmentOrigins[environment],
     entryPath: binding.entryPath || module.entryPath,
+    theme: binding.theme || undefined,
   };
 }
 
 export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity = {}) {
   const environments = normalizeVisualEnvironments(requestedEnvironments);
   const scope = String(runIdentity.scope || 'full').trim() || 'full';
+  if (scope === 'routine') {
+    const full = buildVisualPlan(catalog, requestedEnvironments, { ...runIdentity, scope: 'full' });
+    const slots = full.slots.filter(slot => {
+      const sequence = Number(slot.slotId.split('-').at(-1));
+      return routineVisualSequences[slot.environment]?.[slot.moduleId]?.includes(sequence);
+    });
+    if (!slots.length) throw new Error('例行视觉计划没有真实核心状态');
+    return { ...full, scope, plannedScreenshotTarget: slots.length, slots, modules: full.modules.filter(module => slots.some(slot => slot.moduleId === module.id)).map(module => ({ ...module, planned: slots.filter(slot => slot.moduleId === module.id).length })) };
+  }
   const runId = String(runIdentity.runId || '').trim();
   const commit = String(runIdentity.commit || '').trim();
   const captureStartedAt = String(runIdentity.captureStartedAt || '').trim();
@@ -80,17 +96,9 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
     normalizeOrigin(runIdentity.gatewayEnvironmentOrigins?.[environment]),
   ]).filter(([, origin]) => origin));
   const hasRunIdentity = Boolean(runId && commit && captureStartedAt);
-  if (hasRunIdentity) {
-    for (const environment of environments) {
-      if (!environmentOrigins[environment]) {
-        throw new Error(`${environmentLabel(environment)}主应用视觉取证地址未配置`);
-      }
-      if ((catalog.modules || []).some((module) => module.originKind === 'gateway')
-          && !gatewayEnvironmentOrigins[environment]) {
-        throw new Error(`${environmentLabel(environment)}模型网关视觉取证地址未配置`);
-      }
-    }
-  }
+  // 正式环境单独运行时只做 CORE-001 只读健康检查，视觉计划固定为零项。
+  // 这条路径不会打开模型网关页面，因此不能反向要求配置一个不会被使用的网关地址；
+  // 否则 production-only 会在业务检查前被视觉计划生成器误拦截，零视觉归档链永远无法复测。
   if (scope === 'production-read-only') {
     return {
       schemaVersion: hasRunIdentity ? '3.0' : environments.length > 0 ? '2.0' : '1.0',
@@ -107,6 +115,17 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
       modules: [],
       slots: [],
     };
+  }
+  if (hasRunIdentity) {
+    for (const environment of environments) {
+      if (!environmentOrigins[environment]) {
+        throw new Error(`${environmentLabel(environment)}主应用视觉取证地址未配置`);
+      }
+      if ((catalog.modules || []).some((module) => module.originKind === 'gateway')
+          && !gatewayEnvironmentOrigins[environment]) {
+        throw new Error(`${environmentLabel(environment)}模型网关视觉取证地址未配置`);
+      }
+    }
   }
   if (scope !== 'full') throw new Error(`不支持的视觉取证范围：${scope}`);
   const planEnvironments = environments.length > 0 ? environments : [''];
@@ -136,7 +155,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           primaryState: state,
           coverageStates: [state],
           testType: index === 0 ? '冒烟' : '视觉',
-          theme: stateTheme(module, index),
+          theme: binding.theme || stateTheme(module, index),
           viewportClass,
           ...mobileMetadata(module, state, state, viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${state}`),
@@ -165,7 +184,7 @@ export function buildVisualPlan(catalog, requestedEnvironments = [], runIdentity
           primaryState: extra.primaryState,
           coverageStates: [extra.primaryState],
           testType: '视觉',
-          theme: extra.theme,
+          theme: binding.theme || extra.theme,
           viewportClass: extra.viewportClass,
           ...mobileMetadata(module, extra.label, extra.primaryState, extra.viewportClass),
           breadcrumb: qualifyBreadcrumb(`${module.breadcrumb} → ${extra.label}`),
@@ -253,13 +272,15 @@ export function renderVisualPlan(plan) {
     '',
     '## 逐模块视觉取证任务',
     '',
+    '> 本节是运行前冻结的计划基线，不代表本轮执行结果。完成数、通过数和缺证项必须以视觉门禁的模块覆盖与逐张证据账本为准。',
+    '',
     ...plan.modules.flatMap((module) => {
       const moduleSlots = plan.slots.filter((slot) => slot.moduleId === module.id);
       return [
         `<a id="visual-plan-${module.id}"></a>`,
-        `### ${module.name} · 0/${module.planned} 项完成`,
+        `### ${module.name} · ${module.planned} 项计划基线`,
         '',
-        '| 序号 | 验收场景 | 类型 | 主题 | 设备 | 完整测试路径 | 预期证明 | 当前状态 | 是否需干预 | 测试方法 |',
+        '| 序号 | 验收场景 | 类型 | 主题 | 设备 | 完整测试路径 | 预期证明 | 计划快照状态 | 是否需干预 | 测试方法 |',
         '|---:|---|---|---|---|---|---|---|---|---|',
         ...moduleSlots.map((slot, index) => `| ${index + 1} | ${slot.scenario} | ${slot.testType} | ${slot.theme === 'dark' ? '暗色' : '亮色'} | ${slot.viewportClass === 'mobile' ? '真实触控移动端' : '桌面端'} | ${slot.breadcrumb} | ${slot.expectedProof} | ${slot.status} | 是，需要执行并取证 | [查看](${slot.methodAnchor}) |`),
         '',

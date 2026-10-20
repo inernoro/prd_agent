@@ -92,19 +92,25 @@ function buildMetadata(plan, matrix, row) {
   const feature = resolveFeature(plan, row.caseId);
   const method = matrix.get(row.caseId);
   const scenario = method?.scenario || (row.caseId.startsWith('REG-') ? '永久回归' : '业务验收');
-  const breadcrumb = [...(feature?.breadcrumb || ['关键业务']), scenario].join(' → ');
+  const commonInfrastructureFailure = row.caseId === 'COMMON-004'
+    && /CDS .*网关|清理旅程首轮失败/.test(String(row.error || ''));
+  const breadcrumb = commonInfrastructureFailure
+    ? `网页托管 → 清理回读 → ${scenario}`
+    : [...(feature?.breadcrumb || ['关键业务']), scenario].join(' → ');
   return {
     ...row,
     featureId: feature?.id || 'unmapped',
-    featureLabel: feature?.label || '未映射功能线',
+    featureLabel: commonInfrastructureFailure ? '跨模块清理门禁' : feature?.label || '未映射功能线',
     breadcrumb,
     scenario,
     assertion: method?.assertion || '按永久回归账本验证问题不再出现',
     environmentPolicy: row.environment === 'cds' ? method?.cdsPolicy : method?.productionPolicy,
     testType: testType(row.caseId),
     statusLabel: statusLabel(row.status),
-    intervention: row.status === 'pass' ? '无需' : row.status === 'fail' ? '团队修复并复测' : row.environment === 'production' ? '准备正式验收身份后补测' : '团队补齐自动化并补测',
-    owner: OWNER_BY_FEATURE[feature?.id] || '质量负责人',
+    intervention: row.status === 'pass' ? '无需' : row.status === 'fail' ? '团队诊断并复测' : '按本轮执行覆盖账本处理原因并补测',
+    owner: commonInfrastructureFailure
+      ? 'CDS 与运行平台负责人'
+      : OWNER_BY_FEATURE[feature?.id] || '质量负责人',
     methodAnchor: `method-${row.caseId.toLowerCase()}`,
   };
 }
@@ -127,6 +133,70 @@ function resultCell(rows, environment, selectedEnvironments) {
   const passed = selected.filter((row) => row.status === 'pass').length;
   const verdict = failed > 0 ? '不通过' : notRun > 0 ? '部分通过' : '通过';
   return `${verdict}（${passed} 通过，${failed} 失败，${notRun} 未执行）`;
+}
+
+function businessFailure(row) {
+  const detail = String(row.error || '');
+  if (row.caseId === 'FILE-003') {
+    return {
+      impact: '大文件字节上传完成后，页面没有稳定展示已进入解析阶段，用户可能误以为仍在上传。',
+      close: '原 FILE-003 在同一固定提交上连续两次显示“正在解析”，正文可回读，删除后条目与附件均回读 404。',
+    };
+  }
+  if (row.caseId === 'FILE-004' || row.caseId === 'FILE-008' || row.caseId === 'REG-FILE-002') {
+    return {
+      impact: '损坏文件被拒绝后，页面未稳定显示重新选择完整文件的恢复动作，用户不知道如何继续。',
+      close: '桌面与真实触控移动端均显示精确恢复文案，随后上传有效文件成功，刷新后正文可回读，清理后资源 404。',
+    };
+  }
+  if (/^REC-(?:003|007|012)$/.test(row.caseId)) {
+    return {
+      impact: '录音转写正文已生成，但刷新后首句时间戳丢失；重试时建库请求又中断，用户无法稳定回读完整结果。',
+      close: '原录音用例连续两次保留正文与“00:00”时间戳，刷新后一致，建库无请求中断，清理回读无残留。',
+    };
+  }
+  if (row.caseId === 'VIS-001' || (row.caseId === 'VIS-003' && /Hand tool|Select/.test(detail))) {
+    return {
+      impact: '桌面画布按 H 后仍是选择工具，用户无法按界面约定快速切换到平移操作。',
+      close: '真人路径进入画布后按 H，工具状态变为 Hand tool，拖动画布产生位移，再按 V 恢复 Select。',
+    };
+  }
+  if (row.caseId === 'VIS-003' || row.caseId === 'REG-IMAGE-INPUT-001') {
+    return {
+      impact: 'JPEG 参考图已生成产物，但发往上游的单图字段名未满足图像编辑契约，换线路时可能直接失败。',
+      close: '原 VIS-003 与 REG-image-input-001 连续两次证明字段为 image[]，MIME、扩展名和 SHA256 与原 JPEG 一致，产物可下载解码且清理回读 404。',
+    };
+  }
+  if (row.caseId === 'COMMON-004') {
+    return {
+      impact: '生图任务首次刷新后没有恢复到画板，虽然重试通过，仍不能证明首轮没有留下残留资源。',
+      close: '同一固定提交上两条生图与清理旅程首轮通过，刷新后产物恢复，删除后任务、工作区与资产均回读不存在。',
+    };
+  }
+  return {
+    impact: `用户无法稳定完成“${row.scenario}”并回读预期业务结果。`,
+    close: `原 ${row.caseId} 与相关永久回归首轮通过，结果可回读，清理后无残留。`,
+  };
+}
+
+function groupNotRun(notRunLedger) {
+  const conciseReason = (row) => {
+    if (row.reasonCode === 'production-safety-restricted') {
+      return 'CDS 出现高风险失败与清理未知，正式写入矩阵按安全门保持未启动。';
+    }
+    if (row.reasonCode === 'explicit-test-skip') {
+      return '本轮缺少可核验的身份范围或前置条件，按执行合同保留为未执行。';
+    }
+    return row.reason || '原因待诊断';
+  };
+  const grouped = new Map();
+  for (const row of notRunLedger) {
+    const key = `${row.environment}:${row.reasonCode || '原因待诊断'}`;
+    const current = grouped.get(key) || { environment: row.environment, reasonCode: row.reasonCode || '原因待诊断', count: 0, reason: conciseReason(row) };
+    current.count += 1;
+    grouped.set(key, current);
+  }
+  return [...grouped.values()];
 }
 
 export function renderSupervisorReport({
@@ -157,33 +227,41 @@ export function renderSupervisorReport({
     pass: metadata.filter((row) => row.status === 'pass').length,
     fail: metadata.filter((row) => row.status === 'fail').length,
     notRun: metadata.filter((row) => row.status === 'not-run').length,
+    flaky: metadata.filter((row) => row.status === 'pass' && row.hadFailedAttempt).length,
   };
+  const failedEnvironmentLabel = [...new Set(metadata.filter((row) => row.status === 'fail').map((row) => row.environment))]
+    .map(environmentLabel).join('、');
   const verdict = executionFailures.length > 0 || counts.fail > 0
     ? '不通过'
     : counts.notRun > 0 ? '部分通过' : '通过';
-  const managerIntervention = productionNotRun.length > 0 ? '需要：确认正式验收身份可用' : '不需要：由团队闭环剩余项';
+  const managerIntervention = productionNotRun.length > 0 ? '待确认：根据本轮执行覆盖账本与安全限制安排补测' : '不需要：由团队闭环剩余项';
   const methods = [...new Map(metadata.map((row) => [row.caseId, row])).values()];
-  const environmentCoverage = [...selectedEnvironmentSet].map((environment) => {
+  const environmentCoverage = [...selectedEnvironmentSet]
+    .sort((left, right) => (left === 'production' ? -1 : right === 'production' ? 1 : 0))
+    .map((environment) => {
     const environmentRows = metadata.filter((row) => row.environment === environment);
     const passed = environmentRows.filter((row) => row.status === 'pass').length;
     const failed = environmentRows.filter((row) => row.status === 'fail').length;
     const notRun = environmentRows.filter((row) => row.status === 'not-run').length;
+    const flaky = environmentRows.filter((row) => row.status === 'pass' && row.hadFailedAttempt).length;
     const blocker = notRun === 0
       ? '无'
-      : environment === 'production' ? '正式环境专用身份或安全门槛' : '自动化步骤或依赖资源缺失';
+      : '未执行，原因见本轮执行覆盖账本与安全限制';
     const command = environment === 'cds'
       ? 'node scripts/stable-smoke-run.mjs --cds-only'
       : 'node scripts/stable-smoke-run.mjs';
     const closeCondition = notRun === 0
       ? '保持周期复测'
       : '所有未执行项获得真实通过或失败结果，并完成清理回读';
-    return { environment, rows: environmentRows, passed, failed, notRun, blocker, command, closeCondition };
-  });
+    return { environment, rows: environmentRows, passed, failed, notRun, flaky, blocker, command, closeCondition };
+    });
+  const productionCoverage = environmentCoverage.find((item) => item.environment === 'production');
+  const notRunGroups = groupNotRun(notRunLedger);
 
   const lines = [
     `# 核心业务稳定验收主管报告 · ${runId}`,
     '',
-    `> 主管结论：${verdict}。共 ${counts.total} 项，${counts.pass} 项通过、${counts.fail} 项不通过、${counts.notRun} 项未执行。未执行不能按通过计算。`,
+    `> 主管结论：${verdict}。共 ${counts.total} 项，${counts.pass - counts.flaky} 项稳定通过、${counts.flaky} 项重试后通过、${counts.fail} 项不通过、${counts.notRun} 项未执行。重试后通过和未执行都不能按稳定通过计算。`,
     '',
     '## 主管验收总览',
     '',
@@ -192,37 +270,38 @@ export function renderSupervisorReport({
     `| 总体结论 | ${verdict} | ${verdict === '通过' ? '无需干预' : '先处理下方“需干预事项”，关闭前不得对外宣称全面通过'} |`,
     `| 发布建议 | ${verdict === '通过' ? '可以发布' : '暂缓全面放行'} | 关键项全部通过且未执行清零后再变更结论 |`,
     `| 是否需要主管介入 | ${managerIntervention} | 技术修复和自动化补跑由对应负责人处理 |`,
-    `| 通过 | ${counts.pass}/${counts.total} | 可抽查逐项账本中的证据与方法 |`,
-    `| 不通过 | ${counts.fail}/${counts.total} | 必须修复并在 CDS 与正式环境复测 |`,
-    `| 未执行 | ${counts.notRun}/${counts.total} | 必须补齐身份或自动化步骤，不能用入口截图代替 |`,
+    `| 稳定通过 | ${counts.pass - counts.flaky}/${counts.total} | 可抽查逐项账本中的证据与方法 |`,
+    `| 重试后通过 | ${counts.flaky}/${counts.total} | 必须解释首轮失败并确认没有清理副作用 |`,
+    `| 不通过 | ${counts.fail}/${counts.total} | 先诊断分类与根因，再按原验收项复测 |`,
+    `| 未执行 | ${counts.notRun}/${counts.total} | 按本轮执行覆盖账本与安全限制安排补测，不能用入口截图代替 |`,
+    '',
+    '## 正式环境老板结论',
+    '',
+    productionCoverage
+      ? `正式环境本轮已执行 ${productionCoverage.passed + productionCoverage.failed}/${productionCoverage.rows.length} 项，${productionCoverage.passed - productionCoverage.flaky} 项稳定通过、${productionCoverage.flaky} 项重试后通过、${productionCoverage.failed} 项失败、${productionCoverage.notRun} 项未执行。${productionCoverage.notRun > 0 ? '当前只能确认无写入基线可用，不能放行正式写入矩阵。' : '正式计划项已全部获得真实结果。'}`
+      : '本轮未选择正式环境，不能得出正式可用结论。',
     '',
     '## 执行覆盖账本',
     '',
     '先看环境汇总，再按验收项补跑。补跑命令只包含安全的执行入口，不包含账号、密码或单次票据。',
     '',
-    '| 环境 | 计划 | 已执行 | 通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 | 关闭条件 |',
-    '|---|---:|---:|---:|---:|---:|---|---|---|',
-    ...environmentCoverage.map((coverage) => `| ${environmentLabel(coverage.environment)} | ${coverage.rows.length} | ${coverage.passed + coverage.failed} | ${coverage.passed} | ${coverage.failed} | ${coverage.notRun} | ${coverage.blocker} | \`${coverage.command}\` | ${coverage.closeCondition} |`),
+    '| 环境 | 计划 | 已执行 | 稳定通过 | 重试后通过 | 失败 | 未执行 | 阻塞类别 | 直接执行路径 | 关闭条件 |',
+    '|---|---:|---:|---:|---:|---:|---:|---|---|---|',
+    ...environmentCoverage.map((coverage) => `| ${environmentLabel(coverage.environment)} | ${coverage.rows.length} | ${coverage.passed + coverage.failed} | ${coverage.passed - coverage.flaky} | ${coverage.flaky} | ${coverage.failed} | ${coverage.notRun} | ${coverage.blocker} | \`${coverage.command}\` | ${coverage.closeCondition} |`),
     '',
-    '| 验收项编号 | 环境 | 阻塞类别 | 具体原因 | 代码或页面入口 | 补跑命令 | 关闭条件 |',
-    '|---|---|---|---|---|---|---|',
-    ...metadata.filter((row) => row.status === 'not-run').map((row) => {
-      const gap = gapByKey.get(`${row.environment}:${row.caseId}`);
-      const command = gap?.command || (row.environment === 'cds'
-        ? 'node scripts/stable-smoke-run.mjs --cds-only'
-        : 'node scripts/stable-smoke-run.mjs');
-      return `| ${row.caseId} | ${environmentLabel(row.environment)} | ${escapeCell(gap?.reasonCode || (row.environment === 'production' ? '正式身份或安全门槛' : '自动化或依赖缺口'))} | ${escapeCell(gap?.reason || '没有获得真实执行证据')} | ${escapeCell(gap?.sourcePath || row.breadcrumb)} | \`${escapeCell(command)}\` | ${escapeCell(gap?.closeCondition || '该项获得真实通过或失败结果，并完成清理回读')} |`;
-    }),
-    ...(counts.notRun === 0 ? ['| 无 | 全部环境 | 无 | 所有计划项均已执行 | 保持当前业务路径 | 无需补跑 | 保持周期复测 |'] : []),
+    '| 环境 | 未执行分组 | 数量 | 业务原因 |',
+    '|---|---|---:|---|',
+    ...notRunGroups.map((group) => `| ${environmentLabel(group.environment)} | ${escapeCell(group.reasonCode)} | ${group.count} | ${escapeCell(group.reason)} |`),
+    ...(counts.notRun === 0 ? ['| 全部环境 | 无 | 0 | 所有计划项均已执行 |'] : []),
     '',
     '## 需干预事项',
     '',
     '| 优先级 | 环境 | 影响项 | 当前结果 | 负责人 | 关闭条件 |',
     '|---|---|---:|---|---|---|',
-    ...(counts.fail > 0 ? [`| P1 | CDS | ${counts.fail} 项 | 真实业务失败 | 相关业务负责人 | 修复后相同验收项通过，并加入永久回归 |`] : []),
-    ...(executionFailures.length > 0 ? [`| P1 | ${executionFailures.map(environmentLabel).join('、')} | ${executionFailures.length} 个执行进程 | Playwright 进程异常退出 | 质量负责人 | 修复全局初始化、清理或报告器错误后整轮重跑通过 |`] : []),
-    ...(immediate.filter((row) => row.status === 'not-run').length > 0 ? [`| P1 | CDS | ${immediate.filter((row) => row.status === 'not-run').length} 项 | 自动化步骤未执行 | 质量负责人和相关业务负责人 | 下方每项均获得真实通过或失败证据 |`] : []),
-    ...(productionNotRun.length > 0 ? [`| P1 | 正式环境 | ${productionNotRun.length} 项 | 正式合成身份未就绪 | 身份与权限负责人 | 正式身份预检通过并完成同一套验收项 |`] : []),
+    ...(counts.fail > 0 ? [`| P1 | ${failedEnvironmentLabel} | ${counts.fail} 项 | 验收项不通过，分类与根因待诊断 | 质量负责人和相关模块负责人 | 诊断后处理已确认问题，原验收项与相关永久回归通过 |`] : []),
+    ...(executionFailures.length > 0 ? [`| P1 | ${executionFailures.map(environmentLabel).join('、')} | ${executionFailures.length} 次执行 | 执行未成功，原因待诊断 | 质量负责人 | 核对用例结果与执行日志，完成诊断和相应用例复测；整轮执行成功 |`] : []),
+    ...(immediate.filter((row) => row.status === 'not-run').length > 0 ? [`| P1 | CDS | ${immediate.filter((row) => row.status === 'not-run').length} 项 | 未执行，原因见本轮执行覆盖账本 | 质量负责人和相关模块负责人 | 下方每项均获得真实通过或失败证据 |`] : []),
+    ...(productionNotRun.length > 0 ? [`| P1 | 正式环境 | ${productionNotRun.length} 项 | 未执行，原因见本轮执行覆盖账本与安全限制 | 质量负责人和相关模块负责人 | 按账本解除已确认阻塞，完成原验收项与清理回读 |`] : []),
     ...(abnormal.length === 0 && executionFailures.length === 0 ? [`| 无 | ${environmentScopeLabel} | 0 项 | 全部通过 | 无需干预 | 保持每 48 小时复测 |`] : []),
     '',
     '## 业务功能线与面包屑',
@@ -243,11 +322,14 @@ export function renderSupervisorReport({
     ...frontAbnormal.map((row) => {
       const gap = gapByKey.get(`${row.environment}:${row.caseId}`);
       const reason = row.status === 'not-run'
-        ? String(gap?.reason || '没有获得真实执行证据').replace(/该 caseId/g, '该验收项').replace(/caseId/g, '验收项')
-        : readableReason(row.error || row.assertion);
-      return `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${escapeCell(row.scenario)} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${escapeCell(reason)} | ${row.owner} | [查看](#${row.methodAnchor}) |`;
+        ? String(gap?.reason || '没有获得真实执行证据，原因待诊断').replace(/该 caseId/g, '该验收项').replace(/caseId/g, '验收项')
+        : businessFailure(row).impact;
+      const close = row.status === 'not-run'
+        ? String(gap?.closeCondition || '该项获得真实通过或失败结果，并完成清理回读')
+        : businessFailure(row).close;
+      return `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${escapeCell(row.scenario)} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${escapeCell(reason)} 关闭条件：${escapeCell(close)} | ${row.owner} | [查看](#${row.methodAnchor}) |`;
     }),
-    ...(productionNotRun.length > 0 ? [`| 正式环境 | 全部计划模块 | ${productionNotRun.length} 项 | 冒烟、功能与回归 | 正式合成身份 → 同一验收账本 → 真实业务路径 | 未执行 | 共用身份前置未完成；每项明细保留在下方完整账本 | 身份与权限负责人 | [查看正式环境方法](#正式环境统一执行方法) |`] : []),
+    ...(productionNotRun.length > 0 ? [`| 正式环境 | 未执行项涉及模块 | ${productionNotRun.length} 项 | 冒烟、功能与回归 | 逐项业务路径见下方完整账本 | 未执行 | 原因见本轮执行覆盖账本与安全限制；每项明细保留在下方完整账本 | 质量负责人和相关模块负责人 | [查看正式环境方法](#正式环境统一执行方法) |`] : []),
     ...(abnormal.length === 0 ? [`| ${environmentScopeLabel} | 全部模块 | 无 | 无 | 全部业务路径 | 通过 | 无异常项 | 无需干预 | [查看完整方法](#关联测试方法) |`] : []),
     '',
     '## 逐项验收账本',
@@ -255,6 +337,19 @@ export function renderSupervisorReport({
     '| 环境 | 模块 | 验收项 | 类型 | 详细测试路径 | 结果 | 干预动作 | 查看方法 |',
     '|---|---|---|---|---|---|---|---|',
     ...metadata.map((row) => `| ${environmentLabel(row.environment)} | ${escapeCell(row.featureLabel)} | ${escapeCell(row.scenario)} | ${row.testType} | ${escapeCell(row.breadcrumb)} | ${row.statusLabel} | ${row.intervention} | [查看](#${row.methodAnchor}) |`),
+    '',
+    '## 未执行逐项补跑账本',
+    '',
+    '| 验收项编号 | 环境 | 阻塞类别 | 具体原因 | 代码或页面入口 | 补跑命令 | 关闭条件 |',
+    '|---|---|---|---|---|---|---|',
+    ...metadata.filter((row) => row.status === 'not-run').map((row) => {
+      const gap = gapByKey.get(`${row.environment}:${row.caseId}`);
+      const command = gap?.command || (row.environment === 'cds'
+        ? 'node scripts/stable-smoke-run.mjs --cds-only'
+        : 'node scripts/stable-smoke-run.mjs');
+      return `| ${row.caseId} | ${environmentLabel(row.environment)} | ${escapeCell(gap?.reasonCode || '原因待诊断')} | ${escapeCell(gap?.reason || '没有获得真实执行证据，原因待诊断')} | ${escapeCell(gap?.sourcePath || row.breadcrumb)} | \`${escapeCell(command)}\` | ${escapeCell(gap?.closeCondition || '该项获得真实通过或失败结果，并完成清理回读')} |`;
+    }),
+    ...(counts.notRun === 0 ? ['| 无 | 全部环境 | 无 | 所有计划项均已执行 | 保持当前业务路径 | 无需补跑 | 保持周期复测 |'] : []),
     '',
     '## 关联测试方法',
     '',

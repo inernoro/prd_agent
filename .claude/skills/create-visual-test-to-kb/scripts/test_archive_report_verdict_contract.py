@@ -892,6 +892,51 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         self.assertIn("本轮没有业务失败项。", content)
         self.assertNotIn('<article class="business-failure-card">', content)
 
+    def test_stable_and_flaky_counts_drive_the_first_screen_and_defect_continuity(self):
+        content = archive_report.build_interactive_html(
+            "稳定冒烟 · 分账报告",
+            "fail",
+            """
+## 结论与处理顺序
+
+| 指标 | 数量 |
+|---|---:|
+| 计划测试 | 180 |
+| 已完成 | 69 |
+| 稳定通过 | 51 |
+| 重试后通过 | 10 |
+| 失败 | 8 |
+| 未执行 | 111 |
+
+## 双环境覆盖差异
+
+| 环境 | 计划 | 已完成 | 稳定通过 | 重试后通过 | 失败 | 未执行 | 业务结论 |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 正式环境 | 115 | 7 | 7 | 0 | 0 | 108 | 只读基线可用，写入矩阵未启动 |
+
+## 缺陷变化总览
+
+| 指标 | 数量 | 说明 |
+|---|---:|---|
+| 未关闭缺陷 | 115 | defectId 计数；CDS 59、正式环境 50、unknown 6 |
+| 本轮新缺陷 | 2 | 原编号连续追踪 |
+| 本轮验证关闭 | 0 | 无 |
+| 验收债务变化 | +2 | 新增两项 |
+| 下一轮复验项 | 110 | caseId 计数；正式环境 52、CDS 58，与缺陷数不是同一分母 |
+""",
+            [],
+            figure_srcs={},
+        )
+        self.assertIn("计划 180 项，完成 69 项；稳定通过 51 项、重试后通过 10 项、失败 8 项、未执行 111 项", content)
+        self.assertIn("正式环境：完成 7/115", content)
+        self.assertIn("未关闭缺陷：115", content)
+        self.assertIn("下一轮复验项：110", content)
+        self.assertNotIn("尚未取得结构化统计", content)
+
+    def test_every_evidence_caption_states_what_it_cannot_prove(self):
+        caption = archive_report._evidence_caption({"name": "01-proof", "caption": "页面显示生成结果"})
+        self.assertIn("不能单独证明后端持久化、清理回读或正式环境结果", caption)
+
     @staticmethod
     def body(gap_heading: str) -> str:
         return f"""
@@ -977,6 +1022,114 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         self.assertIn('href="#method-core-001"', rendered)
         self.assertIn('<span id="method-core-001"></span>', rendered)
         self.assertEqual([], archive_report._interactive_evidence_errors(rendered, self.manifest))
+
+
+class ReportRiskDecisionTests(unittest.TestCase):
+    """REG-stsmk-report-risk-001：不让首屏覆盖不足或工具异常冒充产品结论。"""
+
+    warning = "自动捕获(P0,pageerror): serviceWorker SecurityError"
+    review = {
+        "severity": "P2", "classification": "test/infrastructure",
+        "defectId": "DEF-STSMK-WEB-SW-001",
+        "reason": "真实浏览器旧脚本1次异常、新脚本0次，已确认巡检注入造成",
+    }
+
+    def test_nonpass_without_structured_items_never_renders_green_zero_counts(self):
+        body = "## 3. 缺陷总表\n\n| 优先级/defectId | 哪里错 |\n|---|---|\n| P1 DEF-ASK | 回答失败 |\n\n## 覆盖缺口\n\n正式108项、核心8张未完成。"
+        for verdict in ("fail", "conditional"):
+            rendered = archive_report.build_interactive_html("核心功能复测", verdict, body, [])
+            for label in ("P0 定位项", "P1-P2 风险", "缺口"):
+                self.assertIn(f"<span>{label}</span><strong>未统计</strong>", rendered)
+                self.assertNotIn(f"<span>{label}</span><strong>0</strong>", rendered)
+            self.assertIn("未统计不等于没有风险或缺口", rendered)
+
+    def test_structured_risk_and_gap_counts_remain_exact(self):
+        body = "## 3. 缺陷清单\n\n| 严重级 | 编号 | 问题 |\n|---|---|---|\n| P2 | DEF-ASK | 回答失败 |\n\n## 覆盖缺口\n\n| 编号 | 未覆盖项 |\n|---|---|\n| G1 | 正式未执行 |"
+        rendered = archive_report.build_interactive_html("核心功能复测", "fail", body, [])
+        self.assertIn("<span>P1-P2 风险</span><strong>1</strong>", rendered)
+        self.assertIn("<span>缺口</span><strong>1</strong>", rendered)
+
+    def test_pass_report_can_keep_explicit_zero_summary(self):
+        rendered = archive_report.build_interactive_html("定向全部通过", "pass", "## 结论\n\n定向全部通过。", [])
+        self.assertIn("<span>P1-P2 风险</span><strong>0</strong>", rendered)
+
+    def test_incomplete_conditional_is_not_presented_as_pass(self):
+        rendered = archive_report.build_interactive_html(
+            "定向修复", "conditional", "## 覆盖说明\n\n覆盖缺口：227个；补充flaky 1不计入缺口", []
+        )
+        self.assertNotIn("原则性通过", rendered)
+        self.assertIn("未完成，不放行", rendered)
+        self.assertEqual(227, archive_report._coverage_gap_count("覆盖缺口：227个；补充flaky 1"))
+
+    def test_reviewed_tool_warning_keeps_raw_evidence_without_product_p0(self):
+        shot = {"name": "01-old", "warnings": [self.warning], "warningReview": self.review}
+        items = archive_report._collect_problem_items("", [shot])
+        self.assertEqual("P2", items[0]["severity"])
+        self.assertIn(self.warning, items[0]["detail"])
+        self.assertIn("非产品严重级", items[0]["detail"])
+
+    def test_unreviewed_real_failure_remains_p0(self):
+        items = archive_report._collect_problem_items("", [{"name": "01-fail", "warnings": [self.warning]}])
+        self.assertEqual("P0", items[0]["severity"])
+
+    def test_review_reaches_actual_figure_and_header(self):
+        shot = {"name": "01-old", "caption": "原失败旁证", "warnings": [self.warning], "warningReview": self.review}
+        rendered = archive_report.build_interactive_html(
+            "原失败旁证", "conditional",
+            '## 原失败\n\n覆盖缺口：227个\n\n<span id="fig-01-old" class="figure-anchor"></span>\n\n![原失败旁证](https://assets.example.test/old.png)',
+            [shot], figure_srcs={"fig-01-old": "https://assets.example.test/old.png"},
+        )
+        self.assertIn("有条件风险 · P2", rendered)
+        self.assertNotIn("验收失败 · P0", rendered)
+        self.assertIn(self.warning, rendered)
+        self.assertIn("未完成，不放行", rendered)
+
+    def test_review_requires_reason_and_defect_mapping(self):
+        for missing in ("reason", "defectId", "classification", "severity"):
+            review = {k: v for k, v in self.review.items() if k != missing}
+            with self.assertRaises(ValueError):
+                archive_report._collect_problem_items("", [{"name": "01-old", "warnings": [self.warning], "warningReview": review}])
+
+    def test_single_review_cannot_override_multiple_warnings(self):
+        shot = {
+            "name": "01-mixed",
+            "warnings": [self.warning, "自动捕获(P0,network): HTTP 500"],
+            "warningReview": self.review,
+        }
+        with self.assertRaisesRegex(ValueError, "逐条 warningReviews"):
+            archive_report._collect_problem_items("", [shot])
+
+    def test_per_warning_reviews_do_not_downgrade_unrelated_p0(self):
+        shot = {
+            "name": "01-mixed",
+            "caption": "混合告警截图",
+            "warnings": [self.warning, "自动捕获(P0,network): HTTP 500"],
+            "warningReviews": [{"warning": self.warning, **self.review}],
+        }
+        items = archive_report._collect_problem_items("", [shot])
+        self.assertEqual(["P0", "P2"], [item["severity"] for item in items])
+        self.assertIn("HTTP 500", items[0]["detail"])
+        self.assertIn("test/infrastructure", items[1]["detail"])
+        rendered = archive_report.build_interactive_html(
+            "混合告警",
+            "fail",
+            '## 混合告警证据\n\n'
+            '<span id="fig-01-mixed" class="figure-anchor"></span>\n\n'
+            '![混合告警截图](https://assets.example.test/mixed.png)',
+            [shot],
+            figure_srcs={"fig-01-mixed": "https://assets.example.test/mixed.png"},
+        )
+        self.assertIn("验收失败 · P0", rendered)
+
+    def test_business_decision_cannot_release_with_unexecuted_cases(self):
+        for not_run in (0, 227):
+            body = InteractiveReportLinkContractTests.business_decision_body(not_run, 0)
+            rendered = archive_report.build_interactive_html("业务放行", "conditional", body, [])
+            if not_run:
+                self.assertIn("当前不能放行", rendered)
+                self.assertNotIn("当前只能有条件放行", rendered)
+            else:
+                self.assertIn("当前只能有条件放行", rendered)
 
 
 if __name__ == "__main__":
