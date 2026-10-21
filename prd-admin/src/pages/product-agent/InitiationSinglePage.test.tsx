@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InitiationWizard } from './VersionWorkflowTab';
 import type { ProductInitiation } from './types';
 
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
 const api = vi.hoisted(() => ({
   listProductVersionReviewSources: vi.fn(), getInitiationPlanDefaults: vi.fn(), parseProductVersionMessage: vi.fn(),
   createInitiation: vi.fn(), updateInitiation: vi.fn(), syncInitiationReview: vi.fn(), decideInitiation: vi.fn(),
