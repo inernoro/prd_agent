@@ -111,47 +111,17 @@ describe('estimatePages', () => {
 });
 
 describe('looksLikeDeck', () => {
-  it('只接受正文中存在真实幻灯元素且完整闭合的文档', () => {
-    const padding = '正文'.repeat(120);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{color:red}</style></head><body>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{color:red}</style></head>${padding}`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><script>const fake = '<div class="deck"><section class="slide">x</section></div>';</script>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><script>const fake = '<section class="slide">x</section>';${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><script>const fake='</head><body><section class="slide">x</section>${padding}</body></html>'`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><script>const fake='</head><body><section class="slide">x</section>${padding}</body></html>';</script></head></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="presentation"><div class="slide active"><h1>${padding}</h1></div></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class='reveal'><div class='slides'><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class='SLIDE active'><h1>${padding}</h1></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>${padding}</style></head><body><section class="slide"></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><h1>${padding}</h1></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>body{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body style="visibility:hidden"><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><main id="root"><section class="slide"><h1>${padding}</h1></section></main></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide" hidden><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide" aria-hidden="true"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><svg></svg></section>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide"><svg><defs><path d="M0 0"></path></defs><path d=""></path></svg></section>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>/* deck */ .slide{display:none}</style></head><body><section class="slide"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>@media print{body{display:none}}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>@media screen{body{display:none}}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide .notes{display:none}</style></head><body><section class="slide active"><h1>序</h1><div class="notes">备注</div></section>${padding}</body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide:not(.active){display:none}</style></head><body><section class="slide active"><h1>序</h1></section>${padding}</body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="deck" hidden><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.deck{display:none}</style></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.missing .deck{display:none}</style></head><body><div class="deck"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.deck{display:none}.deck.active{display:block}</style></head><body><div class="deck active"><section class="slide active"><h1>${padding}</h1></section></div></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{opacity:0!important}.slide.active{opacity:1}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{opacity:0!important}.slide.active{opacity:1!important}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(true);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none!important}.missing .slide.active{display:block!important}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.slide{display:none}.slide.active{opacity:1}</style></head><body><section class="slide active"><h1>${padding}</h1></section></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.reveal{display:none}</style></head><body><div class="reveal"><div class="slides"><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head><style>.reveal .slides section{display:none}</style></head><body><div class="reveal"><div class="slides"><section><h1>${padding}</h1></section></div></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"></div></div><template><section><h1>${padding}</h1></section></template></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>标题</h1></section><section></section></div></div>${padding}</body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><div class="reveal"><div class="slides"><section><section><h1>${padding}</h1></section><section></section></section></div></div></body></html>`)).toBe(false);
-    expect(looksLikeDeck(`<!DOCTYPE html><html><head></head><body><section class="slide">&#32;&#32;</section>${padding}</body></html>`)).toBe(false);
+  it('只校验完整 HTML 文件，不以 PPT 结构、页数或可见性阻断预览', () => {
+    expect(looksLikeDeck('')).toBe(false);
+    expect(looksLikeDeck('<html><head></head><body></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><main>普通 OpenDesign 文档</main></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head><style>body{display:none}</style></head><body hidden><main>内容</main></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><section>没有 Reveal 或 slide 类名</section></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><script>const marker = "<section>";</script></body></html>')).toBe(true);
+    expect(looksLikeDeck('<html><head></head><body><script>const broken = true;</body></html>')).toBe(false);
+    expect(looksLikeDeck('<html><head><style>body{color:red}</head><body></body></html>')).toBe(false);
+    expect(looksLikeDeck('<html><head></head><body><!-- incomplete</body></html>')).toBe(false);
+    expect(looksLikeDeck('<html><head></head><body>缺少 html 闭合')).toBe(false);
   });
 });
 
@@ -173,7 +143,7 @@ describe('OpenDesign 运行态可见信息', () => {
       <section><h1>第一页</h1><p>${padding}</p></section>
       <section><h1>第二页</h1><p>${padding}</p></section>
     </div></div><script>document.querySelector('.slides>section')?.classList.add('present')</script></body></html>`;
-    expect(looksLikeDeck(previewHtml)).toBe(false);
+    expect(looksLikeDeck(previewHtml)).toBe(true);
     expect(isPreviewableDeck(previewHtml)).toBe(true);
     const generatedHtml = isPreviewableDeck(previewHtml) ? previewHtml : '';
     const previewPageDocs = buildDeckPreviewPageDocs(generatedHtml);
@@ -186,16 +156,16 @@ describe('OpenDesign 运行态可见信息', () => {
       previewPageDocs,
       previewPageIndex: 1,
     })).toContain('第二页');
-    expect(isPreviewableDeck(`<!doctype html><html><head></head><body><main><section style="display:none"><p>${padding}</p></section></main></body></html>`)).toBe(false);
+    expect(isPreviewableDeck(`<!doctype html><html><head></head><body><main><section style="display:none"><p>${padding}</p></section></main></body></html>`)).toBe(true);
     const staticHiddenReveal = `<!doctype html><html><head><style>.slides>section{display:none}</style></head><body><div class="reveal"><div class="slides"><section><p>${padding}</p></section></div></div></body></html>`;
     expect(isPreviewableDeck(staticHiddenReveal)).toBe(true);
     expect(buildDeckPreviewPageDocs(staticHiddenReveal).every(looksLikeDeck)).toBe(true);
-    expect(isPreviewableDeck('<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section></section></div></div></body></html>')).toBe(false);
+    expect(isPreviewableDeck('<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section></section></div></div></body></html>')).toBe(true);
 
     const capturedPreviewPath = process.env.PPT_RUNTIME_REAL_PREVIEW_HTML;
     if (capturedPreviewPath) {
       const capturedPreview = readFileSync(capturedPreviewPath, 'utf8');
-      expect(looksLikeDeck(capturedPreview)).toBe(false);
+      expect(looksLikeDeck(capturedPreview)).toBe(true);
       expect(isPreviewableDeck(capturedPreview)).toBe(true);
       const capturedPages = buildDeckPreviewPageDocs(capturedPreview);
       expect(capturedPages).toHaveLength(34);
@@ -324,7 +294,7 @@ describe('失败演示稿继续打磨', () => {
     status: 'error',
     op: 'convert',
     errorCode: 'design_browser_quality_rejected',
-    latestPreviewHtml: '<!doctype html><html><body><div class="reveal"><div class="slides"><section><h1>只读初稿</h1></section></div></div></body></html>',
+    latestPreviewHtml: '<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>只读初稿</h1></section></div></div></body></html>',
   } as MdToPptRunDetail & { errorCode: string };
 
   it('只允许带冻结初稿的确定性质量失败进入权威 restart', () => {
@@ -450,7 +420,7 @@ describe('失败演示稿继续打磨', () => {
       createdAt: '2026-10-21T00:00:00Z',
       updatedAt: '2026-10-21T00:01:00Z',
     };
-    const completedHtml = '<!doctype html><html><body><div class="reveal"><div class="slides"><section><h1>打磨完成</h1><p>完整正文</p></section></div></div></body></html>';
+    const completedHtml = '<!doctype html><html><head></head><body><div class="reveal"><div class="slides"><section><h1>打磨完成</h1><p>完整正文</p></section></div></div></body></html>';
 
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
