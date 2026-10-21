@@ -397,6 +397,55 @@ describe('Branch Routes', () => {
     return { A, B, repo, origin, git };
   }
 
+  describe('手动镜像认领回执恢复', () => {
+    const sha = 'a'.repeat(40);
+    function seedClaim() {
+      stateService.getProject('default')!.githubRepoFullName = 'acme/new-repo';
+      stateService.addBuildProfile({ id: 'claim-web', projectId: 'default', name: 'Web', dockerImage: 'node', workDir: '.', containerPort: 8080,
+        deployModes: { express: { label: 'Express', dockerImage: 'ghcr.io/acme/demo:sha-${CDS_COMMIT_SHA}', prebuilt: true } } });
+      const entry: BranchEntry = { id: 'claim-branch', projectId: 'default', branch: 'feature', worktreePath: tmpDir, status: 'running', services: {}, createdAt: new Date().toISOString(),
+        githubRepoFullName: 'acme/old-repo', githubCommitSha: sha, ciTargetSha: sha, ciImageStatus: 'waiting', ciWorkflowRunUrl: '', profileOverrides: { 'claim-web': { activeDeployMode: 'express' } } };
+      stateService.addBranch(entry);
+      return entry;
+    }
+    const run = { repository: { full_name: 'acme/old-repo' }, head_branch: 'feature', head_sha: sha,
+      path: '.github/workflows/branch-image.yml', status: 'completed', conclusion: 'success' };
+    it('项目重新关联后仍使用在途分支缓存的仓库核验真实回执', async () => {
+      const entry = seedClaim(); const original = globalThis.fetch;
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(run)));
+      globalThis.fetch = fetcher;
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha, workflowRunUrl: 'https://github.com/acme/old-repo/actions/runs/123', dryRun: true });
+        expect(result.status).toBe(200);
+        expect(fetcher.mock.calls[0][0]).toBe('https://api.github.com/repos/acme/old-repo/actions/runs/123');
+        expect(entry.ciImageStatus).toBe('waiting');
+      } finally { globalThis.fetch = original; }
+    });
+    it('仅传提交时自动查询并保存核验后的规范运行链接', async () => {
+      const entry = seedClaim(); const original = globalThis.fetch;
+      globalThis.fetch = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ workflow_runs: [{ ...run, id: 123 }] })))
+        .mockResolvedValueOnce(new Response(JSON.stringify(run)));
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha });
+        expect(result.status).toBe(200);
+        expect((result.body as any).patch.ciWorkflowRunUrl).toBe('https://github.com/acme/old-repo/actions/runs/123');
+        expect(stateService.getBranch(entry.id)?.ciWorkflowRunUrl).toBe('https://github.com/acme/old-repo/actions/runs/123');
+        expect(stateService.getBranch(entry.id)?.ciImageStatus).toBe('ready');
+      } finally { globalThis.fetch = original; }
+    });
+    it('同名但路径不符的成功回执不能改写运行和等待状态', async () => {
+      const entry = seedClaim(); const before = JSON.stringify(entry); const original = globalThis.fetch;
+      globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ ...run, path: '.github/workflows/ci.yml', name: 'Branch Image' })));
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha, workflowRunUrl: 'https://github.com/acme/old-repo/actions/runs/123' });
+        expect(result.status).toBe(409);
+        expect((result.body as any).error).toBe('ci_evidence_mismatch');
+        expect(JSON.stringify(stateService.getBranch(entry.id))).toBe(before);
+      } finally { globalThis.fetch = original; }
+    });
+  });
+
   describe('真实Git部署目标与运行源码隔离', () => {
     async function sourceFixture(withMigration = false) {
       const git = (args: string[], cwd: string) => execFileSync('/usr/bin/git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();

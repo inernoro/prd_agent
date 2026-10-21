@@ -40,6 +40,15 @@ import { decideProjectScope, resolveProjectScope } from './project-scope.js';
 export const CI_PREBUILT_WORKFLOW_FILE = 'branch-image.yml';
 export const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
 
+/** 有路径时以路径为准；仅旧回执缺少路径时才回退名称。 */
+export function isPrebuiltImageWorkflow(run: { path?: string; name?: string }): boolean {
+  const workflowPath = (run.path || '').trim();
+  return workflowPath
+    ? workflowPath.split('/').pop() === CI_PREBUILT_WORKFLOW_FILE
+    : (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+}
+
+
 /**
  * Validate a git ref (branch/tag) name against a strict allow-list before
  * interpolating it into any shell command. Git's own rules
@@ -1033,12 +1042,7 @@ export class GitHubWebhookDispatcher {
 
   /** 极速版（CI 预构建）：判断 workflow_run 是否来自「构建预构建镜像」的工作流。 */
   private isPrebuiltImageWorkflow(run: NonNullable<GitHubWorkflowRunEvent['workflow_run']>): boolean {
-    // workflow_run.path 形如 `.github/workflows/branch-image.yml`。只认这个工作流,
-    // 避免 ci.yml / cds.yml 等其它工作流先完成就误触发部署（那时镜像还没 push）。
-    const base = (run.path || '').split('/').pop() || '';
-    if (base === CI_PREBUILT_WORKFLOW_FILE) return true;
-    // 兜底:按 workflow name 匹配（防止个别 GitHub 投递缺 path）。
-    return (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
+    return isPrebuiltImageWorkflow(run);
   }
 
   private emitCiStatus(
