@@ -1,0 +1,4 @@
+@import '../src/styles/tailwind.css';
+/* 临时Vite root不在正式入口，显式扫描真实组件，避免漏掉flex等系统工具类。 */
+@source '../src';
+@source './entry.tsx';
