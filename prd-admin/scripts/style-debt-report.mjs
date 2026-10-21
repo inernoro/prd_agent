@@ -90,7 +90,7 @@ const JSON_OUTPUT = process.argv.includes('--json');
 const DETAILS_OUTPUT = process.argv.includes('--details');
 const CHECK_BASELINE = process.argv.includes('--check-baseline');
 const UPDATE_BASELINE = process.argv.includes('--update-baseline');
-const METRIC_VERSION = 3;
+const METRIC_VERSION = 4;
 const EXCLUDE_PATTERNS = getArgValues('--exclude')
   .flatMap((value) => value.split(','))
   .map((value) => value.trim())
@@ -318,8 +318,15 @@ function isExcluded(row) {
   return EXCLUDE_PATTERNS.some((pattern) => row.path.startsWith(pattern) || row.module === pattern);
 }
 
-function summarize(projectRoot) {
-  const files = walkFiles(path.join(projectRoot, 'src'));
+function isTestSource(relativePath) {
+  return /(^|\/)(?:__tests__|__fixtures__)(\/|$)/.test(relativePath)
+    || /\.(?:test|spec)\.[jt]sx?$/.test(relativePath);
+}
+
+function summarize(projectRoot, includeTestSources = false) {
+  const sourceFiles = walkFiles(path.join(projectRoot, 'src'));
+  const relativeSource = (file) => path.relative(path.join(projectRoot, 'src'), file).replace(/\\/g, '/');
+  const files = sourceFiles.filter((file) => includeTestSources || !isTestSource(relativeSource(file)));
   const allRows = files.map((file) => analyzeFile(projectRoot, file));
   const rows = allRows.filter((row) => !isExcluded(row));
   const emptyPatternCounts = Object.fromEntries(Object.keys(PATTERNS).map((key) => [key, 0]));
@@ -357,7 +364,9 @@ function summarize(projectRoot) {
     ...classificationManifest.infrastructureFiles,
   ];
   const classifiedPaths = new Set(classificationEntries.map((entry) => entry.path));
-  const rowPaths = new Set(rows.map((row) => row.path));
+  // Excluded test samples may still have valid registrations; existence is not a score waiver.
+  const rowPaths = new Set(sourceFiles.map(relativeSource)
+    .filter((relativePath) => !isExcluded({ path: relativePath, module: moduleKey(relativePath) })));
   const duplicatePaths = classificationEntries
     .map((entry) => entry.path)
     .filter((entryPath, index, all) => all.indexOf(entryPath) !== index);
@@ -422,8 +431,8 @@ function summarize(projectRoot) {
     .filter((row) => row.adaptiveThemeRisk > 0)
     .sort((a, b) => b.adaptiveThemeRisk - a.adaptiveThemeRisk);
 
-  return {
-    metricVersion: METRIC_VERSION,
+  const report = {
+    metricVersion: includeTestSources ? 3 : METRIC_VERSION,
     projectRoot,
     generatedAt: new Date().toISOString(),
     excluded: EXCLUDE_PATTERNS,
@@ -447,6 +456,17 @@ function summarize(projectRoot) {
       .sort((a, b) => b.score - a.score)
       .slice(0, PRINT_TOP),
   };
+  if (!includeTestSources) {
+    // v4 changes only the production input set. Preserve v3's identical formula
+    // over the same checkout (including samples), without changing any ceiling.
+    const legacy = summarize(projectRoot, true);
+    report.historicalBridge = {
+      metricVersion: 3,
+      files: legacy.totals.files,
+      ...scoreSnapshot(legacy),
+    };
+  }
+  return report;
 }
 
 function printTable(title, rows, columns) {
@@ -466,6 +486,8 @@ function printHuman(report) {
   console.log(`Files scanned: ${report.totals.files}`);
   console.log(`Debt score: ${report.totals.score}`);
   console.log(`Metric version: ${report.metricVersion}`);
+  console.log(`Historical v3 (including tests): ${JSON.stringify(report.historicalBridge)}`);
+  console.log(`Production v4 (excluding tests): ${JSON.stringify({ files: report.totals.files, ...scoreSnapshot(report) })}`);
   console.log(`Actionable theme risk: ${report.themeLayers.actionableThemeRisk}`);
   console.log(`Ordinary UI risk: ${report.themeLayers.ordinaryUiRisk}`);
   console.log(`Unclassified theme risk: ${report.themeLayers.unclassifiedThemeRisk}`);
