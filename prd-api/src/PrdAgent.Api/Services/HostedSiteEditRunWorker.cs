@@ -307,13 +307,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     qualityEvidence,
                     allowScriptedControls: verifiedFiles != null);
             }
+            var isOpenDesignPresentation = run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                                           && run.Runtime == DesignArtifactRuntimes.OpenDesign;
             var browserQuality = ParseBrowserQualitySummary(
                 verifiedFiles,
-                run.ArtifactType == DesignArtifactTypes.HtmlPpt
-                    ? run.PresentationInput?.TargetPages
-                    : null);
+                requireHardPass: !isOpenDesignPresentation);
             if (run.Runtime == DesignArtifactRuntimes.OpenDesign
                 && run.ContractVersion == DesignArtifactContractVersions.Current
+                && !isOpenDesignPresentation
                 && browserQuality == null)
                 throw new InvalidOperationException("OpenDesign 没有提交浏览器质量证据，请重新生成");
             if (browserQuality != null)
@@ -344,9 +345,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         sites,
                         verifiedFiles,
                         html,
-                        trustedPresentation: run.ArtifactType == DesignArtifactTypes.HtmlPpt
-                                             && run.Runtime == DesignArtifactRuntimes.OpenDesign
-                                             && browserQuality?.FinalHardPassed == true);
+                        trustedPresentation: isOpenDesignPresentation);
                     html = Encoding.UTF8.GetString(Convert.FromBase64String(
                         verifiedFiles.Single(file => file.Path == "index.html").ContentBase64));
                 }
@@ -1497,7 +1496,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
     internal static DesignArtifactBrowserQualitySummary? ParseBrowserQualitySummary(
         IReadOnlyList<DesignWorkspaceFile>? verifiedFiles,
-        int? expectedPresentationPages = null)
+        bool requireHardPass = true)
     {
         const string evidencePath = "assets/visual-quality-report.json";
         var file = verifiedFiles?.SingleOrDefault(item => item.Path == evidencePath);
@@ -1513,11 +1512,12 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var root = document.RootElement;
             var ruleVersion = root.GetProperty("ruleVersion").GetString();
             var heuristicVersion = root.GetProperty("heuristicVersion").GetString();
+            var finalHardPassed = root.GetProperty("finalHardPassed").GetBoolean();
             if (root.ValueKind != JsonValueKind.Object
                 || root.GetProperty("schemaVersion").GetString() != "map-browser-quality-evidence-v1"
                 || ruleVersion != "browser-hard-gate-v1"
                 || heuristicVersion != "browser-aesthetic-heuristic-v1"
-                || !root.GetProperty("finalHardPassed").GetBoolean())
+                || (requireHardPass && !finalHardPassed))
                 throw new InvalidOperationException("浏览器质量证据合同不一致，请重新生成");
             if (ContainsForbiddenBrowserEvidence(root))
                 throw new InvalidOperationException("浏览器质量证据包含不应持久化的模型或页面正文，请重新生成");
@@ -1530,8 +1530,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var repairSucceeded = root.GetProperty("repairSucceeded").GetBoolean();
             if (repairAttempts is < 0 or > 2
                 || repairAttempts != attempts.GetArrayLength() - 1
-                || firstPassPassed != (repairAttempts == 0)
-                || repairSucceeded != (repairAttempts > 0)
+                || (requireHardPass && firstPassPassed != (repairAttempts == 0))
+                || repairSucceeded != (!firstPassPassed && finalHardPassed)
                 || !double.IsFinite(finalScore)
                 || finalScore is < 0 or > 100)
                 throw new InvalidOperationException("浏览器质量证据指标不合法，请重新生成");
@@ -1543,21 +1543,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 var attemptViewports = viewportEntries
                     .Select(viewport => viewport.GetProperty("viewport").GetString())
                     .ToArray();
-                if (expectedPresentationPages is > 0)
-                {
-                    foreach (var viewportName in expectedViewports)
-                    {
-                        var slides = viewportEntries
-                            .Where(viewport => viewport.GetProperty("viewport").GetString() == viewportName)
-                            .Select(viewport => viewport.GetProperty("slideIndex").GetInt32())
-                            .OrderBy(value => value)
-                            .ToArray();
-                        if (!slides.SequenceEqual(Enumerable.Range(1, expectedPresentationPages.Value)))
-                            throw new InvalidOperationException("浏览器质量证据没有逐页覆盖桌面与移动视口，请重新生成");
-                    }
-                }
-                else if (!attemptViewports.OrderBy(viewport => viewport, StringComparer.Ordinal)
-                             .SequenceEqual(expectedViewports, StringComparer.Ordinal))
+                if (!attemptViewports
+                         .OfType<string>()
+                         .Distinct(StringComparer.Ordinal)
+                         .OrderBy(viewport => viewport, StringComparer.Ordinal)
+                         .SequenceEqual(expectedViewports, StringComparer.Ordinal))
                 {
                     throw new InvalidOperationException("浏览器质量证据缺少桌面或移动视口，请重新生成");
                 }
@@ -1583,7 +1573,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 FirstPassPassed = firstPassPassed,
                 RepairAttempts = repairAttempts,
                 RepairSucceeded = repairSucceeded,
-                FinalHardPassed = true,
+                FinalHardPassed = finalHardPassed,
                 FinalScore = finalScore,
                 Viewports = expectedViewports.ToList(),
                 EvidenceRef = evidencePath,

@@ -60,7 +60,6 @@ public class MdToPptSourcePlanTests
         Assert.Equal(58, plan.Blocks.Count(block => block.Markdown.StartsWith("## 条件组", StringComparison.Ordinal)));
         Assert.Equal(15, plan.Blocks.Count(block => block.Markdown.Trim() == "---"));
         Assert.Equal(136, plan.PayloadBlockCount);
-        Assert.Equal(23, plan.MinimumPageCount(attachment.Length));
         Assert.Equal(34, plan.RecommendedPageCount(attachment.Length));
         var bound = plan.Bind(Enumerable.Range(0, 34).Select(pageIndex => new MdToPptOutlinePageDto
         {
@@ -74,30 +73,27 @@ public class MdToPptSourcePlanTests
         Assert.Equal(34, MdToPptController.ResolveTargetPages(
             new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
             plan));
-        var error = Assert.Throws<MdToPptSourcePlanException>(() => MdToPptController.ResolveTargetPages(
+        Assert.Equal(22, MdToPptController.ResolveTargetPages(
             new MdToPptOutlineRequest { Content = "严格生成 22 页演示稿", AttachmentText = attachment },
             plan));
-        Assert.Equal("outline_capacity_exceeded", error.Code);
 
         Assert.Equal(23, MdToPptController.ResolveTargetPages(
             new MdToPptOutlineRequest { Content = "严格生成 23 页演示稿", AttachmentText = attachment },
             plan));
-        Assert.Equal("outline_page_limit_exceeded", Assert.Throws<MdToPptSourcePlanException>(() =>
-            MdToPptController.ResolveTargetPages(
-                new MdToPptOutlineRequest { Content = "严格生成 41 页演示稿", AttachmentText = attachment },
-                plan)).Code);
+        Assert.Equal(41, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "严格生成 41 页演示稿", AttachmentText = attachment },
+            plan));
     }
 
     [Fact]
-    public void AutoPageCapacity_RejectsDocumentsThatCannotFitWithinFortyReadablePages()
+    public void AutoPageSuggestion_DoesNotBecomeAPlatformPageLimit()
     {
         var attachment = CapacityFixture(payloadBlocks: 164);
         var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
         Assert.Equal(41, plan.RecommendedPageCount(attachment.Length));
-        Assert.Equal("outline_page_limit_exceeded", Assert.Throws<MdToPptSourcePlanException>(() =>
-            MdToPptController.ResolveTargetPages(
-                new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
-                plan)).Code);
+        Assert.Equal(41, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
+            plan));
     }
 
     [Fact]
@@ -112,7 +108,7 @@ public class MdToPptSourcePlanTests
         Assert.Equal(34, normalized["outline"]!.AsArray().Count);
         MdToPptController.EnsureOutlinePageCount(34, 34, 34);
         Assert.Equal(34, MdToPptController.ResolvePatchSlideIndex(null, "修改第 34 页标题"));
-        Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "修改第 41 页标题"));
+        Assert.Equal(41, MdToPptController.ResolvePatchSlideIndex(null, "修改第 41 页标题"));
     }
 
     [Fact]
@@ -340,15 +336,16 @@ public class MdToPptSourcePlanTests
     }
 
     [Fact]
-    public void ChildRunOwnsPlan_FinalNormalizedFourPagesCannotSilentlyDropOrMoveSource()
+    public void ChildRunOwnsPlan_FinalSaveChecksFrozenIdentityWithoutInspectingOpenDesignDom()
     {
         var sources = Sources("# 介绍\n\n不提供线上报名。\n\n# 活动\n\n每场最多12人。");
         var catalog = MdToPptSourcePlan.Create(sources);
         var pages = catalog.Blocks.Select(x => new MdToPptOutlinePageDto { Title = "用户确认的展示标题", SourceBlockIds = new() { x.Id } }).ToList();
+        var frozen = catalog.SerializeCatalog();
         var child = new MdToPptRun { KnowledgeReferences = sources, SourcePlanVersion = 1, SourcePlanPageCount = 4,
-            SourcePlanJson = MdToPptController.BuildCanonicalOutlineJson(pages, "摘要"),
-            SourcePlanHash = MdToPptController.ComputeSourcePlanHash(sources, pages, 4) };
-        var plan = MdToPptController.RestoreSourcePlan(child);
+            SourcePlanJson = frozen,
+            SourcePlanHash = MdToPptSourcePlan.Hash(frozen) };
+        var plan = catalog.Bind(pages, pages.Count);
         pages[0].SourceBlockIds!.Clear(); // 模拟父工作稿后续改动，子 Run 不可被影响。
         var anchor = MdToPptAnchors.Resolve("tech-dark")!;
         var sections = plan.Select((p, i) => MdToPptController.NormalizeSlidePageIdentity(
@@ -356,9 +353,10 @@ public class MdToPptSourcePlanTests
         var document = MdToPptController.NormalizePresentationDocument(anchor.Prefix + string.Join("\n", sections) + anchor.Suffix);
         document = Encoding.UTF8.GetString(HostedSiteService.RewritePublishedEntryHtml(Encoding.UTF8.GetBytes(document), "index.html"));
         Assert.True(MdToPptController.ValidateSourcePlanDocument(child, document));
-        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, document.Replace("不提供", "提供")));
-        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, anchor.Prefix + string.Join("\n", sections.Take(3)) + anchor.Suffix));
-        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, anchor.Prefix + string.Join("\n", sections.Reverse()) + anchor.Suffix));
+        Assert.True(MdToPptController.ValidateSourcePlanDocument(child, document.Replace("不提供", "提供")));
+        Assert.True(MdToPptController.ValidateSourcePlanDocument(child, anchor.Prefix + string.Join("\n", sections.Take(3)) + anchor.Suffix));
+        child.SourcePlanHash = "0".PadLeft(64, '0');
+        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, document));
         Assert.Contains("用户确认的展示标题", document);
     }
 
@@ -465,33 +463,28 @@ public class MdToPptOutlineSourcePlanContractTests
     }
 
     [Fact]
-    public void Contract_NamesTheFieldBindActuallyRequires()
+    public void OutlinePrompt_ProvidesFrozenMaterialWithoutPlatformSlotIdentifiers()
     {
         // Bind 缺这个字段就抛 source_plan_missing，契约文案必须点名同一个字段。
         var plan = MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
         {
             new() { StoreId = "s", EntryId = "e", Content = "# 标题\n\n正文一句话。\n", ContentHash = MdToPptSourcePlan.Hash("# 标题\n\n正文一句话。\n") },
         });
-        var missing = Assert.Throws<MdToPptSourcePlanException>(
-            () => plan.Bind(new[] { new MdToPptOutlinePageDto() }, 1));
-        Assert.Equal("source_plan_missing", missing.Code);
-        var contract = MdToPptController.SourcePlanOutlineContract(plan.Blocks.Count);
-        Assert.Contains("sourceBlockIds", contract, StringComparison.Ordinal);
-        // 第二次失败形态是 source_plan_incomplete（字段有了、id 没覆盖全），
-        // 所以契约还必须把「一共几个 id」告诉模型，否则它没有可自查的数。
-        Assert.Contains(plan.Blocks.Count.ToString(), contract, StringComparison.Ordinal);
+        var prompt = plan.OutlinePrompt();
+        Assert.Contains("服务端冻结来源材料", prompt, StringComparison.Ordinal);
+        Assert.Contains("markdown", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourceBlockIds", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain(plan.Blocks[0].Id, prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain(plan.Blocks[0].Alias, prompt, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void BothOutlineEndpoints_AppendTheContractToTheirSystemPrompt()
+    public void BothOutlineEndpoints_DoNotInjectASourceSlotOutputContract()
     {
         var source = ControllerSource();
-        var appends = Regex.Matches(source, @"if\s*\(sourcePlan\s*!=\s*null\)\s*systemPrompt\s*\+=\s*SourcePlanOutlineContract\(sourcePlan\.Blocks\.Count,\s*targetPages\)\s*;").Count;
-
-        // /outline（整块 JSON）与 /outline-stream（JSONL）各一处；少一处就有一条入口
-        // 仍然发不出 sourceBlockIds，而它不会让任何现有用例变红。页数也要传进去，
-        // 否则来源块少于页数时模型不知道封面、结尾可以留空（Codex P1）。
-        Assert.Equal(2, appends);
+        Assert.DoesNotContain("SourcePlanOutlineContract", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourcePlan.RepairCoverage", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriteBackSourceBlockIds(payload", source, StringComparison.Ordinal);
     }
 }
 
@@ -918,10 +911,13 @@ public class MdToPptSourceBindingOwnershipTests
     }
 
     [Fact]
-    public void OutlinePromptTellsTheModelOneBlockBelongsToOnePage()
+    public void OutlinePromptLeavesPageGroupingToOpenDesignWithoutExposingIds()
     {
-        // 判据改严了就必须同时告诉模型，否则等于按一份没交代过的契约罚它。
-        Assert.Contains("每个ID只能出现在一页", Plan().OutlinePrompt());
+        var plan = Plan();
+        var prompt = plan.OutlinePrompt();
+        Assert.Contains("自行规划页数与结构", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("每个ID只能出现在一页", prompt, StringComparison.Ordinal);
+        Assert.All(plan.Blocks, block => Assert.DoesNotContain(block.Id, prompt, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -954,19 +950,12 @@ public class MdToPptSourceBindingOwnershipTests
     }
 
     [Fact]
-    public void RepairedPagesAreReEmittedBeforeDone()
+    public void OutlineStream_DoesNotPostRepairSourceAssignmentsBeforeDone()
     {
-        // 接线守卫：判据算得再对，不发出去也白搭——而删掉那段重发不会让任何用例变红
-        // （SSE 这条路没有集成测试覆盖）。所以这里直接盯源码里的次序。
         var source = File.ReadAllText(LocateController());
-        var repair = source.IndexOf("foreach (var index in repairedPages)", StringComparison.Ordinal);
-        Assert.True(repair > 0, "补齐后的页不再重发，前端手里会留着补齐前的来源绑定");
-
-        var computed = source.IndexOf("ChangedSourceBindingPages(beforeRepair", StringComparison.Ordinal);
-        Assert.True(computed > 0 && computed < repair, "重发的页必须来自补齐前后的实际差集");
-
-        var done = source.IndexOf("WriteEventAsync(\"done\", new { pages = emittedPages", StringComparison.Ordinal);
-        Assert.True(done > repair, "重发必须排在 done 之前，done 之后前端已经收尾了");
+        Assert.DoesNotContain("foreach (var index in repairedPages)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ChangedSourceBindingPages(beforeRepair", source, StringComparison.Ordinal);
+        Assert.Contains("WriteEventAsync(\"done\", new { pages = emittedPages", source, StringComparison.Ordinal);
     }
 
     private static string LocateController()

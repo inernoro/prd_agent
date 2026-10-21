@@ -89,6 +89,39 @@ public sealed class DesignArtifactBrowserQualityTests
     }
 
     [Fact]
+    public void ParseBrowserQualitySummary_PresentationKeepsFailedVisualChecksAsObservations()
+    {
+        var json = """
+        {
+          "schemaVersion":"map-browser-quality-evidence-v1",
+          "ruleVersion":"browser-hard-gate-v1",
+          "heuristicVersion":"browser-aesthetic-heuristic-v1",
+          "firstPassPassed":false,
+          "repairAttempts":0,
+          "repairSucceeded":false,
+          "finalHardPassed":false,
+          "finalScore":40,
+          "attempts":[{"viewports":[
+            {"viewport":"desktop","slideIndex":1},{"viewport":"desktop","slideIndex":2},
+            {"viewport":"mobile","slideIndex":1},{"viewport":"mobile","slideIndex":2}
+          ],"evidenceRefs":[
+            "assets/quality/attempt-0-desktop-slide-1.png","assets/quality/attempt-0-desktop-slide-2.png",
+            "assets/quality/attempt-0-mobile-slide-1.png","assets/quality/attempt-0-mobile-slide-2.png"
+          ]}]
+        }
+        """;
+
+        var summary = HostedSiteEditRunWorker.ParseBrowserQualitySummary(
+            PresentationPackage(json, 2),
+            requireHardPass: false);
+
+        Assert.NotNull(summary);
+        Assert.False(summary!.FinalHardPassed);
+        Assert.False(summary.RepairSucceeded);
+        Assert.Equal(40, summary.FinalScore);
+    }
+
+    [Fact]
     public void ParseBrowserQualitySummary_RejectsMissingScreenshotEvidence()
     {
         var json = """
@@ -112,7 +145,7 @@ public sealed class DesignArtifactBrowserQualityTests
     }
 
     [Fact]
-    public void ParseBrowserQualitySummary_PresentationRequiresEverySlideAtBothViewports()
+    public void ParseBrowserQualitySummary_PresentationObservationStillRequiresEveryReferencedScreenshot()
     {
         var json = """
         {
@@ -136,12 +169,12 @@ public sealed class DesignArtifactBrowserQualityTests
 
         var summary = HostedSiteEditRunWorker.ParseBrowserQualitySummary(
             PresentationPackage(json, 2),
-            expectedPresentationPages: 2);
+            requireHardPass: false);
 
         Assert.NotNull(summary);
         Assert.Throws<InvalidOperationException>(() => HostedSiteEditRunWorker.ParseBrowserQualitySummary(
             PresentationPackage(json, 2).Where(file => !file.Path.EndsWith("mobile-slide-2.png", StringComparison.Ordinal)).ToList(),
-            expectedPresentationPages: 2));
+            requireHardPass: false));
     }
 
     private static DesignWorkspaceFile File(string json)

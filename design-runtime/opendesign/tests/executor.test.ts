@@ -12,15 +12,11 @@ import {
   computePublicArtifactRevision,
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
-import { classifyQualityRepairReason, hardenSelfContainedHtml } from '../src/quality/gate.js';
+import { hardenSelfContainedHtml } from '../src/quality/gate.js';
 import { runBrowserWorker } from '../src/quality/browser-worker.js';
 import type { BrowserQualityIssue } from '../src/quality/browser-contract.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
-import {
-  DesignTaskExecutor,
-  buildPresentationSourceScaffold,
-  materializePresentationSourcePlan,
-} from '../src/executor.js';
+import { DesignTaskExecutor } from '../src/executor.js';
 import {
   auth,
   buildPackage,
@@ -68,59 +64,11 @@ afterEach(async () => {
   map = undefined;
 });
 
-describe('presentation frozen source materialization', () => {
-  it('preseeds every frozen source block exactly once without becoming a publishable presentation', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-scaffold-'));
-    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
-    const blocks = Array.from({ length: 210 }, (_, offset) => ({
-      Id: `sb-${(offset + 1).toString(16).padStart(64, '0')}`,
-      Html: offset === 0
-        ? '<h2>附件：基于 GitHub 和 PR 的版本管理与发布流程最佳实践.md</h2>'
-        : `<p>来源正文 ${offset + 1}</p>`,
-    }));
-    const pages = Array.from({ length: 34 }, (_, pageOffset) => ({
-      Index: pageOffset + 1,
-      Hash: `page-${pageOffset + 1}`,
-      DisplayTitle: pageOffset === 0
-        ? '从代码到生产的协作契约'
-        : pageOffset === 1
-          ? '<script>不能执行的标题</script>'
-          : `第 ${pageOffset + 1} 页`,
-      Blocks: blocks
-        .filter((_block, blockOffset) => blockOffset % 34 === pageOffset)
-        .map((block) => ({ Id: block.Id })),
-    }));
-    const plan = JSON.stringify({ SchemaVersion: 'map-mdppt-source-plan-v2', Fingerprint: 'frozen', Blocks: blocks, Pages: pages });
-    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
-    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
-      presentationContract: { targetPages: 34, sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
-    }));
-
-    const scaffold = buildPresentationSourceScaffold(root);
-
-    expect(scaffold).toContain('PASTE LAYOUTS FROM references/layouts.md HERE');
-    expect(scaffold).toContain('从代码到生产的协作契约');
-    expect(scaffold).toContain('&lt;script&gt;不能执行的标题&lt;/script&gt;');
-    expect(scaffold).not.toContain('<script>不能执行的标题</script>');
-    expect(scaffold).toContain(blocks[0].Html);
-    expect([...scaffold.matchAll(/data-mdppt-source=["']([^"']+)["']/g)]).toHaveLength(210);
-    for (const block of blocks) expect(scaffold.match(new RegExp(block.Id, 'g'))).toHaveLength(1);
-    expect(() => hardenSelfContainedHtml(scaffold)).toThrow(/untouched starter template/);
-
-    const withoutSentinel = scaffold.replace('PASTE LAYOUTS FROM references/layouts.md HERE', 'OpenDesign authored this layout');
-    fs.writeFileSync(path.join(root, 'index.html'), withoutSentinel);
-    const navigated = await runBrowserWorker({
-      workspaceDir: root,
-      evidenceDir: path.join(root, 'evidence-navigation'),
-      repairAttempt: 0,
-    });
-    expect(navigated.measurements.flatMap((measurement) => measurement.issues.map((issue) => issue.issueCode)))
-      .toContain('presentation_navigation_unusable');
-    fs.rmSync(root, { recursive: true, force: true });
-  }, 30_000);
-
-  it('runs OpenDesign against the source scaffold and never commits an unchanged seed', async () => {
-    harness = await startHarness();
+describe('presentation source context', () => {
+  it('passes the frozen source to OpenDesign without imposing a platform source-slot scaffold', async () => {
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async (job) => passingBrowserResult(job) },
+    } });
     const id = `sb-${'1'.repeat(64)}`;
     const plan = JSON.stringify({
       SchemaVersion: 'map-mdppt-source-plan-v2',
@@ -140,10 +88,9 @@ describe('presentation frozen source materialization', () => {
     });
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
-        const seed = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
-        expect(seed).toContain('正常非来源标题');
-        expect(seed).toContain('<p>原始来源正文</p>');
-        expect(String(body.systemPrompt)).toContain('Redesign that file in place');
+        expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
+        expect(String(body.systemPrompt)).toContain('frozen input material and provenance');
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>OpenDesign 自主成稿</h1><p>TODO 由上游内容能力自行处理</p></main></body></html>');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
@@ -153,70 +100,41 @@ describe('presentation frozen source materialization', () => {
       previewUrl: request.transfer.resultCommitUrl.replace('/result', '/preview'),
     }));
 
-    expect(view.state).toBe('failed');
-    expect(view.error.code).toBe('design_output_quality_rejected');
-    expect(view.error.message).toContain('untouched starter template');
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
     expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
-    expect(map!.previews).toHaveLength(0);
-    expect(map!.commits).toHaveLength(0);
+    expect(map!.commits).toHaveLength(1);
+    const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('OpenDesign 自主成稿');
   });
 
-  it('materializes the exact server-owned bytes before quality and rejects missing, duplicate, unknown, or modified slots', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-plan-'));
-    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
-    const id = `sb-${'a'.repeat(64)}`;
+  it('rejects a mismatched frozen source-plan hash before opening an OpenDesign session', async () => {
+    harness = await startHarness();
     const plan = JSON.stringify({
       SchemaVersion: 'map-mdppt-source-plan-v2',
       Fingerprint: 'frozen',
-      Blocks: [{ Id: id, Html: '<p>5% 只是示例，不是强制值。</p>' }],
-      Pages: [{ Index: 1, Hash: 'page', DisplayTitle: '发布策略', Blocks: [{ Id: id }] }],
+      Blocks: [],
+      Pages: [],
     });
-    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
-    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
-      presentationContract: { sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
-    }));
-    const draft = `<html><body><div class="reveal"><div class="slides"><section data-slide-index="1"><div data-mdppt-source="${id}"></div></section></div></div></body></html>`;
-    expect(materializePresentationSourcePlan(root, draft)).toContain('<p>5% 只是示例，不是强制值。</p>');
-    expect(() => materializePresentationSourcePlan(root, draft.replace('</section>', `<div data-mdppt-source="${id}"></div></section>`)))
-      .toThrow(/exactly one matching slot marker/);
-    expect(() => materializePresentationSourcePlan(root, draft.replace(id, `sb-${'b'.repeat(64)}`)))
-      .toThrow(/exactly one matching slot marker/);
-    expect(() => materializePresentationSourcePlan(root, draft.replace('></div>', '>改写</div>')))
-      .toThrow(/modified outside the frozen source contract/);
-    fs.rmSync(root, { recursive: true, force: true });
+    const pkg = buildPackage([{ path: 'brief/source-plan.json', content: plan, mediaType: 'application/json' }], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          sourcePlan: { path: 'brief/source-plan.json', contentHash: '0'.repeat(64) },
+        },
+      },
+    });
+
+    const view = await runToEnd(pkg);
+
+    expect(view.state).toBe('failed');
+    expect(view.error?.code).toBe('workspace_package_invalid');
+    expect(harness.daemon.runBodies).toHaveLength(0);
+    expect(map!.commits).toHaveLength(0);
   });
 
-  it('rejects a unique source marker moved away from its assigned slide', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-page-assignment-'));
-    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
-    const firstId = `sb-${'1'.repeat(64)}`;
-    const secondId = `sb-${'2'.repeat(64)}`;
-    const plan = JSON.stringify({
-      SchemaVersion: 'map-mdppt-source-plan-v2',
-      Fingerprint: 'frozen-page-assignment',
-      Blocks: [
-        { Id: firstId, Html: '<p>第一页冻结正文</p>' },
-        { Id: secondId, Html: '<p>第二页冻结正文</p>' },
-      ],
-      Pages: [
-        { Index: 1, Hash: 'page-1', DisplayTitle: '第一页', Blocks: [{ Id: firstId }] },
-        { Index: 2, Hash: 'page-2', DisplayTitle: '第二页', Blocks: [{ Id: secondId }] },
-      ],
-    });
-    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
-    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
-      presentationContract: { sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
-    }));
-    const swapped = `<html><body><div class="reveal"><div class="slides">
-      <section data-slide-index="1"><div data-mdppt-source="${secondId}"></div></section>
-      <section data-slide-index="2"><div data-mdppt-source="${firstId}"></div></section>
-    </div></div></body></html>`;
-
-    expect(() => materializePresentationSourcePlan(root, swapped)).toThrow(/must remain on its assigned slide/);
-    fs.rmSync(root, { recursive: true, force: true });
-  });
-
-  it('restores a server-retained failed preview as a non-final OpenDesign input and rematerializes frozen source bytes', async () => {
+  it('restores a server-retained failed preview as exact non-final OpenDesign input without post-injecting source bytes', async () => {
     const id = `sb-${'c'.repeat(64)}`;
     const sourceHtml = '<p>回滚窗口、负责人和通知记录必须完整保留。</p>';
     const plan = JSON.stringify({
@@ -246,7 +164,7 @@ describe('presentation frozen source materialization', () => {
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
         const restored = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
-        expect(restored).toContain(sourceHtml);
+        expect(restored).toBe(candidate);
         expect(restored).not.toContain('candidate/index.html');
         expect(String(body.systemPrompt)).toContain('server-retained failed preview');
         expect(String(body.systemPrompt)).toContain('non-final repair candidate');
@@ -259,15 +177,15 @@ describe('presentation frozen source materialization', () => {
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
     expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
-    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(sourceHtml);
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('发布与回滚');
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).not.toContain(sourceHtml);
   });
 
   it.each([
     ['missing slot', (_id: string) => '<!doctype html><html><body><main>缺少来源槽</main></body></html>'],
     ['duplicate slot', (id: string) => `<!doctype html><html><body><main><div data-mdppt-source="${id}"></div><div data-mdppt-source="${id}"></div></main></body></html>`],
     ['hidden slot', (id: string) => `<!doctype html><html><body><main><div data-mdppt-source="${id}" hidden></div></main></body></html>`],
-    ['external dependency', (id: string) => `<!doctype html><html><body><main><img src="https://outside.example/x.png"><div data-mdppt-source="${id}"></div></main></body></html>`],
-  ])('rejects a repair candidate with %s before opening an OpenDesign run', async (_label, candidateFor) => {
+  ])('lets OpenDesign repair a candidate with %s without a platform source-slot gate', async (_label, candidateFor) => {
     const id = `sb-${'d'.repeat(64)}`;
     const plan = JSON.stringify({
       SchemaVersion: 'map-mdppt-source-plan-v2',
@@ -294,16 +212,15 @@ describe('presentation frozen source materialization', () => {
 
     const view = await runToEnd(pkg);
 
-    expect(view.state).toBe('failed');
-    expect(['workspace_package_invalid', 'design_output_quality_rejected']).toContain(view.error.code);
-    expect(harness.daemon.runBodies).toHaveLength(0);
-    expect(map!.commits).toHaveLength(0);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
+    expect(map!.commits).toHaveLength(1);
   });
 
   it.each([
     ['missing', (id: string) => '封面'],
     ['duplicate', (id: string) => `<div data-mdppt-source="${id}"></div><div data-mdppt-source="${id}"></div>`],
-  ])('routes a %s attachment-title slot through one bounded repair before materialization', async (_case, initialBody) => {
+  ])('does not route a %s source-slot shape through a platform-paid repair', async (_case, initialBody) => {
     const id = `sb-${'6'.repeat(64)}`;
     const secondId = `sb-${'8'.repeat(64)}`;
     const sourceHtml = '<h2>附件：基于 GitHub 和 PR 的版本管理与发布流程最佳实践.md</h2>';
@@ -312,7 +229,6 @@ describe('presentation frozen source materialization', () => {
       browserQualityRunner: {
         run: async (job) => {
           expect(fs.existsSync(path.join(job.workspaceDir, 'current', 'index.html'))).toBe(false);
-          expect(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8')).toContain(sourceHtml);
           return passingBrowserResult(job);
         },
       },
@@ -343,23 +259,16 @@ describe('presentation frozen source materialization', () => {
       if (index === 1) {
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><div class="reveal"><div class="slides"><section>${initialBody(id)}</section></div></div></main></body></html>`);
       }
-      if (String(body.message).includes('source_slot_cardinality_invalid')) {
-        expect(String(body.message)).toContain('inspect every frozen block marker');
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><div class="reveal"><div class="slides"><section data-slide-index="1"><div data-mdppt-source="${id}"></div><div data-mdppt-source="${secondId}"></div></section></div></div></main></body></html>`);
-      }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
 
     const view = await runToEnd(pkg);
 
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
-    expect(harness.daemon.runBodies).toHaveLength(3);
-    expect(String(harness.daemon.runBodies[2].message)).toMatch(/contained (0|2)/);
-    expect(String(harness.daemon.runBodies[2].message)).not.toContain('GitHub');
-    expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    expect(await statusReasons(pkg.runId)).not.toContain('open_design_quality_repairing');
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
-    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(sourceHtml);
-    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(secondSourceHtml);
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(initialBody(id));
   });
 
   it('materializes an edit into the author root while keeping the frozen parent and source package byte-identical', async () => {
@@ -377,7 +286,7 @@ describe('presentation frozen source materialization', () => {
         run: async (job) => {
           expect(fs.readFileSync(path.join(job.workspaceDir, 'current', 'index.html'), 'utf8')).toBe(parentHtml);
           expect(fs.readFileSync(path.join(job.workspaceDir, 'brief', 'source-plan.json'), 'utf8')).toBe(plan);
-          expect(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8')).toContain(sourceHtml);
+          expect(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8')).toContain(`data-mdppt-source="${id}"`);
           return passingBrowserResult(job);
         },
       },
@@ -407,7 +316,8 @@ describe('presentation frozen source materialization', () => {
 
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
-    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(sourceHtml);
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(`data-mdppt-source="${id}"`);
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).not.toContain(sourceHtml);
   });
 
   it.skipIf(!hasExternalCompletionChainFixture())(
@@ -449,9 +359,8 @@ describe('presentation frozen source materialization', () => {
         const generatedDeck = buildExternalReadableDeck(parsedPlan, '完成链受控父稿');
         if (index === 1) {
           expect(fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8')).toBe(failedHtml);
-          const materializedDeck = materializePresentationSourcePlan(workspaceDir, generatedDeck);
           fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
-          fs.writeFileSync(path.join(outputDir, 'generation-materialized-diagnostic.html'), materializedDeck, { mode: 0o600 });
+          fs.writeFileSync(path.join(outputDir, 'generation-authored-diagnostic.html'), generatedDeck, { mode: 0o600 });
         }
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), generatedDeck);
         return { status: 'succeeded', deliverableEntryFile: 'index.html' };
@@ -629,40 +538,6 @@ describe('presentation frozen source materialization', () => {
     expect(map!.commits).toHaveLength(0);
   });
 
-  it.each([
-    ['missing', (id: string) => '<html><body><div class="reveal"><div class="slides"><section></section></div></div></body></html>', 0],
-    ['duplicate', (id: string) => `<html><body><div class="reveal"><div class="slides"><section><div data-mdppt-source="${id}"></div><div data-mdppt-source="${id}"></div></section></div></div></body></html>`, 2],
-  ])('classifies a %s attachment-title slot cardinality failure without exposing source text', (_case, draftFor, slotCount) => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-slot-cardinality-'));
-    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
-    const id = `sb-${'6'.repeat(64)}`;
-    const sourceHtml = '<h2>附件：基于 GitHub 和 PR 的版本管理与发布流程最佳实践.md</h2>';
-    const plan = JSON.stringify({
-      SchemaVersion: 'map-mdppt-source-plan-v2',
-      Fingerprint: 'frozen',
-      Blocks: [{ Id: id, Html: sourceHtml }],
-      Pages: [{ Index: 1, Hash: 'page', DisplayTitle: '封面', Blocks: [{ Id: id }] }],
-    });
-    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
-    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
-      presentationContract: { sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
-    }));
-
-    let rejected: unknown;
-    try {
-      materializePresentationSourcePlan(root, draftFor(id));
-    } catch (error) {
-      rejected = error;
-    }
-    expect(rejected).toBeInstanceOf(AgentWorkspaceRuntimeError);
-    const reason = classifyQualityRepairReason(rejected as AgentWorkspaceRuntimeError);
-    expect(reason?.code).toBe('source_slot_cardinality_invalid');
-    expect(reason?.instruction).toContain(id);
-    expect(reason?.instruction).toContain(`contained ${slotCount}`);
-    expect(JSON.stringify(rejected)).not.toContain('GitHub');
-    expect(JSON.stringify(rejected)).not.toContain(sourceHtml);
-    fs.rmSync(root, { recursive: true, force: true });
-  });
 });
 
 type TaskRequest = ReturnType<typeof taskRequest>;
@@ -1241,7 +1116,7 @@ describe('collecting the deliverable', () => {
     });
   });
 
-  it('isolates quality work from generation history and keeps browser repairs in the quality conversation', async () => {
+  it('records presentation browser findings without triggering an automatic paid repair', async () => {
     const firstSourceId = `sb-${'a'.repeat(64)}`;
     const secondSourceId = `sb-${'b'.repeat(64)}`;
     const firstSourceHtml = '<p>Frozen release conditions stay visible while layout is repaired.</p>';
@@ -1263,9 +1138,9 @@ describe('collecting the deliverable', () => {
           seenAttempts.push(job.repairAttempt);
           seenEvidenceDirs.push(job.evidenceDir);
           fs.mkdirSync(job.evidenceDir, { recursive: true });
-          const materialized = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
-          expect(materialized).toContain(firstSourceHtml);
-          expect(materialized).toContain(secondSourceHtml);
+          const authored = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
+          expect(authored).toContain(`data-mdppt-source="${firstSourceId}"`);
+          expect(authored).not.toContain(firstSourceHtml);
           const measurements = [
             { viewport: 'desktop' as const, width: 1440, height: 900 },
             { viewport: 'mobile' as const, width: 390, height: 844 },
@@ -1328,28 +1203,14 @@ describe('collecting the deliverable', () => {
       if (index === 1) {
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main id="content" class="reveal"><div class="slides"><section data-slide-index="1"><h1>Launch page</h1><div class="source-rail"><div data-mdppt-source="${firstSourceId}"></div><div data-mdppt-source="${secondSourceId}"></div></div></section></div></main></body></html>`);
       }
-      if (index >= 3) {
-        const current = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
-        expect(current).toContain(firstSourceHtml);
-        expect(current).toContain(secondSourceHtml);
-        expect(String(body.message)).toContain('presentation_source_content_unreadable');
-        expect(String(body.message)).toContain('"unreadableSourceSlotCount":2');
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main id="content" class="reveal"><div class="slides"><section data-slide-index="1"><h1>Launch page</h1><div class="source-layout"><div data-mdppt-source="${firstSourceId}">${firstSourceHtml}</div><div data-mdppt-source="${secondSourceId}">${secondSourceHtml}</div></div></section></div></main></body></html>`);
-      }
       return { status: 'succeeded' };
     };
     const view = await runToEnd(pkg);
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
-    expect(seenAttempts).toEqual([0, 1, 2]);
+    expect(seenAttempts).toEqual([0]);
     expect(seenEvidenceDirs.every((dir) => dir.startsWith(path.dirname(harness!.config.outputDir)))).toBe(true);
     expect(seenEvidenceDirs.every((dir) => !dir.startsWith(harness!.config.odDataDir))).toBe(true);
-    expect(harness.daemon.runBodies).toHaveLength(4);
-    expect(harness.daemon.runBodies.slice(2).every((body) => String(body.message).includes('isolated browser quality gate'))).toBe(true);
-    expect(String(harness.daemon.runBodies[2].message)).toContain('presentation_source_content_unreadable');
-    expect(String(harness.daemon.runBodies[2].message)).toContain('"unreadableSourceSlotCount":2');
-    expect(String(harness.daemon.runBodies[2].message)).not.toContain('previous targeted repair produced no measurable change');
-    expect(String(harness.daemon.runBodies[3].message)).toContain('previous targeted repair produced no measurable change');
-    expect(String(harness.daemon.runBodies[3].message)).toContain('Do not leave any second hidden nav or [role="navigation"]');
+    expect(harness.daemon.runBodies).toHaveLength(2);
     expect(harness.daemon.runBodies[0].conversationId).toBe('od-conversation');
     expect(new Set(harness.daemon.runBodies.slice(1).map((body) => body.conversationId))).toEqual(
       new Set(['od-quality-conversation-1']),
@@ -1361,11 +1222,11 @@ describe('collecting the deliverable', () => {
       schemaVersion: 'map-browser-quality-evidence-v1',
       ruleVersion: 'browser-hard-gate-v1',
       firstPassPassed: false,
-      repairAttempts: 2,
-      repairSucceeded: true,
-      finalHardPassed: true,
+      repairAttempts: 0,
+      repairSucceeded: false,
+      finalHardPassed: false,
     });
-    expect(report.attempts).toHaveLength(3);
+    expect(report.attempts).toHaveLength(1);
     expect(reportText).not.toContain('<!doctype html>');
     expect(reportText).not.toContain('thinking');
   });

@@ -369,6 +369,7 @@ export function createArtifactQualityGate(
   evidenceText: string,
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
   authoritativeEvidenceText = evidenceText,
+  enforceContentQuality = true,
 ): (rawHtml: string, packagePaths?: readonly string[]) => string {
   const retention: MeasuredFactRetentionState = {
     facts: new Map(),
@@ -382,6 +383,7 @@ export function createArtifactQualityGate(
     constraints,
     retention,
     packagePaths,
+    enforceContentQuality,
   );
 }
 
@@ -391,6 +393,7 @@ function hardenHtmlWithFactRetention(
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
   retention?: MeasuredFactRetentionState,
   packagePaths?: readonly string[],
+  enforceContentQuality = true,
 ): string {
   let html = normalizeGeneratedHtml(rawHtml);
   if (!DOCUMENT_ROOT_RE.test(html)) {
@@ -465,14 +468,16 @@ function hardenHtmlWithFactRetention(
       'index.html CSS references a non-inline resource',
     );
   }
-  validateCssGeneratedContent(html);
-  validateArtifactQuality(
-    html,
-    evidenceText,
-    visibleTextOccurrenceConstraints,
-    retention,
-    verifiedPackagePaths !== undefined,
-  );
+  if (enforceContentQuality) {
+    validateCssGeneratedContent(html);
+    validateArtifactQuality(
+      html,
+      evidenceText,
+      visibleTextOccurrenceConstraints,
+      retention,
+      verifiedPackagePaths !== undefined,
+    );
+  }
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${verifiedPackagePaths === undefined ? ARTIFACT_CSP : VERIFIED_PACKAGE_ARTIFACT_CSP}">`;
   const root = html.match(DOCUMENT_ROOT_RE);
