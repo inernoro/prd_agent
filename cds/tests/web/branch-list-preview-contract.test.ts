@@ -21,10 +21,21 @@ describe('BranchListPage preview contract', () => {
     expect(source).not.toContain('openPreview(branch, true)');
   });
 
-  it('keeps preview visually primary and quick start visually secondary', () => {
-    expect(source).toContain("className={isAiOperated ? '' : 'w-32'}");
-    expect(source).toContain("previewLabel={isAiOperated ? undefined : '预览'}");
-    expect(source).toContain('className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"');
+  it('keeps preview, release and quick start in the middle slot, separate from footer deployment', () => {
+    const middleAt = source.indexOf('<div data-card-info');
+    const footerAt = source.indexOf('<footer', middleAt);
+    expect(middleAt).toBeGreaterThan(-1);
+    expect(footerAt).toBeGreaterThan(middleAt);
+    const middle = source.slice(middleAt, footerAt);
+    expect(middle).toContain('<PreviewActionSplitButton');
+    expect(middle).toContain('onRelease={onRelease}');
+    expect(middle).toContain('previewConfirmDescription={previewCapacityWarning && !isAiOperated ? previewCapacityWarning : undefined}');
+    expect(middle).toContain('onClick={onRestart}');
+    expect(middle).toContain('不拉取代码、不重建镜像');
+    const footer = source.slice(footerAt, source.indexOf('</footer>', footerAt));
+    expect(footer).not.toContain('<PreviewActionSplitButton');
+    expect(footer).toContain('onDeploy();');
+    expect(footer).toContain('disabled={busy || Boolean(buildPhase)}');
   });
 
   it('keeps commit history separate from the current commit summary', () => {
