@@ -20,6 +20,113 @@ namespace PrdAgent.Api.Tests.Services;
 public class ProductVersionClaimGuardTests
 {
     [Theory]
+    [InlineData("minor", "T6.19.6", "V6.19.6")]
+    [InlineData("medium", "T6.20.0", "V6.20.0")]
+    [InlineData("major", "T7.0.0", "V7.0.0")]
+    public async Task WorkflowNumberingActualTAndVRequestsUseTheSelectedVersionType(string type, string expectedT, string expectedV)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture, type);
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
+            Builders<ProductInitiation>.Update.Set(x => x.TCode, null).Set(x => x.Status, "decision_pending"));
+        var issuedT = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(
+            await fixture.Controller().DecideInitiation("numbering-source", new InitiationDecisionRequest())).Value);
+        Assert.Equal(expectedT, Assert.IsType<ProductInitiation>(issuedT.Data).TCode);
+        var issuedV = Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(
+            await fixture.Controller().CreateRelease("product", NumberingReleaseRequest())).Value);
+        var release = Assert.IsType<ProductRelease>(issuedV.Data);
+        Assert.Equal(expectedV, release.VCode);
+        Assert.Equal(type, release.VersionType);
+        Assert.Equal("announcement_pending", release.Status);
+    }
+
+    [Fact]
+    public async Task WorkflowNumberingFormalDeletedHistoryMustNotBeReused()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductReleases.UpdateOneAsync(x => x.Id == "numbering-v-base",
+            Builders<ProductRelease>.Update.Set(x => x.IsDeleted, true));
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest()));
+        Assert.Equal("V6.19.6", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
+    }
+
+    [Fact]
+    public async Task WorkflowNumberingFormalReservedHistoryMustNotBeReused()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, "workflow-code:V:V6.19.6", "release:interrupted"));
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest()));
+        Assert.Equal("V6.19.7", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
+    }
+
+    [Fact]
+    public async Task WorkflowNumberingLegacyBaseIsGlobalAndTClaimsDoNotAffectV()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration {
+            Kind = VersionRegistrationKind.Formal, ApplicationName = "其他应用", Code = "V6.19.9",
+        });
+        Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, "workflow-code:T:T99.0.0", "initiation:other"));
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest()));
+        Assert.Equal("V6.19.10", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
+    }
+
+    [Fact]
+    public async Task WorkflowNumberingInvalidFormalRequestDoesNotAllocateANumber()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var request = NumberingReleaseRequest();
+        request.PlannedTrainingMinutes = -1;
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+            .CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))));
+    }
+
+    [Fact]
+    public async Task WorkflowNumberingConcurrentDifferentTSourcesGetDistinctFormalNumbers()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        const int count = 12;
+        await fixture.Db.ProductInitiations.InsertManyAsync(Enumerable.Range(0, count).Select(i => new ProductInitiation {
+            Id = "concurrent-numbering-" + i, ProductId = "product", AppName = "测试应用", PlanName = "独立方案" + i,
+            TCode = "T1.0." + i, VersionType = "minor", Status = "approved", ReviewPassed = true, CreatedBy = "me",
+        }));
+        var results = await Task.WhenAll(Enumerable.Range(0, count).Select(i =>
+            fixture.Controller().CreateRelease("product", NumberingReleaseRequest("concurrent-numbering-" + i))));
+        var codes = results.Select(result => Assert.IsType<ProductRelease>(
+            Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data).VCode).ToArray();
+        Assert.Equal(count, codes.Distinct().Count());
+        Assert.Equal(Enumerable.Range(6, count).Select(i => "V6.19." + i).OrderBy(x => x), codes.OrderBy(x => x));
+        Assert.Equal(count, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+            .CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))));
+    }
+
+    private static async Task SeedWorkflowNumberingAsync(Fixture fixture, string type = "minor")
+    {
+        await fixture.Db.Users.InsertOneAsync(new User { UserId = "me", DisplayName = "申领人" });
+        await fixture.Db.Features.InsertOneAsync(new Feature { Id = "feature", ProductId = "product", Title = "测试功能" });
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "numbering-t-base", ProductId = "other-product", TCode = "T6.19.5", Status = "approved", IsDeleted = true },
+            new ProductInitiation { Id = "numbering-source", ProductId = "product", AppName = "测试应用", PlanName = "编号测试方案",
+                VersionType = type, TCode = "T1.2.3", Status = "approved", ReviewPassed = true, CreatedBy = "me" },
+        });
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease {
+            Id = "numbering-v-base", ProductId = "other-product", VCode = "V6.19.5", Status = "released",
+        });
+    }
+
+    private static CreateReleaseRequest NumberingReleaseRequest(string source = "numbering-source") => new() {
+        InitiationId = source, OwnerId = "me", TeamMemberIds = new() { "me" }, VersionType = "major",
+        PlannedReleaseAt = DateTime.UtcNow.AddDays(1), PlannedTrainingMinutes = 30,
+        FeatureManifest = new() { new() { FeatureId = "feature", ChangeType = FeatureChangeType.Added } },
+    };
+
+    [Theory]
     [InlineData(false, "me", "me", true)]
     [InlineData(false, "me", "other", false)]
     [InlineData(true, "me", "other", true)]

@@ -1426,7 +1426,6 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选产品负责人不存在"));
 
         var versionType = request.IsTemporaryOptimization ? "minor" : initiation?.VersionType ?? NormalizeVersionType(request.VersionType);
-        var vCode = await GenerateWorkflowCodeAsync("V", versionType);
         var previousRelease = await FindLatestReleaseWithManifestAsync(productId);
         var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
         if (manifest.Count == 0)
@@ -1445,7 +1444,6 @@ public class ProductAgentController : ControllerBase
             ProductId = productId,
             InitiationId = initiation?.Id,
             TCode = initiation?.TCode ?? manualTCode,
-            VCode = vCode,
             IsManualTCode = hasManualT,
             IsTemporaryOptimization = request.IsTemporaryOptimization,
             PlanName = request.IsTemporaryOptimization ? request.PlanName?.Trim() ?? "临时优化需求" : string.IsNullOrWhiteSpace(request.PlanName) ? initiation?.PlanName ?? string.Empty : request.PlanName.Trim(),
@@ -1476,6 +1474,7 @@ public class ProductAgentController : ControllerBase
         if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
                 ProductVersionClaimPolicy.ReleaseKey(claimApplicationName, item.TCode!), "release:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
+        item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id);
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(item));
     }
@@ -7680,18 +7679,6 @@ public class ProductAgentController : ControllerBase
             "medium" or "中版本" => "medium",
             _ => "minor",
         };
-
-    private async Task<string> GenerateWorkflowCodeAsync(string prefix, string versionType)
-    {
-        var legacyCodes = prefix == "T"
-            ? await _db.ProductInitiations.Find(x => x.TCode != null).Project(x => x.TCode!).ToListAsync()
-            : await _db.ProductReleases.Find(x => x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync();
-        var registrationCodes = await _db.VersionRegistrations
-            .Find(x => x.Code.StartsWith(prefix))
-            .Project(x => x.Code)
-            .ToListAsync();
-        return ProductEntityNumbering.NextWorkflowCode(prefix, versionType, legacyCodes.Concat(registrationCodes));
-    }
 
     /// <summary>解析产品负责人列表，同步 OwnerId / OwnerName 反规范化字段。</summary>
     private async Task<(List<string> OwnerIds, string OwnerId, string? OwnerName)> ResolveProductOwnersAsync(List<string>? requestOwnerIds)

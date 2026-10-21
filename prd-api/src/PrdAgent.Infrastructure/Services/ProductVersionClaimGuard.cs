@@ -14,6 +14,30 @@ public static class ProductVersionClaimGuard
 {
     public const string CollectionName = "product_version_claims";
 
+    /// <summary>T/V各自按全局数字最大值递增；先永久占号，软删除和未落业务行的占号均不能复用。</summary>
+    public static async Task<string> ReserveWorkflowCodeAsync(MongoDbContext db, string prefix, string versionType, string targetId)
+    {
+        if (prefix is not ("T" or "V")) throw new ArgumentException("不支持的版本编号类型", nameof(prefix));
+        var keyPrefix = "workflow-code:" + prefix + ":";
+        var claims = db.Database.GetCollection<BsonDocument>(CollectionName);
+        var codeClaims = Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^" + keyPrefix));
+        var reserved = await claims.Find(codeClaims & Builders<BsonDocument>.Filter.Eq("targetId", targetId)).FirstOrDefaultAsync();
+        if (reserved != null) return reserved["_id"].AsString[keyPrefix.Length..];
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            // 编号永久占用，不按产品、状态或软删除过滤。
+            var existing = prefix == "T"
+                ? await db.ProductInitiations.Find(x => x.TCode != null).Project(x => x.TCode!).ToListAsync()
+                : await db.ProductReleases.Find(x => x.VCode != "").Project(x => x.VCode).ToListAsync();
+            var legacy = await db.VersionRegistrations.Find(x => x.Code.StartsWith(prefix)).Project(x => x.Code).ToListAsync();
+            var allocations = await claims.Find(codeClaims).ToListAsync();
+            var candidate = ProductEntityNumbering.NextWorkflowCode(prefix, versionType,
+                existing.Concat(legacy).Concat(allocations.Select(x => x["_id"].AsString[keyPrefix.Length..])));
+            if (await TryReserveAsync(db.Database, keyPrefix + candidate, targetId)) return candidate;
+        }
+        throw new InvalidOperationException("自动发号繁忙，请稍后重试");
+    }
+
     public static async Task<bool> TryReserveAsync(IMongoDatabase database, string key, string targetId)
     {
         var collection = database.GetCollection<BsonDocument>(CollectionName);

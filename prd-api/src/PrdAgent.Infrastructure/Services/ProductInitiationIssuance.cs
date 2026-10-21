@@ -9,7 +9,6 @@ namespace PrdAgent.Infrastructure.Services;
 /// <summary>产品 T 号自动发放。新申领与存量待审批共用评审门、永久编号占用和条件更新。</summary>
 public static class ProductInitiationIssuance
 {
-    private const string CodeKeyPrefix = "workflow-code:T:";
     private const string LegacyMigrationKey = "migration:product-initiation-single-auto-issue-20261021";
     // 本次仅授权处理用户已创建的唯一待审批记录；不能滑动到后续申请。
     private static readonly DateTime LegacyCreatedBeforeUtc = new(2026, 10, 21, 6, 26, 1, DateTimeKind.Utc);
@@ -43,24 +42,9 @@ public static class ProductInitiationIssuance
         var item = await db.ProductInitiations.Find(eligible).FirstOrDefaultAsync();
         if (item == null) return null;
 
-        var claims = db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName);
         var target = "initiation:" + id;
         // 结果不明确后的重试沿用该记录已占用的编号，不释放或重用编号。
-        var reserved = await claims.Find(Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^" + CodeKeyPrefix)),
-            Builders<BsonDocument>.Filter.Eq("targetId", target))).FirstOrDefaultAsync();
-        string? code = reserved?["_id"].AsString[CodeKeyPrefix.Length..];
-        for (var attempt = 0; code == null && attempt < 64; attempt++)
-        {
-            var existing = await db.ProductInitiations.Find(x => x.TCode != null).Project(x => x.TCode!).ToListAsync();
-            var legacy = await db.VersionRegistrations.Find(x => x.Code.StartsWith("T")).Project(x => x.Code).ToListAsync();
-            var allocations = await claims.Find(Builders<BsonDocument>.Filter.Regex("_id",
-                new BsonRegularExpression("^" + CodeKeyPrefix))).ToListAsync();
-            var candidate = ProductEntityNumbering.NextWorkflowCode("T", item.VersionType,
-                existing.Concat(legacy).Concat(allocations.Select(x => x["_id"].AsString[CodeKeyPrefix.Length..])));
-            if (await ProductVersionClaimGuard.TryReserveAsync(db.Database, CodeKeyPrefix + candidate, target)) code = candidate;
-        }
-        if (code == null) throw new InvalidOperationException("自动发号繁忙，后台将重试");
+        var code = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(db, "T", item.VersionType, target);
 
         var update = Builders<ProductInitiation>.Update.Set(x => x.TCode, code).Set(x => x.Status, "approved")
             .Set(x => x.RequirementSyncPending, true).Set(x => x.UpdatedAt, DateTime.UtcNow);
