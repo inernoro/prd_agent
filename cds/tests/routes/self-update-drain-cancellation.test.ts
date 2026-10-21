@@ -15,7 +15,7 @@ import { BranchOperationCoordinator } from '../../src/services/branch-operation-
 import { endSelfUpdateDrain, selfUpdateDrainBlockReason } from '../../src/services/deploy-drain.js';
 import { getRestartWait, setRestartWait } from '../../src/services/self-restart-wait.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
-import type { CdsConfig } from '../../src/types.js';
+import type { CdsConfig, IShellExecutor } from '../../src/types.js';
 
 vi.mock('node:child_process', async (original) => ({
   ...await original<typeof import('node:child_process')>(), spawn: vi.fn(),
@@ -43,8 +43,20 @@ describe('self-update cancels before replacing code when other work is active', 
     state.addBranch({ id: 'other-project', projectId: 'app02', branch: 'main', worktreePath: root,
       createdAt: new Date().toISOString(), status: 'building', services: {} });
     runs = new DeploymentRunService(state); coordinator = new BranchOperationCoordinator();
+    // 这里只消费真实HTTP的排空控制流；Git读值仍是原Mock，不声称真实进程或Git验收。
+    // 新同票入口要求受控接缝；只承接本夹具三条原只读命令，不运行或伪造改树命令。
+    const controlledShell: IShellExecutor = {
+      exec: shell.exec.bind(shell),
+      async execOwnedOperation(command, options) {
+        options.beforeStart();
+        if (!/^git rev-parse (?:--abbrev-ref HEAD|--short HEAD|HEAD)$/.test(command)) {
+          throw new Error('排空夹具拒绝非原只读Git命令');
+        }
+        return shell.exec(command, options);
+      },
+    };
     const app = express(); app.use(express.json());
-    app.use('/api', createBranchRouter({ stateService: state, shell, config,
+    app.use('/api', createBranchRouter({ stateService: state, shell: controlledShell, config,
       worktreeService: new WorktreeService(shell, root), containerService: new ContainerService(shell, config),
       registry: { getAll: () => [], getOnline: () => [] } as any,
       deploymentRunService: runs, branchOperationCoordinator: coordinator }));

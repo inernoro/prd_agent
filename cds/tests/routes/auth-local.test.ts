@@ -11,17 +11,20 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import { once } from 'node:events';
 import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from '../../src/services/github-oauth-client.js';
 import { AuthService } from '../../src/services/auth-service.js';
 import { createAuthRouter, GH_SESSION_COOKIE } from '../../src/routes/auth.js';
 import { createAuthLocalRouter } from '../../src/routes/auth-local.js';
 import { createGithubAuthMiddleware } from '../../src/middleware/github-auth.js';
+import { attachHttpFixtureObservation, listenLoopbackFixture, projectHttpFixtureResponse, type HttpFixtureEvent } from '../helpers/loopback-http-fixture.js';
 
 interface Res {
   status: number;
   body: any;
   headers: http.IncomingHttpHeaders;
+  evidence: ReturnType<typeof projectHttpFixtureResponse>;
 }
 
 async function call(
@@ -30,8 +33,13 @@ async function call(
   urlPath: string,
   opts: { body?: unknown; cookie?: string } = {},
 ): Promise<Res> {
+  attachHttpFixtureObservation(server);
+  const phase = urlPath === '/api/auth/bootstrap' ? 'bootstrap' : 'auth-local';
   return new Promise((resolve, reject) => {
+    const fail = (event: HttpFixtureEvent, response?: http.IncomingMessage, raw = '', bytes = 0) =>
+      reject(new Error(JSON.stringify(projectHttpFixtureResponse(server, { phase, event, response, raw, bytes }))));
     const addr = server.address() as { port: number };
+    if (!addr) { fail('request-error'); return; }
     const payload = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (payload) {
@@ -42,16 +50,21 @@ async function call(
     const req = http.request(
       { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
       (res) => {
-        let raw = '';
-        res.on('data', (c: Buffer) => (raw += c.toString()));
+        let raw = '', bytes = 0;
+        res.on('data', (c: Buffer) => { bytes += c.length; raw += c.toString(); });
         res.on('end', () => {
+          if (!res.complete) { fail('aborted', res, raw, bytes); return; }
+          const evidence = projectHttpFixtureResponse(server, { phase, event: 'end', response: res, raw, bytes });
           let body: any = raw;
           try { body = JSON.parse(raw); } catch { /* keep raw */ }
-          resolve({ status: res.statusCode!, body, headers: res.headers });
+          resolve({ status: res.statusCode!, body, headers: res.headers, evidence });
         });
+        res.on('aborted', () => fail('aborted', res, raw, bytes));
+        res.on('error', () => fail('response-error', res, raw, bytes));
+        res.on('close', () => { if (!res.complete) fail('aborted', res, raw, bytes); });
       },
     );
-    req.on('error', reject);
+    req.on('error', () => fail('request-error'));
     if (payload) req.write(payload);
     req.end();
   });
@@ -61,6 +74,8 @@ function sessionCookieFrom(res: Res): string {
   const setCookie = res.headers['set-cookie'];
   const raw = Array.isArray(setCookie) ? setCookie[0] : String(setCookie || '');
   const token = raw.split(';')[0];
+  expect(res.evidence.sessionIndex === 0 && res.evidence.fixtureIdMatches && res.evidence.fixturePidMatches
+    && res.evidence.arrivalMatches && res.evidence.finishMatches, JSON.stringify(res.evidence)).toBe(true);
   expect(token.startsWith(`${GH_SESSION_COOKIE}=`)).toBe(true);
   return token;
 }
@@ -69,7 +84,7 @@ describe('Local auth routes (with gate)', () => {
   let server: http.Server;
   let svc: AuthService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const store = new MemoryAuthStore();
     const github = new GitHubOAuthClient({
       clientId: 'cid', clientSecret: 'secret',
@@ -82,7 +97,8 @@ describe('Local auth routes (with gate)', () => {
     app.use('/api', createAuthRouter({ authService: svc, publicBaseUrl: 'http://localhost:9900', cookieSecure: false }));
     app.use(createGithubAuthMiddleware({ authService: svc }));
     app.use('/api', createAuthLocalRouter({ authService: svc, cookieSecure: false, bootstrapAllowed: true }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
+    if (!server.address()) await once(server, 'listening');
   });
 
   afterEach(async () => {
@@ -159,6 +175,9 @@ describe('Local auth routes (with gate)', () => {
 
   it('lets a user change their own password and records activity', async () => {
     const boot = await call(server, 'POST', '/api/auth/bootstrap', { body: { username: 'owner', password: 'owner-password-1' } });
+    expect(boot.status === 200 && boot.evidence.hasUser && boot.evidence.isSystemOwner
+      && boot.evidence.fixtureIdMatches && boot.evidence.fixturePidMatches
+      && boot.evidence.arrivalMatches && boot.evidence.finishMatches, JSON.stringify(boot.evidence)).toBe(true);
     const cookie = sessionCookieFrom(boot);
 
     const cp = await call(server, 'POST', '/api/auth/change-password', {
@@ -187,7 +206,7 @@ describe('Local auth bootstrap gating (volatile store)', () => {
   // bootstrapAllowed = (store is mongo); here we pass false to lock the gate.
   let server: http.Server;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const store = new MemoryAuthStore();
     const github = new GitHubOAuthClient({
       clientId: 'cid', clientSecret: 'secret',
@@ -198,7 +217,8 @@ describe('Local auth bootstrap gating (volatile store)', () => {
     app.use(express.json());
     app.use(createGithubAuthMiddleware({ authService: svc }));
     app.use('/api', createAuthLocalRouter({ authService: svc, cookieSecure: false, bootstrapAllowed: false }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
+    if (!server.address()) await once(server, 'listening');
   });
 
   afterEach(async () => {

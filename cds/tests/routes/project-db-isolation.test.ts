@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import http from 'node:http';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -27,16 +28,23 @@ import { resolveReplicaDbTarget } from '../../src/services/replica-db-clone.js';
 import { applyPerBranchDbIsolation } from '../../src/services/db-scope-isolation.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import type { BuildProfile } from '../../src/types.js';
+import { getHttpFixtureTrace, listenLoopbackFixture } from '../helpers/loopback-http-fixture.js';
 
 async function request(
   server: http.Server, method: string, urlPath: string, body?: unknown,
   headers?: Record<string, string>,
 ): Promise<{ status: number; body: any }> {
+  if (!server.listening) await once(server, 'listening');
+  const trace = getHttpFixtureTrace(server);
+  const addr = server.address();
+  if (!trace || !addr || typeof addr === 'string' || addr.address !== '127.0.0.1') {
+    throw new Error('数据库隔离自有HTTP夹具的IPv4监听身份未确认');
+  }
   return new Promise((resolve, reject) => {
-    const addr = server.address() as { port: number };
     const data = body !== undefined ? JSON.stringify(body) : undefined;
     const req = http.request({
       hostname: '127.0.0.1', port: addr.port, path: urlPath, method,
+      agent: false,
       headers: {
         'Content-Type': 'application/json',
         ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
@@ -44,8 +52,14 @@ async function request(
       },
     }, (res) => {
       let raw = '';
+      res.once('aborted', () => reject(new Error('数据库隔离自有HTTP夹具响应中断')));
+      res.once('error', reject);
       res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
       res.on('end', () => {
+        if (!res.complete || res.headers['x-cds-fixture-id'] !== trace.id
+          || res.headers['x-cds-fixture-pid'] !== String(trace.pid)) {
+          reject(new Error('数据库隔离自有HTTP夹具响应不完整或归属不匹配')); return;
+        }
         try { resolve({ status: res.statusCode!, body: raw ? JSON.parse(raw) : null }); }
         catch { resolve({ status: res.statusCode!, body: raw }); }
       });
@@ -143,7 +157,7 @@ describe('项目级数据库隔离路由', () => {
       next();
     });
     app.use('/api', createProjectDbIsolationRouter({ stateService, assertProjectAccess: assertProjectAccess as any }));
-    server = app.listen(0);
+    server = listenLoopbackFixture(app);
   });
 
   afterEach(async () => {

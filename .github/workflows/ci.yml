@@ -61,6 +61,7 @@ jobs:
               - 'scripts/bundle-official-skills.mjs'
               - 'scripts/test-official-skill-bundles.mjs'
               - 'scripts/verify-dotnet-test-projects.sh'
+              - 'scripts/tests/mongo-ci-contract.test.py'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
@@ -123,6 +124,7 @@ jobs:
               - 'scripts/tests/release-evidence.test.py'
               - 'scripts/llmgw-prod-preflight.py'
               - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
+              - 'scripts/tests/mongo-ci-contract.test.py'
               # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
               # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
               # 它们守的是 gw-smoke / 发布双密钥 / ASR WebSocket 转发，
@@ -232,6 +234,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
 
       - name: Root layout contract
         run: python3 scripts/tests/test_root_layout_contract.py
@@ -379,11 +384,11 @@ jobs:
 
   # 后端服务构建和测试
   server-build:
-    name: Server Build & Test
+    name: Server Build & Test (execution)
     needs: changes
     if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    # MongoDB 8 与 Linux 6.19 至 7.0.13 不兼容；固定仍使用 6.8 内核的测试运行器。
-    # https://www.mongodb.com/docs/v8.0/release-notes/8.0/
+    # 临时兼容：24.04 镜像 20261018.339.1 的 Azure 7.0 内核被 Mongo 8.0 拒绝。
+    # SERVER-131779 修复在 8.0.35；可用并在原 runner 真验后回迁，见 debt.platform.md。
     runs-on: ubuntu-22.04
     services:
       mongodb:
@@ -404,6 +409,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: MongoDB runtime versions
+        run: |
+          uname -r
+          docker exec "${{ job.services.mongodb.id }}" mongosh --quiet --eval \
+            'const v = db.version(); print("MongoDB " + v); if (!/^8[.]0[.]/.test(v) || db.adminCommand({ ping: 1 }).ok !== 1) quit(1);'
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -493,6 +504,22 @@ jobs:
           " "$trx" || echo "(failed to parse $trx)"
           done
         shell: bash
+
+  server-required:
+    name: Server Build & Test
+    needs: [changes, server-build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: MongoDB CI compatibility contract
+        run: python3 scripts/tests/mongo-ci-contract.test.py
+      - name: Forward server result
+        run: |
+          [[ "${{ needs.changes.result }}" == success &&
+             ( "${{ needs.server-build.result }}" == success ||
+               ( "${{ needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}" == false &&
+                 "${{ needs.server-build.result }}" == skipped ) ) ]]
 
   # Web 管理后台构建
   admin-build:

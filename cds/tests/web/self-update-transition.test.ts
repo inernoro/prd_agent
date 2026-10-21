@@ -288,7 +288,8 @@ describe('自更新重启的结构（源码守卫）', () => {
     expect(helper).toContain("spawnProcess('bash', ['-p', '-c', CDS_RESTART_PERMIT_COMMAND]");
     expect(launch).toContain("saved !== 'flushed' || input.preserveQueued !== true || !permit?.hasChildPid");
     expect(launch).toContain('normalShutdown: input.preserveQueued === true && permit?.hasChildPid === true');
-    expect(launch).toContain('await permit?.cancel(); await input.rollback?.();');
+    expect(launch).toMatch(/await permit\?\.cancel\(\);\s+try \{\s*await input\.rollback\?\.\(\);\s*\}\s*finally \{/);
+    expect(launch).toContain('if (operationsInterrupted && branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);');
   });
 
   it('中断终态保存及pipe许可后才排退出，仍用原期限与开闸兜底', () => {

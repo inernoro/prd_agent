@@ -10,6 +10,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { SelfMaintenanceRuntime } from './services/self-maintenance-runtime.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
@@ -568,6 +569,8 @@ export interface ServerDeps {
   gracefulShutdown?: GracefulShutdownController;
   /** Resources must settle before the shared execution pools close. */
   registerResourceShutdown?: (close: () => Promise<void>) => void;
+  /** 同一服务器的维护owner、执行能力与纯状态/健康投影。 */
+  selfMaintenanceRuntime?: SelfMaintenanceRuntime;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -1827,6 +1830,13 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
+    deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
+      action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
+      details: { selfMaintenance: view } });
+    console.warn('[self-maintenance] CDS 维护写者正在停止或等待清理确认，请检查维护状态。');
+  });
+  deps.registerResourceShutdown?.(() => selfMaintenance.close());
   app.disable('x-powered-by');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
@@ -2081,6 +2091,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
+    // 纯判据不执行命令/取消/释放；公开check只给布尔，不暴露维护身份或assignment。
+    checks.selfMaintenance = { ok: selfMaintenance.isHealthy() };
+    if (!checks.selfMaintenance.ok) overallOk = false;
 
     // Check 1: state readable — plus 暴露 backing store kind 到 detail
     // 供"Mongo 模式是否真正生效"这类无认证诊断。不泄漏 URI/credentials。
@@ -3784,6 +3797,7 @@ export function createServer(deps: ServerDeps): express.Express {
         pidStartedAt,
         restartStatus,
         restartWait,
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,
@@ -3808,6 +3822,7 @@ export function createServer(deps: ServerDeps): express.Express {
         runningPid: process.pid,
         pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
         restartStatus: 'not_required',
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: null,
         selfUpdateHistory: [],
         webBuildSha: '',
@@ -5018,6 +5033,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
 
   app.use('/api', createBranchRouter({
+    selfMaintenanceRuntime: selfMaintenance,
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
     containerService: deps.containerService,

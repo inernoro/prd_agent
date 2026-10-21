@@ -757,6 +757,12 @@ export class BranchOperationCoordinator {
         continueWith: reserved.continueWith,
       });
     }
+    // 取消重启后进程仍会服务；撤销旧运行许可，但保留代次与生命周期监听。
+    this.active.clear();
+    this.pendingWebhookDeploys.clear();
+    this.reservedContinuations.clear();
+    this.pendingReplayClaims.clear();
+    this.deploymentInputs.clear();
   }
 
   isCurrent(branchId: string, operationId: string, generation: number): boolean {
