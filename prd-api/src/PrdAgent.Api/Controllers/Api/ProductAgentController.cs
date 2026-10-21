@@ -909,7 +909,7 @@ public class ProductAgentController : ControllerBase
             AppName = appName,
             CustomerSource = request.CustomerSource?.Trim(),
             DemandSource = request.DemandSource?.Trim(),
-            PlanName = ProductVersionPlanMatching.CleanTitle(request.PlanName, appName ?? linkedProduct.Name),
+            PlanName = request.PlanName.Trim(),
             RequirementDescription = request.RequirementDescription?.Trim(),
             DepartmentName = departmentName,
             OwnerName = ownerName,
@@ -990,7 +990,7 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.AppName, appName)
                 .Set(x => x.CustomerSource, request.CustomerSource?.Trim())
                 .Set(x => x.DemandSource, request.DemandSource?.Trim())
-                .Set(x => x.PlanName, ProductVersionPlanMatching.CleanTitle(request.PlanName, appName ?? linkedProduct.Name))
+                .Set(x => x.PlanName, request.PlanName.Trim())
                 .Set(x => x.RequirementDescription, request.RequirementDescription?.Trim())
                 .Set(x => x.DepartmentName, departmentName)
                 .Set(x => x.OwnerName, ownerName)

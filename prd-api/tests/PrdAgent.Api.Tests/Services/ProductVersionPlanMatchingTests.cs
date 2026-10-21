@@ -10,6 +10,20 @@ public class ProductVersionPlanMatchingTests
     private const string Topic = "渠道返利是否宴席/团购商品订单结单后判定优化";
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void 明确粘贴的立项名称优先于规范化和匹配方案(bool formal)
+    {
+        var name = $"互动营销T3.47.1（{Topic}调整）-AI文档";
+        var result = VersionRegistrationMessageParser.Parse($"产品立项方案名称：{name} @张三", formal ? "formal" : "internal");
+        ProductVersionPlanMatching.Match(result, Applications,
+            new[] { new VersionPlanCandidate("plan", "marketing", $"互动营销（{Topic}）", "T3.47.1") }, formal);
+        result.PlanName.ShouldBe(name);
+        result.MatchedApplicationId.ShouldBe("marketing");
+        if (formal) result.MatchedInitiationId.ShouldBe("plan");
+    }
+
+    [Theory]
     [InlineData("互动营销R=TXXXX（订单优化）", "互动营销（订单优化）")]
     [InlineData("互动营销 临时占位R=T3.47.1 (订单优化)-AI文档", "互动营销(订单优化)-AI文档")]
     [InlineData("互动营销（合法R=T内容不可删除）", "互动营销（合法R=T内容不可删除）")]

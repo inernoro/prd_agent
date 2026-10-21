@@ -60,15 +60,15 @@ describe('内部版本在申领表单内选择应用', () => {
   it('快速换方案或退出表单后，旧请求不再回填或结束新请求的识别状态', () => {
     expect(application).toContain('const sequence = ++reviewApplicationSequence.current');
     expect(application).toContain('if (sequence !== reviewApplicationSequence.current) return;');
-    expect(application).toContain('const sequence = reviewApplicationSequence.current;');
-    expect(application).toContain('sequence !== reviewApplicationSequence.current || !response.success');
+    expect(application).toContain('if (!response.success) {');
+    expect(application).not.toContain('planNameRef.current !== entered');
     expect(application).toContain('if (sequence === reviewApplicationSequence.current) setReviewApplicationMatching(false)');
     expect(application).toContain('useEffect(() => () => { reviewApplicationSequence.current += 1; }, [])');
   });
 
   it('手选应用、编辑标题或重新粘贴会取消当前方案的自动回填，保留人工操作', () => {
     expect(application).toContain('onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }}');
-    expect(application).toContain('onChange={(e) => { cancelReviewApplicationLookup(); setPlanName(e.target.value); }}');
+    expect(application).toContain('onChange={(e) => { cancelReviewApplicationLookup(); planNameDraft.setManual(e.target.value); }}');
     expect(application).toMatch(/const applyParsedMessage = [\s\S]*?=> \{\s+cancelReviewApplicationLookup\(\);/);
     expect(application).toContain('reviewApplicationSequence.current += 1;');
   });

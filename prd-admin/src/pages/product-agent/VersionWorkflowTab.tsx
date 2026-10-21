@@ -47,6 +47,7 @@ import {
   isMeetingResultPending,
 } from './initiationWorkflowUtils';
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
+import { useVersionPlanName } from './useVersionPlanName';
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
 import { VersionCopyActions } from './VersionCopyActions';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
@@ -316,9 +317,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [demandSource, setDemandSource] = useState(seed?.demandSource ?? '');
   const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
   const [catalogProducts, setCatalogProducts] = useState<VersionApplicationProduct[]>([]);
-  const [planName, setPlanName] = useState(seed?.planName ?? '');
-  const planNameRef = useRef(planName);
-  planNameRef.current = planName;
+  const planNameDraft = useVersionPlanName(seed?.planName ?? '');
+  const planName = planNameDraft.value;
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed ? (seed.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no') : 'yes');
@@ -452,7 +452,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     setReviewApplicationMatching(false);
     const source = reviewSources.find((entry) => entry.id === id);
     if (!source) return;
-    setPlanName(source.title);
+    planNameDraft.setSource(source.title);
     setMessage('');
     setReviewApplicationMatching(true);
     void parseProductVersionMessage('internal', `产品立项方案名称：${source.title}`).then((response) => {
@@ -621,13 +621,13 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     }
   };
 
-  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
+  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
     cancelReviewApplicationLookup();
     if (parsed.projectType) setProjectType(parsed.projectType);
     if (parsed.versionType) setVersionType(parsed.versionType);
     if (parsed.demandSource) setDemandSource(parsed.demandSource);
-    if (parsed.planName) {
-      setPlanName(parsed.planName);
+    if (parsed.planName && planNameDraft.isCurrentEdit(editVersion)) {
+      planNameDraft.setPasted(parsed.planName, editVersion);
       const match = reviewSources.find((source) => source.title.replace(/\s+/g, '') === parsed.planName?.replace(/\s+/g, ''));
       if (match) setReviewSubmissionId(match.id);
       const productMatches = availableProducts.filter((product) =>
@@ -645,7 +645,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     {memberNotice}
     <Stepper step={step} />
     {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} />
+      <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
       <Field label="已通过的产品评审记录（选填，可跳过重复评审）" full>
         <Select value={reviewSubmissionId} onChange={(event) => chooseReviewSource(event.target.value)}>
           <option value="">新上传方案并进行 Agent 评审</option>
@@ -666,16 +666,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
         />
         {reviewApplicationMatching && <p role="status" className="mt-1.5 flex items-center gap-2 text-xs text-token-muted"><MapSpinner size={14} />正在识别方案所属应用，也可手动选择。</p>}
       </Field>
-      <Field label="方案名称 *"><Input value={planName} onChange={(e) => { cancelReviewApplicationLookup(); setPlanName(e.target.value); }} onBlur={() => {
-        const sequence = reviewApplicationSequence.current;
-        const entered = planName;
-        if (!entered.trim()) return;
-        void parseProductVersionMessage('internal', `产品立项方案名称：${entered}`).then((response) => {
-          if (sequence !== reviewApplicationSequence.current || !response.success || !response.data.result.planName || planNameRef.current !== entered) return;
-          const parsed = response.data.result;
-          setPlanName((previous) => previous === entered ? parsed.planName! : previous);
-        }).catch(() => { /* 提交时仍由同一服务端规则清洗，不因预览失败丢失输入。 */ });
-      }} /></Field>
+      <Field label="方案名称 *"><Input value={planName} onChange={(e) => { cancelReviewApplicationLookup(); planNameDraft.setManual(e.target.value); }} /></Field>
       <Field label="版本级别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
       <Field label="需求来源 *"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
       <Field label="计划立项时间 *"><Input type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} /></Field>

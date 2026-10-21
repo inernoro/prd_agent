@@ -3,9 +3,10 @@ import { Loader2 } from 'lucide-react';
 import { parseProductVersionMessage } from '@/services/real/productAgent';
 import type { VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
 
-export function ProductVersionMessagePaste({ kind, onParsed }: {
+export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVersion }: {
   kind: 'internal' | 'formal';
-  onParsed: (result: VersionRegistrationMessageParseResult) => void;
+  onParsed: (result: VersionRegistrationMessageParseResult, editVersion?: number) => void;
+  getPlanNameEditVersion?: () => number;
 }) {
   const [text, setText] = useState('');
   const [hint, setHint] = useState('');
@@ -20,6 +21,7 @@ export function ProductVersionMessagePaste({ kind, onParsed }: {
       return undefined;
     }
     const currentId = ++requestId.current;
+    const editVersion = getPlanNameEditVersion?.();
     const timer = window.setTimeout(async () => {
       setBusy(true);
       try {
@@ -34,7 +36,7 @@ export function ProductVersionMessagePaste({ kind, onParsed }: {
           setHint('没有识别到可回填的字段，现有内容保持不变');
           return;
         }
-        latestOnParsed.current(result);
+        latestOnParsed.current(result, editVersion);
         setHint(`已识别并回填 ${result.matchedFields.length} 项，请核对后继续。`);
       } catch {
         if (requestId.current === currentId) setHint('暂时无法识别，现有内容保持不变');
@@ -46,7 +48,7 @@ export function ProductVersionMessagePaste({ kind, onParsed }: {
       window.clearTimeout(timer);
       requestId.current += 1;
     };
-  }, [kind, text]);
+  }, [kind, text, getPlanNameEditVersion]);
 
   return (
     <div className="rounded-xl border border-token-subtle bg-token-nested p-3 sm:col-span-2">

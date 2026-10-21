@@ -12,17 +12,21 @@ public static partial class VersionRegistrationMessageParser
 {
     public static VersionRegistrationMessageParseResult Parse(string? rawText, string? kind)
     {
-        var text = rawText?.Trim() ?? string.Empty;
+        // 只去掉有边界的企微提醒标记，不误删邮箱或 URL 中的 @。
+        var text = Regex.Replace(rawText?.Trim() ?? string.Empty,
+            @"(?<![\p{L}\p{N}_./:+-])[@＠][\p{L}\p{N}_-]+", string.Empty);
         var isInternal = string.Equals(kind, "internal", StringComparison.OrdinalIgnoreCase);
         var result = new VersionRegistrationMessageParseResult();
 
         SetProjectType(result, GetFieldValue(text, "项目类别", "项目类型"));
         SetVersionType(result, GetFieldValue(text, "版本类别", "版本类型"));
         SetText(result, "demandSource", value => result.DemandSource = value, GetFieldValue(text, "需求来源"));
+        var explicitPlanName = GetFieldValue(text, "产品立项方案名称");
+        result.HasExplicitPlanName = !string.IsNullOrWhiteSpace(explicitPlanName) && explicitPlanName != "无";
         SetText(result, "planName", value => result.PlanName = value,
-            isInternal
-                ? GetFieldValue(text, "产品立项方案名称", "立项方案名称", "产品方案名称", "方案名称")
-                : GetFieldValue(text, "产品方案名称", "上线方案名称", "方案名称", "产品立项方案名称"));
+            result.HasExplicitPlanName ? explicitPlanName : isInternal
+                ? GetFieldValue(text, "立项方案名称", "产品方案名称", "方案名称")
+                : GetFieldValue(text, "产品方案名称", "上线方案名称", "方案名称"));
         SetText(result, "planUrl", value => result.PlanUrl = value, GetFieldValue(text, "方案地址", "产品方案地址"));
         SetMembers(result, GetFieldValue(text, "项目组成员", "项目成员"));
 
@@ -127,11 +131,11 @@ public static partial class VersionRegistrationMessageParser
     private static string? GetFieldValue(string text, params string[] labels)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
-        foreach (var line in text.Split('\n'))
+        foreach (var label in labels)
         {
-            var candidate = line.Trim();
-            foreach (var label in labels)
+            foreach (var line in text.Split('\n'))
             {
+                var candidate = line.Trim();
                 var match = Regex.Match(candidate, $@"^(?:[-*]\s*)?{Regex.Escape(label)}\s*[：:]\s*(?<value>.+?)\s*$", RegexOptions.IgnoreCase);
                 if (match.Success)
                     return match.Groups["value"].Value.Trim();
@@ -180,6 +184,7 @@ public static partial class VersionRegistrationMessageParser
 
 public sealed class VersionRegistrationMessageParseResult
 {
+    public bool HasExplicitPlanName { get; set; }
     public string? ProjectType { get; set; }
     public string? VersionType { get; set; }
     public bool? NeedUiDesign { get; set; }

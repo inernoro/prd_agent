@@ -5,6 +5,37 @@ namespace PrdAgent.Tests;
 
 public sealed class VersionRegistrationMessageParserTests
 {
+    [Theory]
+    [InlineData("internal")]
+    [InlineData("formal")]
+    public void 显式立项名称不受字段顺序或企微提醒影响(string kind)
+    {
+        var result = VersionRegistrationMessageParser.Parse("方案名称：通用名称\n产品方案名称：旧标题\n产品立项方案名称：互动营销（通知识别） @张三 ＠李四\n@所有人", kind);
+        Assert.True(result.HasExplicitPlanName);
+        Assert.Equal("互动营销（通知识别）", result.PlanName);
+    }
+
+    [Theory]
+    [InlineData("internal")]
+    [InlineData("formal")]
+    public void 空立项名称仍可使用其它明确名称(string kind)
+    {
+        var result = VersionRegistrationMessageParser.Parse("产品立项方案名称： @张三\n产品方案名称：互动营销（有效标题）", kind);
+        Assert.False(result.HasExplicitPlanName);
+        Assert.Equal("互动营销（有效标题）", result.PlanName);
+    }
+
+    [Fact]
+    public void 企微提醒不是成员但邮箱和链接保持原样()
+    {
+        var result = VersionRegistrationMessageParser.Parse("需求来源：team@example.com\n方案地址：https://example.com/@docs\n项目组成员：张三、李四、@提醒人员\n是否全域开放：是 @所有人\n预计培训时长：30 @提醒人员", "formal");
+        Assert.Equal("team@example.com", result.DemandSource);
+        Assert.Equal("https://example.com/@docs", result.PlanUrl);
+        Assert.Equal(new[] { "张三", "李四" }, result.ProjectMemberNames);
+        Assert.True(result.IsGlobalOpen);
+        Assert.Equal(30, result.PlannedTrainingMinutes);
+    }
+
     [Fact]
     public void Parse_内部版本企微格式_只回填已出现的立项字段()
     {

@@ -31,11 +31,12 @@ describe('培训分钟与方案回填契约', () => {
     expect(workflow).toContain('查看全部方案');
     expect(workflow).toContain('<UserSearchSelect value=""');
     expect(workflow).toContain('if (id && !selected.includes(id))');
-    expect(paste).toContain('latestOnParsed.current(result)');
+    expect(paste).toContain('latestOnParsed.current(result, editVersion)');
   });
-  it('手填和企微 T 名称都消费后端清洗，过期响应不覆盖正在编辑的标题', () => {
-    expect(initiation).toContain("parseProductVersionMessage('internal', `产品立项方案名称：${entered}`)");
-    expect(initiation).toContain('planNameRef.current !== entered');
+  it('手填名称不再失焦重写，企微回填受编辑版本保护', () => {
+    expect(initiation).not.toContain('planNameRef.current !== entered');
+    expect(initiation).toContain('planNameDraft.setManual(e.target.value)');
+    expect(initiation).toContain('planNameDraft.isCurrentEdit(editVersion)');
     expect(initiation).toContain('parsed.matchedApplicationId');
   });
 });

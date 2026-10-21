@@ -42,7 +42,7 @@ public static class ProductVersionPlanMatching
         if (apps.Count == 1)
         {
             result.MatchedApplicationId = apps[0].Id;
-            result.PlanName = CleanTitle(raw, apps[0].Name);
+            if (!result.HasExplicitPlanName) result.PlanName = CleanTitle(raw, apps[0].Name);
         }
         if (!formal) return;
         var appIds = apps.Select(app => app.Id).ToHashSet();
@@ -60,7 +60,7 @@ public static class ProductVersionPlanMatching
         if (matches.Count != 1 || (apps.Count == 0 && Opening(raw ?? string.Empty) >= 0 && !string.IsNullOrWhiteSpace(Prefix(raw ?? string.Empty)))) return;
         result.MatchedInitiationId = matches[0].Id;
         result.MatchedApplicationId = matches[0].ProductId;
-        result.PlanName = matches[0].PlanName;
+        if (!result.HasExplicitPlanName) result.PlanName = matches[0].PlanName;
     }
 
     private static int Opening(string value)

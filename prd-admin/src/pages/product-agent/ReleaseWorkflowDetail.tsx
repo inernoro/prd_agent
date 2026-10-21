@@ -48,6 +48,7 @@ import { buildReleaseBasicInfoRows } from './versionBasicInfoCatalog';
 import { defectDetailColumns, featureDetailColumns, requirementDetailColumns } from './versionDetailTables';
 import { DetailRecordActions } from './DetailRecordActions';
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
+import { useVersionPlanName } from './useVersionPlanName';
 import type { VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
 import { VersionCopyActions } from './VersionCopyActions';
 import { mergeMemberIds, type PastedMemberMatch } from './releaseMemberMatching';
@@ -148,7 +149,8 @@ export function ReleaseWorkflowDetail({
   const [trainingMinutes, setTrainingMinutes] = useState('');
   const [projectType, setProjectType] = useState<'standard' | 'custom'>('standard');
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>('minor');
-  const [planName, setPlanName] = useState('');
+  const planNameDraft = useVersionPlanName();
+  const planName = planNameDraft.value;
   const [planUrl, setPlanUrl] = useState('');
   const [demandSource, setDemandSource] = useState('');
   const [requirementDescription, setRequirementDescription] = useState('');
@@ -403,14 +405,14 @@ export function ReleaseWorkflowDetail({
       changeApplication(source?.productId ?? '');
     }
     if (!source) {
-      setPlanName(''); setPlanUrl(''); setDemandSource(''); setRequirementDescription('');
+      planNameDraft.setSource(''); setPlanUrl(''); setDemandSource(''); setRequirementDescription('');
       setDepartmentName(''); setOwnerName('');
       if (temporary) setProjectMembers('');
       return;
     }
     setProjectType(source.projectType);
     setVersionType(source.versionType);
-    setPlanName(source.planName);
+    planNameDraft.setSource(source.planName);
     setPlanUrl(source.planUrl ?? '');
     setDemandSource(source.demandSource ?? '');
     setRequirementDescription(source.requirementDescription ?? '');
@@ -419,11 +421,11 @@ export function ReleaseWorkflowDetail({
     if (temporary) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
-  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult) => {
+  const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
     const parsedInitiations = parsed.initiationCandidates ?? [];
     const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
       ?? approved.find((item) => item.id === parsed.matchedInitiationId) : undefined;
-    if (!temporary && (parsed.planName || parsed.tCode)) {
+    if (!temporary && (parsed.planName || parsed.tCode) && planNameDraft.isCurrentEdit(editVersion)) {
       setPastedInitiations(parsedInitiations);
       const candidates = parsed.candidateInitiationIds ?? [];
       setPastedPlanCandidates(candidates);
@@ -443,11 +445,11 @@ export function ReleaseWorkflowDetail({
       if (parsed.projectType) setProjectType(parsed.projectType);
       if (parsed.versionType) setVersionType(parsed.versionType);
       if (parsed.demandSource) setDemandSource(parsed.demandSource);
-      if (parsed.planName) setPlanName(parsed.planName);
       if (parsed.planUrl) setPlanUrl(parsed.planUrl);
       if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
       if (parsed.departmentName) setDepartmentName(parsed.departmentName);
     }
+    if (parsed.planName) planNameDraft.setPasted(parsed.planName, editVersion);
     if (!source && parsed.ownerName) {
       setOwnerName(parsed.ownerName);
       const matchedOwner = members.find((member) => member.displayName === parsed.ownerName);
@@ -467,6 +469,10 @@ export function ReleaseWorkflowDetail({
   };
 
   const saveNew = async () => {
+    if (!temporary && !planName.trim()) {
+      setMessage('请填写产品方案名称');
+      return;
+    }
     if (pastedMembers.pendingCount > 0) {
       setMessage('正在匹配企微成员，请稍候并核对名单后申领。');
       return;
@@ -763,7 +769,7 @@ export function ReleaseWorkflowDetail({
         <div className="space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5">
           {isNew ? (
             <>
-              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} />
+              <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
               <Field label="产品负责人（申领人）*">
                 <UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品负责人" />
               </Field>
@@ -821,9 +827,7 @@ export function ReleaseWorkflowDetail({
                 <Field label="项目类别"><Select value={effectiveProjectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
                 <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
               </>}
-              {!temporary && <Field label="产品方案名称 *">{sourceMode === 'manual_t'
-                ? <Input value={planName} onChange={(e) => setPlanName(e.target.value)} />
-                : <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{selectedInitiation?.planName || '选择立项方案后自动回填'}</div>}</Field>}
+              {!temporary && <Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="可粘贴识别、自动回填或手动修改" /></Field>}
               <Field label="需求来源"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} /></Field>
               <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field>
               <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
