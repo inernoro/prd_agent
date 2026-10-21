@@ -1,7 +1,8 @@
 import type { BuildProfile, IShellExecutor } from '../types.js';
+import type { WorktreeService } from './worktree.js';
 import { shellQuoteArg } from './secure-database-cli.js';
 import {
-  imageRepositoryOf, normalizeBuildScope, normalizeFallbackImages, normalizeImageRevision, proveFallbackImage,
+  componentInputComparator, imageRepositoryOf, normalizeBuildScope, normalizeFallbackImages, normalizeImageRevision, proveFallbackImage,
   type ProveFallbackImageInput,
 } from './prebuilt-reuse.js';
 
@@ -21,6 +22,24 @@ export interface VerifiedDeploymentArtifact {
 export interface ArtifactInspectionOptions {
   inspectLocalArtifacts?: boolean;
   isComponentUnchangedSince?: ProveFallbackImageInput['isComponentUnchangedSince'];
+  remainingMs?: () => number;
+}
+
+/** 每轮一次封顶；旧无 owner 的执行器请求保留只读比较，不能借此取得 fetch 资格。 */
+export function artifactInspectionContext(shell: IShellExecutor, worktree: Pick<WorktreeService, 'ensureCommitAvailable'> | undefined,
+  repoRoot: string, assertCurrent: () => void, limitMs = 120_000): ArtifactInspectionOptions & { remainingMs: () => number } {
+  if (!Number.isFinite(limitMs) || limitMs <= 0) throw new Error('产物核验剩余时间无效');
+  const deadline = performance.now() + Math.min(limitMs, 120_000);
+  const remainingMs = () => {
+    assertCurrent(); const remaining = Math.floor(deadline - performance.now());
+    if (remaining <= 0) throw new Error('产物核验已超时，请稍后重试');
+    return remaining;
+  };
+  const compare = componentInputComparator(shell, repoRoot, () => { remainingMs(); }, remainingMs);
+  return { remainingMs, isComponentUnchangedSince: async (from, to, scope) => {
+    if (worktree) for (const sha of [from, to]) await worktree.ensureCommitAvailable(repoRoot, sha, assertCurrent, remainingMs);
+    return compare(from, to, scope);
+  } };
 }
 
 /** 私有输入的一部分；公开事件只发等待原因，不发 registry 输出或认证细节。 */
@@ -76,7 +95,9 @@ export async function inspectDeploymentArtifacts(
   if (!required.length) return { state: 'ready', targetCommitSha: target, checkedAt, artifacts: [] };
   const exec = async (command: string, timeout = 30_000) => {
     assertCurrent();
-    const result = await shell.exec(command, { timeout, beforeStart: assertCurrent });
+    const check = () => { assertCurrent(); options.remainingMs?.(); };
+    const result = await shell.exec(command, { timeout: Math.min(timeout, options.remainingMs?.() ?? timeout), beforeStart: check });
+    check();
     assertCurrent();
     return result;
   };

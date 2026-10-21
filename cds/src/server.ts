@@ -1564,7 +1564,7 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   if (method === 'POST' && /^\/api\/projects\/[^/]+\/access-requests$/.test(path)) return true;
   if (method === 'GET' && /^\/api\/projects\/[^/]+\/access-requests\/[^/]+$/.test(path)) return true;
   if (method === 'POST' && path === '/api/bootstrap-access-requests') return true;
-  if (method === 'GET' && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
+  if ((method === 'GET' || method === 'DELETE') && /^\/api\/bootstrap-access-requests\/[^/]+$/.test(path)) return true;
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
@@ -4679,6 +4679,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
   app.use('/api', (req, res, next) => {
     if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    // Let already accepted, authenticated queued work drain to completion.
+    if (pendingReplayGate.isTrusted(req)) { next(); return; }
     const draining = selfUpdateDrainBlockReason(Date.now());
     if (!draining) { next(); return; }
     res.setHeader('Retry-After', '60');

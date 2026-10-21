@@ -2402,6 +2402,8 @@ export interface CdsState {
    * 收割器补偿成功 / 发现同名容器已属后继项目时逐条移除。旧状态可缺省。
    */
   pendingContainerTeardowns?: ContainerTeardownTombstone[];
+  /** 删除项目时持久化本项目的网络清理任务；仅清理无端点、无人认领的网络。 */
+  pendingNetworkTeardowns?: Array<{ name: string; projectId: string }>;
   /**
    * 已删项目的 worktree 桶墓碑（见 DeletedProjectWorktreeTombstone 注释）。
    * 孤儿对账把这些 id 并入「已知项目桶」白名单，桶清空后自动摘除。
@@ -3751,7 +3753,31 @@ export interface ProjectIdentityRecord {
   after: ProjectIdentitySnapshot;
 }
 
+export interface PreviewAddressOverride {
+  /** DNS-facing name only; Git branch/resource identity never changes. */
+  branchName?: string;
+  projectSlug?: string;
+  customSubdomain?: string;
+}
+
+export interface PreviewAddressAudit {
+  id: string;
+  at: string;
+  actor: string;
+  requestId?: string;
+  branchId: string;
+  action: 'save' | 'verify' | 'visit-conflict' | 'rejected' | 'release' | 'preview';
+  scope: 'branch' | 'project';
+  result: string;
+  before?: unknown;
+  after?: unknown;
+}
+
 export interface Project {
+  /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */
+  previewAddresses?: Record<string, PreviewAddressOverride>;
+  /** Append-only address/verification audit. Never accepted from request bodies. */
+  previewAddressAudit?: PreviewAddressAudit[];
   /** 独立于活动日志保留的设置变更记录；baseline 只证明观察时的状态。 */
   identityHistory?: ProjectIdentityRecord[];
   /** 父实例镜像来的只读项目（预览实例专用） */
@@ -4330,7 +4356,9 @@ export interface AccessRequest {
   /** 服务端凭 issuedKeyId 关联实际创建结果，不接受客户端自报。 */
   createdProject?: { id: string; name: string; createdAt: string };
   /** Lifecycle: starts 'pending', moves to 'approved' or 'rejected'. */
-  status: 'pending' | 'approved' | 'rejected';
+  status: 'pending' | 'approved' | 'rejected' | 'expired' | 'cancelled';
+  /** 首次建项目申请的等待截止时间；不依赖 Agent 进程存活。 */
+  expiresAt?: string;
   /** ISO submit time. */
   createdAt: string;
   /** Set when status flips away from 'pending'. */
@@ -4511,6 +4539,8 @@ export interface GlobalAgentKey {
   oneTime?: boolean;
   /** 页面批准的唯一创建目标；缺省的一次性旧授权不得继续建项目。 */
   creationTarget?: { name: string; repository: string };
+  /** 一次性创建凭据的硬截止时间；存量非一次性 key 不受影响。 */
+  expiresAt?: string;
   /** ISO timestamp of sign time. */
   createdAt: string;
   /** GitHub login of the signer if github auth mode, else undefined. */

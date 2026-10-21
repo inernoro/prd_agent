@@ -90,6 +90,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
   const { stateService } = deps;
   const authDisabled = deps.authMode === 'disabled';
   const router = Router();
+  router.use((_req, _res, next) => {
+    stateService.expireBootstrapAccessRequests();
+    next();
+  });
 
   router.get('/projects/:id/access-status', (req, res) => {
     const project = stateService.getProject(req.params.id);
@@ -172,7 +176,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       });
       return;
     }
-    const body = (req.body || {}) as { agentName?: string; purpose?: string; requestedProject?: unknown };
+    const body = (req.body || {}) as { agentName?: string; purpose?: string; requestedProject?: unknown; waitSeconds?: number };
     const agentName = typeof body.agentName === 'string' && body.agentName.trim()
       ? body.agentName.trim().slice(0, 100) : 'AI Agent';
     const purpose = typeof body.purpose === 'string' && body.purpose.trim()
@@ -186,6 +190,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     const item: AccessRequest = {
       id: newRequestId(),
       kind: 'bootstrap',
+      expiresAt: new Date(Date.now() + Math.min(3600, Math.max(10, Number.isFinite(body.waitSeconds) ? body.waitSeconds! : 600)) * 1000).toISOString(),
       requestedProject: target,
       targetBound: true,
       projectId: BOOTSTRAP_PROJECT_ID,
@@ -265,6 +270,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
       res.status(403).json({ error: 'poll_token_invalid', message: '轮询票据无效。' });
       return;
     }
+    if (item.status === 'expired' || item.status === 'cancelled') {
+      res.json({ status: item.status, message: '申请已结束，未保留建项目权限。请重新运行接入命令。' });
+      return;
+    }
     if (item.status === 'pending') {
       res.json({ status: 'pending' });
       return;
@@ -283,6 +292,29 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     res.json({ status: 'approved', delivered: true });
   });
 
+  // 发起者超时或中断时收回未使用的一次建项目权限；票据只认 header。
+  router.delete('/bootstrap-access-requests/:reqId', (req, res) => {
+    const item = stateService.getAccessRequest(req.params.reqId);
+    if (!item || item.kind !== 'bootstrap') {
+      res.status(404).json({ error: 'request_not_found' }); return;
+    }
+    const tokenHash = sha256(extractPollToken(req));
+    if (tokenHash.length !== item.pollTokenHash.length
+      || !timingSafeEqual(Buffer.from(tokenHash, 'hex'), Buffer.from(item.pollTokenHash, 'hex'))) {
+      res.status(403).json({ error: 'poll_token_invalid' }); return;
+    }
+    if (item.createdProject) {
+      res.status(409).json({ error: 'project_already_created', message: '项目已创建，未撤销项目权限。' }); return;
+    }
+    if (item.issuedKeyId) stateService.revokeGlobalAgentKey(item.issuedKeyId);
+    stateService.updateAccessRequest(item.id, {
+      status: item.status === 'expired' ? 'expired' : 'cancelled',
+      issuedKeyPlaintext: undefined, decidedAt: new Date().toISOString(),
+    });
+    cdsEventsBus.publish('access-request.decided', { requestId: item.id, status: 'cancelled', pendingCount: pendingCount(stateService) });
+    res.json({ cancelled: true });
+  });
+
   // ───────────────────────────────────────────────────────────────────────
   // 操作员通道:列表 / 批准 / 拒绝(走全局中间件 cookie / 全权 key 鉴权)
   // ───────────────────────────────────────────────────────────────────────
@@ -295,6 +327,10 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
     if (decidedCount > 20) stateService.pruneAccessRequests(AUDIT_RETENTION_MS);
     const list = stateService.listAccessRequests().map((item) => ({
       ...publicView(item),
+      // 删除状态来自项目事实源，存量回执同样生效；不删除审计、不改变原批准结果。
+      // 同时关闭旧版页面已有的展示开关，无需强制刷新仍在编辑其他项目的标签页。
+      ...(item.kind === 'bootstrap' && item.status === 'approved' && item.createdProject
+        && !stateService.getProject(item.createdProject.id) ? { receiptArchived: true, creationReceiptEnabled: false } : {}),
       ...(item.kind !== 'bootstrap' ? { projectName: stateService.getProject(item.projectId)?.name } : {}),
     }));
     res.json({ requests: list, pendingCount: list.filter((r) => r.status === 'pending').length });
@@ -365,6 +401,7 @@ export function createAccessRequestsRouter(deps: AccessRequestsRouterDeps): Rout
         access: { canCreateProjects: true, projects: [] },
         oneTime: true,
         creationTarget: target,
+        expiresAt: new Date(now.getTime() + 300_000).toISOString(),
         createdAt: now.toISOString(),
         createdBy: decidedBy === 'cookie' || decidedBy === 'operator' ? undefined : decidedBy,
       };

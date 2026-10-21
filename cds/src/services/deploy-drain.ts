@@ -12,9 +12,8 @@
  * 整个 CDS 进不去。补发是**事后补偿**，会把那个旧事故一起放回来。
  *
  * 所以走**事前避免**：重启前先等在途部署跑到终态。部署通常几分钟内结束，等它
- * 落地再重启，既不丢 run 也不需要任何重试。等待有上限（超时就照常重启并如实
- * 记录，绝不让一个卡住的部署把自更新永久堵死——自更新往往正是去修那个卡住的
- * bug 的），可经 `CDS_SELFUPDATE_DRAIN_TIMEOUT_MS` 调整，设 0 关闭。
+ * 落地再重启，既不丢 run 也不需要任何重试。等待有上限，超时取消本次更新与重启，绝不打断其他项目。
+ * 可经 `CDS_SELFUPDATE_DRAIN_TIMEOUT_MS` 调整；0 表示忙时立即取消，不能跳过保护。
  *
  * 判定做成纯函数，便于把「什么算在途」「什么时候该放弃等待」写成回归测试。
  *
@@ -127,15 +126,33 @@ export function isRunAlive(run: DrainableRun, nowMs: number): boolean {
   return nowMs - beat <= DRAIN_STALE_HEARTBEAT_MS;
 }
 
-/** 当前仍值得等待的 run（在途且心跳新鲜）。 */
-export function pendingRunsToDrain(runs: readonly DrainableRun[], nowMs: number,
-  isExecutionWaiting?: (runId: string, nowMs: number) => boolean): DrainableRun[] {
-  return runs.filter((run) => {
-    if (!isRunInFlight(run)) return false;
-    if (isRunAlive(run, nowMs)) return true;
-    if (run.kind === 'release') return false;
-    try { return isExecutionWaiting?.(run.id, nowMs) === true; } catch { return false; }
-  });
+/** 所有尚未终结的 run；过期心跳由所属执行器处理，不能作为重启许可。 */
+export function pendingRunsToDrain(runs: readonly DrainableRun[], nowMs: number): DrainableRun[] {
+  // A missing heartbeat does not prove an operation is safe to interrupt.
+  // Only its owner/reconciler may terminate it; self-update must fail closed.
+  void nowMs;
+  return runs.filter(isRunInFlight);
+}
+
+export const DEFAULT_SELF_UPDATE_DRAIN_TIMEOUT_MS = 5 * 60_000;
+
+export function resolveSelfUpdateDrainTimeoutMs(body: unknown, env = process.env): number {
+  const request = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  for (const value of [request.drainTimeoutMs, request.restartDrainTimeoutMs,
+    env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS, env.CDS_RESTART_DRAIN_TIMEOUT_MS]) {
+    if (value === undefined || value === null || value === '') continue;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return DEFAULT_SELF_UPDATE_DRAIN_TIMEOUT_MS;
+}
+
+export class SelfUpdateRestartBlockedError extends Error {
+  readonly code = 'self_update_restart_cancelled';
+  constructor(readonly remaining: string[], readonly waitedMs: number) {
+    super(`等待其他项目操作结束超时，仍有 ${remaining.length} 个在途操作；已取消本次更新与重启。`);
+    this.name = 'SelfUpdateRestartBlockedError';
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -244,7 +261,7 @@ export function isDrainBlockedPath(method: string, pathname: string): boolean {
 }
 
 export interface DrainOutcome {
-  /** 是否等到了全部落地（false = 超时后放弃，照常重启）。 */
+  /** 是否等到了全部落地（false = 取消重启）。 */
   drained: boolean;
   /** 等待耗时（毫秒）。 */
   waitedMs: number;
@@ -261,23 +278,17 @@ export interface DrainDeps {
   timeoutMs: number;
   pollIntervalMs?: number;
   onWait?: (pending: DrainableRun[], waitedMs: number) => void;
-  isExecutionWaiting?: (runId: string, nowMs: number) => boolean;
 }
 
 /**
  * 等在途部署落地，或等到超时。
  *
- * 超时不是失败——是「等够了就走」。自更新的优先级高于任何一次分支部署：
- * 卡住的部署不该把「修 bug 的那次自更新」永久堵在门外。放弃时把仍在途的
- * run id 如实带出去，由调用方记进事件日志。
+ * 超时必须拒绝重启，带出仍在途的操作，交由调用方记录取消原因。
  */
 export async function drainInFlightDeploys(deps: DrainDeps): Promise<DrainOutcome> {
   const started = deps.now();
-  if (deps.timeoutMs <= 0) {
-    return { drained: true, waitedMs: 0, remaining: [], skipped: true };
-  }
   const poll = Math.max(200, deps.pollIntervalMs ?? 2_000);
-  let pending = pendingRunsToDrain(deps.listRuns(), deps.now(), deps.isExecutionWaiting);
+  let pending = pendingRunsToDrain(deps.listRuns(), deps.now());
   if (pending.length === 0) {
     return { drained: true, waitedMs: 0, remaining: [], skipped: true };
   }
@@ -291,6 +302,6 @@ export async function drainInFlightDeploys(deps: DrainDeps): Promise<DrainOutcom
     }
     deps.onWait?.(pending, waited);
     await deps.sleep(Math.min(poll, deps.timeoutMs - waited));
-    pending = pendingRunsToDrain(deps.listRuns(), deps.now(), deps.isExecutionWaiting);
+    pending = pendingRunsToDrain(deps.listRuns(), deps.now());
   }
 }

@@ -1,11 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { ExecOptions, IShellExecutor } from '../types.js';
+import type { BuildProfile, ExecOptions, IShellExecutor } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { StateService } from './state.js';
 import { computePreviewSlug, slugifyForPreview } from './preview-slug.js';
 import { fetchWithLockRetry } from './git-fetch-retry.js';
+import { hasDatabaseInitializationSource } from './stack-detector.js';
 import { readWorktreeDirectoryIdentity, sameWorktreeDirectoryIdentity, worktreePathActivity, WorktreePathActivity } from './worktree-path-activity.js';
 
 // 同一控制进程/规范repoRoot共用；元数据清理未知时复用现有活动围栏，不放行后继写入。
@@ -19,6 +20,17 @@ async function withRepositoryMutation<T>(repoRoot: string, operation: () => Prom
   repositoryMutations.set(key, settled);
   try { return await running; }
   finally { if (repositoryMutations.get(key) === settled) repositoryMutations.delete(key); }
+}
+
+/** 仅应用已在镜像内且没有宿主文件依赖时，部署无需物化源码。 */
+export function deploymentNeedsSourceCheckout(profiles: readonly BuildProfile[]): boolean {
+  return profiles.length === 0 || profiles.some(p => !p.prebuiltImage
+    || !!p.managedBuild || !!p.localArtifact || p.cacheMounts?.some(m => m.kind !== 'volume'));
+}
+
+export function hasDeploymentSource(value: object): value is { sourcePath: string; afterFull: string } {
+  const source = value as {sourcePath?: unknown; afterFull?: unknown};
+  return typeof source.sourcePath === 'string' && typeof source.afterFull === 'string';
 }
 
 /**
@@ -279,9 +291,61 @@ export class WorktreeService {
     branch: string,
     maxAttempts = 3,
     repoRoot = cwd,
+    control?: { shell: IShellExecutor; resolveEnv: (provider: () => Promise<ExecOptions['env'] | undefined>) => Promise<ExecOptions['env'] | undefined> },
   ): Promise<Awaited<ReturnType<IShellExecutor['exec']>>> {
-    const env = await this.gitEnvProvider?.(cwd);
-    return withRepositoryMutation(repoRoot, () => fetchWithLockRetry(this.shell, cwd, branch, { maxAttempts, env }));
+    const provider = async () => this.gitEnvProvider?.(cwd);
+    const env = control ? await control.resolveEnv(provider) : await provider();
+    return withRepositoryMutation(repoRoot, () => fetchWithLockRetry(control?.shell ?? this.shell, cwd, branch, { maxAttempts, env }));
+  }
+
+  /** 只准备原 origin 的完整对象；调用者仍须独立证明构建输入等价。 */
+  async ensureCommitAvailable(repoRoot: string, fullSha: string, assertCurrent: () => void,
+    remainingMs: () => number): Promise<string> {
+    if (!repoRoot || !/^[0-9a-f]{40}$/i.test(fullSha) || typeof assertCurrent !== 'function'
+      || typeof remainingMs !== 'function') throw new Error('提交对象准备需要明确仓库、完整提交与有效资格');
+    assertCurrent();
+    if (!this.shell.execOwnedOperation) throw new Error('提交对象准备的归属执行能力不可用');
+    const initial = remainingMs();
+    if (!Number.isFinite(initial) || initial <= 0) throw new Error('提交对象准备已超时');
+    const deadline = performance.now() + initial;
+    const check = () => {
+      assertCurrent();
+      const timeout = Math.floor(Math.min(remainingMs(), deadline - performance.now()));
+      if (!Number.isFinite(timeout) || timeout <= 0) throw new Error('提交对象准备已超时');
+      return timeout;
+    };
+    const qualified: IShellExecutor = { exec: async (command, options) => {
+      const timeout = check();
+      let cleanupUnknown = false;
+      try { return await this.shell.execOwnedOperation!(command, { ...options, timeout,
+        beforeStart: () => { options?.beforeStart?.(); check(); } });
+      } catch (error) {
+        // 未知清理须先进入原mutation围栏，不能被失效资格覆盖。
+        cleanupUnknown = (error as { code?: string } | null)?.code === 'cleanup';
+        throw error;
+      } finally { if (!cleanupUnknown) check(); }
+    } };
+    const withinBudget = async <T>(operation: () => Promise<T>): Promise<T> => {
+      const timeout = check(); let timer: ReturnType<typeof setTimeout> | undefined;
+      try { return await Promise.race([operation(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('提交对象准备已超时')), timeout);
+      })]);
+      } finally { clearTimeout(timer); check(); }
+    };
+    const resolveEnv = async (provider: () => Promise<ExecOptions['env'] | undefined>) => {
+      try { return await withinBudget(provider); }
+      catch { check(); throw new Error('提交对象认证暂不可用'); }
+    };
+    const sha = fullSha.toLowerCase();
+    const resolve = () => qualified.exec(`git rev-parse --verify '${sha}^{commit}'`, { cwd: repoRoot });
+    let resolved = await resolve();
+    if (resolved.exitCode !== 0) {
+      const fetched = await withinBudget(() => this.fetchWithLockRetry(repoRoot, sha, 1, repoRoot, { shell: qualified, resolveEnv }));
+      if (fetched.exitCode === 0) resolved = await resolve();
+    }
+    check();
+    if (resolved.exitCode !== 0 || resolved.stdout.trim().toLowerCase() !== sha) throw new Error('目标提交不可用，请确认完整提交及仓库访问权限');
+    return sha;
   }
 
   async create(repoRoot: string, branch: string, targetDir: string): Promise<void> {
@@ -515,12 +579,25 @@ export class WorktreeService {
     return path.join(path.dirname(targetDir), '.deployment-sources', path.basename(targetDir));
   }
 
-  /** 准备本次部署专用的源码目录，不 reset 已运行容器可能挂载的旧目录。 */
-  async prepareDeploymentSource(repoRoot: string, branch: string, targetDir: string, commitSha?: string,
-    recovery: DeploymentSourceRecoveryPolicy = { kind: 'existing-only' }): Promise<{
-    head: string; before: string; after: string; afterFull: string; updated: boolean; sourcePath: string;
-  }> {
-    return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)], async () => {
+  /** Resolve the target while preserving managed-worktree recovery and repository ownership. */
+  async resolveDeploymentCommit(repoRoot: string, branch: string, targetDir: string, commitSha?: string,
+    recovery: DeploymentSourceRecoveryPolicy = { kind: 'existing-only' }) {
+    return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)],
+      () => this.resolveDeploymentTarget(repoRoot, branch, targetDir, commitSha, recovery), true);
+  }
+
+  /** A failed/partial tree read retains the exact checkout instead of scanning mutable host source. */
+  async needsDatabaseInitializationSource(targetDir: string, commitSha: string, workDirs: readonly string[]): Promise<boolean> {
+    if (!/^[0-9a-f]{40}$/i.test(commitSha)) throw new Error('数据库初始化必须绑定完整提交');
+    try {
+      const tree = await this.shell.exec(`git ls-tree -r -z --name-only ${commitSha}`, { cwd: targetDir, timeout: 30_000 });
+      if (tree.exitCode !== 0 || (tree.stdout && !tree.stdout.endsWith('\0'))) return true;
+      return hasDatabaseInitializationSource(tree.stdout.split('\0').filter(Boolean), workDirs);
+    } catch { return true; }
+  }
+
+  private async resolveDeploymentTarget(repoRoot: string, branch: string, targetDir: string, commitSha: string | undefined,
+    recovery: DeploymentSourceRecoveryPolicy) {
       if (commitSha !== undefined && !/^[0-9a-f]{7,40}$/i.test(commitSha)) throw new Error('目标提交必须是有效的 Git SHA');
       const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
       // 分支格式只依赖 Git 语法，不应依赖可能被 LRU 回收的分支工作树。
@@ -541,23 +618,34 @@ export class WorktreeService {
       }
       const sha = resolved.stdout.trim().toLowerCase();
       if (resolved.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('目标提交不可用，请确认完整提交及仓库访问权限');
+      const log = await this.shell.exec(`git log --oneline -1 ${quote(sha)}`, { cwd: targetDir });
+      return { head: log.stdout.trim() || sha, before: before.stdout.trim(), after: sha.slice(0, 7),
+        afterFull: sha, updated: before.stdout.trim().toLowerCase() !== sha };
+  }
+
+  /** 准备本次部署专用的源码目录，不 reset 已运行容器可能挂载的旧目录。 */
+  async prepareDeploymentSource(repoRoot: string, branch: string, targetDir: string, commitSha?: string,
+    recovery: DeploymentSourceRecoveryPolicy = { kind: 'existing-only' }): Promise<{
+    head: string; before: string; after: string; afterFull: string; updated: boolean; sourcePath: string;
+  }> {
+    return worktreePathActivity.run([targetDir, WorktreeService.deploymentSourceRootFor(targetDir)], async () => {
+      const target = await this.resolveDeploymentTarget(repoRoot, branch, targetDir, commitSha, recovery);
+      const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
       const sourceRoot = WorktreeService.deploymentSourceRootFor(targetDir);
       fs.mkdirSync(sourceRoot, { recursive: true, mode: 0o700 });
       const sourcePath = path.join(sourceRoot, randomUUID());
-      const added = await withRepositoryMutation(repoRoot, () => this.shell.exec(`git worktree add --detach ${quote(sourcePath)} ${quote(sha)}`, { cwd: targetDir }));
+      const added = await withRepositoryMutation(repoRoot, () => this.shell.exec(`git worktree add --detach ${quote(sourcePath)} ${quote(target.afterFull)}`, { cwd: targetDir }));
       if (added.exitCode !== 0) {
         await fs.promises.rm(sourcePath, { recursive: true, force: true });
         throw new Error(`部署源码目录准备失败:\n${combinedOutput(added)}`);
       }
       const actual = await this.deploymentWorktreeHead(sourcePath);
-      if (actual.exitCode !== 0 || actual.stdout.trim().toLowerCase() !== sha) {
+      if (actual.exitCode !== 0 || actual.stdout.trim().toLowerCase() !== target.afterFull) {
         await withRepositoryMutation(repoRoot, () => this.shell.exec(`git worktree remove --force ${quote(sourcePath)}`, { cwd: targetDir }));
         await fs.promises.rm(sourcePath, { recursive: true, force: true });
         throw new Error('部署源码目录未匹配目标提交，已拒绝执行');
       }
-      const log = await this.shell.exec(`git log --oneline -1 ${quote(sha)}`, { cwd: targetDir });
-      return { head: log.stdout.trim() || sha, before: before.stdout.trim(), after: sha.slice(0, 7),
-        afterFull: sha, updated: before.stdout.trim().toLowerCase() !== sha, sourcePath };
+      return { ...target, sourcePath };
     }, true);
   }
 

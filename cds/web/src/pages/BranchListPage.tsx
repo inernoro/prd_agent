@@ -1,3 +1,4 @@
+import { projectUnavailable } from '../lib/project-availability.js';
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
@@ -36,7 +37,6 @@ import {
   X,
   Layers,
   XCircle,
-  Zap,
   FolderInput,
   Pin,
   Users,
@@ -66,6 +66,7 @@ import { BranchGroupSuggestions, EMPTY_SUGGESTION_DRAFT, type BranchGroupSuggest
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
+import { PrebuiltRuntimeIcon } from '@/components/branch/PrebuiltRuntimeIcon';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
 
@@ -504,6 +505,7 @@ interface FocusBranchEventDetail {
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
+  | { status: 'unavailable'; message: string }
   | {
       status: 'ok';
       project: ProjectSummary;
@@ -1967,6 +1969,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
         apiRequest<BranchesResponse>(`/api/branches?project=${encodeURIComponent(projectId)}&live=false`),
       ]);
+      const unavailable = projectResult.status === 'rejected' ? projectUnavailable(projectResult.reason) : null;
+      if (unavailable) {
+        setState({ status: 'unavailable', message: unavailable });
+        return;
+      }
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
           // 边缘 / CDN 抖动,静默保留缓存
@@ -2072,6 +2079,11 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
         canManageConsole ? apiRequest<{ services: InfraServiceSummary[] }>(infraUrl) : Promise.resolve({ services: [] }),
         apiRequest<{ profiles: BuildProfileSummary[] }>(profilesUrl),
       ]);
+      const unavailable = projectResult.status === 'rejected' ? projectUnavailable(projectResult.reason) : null;
+      if (unavailable) {
+        setState({ status: 'unavailable', message: unavailable });
+        return;
+      }
       if (branchesResult.status === 'rejected') {
         if (branchesResult.reason instanceof ApiError && branchesResult.reason.transient) {
           return;
@@ -2083,6 +2095,10 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             message: `分支列表刷新失败，已保留上次可用内容。${message}`,
           }).state
           : { status: 'error', message });
+        return;
+      }
+      if (projectResult.status === 'rejected' && branchesResult.value.branches.length === 0) {
+        setState({ status: 'error', message: `项目读取失败，请刷新重试。${readableError(projectResult.reason)}` });
         return;
       }
       const branchesRes = branchesResult.value;
@@ -3740,14 +3756,14 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
   useEffect(() => {
     if (resourceOpenQueryConsumedRef.current || state.status !== 'ok') return;
     const request = resourceOpenQueryRef.current;
-    if (!request.branchId || !request.resourceId) return;
+    if (!request.branchId || (!request.resourceId && new URLSearchParams(window.location.search).get('configureAddress') !== '1')) return;
     const branch = state.branches.find((item) => item.id === request.branchId);
     if (!branch) return;
     resourceOpenQueryConsumedRef.current = true;
-    setDetailDrawerResourceFocus({
+    setDetailDrawerResourceFocus(request.resourceId ? {
       resourceId: request.resourceId,
       detailTab: request.detailTab,
-    });
+    } : null);
     setDetailDrawerBranchId(branch.id);
     const params = new URLSearchParams(window.location.search);
     params.delete('openBranch');
@@ -4151,6 +4167,15 @@ function ProjectBranchList({ projectId }: { projectId: string }): JSX.Element {
             {/* 骨架屏镜像真实分支卡网格(cds-branch-card-grid + 固定 15.25rem 卡形状),
                 加载完成时无缝切到真数据;不再用通用的几行横条骨架。 */}
             <BranchListSkeleton />
+          </div>
+        ) : null}
+        {state.status === 'unavailable' ? (
+          <div className="mt-6 rounded-lg border border-border bg-card p-6" role="status">
+            <h2 className="text-lg font-semibold">项目不可用</h2>
+            <p className="mt-2 text-sm text-muted-foreground">{state.message}</p>
+            <Button asChild variant="outline" size="sm" className="mt-4">
+              <Link to="/project-list">返回项目列表</Link>
+            </Button>
           </div>
         ) : null}
         {state.status === 'error' ? (
@@ -5096,12 +5121,12 @@ function BranchSearchDropdown({
             value={configSourceBranchId ?? ''}
             onChange={(event) => onChangeConfigSource(event.target.value || null)}
             className="min-w-0 flex-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-1 text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-[hsl(var(--ring))]"
-            title="新建分支时从来源分支快照拷贝分支级配置;默认走项目模板(不派生)"
+            title="默认使用项目模板。派生会复制环境与额外服务，但保留项目极速默认；源码模式例外需创建后手动设置。额外服务仍可能使分支显示部分极速。"
           >
             <option value="">项目模板(默认,不派生)</option>
             {sourceCandidates.map((branch) => (
               <option key={branch.id} value={branch.id}>
-                派生自 {branch.branch}
+                派生自 {branch.branch}（保留项目极速默认）
               </option>
             ))}
           </select>
@@ -6669,10 +6694,12 @@ const BranchCard = memo(function BranchCard({
       <header className="flex min-w-0 items-start justify-between gap-3 px-5 pt-5">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
-            {runtime?.prebuilt ? (
-              <Zap
-                className={`h-4 w-4 ${runtimeIconClass} ${isInterim ? 'animate-pulse' : ''}`}
-                aria-label={runtime.label}
+            {runtime && (runtime.prebuilt || branch.deployRuntime?.prebuiltCoverage === 'partial') ? (
+              <PrebuiltRuntimeIcon
+                partial={branch.deployRuntime?.prebuiltCoverage === 'partial'}
+                pending={runtime.kind === 'pending'}
+                label={runtime.label}
+                className={isInterim ? 'animate-pulse' : ''}
               />
             ) : runtime ? (
               <Rocket
@@ -7883,7 +7910,7 @@ function BranchMoreMenu({
 /**
  * 整条分支是不是极速版（2026-10-08）：所有服务都走预构建镜像才算。
  * deployRuntime.prebuilt 只表示「任一服务」，9 个服务里 1 个极速、8 个在宿主编译时它也是 true，
- * 拿它亮闪电就是把混合分支说成极速版。旧后端没有 prebuiltCoverage 时沿用 prebuilt。
+ * 全部与部分分别用黄、蓝闪电；待生效不亮完成态闪电。旧后端沿用 prebuilt。
  */
 function isFullyPrebuilt(runtime: BranchSummary['deployRuntime']): boolean {
   if (!runtime) return false;
@@ -7893,8 +7920,7 @@ function isFullyPrebuilt(runtime: BranchSummary['deployRuntime']): boolean {
 
 function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' | 'pending'; label: string; title: string; className: string; prebuilt?: boolean } | null {
   const runtime = branch.deployRuntime;
-  // 只有一部分服务走极速版：如实显示「混合 · 极速 x/y」，不亮闪电（2026-10-08 用户指出：
-  // 「左上角显示了闪电，意味着这必须是极速版，不然是既设置错了，又显示错了」）。
+  // 全部服务仍计入分母；辅助服务未标记预构建，不等于正在宿主编译。
   if (runtime?.prebuiltCoverage === 'partial') {
     const fast = runtime.prebuiltProfileIds?.length ?? 0;
     const total = runtime.activeProfiles;
@@ -7902,14 +7928,14 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
     return {
       kind: runtime.pendingPublish ? 'pending' : 'mixed',
       label: runtime.pendingPublish ? `混合 · ${ratio} · 待生效` : `混合 · ${ratio}`,
-      title: `${total} 个服务里只有 ${fast} 个走极速版（CI 预构建），其余仍在 CDS 宿主上编译。${runtime.title ? ` ${runtime.title}` : ''}`,
+      title: `${total} 个服务里 ${fast} 个配置为极速版（CI 预构建）；其余可能是依赖镜像、辅助服务或源码模式，不能据此判定正在宿主编译。${runtime.title ? ` ${runtime.title}` : ''}`,
       className: runtime.pendingPublish
         ? 'border-warn/40 bg-warn/10 text-warn'
-        : 'border-violet-400/35 bg-violet-400/10 text-violet-700 dark:text-violet-300',
+        : 'border-express-partial/35 bg-express-partial/10 text-express-partial',
     };
   }
   // 2026-06-23 极速版（CI 预构建）：分类上属 release,但要从「发布版」里细分出来,
-  // 给独立标签「极速版」+ Zap 闪电图标 + 青色,让用户一眼区分「拉 CI 镜像」vs「源码编译发布」。
+  // 全量已生效用黄闪电；部分用蓝闪电，待生效显示时钟。
   if (runtime && isFullyPrebuilt(runtime)) {
     // 配置=极速版,但容器还没真正以极速版跑起来（force-align 后未重部署 / 重建中 / 还停着）
     // → 「极速版·待生效」橙色,别误显示绿/青的「已在跑」（Codex review）。
@@ -7927,7 +7953,7 @@ function branchRuntimeBadge(branch: BranchSummary): { kind: 'release' | 'mixed' 
       prebuilt: true,
       label: '极速版',
       title: runtime.title || '极速版（CI 预构建）：拉取 GitHub Actions 编译的镜像运行,CDS 不本机编译',
-      className: 'border-info/35 bg-info/10 text-info',
+      className: 'border-express-full/35 bg-express-full/10 text-express-full',
     };
   }
   if (runtime?.kind === 'release') {

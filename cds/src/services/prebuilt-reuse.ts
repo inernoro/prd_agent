@@ -20,7 +20,7 @@
  */
 
 import type { IShellExecutor } from '../types.js';
-import { createReleaseGitRunner } from './release-git-reader.js';
+import { createReleaseGitRunner, READ_TIMEOUT_MS } from './release-git-reader.js';
 
 /** CDS/CI 给部署镜像打的 tag 形状：`sha-<40 位十六进制>`。 */
 const SHA_TAG_PATTERN = /:sha-([0-9a-f]{40})$/;
@@ -64,15 +64,18 @@ export function normalizeFallbackImages(fallback: string | string[] | undefined)
 }
 
 /** 只读可信项目仓库，不创建worktree、不fetch；缺提交或读取能力时不能证明等价。 */
-export function componentInputComparator(shell: IShellExecutor, repoRoot: string, assertCurrent: () => void = () => {}) {
+export function componentInputComparator(shell: IShellExecutor, repoRoot: string, assertCurrent: () => void = () => {}, remainingMs?: () => number) {
   const read = createReleaseGitRunner(shell, assertCurrent);
   return async (fromSha: string, toSha: string, scope: readonly string[]): Promise<boolean> => {
     const paths = normalizeBuildScope(scope);
     if (!repoRoot || !paths || !normalizeImageRevision(fromSha) || !normalizeImageRevision(toSha)) return false;
     assertCurrent();
-    const unchanged = await Promise.resolve().then(() => read(['-C', repoRoot, 'diff', '--no-ext-diff', '--quiet', fromSha, toSha, '--', ...paths]))
+    const unchanged = await Promise.resolve().then(() => {
+      if (remainingMs && remainingMs() < READ_TIMEOUT_MS) throw new Error('构建输入核验剩余时间不足');
+      return read(['-C', repoRoot, 'diff', '--no-ext-diff', '--quiet', fromSha, toSha, '--', ...paths]);
+    })
       .then(() => true, () => false);
-    assertCurrent(); return unchanged;
+    assertCurrent(); remainingMs?.(); return unchanged;
   };
 }
 

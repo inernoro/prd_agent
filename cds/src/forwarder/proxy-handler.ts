@@ -764,6 +764,7 @@ export class ProxyHandler {
     }
     const upstreamHost = route.upstreamHost ?? '127.0.0.1';
     const upstreamPort = route.upstreamPort;
+    this.previewActivity.record(route.branchId, req.headers);
 
     // 透传 headers + 合并 passthrough 注入(本地变量,不 mutate req)
     const fwdHeaders: Record<string, string | string[]> = {};
@@ -864,6 +865,11 @@ export class ProxyHandler {
       }
       upstreamReq.end();
     });
+  }
+
+  /** 调度只读有限收据，不构造随公网 Host 基数增长的完整统计。 */
+  getPreviewActivity(): PreviewActivitySnapshot {
+    return this.previewActivity.snapshot();
   }
 
   getStats(): ProxyStats & { previewActivity: PreviewActivitySnapshot } {

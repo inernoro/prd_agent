@@ -51,6 +51,21 @@ describe('部署内存预约生命周期', () => {
     } finally { abort.abort(); (await next)?.(); deploymentPhaseBudget.releaseMemory('new-runtime'); }
   });
 
+  it('候选部署把聚合状态改成building时，不重复预约已发布旧运行，仍保留未就绪候选额度', () => {
+    const entry = branch(); entry.services.api.status = 'building';
+    entry.services.api.servingRuntime = { ...runtime };
+    entry.services.api.pendingRuntime = { ...runtime, containerName: 'new-candidate', containerId: 'b'.repeat(64) };
+    restoreDeploymentMemoryReservations([entry], () => [profile]);
+    expect(deploymentPhaseBudget.memorySnapshot().map(item => item.key)).toEqual(['new-candidate']);
+  });
+
+  it('发布身份没有确认CID时仍保留旧运行的未知责任', () => {
+    const entry = branch(); entry.services.api.status = 'building';
+    entry.services.api.servingRuntime = { ...runtime, containerId: undefined };
+    restoreDeploymentMemoryReservations([entry], () => [profile]);
+    expect(deploymentPhaseBudget.memorySnapshot().map(item => item.key)).toEqual([runtime.containerName]);
+  });
+
   it('按不可变ID停止成功后释放原容器名称预约，不删除容器', async () => {
     deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 512, owner);
     mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -136,6 +151,52 @@ describe('部署内存预约生命周期', () => {
     const result = await service.reconcileDeploymentMemoryReservations([entry], { creationSettled: () => true });
     expect(result.released).toEqual([]);
     expect(deploymentPhaseBudget.memorySnapshot().map(item => item.key)).toEqual([runtime.containerName]);
+  });
+
+  it.each(['absent', 'exited', 'running', 'unavailable', 'foreign', 'wrong-id', 'created'] as const)(
+    '服务引用已被替换时，以预约保存的CID核验%s，不把其他项目或未知运行释放', async state => {
+      const entry = branch();
+      restoreDeploymentMemoryReservations([entry], () => [profile]);
+      entry.services.api = { ...runtime, containerName: 'replacement', containerId: 'b'.repeat(64), status: 'running' };
+      mock.addResponsePattern(/docker inspect/, () => state === 'absent' ? absent()
+        : state === 'unavailable' ? { stdout: '', stderr: 'daemon unavailable', exitCode: 1 }
+          : state === 'foreign' ? inspection(false, { project: 'foreign' })
+            : state === 'wrong-id' ? inspection(false, {}, 'c'.repeat(64))
+              : state === 'created' ? { ...inspection(false), stdout: JSON.stringify({ ...JSON.parse(inspection(false).stdout), status: 'created' }) }
+                : inspection(state === 'running'));
+      const result = await service.reconcileDeploymentMemoryReservations([entry], {
+        recoveredOnly: true, creationSettled: (_owner, item) => Boolean(item.containerId),
+      });
+      expect(mock.commands).toHaveLength(1);
+      expect(mock.commands[0]).toContain(runtime.containerId!);
+      expect(mock.commands[0]).not.toContain(entry.services.api.containerId!);
+      expect(result.released).toHaveLength(state === 'absent' || state === 'exited' ? 1 : 0);
+      expect(entry.services.api.status).toBe('running');
+      expect(mock.commands.every(command => command.startsWith('docker inspect'))).toBe(true);
+    });
+
+  it('服务引用丢失且预约没有确认CID时，不能凭一次名称缺席释放未知创建', async () => {
+    const entry = branch(); entry.services.api.containerId = undefined;
+    restoreDeploymentMemoryReservations([entry], () => [profile]);
+    entry.services.api = { ...runtime, containerName: 'replacement', status: 'running' };
+    mock.addResponsePattern(/docker inspect/, absent);
+    const result = await service.reconcileDeploymentMemoryReservations([entry], { recoveredOnly: true, creationSettled: () => true });
+    expect(result.released).toEqual([]);
+    expect(mock.commands).toEqual([]);
+  });
+
+  it('旧引用被替换后的迟到核验不能删除同名称新代次预约', async () => {
+    const entry = branch(); restoreDeploymentMemoryReservations([entry], () => [profile]);
+    entry.services.api = { ...runtime, containerName: 'replacement', status: 'running' };
+    let finish!: (value: ExecResult) => void;
+    const response = new Promise<ExecResult>(resolve => { finish = resolve; });
+    const delayed = new ContainerService({ exec: () => response }, config);
+    const checking = delayed.reconcileDeploymentMemoryReservations([entry], { recoveredOnly: true, creationSettled: () => true });
+    await Promise.resolve();
+    deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 768, { ...owner, operationId: 'op-new', operationGeneration: 2 });
+    finish(absent()); await checking;
+    expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ memoryMB: 768,
+      owner: expect.objectContaining({ operationId: 'op-new' }) })]);
   });
 
   it('一次冷盘点最多核64项，其余保持预约不拖长启动', async () => {

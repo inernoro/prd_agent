@@ -60,7 +60,12 @@ export class PreviewActivityCollector {
     const previous = branch.markers.find(item => item.fingerprint === fingerprint);
     if (previous) previous.at = Math.max(previous.at, at);
     else if (branch.markers.length < MAX_MARKERS_PER_BRANCH) branch.markers.push({ fingerprint, at });
-    else branch.markerOverflowAt = at;
+    else {
+      // 原 master 只排除一个本代指纹；最近两个不同指纹已保住最大非探针时间。
+      // 原容量八项保留最近观察，不能因公开 marker 更换制造全局覆盖丢失。
+      const oldest = branch.markers.reduce((left, right) => right.at < left.at ? right : left);
+      if (at >= oldest.at) branch.markers[branch.markers.indexOf(oldest)] = { fingerprint, at };
+    }
   }
 
   /** 只由可信路由表更新调用；读取失败、未知路由或时间到期都不是退出证明。 */
@@ -84,14 +89,14 @@ export function isPrivateForwarderDiagnostic(req: http.IncomingMessage): boolean
     && /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i.test(req.headers.host ?? '');
 }
 
-/** 复用原 /__forwarder/stats 回环 GET；固定目标、总时限和体积，不阻塞数据面。 */
+/** 原回环 GET 只请求有限活动投影；旧 forwarder 忽略 query 时仍受相同体积和时限约束。 */
 export function readForwarderPreviewActivity(port: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       reject(new Error('预览活动诊断端口无效'));
       return;
     }
-    const req = http.get({ host: '127.0.0.1', port, path: '/__forwarder/stats' }, res => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/__forwarder/stats?view=preview-activity' }, res => {
       let bytes = 0;
       const chunks: Buffer[] = [];
       res.on('data', (chunk: Buffer) => {

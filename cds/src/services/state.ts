@@ -529,6 +529,7 @@ export class StateService {
       // Migrate: tag every pre-P4 branch/profile/infra/routing entry with
       // the legacy default projectId. See migrateProjectScoping().
       this.migrateProjectScoping();
+      this.pruneOrphanedPreviewAddresses();
       let identityBaselineAdded = false;
       for (const project of this.state.projects) {
         if (!project.identityHistory?.length) {
@@ -1287,6 +1288,10 @@ export class StateService {
     // legacy project 的真实 id（不是硬编码 'default'）—— 避免历史 callers
     // 没传 / 传空时产生孤儿引用，跟 migrateProjectScoping 一致语义。
     if (!entry.projectId) entry.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
+    const project = this.getProject(entry.projectId);
+    if (project && !project.mirror && !Object.values(this.state.branches).some(branch => branch.projectId === entry.projectId && branch.branch === entry.branch)) {
+      this.releasePreviewAddress(project, entry.branch, entry.id, '重新创建分支前释放遗留地址配置');
+    }
     this.state.branches[entry.id] = entry;
   }
 
@@ -1441,6 +1446,42 @@ export class StateService {
     return conflicts;
   }
 
+  private releasePreviewAddress(project: Project, ref: string, branchId: string, result: string): void {
+    if (!project.previewAddresses || !Object.hasOwn(project.previewAddresses, ref)) return;
+    const before = project.previewAddresses[ref];
+    const addresses = { ...project.previewAddresses };
+    delete addresses[ref];
+    // Replace the project rather than mutating a pending save's snapshot. A failed
+    // concurrent save must not roll this release back and resurrect the old claim.
+    this.updateProject(project.id, {
+      previewAddresses: addresses,
+      previewAddressAudit: [...(project.previewAddressAudit || []), {
+        id: crypto.randomUUID(),
+        at: new Date().toISOString(),
+        actor: 'system:branch-lifecycle',
+        branchId,
+        action: 'release',
+        scope: 'branch',
+        result,
+        before: { gitBranch: ref, branchAddress: before },
+        after: { branchAddress: null },
+      }],
+    }, { actor: 'system:branch-lifecycle' });
+  }
+
+  /** Historical audit may outlive a branch; active address claims must not. */
+  private pruneOrphanedPreviewAddresses(): void {
+    for (const project of this.state.projects || []) {
+      const activeRefs = new Set(Object.values(this.state.branches)
+        .filter(branch => branch.projectId === project.id).map(branch => branch.branch));
+      for (const ref of Object.keys(project.previewAddresses || {})) {
+        if (!activeRefs.has(ref)) {
+          this.releasePreviewAddress(this.getProject(project.id)!, ref, '', '已删除分支的遗留地址配置已释放');
+        }
+      }
+    }
+  }
+
   /**
    * 删分支，并级联清掉**绑在这条分支上**的自定义监控。
    *
@@ -1459,6 +1500,9 @@ export class StateService {
     if (!this.state.branches[id]) {
       throw new Error(`分支 "${id}" 不存在`);
     }
+    const branch = this.state.branches[id];
+    const project = this.getProject(branch.projectId);
+    if (project) this.releasePreviewAddress(project, branch.branch, id, '分支已删除，地址配置已释放');
     delete this.state.branches[id];
     if (this.state.defaultBranch === id) {
       this.state.defaultBranch = null;
@@ -1477,6 +1521,7 @@ export class StateService {
         }
       }
     }
+    this.save();
     return orphaned;
   }
 
@@ -2083,6 +2128,25 @@ export class StateService {
     return [...(this.state.pendingContainerTeardowns || [])];
   }
 
+  /** 明确删除意图的网络清理台账；不能靠扫描名字猜项目归属。 */
+  addNetworkTeardowns(networks: Array<{ name: string; projectId: string }>): void {
+    const list = this.state.pendingNetworkTeardowns ||= [];
+    for (const item of networks) {
+      if (!list.some(n => n.name === item.name && n.projectId === item.projectId)) list.push(item);
+    }
+    this.save();
+  }
+
+  getNetworkTeardowns(): Array<{ name: string; projectId: string }> {
+    return [...(this.state.pendingNetworkTeardowns || [])];
+  }
+
+  removeNetworkTeardown(name: string, projectId: string): void {
+    this.state.pendingNetworkTeardowns = (this.state.pendingNetworkTeardowns || [])
+      .filter(n => n.name !== name || n.projectId !== projectId);
+    this.save();
+  }
+
   /**
    * 已删项目的 worktree 桶墓碑（Codex PR #1275 三轮 P2）。
    *
@@ -2296,6 +2360,8 @@ export class StateService {
         Project,
         | 'name'
         | 'aliasName'
+        | 'previewAddresses'
+        | 'previewAddressAudit'
         | 'slug'
         | 'description'
         | 'deliveryMode'
@@ -3357,6 +3423,26 @@ export class StateService {
     this.save();
   }
 
+  /** 申请者离线后仍关闭过期审批与未领取的一次授权，清除待交付明文。 */
+  expireBootstrapAccessRequests(now = Date.now()): void {
+    let changed = false;
+    for (const item of this.state.accessRequests || []) {
+      if (item.kind !== 'bootstrap' || item.createdProject
+        || !['pending', 'approved'].includes(item.status)) continue;
+      const key = (this.state.globalAgentKeys || []).find(k => k.id === item.issuedKeyId);
+      const deadline = item.deliveredAt
+        ? Date.parse(key?.expiresAt || '') || Date.parse(item.deliveredAt) + 300_000
+        : Date.parse(item.expiresAt || '') || Date.parse(item.createdAt) + 600_000;
+      if (deadline > now && !key?.revokedAt) continue;
+      if (key && !key.revokedAt) key.revokedAt = new Date(now).toISOString();
+      item.status = 'expired';
+      item.decidedAt = new Date(now).toISOString();
+      delete item.issuedKeyPlaintext;
+      changed = true;
+    }
+    if (changed) this.save();
+  }
+
   listAccessRequests(): AccessRequest[] {
     return this.state.accessRequests || [];
   }
@@ -3458,10 +3544,11 @@ export class StateService {
    */
   findGlobalAgentKeyForAuth(plaintextKey: string): { keyId: string; access: AgentKeyAccess } | null {
     if (!plaintextKey || !plaintextKey.startsWith('cdsg_')) return null;
+    this.expireBootstrapAccessRequests();
     const hash = crypto.createHash('sha256').update(plaintextKey).digest('hex');
     const hashBuf = Buffer.from(hash, 'hex');
     for (const entry of this.state.globalAgentKeys || []) {
-      if (entry.revokedAt) continue;
+      if (entry.revokedAt || (entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now())) continue;
       try {
         const entryBuf = Buffer.from(entry.hash, 'hex');
         if (entryBuf.length !== hashBuf.length) continue;

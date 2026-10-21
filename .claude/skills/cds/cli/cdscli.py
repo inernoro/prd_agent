@@ -4161,6 +4161,7 @@ def cmd_connect(args: argparse.Namespace) -> None:
         request_path,
         body={
             "agentName": agent_name, "purpose": purpose,
+            **({"waitSeconds": max(10, int(recovery_deadline - time.monotonic()))} if new_project else {}),
             **({"requestedProject": {
                 "name": create_name or _repository_identity(git_url).rsplit("/", 1)[-1],
                 "repository": str(getattr(args, "git_url", "") or "").strip(),
@@ -4194,46 +4195,56 @@ def cmd_connect(args: argparse.Namespace) -> None:
     deadline = recovery_deadline
     last_progress_at = 0.0
     authorization_key: str | None = None
-    while time.monotonic() < deadline:
-        poll_status, poll_body, _ = _request(
-            "GET",
-            poll_path,
-            timeout=10,
-            extra_headers={"X-Poll-Token": poll_token},
-            fatal_network_errors=False,
-        )
-        if poll_status == 0:
+    try:
+        while time.monotonic() < deadline:
+            poll_status, poll_body, _ = _request(
+                "GET",
+                poll_path,
+                timeout=10,
+                extra_headers={"X-Poll-Token": poll_token},
+                fatal_network_errors=False,
+            )
+            if poll_status == 0:
+                now = time.monotonic()
+                if now - last_progress_at >= 10:
+                    remaining = max(0, int(deadline - now))
+                    print(f"网络短暂波动，继续等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
+                    last_progress_at = now
+                time.sleep(interval_seconds)
+                continue
+            if poll_status != 200 or not isinstance(poll_body, dict):
+                _restore_auth_env(previous)
+                die(f"轮询授权失败: HTTP {poll_status} {poll_body}", code=2)
+            state = str(poll_body.get("status") or "")
+            if state == "approved":
+                authorization_key = str(poll_body.get("authorizationKey") or "")
+                if not authorization_key:
+                    _restore_auth_env(previous)
+                    die("授权已批准，但凭据已被其他轮询方取走。请重新发起。", code=2)
+                break
+            if state == "rejected":
+                _restore_auth_env(previous)
+                reason = poll_body.get("rejectReason") or "用户拒绝"
+                die(f"授权未通过: {reason}", code=2)
+            if state not in ("pending", "blocked"):
+                _restore_auth_env(previous)
+                die("无法识别授权状态，未保存凭据。", code=2)
             now = time.monotonic()
             if now - last_progress_at >= 10:
                 remaining = max(0, int(deadline - now))
-                print(f"网络短暂波动，继续等待批准，剩余约 {remaining} 秒。", file=sys.stderr)
+                print((str(poll_body.get("message") or "等待管理员恢复原访问权限，同一条命令将自动继续。")
+                       if state == "blocked" else f"仍在等待批准，剩余约 {remaining} 秒。"), file=sys.stderr)
                 last_progress_at = now
             time.sleep(interval_seconds)
-            continue
-        if poll_status != 200 or not isinstance(poll_body, dict):
+    finally:
+        # 仅收回本次未领取的一次建项目授权。网络不通也有服务端截止时间兜底。
+        if new_project and not authorization_key:
+            try:
+                _request("DELETE", poll_path, timeout=10,
+                         extra_headers={"X-Poll-Token": poll_token}, fatal_network_errors=False)
+            except Exception:
+                pass
             _restore_auth_env(previous)
-            die(f"轮询授权失败: HTTP {poll_status} {poll_body}", code=2)
-        state = str(poll_body.get("status") or "")
-        if state == "approved":
-            authorization_key = str(poll_body.get("authorizationKey") or "")
-            if not authorization_key:
-                _restore_auth_env(previous)
-                die("授权已批准，但凭据已被其他轮询方取走。请重新发起。", code=2)
-            break
-        if state == "rejected":
-            _restore_auth_env(previous)
-            reason = poll_body.get("rejectReason") or "用户拒绝"
-            die(f"授权未通过: {reason}", code=2)
-        if state not in ("pending", "blocked"):
-            _restore_auth_env(previous)
-            die("无法识别授权状态，未保存凭据。", code=2)
-        now = time.monotonic()
-        if now - last_progress_at >= 10:
-            remaining = max(0, int(deadline - now))
-            print((str(poll_body.get("message") or "等待管理员恢复原访问权限，同一条命令将自动继续。")
-                   if state == "blocked" else f"仍在等待批准，剩余约 {remaining} 秒。"), file=sys.stderr)
-            last_progress_at = now
-        time.sleep(interval_seconds)
 
     if not authorization_key:
         _restore_auth_env(previous)

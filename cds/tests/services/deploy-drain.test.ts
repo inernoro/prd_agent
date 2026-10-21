@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   drainInFlightDeploys, isRunInFlight, isRunAlive, pendingRunsToDrain,
   beginSelfUpdateDrain, endSelfUpdateDrain, isSelfUpdateDraining, selfUpdateDrainBlockReason,
-  DRAIN_STALE_HEARTBEAT_MS, type DrainableRun,
+  DRAIN_STALE_HEARTBEAT_MS, resolveSelfUpdateDrainTimeoutMs, type DrainableRun,
 } from '../../src/services/deploy-drain.js';
 
 /**
@@ -46,13 +46,13 @@ describe('在途判定', () => {
     expect(isRunAlive(run('a', 'building'), T0)).toBe(true);
   });
 
-  it('pendingRunsToDrain 只留下值得等的', () => {
+  it('非终态记录都必须等待，不能按心跳猜测可中断', () => {
     const runs = [
       run('ok', 'running'),
       run('live', 'building', new Date(T0 - 5_000).toISOString()),
       run('zombie', 'building', new Date(T0 - 10 * 60_000).toISOString()),
     ];
-    expect(pendingRunsToDrain(runs, T0).map((r) => r.id)).toEqual(['live']);
+    expect(pendingRunsToDrain(runs, T0).map((r) => r.id)).toEqual(['live', 'zombie']);
   });
 });
 
@@ -102,10 +102,10 @@ describe('排空流程', () => {
     expect(out.waitedMs).toBeGreaterThanOrEqual(3_000);
   });
 
-  it('超时设为 0 = 关闭排空，行为回到旧版（立即重启）', async () => {
+  it('零等待也必须拒绝打断在途部署', async () => {
     const { deps, waits } = mkDeps([[run('a', 'building')]], 0);
     const out = await drainInFlightDeploys(deps);
-    expect(out).toMatchObject({ drained: true, skipped: true });
+    expect(out).toMatchObject({ drained: false, skipped: false, remaining: ['a'] });
     expect(waits).toHaveLength(0);
   });
 
@@ -119,32 +119,37 @@ describe('排空流程', () => {
     expect(seen[0]).toEqual(['a']);
   });
 
-  it('静默部署的合格等待从首判到每轮复核，资格消失才按原心跳收口', async () => {
+  it('静默部署从首判到每轮复核，心跳失效仍等原owner终态', async () => {
     const stale = run('waiter', 'building', new Date(T0 - 16 * 60_000).toISOString());
-    const { deps, waits } = mkDeps([[stale], [stale]]);
-    const observed: number[] = [];
-    const out = await drainInFlightDeploys({ ...deps, isExecutionWaiting: (id, now) => {
-      expect(id).toBe('waiter'); observed.push(now); return now === T0;
-    } });
-    expect(out).toMatchObject({ drained: true, skipped: false, waitedMs: 1000 });
-    expect(observed).toEqual([T0, T0 + 1000]); expect(waits).toEqual([1000]);
+    const { deps, waits } = mkDeps([[stale], [stale], [{ ...stale, status: 'running' }]]);
+    const observed: Array<{ ids: string[]; now: number }> = [];
+    const out = await drainInFlightDeploys({ ...deps,
+      onWait: pending => observed.push({ ids: pending.map(item => item.id), now: deps.now() }),
+    });
+    expect(out).toMatchObject({ drained: true, skipped: false, waitedMs: 2000 });
+    expect(observed).toEqual([{ ids: ['waiter'], now: T0 }, { ids: ['waiter'], now: T0 + 1000 }]);
+    expect(waits).toEqual([1000, 1000]);
+    expect(stale.status).toBe('building');
   });
 
-  it('持续合格等待仍受原排空上限约束，回调异常不生成等待事实', async () => {
+  it('持续未终态等待仍受原排空上限约束，资格未知不能生成重启许可', async () => {
     const stale = run('waiter', 'building', new Date(T0 - 16 * 60_000).toISOString());
     const { deps } = mkDeps([[stale]], 3000);
-    expect(await drainInFlightDeploys({ ...deps, isExecutionWaiting: () => true }))
+    expect(await drainInFlightDeploys(deps))
       .toMatchObject({ drained: false, skipped: false, waitedMs: 3000, remaining: ['waiter'] });
-    expect(pendingRunsToDrain([stale], T0, () => { throw new Error('资格未知'); })).toEqual([]);
+    expect(pendingRunsToDrain([stale], T0)).toEqual([stale]);
+    const unknown = { ...stale, heartbeatAt: 'unknown' };
+    expect(pendingRunsToDrain([unknown], T0)).toEqual([unknown]);
   });
 
-  it('deployment终态与release不能借部署等待回调复活', () => {
+  it('deployment终态不能复活，release运行中不能借部署终态放行', () => {
     const heartbeatAt = new Date(T0 - 16 * 60_000).toISOString();
-    const values = [run('done', 'running', heartbeatAt), run('failed', 'failed', heartbeatAt),
-      run('cancelled', 'cancelled', heartbeatAt), { ...run('release', 'running', heartbeatAt), kind: 'release' as const }];
-    let calls = 0;
-    expect(pendingRunsToDrain(values, T0, () => { calls++; return true; })).toEqual([]);
-    expect(calls).toBe(0);
+    const terminals = [run('done', 'running', heartbeatAt), run('failed', 'failed', heartbeatAt),
+      run('cancelled', 'cancelled', heartbeatAt)];
+    const release = { ...run('release', 'running', heartbeatAt), kind: 'release' as const };
+    expect(pendingRunsToDrain(terminals, T0)).toEqual([]);
+    expect(pendingRunsToDrain([...terminals, release], T0)).toEqual([release]);
+    expect(pendingRunsToDrain([{ ...release, status: 'success' }], T0)).toEqual([]);
   });
 });
 
@@ -178,26 +183,18 @@ describe('排空窗口闸门（第三十六轮 P1）', () => {
   });
 });
 
-describe('排空超时的环境变量解析（第三十七轮 P2）', () => {
-  // 判定与 routes/branches.ts 的 drainDeploysBeforeSelfUpdateRestart 同源：
-  // 文档明写「设 0 关闭」，而 parseInt('0') || 默认值 会把 0 吞掉换成 5 分钟。
-  const resolve = (raw: string | undefined): number => {
-    const parsed = Number.parseInt(raw ?? '', 10);
-    return Number.isFinite(parsed) ? Math.max(0, parsed) : 5 * 60_000;
-  };
-
-  it('显式 0 就是 0（关闭排空），不被默认值吞掉', () => {
-    expect(resolve('0')).toBe(0);
+describe('self-update wait limits', () => {
+  it('defaults to five minutes; explicit zero means immediate cancellation if busy', () => {
+    expect(resolveSelfUpdateDrainTimeoutMs({}, {})).toBe(300_000);
+    expect(resolveSelfUpdateDrainTimeoutMs({ drainTimeoutMs: 0 }, {})).toBe(0);
+    expect(resolveSelfUpdateDrainTimeoutMs({ drain: false }, {})).toBe(300_000);
   });
-
-  it('未设置 / 非数字才落默认值', () => {
-    expect(resolve(undefined)).toBe(5 * 60_000);
-    expect(resolve('')).toBe(5 * 60_000);
-    expect(resolve('abc')).toBe(5 * 60_000);
+  it('uses valid request limits before environment limits', () => {
+    expect(resolveSelfUpdateDrainTimeoutMs({ drainTimeoutMs: 50 }, { CDS_SELFUPDATE_DRAIN_TIMEOUT_MS: '10' })).toBe(50);
+    expect(resolveSelfUpdateDrainTimeoutMs({}, { CDS_SELFUPDATE_DRAIN_TIMEOUT_MS: '0' })).toBe(0);
+    expect(resolveSelfUpdateDrainTimeoutMs({ drainTimeoutMs: -1 }, { CDS_SELFUPDATE_DRAIN_TIMEOUT_MS: 'abc' })).toBe(300_000);
   });
-
-  it('负值按 0 处理，正常值原样生效', () => {
-    expect(resolve('-1')).toBe(0);
-    expect(resolve('90000')).toBe(90_000);
+  it('does not treat an old heartbeat as permission to interrupt a nonterminal run', () => {
+    expect(pendingRunsToDrain([run('stale', 'verifying', new Date(T0 - 3_600_000).toISOString())], T0).map(r => r.id)).toEqual(['stale']);
   });
 });

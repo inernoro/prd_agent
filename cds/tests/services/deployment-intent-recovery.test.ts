@@ -519,7 +519,9 @@ describe('已受理部署的持久输入与重启恢复', () => {
         expect(timers[1].ms).toBe(15_000); expect(rollback).not.toHaveBeenCalled();
       } else {
         expect(timers).toEqual([]); expect(rollback).toHaveBeenCalledOnce();
-        expect(releaseGate).toHaveBeenCalledOnce(); expect(restartWait).toHaveBeenLastCalledWith(null);
+        // 调度器不独立开前置部署闸；实际路由只在同票finish成功后恢复准入。
+        expect(releaseGate).not.toHaveBeenCalled();
+        expect(restartWait).toHaveBeenLastCalledWith(expect.objectContaining({ phase: 'spawning' }));
         expect(blocker.isCurrent()).toBe(true);
         expect(coordinator.getActive('b')?.operationId).toBe(blocker.operationId);
         expect(coordinator.hasWaitingOperation(run.operationId!, run.operationGeneration!)).toBe(true);
@@ -661,8 +663,8 @@ describe('已受理部署的持久输入与重启恢复', () => {
       expect(Number.isSafeInteger(child?.pid) && child!.pid! > 0).toBe(true);
       expect(await close).toBe(1); expect(childClosed).toBe(true); expect(timedOut).toBe(false);
       expect(trace.indexOf('child-close')).toBeLessThan(trace.indexOf('rollback-start'));
-      expect(trace.indexOf('git-rollback')).toBeLessThan(trace.indexOf('drain-open'));
-      expect(trace.indexOf('drain-open')).toBeLessThan(trace.indexOf('settled'));
+      expect(trace.indexOf('git-rollback')).toBeLessThan(trace.indexOf('settled'));
+      expect(trace).not.toContain('drain-open');
       expect(rollbackGit).toMatchObject({ exitCode: 128, stderr: expect.stringContaining('index.lock') });
       expect(writes).toContainEqual(expect.objectContaining({ filePath: file, purpose: 'primary', phase: 'failed', errorCode: 'EISDIR' }));
       expect(fs.readFileSync(dist, 'utf8')).toBe('old backend');

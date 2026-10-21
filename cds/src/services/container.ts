@@ -62,6 +62,8 @@ import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from 
  * config.dockerNetwork 共享网络,保持 backward compat。
  */
 export interface ProjectNetworkResolver {
+  /** 当前受管容器身份；保留的历史运行不能覆盖它的巡检结果。 */
+  getAppContainerName?(branchId: string, profileId: string): string | undefined;
   /** 返回该项目的 dockerNetwork,缺失则返回 undefined（调用方走 config 兜底）。 */
   getDockerNetwork(projectId: string): string | undefined;
   /**
@@ -716,8 +718,16 @@ export class ContainerService {
         || previous.entry.projectId !== entry.projectId || previous.profileId !== service.profileId)) refs.set(runtime.containerName, null);
       else refs.set(runtime.containerName, { entry, profileId: service.profileId, runtime: runtimeRef(runtime) });
     }
-    return deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner) => {
-      const item = refs.get(key);
+    return deploymentPhaseBudget.reconcileMemoryReservations(async (key, owner, containerId) => {
+      let item = refs.get(key);
+      // 冷恢复预约可能比服务记录活得更久：替换/清理会移走旧引用，不能因此永远漏回收。
+      // 只使用预约捕获的不可变CID，不以可复用名称或服务状态推断Docker已终结。
+      if (containerId && item !== null) {
+        const entry = branches.find(branch => branch.id === owner.branchId && branch.projectId === owner.projectId);
+        if (entry && owner.profileId && entry.services[owner.profileId]) item = {
+          entry, profileId: owner.profileId, runtime: { containerName: key, containerId, hostPort: 0 },
+        };
+      }
       if (!item || item.entry.id !== owner.branchId || item.entry.projectId !== owner.projectId
         || item.profileId !== owner.profileId || !options.creationSettled(owner, item.runtime)) return false;
       const remaining = deadline - performance.now();
@@ -798,6 +808,34 @@ export class ContainerService {
     if (result.exitCode !== 0 && !/already exists/i.test(combinedOutput(result))) throw new Error('新服务网络准备失败，旧入口保持原版本');
     service.connectedNetworks = [...new Set([...(service.connectedNetworks || []), network])];
     service.aliasNetworks = [...new Set([...(service.aliasNetworks || []), ...(service.networkName ? [service.networkName] : []), network])];
+  }
+
+  async isolateReplacementPeer(entry: BranchEntry, service: ServiceState, network: string,
+    assertCurrent: (step: string) => void): Promise<void> {
+    const actual = await this.inspectOwnedRuntime(entry, service.profileId, service);
+    assertCurrent('recovery isolation identity');
+    if (!actual || actual.containerId !== service.containerId) throw new Error('恢复网络前容器身份已变化');
+    const canonical = branchAppNetworkName(entry.id);
+    const prefix = `${canonical.slice(0, 27)}-r-`;
+    if (!entry.replacementNetworks?.includes(network) || !network.startsWith(prefix)) throw new Error('恢复网络不属于当前分支');
+    const shell = this.qualifiedShell(assertCurrent);
+    for (const previous of new Set([actual.networkName, ...(actual.connectedNetworks || [])])) {
+      if (!previous || previous === network) continue;
+      if (previous !== canonical && !(previous.startsWith(prefix) && /^[a-f0-9]{32}$/.test(previous.slice(prefix.length)))) continue;
+      if (previous !== canonical) {
+        const ownership = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(previous)}`);
+        if (ownership.exitCode !== 0) throw new Error('旧分支网络归属读取失败');
+        const labels = JSON.parse(ownership.stdout);
+        if (labels?.['cds.branch.id'] !== entry.id || labels?.['cds.project.id'] !== (entry.projectId || '_unknown'))
+          throw new Error('旧网络属于其他分支，拒绝摘除');
+      }
+      const result = await shell.exec(`docker network disconnect ${this.shellQuote(previous)} ${this.shellQuote(actual.containerId!)}`);
+      if (result.exitCode !== 0) throw new Error('当前容器旧分支网络摘除失败；未发布恢复结果');
+    }
+    const after = await this.inspectOwnedRuntime(entry, service.profileId, { ...service, networkName: network });
+    assertCurrent('recovery isolation verified');
+    if (!after || after.networkName !== network || !after.aliasNetworks?.includes(network)) throw new Error('恢复网络未确认');
+    Object.assign(service, after);
   }
 
   private async ensureReplacementNetwork(entry: BranchEntry, network: string, assertCurrent?: (step: string) => void): Promise<void> {
@@ -2608,9 +2646,11 @@ export class ContainerService {
   async restartServiceInPlace(
     containerName: string,
     onOutput?: (chunk: string) => void,
-    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason'> = {},
+    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason' | 'assertCurrent'> = {},
   ): Promise<boolean> {
-    const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    const shell = this.qualifiedShell(context.assertCurrent);
+    context.assertCurrent?.('before restart identity');
+    const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
       this.recordContainerEvent({
@@ -2636,7 +2676,9 @@ export class ContainerService {
       return false;
     }
     onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
-    const result = await this.shell.exec(`docker restart ${containerName}`);
+    context.assertCurrent?.('before docker restart');
+    const result = await shell.exec(`docker restart ${containerName}`);
+    context.assertCurrent?.('after docker restart');
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
@@ -3653,6 +3695,7 @@ export class ContainerService {
     if (result.exitCode !== 0) return { ok: false, containers: discovered };
     if (!result.stdout.trim()) return { ok: true, containers: discovered };
 
+    const ambiguous = new Set<string>();
     for (const line of result.stdout.trim().split('\n')) {
       if (!line) continue;
       const [name, state, labels] = line.split('|');
@@ -3661,6 +3704,11 @@ export class ContainerService {
       const networkMatch = labels?.match(/cds\.network=([^,]+)/);
       if (branchMatch && profileMatch) {
         const key = `${branchMatch[1]}/${profileMatch[1]}`;
+        const currentName = this.networkResolver?.getAppContainerName?.(branchMatch[1], profileMatch[1]);
+        if (currentName && name !== currentName) continue;
+        // docker ps 的先后顺序不代表发布身份。没有状态指针且同标签多容器时不猜。
+        if (ambiguous.has(key)) continue;
+        if (discovered.has(key)) { discovered.delete(key); ambiguous.add(key); continue; }
         discovered.set(key, {
           running: state === 'running',
           containerName: name,

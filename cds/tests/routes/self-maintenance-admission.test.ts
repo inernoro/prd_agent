@@ -15,7 +15,7 @@ import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor, ShellExecutor } from '../../src/services/shell-executor.js';
 import { IsolatedShellExecutor, OperationExecutionError } from '../../src/services/isolated-shell-executor.js';
 import { SelfMaintenanceRuntime } from '../../src/services/self-maintenance-runtime.js';
-import { endSelfUpdateDrain } from '../../src/services/deploy-drain.js';
+import { endSelfUpdateDrain, selfUpdateDrainBlockReason } from '../../src/services/deploy-drain.js';
 import { setRestartWait } from '../../src/services/self-restart-wait.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
 import { CDS_RESTART_PERMIT_COMMAND } from '../../src/services/self-update-handoff.js';
@@ -638,6 +638,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
       await rollingBack.promise;
       expect(responded).toBe(false);
       expect(process.exit).not.toHaveBeenCalled();
+      expect(selfUpdateDrainBlockReason(Date.now())).not.toBeNull();
       await allBusy();
       rollback.resolve();
     }
@@ -646,6 +647,8 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     expect(failure.raw).toContain('event: error');
     expect(failure.raw).not.toContain('event: done');
     expect(process.exit).not.toHaveBeenCalled();
+    expect(maintenance.observe()).toBeNull();
+    expect(selfUpdateDrainBlockReason(Date.now())).toBeNull();
     expect((await post('self-update-dry-run')).status).toBe(200);
   });
 
