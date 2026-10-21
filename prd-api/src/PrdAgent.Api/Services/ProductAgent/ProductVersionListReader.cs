@@ -37,6 +37,7 @@ public static class ProductVersionListReader
             Builders<ProductInitiation>.Filter.Eq(x => x.IsDeleted, false)
             & Builders<ProductInitiation>.Filter.In(x => x.ProductId, ids)).ToListAsync();
         var legacy = await ReadLegacyAsync(db, VersionRegistrationKind.Internal, userId, canViewAllLegacy);
+        await ProductInitiationDeletion.AnnotateAsync(db, current);
         return new(MergeInitiations(current, legacy, products), new());
     }
 

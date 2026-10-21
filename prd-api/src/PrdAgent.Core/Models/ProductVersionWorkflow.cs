@@ -8,6 +8,9 @@ public class ProductInitiation
     public string? LinkedProductId { get; set; }
     /// <summary>立项编号 T{a}.{b}.{c}，全库 ProductInitiations 全局递增，与产品无关</summary>
     public string? TCode { get; set; }
+    /// <summary>只读删除资格，由服务端按全局 T 序列及下游关联计算，不落库。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool CanDelete { get; set; }
     public string? SystemName { get; set; }
     public string? AppName { get; set; }
     public string ProjectType { get; set; } = "standard";

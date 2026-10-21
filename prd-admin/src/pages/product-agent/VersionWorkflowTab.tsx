@@ -854,7 +854,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Td onClick={(e) => e.stopPropagation()}>
         {item.legacyRegistration && <button type="button" onClick={() => onOpenLegacy(item.legacyRegistration!)} className="text-token-secondary hover:underline">历史详情</button>}
         {isOwner && item.tCode && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">修改资料</button>}
-        {isOwner && item.tCode && <InitiationDeleteAction id={item.id} code={item.tCode} onDeleted={onChanged} />}
+        {isOwner && item.tCode && <InitiationDeleteAction id={item.id} code={item.tCode} canDelete={item.canDelete} onDeleted={onChanged} />}
         {(showRetryReview || showFillMeeting) ? (
           <div className="flex flex-col items-start gap-1">
             {showRetryReview && (

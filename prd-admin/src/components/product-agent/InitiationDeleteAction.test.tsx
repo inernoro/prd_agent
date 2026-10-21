@@ -14,10 +14,15 @@ afterEach(async () => { await act(async () => root.unmount()); host.replaceChild
 async function click(text: string) { await act(async () => [...host.querySelectorAll('button')].find((button) => button.textContent === text)?.click()); }
 
 describe('列表与详情共用内部版本删除确认', () => {
+  it.each([false, undefined])('服务端未授予删除资格时不显示入口（%s）', async (canDelete) => {
+    await act(async () => root.render(<InitiationDeleteAction id="old" code="T1.2.3" canDelete={canDelete} onDeleted={vi.fn()} />));
+    expect(host.querySelector('button')).toBeNull();
+    expect(remove).not.toHaveBeenCalled();
+  });
   it('打开不删除，后续记录的服务端拒绝留在弹窗且不刷新列表', async () => {
     const changed = vi.fn();
-    remove.mockResolvedValue({ success: false, error: { code: 'INITIATION_NOT_LATEST', message: '同一应用已有后续 T 号，不能删除。' } });
-    await act(async () => root.render(<InitiationDeleteAction id="old" code="T1.2.3" onDeleted={changed} />));
+    remove.mockResolvedValue({ success: false, error: { code: 'INITIATION_NOT_LATEST', message: '全局已有后续 T 号，不能删除。' } });
+    await act(async () => root.render(<InitiationDeleteAction id="old" code="T1.2.3" canDelete onDeleted={changed} />));
     await click('删除');
     expect(remove).not.toHaveBeenCalled();
     await click('确认删除');
@@ -28,7 +33,7 @@ describe('列表与详情共用内部版本删除确认', () => {
   it('服务端成功后才关闭并刷新，取消不发送删除请求', async () => {
     const changed = vi.fn();
     remove.mockResolvedValue({ success: true, data: { deleted: true } });
-    await act(async () => root.render(<InitiationDeleteAction id="latest" code="T1.2.4" onDeleted={changed} />));
+    await act(async () => root.render(<InitiationDeleteAction id="latest" code="T1.2.4" canDelete onDeleted={changed} />));
     await click('删除'); await click('取消');
     expect(remove).not.toHaveBeenCalled();
     await click('删除'); await click('确认删除');

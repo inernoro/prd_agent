@@ -551,7 +551,7 @@ public class ProductVersionClaimGuardTests
         Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
     }
     [Fact]
-    public async Task OnlyLatestTWithinSameApplicationCanBeSoftDeleted()
+    public async Task OnlyLatestTGloballyCanBeSoftDeleted()
     {
         await using var fixture = await Fixture.CreateAsync();
         await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
@@ -561,12 +561,89 @@ public class ProductVersionClaimGuardTests
         });
         var rejected = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteInitiation("older"));
         Assert.Equal("INITIATION_NOT_LATEST", Assert.IsType<ApiResponse<object>>(rejected.Value).Error!.Code);
-        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("latest"));
-        var deleted = await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync();
+        var sameApplicationLatest = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteInitiation("latest"));
+        Assert.Equal("INITIATION_NOT_LATEST", Assert.IsType<ApiResponse<object>>(sameApplicationLatest.Value).Error!.Code);
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "global-latest", ProductId = "product", AppName = "测试应用", TCode = "T10.0.0", CreatedBy = "me", Status = "approved",
+        });
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("global-latest"));
+        var deleted = await fixture.Db.ProductInitiations.Find(x => x.Id == "global-latest").SingleAsync();
         Assert.True(deleted.IsDeleted);
-        Assert.Equal("T1.2.10", deleted.TCode);
+        Assert.Equal("T10.0.0", deleted.TCode);
         Assert.False(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
-            ProductVersionClaimPolicy.ReleaseKey("测试应用", "T1.2.10"), "release:after-delete"));
+            ProductVersionClaimPolicy.ReleaseKey("测试应用", "T10.0.0"), "release:after-delete"));
+    }
+
+    [Fact]
+    public async Task ScopedListAndDetailNeverPromoteAnOlderApplicationRecord()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "visible", ProductId = "product", AppName = "测试应用", TCode = "T1.2.9", CreatedBy = "me", Status = "approved" },
+            new ProductInitiation { Id = "hidden-latest", ProductId = "inaccessible", AppName = "其它应用", TCode = "T1.2.10", CreatedBy = "other", Status = "approved" },
+        });
+        var list = await PrdAgent.Api.Services.ProductAgent.ProductVersionListReader.ReadInitiationsAsync(
+            fixture.Db, new HashSet<string> { "product" }, "me", false);
+        var row = Assert.Single(list.Items);
+        Assert.Equal("visible", row.Record.Id);
+        Assert.False(row.Record.CanDelete);
+        var detail = Assert.IsType<OkObjectResult>(await fixture.Controller().GetInitiation("visible"));
+        var detailItem = Assert.IsType<ApiResponse<object>>(detail.Value).Data as ProductInitiation;
+        Assert.NotNull(detailItem);
+        Assert.False(detailItem.CanDelete);
+        var singleProduct = Assert.IsType<OkObjectResult>(await fixture.Controller().ListInitiations("product"));
+        Assert.Contains("\"canDelete\":false", JsonSerializer.Serialize(singleProduct.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+
+    [Fact]
+    public async Task OnlyGlobalLatestHasReadOnlyEligibilityIgnoringDraftsDeletedAndEditTimes()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var items = new[] {
+            new ProductInitiation { Id = "older", ProductId = "product", AppName = "测试应用", TCode = "T1.2.9", CreatedBy = "me", Status = "approved", UpdatedAt = DateTime.UtcNow.AddDays(1) },
+            new ProductInitiation { Id = "latest", ProductId = "product", AppName = "测试应用", TCode = "T1.2.10", CreatedBy = "me", Status = "approved" },
+            new ProductInitiation { Id = "draft", ProductId = "product", Status = "draft" },
+            new ProductInitiation { Id = "deleted", ProductId = "other", TCode = "T9.0.0", Status = "approved", IsDeleted = true },
+        };
+        await fixture.Db.ProductInitiations.InsertManyAsync(items);
+        await PrdAgent.Api.Services.ProductAgent.ProductInitiationDeletion.AnnotateAsync(fixture.Db, items.Where(x => !x.IsDeleted).ToList());
+        Assert.Equal(new[] { "latest" }, items.Where(x => x.CanDelete).Select(x => x.Id));
+        Assert.False(items[1].ToBsonDocument().Contains("CanDelete"));
+        Assert.False(items[1].ToBsonDocument().Contains("canDelete"));
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("latest"));
+    }
+
+    [Theory]
+    [InlineData("T9.0.0")]
+    [InlineData("T1.2.3")]
+    public async Task GlobalLegacyHigherOrSameNumberBlocksDeletion(string legacyCode)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var item = new ProductInitiation { Id = "item", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", CreatedBy = "me", Status = "approved" };
+        await fixture.Db.ProductInitiations.InsertOneAsync(item);
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration {
+            Kind = VersionRegistrationKind.Internal, ApplicationName = "其它应用", Code = legacyCode, CreatedBy = "other",
+        });
+        await PrdAgent.Api.Services.ProductAgent.ProductInitiationDeletion.AnnotateAsync(fixture.Db, new[] { item });
+        Assert.False(item.CanDelete);
+        var rejected = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteInitiation("item"));
+        Assert.Equal("INITIATION_NOT_LATEST", Assert.IsType<ApiResponse<object>>(rejected.Value).Error!.Code);
+    }
+
+    [Fact]
+    public async Task DeleteRechecksGlobalLatestAfterPageWasLoaded()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var item = new ProductInitiation { Id = "item", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", CreatedBy = "me", Status = "approved" };
+        await fixture.Db.ProductInitiations.InsertOneAsync(item);
+        await PrdAgent.Api.Services.ProductAgent.ProductInitiationDeletion.AnnotateAsync(fixture.Db, new[] { item });
+        Assert.True(item.CanDelete);
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "newer", ProductId = "other", AppName = "其它应用", TCode = "T1.2.4", Status = "approved",
+        });
+        var rejected = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteInitiation("item"));
+        Assert.Equal("INITIATION_NOT_LATEST", Assert.IsType<ApiResponse<object>>(rejected.Value).Error!.Code);
+        Assert.False((await fixture.Db.ProductInitiations.Find(x => x.Id == "item").SingleAsync()).IsDeleted);
     }
 
     [Theory]
@@ -586,6 +663,9 @@ public class ProductVersionClaimGuardTests
         if (kind == "claim") await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, ProductVersionClaimPolicy.ReleaseKey("测试应用", "T1.2.3"), "release:pending");
         if (kind == "requirement") await fixture.Db.Requirements.InsertOneAsync(new Requirement { VersionIds = new() { "latest" } });
         if (kind == "feature") await fixture.Db.Features.InsertOneAsync(new Feature { PlannedVersionId = "latest" });
+        var latest = await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync();
+        await PrdAgent.Api.Services.ProductAgent.ProductInitiationDeletion.AnnotateAsync(fixture.Db, new[] { latest });
+        Assert.False(latest.CanDelete);
         var rejected = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteInitiation("latest"));
         Assert.Equal("INITIATION_HAS_DOWNSTREAM", Assert.IsType<ApiResponse<object>>(rejected.Value).Error!.Code);
         Assert.False((await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync()).IsDeleted);

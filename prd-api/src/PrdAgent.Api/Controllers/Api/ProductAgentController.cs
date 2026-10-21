@@ -850,6 +850,7 @@ public class ProductAgentController : ControllerBase
             filter &= Builders<ProductInitiation>.Filter.Eq(x => x.CreatedBy, userId);
         var items = await _db.ProductInitiations.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
+        await ProductInitiationDeletion.AnnotateAsync(_db, items);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -859,6 +860,7 @@ public class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        await ProductInitiationDeletion.AnnotateAsync(_db, new[] { item });
         return Ok(ApiResponse<object>.Ok(item));
     }
 
@@ -1048,29 +1050,18 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         if (item.CreatedBy != userId && !await CanManageAsync(userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人或管理员可删除该立项记录"));
-        if (string.IsNullOrWhiteSpace(item.TCode) || !Version.TryParse(item.TCode.TrimStart('T', 't'), out var number))
+        if (string.IsNullOrWhiteSpace(item.TCode) || !Version.TryParse(item.TCode.TrimStart('T', 't'), out _))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新内部版本记录。"));
+
+        if (await ProductInitiationDeletion.LatestIdAsync(_db) != id)
+            return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "只允许删除全局最后一条申领成功的内部版本记录，当前记录不是最新一条，请保留并修改资料。"));
 
         var applicationId = item.LinkedProductId ?? item.ProductId;
         var product = await _db.Products.Find(x => x.Id == applicationId).FirstOrDefaultAsync();
         var applicationName = item.AppName ?? product?.Name ?? string.Empty;
         if (string.IsNullOrWhiteSpace(applicationName))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "无法确定所属应用，请先核对产品资料。"));
-        var peers = await _db.ProductInitiations.Find(x => !x.IsDeleted
-            && (x.ProductId == applicationId || x.LinkedProductId == applicationId || x.AppName == applicationName))
-            .Project(x => new { x.Id, x.TCode }).ToListAsync();
-        var legacyCodes = await _db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Internal
-            && x.ApplicationName == applicationName).Project(x => x.Code).ToListAsync();
-        var codes = peers.Where(x => x.Id != id).Select(x => x.TCode).Concat(legacyCodes);
-        if (codes.Any(code => !string.IsNullOrWhiteSpace(code)
-            && Version.TryParse(code.TrimStart('T', 't'), out var other) && other >= number))
-            return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "同一应用已有后续或同号 T 记录，只允许删除最新一条，请保留当前记录并修改资料。"));
-
-        var history = await ProductVersionHistoryLinks.CheckAsync(_db, item.ProductId, applicationName, item.TCode, item.PlanName);
-        if (history.Blocked || history.NeedsConfirmation
-            || await _db.ProductReleases.Find(x => x.InitiationId == id).AnyAsync()
-            || await _db.Requirements.Find(x => !x.IsDeleted && x.VersionIds.Contains(id)).AnyAsync()
-            || await _db.Features.Find(x => !x.IsDeleted && x.PlannedVersionId == id).AnyAsync())
+        if (await ProductInitiationDeletion.HasDownstreamAsync(_db, item, applicationName))
             return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该立项已有正式版本或其他下游关联，不能删除。请保留记录并修改资料。"));
 
         // 与正式申领使用相同永久键：并发请求只能有一方成功，不在删除后重新开放手工 T 申领。
