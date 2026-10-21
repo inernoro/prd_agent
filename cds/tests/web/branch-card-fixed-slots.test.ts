@@ -383,7 +383,7 @@ describe('构建页脚：阶段条接线', () => {
   const cardShowsPersistedServiceFailure = (source: string) => {
     expect(source).toContain('const serviceFailed = !isError && !buildPhase && branchHasDeployFailure(branch, projectProfileIds);');
     expect(source).toContain('{showsIssue && !failedPhase ? (');
-    expect(source).toContain(') : showsIssue || failedPhase ? (');
+    expect(source).toContain("aria-label={`${showsIssue || failedPhase ? '重新部署' : '部署'} ${branch.branch}`}");
   };
 
   // 列表排序的「出错置顶」也走同一判据；定位收起分组里的卡片前先展开分组。
