@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { Search, X } from 'lucide-react';
+import { AnchoredMenu } from './ui/AnchoredMenu';
 import {
   comboboxRadius,
   formatItemSearchLabel,
@@ -47,24 +47,28 @@ export function ItemSearchSelect({
   const closedLabel = value && selected ? truncateItemLabel(formatItemSearchLabel(selected)) : '';
   const inputDisplayValue = open ? filter : closedLabel;
 
-  const dropdownPanel = open && pos && !disabled && createPortal(
-    <div ref={panelRef} className="rounded-[8px] flex flex-col overflow-hidden" style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight, ...itemComboboxPanelStyle }}>
-      <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
-        {clearOptionLabel && !q && (
-          <>
-            <ItemComboboxOptionRow selected={!value} label={clearOptionLabel} onSelect={() => { onChange(''); closePanel(); }} />
-            {filtered.length > 0 && <div className="mx-3 my-0.5 border-b border-token-subtle" />}
-          </>
-        )}
-        {filtered.length === 0 ? (
-          <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>{q ? `未找到匹配「${filter}」的${countUnit}` : emptyText}</div>
-        ) : filtered.map((o) => (
-          <ItemComboboxOptionRow key={o.id} selected={o.id === value} label={formatItemSearchLabel(o)} onSelect={() => { onChange(o.id); closePanel(); }} />
-        ))}
+  // 复用菜单的弹窗内 portal 与定位校正，避免 body 下的列表被模态滚动锁拦截。
+  const dropdownPanel = open && pos && !disabled && (
+    <AnchoredMenu open onClose={closePanel} anchorRef={triggerRef} align="left" gap={4} minWidth={pos.width}
+      className="rounded-[8px]"
+      style={{ width: pos.width, maxHeight: pos.maxHeight, padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', ...itemComboboxPanelStyle }}>
+      <div ref={panelRef} className="flex flex-col" style={{ minHeight: 0 }}>
+        <div className="flex-1 py-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {clearOptionLabel && !q && (
+            <>
+              <ItemComboboxOptionRow selected={!value} label={clearOptionLabel} onSelect={() => { onChange(''); closePanel(); }} />
+              {filtered.length > 0 && <div className="mx-3 my-0.5 border-b border-token-subtle" />}
+            </>
+          )}
+          {filtered.length === 0 ? (
+            <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>{q ? `未找到匹配「${filter}」的${countUnit}` : emptyText}</div>
+          ) : filtered.map((o) => (
+            <ItemComboboxOptionRow key={o.id} selected={o.id === value} label={formatItemSearchLabel(o)} onSelect={() => { onChange(o.id); closePanel(); }} />
+          ))}
+        </div>
+        <ItemComboboxPanelFooter left={q ? `${filtered.length} / ${options.length} ${countUnit}匹配` : `共 ${options.length} ${countUnit}`} />
       </div>
-      <ItemComboboxPanelFooter left={q ? `${filtered.length} / ${options.length} ${countUnit}匹配` : `共 ${options.length} ${countUnit}`} />
-    </div>,
-    document.body,
+    </AnchoredMenu>
   );
 
   return (
