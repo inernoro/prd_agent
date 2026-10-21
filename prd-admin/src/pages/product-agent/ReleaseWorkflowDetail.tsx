@@ -844,7 +844,7 @@ export function ReleaseWorkflowDetail({
               <Field label="当前开放品牌">{!temporary && effectiveGlobalOpen === 'yes'
                 ? <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">上线全域开放</div>
                 : <Input value={editableOpenBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder={temporary ? '上线全域开放' : '填写本次开放的品牌'} />}</Field>
-              <InfoBox>确认后自动审批并生成正式版本号，随后必须补充上线公告地址才能完成上线。</InfoBox>
+              <InfoBox>确认后自动生成正式版本号，无需人工审批；随后必须补充上线公告地址才能完成上线。</InfoBox>
             </>
           ) : null}
         </div>

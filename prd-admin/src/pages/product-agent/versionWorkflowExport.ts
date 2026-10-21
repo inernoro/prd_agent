@@ -3,7 +3,7 @@ import { formatVersionBasicBool, formatVersionBasicDate, resolveVersionProductLa
 
 export const VERSION_WORKFLOW_STATUS_LABEL: Record<string, string> = {
   draft: '草稿', review_pending: 'Agent 评审中', review_failed: '评审未通过',
-  decision_pending: '待确认评审方式', owner_pending: '待负责人同意', approved: '已取得立项号',
+  decision_pending: '待确认评审方式', owner_pending: '待自动发号', approved: '已取得立项号',
   announcement_pending: '待填写上线公告', released: '已上线',
   legacy_readonly: '历史登记',
 };

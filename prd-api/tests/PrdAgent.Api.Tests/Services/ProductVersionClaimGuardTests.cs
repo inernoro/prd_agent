@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
@@ -229,26 +230,186 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
-    public async Task OwnerChoiceIsSavedBeforeReviewAndStillRequiresApproval()
+    public async Task NoMeetingIssuesTImmediatelyAfterReviewWithoutChoosingAnApprover()
     {
         await using var fixture = await Fixture.CreateAsync();
         var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateInitiation("product", new CreateInitiationRequest {
             LinkedProductId = "product", PlanName = "测试应用（无需线下会议）", ReviewMeetingRequired = false,
-            PrimaryOwnerId = "owner", PlannedProjectAt = DateTime.UtcNow,
+            PlannedProjectAt = DateTime.UtcNow,
         }));
         var item = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
-        Assert.Equal("owner", item.PrimaryOwnerId); Assert.Null(item.TCode);
+        Assert.Null(item.PrimaryOwnerId); Assert.Null(item.TCode);
         await fixture.Db.ReviewSubmissions.InsertOneAsync(Review("passed", "me"));
         await fixture.Controller().SyncInitiationReview(item.Id, new SyncInitiationReviewRequest { SubmissionId = "passed" });
         Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation(item.Id,
-            new InitiationDecisionRequest { ReviewMeetingRequired = false, PrimaryOwnerId = "owner" }));
+            new InitiationDecisionRequest { ReviewMeetingRequired = false }));
         var pending = await fixture.Db.ProductInitiations.Find(x => x.Id == item.Id).SingleAsync();
-        Assert.Equal("owner_pending", pending.Status); Assert.Equal("owner", pending.PrimaryOwnerId); Assert.Null(pending.TCode);
+        Assert.Equal("approved", pending.Status); Assert.Null(pending.PrimaryOwnerId); Assert.NotNull(pending.TCode);
+    }
+
+    [Fact]
+    public async Task BackfillOnlyIssuesPassedPendingRecordsAndPreservesOriginalData()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var pending = new ProductInitiation {
+            Id = "pending-owner", ProductId = "product", Status = "owner_pending", ReviewPassed = true,
+            ReviewSubmissionId = "passed-review", PrimaryOwnerId = "owner", CreatedBy = "me", PlanName = "保留方案",
+            PlannedProjectAt = DateTime.UtcNow.Date, Remark = "保留备注", ApprovalComment = "保留历史内容",
+            RequirementIds = new() { "req" }, ProjectMemberNames = new() { "原成员" },
+            ReviewAttempts = new() { new() { SubmissionId = "passed-review", ReviewPassed = true } },
+        };
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            pending,
+            new ProductInitiation { Id = "failed", Status = "owner_pending", ReviewPassed = false },
+            new ProductInitiation { Id = "unfinished", Status = "owner_pending" },
+            new ProductInitiation { Id = "deleted", Status = "owner_pending", ReviewPassed = true, IsDeleted = true },
+            new ProductInitiation { Id = "issued", Status = "owner_pending", ReviewPassed = true, TCode = "T8.0.1" },
+            new ProductInitiation { Id = "decision", Status = "decision_pending", ReviewPassed = true },
+            new ProductInitiation { Id = "review", Status = "review_pending", ReviewPassed = true },
+        });
+        await fixture.Db.Requirements.InsertOneAsync(new Requirement {
+            Id = "req", ProductId = "product", CurrentState = RequirementWorkflowCatalog.Planning,
+        });
+        Assert.Equal(1, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        var saved = await fixture.Db.ProductInitiations.Find(x => x.Id == pending.Id).SingleAsync();
+        Assert.Equal("approved", saved.Status); Assert.Equal("T8.0.2", saved.TCode);
+        Assert.Equal(pending.PlanName, saved.PlanName); Assert.Equal(pending.Remark, saved.Remark);
+        Assert.Equal(pending.PrimaryOwnerId, saved.PrimaryOwnerId); Assert.Equal(pending.ApprovalComment, saved.ApprovalComment);
+        Assert.Equal(pending.PlannedProjectAt, saved.PlannedProjectAt); Assert.Equal(pending.CreatedAt, saved.CreatedAt, TimeSpan.FromMilliseconds(1));
+        Assert.Equal(pending.ProjectMemberNames, saved.ProjectMemberNames); Assert.Single(saved.ReviewAttempts);
+        Assert.False(saved.RequirementSyncPending);
+        var all = await fixture.Db.ProductInitiations.Find(_ => true).ToListAsync();
+        Assert.All(all.Where(x => x.Id != pending.Id && x.Id != "issued"), x => Assert.Null(x.TCode));
+        Assert.Equal("T8.0.1", all.Single(x => x.Id == "issued").TCode);
+        Assert.Equal(RequirementWorkflowCatalog.Approved, (await fixture.Db.Requirements.Find(x => x.Id == "req").SingleAsync()).CurrentState);
+        Assert.Equal(1, await fixture.Db.ProductItemActivities.CountDocumentsAsync(x => x.EntityId == "req"));
+    }
+
+    [Fact]
+    public async Task ConcurrentBackfillsAndNewDecisionsDoNotDuplicateOrOverwriteNumbers()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertManyAsync(Enumerable.Range(0, 12).Select(i => new ProductInitiation {
+            Id = "pending-" + i, ProductId = "product", CreatedBy = "me", ReviewPassed = true,
+            Status = i % 2 == 0 ? "owner_pending" : "decision_pending",
+        }));
+        var tasks = Enumerable.Range(0, 12).Where(i => i % 2 == 1)
+            .Select(i => fixture.Controller().DecideInitiation("pending-" + i, new InitiationDecisionRequest())).Cast<Task>().ToList();
+        tasks.Add(ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        tasks.Add(ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        await Task.WhenAll(tasks);
+        var first = await fixture.Db.ProductInitiations.Find(_ => true).ToListAsync();
+        Assert.All(first, x => { Assert.Equal("approved", x.Status); Assert.False(string.IsNullOrWhiteSpace(x.TCode)); });
+        Assert.Equal(12, first.Select(x => x.TCode).Distinct().Count());
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        foreach (var item in first)
+            Assert.Equal(item.TCode, (await fixture.Db.ProductInitiations.Find(x => x.Id == item.Id).SingleAsync()).TCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task FailedOrUnfinishedReviewCannotBypassAutomaticIssuance(bool? passed)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "not-passed", ProductId = "product", CreatedBy = "me", Status = "decision_pending", ReviewPassed = passed,
+        });
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DecideInitiation("not-passed", new InitiationDecisionRequest()));
+        Assert.Null(await ProductInitiationIssuance.IssueAsync(fixture.Db, "not-passed", "decision_pending"));
+        Assert.Null((await fixture.Db.ProductInitiations.Find(x => x.Id == "not-passed").SingleAsync()).TCode);
+    }
+
+    [Fact]
+    public async Task WorkerBackfillsWithoutOpeningOrSubmittingTheRecord()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "startup-pending", ProductId = "product", Status = "owner_pending", ReviewPassed = true, CreatedBy = "me",
+        });
+        using var services = new ServiceCollection().AddSingleton(fixture.Db).BuildServiceProvider();
+        using var worker = new PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker(services,
+            NullLogger<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>.Instance);
+        await worker.StartAsync(CancellationToken.None);
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (!await fixture.Db.ProductInitiations.Find(x => x.Id == "startup-pending" && x.Status == "approved").AnyAsync(timeout.Token))
+                await Task.Delay(20, timeout.Token);
+            Assert.NotNull((await fixture.Db.ProductInitiations.Find(x => x.Id == "startup-pending").SingleAsync()).TCode);
+        }
+        finally { await worker.StopAsync(CancellationToken.None); }
+    }
+
+    [Fact]
+    public async Task DuplicateRequestsIssueOnceAndRetryKeepsItsReservedNumber()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "pending", ProductId = "product", CreatedBy = "me", Status = "decision_pending", ReviewPassed = true,
+        });
+        Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
+            "workflow-code:T:T2.3.4", "initiation:pending"));
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            ProductInitiationIssuance.IssueAsync(fixture.Db, "pending", "decision_pending")));
+        Assert.Single(results.Where(x => x != null));
+        Assert.Equal("T2.3.4", (await fixture.Db.ProductInitiations.Find(x => x.Id == "pending").SingleAsync()).TCode);
+        Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task AutomaticDecisionStillRequiresTheApplicantOrAdministrator()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "not-mine", ProductId = "product", CreatedBy = "other", Status = "decision_pending", ReviewPassed = true,
+        });
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller().DecideInitiation("not-mine", new InitiationDecisionRequest())).StatusCode);
+        Assert.Null((await fixture.Db.ProductInitiations.Find(x => x.Id == "not-mine").SingleAsync()).TCode);
+    }
+
+    [Fact]
+    public async Task IssuedRecordWithInterruptedRequirementSyncIsRecoveredWithoutReissuing()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "issued", ProductId = "product", CreatedBy = "me", Status = "approved", TCode = "T7.8.9",
+            RequirementSyncPending = true, RequirementIds = new() { "req" },
+        });
+        await fixture.Db.Requirements.InsertOneAsync(new Requirement { Id = "req", ProductId = "product", CurrentState = RequirementWorkflowCatalog.Planning });
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        var saved = await fixture.Db.ProductInitiations.Find(x => x.Id == "issued").SingleAsync();
+        Assert.Equal("T7.8.9", saved.TCode); Assert.False(saved.RequirementSyncPending);
+        Assert.Equal(1, await fixture.Db.ProductItemActivities.CountDocumentsAsync(x => x.EntityId == "req"));
     }
 
     private static ReviewSubmission Review(string id, string submitter, bool passed = true) => new() {
         Id = id, SubmitterId = submitter, Title = id, Status = ReviewStatuses.Done, IsPassed = passed,
     };
+
+    [Fact]
+    public async Task FormalVersionIsIssuedWithoutApprovalAndStillRequiresAnAnnouncement()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertOneAsync(new User { UserId = "me", DisplayName = "申领人" });
+        await fixture.Db.Features.InsertOneAsync(new Feature { Id = "feature", ProductId = "product", Title = "测试功能" });
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "source", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", Status = "approved", PlanName = "测试方案",
+        });
+        var request = new CreateReleaseRequest {
+            InitiationId = "source", OwnerId = "me", TeamMemberIds = new() { "me" },
+            PlannedReleaseAt = DateTime.UtcNow.AddDays(1), PlannedTrainingMinutes = 30,
+            FeatureManifest = new() { new() { FeatureId = "feature", ChangeType = FeatureChangeType.Added } },
+        };
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        var issued = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data);
+        Assert.StartsWith("V", issued.VCode); Assert.Equal("announcement_pending", issued.Status);
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CompleteRelease(issued.Id, new CompleteReleaseRequest()));
+        Assert.Equal(1, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+    }
 
     [Fact]
     public async Task HistoricalVRawTMappingBlocksNewVDespiteDifferentPlanName()

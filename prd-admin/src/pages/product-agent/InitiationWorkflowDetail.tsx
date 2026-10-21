@@ -26,7 +26,7 @@ const STATUS_LABEL: Record<string, string> = {
   review_pending: 'Agent 评审中',
   review_failed: '评审未通过',
   decision_pending: '待确认评审方式',
-  owner_pending: '待负责人同意',
+  owner_pending: '待自动发号',
   approved: '已取得立项号',
 };
 

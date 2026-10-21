@@ -44,6 +44,8 @@ public class ProductInitiation
     public string? Remark { get; set; }
     public string? PrimaryOwnerId { get; set; }
     public string? ApprovalComment { get; set; }
+    /// <summary>自动发号后的需求状态待同步标记，后台幂等重试，不重新发号。</summary>
+    public bool RequirementSyncPending { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public string SourceType { get; set; } = "system";
     /// <summary>无编号历史导入行的规范化指纹，重导时用于去重。</summary>

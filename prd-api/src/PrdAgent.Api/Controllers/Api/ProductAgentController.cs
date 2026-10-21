@@ -1172,9 +1172,6 @@ public class ProductAgentController : ControllerBase
             if (draftCount < 1 || draftCount > 3)
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "会议稿次须为 1–3 稿"));
         }
-        if (!request.ReviewMeetingRequired && string.IsNullOrWhiteSpace(request.PrimaryOwnerId))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择产品主负责人"));
-
         var meetingDraftCount = request.ReviewMeetingRequired
             ? (request.MeetingDraftCount is >= 1 and <= 3 ? request.MeetingDraftCount.Value : 1)
             : (int?)null;
@@ -1184,22 +1181,14 @@ public class ProductAgentController : ControllerBase
                 .ToList()
             : new List<InitiationMeetingDraftRound>();
 
-        var tCode = request.ReviewMeetingRequired ? await GenerateWorkflowCodeAsync("T", item.VersionType) : null;
-        var decision = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && x.Status == "decision_pending" && (x.TCode == null || x.TCode == ""),
+        var updated = await ProductInitiationIssuance.IssueAsync(_db, id, "decision_pending",
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
                 .Set(x => x.ExpectedMeetingAt, request.ReviewMeetingRequired ? expectedMeetingAt : null)
                 .Set(x => x.MeetingDraftCount, meetingDraftCount)
-                .Set(x => x.MeetingDraftRounds, meetingRounds)
-                .Set(x => x.PrimaryOwnerId, request.PrimaryOwnerId)
-                .Set(x => x.TCode, tCode)
-                .Set(x => x.Status, request.ReviewMeetingRequired ? "approved" : "owner_pending")
-                .Set(x => x.UpdatedAt, DateTime.UtcNow));
-        if (decision.MatchedCount == 0)
+                .Set(x => x.MeetingDraftRounds, meetingRounds));
+        if (updated == null)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已处理，请刷新查看现有 T 号，不要重复提交"));
-        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
-        if (request.ReviewMeetingRequired)
-            await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项评审通过，自动流转到已立项");
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -1243,31 +1232,6 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.ProjectAt, projectAt)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
-        return Ok(ApiResponse<object>.Ok(updated));
-    }
-
-    [HttpPost("initiations/{id}/approve")]
-    public async Task<IActionResult> ApproveInitiation(string id, [FromBody] ApproveInitiationRequest request)
-    {
-        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
-        if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
-        if (item.Status != "owner_pending")
-            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前记录不在负责人审批状态"));
-        if (item.PrimaryOwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅产品主负责人可审批"));
-
-        var tCode = await GenerateWorkflowCodeAsync("T", item.VersionType);
-        var approval = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && x.Status == "owner_pending" && (x.TCode == null || x.TCode == ""),
-            Builders<ProductInitiation>.Update
-                .Set(x => x.TCode, tCode)
-                .Set(x => x.Status, "approved")
-                .Set(x => x.ApprovalComment, request.Comment?.Trim())
-                .Set(x => x.UpdatedAt, DateTime.UtcNow));
-        if (approval.MatchedCount == 0)
-            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已审批，请刷新查看现有 T 号，不要重复提交"));
-        var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
-        await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Approved, GetUserId(), "立项负责人审批通过，自动流转到已立项");
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -8095,7 +8059,6 @@ public class InitiationDecisionRequest
 {
     public bool ReviewMeetingRequired { get; set; }
     public DateTime? ExpectedMeetingAt { get; set; }
-    public string? PrimaryOwnerId { get; set; }
     /// <summary>需开会时计划稿次数（1–3）</summary>
     public int? MeetingDraftCount { get; set; }
 }
@@ -8103,11 +8066,6 @@ public class InitiationDecisionRequest
 public class UpdateInitiationMeetingRequest
 {
     public List<InitiationMeetingDraftRound>? Rounds { get; set; }
-}
-
-public class ApproveInitiationRequest
-{
-    public string? Comment { get; set; }
 }
 
 public class CreateReleaseRequest

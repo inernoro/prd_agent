@@ -110,15 +110,17 @@ describe('内部立项单页来源与失败恢复', () => {
     expect(field<HTMLInputElement>('需求来源 *').value).toBe('保留需求');
   });
 
-  it('空产品成员目录仍可选择其他产品主负责人并提交', async () => {
+  it('无需选择审批人，不开会也直接自动发号', async () => {
     api.createInitiation.mockResolvedValue({ success: true, data: seed({ reviewPassed: true, status: 'decision_pending' }) });
     await mount();
     await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
     await change(field('需求来源 *'), '客户');
     await change(field('计划立项时间 *'), '2026-10-21');
-    await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索并选择产品主负责人"]')!, 'owner');
+    expect(host.querySelector('[aria-label="搜索并选择产品主负责人"]')).toBeNull();
     await confirm();
-    expect(api.createInitiation).toHaveBeenCalledWith('product', expect.objectContaining({ primaryOwnerId: 'owner' }));
+    expect(api.decideInitiation).toHaveBeenCalledWith('initiation', expect.objectContaining({ reviewMeetingRequired: false }));
+    expect(api.decideInitiation.mock.calls[0][1]).not.toHaveProperty('primaryOwnerId');
+    expect(host.textContent).toContain('T1.2.3');
   });
 
   it('已发号记录修改只保存资料，不上传、不评审、不重新发号', async () => {
@@ -132,7 +134,7 @@ describe('内部立项单页来源与失败恢复', () => {
     expect(api.decideInitiation).not.toHaveBeenCalled();
     expect(api.upload).not.toHaveBeenCalled();
     expect(api.submit).not.toHaveBeenCalled();
-    expect(host.textContent).toContain('原 T 号、评审、审批及下游关联保持不变');
+    expect(host.textContent).toContain('原 T 号、评审及下游关联保持不变');
   });
   it('两种来源显式分开，切换上传立即出现文件控件，不出现下一步', async () => {
     await mount();
@@ -185,11 +187,11 @@ describe('内部立项单页来源与失败恢复', () => {
     expect(host.textContent).toContain('T1.2.3');
   });
 
-  it('连续确认只执行一次；不需要开会仍提交负责人审批，不伪造编号', async () => {
+  it('连续确认只执行一次；不需要开会自动发号并显示服务端编号', async () => {
     let resolveSave!: (value: unknown) => void;
     const previous = seed({ reviewMeetingRequired: false, primaryOwnerId: 'owner', reviewPassed: true, status: 'decision_pending' });
     api.updateInitiation.mockReturnValue(new Promise((resolve) => { resolveSave = resolve; }));
-    api.decideInitiation.mockResolvedValue({ success: true, data: { ...previous, status: 'owner_pending', tCode: null } });
+    api.decideInitiation.mockResolvedValue({ success: true, data: { ...previous, status: 'approved', tCode: 'T1.2.3' } });
     await mount(previous);
     await act(async () => {
       const form = host.querySelector('form');
@@ -198,8 +200,20 @@ describe('内部立项单页来源与失败恢复', () => {
     });
     expect(api.updateInitiation).toHaveBeenCalledTimes(1);
     await act(async () => resolveSave({ success: true, data: previous }));
-    expect(api.decideInitiation).toHaveBeenCalledWith('initiation', expect.objectContaining({ reviewMeetingRequired: false, primaryOwnerId: 'owner' }));
-    expect(host.textContent).toContain('已提交主负责人审批');
+    expect(api.decideInitiation).toHaveBeenCalledWith('initiation', expect.objectContaining({ reviewMeetingRequired: false }));
+    expect(api.decideInitiation).toHaveBeenCalledTimes(1);
+    expect(host.textContent).toContain('T1.2.3');
+    expect(host.textContent).not.toContain('已提交主负责人审批');
     expect(api.createInitiation).not.toHaveBeenCalled();
+  });
+
+  it('服务端尚未返回编号时不把待发号误报为完成', async () => {
+    const previous = seed({ reviewMeetingRequired: false, reviewPassed: true, status: 'decision_pending' });
+    api.updateInitiation.mockResolvedValue({ success: true, data: previous });
+    api.decideInitiation.mockResolvedValue({ success: true, data: { ...previous, status: 'owner_pending', tCode: null } });
+    await mount(previous); await confirm();
+    expect(host.textContent).toContain('尚未取得 T 立项号');
+    expect(host.textContent).not.toContain('内部版本号已生成');
+    expect(host.querySelector('form')).not.toBeNull();
   });
 });

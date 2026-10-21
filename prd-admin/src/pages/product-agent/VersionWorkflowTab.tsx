@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, FileText, HelpCircle, Plus, Search, Upload, X } from 'lucide-react';
 import {
-  approveInitiation, completeRelease, createInitiation, decideInitiation,
+  completeRelease, createInitiation, decideInitiation,
   listProductMembers, listVersionApplicationProducts, getWorkflowInitiations, getWorkflowReleases,
   syncInitiationReview, updateInitiation, listProductVersionReviewSources, parseProductVersionMessage,
   getInitiationPlanDefaults,
@@ -227,7 +227,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
             : downloadListCsv(internalExport.filename, internalExport.headers, visibleInitiations.map(internalExport.mapRow))}><Download size={14} />导出{tab === 'release' ? '正式' : '内部'}版本</Secondary>
         <Primary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => openApplication(tab)}><Plus size={14} />申领{tab === 'release' ? '正式' : '内部'}版本号</Primary>
         {tab === 'release' && <Secondary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => openApplication('temporary')}>临时优化需求</Secondary>}
-        {tab === 'release' && <span title="月度常规计划外、紧急且工作量较小的优化，无需 T 号，沿用既有自动审批规则。" className="text-token-muted"><HelpCircle size={15} /></span>}
+        {tab === 'release' && <span title="月度常规计划外、紧急且工作量较小的优化，无需 T 号，确认后自动发号。" className="text-token-muted"><HelpCircle size={15} /></span>}
       </div>
     </div>
     {(catalogError || loadError || selectedProductUnavailable) && <div role="alert" className="shrink-0 rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">
@@ -336,7 +336,6 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [file, setFile] = useState<File | null>(null);
   const [meeting, setMeeting] = useState(seed?.reviewMeetingRequired ?? false);
   const [meetingDraftCount, setMeetingDraftCount] = useState(seed?.meetingDraftCount ?? 1);
-  const [ownerId, setOwnerId] = useState(seed?.primaryOwnerId ?? '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [sourceRejection, setSourceRejection] = useState<{ title: string; message: string } | null>(null);
@@ -404,7 +403,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
 
   const reviewRunning = reviewStage !== 'idle';
   const issuedCode = item?.tCode ?? '';
-  const completed = !editingIssued && Boolean(issuedCode || item?.status === 'owner_pending');
+  const completed = !editingIssued && Boolean(issuedCode);
   const sourceFileName = reviewSources.find((source) => source.id === reviewSubmissionId)?.fileName;
   const planFileName = sourceMode === 'upload'
     ? file?.name ?? item?.reviewAttempts?.slice(-1)[0]?.planFileName ?? undefined
@@ -525,7 +524,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     projectMemberNames: item?.projectMemberNames,
     plannedProjectAt: plannedProjectAt ? new Date(`${plannedProjectAt}T00:00:00+08:00`).toISOString() : undefined,
     reviewMeetingRequired: meeting,
-    primaryOwnerId: meeting ? undefined : ownerId,
+    primaryOwnerId: item?.primaryOwnerId ?? undefined,
     planFileName,
     needUiDesign: editingIssued && !needUiDesign ? item?.needUiDesign ?? undefined : needUiDesign === 'yes',
     isAiPoc: editingIssued && !isAiPoc ? item?.isAiPoc ?? undefined : isAiPoc === 'yes',
@@ -610,7 +609,6 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     const res = await decideInitiation(reviewed.id, {
       reviewMeetingRequired: meeting,
       expectedMeetingAt: meeting ? reviewed.plannedProjectAt ?? undefined : undefined,
-      primaryOwnerId: meeting ? undefined : ownerId,
       meetingDraftCount: meeting ? reviewed.meetingDraftCount ?? 1 : undefined,
     });
     if (!res.success) throw new Error(res.error?.message ?? '提交失败，请从当前记录继续。');
@@ -623,7 +621,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
         setMessage('立项号已生成；浏览器未允许自动复制，请点击复制编号。');
       }
     } else {
-      setMessage('已提交主负责人审批，同意后自动生成 T 立项号。填写内容已保存。');
+      setMessage('尚未取得 T 立项号，填写内容已保存，请刷新原记录查看发号结果。');
     }
   };
 
@@ -637,7 +635,6 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
     if (!editingIssued && !demandSource.trim()) return setMessage('请填写需求来源');
     if (!editingIssued && !plannedProjectAt) return setMessage('请填写计划立项时间');
-    if (!editingIssued && !meeting && !ownerId) return setMessage('请选择产品主负责人');
     if (!editingIssued && (!needUiDesign || !isAiPoc)) return setMessage('请选择 UI 设计和 AI POC 状态');
 
     submittingRef.current = true;
@@ -663,7 +660,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       setItem(saved.data);
       setMeetingDraftCount(saved.data.meetingDraftCount ?? 1);
       if (editingIssued) {
-        setMessage('基础资料已保存，原 T 号、评审、审批及下游关联保持不变。');
+        setMessage('基础资料已保存，原 T 号、评审及下游关联保持不变。');
         return;
       }
       const reviewed = saved.data.reviewPassed && (sourceMode === 'existing' || !file) ? saved.data : await runReview(saved.data);
@@ -719,11 +716,11 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     open
     onOpenChange={(open) => { if (!open && !submittingRef.current) onClose(); }}
     title={wizardTitle}
-    description={editingIssued ? '修改基础资料，保留原编号、评审和审批记录，不重新发号。' : '一次填写并确认。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
+    description={editingIssued ? '修改基础资料，保留原编号、评审和历史记录，不重新发号。' : '一次填写并确认，无需人工审批。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
     maxWidth={920}
     contentStyle={{ height: 'min(94vh, 960px)', maxHeight: '94vh' }}
     actions={<>
-      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '仅修改资料，不重新发号' : meeting ? '评审通过后申领 T 号' : '评审通过后交主负责人审批'}</span>}
+      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '仅修改资料，不重新发号' : '评审通过后自动发放 T 号，无需人工审批'}</span>}
       <Button size="sm" onClick={onClose} disabled={busy}>{completed ? '完成' : '取消'}</Button>
       {!completed && <Button size="sm" variant="primary" type="submit" form={formId} disabled={busy || !linkedProductId.trim()}>
         {busy && <MapSpinner size={14} />}{busy ? (reviewRunning ? '评审中，通过后自动继续…' : '正在保存并提交…') : confirmationLabel}
@@ -732,7 +729,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     content={<div className="space-y-5">
       {memberNotice}
       {completed ? <section className="space-y-3 rounded-md border border-token-subtle bg-token-nested p-4">
-        <div className="flex items-center gap-2 text-sm font-medium text-token-primary"><CheckCircle2 size={18} />{issuedCode ? '内部版本号已生成' : '已提交主负责人审批'}</div>
+        <div className="flex items-center gap-2 text-sm font-medium text-token-primary"><CheckCircle2 size={18} />内部版本号已生成</div>
         {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /></>}
       </section> : <form id={formId} onSubmit={(event) => { event.preventDefault(); void confirmApplication(); }} aria-busy={busy}>
         <fieldset disabled={busy} className="min-w-0 space-y-5 border-0 p-0">
@@ -789,13 +786,12 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
             <h4 id={`${formId}-decision`} className="text-sm font-semibold text-token-primary">立项安排</h4>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Field label="是否需要开评审会"><InitiationSelect disabled={editingIssued} value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></InitiationSelect></Field>
-              {!meeting && <Field label="产品主负责人 *"><fieldset disabled={busy || editingIssued} style={{ pointerEvents: busy || editingIssued ? 'none' : undefined }} className="m-0 min-w-0 border-0 p-0"><UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品主负责人" /></fieldset></Field>}
               <div className="grid grid-cols-1 gap-4 md:col-span-2 md:grid-cols-2">
                 <Field label="计划立项时间 *"><InitiationInput type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} />{meeting && <span className="mt-1 block text-xs text-token-muted">同时作为预计评审会时间，无需重复填写。</span>}</Field>
                 {meeting && <Field label="计划召开稿次（自动识别）"><output className="block rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary">{draftDefaultsPending && !busy ? '正在识别，未标注时默认第一稿' : `${['', '第一稿', '第二稿', '第三稿'][meetingDraftCount] ?? '第一稿'}${meetingDraftCount > 1 ? `（计划共 ${meetingDraftCount} 稿）` : '（默认）'}`}</output><span className="mt-1 block text-xs text-token-muted">按方案名称或文件名中的明确稿次识别，不按版本号或评审次数推断。</span></Field>}
               </div>
             </div>
-            <p className="text-xs leading-5 text-token-secondary">{editingIssued ? `当前立项号：${issuedCode}。所属应用、版本级别和原审批方式保持不变，仅保存资料修改。` : <>{meeting ? 'Agent 评审通过后自动申领 T 号，线下各稿会议结果在详情中后续回填。' : 'Agent 评审通过后提交主负责人审批，同意后生成 T 号。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</>}</p>
+            <p className="text-xs leading-5 text-token-secondary">{editingIssued ? `当前立项号：${issuedCode}。所属应用、版本级别和原会议安排保持不变，仅保存资料修改。` : <>Agent 评审通过后自动发放 T 号，无需人工审批。{meeting && '线下各稿会议结果在详情中后续回填。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</>}</p>
           </section>
         </fieldset>
       </form>}
@@ -861,7 +857,6 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
         <div>{item.ownerName || names.get(item.primaryOwnerId ?? item.createdBy) || item.legacyData?.['产品负责人'] || item.primaryOwnerId || item.createdBy || '-'}</div>
-        {!item.legacyRegistration && item.primaryOwnerId === currentUserId && item.status === 'owner_pending' && <button onClick={async (event) => { event.stopPropagation(); const result = await approveInitiation(item.id); if (result.success) await onChanged(); }} className="mt-1 text-cyan-300">负责人同意</button>}
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatDate(item.plannedProjectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td><Td>{formatBool(item.isAiPoc)}</Td>
