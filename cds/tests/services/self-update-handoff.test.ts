@@ -383,8 +383,8 @@ describe('CDS 可撤销重启交接', () => {
     git('checkout', '-b', 'after'); fs.writeFileSync(path.join(root, 'source.txt'), 'new source');
     git('add', 'source.txt'); git('commit', '-m', '测试晚期复制故障源码');
     expect(git('rev-parse', 'HEAD')).not.toBe(sha);
-    const unreadable = path.join(root, 'cds/node_modules/fixture.js');
-    const mode = fs.statSync(unreadable).mode & 0o777;
+    // 产物目录按真实合同去引用；悬空链接在UID0也真实ENOENT，不依赖chmod权限拒绝。
+    const unreadable = path.join(root, 'cds/web/dist.previous/copy-fault.js');
     const results: Array<{ action: string; exitCode: number; stderr: string }> = [];
     const execute = runtime.exec.bind(runtime);
     const observe = vi.spyOn(runtime, 'exec').mockImplementation(async (ticket, command, options, recovery) => {
@@ -396,17 +396,18 @@ describe('CDS 可撤销重启交接', () => {
       return result;
     });
     try {
-      fs.chmodSync(unreadable, 0o000);
-      expect(() => fs.readFileSync(unreadable)).toThrow(expect.objectContaining({ code: 'EACCES' }));
+      fs.symlinkSync(path.join(root, 'missing-copy-source'), unreadable);
+      expect(fs.lstatSync(unreadable).isSymbolicLink()).toBe(true);
+      expect(() => fs.readFileSync(unreadable)).toThrow(expect.objectContaining({ code: 'ENOENT' }));
       await expect(checkpoint.captureArtifacts()).rejects.toThrow('维护文件操作未完成');
-      // worker按既有合同只输出安全文案；EACCES由上面的真实文件读取证明，不要求泄露原始异常。
+      // worker按既有合同只输出安全文案；ENOENT由上面的真实文件读取证明，不要求泄露原始异常。
       expect(results[0]).toEqual({ action: 'snapshot', exitCode: 1,
         stderr: 'CDS 维护文件操作未完成，已保留可用恢复点，请核对维护状态。' });
       expect(results[1]).toMatchObject({ action: 'discard', exitCode: 0 });
       expect(runtime.observe()).toMatchObject({ id: owner.id, stopRequested: true,
         activeJobCount: 0, unconfirmedJobCount: 0 });
       expect(git('branch', '--show-current')).toBe('after');
-      fs.chmodSync(unreadable, mode);
+      fs.unlinkSync(unreadable);
       await checkpoint.rollback(); await checkpoint.rollback();
       expect(git('rev-parse', 'HEAD')).toBe(sha); expect(git('branch', '--show-current')).toBe('before');
       expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toBe('old source');
@@ -414,7 +415,7 @@ describe('CDS 可撤销重启交接', () => {
       expect(dispatches.map(job => job.action)).toEqual(['snapshot', 'discard']);
       expect(fs.readdirSync(path.join(root, 'cds/.cds'))).toEqual([]);
       expect(runtime.finish(owner)).toBe(true); expect(runtime.observe()).toBeNull();
-    } finally { fs.chmodSync(unreadable, mode); observe.mockRestore(); }
+    } finally { fs.rmSync(unreadable, { force: true }); observe.mockRestore(); }
   });
 
   it.each(['git', 'nginx'] as const)('真实%s恢复失败后仍观察同票，二次确认不重复替换已恢复目录', async failure => {

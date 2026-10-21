@@ -5,8 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { afterEach, describe, expect, it } from 'vitest';
-import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
-import { ShellExecutor } from '../../src/services/shell-executor.js';
+import type { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
 import { shellQuote } from '../../src/services/sidecar/sidecar-deployer.js';
 import { confirmMaintenanceBoot, maintenanceDirectoryIdentity, retirementFor } from '../../src/services/self-maintenance-retention.js';
 import type { ExecAssignment, ExecResult } from '../../src/types.js';
@@ -77,6 +76,10 @@ async function compileFixture(root: string) {
     format: 'esm', platform: 'node', target: 'node20', bundle: false, sourcemap: false, logLevel: 'silent' });
   fs.writeFileSync(path.join(compiled, 'package.json'), '{"type":"module"}');
   fs.symlinkSync(fs.realpathSync(new URL('../../node_modules/', import.meta.url)), path.join(compiled, 'node_modules'), 'dir');
+  // 外层监督链也用本例刚编译的真实ESM，避免为夹具额外启动TSX；构建/导入仍计入原五秒。
+  const { IsolatedShellExecutor: CompiledExecutor } = await import(compiledSource(root, 'isolated-shell-executor'));
+  const { ShellExecutor: CompiledShell } = await import(compiledSource(root, 'shell-executor'));
+  return new CompiledExecutor(new CompiledShell(), { isolatedLane: 'operation', concurrency: 1 }) as IsolatedShellExecutor;
 }
 
 function casePhases(caseId: string) {
@@ -170,8 +173,7 @@ describe('受管恢复副本的真实Node换代与完整替代点', () => {
   it('完整B之前保留A，正常旧Node终态后仅回收精确A并保留B及未知副本', async () => {
     const phase = casePhases('complete-replacement');
     const { root, owned, git, seed } = makeFixture();
-    await compileFixture(root); phase('compiled-esm-ready');
-    const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
+    const operation = await compileFixture(root); phase('compiled-esm-ready');
     pools.push(operation);
     const releaseFile = path.join(root, '.owned/release-copy'); releases.push(releaseFile);
     const heldFile = path.join(root, '.owned/held-copy.json'), holdToken = 'retention-fixture-B-copy-held';
@@ -245,8 +247,7 @@ describe('受管恢复副本的真实Node换代与完整替代点', () => {
   it('精确旧许可晚启动不删A，真实退役worker仍活时不接管、不分配第三份且保持B', async () => {
     const phase = casePhases('late-permit-live-writer');
     const { root, owned } = makeFixture();
-    await compileFixture(root); phase('compiled-esm-ready');
-    const operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation', concurrency: 1 });
+    const operation = await compileFixture(root); phase('compiled-esm-ready');
     pools.push(operation);
     const cwd = fileURLToPath(new URL('../../', import.meta.url));
     const run = async (generation: 'A' | 'B', refuse = false) => {
