@@ -13,7 +13,7 @@ let root = createRoot(host);
 afterEach(async () => { await act(async () => root.unmount()); host.replaceChildren(); root = createRoot(host); vi.clearAllMocks(); });
 async function click(text: string) { await act(async () => [...host.querySelectorAll('button')].find((button) => button.textContent === text)?.click()); }
 
-describe('内部版本删除确认', () => {
+describe('列表与详情共用内部版本删除确认', () => {
   it('打开不删除，后续记录的服务端拒绝留在弹窗且不刷新列表', async () => {
     const changed = vi.fn();
     remove.mockResolvedValue({ success: false, error: { code: 'INITIATION_NOT_LATEST', message: '同一应用已有后续 T 号，不能删除。' } });

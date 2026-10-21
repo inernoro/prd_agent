@@ -3,7 +3,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { deleteInitiation } from '@/services/real/productAgent';
 
-/** 删除资格由服务端按完整应用序列和下游关系判断，不使用当前筛选后的列表。 */
+/** 列表与详情共用；删除资格由服务端判断，不使用当前筛选后的列表。 */
 export function InitiationDeleteAction({ id, code, onDeleted }: { id: string; code: string; onDeleted: () => void | Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);

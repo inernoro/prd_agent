@@ -26,7 +26,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { InitiationDeleteAction } from './InitiationDeleteAction';
+import { InitiationDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
 import { useProductListScope } from '@/lib/productListScope';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';

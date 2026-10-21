@@ -18,7 +18,7 @@ import { InitiationWizard } from './VersionWorkflowTab';
 import { useAuthStore } from '@/stores/authStore';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { VersionCopyActions } from './VersionCopyActions';
-import { InitiationDeleteAction } from './InitiationDeleteAction';
+import { InitiationDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
