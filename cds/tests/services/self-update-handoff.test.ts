@@ -9,6 +9,7 @@ import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../../src
 import { MockShellExecutor, ShellExecutor } from '../../src/services/shell-executor.js';
 import { IsolatedShellExecutor, OperationExecutionError } from '../../src/services/isolated-shell-executor.js';
 import { SelfMaintenanceRuntime } from '../../src/services/self-maintenance-runtime.js';
+import { confirmMaintenanceBoot, maintenanceDirectoryIdentity, markRetentionDisposition, sealRetention } from '../../src/services/self-maintenance-retention.js';
 import { createBranchRouter } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
 import { WorktreeService } from '../../src/services/worktree.js';
@@ -299,6 +300,78 @@ describe('CDS 可撤销重启交接', () => {
     expect(dispatches.map(job => job.action)).toEqual(['snapshot', 'restore', 'discard']);
     expect(fs.readdirSync(path.join(root, 'cds/.cds'))).toEqual([]);
     expect(runtime.finish(owner)).toBe(true); expect(runtime.observe()).toBeNull();
+  });
+
+  it('许可后真实元数据EISDIR只告警保留，不回滚或派发旧owner深删', async () => {
+    const { root, oldFiles } = gitFixture(true);
+    confirmMaintenanceBoot(root);
+    const { runtime, dispatches } = realCheckpointRuntime(root);
+    const owner = runtime.acquire({ source: 'self-update', actor: 'retention-publish-failure' })!;
+    const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root);
+    const file = path.join(root, 'cds/.cds/checkpoint-retention.json'), saved = `${file}.owned-original`;
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.renameSync(file, saved); fs.mkdirSync(file);
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      owner.restartScheduled = true;
+      await expect(Promise.resolve(checkpoint.retainForRestart())).resolves.toBeUndefined();
+      await checkpoint.rollback();
+      expect(dispatches.map(job => job.action)).toEqual(['snapshot']);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('回执未确认'));
+      for (const [name, contents] of oldFiles) expect(fs.readFileSync(path.join(root, name), 'utf8')).toBe(contents);
+      expect(fs.existsSync(record.slots[0].backup.path)).toBe(true);
+      expect(runtime.observe()).toMatchObject({ restartScheduled: true, activeJobCount: 0, unconfirmedJobCount: 0 });
+      await expect(runtime.exec(owner, 'must-not-run')).rejects.toThrow('尚未确认停止');
+    } finally {
+      warning.mockRestore(); fs.rmdirSync(file); fs.renameSync(saved, file);
+    }
+  });
+
+  it('旧异步保留回执晚到不得覆盖已经推进的精确revision', async () => {
+    const { root } = gitFixture(true);
+    confirmMaintenanceBoot(root);
+    const { runtime } = realCheckpointRuntime(root);
+    const owner = runtime.acquire({ source: 'self-update', actor: 'retention-stale-publication' })!;
+    await createSelfUpdateCheckpoint(runtime, owner, root);
+    const file = path.join(fs.realpathSync(root), 'cds/.cds/checkpoint-retention.json');
+    const record = JSON.parse(fs.readFileSync(file, 'utf8'));
+    let enter!: () => void, release!: () => void;
+    const entered = new Promise<void>(resolve => { enter = resolve; }), gate = new Promise<void>(resolve => { release = resolve; });
+    const open = fs.promises.open.bind(fs.promises);
+    const observe = vi.spyOn(fs.promises, 'open').mockImplementation(async (...args) => {
+      const handle = await open(...args);
+      if (String(args[0]).startsWith(file + '.') && args[1] === 'wx') { enter(); await gate; }
+      return handle;
+    });
+    const publication = sealRetention(maintenanceDirectoryIdentity(fs.realpathSync(root)), owner.id);
+    try {
+      await Promise.race([entered, publication.then(() => { throw new Error('保留回执没有进入本任务真实写入闸'); })]);
+      markRetentionDisposition(maintenanceDirectoryIdentity(fs.realpathSync(root)), owner.id, 'restoring', record.slots[0].existed);
+      const advanced = fs.readFileSync(file, 'utf8');
+      release(); await expect(publication).rejects.toThrow('身份或终态未确认');
+      expect(fs.readFileSync(file, 'utf8')).toBe(advanced);
+      expect(JSON.parse(advanced)).toMatchObject({ revision: record.revision + 1, slots: [{ phase: 'restoring' }] });
+      expect(fs.existsSync(record.slots[0].backup.path)).toBe(true);
+    } finally { release(); observe.mockRestore(); await publication.catch(() => {}); }
+  });
+
+  it('真实生产者仍活的同Node不能凭15秒释放或新owner领取回收旧副本', async () => {
+    const { root } = gitFixture(true);
+    confirmMaintenanceBoot(root);
+    const { runtime, dispatches } = realCheckpointRuntime(root);
+    const owner = runtime.acquire({ source: 'self-update', actor: 'retention-still-alive' })!;
+    const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root);
+    owner.restartScheduled = true; await checkpoint.retainForRestart();
+    const file = path.join(root, 'cds/.cds/checkpoint-retention.json'), before = fs.readFileSync(file, 'utf8');
+    const record = JSON.parse(before);
+    expect(record.slots[0].producer.birth.pid).toBe(process.pid);
+    expect(() => process.kill(record.slots[0].producer.birth.pid, 0)).not.toThrow();
+    expect(runtime.release(owner)).toBe(true); // 只模拟原release入口，不fake计时或进程终态。
+    const next = runtime.acquire({ source: 'self-update', actor: 'must-not-reclaim-live-producer' })!;
+    await expect(createSelfUpdateCheckpoint(runtime, next, root)).rejects.toThrow('身份或终态未确认');
+    expect(dispatches.map(job => job.action)).toEqual(['snapshot']);
+    expect(fs.readFileSync(file, 'utf8')).toBe(before);
+    expect(fs.existsSync(record.slots[0].backup.path)).toBe(true);
   });
 
   it('晚期真实复制拒绝后丢弃局部副本不结束源码保护，也不恢复未确认的五目录', async () => {

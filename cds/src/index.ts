@@ -25,6 +25,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, t
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { IsolatedShellExecutor } from './services/isolated-shell-executor.js';
+import { confirmMaintenanceBoot } from './services/self-maintenance-retention.js';
 import { ContainerLogStreamHub } from './services/container-log-stream-hub.js';
 import { ObservationStreamExecutor } from './services/observation-stream-executor.js';
 import { StateService } from './services/state.js';
@@ -5819,6 +5820,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
 } else {
   // ── Standalone or Scheduler mode: start dashboard + proxy ──
   listenWithRetry(app, config.masterPort, 'Dashboard', () => {
+    confirmMaintenanceBoot(config.repoRoot);
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
     console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);

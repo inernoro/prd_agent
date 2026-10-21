@@ -330,6 +330,10 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
       return result;
     });
     const backupPrefix = path.join(fs.realpathSync(root), 'cds/.cds/restart-rollback-');
+    // 真实历史损坏记录也不能让noOp进入retention读取、分配或清理路径。
+    const retentionFile = path.join(root, 'cds/.cds/checkpoint-retention.json');
+    fs.mkdirSync(path.dirname(retentionFile), { recursive: true });
+    fs.writeFileSync(retentionFile, 'unknown historical retention record\n', { mode: 0o600 });
     const backup = vi.spyOn(fs, 'mkdtempSync');
     realNoopGitEnv = env;
     const trace = getHttpFixtureTrace(server)!;
@@ -364,6 +368,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     // 旧b7应仅在以下工作量断言语义RED：已成功noOp却先snapshot再discard并创建过备份。
     expect.soft(fileJobs.map(job => job.action)).toEqual([]);
     expect.soft(backup.mock.calls.filter(([name]) => String(name).startsWith(backupPrefix))).toEqual([]);
+    expect(fs.readFileSync(retentionFile, 'utf8')).toBe('unknown historical retention record\n');
   });
 
   it.each([
