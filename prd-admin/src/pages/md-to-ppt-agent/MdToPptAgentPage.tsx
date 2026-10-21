@@ -480,15 +480,6 @@ function genId(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function countElementsWithClass(html: string, token: string): number {
-  const tagPattern = /<(?:div|main|section|article)\b[^>]*\bclass\s*=\s*(["'])([^"']*)\1[^>]*>/gis;
-  let count = 0;
-  for (const match of html.matchAll(tagPattern)) {
-    if (match[2].split(/\s+/).some(value => value.toLowerCase() === token.toLowerCase())) count += 1;
-  }
-  return count;
-}
-
 function findBalancedClassBlocks(html: string, classToken: string): string[] {
   const blocks: string[] = [];
   const opening = /<(div|main|section|article)\b[^>]*\bclass\s*=\s*(["'])([^"']*)\2[^>]*>/gi;
@@ -558,245 +549,9 @@ function hasBalancedRawTextElements(html: string, tag: string): boolean {
   return true;
 }
 
-function hasRenderableSlideContent(block: string): boolean {
-  const hasImage = /<img\b[^>]*\bsrc\s*=\s*(["'])[^"']+\1/i.test(block);
-  const svg = block.match(/<svg\b[^>]*>([\s\S]*?)<\/svg\s*>/i)?.[1]
-    .replace(/<defs\b[^>]*>[\s\S]*?<\/defs\s*>/gi, '') ?? '';
-  const hasSvgShape = /<path\b[^>]*\bd\s*=\s*(["'])[^"'\s][^"']*\1/i.test(svg)
-    || /<(?:circle|ellipse|rect)\b[^>]*(?:\br|\brx|\bry|\bwidth|\bheight)\s*=\s*(["'])[^"']*[1-9][^"']*\1/i.test(svg)
-    || /<(?:polyline|polygon)\b[^>]*\bpoints\s*=\s*(["'])[^"'\s][^"']*\1/i.test(svg)
-    || /<(?:use|image)\b[^>]*(?:href|xlink:href)\s*=\s*(["'])[^"'\s][^"']*\1/i.test(svg)
-    || /<text\b[^>]*>[\s\S]*?\S[\s\S]*?<\/text\s*>/i.test(svg);
-  const hasEmbeddedMedia = /<(?:video|iframe)\b[^>]*\bsrc\s*=\s*(["'])[^"']+\1/i.test(block);
-  if (hasImage || hasSvgShape || hasEmbeddedMedia) return true;
-  const encodedText = block
-    .replace(/<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)\s*>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<[^>]+>/g, '');
-  const text = encodedText
-    .replace(/&#(\d+);|&#x([0-9a-f]+);/gi, (_, decimal: string | undefined, hex: string | undefined) => {
-      const value = Number.parseInt(decimal ?? hex ?? '0', decimal ? 10 : 16);
-      return Number.isFinite(value) ? String.fromCodePoint(value) : '';
-    })
-    .replace(/&(?:nbsp|ensp|emsp|thinsp);/gi, ' ')
-    .replace(/\s+/g, '');
-  return text.length > 0;
-}
-
-function topLevelCssRules(css: string): Array<{ selectors: string; declarations: string }> {
-  const rules: Array<{ selectors: string; declarations: string }> = [];
-  const normalizedCss = css.replace(/\/\*[\s\S]*?\*\//g, ' ');
-  let depth = 0;
-  let selectorStart = 0;
-  let declarationStart = -1;
-  let selectors = '';
-  for (let index = 0; index < normalizedCss.length; index += 1) {
-    if (normalizedCss[index] === '{') {
-      if (depth === 0) {
-        selectors = normalizedCss.slice(selectorStart, index).trim();
-        declarationStart = index + 1;
-      }
-      depth += 1;
-    } else if (normalizedCss[index] === '}' && depth > 0) {
-      depth -= 1;
-      if (depth === 0 && declarationStart >= 0) {
-        const declarations = normalizedCss.slice(declarationStart, index);
-        if (/^@media\b/i.test(selectors)) {
-          if (!/@media\s+(?:print|speech)(?:\s|\{|$)/i.test(selectors)) {
-            rules.push(...topLevelCssRules(declarations));
-          }
-        } else if (/^@(supports|layer)\b/i.test(selectors)) {
-          rules.push(...topLevelCssRules(declarations));
-        } else if (!selectors.startsWith('@')) {
-          rules.push({ selectors, declarations });
-        }
-        selectorStart = index + 1;
-        declarationStart = -1;
-      }
-    }
-  }
-  return rules;
-}
-
-function hasGloballyHiddenCanvas(html: string, bodyOpeningTag: string): boolean {
-  const hidden = (declarations: string) => /(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?:\.0+)?(?:[;!\s]|$))/i.test(declarations);
-  const inline = bodyOpeningTag.match(/\bstyle\s*=\s*(["'])([^"']*)\1/i);
-  if (inline && hidden(inline[2])) return true;
-  for (const style of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) {
-    for (const rule of topLevelCssRules(style[1])) {
-      const hidesRoot = rule.selectors.split(',').some(raw => {
-        const selector = raw.trim().toLowerCase();
-        return selector === 'body' || selector === 'html' || selector === 'html body' || selector === '*';
-      });
-      if (hidesRoot && hidden(rule.declarations)) return true;
-    }
-  }
-  return false;
-}
-
-function isSlideBlockExplicitlyHidden(block: string): boolean {
-  const opening = block.slice(0, block.indexOf('>') + 1);
-  if (/\shidden(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?(?=\s|>)/i.test(opening)) return true;
-  if (/\baria-hidden\s*=\s*(?:["']true["']|true)(?:\s|>)/i.test(opening)) return true;
-  const inline = opening.match(/\bstyle\s*=\s*(["'])([^"']*)\1/i);
-  return Boolean(inline && /(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?:\.0+)?(?:[;!\s]|$))/i.test(inline[2]));
-}
-
-function findAncestorOpeningTags(html: string, childStart: number): string[] {
-  const stack: Array<{ tag: string; opening: string }> = [];
-  const tokens = /<(?<close>\/?)\s*(?<tag>[a-z][a-z0-9:-]*)\b[^>]*?(?<self>\/?)>/gi;
-  let token: RegExpExecArray | null;
-  const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr']);
-  while ((token = tokens.exec(html)) !== null && token.index < childStart) {
-    const tag = (token.groups?.tag ?? '').toLowerCase();
-    if (token.groups?.close === '/') {
-      let match = -1;
-      for (let index = stack.length - 1; index >= 0; index -= 1) {
-        if (stack[index].tag === tag) {
-          match = index;
-          break;
-        }
-      }
-      if (match >= 0) stack.splice(match);
-      continue;
-    }
-    if (token.groups?.self === '/' || voidTags.has(tag)) continue;
-    stack.push({ tag, opening: token[0] });
-  }
-  return stack.map(item => item.opening);
-}
-
-function selectorSubjectMatchesOpeningTag(subject: string, opening: string): boolean {
-  const normalized = subject.replace(/:not\([^)]*\)/gi, '').trim();
-  if (normalized === '*') return true;
-  const tag = opening.match(/^<\s*([a-z][a-z0-9:-]*)/i)?.[1] ?? '';
-  const requestedTag = normalized.match(/^([a-z][a-z0-9:-]*)/i)?.[1] ?? '';
-  if (requestedTag && requestedTag.toLowerCase() !== tag.toLowerCase()) return false;
-  const classes = (opening.match(/\bclass\s*=\s*(["'])([^"']*)\1/i)?.[2] ?? '').split(/\s+/).filter(Boolean);
-  for (const requested of normalized.matchAll(/\.([a-z0-9_-]+)/gi)) {
-    if (!classes.some(value => value.toLowerCase() === requested[1].toLowerCase())) return false;
-  }
-  const requestedId = normalized.match(/#([a-z0-9_-]+)/i)?.[1];
-  if (requestedId) {
-    const id = opening.match(/\bid\s*=\s*(["'])([^"']*)\1/i)?.[2] ?? '';
-    if (requestedId.toLowerCase() !== id.toLowerCase()) return false;
-  }
-  return Boolean(requestedTag || normalized.includes('.') || normalized.includes('#'));
-}
-
-function selectorCanApplyToPage(selector: string, opening: string, ancestors: string[]): boolean {
-  if (selector.replace(/:not\([^)]*\)/gi, '').includes(':')) return false;
-  const classes = (opening.match(/\bclass\s*=\s*(["'])([^"']*)\1/i)?.[2] ?? '').split(/\s+/).filter(Boolean);
-  for (const excluded of selector.matchAll(/:not\(\.([a-z0-9_-]+)\)/gi)) {
-    if (classes.some(value => value.toLowerCase() === excluded[1].toLowerCase())) return false;
-  }
-  const parts = selector.trim().split(/[\s>+~]+/).filter(Boolean);
-  if (parts.length === 0 || !selectorSubjectMatchesOpeningTag(parts[parts.length - 1], opening)) return false;
-  let ancestorIndex = ancestors.length - 1;
-  for (let partIndex = parts.length - 2; partIndex >= 0; partIndex -= 1) {
-    const part = parts[partIndex];
-    if (/^(?:html|body)$/i.test(part)) continue;
-    let found = false;
-    while (ancestorIndex >= 0) {
-      if (selectorSubjectMatchesOpeningTag(part, ancestors[ancestorIndex])) {
-        found = true;
-        ancestorIndex -= 1;
-        break;
-      }
-      ancestorIndex -= 1;
-    }
-    if (!found) return false;
-  }
-  return true;
-}
-
-function parseVisibilityDeclarations(declarations: string): Array<{ property: string; hidden: boolean; important: boolean }> {
-  const result: Array<{ property: string; hidden: boolean; important: boolean }> = [];
-  for (const match of declarations.matchAll(/(display|visibility|opacity)\s*:\s*([^;!}]+?)(\s*!important)?(?=;|}|$)/gi)) {
-    const property = match[1].toLowerCase();
-    const value = match[2].trim().toLowerCase();
-    let hidden: boolean;
-    if (property === 'display') hidden = value === 'none';
-    else if (property === 'visibility') hidden = value === 'hidden' || value === 'collapse';
-    else {
-      const opacity = Number.parseFloat(value);
-      if (!Number.isFinite(opacity)) continue;
-      hidden = opacity <= 0;
-    }
-    result.push({ property, hidden, important: Boolean(match[3]) });
-  }
-  return result;
-}
-
-function cssSpecificity(selector: string): number {
-  const ids = selector.match(/#[a-z0-9_-]+/gi)?.length ?? 0;
-  const classes = selector.match(/\.[a-z0-9_-]+|\[[^\]]+\]|:[a-z0-9_-]+/gi)?.length ?? 0;
-  const tags = selector.match(/(?:^|[\s>+~])(?:[a-z][a-z0-9:-]*)/gi)?.length ?? 0;
-  return ids * 100 + classes * 10 + tags;
-}
-
-function hasHiddenSlideContract(html: string, structuralBody: string, blocks: string[]): boolean {
-  if (blocks.some(isSlideBlockExplicitlyHidden)) return true;
-  const blockStarts: number[] = [];
-  let searchFrom = 0;
-  for (const block of blocks) {
-    const start = structuralBody.indexOf(block, searchFrom);
-    if (start < 0) return true;
-    blockStarts.push(start);
-    searchFrom = start + block.length;
-  }
-  const ancestorOpenings = [...new Set(blockStarts.flatMap(start => findAncestorOpeningTags(structuralBody, start)))];
-  if (ancestorOpenings.some(isSlideBlockExplicitlyHidden)) return true;
-  const contexts = blocks.map((block, index) => ({
-    opening: block.slice(0, block.indexOf('>') + 1),
-    ancestors: findAncestorOpeningTags(structuralBody, blockStarts[index]),
-  }));
-  const rules: Array<{ selector: string; declarations: string; order: number }> = [];
-  let order = 0;
-  for (const style of html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)) {
-    for (const rule of topLevelCssRules(style[1])) {
-      for (const raw of rule.selectors.split(',')) {
-        const selector = raw.trim().toLowerCase();
-        rules.push({ selector, declarations: rule.declarations, order: order++ });
-      }
-    }
-  }
-
-  const elementIsHidden = (context: { opening: string; ancestors: string[] }) => {
-    const winners = new Map<string, { hidden: boolean; important: boolean; specificity: number; order: number }>();
-    for (const rule of rules) {
-      if (!selectorCanApplyToPage(rule.selector, context.opening, context.ancestors)) continue;
-      const specificity = cssSpecificity(rule.selector);
-      for (const declaration of parseVisibilityDeclarations(rule.declarations)) {
-        const current = winners.get(declaration.property);
-        if (!current || (declaration.important && !current.important)
-          || (declaration.important === current.important
-            && (specificity > current.specificity || (specificity === current.specificity && rule.order >= current.order)))) {
-          winners.set(declaration.property, { ...declaration, specificity, order: rule.order });
-        }
-      }
-    }
-    return [...winners.values()].some(value => value.hidden);
-  };
-  const pageIsHidden = (context: { opening: string; ancestors: string[] }) => {
-    for (let index = 0; index < context.ancestors.length; index += 1) {
-      if (elementIsHidden({ opening: context.ancestors[index], ancestors: context.ancestors.slice(0, index) })) return true;
-    }
-    return elementIsHidden(context);
-  };
-  const isActive = (opening: string) => {
-    const classes = opening.match(/\bclass\s*=\s*(["'])([^"']*)\1/i)?.[2] ?? '';
-    return classes.split(/\s+/).some(value => ['active', 'is-active', 'present'].includes(value.toLowerCase()));
-  };
-  const activeContexts = contexts.filter(context => isActive(context.opening));
-  return activeContexts.length > 0
-    ? activeContexts.every(pageIsHidden)
-    : contexts.length > 0 && contexts.every(pageIsHidden);
-}
-
-// 可见层防线；持久化与发布的权威判据在后端 IsRunnableDeckDocument。
+// 这里只校验可安全装载的完整 HTML 文件；PPT 结构、页数与视觉设计由 OpenDesign 负责。
 export function looksLikeDeck(html: string): boolean {
-  if (!html || html.length < 200) return false;
+  if (!html.trim()) return false;
   if (!hasBalancedRawTextElements(html, 'script') || !hasBalancedRawTextElements(html, 'style')) return false;
   const outsideRawText = html.replace(/<(?:script|style)\b[^>]*>[\s\S]*?<\/(?:script|style)\s*>/gi, match => ' '.repeat(match.length));
   if ((outsideRawText.match(/<!--/g)?.length ?? 0) !== (outsideRawText.match(/-->/g)?.length ?? 0)) return false;
@@ -808,26 +563,7 @@ export function looksLikeDeck(html: string): boolean {
   const documentBody = structuralDocument.slice(headClose.index + headClose[0].length);
   if (!/<body\b[^>]*>/i.test(documentBody)) return false;
 
-  const bodyMatch = documentBody.match(/(<body\b[^>]*>)([\s\S]*?)<\/body\s*>/i);
-  if (!bodyMatch) return false;
-  if (hasGloballyHiddenCanvas(html, bodyMatch[1])) return false;
-  const structuralBody = bodyMatch[2];
-  const slideTagCount = countElementsWithClass(structuralBody, 'slide');
-  const slideBlocks = findBalancedSlideBlocks(structuralBody);
-  // OpenDesign 锚定模板有多种外壳；完整且有内容的 .slide 才是跨模板稳定合同。
-  const anchored = slideTagCount > 0
-    && slideBlocks.length === slideTagCount
-    && !hasHiddenSlideContract(html, structuralBody, slideBlocks)
-    && slideBlocks.every(hasRenderableSlideContent);
-  const sectionOpenCount = (structuralBody.match(/<section\b[^>]*>/gi) || []).length;
-  const sectionCloseCount = (structuralBody.match(/<\/section\s*>/gi) || []).length;
-  const revealSections = findRevealPageBlocks(structuralBody);
-  const reveal = sectionOpenCount > 0
-    && sectionOpenCount === sectionCloseCount
-    && revealSections.length > 0
-    && !hasHiddenSlideContract(html, structuralBody, revealSections)
-    && revealSections.every(hasRenderableSlideContent);
-  return anchored || reveal;
+  return /<body\b[^>]*>[\s\S]*<\/body\s*>/i.test(documentBody);
 }
 
 /** 只统计作者定义的顶层页面，嵌套装饰节点与普通网页 section 不冒充 PPT 页数。 */
@@ -1313,14 +1049,9 @@ export function buildDeckPreviewPageDocs(html: string): string[] {
   }
 }
 
-/**
- * 原始文档通过可见性门，或每个已识别页面经现有静态单页构建后都通过同一门，才允许预览。
- * 这只决定 HTML 能否进入只读展示；完成、编辑、保存和发布仍由后端终态与质量门授权。
- */
+/** 只校验完整 HTML 文件；已识别页面的拆分仅用于预览导航，不参与准入。 */
 export function isPreviewableDeck(html: string): boolean {
-  if (looksLikeDeck(html)) return true;
-  const pageDocs = buildDeckPreviewPageDocs(html);
-  return pageDocs.length > 0 && pageDocs.every(looksLikeDeck);
+  return looksLikeDeck(html);
 }
 
 export function selectRuntimeLivePreviewDoc({
