@@ -7,6 +7,8 @@ import { OperationExecutionError } from './isolated-shell-executor.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { maintenanceDirectoryIdentity, verifyMaintenanceFilesInput,
   type MaintenanceFilesAction, type MaintenanceFilesInput, type MaintenanceFilesReceipt } from './self-maintenance-files-process.js';
+import { reserveRetention, completeRetention, sealRetention, retirementFor, recoverCompleteRetention, markRetentionDisposition, forgetRetention,
+  type MaintenanceDirectoryIdentity, type MaintenanceRetirement } from './self-maintenance-retention.js';
 
 // 与index.ts既有operation默认预算一致，显式投影才能在清理未终态时观察到期。
 const MAINTENANCE_FILES_TIMEOUT_MS = 15 * 60_000;
@@ -41,6 +43,7 @@ interface Owner extends SelfMaintenanceOwner {
   jobs: Set<MaintenanceJob>;
   invariantFailure: boolean;
   lastWarning?: { state: SelfMaintenanceSnapshot['state']; at: number };
+  filesDeadline?: number;
 }
 export interface SelfMaintenanceSnapshot {
   id: string;
@@ -72,6 +75,7 @@ interface Checkpoint {
   restoreUnconfirmed: boolean;
   discarded: boolean;
   busy: boolean;
+  retirementUnconfirmed: boolean;
 }
 
 /** 四种维护业务共享一棵树；无等待队列，无TTL解锁，只信真实owned执行终态。 */
@@ -223,7 +227,7 @@ export class SelfMaintenanceRuntime {
   }
 
   /** 先建立本票唯一恢复点身份；只做小目录操作，递归I/O全部交给worker。 */
-  prepareCheckpoint(ticket: SelfMaintenanceOwner): SelfMaintenanceCheckpoint {
+  prepareCheckpoint(ticket: SelfMaintenanceOwner, source?: { sha: string; branch: string }): SelfMaintenanceCheckpoint {
     this.qualify(ticket, false);
     if (!this.shell.execOwnedOperation) throw new Error('CDS 缺少受控维护文件能力，尚未创建恢复点。');
     const root = maintenanceDirectoryIdentity(fs.realpathSync(this.repoRoot));
@@ -232,15 +236,19 @@ export class SelfMaintenanceRuntime {
     const base = path.join(cds, '.cds');
     fs.mkdirSync(base, { recursive: true }); maintenanceDirectoryIdentity(base);
     const backup = maintenanceDirectoryIdentity(fs.mkdtempSync(path.join(base, `restart-rollback-${ticket.id}-`)));
+    try { reserveRetention(root, backup, ticket.id, source); }
+    catch (error) { fs.rmdirSync(backup.path); throw error; } // 只删本次仍为空的小入口，不做深删。
     const handle = Object.freeze({ backupPath: backup.path });
     this.checkpoints.set(handle, { owner: ticket, input: { action: 'snapshot', ownerId: ticket.id, root, backup },
-      snapshotStarted: false, artifactsRestored: false, restoreUnconfirmed: false, discarded: false, busy: false });
+      snapshotStarted: false, artifactsRestored: false, restoreUnconfirmed: false, discarded: false, busy: false,
+      retirementUnconfirmed: false });
     return handle;
   }
 
-  async files(ticket: SelfMaintenanceOwner, action: MaintenanceFilesAction, handle: SelfMaintenanceCheckpoint): Promise<MaintenanceFilesReceipt> {
+  async files(ticket: SelfMaintenanceOwner, action: Exclude<MaintenanceFilesAction, 'retire'>, handle: SelfMaintenanceCheckpoint): Promise<MaintenanceFilesReceipt> {
     const checkpoint = this.checkpoints.get(handle);
-    if (!checkpoint || checkpoint.owner !== ticket || checkpoint.busy || checkpoint.discarded || checkpoint.restoreUnconfirmed) {
+    if (!checkpoint || checkpoint.owner !== ticket || checkpoint.busy || checkpoint.discarded || checkpoint.restoreUnconfirmed
+      || checkpoint.retirementUnconfirmed) {
       throw new Error('CDS 恢复点状态未确认，已停止维护文件操作。');
     }
     const recovery = action !== 'snapshot';
@@ -266,9 +274,15 @@ export class SelfMaintenanceRuntime {
       && checkpoint.existed?.[0] === true && !checkpoint.artifactsRestored
       ? path.join(input.backup.path, '0', 'services', 'self-maintenance-files-process.js') : originalWorker;
     try {
+      if (action !== 'snapshot') markRetentionDisposition(input.root, ticket.id, action === 'restore' ? 'restoring' : 'discarding', input.existed);
+      const timeout = action === 'snapshot' && owner.filesDeadline !== undefined
+        ? this.remainingFilesBudget(owner) : MAINTENANCE_FILES_TIMEOUT_MS;
+      if (action === 'snapshot') owner.filesDeadline ??= performance.now() + timeout;
+      let assignment: ExecAssignment | undefined;
       // 显式保持原operation默认有限上界；五目录是一份job，不逐目录重新发预算。
       const result = await this.exec(ticket, `${shellQuote(process.execPath)} ${source ? '--import tsx ' : ''}${shellQuote(worker)}`, {
-        cwd: fileURLToPath(new URL('../../', import.meta.url)), stdin: JSON.stringify(input), timeout: MAINTENANCE_FILES_TIMEOUT_MS,
+        cwd: fileURLToPath(new URL('../../', import.meta.url)), stdin: JSON.stringify(input), timeout,
+        onAssigned: value => { assignment = { ...value }; },
         beforeStart: () => {
           if (fs.realpathSync(this.repoRoot) !== input.root.path) throw new Error('CDS 维护源码目录已变化，已停止文件操作。');
           verifyMaintenanceFilesInput(input);
@@ -282,14 +296,77 @@ export class SelfMaintenanceRuntime {
         || action !== 'snapshot' && receipt.existed.some((value, i) => value !== input.existed[i])) {
         throw new Error('CDS 维护文件回执未确认，已保留恢复点，请检查维护状态。');
       }
-      if (action === 'snapshot') checkpoint.existed = [...receipt.existed];
+      if (action === 'snapshot') {
+        checkpoint.existed = [...receipt.existed];
+        completeRetention(input.root, ticket.id, receipt.existed, assignment);
+        checkpoint.retirementUnconfirmed = true;
+        const retirement = retirementFor(input.root);
+        if (retirement) {
+          // 从可能开始删除A前就保护B；失败后原capture catch不能把最后保护点当临时副本丢弃。
+          await this.retireCheckpoint(ticket, input.root, retirement);
+        }
+        checkpoint.retirementUnconfirmed = false;
+      }
       if (action === 'restore') checkpoint.artifactsRestored = true;
-      if (action === 'discard') checkpoint.discarded = true;
+      if (action === 'discard') {
+        // 备份旧worker未必理解新小清单；真正终态后由当前Master完成同一精确记录收尾。
+        forgetRetention(input.root, ticket.id); checkpoint.discarded = true;
+      }
       return receipt;
     } catch (error) {
       if (action === 'restore') { checkpoint.restoreUnconfirmed = true; owner.invariantFailure = true; }
+      if (checkpoint.retirementUnconfirmed) owner.invariantFailure = true;
       throw error;
     } finally { checkpoint.busy = false; }
+  }
+
+  /** retain先finished再调用；只复制同步资格与小回执，不派发旧owner文件任务。 */
+  retainCheckpoint(ticket: SelfMaintenanceOwner, handle: SelfMaintenanceCheckpoint): Promise<void> {
+    const owner = this.current(ticket), checkpoint = this.checkpoints.get(handle);
+    if (!owner.restartScheduled || owner.jobs.size || owner.invariantFailure || !checkpoint || checkpoint.owner !== ticket
+      || checkpoint.busy || checkpoint.discarded || checkpoint.restoreUnconfirmed || checkpoint.retirementUnconfirmed
+      || !checkpoint.existed || checkpoint.artifactsRestored) throw new Error('CDS 保留回执尚未具备完整终态，恢复副本保持不动。');
+    return sealRetention(checkpoint.input.root, ticket.id);
+  }
+
+  /** 仅恢复清单明确记录的两槽事务；在准备下一大副本前完成，绝不分配第三槽。 */
+  async recoverCheckpointRetention(ticket: SelfMaintenanceOwner): Promise<void> {
+    const owner = this.qualify(ticket, false), root = maintenanceDirectoryIdentity(fs.realpathSync(this.repoRoot));
+    const base = path.join(root.path, 'cds/.cds');
+    if (!fs.existsSync(base)) return;
+    try {
+      recoverCompleteRetention(root);
+      const retirement = retirementFor(root);
+      if (retirement) {
+        owner.filesDeadline ??= performance.now() + MAINTENANCE_FILES_TIMEOUT_MS;
+        await this.retireCheckpoint(ticket, root, retirement);
+      }
+      recoverCompleteRetention(root);
+    } catch (error) { owner.invariantFailure = true; owner.controller.abort(); throw error; }
+  }
+
+  private remainingFilesBudget(owner: Owner): number {
+    const remaining = Math.floor((owner.filesDeadline ?? performance.now()) - performance.now());
+    if (remaining <= 0) { this.requestStop(owner); throw new Error('CDS 恢复副本阶段已到期，已保留恢复点并停止维护。'); }
+    return remaining;
+  }
+
+  private async retireCheckpoint(ticket: SelfMaintenanceOwner, root: MaintenanceDirectoryIdentity, retirement: MaintenanceRetirement): Promise<void> {
+    const owner = this.qualify(ticket, false);
+    const source = import.meta.url.endsWith('.ts');
+    const worker = fileURLToPath(new URL(source ? './self-maintenance-files-process.ts' : './self-maintenance-files-process.js', import.meta.url));
+    const input: MaintenanceFilesInput = { action: 'retire', ownerId: ticket.id, root,
+      backup: retirement.backup, existed: retirement.existed, retirement };
+    try {
+      const result = await this.exec(ticket, `${shellQuote(process.execPath)} ${source ? '--import tsx ' : ''}${shellQuote(worker)}`, {
+        cwd: fileURLToPath(new URL('../../', import.meta.url)), stdin: JSON.stringify(input),
+        timeout: this.remainingFilesBudget(owner), beforeStart: () => verifyMaintenanceFilesInput(input),
+      });
+      const receipt = result.exitCode === 0 ? JSON.parse(result.stdout) as MaintenanceFilesReceipt : undefined;
+      if (!receipt || receipt.action !== 'retire' || receipt.ownerId !== ticket.id || receipt.artifactsRestored !== false
+        || !Array.isArray(receipt.existed) || receipt.existed.length !== 5
+        || receipt.existed.some((v, i) => v !== retirement.existed[i])) throw new Error('CDS 旧恢复副本退役未确认，已保留完整替代副本。');
+    } catch (error) { owner.invariantFailure = true; owner.controller.abort(); throw error; }
   }
 
   async close(): Promise<void> {

@@ -59,7 +59,8 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
     if (finished) throw new Error('CDS 版本恢复保护已经结束，已停止保存产物。');
     if (artifactsSaved) return;
     if (checkpoint) throw new Error('CDS 产物恢复点未完整保存，已停止重复保存。');
-    checkpoint = runtime.prepareCheckpoint(owner);
+    await runtime.recoverCheckpointRetention(owner);
+    checkpoint = runtime.prepareCheckpoint(owner, { sha, branch });
     try {
       await runtime.files(owner, 'snapshot', checkpoint); artifactsSaved = true;
     } catch (error) {
@@ -77,7 +78,13 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
       }
       // permit写出后新daemon可立即启动；此处绝不派发深删或借用旧一秒退出窗口。
       finished = true;
-      console.warn(`[self-update] 重启已交接，安全恢复副本保留待清理：${checkpoint.backupPath}`);
+      try {
+        return runtime.retainCheckpoint(owner, checkpoint).catch(() => {
+          console.warn('[self-update] 重启已交接，恢复副本保留回执未确认，副本保持不动。');
+        });
+      } catch {
+        console.warn('[self-update] 重启已交接，恢复副本终态未确认，副本保持不动。');
+      }
     },
     async rollback() {
       if (finished) return;

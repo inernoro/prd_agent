@@ -174,6 +174,23 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     }
   });
 
+  it('完整snapshot之后其它writer清理分类未知时，不发布保留能力或释放原票', async () => {
+    // 仅未知分类故障注入；真实snapshot不等于后续未知writer已物理停止。
+    seedFiles();
+    const operation = pool(), instance = runtime(operation);
+    const ticket = instance.acquire({ source: 'self-update', actor: 'retention-unknown-classification' })!;
+    const checkpoint = instance.prepareCheckpoint(ticket, { sha: 'a'.repeat(40), branch: 'fixture' });
+    await instance.files(ticket, 'snapshot', checkpoint);
+    const file = path.join(root, 'cds/.cds/checkpoint-retention.json'), before = fs.readFileSync(file, 'utf8');
+    vi.spyOn(operation, 'execOwnedOperation').mockRejectedValueOnce(new OperationExecutionError('cleanup'));
+    await expect(instance.exec(ticket, 'never-physically-executed-policy-fixture')).rejects.toMatchObject({ code: 'cleanup' });
+    ticket.restartScheduled = true;
+    expect(() => instance.retainCheckpoint(ticket, checkpoint)).toThrow('尚未具备完整终态');
+    expect(fs.readFileSync(file, 'utf8')).toBe(before); expect(fs.existsSync(checkpoint.backupPath)).toBe(true);
+    expect(instance.observe()).toMatchObject({ activeJobCount: 0, unconfirmedJobCount: 1 });
+    expect(instance.finish(ticket)).toBe(false);
+  });
+
   it('持续cleanup未知保留原五秒观察，但同态告警最多每分钟一次不淹没整日事件', async () => {
     // 仅分类与告警时钟，不把故障注入或虚拟一天冒充真实OS未知停止/稳定性验收。
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
@@ -303,7 +320,7 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     seedFiles();
     const sourceDir = fileURLToPath(new URL('../../src/services/', import.meta.url));
     const compiled = path.join(root, 'compiled');
-    await build({ entryPoints: ['self-maintenance-files-process.ts', 'atomic-directory-replacement.ts'].map(file => path.join(sourceDir, file)),
+    await build({ entryPoints: ['self-maintenance-files-process.ts', 'self-maintenance-retention.ts', 'atomic-directory-replacement.ts'].map(file => path.join(sourceDir, file)),
       outdir: compiled, outbase: sourceDir, format: 'esm', platform: 'node', target: 'node20', bundle: false, sourcemap: false, logLevel: 'silent' });
     fs.writeFileSync(path.join(compiled, 'package.json'), '{"type":"module"}');
     const instance = runtime(pool()), ticket = instance.acquire({ source: 'self-update', actor: 'fixture' })!;
@@ -336,6 +353,7 @@ describe('四来源维护runtime与真实owned文件组件', () => {
     const dist = path.join(root, 'cds/dist');
     const entries = [
       'services/self-maintenance-runtime.ts', 'services/self-maintenance-files-process.ts',
+      'services/self-maintenance-retention.ts',
       'services/atomic-directory-replacement.ts', 'services/isolated-shell-executor.ts',
       'services/observation-process-launcher.ts', 'services/observation-process-group.ts',
       'services/sidecar/sidecar-deployer.ts', 'services/sidecar/remote-host-service.ts',
