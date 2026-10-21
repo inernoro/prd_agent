@@ -22,6 +22,7 @@ import {
   PptRuntimeLivePreview,
   PptRuntimeProgressHeader,
   isPreviewableDeck,
+  isOpenableHistoryRun,
   isRestartablePresentationQualityRun,
   MdToPptAgentPage,
   resolveOutlineTargetPages,
@@ -331,6 +332,62 @@ describe('失败演示稿继续打磨', () => {
     expect(isRestartablePresentationQualityRun({ ...qualityFailure, errorCode: 'task_failed' })).toBe(false);
     expect(isRestartablePresentationQualityRun({ ...qualityFailure, latestPreviewHtml: '' })).toBe(false);
     expect(isRestartablePresentationQualityRun({ ...qualityFailure, status: 'done' })).toBe(false);
+  });
+
+  it('历史列表可打开失败预览但不把大纲或一般失败冒充成品', () => {
+    const base = {
+      id: 'history-run',
+      engine: 'agent',
+      provider: 'open-design',
+      title: '历史演示稿',
+      contentPreview: '',
+      model: null,
+      platform: null,
+      createdAt: '2026-10-20T15:49:21.164Z',
+    } as const;
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'done',
+      runtime: 'html-ppt-pipeline',
+      op: 'outline',
+      hasHtml: false,
+    })).toBe(false);
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'error',
+      runtime: 'open-design',
+      op: 'convert',
+      errorCode: 'open_design_run_failed',
+      hasHtml: false,
+    })).toBe(true);
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'error',
+      runtime: 'open-design',
+      op: 'convert',
+      errorCode: 'design_output_quality_rejected',
+      hasHtml: false,
+    })).toBe(true);
+    expect(isOpenableHistoryRun({
+      ...base,
+      status: 'error',
+      runtime: 'open-design',
+      op: 'convert',
+      errorCode: 'unrelated_failure',
+      hasHtml: false,
+    })).toBe(false);
+  });
+
+  it('历史载入复用失败预览恢复与继续打磨权威判定', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/pages/md-to-ppt-agent/MdToPptAgentPage.tsx'), 'utf8');
+    const handlerStart = source.indexOf('const loadHistoryRun = useCallback');
+    const handlerEnd = source.indexOf('// ─── Outline adjust', handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+    expect(handlerStart).toBeGreaterThan(0);
+    expect(handler).toContain('run.latestPreviewHtml');
+    expect(handler).toContain("setArtifactPhase(isCompleted ? 'done' : 'error')");
+    expect(handler).toContain('isRestartablePresentationQualityRun(run)');
+    expect(handler).toContain('setGeneratedHtml(completedHtml || failedPreviewHtml)');
   });
 
   it('继续打磨调用既有 restart 并轮询新 run，失败初稿不提前开放写操作', () => {
