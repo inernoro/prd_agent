@@ -12,15 +12,11 @@ import {
   computePublicArtifactRevision,
 } from '../src/artifact/public-package.js';
 import { AgentWorkspaceRuntimeError } from '../src/errors.js';
-import { classifyQualityRepairReason, hardenSelfContainedHtml } from '../src/quality/gate.js';
+import { hardenSelfContainedHtml } from '../src/quality/gate.js';
 import { runBrowserWorker } from '../src/quality/browser-worker.js';
 import type { BrowserQualityIssue } from '../src/quality/browser-contract.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
-import {
-  DesignTaskExecutor,
-  buildPresentationSourceScaffold,
-  materializePresentationSourcePlan,
-} from '../src/executor.js';
+import { DesignTaskExecutor } from '../src/executor.js';
 import {
   auth,
   buildPackage,
@@ -68,59 +64,11 @@ afterEach(async () => {
   map = undefined;
 });
 
-describe('presentation frozen source materialization', () => {
-  it('preseeds every frozen source block exactly once without becoming a publishable presentation', async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-scaffold-'));
-    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
-    const blocks = Array.from({ length: 210 }, (_, offset) => ({
-      Id: `sb-${(offset + 1).toString(16).padStart(64, '0')}`,
-      Html: offset === 0
-        ? '<h2>附件：基于 GitHub 和 PR 的版本管理与发布流程最佳实践.md</h2>'
-        : `<p>来源正文 ${offset + 1}</p>`,
-    }));
-    const pages = Array.from({ length: 34 }, (_, pageOffset) => ({
-      Index: pageOffset + 1,
-      Hash: `page-${pageOffset + 1}`,
-      DisplayTitle: pageOffset === 0
-        ? '从代码到生产的协作契约'
-        : pageOffset === 1
-          ? '<script>不能执行的标题</script>'
-          : `第 ${pageOffset + 1} 页`,
-      Blocks: blocks
-        .filter((_block, blockOffset) => blockOffset % 34 === pageOffset)
-        .map((block) => ({ Id: block.Id })),
-    }));
-    const plan = JSON.stringify({ SchemaVersion: 'map-mdppt-source-plan-v2', Fingerprint: 'frozen', Blocks: blocks, Pages: pages });
-    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
-    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
-      presentationContract: { targetPages: 34, sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
-    }));
-
-    const scaffold = buildPresentationSourceScaffold(root);
-
-    expect(scaffold).toContain('PASTE LAYOUTS FROM references/layouts.md HERE');
-    expect(scaffold).toContain('从代码到生产的协作契约');
-    expect(scaffold).toContain('&lt;script&gt;不能执行的标题&lt;/script&gt;');
-    expect(scaffold).not.toContain('<script>不能执行的标题</script>');
-    expect(scaffold).toContain(blocks[0].Html);
-    expect([...scaffold.matchAll(/data-mdppt-source=["']([^"']+)["']/g)]).toHaveLength(210);
-    for (const block of blocks) expect(scaffold.match(new RegExp(block.Id, 'g'))).toHaveLength(1);
-    expect(() => hardenSelfContainedHtml(scaffold)).toThrow(/untouched starter template/);
-
-    const withoutSentinel = scaffold.replace('PASTE LAYOUTS FROM references/layouts.md HERE', 'OpenDesign authored this layout');
-    fs.writeFileSync(path.join(root, 'index.html'), withoutSentinel);
-    const navigated = await runBrowserWorker({
-      workspaceDir: root,
-      evidenceDir: path.join(root, 'evidence-navigation'),
-      repairAttempt: 0,
-    });
-    expect(navigated.measurements.flatMap((measurement) => measurement.issues.map((issue) => issue.issueCode)))
-      .toContain('presentation_navigation_unusable');
-    fs.rmSync(root, { recursive: true, force: true });
-  }, 30_000);
-
-  it('runs OpenDesign against the source scaffold and never commits an unchanged seed', async () => {
-    harness = await startHarness();
+describe('presentation source context', () => {
+  it('passes the frozen source to OpenDesign without imposing a platform source-slot scaffold', async () => {
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async (job) => passingBrowserResult(job) },
+    } });
     const id = `sb-${'1'.repeat(64)}`;
     const plan = JSON.stringify({
       SchemaVersion: 'map-mdppt-source-plan-v2',
@@ -140,10 +88,9 @@ describe('presentation frozen source materialization', () => {
     });
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
-        const seed = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
-        expect(seed).toContain('正常非来源标题');
-        expect(seed).toContain('<p>原始来源正文</p>');
-        expect(String(body.systemPrompt)).toContain('Redesign that file in place');
+        expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
+        expect(String(body.systemPrompt)).toContain('frozen input material and provenance');
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>OpenDesign 自主成稿</h1><p>TODO 由上游内容能力自行处理</p></main></body></html>');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
@@ -153,43 +100,127 @@ describe('presentation frozen source materialization', () => {
       previewUrl: request.transfer.resultCommitUrl.replace('/result', '/preview'),
     }));
 
-    expect(view.state).toBe('failed');
-    expect(view.error.code).toBe('design_output_quality_rejected');
-    expect(view.error.message).toContain('untouched starter template');
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
     expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
-    expect(map!.previews).toHaveLength(0);
-    expect(map!.commits).toHaveLength(0);
+    expect(map!.commits).toHaveLength(1);
+    const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('OpenDesign 自主成稿');
   });
 
-  it('materializes the exact server-owned bytes before quality and rejects missing, duplicate, unknown, or modified slots', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-plan-'));
-    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
-    const id = `sb-${'a'.repeat(64)}`;
+  it('rejects a mismatched frozen source-plan hash before opening an OpenDesign session', async () => {
+    harness = await startHarness();
     const plan = JSON.stringify({
       SchemaVersion: 'map-mdppt-source-plan-v2',
       Fingerprint: 'frozen',
-      Blocks: [{ Id: id, Html: '<p>5% 只是示例，不是强制值。</p>' }],
+      Blocks: [],
+      Pages: [],
+    });
+    const pkg = buildPackage([{ path: 'brief/source-plan.json', content: plan, mediaType: 'application/json' }], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          sourcePlan: { path: 'brief/source-plan.json', contentHash: '0'.repeat(64) },
+        },
+      },
+    });
+
+    const view = await runToEnd(pkg);
+
+    expect(view.state).toBe('failed');
+    expect(view.error?.code).toBe('workspace_package_invalid');
+    expect(harness.daemon.runBodies).toHaveLength(0);
+    expect(map!.commits).toHaveLength(0);
+  });
+
+  it('restores a server-retained failed preview as exact non-final OpenDesign input without post-injecting source bytes', async () => {
+    const id = `sb-${'c'.repeat(64)}`;
+    const sourceHtml = '<p>回滚窗口、负责人和通知记录必须完整保留。</p>';
+    const plan = JSON.stringify({
+      SchemaVersion: 'map-mdppt-source-plan-v2',
+      Fingerprint: 'frozen-repair-candidate',
+      Blocks: [{ Id: id, Html: sourceHtml }],
+      Pages: [{ Index: 1, Hash: 'page', DisplayTitle: '发布与回滚', Blocks: [{ Id: id }] }],
+    });
+    const candidate = `<!doctype html><html><head><meta charset="utf-8"><title>受限候选</title></head><body><main><div class="reveal"><div class="slides"><section data-slide-index="1"><h1>发布与回滚</h1><div data-mdppt-source="${id}"></div></section></div></div></main></body></html>`;
+    harness = await startHarness({ overrides: {
+      browserQualityRunner: { run: async (job) => passingBrowserResult(job) },
+    } });
+    const pkg = buildPackage([
+      { path: 'brief/source-plan.json', content: plan, mediaType: 'application/json' },
+      { path: 'candidate/index.html', content: candidate, mediaType: 'text/html' },
+    ], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) },
+          repairCandidate: { path: 'candidate/index.html', contentHash: digest(Buffer.from(candidate)) },
+        },
+      },
+    });
+    harness.daemon.onRun = ({ workspaceDir, index, body }) => {
+      if (index === 1) {
+        const restored = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
+        expect(restored).toBe(candidate);
+        expect(restored).not.toContain('candidate/index.html');
+        expect(String(body.systemPrompt)).toContain('server-retained failed preview');
+        expect(String(body.systemPrompt)).toContain('non-final repair candidate');
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg);
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
+    const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('发布与回滚');
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).not.toContain(sourceHtml);
+  });
+
+  it.each([
+    ['missing slot', (_id: string) => '<!doctype html><html><body><main>缺少来源槽</main></body></html>'],
+    ['duplicate slot', (id: string) => `<!doctype html><html><body><main><div data-mdppt-source="${id}"></div><div data-mdppt-source="${id}"></div></main></body></html>`],
+    ['hidden slot', (id: string) => `<!doctype html><html><body><main><div data-mdppt-source="${id}" hidden></div></main></body></html>`],
+  ])('lets OpenDesign repair a candidate with %s without a platform source-slot gate', async (_label, candidateFor) => {
+    const id = `sb-${'d'.repeat(64)}`;
+    const plan = JSON.stringify({
+      SchemaVersion: 'map-mdppt-source-plan-v2',
+      Fingerprint: 'frozen-repair-rejection',
+      Blocks: [{ Id: id, Html: '<p>冻结来源正文</p>' }],
       Pages: [{ Index: 1, Hash: 'page', DisplayTitle: '发布策略', Blocks: [{ Id: id }] }],
     });
-    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
-    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
-      presentationContract: { sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
-    }));
-    const draft = `<html><body><div class="reveal"><div class="slides"><section><div data-mdppt-source="${id}"></div></section></div></div></body></html>`;
-    expect(materializePresentationSourcePlan(root, draft)).toContain('<p>5% 只是示例，不是强制值。</p>');
-    expect(() => materializePresentationSourcePlan(root, draft.replace('</section>', `<div data-mdppt-source="${id}"></div></section>`)))
-      .toThrow(/exactly one matching slot marker/);
-    expect(() => materializePresentationSourcePlan(root, draft.replace(id, `sb-${'b'.repeat(64)}`)))
-      .toThrow(/exactly one matching slot marker/);
-    expect(() => materializePresentationSourcePlan(root, draft.replace('></div>', '>改写</div>')))
-      .toThrow(/modified outside the frozen source contract/);
-    fs.rmSync(root, { recursive: true, force: true });
+    const candidate = candidateFor(id);
+    harness = await startHarness();
+    const pkg = buildPackage([
+      { path: 'brief/source-plan.json', content: plan, mediaType: 'application/json' },
+      { path: 'candidate/index.html', content: candidate, mediaType: 'text/html' },
+    ], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) },
+          repairCandidate: { path: 'candidate/index.html', contentHash: digest(Buffer.from(candidate)) },
+        },
+      },
+    });
+
+    const view = await runToEnd(pkg);
+
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
+    expect(map!.commits).toHaveLength(1);
   });
 
   it.each([
     ['missing', (id: string) => '封面'],
     ['duplicate', (id: string) => `<div data-mdppt-source="${id}"></div><div data-mdppt-source="${id}"></div>`],
-  ])('routes a %s attachment-title slot through one bounded repair before materialization', async (_case, initialBody) => {
+  ])('does not route a %s source-slot shape through a platform-paid repair', async (_case, initialBody) => {
     const id = `sb-${'6'.repeat(64)}`;
     const secondId = `sb-${'8'.repeat(64)}`;
     const sourceHtml = '<h2>附件：基于 GitHub 和 PR 的版本管理与发布流程最佳实践.md</h2>';
@@ -198,7 +229,6 @@ describe('presentation frozen source materialization', () => {
       browserQualityRunner: {
         run: async (job) => {
           expect(fs.existsSync(path.join(job.workspaceDir, 'current', 'index.html'))).toBe(false);
-          expect(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8')).toContain(sourceHtml);
           return passingBrowserResult(job);
         },
       },
@@ -229,23 +259,16 @@ describe('presentation frozen source materialization', () => {
       if (index === 1) {
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><div class="reveal"><div class="slides"><section>${initialBody(id)}</section></div></div></main></body></html>`);
       }
-      if (String(body.message).includes('source_slot_cardinality_invalid')) {
-        expect(String(body.message)).toContain('inspect every frozen block marker');
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><div class="reveal"><div class="slides"><section><div data-mdppt-source="${id}"></div><div data-mdppt-source="${secondId}"></div></section></div></div></main></body></html>`);
-      }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
 
     const view = await runToEnd(pkg);
 
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
-    expect(harness.daemon.runBodies).toHaveLength(3);
-    expect(String(harness.daemon.runBodies[2].message)).toMatch(/contained (0|2)/);
-    expect(String(harness.daemon.runBodies[2].message)).not.toContain('GitHub');
-    expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    expect(await statusReasons(pkg.runId)).not.toContain('open_design_quality_repairing');
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
-    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(sourceHtml);
-    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(secondSourceHtml);
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(initialBody(id));
   });
 
   it('materializes an edit into the author root while keeping the frozen parent and source package byte-identical', async () => {
@@ -263,7 +286,7 @@ describe('presentation frozen source materialization', () => {
         run: async (job) => {
           expect(fs.readFileSync(path.join(job.workspaceDir, 'current', 'index.html'), 'utf8')).toBe(parentHtml);
           expect(fs.readFileSync(path.join(job.workspaceDir, 'brief', 'source-plan.json'), 'utf8')).toBe(plan);
-          expect(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8')).toContain(sourceHtml);
+          expect(fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8')).toContain(`data-mdppt-source="${id}"`);
           return passingBrowserResult(job);
         },
       },
@@ -284,7 +307,7 @@ describe('presentation frozen source materialization', () => {
     });
     harness.daemon.onRun = ({ workspaceDir, index }) => {
       if (index === 1) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><div class="reveal"><div class="slides"><section><div data-mdppt-source="${id}"></div></section></div></div></main></body></html>`);
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><div class="reveal"><div class="slides"><section data-slide-index="1"><div data-mdppt-source="${id}"></div></section></div></div></main></body></html>`);
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
@@ -293,60 +316,313 @@ describe('presentation frozen source materialization', () => {
 
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
-    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(sourceHtml);
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(`data-mdppt-source="${id}"`);
+    expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).not.toContain(sourceHtml);
   });
 
-  it.each([
-    ['missing', (id: string) => '<html><body><div class="reveal"><div class="slides"><section></section></div></div></body></html>', 0],
-    ['duplicate', (id: string) => `<html><body><div class="reveal"><div class="slides"><section><div data-mdppt-source="${id}"></div><div data-mdppt-source="${id}"></div></section></div></div></body></html>`, 2],
-  ])('classifies a %s attachment-title slot cardinality failure without exposing source text', (_case, draftFor, slotCount) => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ppt-source-slot-cardinality-'));
-    fs.mkdirSync(path.join(root, 'brief'), { recursive: true });
-    const id = `sb-${'6'.repeat(64)}`;
-    const sourceHtml = '<h2>附件：基于 GitHub 和 PR 的版本管理与发布流程最佳实践.md</h2>';
-    const plan = JSON.stringify({
-      SchemaVersion: 'map-mdppt-source-plan-v2',
-      Fingerprint: 'frozen',
-      Blocks: [{ Id: id, Html: sourceHtml }],
-      Pages: [{ Index: 1, Hash: 'page', DisplayTitle: '封面', Blocks: [{ Id: id }] }],
+  it.skipIf(!hasExternalCompletionChainFixture())(
+    'replays the authoritative 210-block failed deck through generation and manual-edit quality packages',
+    async () => {
+      const sourcePlanPath = process.env.PPT_COMPLETION_SOURCE_PLAN_PATH!;
+      const sourceMarkdownPath = process.env.PPT_COMPLETION_SOURCE_MD_PATH!;
+      const failedHtmlPath = process.env.PPT_COMPLETION_FAILED_HTML_PATH!;
+      const outputDir = process.env.PPT_COMPLETION_CHAIN_OUTPUT_DIR!;
+      const sourcePlanJson = fs.readFileSync(sourcePlanPath, 'utf8');
+      const sourceMarkdown = fs.readFileSync(sourceMarkdownPath, 'utf8');
+      const failedHtml = fs.readFileSync(failedHtmlPath, 'utf8');
+      expect(digest(Buffer.from(sourcePlanJson))).toBe('f811184612a2379787782f123531347bb4cd7db90600217d5f81f363fa3f3cb2');
+      expect(digest(Buffer.from(sourceMarkdown))).toBe('ba22ff9d8b26081dfb409fdf565529dde2e06831e9730c5be8e9f727b07fc450');
+      expect(digest(Buffer.from(failedHtml))).toBe('fc969b204cef68b7c5c6875ecba528654801ca6992ee48701da8079046ff9fa4');
+      const parsedPlan = parseExternalSourcePlan(sourcePlanJson);
+      expect(parsedPlan.Blocks).toHaveLength(210);
+      expect(parsedPlan.Pages).toHaveLength(34);
+      expect(parsedPlan.Fingerprint).toBe('93fea52f8a30d753cf1d49e80732d8fd4bb788b53a138320e2b9e5d80de30646');
+
+      harness = await startHarness({ overrides: { browserQualityRunner: { run: runBrowserWorker } } });
+      const generationPackage = buildPackage([
+        { path: 'brief/source-plan.json', content: sourcePlanJson, mediaType: 'application/json' },
+        { path: 'candidate/index.html', content: failedHtml, mediaType: 'text/html' },
+        { path: 'knowledge/source.md', content: sourceMarkdown, mediaType: 'text/markdown' },
+      ], {
+        runId: 'completion-chain-generation',
+        taskExtras: {
+          presentationContract: {
+            schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: parsedPlan.Pages.length,
+            sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+            requiredSlideIndexes: parsedPlan.Pages.map((page) => page.Index),
+            sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(sourcePlanJson)) },
+            repairCandidate: { path: 'candidate/index.html', contentHash: digest(Buffer.from(failedHtml)) },
+          },
+        },
+      });
+      harness.daemon.onRun = ({ workspaceDir, index }) => {
+        const generatedDeck = buildExternalReadableDeck(parsedPlan, '完成链受控父稿');
+        if (index === 1) {
+          expect(fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8')).toBe(failedHtml);
+          fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
+          fs.writeFileSync(path.join(outputDir, 'generation-authored-diagnostic.html'), generatedDeck, { mode: 0o600 });
+        }
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), generatedDeck);
+        return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+      };
+      const generation = await runToEnd(
+        generationPackage,
+        (request) => withPublicOutputCap(request, 6 * 1024 * 1024),
+        120_000,
+      );
+      expect(generation.state, JSON.stringify(generation.error)).toBe('succeeded');
+      const generationCommit = map!.commits.at(-1)! as FakeMapCommit;
+      const generationHtml = committedHtml(generationCommit);
+      expect([...generationHtml.matchAll(/data-mdppt-source=["']([^"']+)["']/g)]).toHaveLength(210);
+      const generationPackageHash = digest(Buffer.from(JSON.stringify(generationCommit)));
+      await harness.close();
+      await map!.close();
+      harness = undefined;
+      map = undefined;
+
+      const manualPlan = structuredClone(parsedPlan);
+      const editedBlock = manualPlan.Blocks.slice(1).find((block) => /<p>[^<]*\S[^<]*<\/p>/.test(block.Html));
+      expect(editedBlock).toBeDefined();
+      const originalBlockHtml = editedBlock!.Html;
+      editedBlock!.Html = originalBlockHtml.replace(/>([^<]*\S[^<]*)</, '>$1（用户确认的等义表述）<');
+      expect(editedBlock!.Html).not.toBe(originalBlockHtml);
+      const manualPlanJson = JSON.stringify(manualPlan);
+      harness = await startHarness({ overrides: { browserQualityRunner: { run: runBrowserWorker } } });
+      const manualPackage = buildPackage([
+        { path: 'current/index.html', content: generationHtml, mediaType: 'text/html' },
+        { path: 'brief/source-plan.json', content: manualPlanJson, mediaType: 'application/json' },
+        { path: 'knowledge/source.md', content: sourceMarkdown, mediaType: 'text/markdown' },
+      ], {
+        runId: 'completion-chain-manual',
+        baseRevision: generationPackageHash,
+        taskExtras: {
+          presentationContract: {
+            schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: manualPlan.Pages.length,
+            sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+            requiredSlideIndexes: manualPlan.Pages.map((page) => page.Index),
+            sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(manualPlanJson)) },
+          },
+        },
+      });
+      harness.daemon.onRun = ({ workspaceDir, index }) => {
+        if (index === 1) {
+          expect(fs.readFileSync(path.join(workspaceDir, 'current', 'index.html'), 'utf8')).toBe(generationHtml);
+        }
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), buildExternalReadableDeck(manualPlan, '完成链用户修订稿'));
+        return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+      };
+      const manual = await runToEnd(
+        manualPackage,
+        (request) => withPublicOutputCap(request, 6 * 1024 * 1024),
+        120_000,
+      );
+      expect(manual.state, JSON.stringify(manual.error)).toBe('succeeded');
+      const manualCommit = map!.commits.at(-1)! as FakeMapCommit;
+      const manualHtml = committedHtml(manualCommit);
+      expect(manualHtml).toContain('完成链用户修订稿');
+      expect(manualHtml).toContain(editedBlock!.Html);
+      expect(manualHtml).not.toContain(originalBlockHtml);
+      expect([...manualHtml.matchAll(/data-mdppt-source=["']([^"']+)["']/g)]).toHaveLength(210);
+
+      fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(outputDir, 0o700);
+      const generationHtmlPath = path.join(outputDir, 'generation-parent.html');
+      const manualHtmlPath = path.join(outputDir, 'manual-final.html');
+      const generationResultPath = path.join(outputDir, 'generation-result.json');
+      const manualResultPath = path.join(outputDir, 'manual-result.json');
+      const receiptPath = path.join(outputDir, 'runtime-chain-receipt.json');
+      const generationResultJson = JSON.stringify(generationCommit);
+      const manualResultJson = JSON.stringify(manualCommit);
+      const summarizeFiles = (commit: typeof generationCommit) => commit.files.map((file) => ({
+        path: file.path,
+        size: Buffer.from(file.contentBase64, 'base64').byteLength,
+        sha256: file.sha256,
+        mediaType: file.mediaType,
+      }));
+      const generationFiles = summarizeFiles(generationCommit);
+      const manualFiles = summarizeFiles(manualCommit);
+      fs.writeFileSync(generationHtmlPath, generationHtml, { mode: 0o600 });
+      fs.writeFileSync(manualHtmlPath, manualHtml, { mode: 0o600 });
+      fs.writeFileSync(generationResultPath, generationResultJson, { mode: 0o600 });
+      fs.writeFileSync(manualResultPath, manualResultJson, { mode: 0o600 });
+      fs.writeFileSync(receiptPath, JSON.stringify({
+        schemaVersion: 'ppt-free-completion-runtime-chain-v1',
+        sourcePlanSha256: digest(Buffer.from(sourcePlanJson)),
+        stableSourceHash: parsedPlan.Fingerprint,
+        sourceBlockCount: parsedPlan.Blocks.length,
+        pageCount: parsedPlan.Pages.length,
+        failedCandidateSha256: digest(Buffer.from(failedHtml)),
+        generation: {
+          runId: generationPackage.runId,
+          htmlPath: generationHtmlPath,
+          htmlSha256: digest(Buffer.from(generationHtml)),
+          resultPath: generationResultPath,
+          resultSha256: digest(Buffer.from(generationResultJson)),
+          packageSha256: generationPackageHash,
+          fileCount: generationFiles.length,
+          browserEvidenceCount: generationFiles.filter((file) => file.path.startsWith('assets/quality/') && file.mediaType === 'image/png').length,
+          files: generationFiles,
+          publicFileBytes: generationCommit.files.reduce((total, file) => total + Buffer.from(file.contentBase64, 'base64').byteLength, 0),
+          serializedResultBytes: Buffer.byteLength(JSON.stringify(generationCommit)),
+        },
+        manual: {
+          runId: manualPackage.runId,
+          parentRunId: generationPackage.runId,
+          parentPackageSha256: generationPackageHash,
+          htmlPath: manualHtmlPath,
+          htmlSha256: digest(Buffer.from(manualHtml)),
+          resultPath: manualResultPath,
+          resultSha256: digest(Buffer.from(manualResultJson)),
+          packageSha256: digest(Buffer.from(JSON.stringify(manualCommit))),
+          fileCount: manualFiles.length,
+          browserEvidenceCount: manualFiles.filter((file) => file.path.startsWith('assets/quality/') && file.mediaType === 'image/png').length,
+          files: manualFiles,
+          publicFileBytes: manualCommit.files.reduce((total, file) => total + Buffer.from(file.contentBase64, 'base64').byteLength, 0),
+          serializedResultBytes: Buffer.byteLength(JSON.stringify(manualCommit)),
+          nonSourceEdit: '完成链受控父稿 -> 完成链用户修订稿',
+          editedSourceBlockId: editedBlock!.Id,
+        },
+        stubs: {
+          model: 'FakeOpenDesign writes a deterministic readable layout while production executor still owns workspace, source materialization, preview, quality, browser, and package flow.',
+          mapTransfer: 'in-process authenticated FakeMap input, preview, and result endpoints',
+          storage: 'local temporary workspace and task-external evidence directory',
+        },
+      }, null, 2), { mode: 0o600 });
+      for (const file of [generationHtmlPath, manualHtmlPath, generationResultPath, manualResultPath, receiptPath]) fs.chmodSync(file, 0o600);
+    },
+    180_000,
+  );
+
+  it('enforces the public byte cap before commit and keeps legacy transfers on their envelope cap', async () => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.mkdirSync(path.join(workspaceDir, 'assets'), { recursive: true });
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>受控页面</main></body></html>');
+      fs.writeFileSync(path.join(workspaceDir, 'assets', 'large.bin'), Buffer.alloc(2048, 7));
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    const rejected = await runToEnd(pkg, (request) => withPublicOutputCap(request, 1024));
+    expect(rejected.state).toBe('failed');
+    expect(rejected.error.code).toBe('design_output_too_large');
+    expect(map!.commits).toHaveLength(0);
+
+    await harness.close();
+    await map!.close();
+    harness = await startHarness();
+    const legacy = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir }) => {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main>兼容页面</main></body></html>');
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+    const legacyView = await runToEnd(legacy, (request) => {
+      const transfer = { ...request.transfer } as TaskRequest['transfer'] & { maxPublicOutputBytes?: number };
+      delete transfer.maxPublicOutputBytes;
+      return { ...request, transfer };
     });
-    fs.writeFileSync(path.join(root, 'brief', 'source-plan.json'), plan);
-    fs.writeFileSync(path.join(root, 'brief', 'task.json'), JSON.stringify({
-      presentationContract: { sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) } },
-    }));
-
-    let rejected: unknown;
-    try {
-      materializePresentationSourcePlan(root, draftFor(id));
-    } catch (error) {
-      rejected = error;
-    }
-    expect(rejected).toBeInstanceOf(AgentWorkspaceRuntimeError);
-    const reason = classifyQualityRepairReason(rejected as AgentWorkspaceRuntimeError);
-    expect(reason?.code).toBe('source_slot_cardinality_invalid');
-    expect(reason?.instruction).toContain(id);
-    expect(reason?.instruction).toContain(`contained ${slotCount}`);
-    expect(JSON.stringify(rejected)).not.toContain('GitHub');
-    expect(JSON.stringify(rejected)).not.toContain(sourceHtml);
-    fs.rmSync(root, { recursive: true, force: true });
+    expect(legacyView.state, JSON.stringify(legacyView.error)).toBe('succeeded');
   });
+
+  it('rejects an inconsistent public byte cap before opening OpenDesign', async () => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    map = await startFakeMap(pkg);
+    const request = taskRequest(map, pkg);
+    const submitted = await harness.request('POST', '/v1/tasks', {
+      ...request,
+      transfer: { ...request.transfer, maxOutputBytes: 1024, maxPublicOutputBytes: 2048 },
+    }, auth);
+    expect(submitted.status).toBe(400);
+    expect(submitted.body.error.code).toBe('workspace_transfer_invalid');
+    expect(harness.daemon.runBodies).toHaveLength(0);
+    expect(map!.commits).toHaveLength(0);
+  });
+
 });
 
 type TaskRequest = ReturnType<typeof taskRequest>;
+type FakeMapCommit = {
+  files: Array<{
+    path: string;
+    contentBase64: string;
+    sha256: string;
+    mediaType: string;
+  }>;
+};
 
-async function runToEnd(pkg: BuiltPackage, mutate: (request: TaskRequest) => TaskRequest = (request) => request) {
+function withPublicOutputCap(request: TaskRequest, maxPublicOutputBytes: number): TaskRequest {
+  return {
+    ...request,
+    transfer: {
+      ...request.transfer,
+      maxOutputBytes: 20 * 1024 * 1024,
+      maxPublicOutputBytes,
+    },
+  } as TaskRequest;
+}
+
+async function runToEnd(
+  pkg: BuiltPackage,
+  mutate: (request: TaskRequest) => TaskRequest = (request) => request,
+  timeoutMs = 10_000,
+) {
   map = await startFakeMap(pkg);
   const submitted = await harness!.request('POST', '/v1/tasks', mutate(taskRequest(map, pkg)), auth);
   expect(submitted.status, JSON.stringify(submitted.body)).toBe(202);
   return waitFor(async () => {
     const response = await harness!.request('GET', `/v1/tasks/${pkg.runId}`, undefined, auth);
     return response.body.task?.state !== 'running' ? response.body.task : undefined;
-  }, 'task to finish');
+  }, 'task to finish', timeoutMs);
 }
 
 async function statusReasons(taskId: string): Promise<string[]> {
   const events = (await harness!.request('GET', `/v1/tasks/${taskId}/events`, undefined, auth)).body.events;
   return events.filter((event: { type: string }) => event.type === 'status').map((event: { payload: { reason: string } }) => event.payload.reason);
+}
+
+type ExternalSourcePlan = {
+  Fingerprint: string;
+  Blocks: Array<{ Id: string; Html: string }>;
+  Pages: Array<{ Index: number; DisplayTitle?: string; Blocks: Array<{ Id: string }> }>;
+};
+
+function hasExternalCompletionChainFixture(): boolean {
+  return [
+    process.env.PPT_COMPLETION_SOURCE_PLAN_PATH,
+    process.env.PPT_COMPLETION_SOURCE_MD_PATH,
+    process.env.PPT_COMPLETION_FAILED_HTML_PATH,
+    process.env.PPT_COMPLETION_CHAIN_OUTPUT_DIR,
+  ].every((value) => Boolean(value?.trim()));
+}
+
+function parseExternalSourcePlan(json: string): ExternalSourcePlan {
+  return JSON.parse(json) as ExternalSourcePlan;
+}
+
+function escapeExternalText(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+}
+
+function buildExternalReadableDeck(plan: ExternalSourcePlan, deckTitle: string): string {
+  const blockIds = new Set(plan.Blocks.map((block) => block.Id));
+  const sections = plan.Pages.map((page, pageOffset) => {
+    const source = page.Blocks.map(({ Id }) => {
+      if (!blockIds.has(Id)) throw new Error(`missing source block ${Id}`);
+      return `<div data-mdppt-source="${escapeExternalText(Id)}"></div>`;
+    }).join('');
+    return `<section id="slide-${page.Index}" data-slide-index="${page.Index}"${pageOffset === 0 ? ' class="active"' : ''}><header><span>${page.Index.toString().padStart(2, '0')} / ${plan.Pages.length}</span><div><p class="deck-label">${escapeExternalText(deckTitle)}</p><h2>${escapeExternalText(page.DisplayTitle || `第 ${page.Index} 页`)}</h2></div></header><div class="source-grid">${source}</div></section>`;
+  }).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeExternalText(deckTitle)}</title><style>
+  *{box-sizing:border-box}html,body{margin:0;min-height:100%;font-family:Arial,"PingFang SC",sans-serif;background:#f4f7fb;color:#172033}body{position:relative}.reveal{min-height:100vh}.slides>section{display:none;min-height:100vh;padding:82px 32px 32px}.slides>section.active{display:block}header{display:flex;align-items:center;gap:18px;margin-bottom:18px;border-bottom:2px solid #2c5fd5;padding-bottom:12px}header span{font-weight:700;color:#2c5fd5}.deck-label{margin:0 0 3px;color:#51617b;font-size:12px;font-weight:700}h2{font-size:28px;margin:0}.source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.source-grid>[data-mdppt-source]{min-width:0;border:1px solid #cad4e7;border-radius:10px;background:#fff;padding:12px;font-size:14px;line-height:1.45;overflow-wrap:anywhere}.source-grid>[data-mdppt-source] h1,.source-grid>[data-mdppt-source] h2,.source-grid>[data-mdppt-source] h3{font-size:16px;margin:0 0 6px}.source-grid>[data-mdppt-source] p,.source-grid>[data-mdppt-source] ul,.source-grid>[data-mdppt-source] ol{margin:4px 0}pre,code{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word}table{width:100%;table-layout:fixed;border-collapse:collapse}th,td{overflow-wrap:anywhere}.deck-nav{position:absolute;z-index:20;top:18px;right:24px;display:flex;justify-content:center;gap:12px}.deck-nav button{min-width:88px;padding:9px 14px;border:0;border-radius:8px;background:#2c5fd5;color:#fff;font-weight:700}.deck-nav button:disabled{background:#53657f}@media(max-width:640px){.slides>section{padding:78px 16px 24px}.source-grid{grid-template-columns:1fr}h2{font-size:22px}.source-grid>[data-mdppt-source]{font-size:14px}.deck-nav{top:14px;right:16px}}
+  </style></head><body><main class="reveal"><div class="slides">${sections}</div></main><nav class="deck-nav" aria-label="演示稿导航"><button id="prev" type="button">上一页</button><button id="next" type="button">下一页</button></nav><script>
+  const slides=[...document.querySelectorAll('.slides>section')];let current=0;function show(index){current=Math.max(0,Math.min(slides.length-1,index));slides.forEach((slide,i)=>slide.classList.toggle('active',i===current));document.getElementById('prev').disabled=current===0;document.getElementById('next').disabled=current===slides.length-1;history.replaceState(null,'','#slide-'+(current+1));}globalThis.Reveal={slide:show,getIndices:()=>({h:current})};document.getElementById('prev').addEventListener('click',()=>show(current-1));document.getElementById('next').addEventListener('click',()=>show(current+1));show(Math.max(0,Number(location.hash.replace('#slide-',''))-1||0));
+  </script></body></html>`;
+}
+
+function committedHtml(commit: { files: Array<{ path: string; contentBase64: string }> }): string {
+  const file = commit.files.find((item) => item.path === 'index.html');
+  if (!file) throw new Error('committed package is missing index.html');
+  return Buffer.from(file.contentBase64, 'base64').toString('utf8');
 }
 
 describe('edit runs seeded from the current published site', () => {
@@ -800,7 +1076,7 @@ describe('collecting the deliverable', () => {
     expect(await statusReasons(pkg.runId)).toContain('open_design_quality_repairing');
   });
 
-  it('bounds deterministic repair before the finalization reserve and keeps the rejected trusted snapshot', async () => {
+  it('bounds deterministic repair before finalization and checkpoints the timed-out candidate without committing it', async () => {
     harness = await startHarness();
     const pkg = buildPackage([]);
     harness.daemon.onRun = async ({ workspaceDir, index, signal }) => {
@@ -826,6 +1102,7 @@ describe('collecting the deliverable', () => {
     expect(harness.daemon.cancels).toContain('od-run-3');
     expect(harness.daemon.freezes).toBe(harness.daemon.thaws);
     expect(map!.commits).toHaveLength(0);
+    expect(map!.previews.at(-1)?.html).toContain('partial-repair');
     expect(await statusReasons(pkg.runId)).toEqual(expect.arrayContaining([
       'open_design_quality_repairing',
       'open_design_quality_repair_budget_exhausted',
@@ -839,7 +1116,7 @@ describe('collecting the deliverable', () => {
     });
   });
 
-  it('isolates quality work from generation history and keeps browser repairs in the quality conversation', async () => {
+  it('records presentation browser findings without triggering an automatic paid repair', async () => {
     const firstSourceId = `sb-${'a'.repeat(64)}`;
     const secondSourceId = `sb-${'b'.repeat(64)}`;
     const firstSourceHtml = '<p>Frozen release conditions stay visible while layout is repaired.</p>';
@@ -861,9 +1138,9 @@ describe('collecting the deliverable', () => {
           seenAttempts.push(job.repairAttempt);
           seenEvidenceDirs.push(job.evidenceDir);
           fs.mkdirSync(job.evidenceDir, { recursive: true });
-          const materialized = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
-          expect(materialized).toContain(firstSourceHtml);
-          expect(materialized).toContain(secondSourceHtml);
+          const authored = fs.readFileSync(path.join(job.workspaceDir, 'index.html'), 'utf8');
+          expect(authored).toContain(`data-mdppt-source="${firstSourceId}"`);
+          expect(authored).not.toContain(firstSourceHtml);
           const measurements = [
             { viewport: 'desktop' as const, width: 1440, height: 900 },
             { viewport: 'mobile' as const, width: 390, height: 844 },
@@ -924,30 +1201,16 @@ describe('collecting the deliverable', () => {
     });
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main id="content"><h1>Launch page</h1><div class="source-rail"><div data-mdppt-source="${firstSourceId}"></div><div data-mdppt-source="${secondSourceId}"></div></div></main></body></html>`);
-      }
-      if (index >= 3) {
-        const current = fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8');
-        expect(current).toContain(firstSourceHtml);
-        expect(current).toContain(secondSourceHtml);
-        expect(String(body.message)).toContain('presentation_source_content_unreadable');
-        expect(String(body.message)).toContain('"unreadableSourceSlotCount":2');
-        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main id="content"><h1>Launch page</h1><div class="source-layout"><div data-mdppt-source="${firstSourceId}">${firstSourceHtml}</div><div data-mdppt-source="${secondSourceId}">${secondSourceHtml}</div></div></main></body></html>`);
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main id="content" class="reveal"><div class="slides"><section data-slide-index="1"><h1>Launch page</h1><div class="source-rail"><div data-mdppt-source="${firstSourceId}"></div><div data-mdppt-source="${secondSourceId}"></div></div></section></div></main></body></html>`);
       }
       return { status: 'succeeded' };
     };
     const view = await runToEnd(pkg);
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
-    expect(seenAttempts).toEqual([0, 1, 2]);
+    expect(seenAttempts).toEqual([0]);
     expect(seenEvidenceDirs.every((dir) => dir.startsWith(path.dirname(harness!.config.outputDir)))).toBe(true);
     expect(seenEvidenceDirs.every((dir) => !dir.startsWith(harness!.config.odDataDir))).toBe(true);
-    expect(harness.daemon.runBodies).toHaveLength(4);
-    expect(harness.daemon.runBodies.slice(2).every((body) => String(body.message).includes('isolated browser quality gate'))).toBe(true);
-    expect(String(harness.daemon.runBodies[2].message)).toContain('presentation_source_content_unreadable');
-    expect(String(harness.daemon.runBodies[2].message)).toContain('"unreadableSourceSlotCount":2');
-    expect(String(harness.daemon.runBodies[2].message)).not.toContain('previous targeted repair produced no measurable change');
-    expect(String(harness.daemon.runBodies[3].message)).toContain('previous targeted repair produced no measurable change');
-    expect(String(harness.daemon.runBodies[3].message)).toContain('Do not leave any second hidden nav or [role="navigation"]');
+    expect(harness.daemon.runBodies).toHaveLength(2);
     expect(harness.daemon.runBodies[0].conversationId).toBe('od-conversation');
     expect(new Set(harness.daemon.runBodies.slice(1).map((body) => body.conversationId))).toEqual(
       new Set(['od-quality-conversation-1']),
@@ -959,11 +1222,11 @@ describe('collecting the deliverable', () => {
       schemaVersion: 'map-browser-quality-evidence-v1',
       ruleVersion: 'browser-hard-gate-v1',
       firstPassPassed: false,
-      repairAttempts: 2,
-      repairSucceeded: true,
-      finalHardPassed: true,
+      repairAttempts: 0,
+      repairSucceeded: false,
+      finalHardPassed: false,
     });
-    expect(report.attempts).toHaveLength(3);
+    expect(report.attempts).toHaveLength(1);
     expect(reportText).not.toContain('<!doctype html>');
     expect(reportText).not.toContain('thinking');
   });

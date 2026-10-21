@@ -21,6 +21,7 @@ export interface WorkspaceTransferRequest {
   baseRevision: string;
   maxInputBytes: number;
   maxOutputBytes: number;
+  maxPublicOutputBytes: number;
   allowedOutputPaths: string[];
 }
 
@@ -182,6 +183,16 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
       'workspaceTransfer.allowedOutputPaths must include index.html and manifest.json',
     );
   }
+  const maxOutputBytes = boundedInteger(record.maxOutputBytes, 'workspaceTransfer.maxOutputBytes', 1, 128 * 1024 * 1024);
+  const maxPublicOutputBytes = record.maxPublicOutputBytes === undefined
+    ? maxOutputBytes
+    : boundedInteger(record.maxPublicOutputBytes, 'workspaceTransfer.maxPublicOutputBytes', 1, 128 * 1024 * 1024);
+  if (maxPublicOutputBytes > maxOutputBytes) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      'workspaceTransfer.maxPublicOutputBytes must not exceed maxOutputBytes',
+    );
+  }
   return {
     schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
     inputPackageUrl: inputPackageUrl.toString(),
@@ -190,7 +201,8 @@ export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferReq
     inputSha256: normalizeSha(record.inputSha256, 'workspaceTransfer.inputSha256'),
     baseRevision,
     maxInputBytes: boundedInteger(record.maxInputBytes, 'workspaceTransfer.maxInputBytes', 1, 64 * 1024 * 1024),
-    maxOutputBytes: boundedInteger(record.maxOutputBytes, 'workspaceTransfer.maxOutputBytes', 1, 128 * 1024 * 1024),
+    maxOutputBytes,
+    maxPublicOutputBytes,
     allowedOutputPaths: [...new Set(allowedOutputPaths)],
   };
 }

@@ -53,7 +53,6 @@ import {
   collectArtifactQualityEvidence,
   collectVisibleTextOccurrenceConstraints,
   createArtifactQualityGate,
-  TEMPLATE_UNTOUCHED_MARKER,
 } from './quality/gate.js';
 import {
   MAX_BROWSER_REPAIR_ATTEMPTS,
@@ -80,143 +79,40 @@ import {
   type WorkspaceTransferRequest,
 } from './workspace/transfer.js';
 
-interface FrozenPptSourceBlock { Id: string; Html: string }
-interface FrozenPptSourcePage { Index?: number; DisplayTitle?: string; Blocks: Array<{ Id: string }> }
-interface FrozenPptSourcePlan { SchemaVersion: string; Blocks: FrozenPptSourceBlock[]; Pages: FrozenPptSourcePage[] }
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-interface ValidatedFrozenPptSourcePlan {
-  plan: FrozenPptSourcePlan;
-  expected: Map<string, string>;
-  assignedPages: Map<string, number>;
-}
-
-function readFrozenPresentationSourcePlan(workspaceDir: string): ValidatedFrozenPptSourcePlan | undefined {
-  const planPath = path.join(workspaceDir, 'brief', 'source-plan.json');
-  if (!fs.existsSync(planPath)) return undefined;
-  const planBytes = readRegularFileNoFollow(planPath, 8 * 1024 * 1024);
-  const task = JSON.parse(readRegularFileNoFollow(path.join(workspaceDir, 'brief', 'task.json'), 1024 * 1024).toString('utf8')) as {
-    presentationContract?: { sourcePlan?: { path?: string; contentHash?: string } };
-  };
-  const declared = task.presentationContract?.sourcePlan;
-  if (declared?.path !== 'brief/source-plan.json' || declared.contentHash !== sha256(planBytes)) {
+function validatePresentationSourcePlanIdentity(
+  workspaceDir: string,
+  declared: { path: string; contentHash: string } | undefined,
+): void {
+  if (!declared) return;
+  const planBytes = readRegularFileNoFollow(path.join(workspaceDir, ...declared.path.split('/')), 8 * 1024 * 1024);
+  if (sha256(planBytes) !== declared.contentHash) {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json does not match its frozen contract');
   }
-  let plan: FrozenPptSourcePlan;
-  try {
-    plan = JSON.parse(planBytes.toString('utf8')) as FrozenPptSourcePlan;
-  } catch {
-    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json is not valid JSON');
-  }
-  if (plan.SchemaVersion !== 'map-mdppt-source-plan-v2' || !Array.isArray(plan.Blocks)
-      || !Array.isArray(plan.Pages) || plan.Pages.length === 0) {
-    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json contract is invalid');
-  }
-  const expected = new Map(plan.Blocks.map((block) => [block.Id, block.Html]));
-  if (expected.size !== plan.Blocks.length || [...expected].some(([id, body]) => !/^sb-[a-f0-9]{64}$/.test(id) || typeof body !== 'string')) {
-    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source blocks are invalid');
-  }
-  const assignedPages = new Map<string, number>();
-  const assignedBlockIds = new Set<string>();
-  for (const [pageOffset, page] of plan.Pages.entries()) {
-    if (!page || typeof page !== 'object' || !Array.isArray(page.Blocks)) {
-      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source pages are invalid');
-    }
-    const pageIndex = Number.isSafeInteger(page.Index) && Number(page.Index) > 0
-      ? Number(page.Index)
-      : pageOffset + 1;
-    for (const block of page.Blocks) {
-      if (!block || typeof block.Id !== 'string' || !expected.has(block.Id) || assignedBlockIds.has(block.Id)) {
-        throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json source page assignments are invalid');
-      }
-      assignedBlockIds.add(block.Id);
-      assignedPages.set(block.Id, pageIndex);
-    }
-  }
-  if (assignedBlockIds.size !== expected.size) {
-    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/source-plan.json must assign every source block exactly once');
-  }
-  return { plan, expected, assignedPages };
 }
 
-function escapeHtmlText(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-/**
- * 为已绑定 SourcePlan 的新 PPT 生成一个可编辑的来源拓扑，不是可发布成品。
- *
- * 来源正文来自经过哈希校验的冻结计划，逐字节放进唯一槽；标题只作文本转义。骨架故意保留
- * untouched sentinel，且不提供 Reveal controller，因此 OpenDesign 必须原位完成视觉设计、导航和交互，
- * 之后仍要通过同一套确定性与双视口浏览器门。该派生文件不属于下载输入包，也不参与冻结输入哈希。
- */
-export function buildPresentationSourceScaffold(workspaceDir: string): string {
-  const validated = readFrozenPresentationSourcePlan(workspaceDir);
-  if (!validated) {
-    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation source scaffold requires a frozen source plan');
+function preparePresentationRepairCandidate(workspaceDir: string): string | undefined {
+  const presentation = collectDesignTaskContext(workspaceDir).presentation;
+  const declared = presentation?.repairCandidate;
+  if (!declared) return undefined;
+  if (!presentation?.sourcePlan) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation repair candidate requires a frozen source plan');
   }
-  const { plan, expected } = validated;
-  const sections = plan.Pages.map((page, pageOffset) => {
-    const pageIndex = Number.isSafeInteger(page.Index) && Number(page.Index) > 0 ? Number(page.Index) : pageOffset + 1;
-    const title = typeof page.DisplayTitle === 'string' && page.DisplayTitle.trim()
-      ? page.DisplayTitle.trim()
-      : `第 ${pageIndex} 页`;
-    const slots = page.Blocks.map(({ Id }) => `<div data-mdppt-source="${Id}">${expected.get(Id)!}</div>`).join('\n');
-    return `<section data-slide-index="${pageIndex}">\n<h1>${escapeHtmlText(title)}</h1>\n${slots}\n</section>`;
-  }).join('\n');
-  return `<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OpenDesign presentation source scaffold</title></head>
-<body>
-<!-- ${TEMPLATE_UNTOUCHED_MARKER} -->
-<main><div class="reveal"><div class="slides">${sections}</div></div></main>
-</body>
-</html>`;
-}
-
-export function materializePresentationSourcePlan(workspaceDir: string, html: string): string {
-  const validated = readFrozenPresentationSourcePlan(workspaceDir);
-  if (!validated) return html;
-  const { expected, assignedPages } = validated;
-  let materialized = html;
-  for (const [sourceBlockOffset, [id, body]] of [...expected.entries()].entries()) {
-    const idPattern = escapeRegex(id);
-    const slots = [...materialized.matchAll(new RegExp(`<div\\s+data-mdppt-source=["']${idPattern}["']\\s*>([\\s\\S]*?)<\\/div>`, 'gi'))];
-    if (slots.length !== 1) {
-      const assignedPageIndex = assignedPages.get(id);
-      throw new AgentWorkspaceRuntimeError(
-        'design_output_quality_rejected',
-        `Source block ${id} must have exactly one matching slot marker`,
-        false,
-        {
-          qualityIssueCode: 'source_slot_cardinality_invalid',
-          sourceBlockId: id,
-          sourceBlockOrdinal: sourceBlockOffset + 1,
-          ...(assignedPageIndex ? { assignedPageIndex } : {}),
-          slotCount: Math.min(slots.length, 1000),
-          slotCountTruncated: slots.length > 1000,
-        },
-      );
-    }
-    const current = slots[0][1];
-    if (current.trim() && current !== body) {
-      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `Source block ${id} was modified outside the frozen source contract`);
-    }
-    materialized = materialized.replace(slots[0][0], `<div data-mdppt-source="${id}">${body}</div>`);
+  const candidatePath = path.join(workspaceDir, ...declared.path.split('/'));
+  const candidateBytes = readRegularFileNoFollow(candidatePath, 1024 * 1024);
+  if (sha256(candidateBytes) !== declared.contentHash) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'candidate/index.html does not match its frozen contract');
   }
-  const allIds = [...materialized.matchAll(/data-mdppt-source=["']([^"']+)["']/gi)].map((match) => match[1]);
-  if (allIds.length !== expected.size || allIds.some((id) => !expected.has(id))) {
-    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'Presentation contains unknown or duplicate source slots');
+  const candidate = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(candidateBytes);
+  if (!candidate.trim()) throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'presentation repair candidate is empty');
+  const externalReference = /(?:\b(?:src|href|poster|action)\s*=|\burl\s*\()\s*["']?(?!#|data:)([^"')\s>]+)/gi;
+  const match = externalReference.exec(candidate);
+  if (match) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      `presentation repair candidate is not self-contained: ${match[1].slice(0, 80)}`,
+    );
   }
-  return materialized;
+  return candidate;
 }
 
 function traceableDeterministicQualityRejection(
@@ -466,15 +362,18 @@ export class DesignTaskExecutor {
       fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
       fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'), { mode: 0o644, flag: 'wx' });
     }
-    const sourcePlanSeed = editableSeeds.length === 0
-      && files.some((file) => file.path === 'brief/source-plan.json')
-      ? buildPresentationSourceScaffold(workspaceDir)
+    const repairCandidateSeed = editableSeeds.length === 0
+      ? preparePresentationRepairCandidate(workspaceDir)
       : undefined;
-    if (sourcePlanSeed !== undefined) {
-      fs.writeFileSync(path.join(workspaceDir, 'index.html'), sourcePlanSeed, { mode: 0o644, flag: 'wx' });
+    const initialIndex = repairCandidateSeed;
+    if (initialIndex !== undefined) {
+      fs.writeFileSync(path.join(workspaceDir, 'index.html'), initialIndex, { mode: 0o644, flag: 'wx' });
     }
     this.chownForEngine(workspaceDir);
-    onStage('workspace_materialized', { fileCount: files.length });
+    onStage('workspace_materialized', {
+      fileCount: files.length,
+      repairCandidateRestored: repairCandidateSeed !== undefined,
+    });
     prepareWebPrototypeResources(
       {
         sourceDir: this.options.paths.webPrototypeSourceDir,
@@ -585,11 +484,15 @@ export class DesignTaskExecutor {
     // 证据口径与 MAP 发布闸（HostedSiteEditRunWorker.BuildQualityEvidence）一致：用户写的标题与要求是
     // 生成请求，不是能证明日期、联系方式、网址或数值的证据。此前这里把它们算进证据，同一页在这里通过、
     // 到 MAP 最后一步才被拒，白等一整轮（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
+    const designContext = collectDesignTaskContext(workspaceDir);
+    const isPresentation = designContext.presentation !== undefined;
+    validatePresentationSourcePlanIdentity(workspaceDir, designContext.presentation?.sourcePlan);
     const qualityEvidence = collectArtifactQualityEvidence(workspaceDir, false);
     const checkArtifactQuality = createArtifactQualityGate(
       qualityEvidence,
       collectVisibleTextOccurrenceConstraints(workspaceDir),
       qualityEvidence,
+      !isPresentation,
     );
     let activeRunId: string | undefined;
     let previewPusher: PreviewPusher | undefined;
@@ -600,7 +503,6 @@ export class DesignTaskExecutor {
     );
     try {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
-      const designContext = collectDesignTaskContext(workspaceDir);
       const designDirection = designContext.direction;
       const reviewMode = designDirection?.reviewMode ?? 'light';
       const reviewPasses = reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
@@ -681,17 +583,6 @@ export class DesignTaskExecutor {
         this.promoteDeliverableEntry(stableDeliverableEntryFile, (stage, detail) => {
           onStage(stage === 'deliverable_entry_resolved' ? 'deliverable_entry_checkpointed' : stage, detail);
         });
-        const reviewIndexPath = path.join(workspaceDir, 'index.html');
-        if (
-          designContext.presentation?.sourcePlan
-          && fs.existsSync(reviewIndexPath)
-          && readRegularFileNoFollow(reviewIndexPath, transfer.maxOutputBytes).toString('utf8').includes(TEMPLATE_UNTOUCHED_MARKER)
-        ) {
-          throw new AgentWorkspaceRuntimeError(
-            'design_output_quality_rejected',
-            'index.html is still the untouched starter template',
-          );
-        }
         this.exportOutputs(transfer, prepared);
         const stableOutputs = this.collectOutputs(transfer);
         const remainingReviewMs = budget.finalizationDeadline - Date.now();
@@ -801,31 +692,17 @@ export class DesignTaskExecutor {
           );
         }
         try {
-          const materializedHtml = materializePresentationSourcePlan(
-            this.options.paths.workspaceDir,
-            outputHtml.toString('utf8'),
-          );
-          if (materializedHtml !== outputHtml.toString('utf8')) {
-            const materialized = Buffer.from(materializedHtml, 'utf8');
-            indexFile = {
-              ...indexFile,
-              contentBase64: materialized.toString('base64'),
-              size: materialized.length,
-              sha256: sha256(materialized),
-            };
-            collectedFiles = collectedFiles.map((file) => file.path === 'index.html' ? indexFile! : file);
-            const materializedIndexPath = path.join(this.options.paths.workspaceDir, 'index.html');
-            fs.writeFileSync(materializedIndexPath, materialized);
-            this.chownForEngine(materializedIndexPath);
-          }
+          const materializedHtml = outputHtml.toString('utf8');
           hardenedHtml = checkArtifactQuality(
             materializedHtml,
             collectedFiles.map((file) => file.path),
           );
-          assertRequiredFactualCoverage(
-            hardenedHtml,
-            designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
-          );
+          if (!isPresentation) {
+            assertRequiredFactualCoverage(
+              hardenedHtml,
+              designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
+            );
+          }
           break;
         } catch (error) {
           if (
@@ -852,7 +729,6 @@ export class DesignTaskExecutor {
           const stableRunId = finalRunId;
           const stableOutcome = runOutcome;
           const stableDeliverableEntryFile = deliverableEntryFile;
-          const stableOutputs = collectedFiles.map((file) => ({ ...file }));
           const remainingRepairMs = budget.finalizationDeadline - Date.now();
           const allottedRepairMs = Math.min(budget.maximumQualityPassMs, remainingRepairMs);
           if (allottedRepairMs < budget.minimumQualityPassMs) {
@@ -907,7 +783,12 @@ export class DesignTaskExecutor {
               && !signal.aborted
               && Date.now() < executionDeadline;
             if (!repairBudgetExpired) throw repairError;
-            this.restoreOutputCheckpoint(transfer, stableOutputs);
+            // The timed-out repair may already have written a better, still non-final candidate.
+            // Persist that exact byte stream as a failed-run preview before workspace cleanup. A
+            // later presentation-only restart may use it only after revalidating the frozen source
+            // contract; it is never committed or treated as the previous successful artifact.
+            await previewPusher?.poll();
+            await previewPusher?.flush();
             finalRunId = stableRunId;
             runOutcome = stableOutcome;
             deliverableEntryFile = stableDeliverableEntryFile;
@@ -915,7 +796,8 @@ export class DesignTaskExecutor {
               kind: 'deterministic-quality-gate',
               attempt: qualityRepairAttempt + 1,
               allottedSeconds: Math.floor(allottedRepairMs / 1000),
-              retainedRunId: stableRunId,
+              retainedRunId: activeRunId,
+              repairCandidateCheckpointed: true,
               issueCodes: [repairReason.code],
             });
             throw traceableDeterministicQualityRejection(
@@ -986,7 +868,7 @@ export class DesignTaskExecutor {
           issueCodes: evidence.issueCodes,
           score: evidence.score,
         });
-        if (evidence.hardPassed) break;
+        if (evidence.hardPassed || isPresentation) break;
         if (browserRepairBudgetExhausted || browserRepairAttempt >= MAX_BROWSER_REPAIR_ATTEMPTS) {
           await rejectBrowserQuality(evidence, browserRepairAttempt, browserRepairBudgetExhausted);
         }
@@ -1048,6 +930,8 @@ export class DesignTaskExecutor {
             && !signal.aborted
             && Date.now() < executionDeadline;
           if (!repairBudgetExpired) throw error;
+          await previewPusher?.poll();
+          await previewPusher?.flush();
           this.restoreOutputCheckpoint(transfer, stableOutputs);
           finalRunId = stableRunId;
           runOutcome = stableOutcome;
@@ -1079,6 +963,7 @@ export class DesignTaskExecutor {
               allottedSeconds: Math.floor(allottedRepairMs / 1000),
               issueCodes: evidence.issueCodes,
               retainedRunId: stableRunId,
+              repairCandidateCheckpointed: true,
             });
           }
           continue;
@@ -1101,18 +986,17 @@ export class DesignTaskExecutor {
             runOutcome.deliverableValidation || 'OpenDesign rejected its browser quality repair deliverable',
           );
         }
-        const materializedRepairHtml = materializePresentationSourcePlan(
-          this.options.paths.workspaceDir,
-          repairedBytes.toString('utf8'),
-        );
+        const materializedRepairHtml = repairedBytes.toString('utf8');
         hardenedHtml = checkArtifactQuality(
           materializedRepairHtml,
           collectedFiles.map((file) => file.path),
         );
-        assertRequiredFactualCoverage(
-          hardenedHtml,
-          designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
-        );
+        if (!isPresentation) {
+          assertRequiredFactualCoverage(
+            hardenedHtml,
+            designContext.brief?.factualCoverageRequirements.requiredFacts ?? [],
+          );
+        }
       }
       activeRunId = undefined;
       const browserQuality = buildBrowserQualityEvidence(browserVersion, browserAttempts);
@@ -1152,8 +1036,8 @@ export class DesignTaskExecutor {
       const files = buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles, browserEvidenceFiles);
       assertPublicArtifactFileCount(files.length);
       const totalOutputBytes = files.reduce((total, file) => total + file.size, 0);
-      if (totalOutputBytes > transfer.maxOutputBytes) {
-        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxOutputBytes');
+      if (totalOutputBytes > transfer.maxPublicOutputBytes) {
+        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxPublicOutputBytes');
       }
       const commitBody = {
         schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
@@ -1332,6 +1216,7 @@ export class DesignTaskExecutor {
         allowedOutputPaths: transfer.allowedOutputPaths,
         inputFiles: prepared.inputFiles,
         maxOutputBytes: transfer.maxOutputBytes,
+        maxPublicOutputBytes: transfer.maxPublicOutputBytes,
       });
     } finally {
       this.options.daemon.thaw();
@@ -1369,8 +1254,8 @@ export class DesignTaskExecutor {
           );
         }
         total += stat.size;
-        if (total > transfer.maxOutputBytes) {
-          throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxOutputBytes');
+        if (total > transfer.maxPublicOutputBytes) {
+          throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxPublicOutputBytes');
         }
         const bytes = fs.readFileSync(absolute);
         results.push({
@@ -1479,16 +1364,8 @@ export class DesignTaskExecutor {
         if (stat.size <= 0 || stat.size > PREVIEW_MAX_BYTES) return;
         let html = readRegularFileNoFollow(indexPath, PREVIEW_MAX_BYTES).toString('utf8');
         if (!html.trim()) return;
-        // SourcePlan scaffold is a server-derived editing surface, not a user-visible preview. It can
-        // only become previewable after OpenDesign has actually replaced the untouched marker and the
-        // same materialized bytes can proceed through deterministic and browser quality gates.
-        if (html.includes(TEMPLATE_UNTOUCHED_MARKER)) return;
-        try {
-          html = materializePresentationSourcePlan(this.options.paths.workspaceDir, html);
-        } catch (error) {
-          if (error instanceof AgentWorkspaceRuntimeError && error.code === 'design_output_quality_rejected') return;
-          throw error;
-        }
+        // Preview the exact OpenDesign bytes. Presentation content and layout are authored upstream;
+        // MAP must not inject source text or require a local source-slot DOM shape before showing it.
         // 文件监听可能在同一毫秒内收到两版同字节数内容；只看 mtime/size 会吞掉真实变化。
         // 以正文摘要作为修订判据，轮询与 watch 共用同一条完整性口径。
         const fingerprint = sha256(Buffer.from(html, 'utf8'));

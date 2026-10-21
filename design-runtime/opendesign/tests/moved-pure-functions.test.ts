@@ -132,7 +132,7 @@ describe('OpenDesign prompt quality contracts', () => {
     expect(aestheticReview).toContain('improve only hierarchy, spacing, typography, color consistency, and mobile layout');
   });
 
-  it('freezes the presentation contract and applies it to generation and strict review', () => {
+  it('passes the presentation plan as frozen context without enforcing its page count', () => {
     const presentation = parsePresentationContract({
       schemaVersion: 'map-html-ppt-contract-v1',
       version: 1,
@@ -157,13 +157,15 @@ describe('OpenDesign prompt quality contracts', () => {
     });
 
     for (const prompt of [generation, review]) {
-      expect(prompt).toContain('20');
       expect(prompt).toContain('390px');
       expect(prompt).toContain('frozen');
+      expect(prompt).not.toContain('exactly 20');
     }
+    expect(generation).toContain('suggests 20 slides');
+    expect(generation).toContain('not a platform-enforced output shape');
     expect(generation).toContain('cookies, localStorage, sessionStorage');
     expect(generation).toContain('packaged relative assets');
-    expect(review).toContain('example semantics');
+    expect(review).toContain('final page grouping and count');
   });
 
   it('treats a manual presentation edit as an untrusted proposal while keeping the current package authoritative', () => {

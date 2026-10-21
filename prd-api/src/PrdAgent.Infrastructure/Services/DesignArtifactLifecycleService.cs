@@ -765,10 +765,11 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             .FirstOrDefaultAsync(CancellationToken.None);
         if (site == null) throw Invalid("发布站点不存在或不属于当前用户");
 
-        if (run.ArtifactType == DesignArtifactTypes.WebPage)
+        var remotePresentation = run.ArtifactType == DesignArtifactTypes.HtmlPpt
+                                 && run.Runtime == DesignArtifactRuntimes.OpenDesign
+                                 && run.WorkspaceRef?.Kind == DesignArtifactWorkspaceKinds.RemotePackage;
+        if (run.ArtifactType == DesignArtifactTypes.WebPage || remotePresentation)
         {
-            var hasNoProducedIdentity = string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
-                                        && string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId);
             var hasMatchingProducedIdentity = string.Equals(
                                                   run.ProducedArtifactSiteId,
                                                   siteId,
@@ -777,9 +778,13 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                                                   run.ProducedArtifactRevisionId,
                                                   versionId,
                                                   StringComparison.Ordinal);
-            if (!hasNoProducedIdentity && !hasMatchingProducedIdentity)
+            var mayHealLegacyWebIdentity = run.ArtifactType == DesignArtifactTypes.WebPage
+                                           && string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+                                           && string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId);
+            if (!hasMatchingProducedIdentity && !mayHealLegacyWebIdentity)
                 throw Invalid("发布版本与任务形成的产物不一致");
-            if (run.Operation == DesignArtifactOperations.Edit
+            if (run.ArtifactType == DesignArtifactTypes.WebPage
+                && run.Operation == DesignArtifactOperations.Edit
                 && !string.Equals(run.TargetSiteId, siteId, StringComparison.Ordinal))
                 throw Invalid("发布站点与网页修改目标不一致");
             var revision = await _db.HostedSiteRevisions

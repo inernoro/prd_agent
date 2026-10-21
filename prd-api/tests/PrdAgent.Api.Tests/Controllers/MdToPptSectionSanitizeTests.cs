@@ -263,6 +263,33 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
+    public void CompletePresentationDocument_RequiresCompleteBytesButNotAPlatformSlideFramework()
+    {
+        var customDeck = "<!doctype html><html><head><style>main{display:grid}</style></head>" +
+                         "<body><main data-opendesign-scene><canvas></canvas></main></body></html>";
+        var hiddenCustomDeck = "<!doctype html><html><head></head><body hidden><main>由上游设计的演示稿</main></body></html>";
+
+        Assert.True(MdToPptController.IsCompletePresentationDocument(customDeck));
+        Assert.True(MdToPptController.IsCompletePresentationDocument(hiddenCustomDeck));
+        Assert.False(MdToPptController.IsCompletePresentationDocument("<html><head></head><body></body></html>"));
+        Assert.False(MdToPptController.IsCompletePresentationDocument(
+            "<html><head></head><body><script>const deck = 1;</body></html>"));
+    }
+
+    [Fact]
+    public void PresentationBusinessFlow_DoesNotUseTheLegacySlideOrRevealClassifier()
+    {
+        var source = File.ReadAllText(LocateController());
+
+        Assert.DoesNotContain("!IsRunnableDeckDocument(parentRun.Html)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("!IsRunnableDeckDocument(manualEditHtml)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("!IsRunnableDeckDocument(req.HtmlContent)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("!IsRunnableDeckDocument(sourceRun.Html)", source, StringComparison.Ordinal);
+        Assert.Contains("IsCompletePresentationDocument(parentRun.Html)", source, StringComparison.Ordinal);
+        Assert.Contains("IsCompletePresentationDocument(sourceRun.Html)", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SlideBlockScanner_AgreesWithValidatorAcrossQuotesAndCase()
     {
         var html = "<div class='SLIDE active'><h1>第一页</h1></div>" +
@@ -325,13 +352,13 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void PatchSlideIndex_UsesExplicitFieldThenBoundedPagePhrase()
+    public void PatchSlideIndex_UsesExplicitFieldThenSinglePagePhrase()
     {
         Assert.Equal(4, MdToPptController.ResolvePatchSlideIndex(4, "修改第 2 页"));
         Assert.Equal(2, MdToPptController.ResolvePatchSlideIndex(null, "仅调整第 2 页的布局"));
         Assert.Equal(12, MdToPptController.ResolvePatchSlideIndex(null, "重绘第十二页"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "生成 5 页演示稿"));
-        Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "修改第 99 页"));
+        Assert.Equal(99, MdToPptController.ResolvePatchSlideIndex(null, "修改第 99 页"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "删除第 3 页"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "第 2 页与第 3 页对调"));
         Assert.Null(MdToPptController.ResolvePatchSlideIndex(null, "把第 2 页移动到第 5 页"));
@@ -367,29 +394,33 @@ public class MdToPptSectionSanitizeTests
     }
 
     [Fact]
-    public void NormalizeOutlinePayload_TrimsExtraPages()
+    public void NormalizeOutlinePayload_PreservesOpenDesignPagePlan()
     {
         var raw = "{\"totalPages\":4,\"summary\":\"x\",\"outline\":[" +
                   "{\"title\":\"A\",\"bullets\":[]}," +
                   "{\"title\":\"B\",\"bullets\":[]}," +
                   "{\"title\":\"C\",\"bullets\":[]}]}";
         var normalized = MdToPptController.NormalizeOutlinePayload(raw, 2);
-        Assert.Equal(2, normalized["totalPages"]?.GetValue<int>());
-        Assert.Equal(2, normalized["outline"]?.AsArray().Count);
+        Assert.Equal(3, normalized["totalPages"]?.GetValue<int>());
+        Assert.Equal(3, normalized["outline"]?.AsArray().Count);
     }
 
     [Fact]
-    public void AttachmentOutline_RejectsOnePageWhenTwentyWereRequested()
+    public void AttachmentOutline_TreatsRequestedPageCountAsSuggestion()
     {
+        MdToPptController.EnsureOutlinePageCount(
+            reportedPages: 1,
+            actualPages: 1,
+            targetPages: 20);
+
         var ex = Assert.Throws<MdToPptOutlineContractException>(() =>
             MdToPptController.EnsureOutlinePageCount(
-                reportedPages: 1,
+                reportedPages: 2,
                 actualPages: 1,
                 targetPages: 20));
-
         Assert.Equal(MdToPptController.OutlinePageCountMismatchCode, ex.Code);
-        Assert.Contains("目标 20 页", ex.Message);
-        Assert.Contains("实际生成 1 页", ex.Message);
+        Assert.Contains("声明 2 页", ex.Message);
+        Assert.Contains("实际 1 页", ex.Message);
     }
 
     [Fact]
@@ -423,7 +454,7 @@ public class MdToPptSectionSanitizeTests
             nonStreamingValidation > 0
             && nonStreamingValidation < nonStreamingNormalization
             && nonStreamingNormalization < nonStreamingDone,
-            "非流式大纲必须在截断归一化和持久化完成态前校验模型实际页数");
+            "非流式大纲必须在归一化和持久化完成态前校验声明与数组自洽");
 
         var streamingValidation = source.IndexOf(
             "EnsureOutlinePageCount(ReadOutlineTotalPages(metaObj), emittedPages, targetPages);",
@@ -438,7 +469,7 @@ public class MdToPptSectionSanitizeTests
         Assert.DoesNotContain("[\"totalPages\"] = targetPages", source);
         Assert.Contains("totalPagesEl.TryGetInt32(out var reportedTotalPages)", source);
         Assert.Contains("源文档只作为内容材料", source);
-        Assert.Contains("随后必须从 index=1", source);
+        Assert.Contains("page 从 index=1", source);
         Assert.Contains("errorCode = run.ErrorCode", source);
     }
 

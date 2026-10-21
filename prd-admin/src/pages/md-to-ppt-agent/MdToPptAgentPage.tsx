@@ -49,6 +49,7 @@ import { useLocation } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 import { sessionStorageOrNull } from '@/lib/designArtifactLaunch';
 import { listMyTeams } from '@/services/real/teams';
+import { restartDesignArtifactRun } from '@/services/real/webPages';
 import { buildPptPublishRequest, markLaunchDraftSent, publishDestinationLabel, resolveLaunchDraft } from './launchHandoff';
 import { activatePptSessionContext, resolvePptSessionContext, type PptSessionContext } from './sessionContext';
 import { NextStepBar } from './NextStepBar';
@@ -65,6 +66,20 @@ export async function recoverPatchParentRun(
 
 export function resolveRecoveredDeckState(run: MdToPptRunDetail): { runId: string; html: string } {
   return { runId: run.id, html: run.html };
+}
+
+type PresentationQualityFailureRun = MdToPptRunDetail & { errorCode?: string | null };
+
+export function isRestartablePresentationQualityRun(run: PresentationQualityFailureRun): boolean {
+  const errorCode = run.errorCode;
+  return run.status === 'error'
+    && run.op === 'convert'
+    && Boolean(run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml))
+    && (errorCode === 'design_output_quality_rejected' || errorCode === 'design_browser_quality_rejected');
+}
+
+export function buildPptRepairIdempotencyKey(sourceRunId: string): string {
+  return `mdppt-repair:${sourceRunId}`;
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -1730,6 +1745,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const [generatedHtml, setGeneratedHtml] = useState('');
   const [artifactSiteUrl, setArtifactSiteUrl] = useState('');
   const [activeRunId, setActiveRunId] = useState(savedSession?.activeRunId ?? '');
+  const [repairableRunId, setRepairableRunId] = useState('');
+  const repairRestartKeyRef = useRef<{ sourceRunId: string; key: string } | null>(null);
   const [publishedUrl, setPublishedUrl] = useState('');
   const [isPublishing, setIsPublishing] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
@@ -2117,6 +2134,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         setArtifactSiteUrl(run.siteUrl ?? '');
         setActiveRunId(recovered.runId);
         setArtifactPhase('done');
+        setRepairableRunId('');
         warnIfDegraded(run);
         reconcileMessages('done', null, buildRecoveredDoneMessage(run));
       } else if (run.status === 'error') {
@@ -2128,13 +2146,16 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setArtifactSiteUrl('');
           setActiveRunId(run.id);
           setArtifactPhase('error');
+          setRepairableRunId(isRestartablePresentationQualityRun(run) ? run.id : '');
         } else if (parent) {
           setGeneratedHtml(parent.html);
           setArtifactSiteUrl(parent.siteUrl ?? '');
           setActiveRunId(parent.id);
           setArtifactPhase('done');
+          setRepairableRunId('');
         } else {
           setArtifactPhase('idle');
+          setRepairableRunId('');
         }
         reconcileMessages('error', run.error);
       } else if (run.status === 'running') {
@@ -2655,6 +2676,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       if (isProcessing || !mountedRef.current) return;
       setIsProcessing(true);
       setArtifactPhase('generating');
+      setRepairableRunId('');
       setArtifactProgress(0);
       setArtifactPhaseMessage('');
       setRuntimeModelCallCount(0);
@@ -2692,6 +2714,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             setGeneratedHtml(run.html);
             setArtifactSiteUrl(run.siteUrl ?? '');
             setArtifactPhase('done');
+            setRepairableRunId('');
             setIsProcessing(false);
             warnIfDegraded(run);
             setMessages((prev) =>
@@ -2718,6 +2741,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             );
             setIsProcessing(false);
             setArtifactPhase(run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml) ? 'error' : 'idle');
+            setRepairableRunId(isRestartablePresentationQualityRun(run) ? run.id : '');
             return;
           }
           if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
@@ -2830,6 +2854,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           hasRuntimePreviewRef.current = true;
           setArtifactSiteUrl(result.siteUrl ?? '');
           setArtifactPhase('done');
+          setRepairableRunId('');
           setIsProcessing(false);
           const pageCount = outlinePages?.length ?? pages;
           const titleSample = outlinePages?.slice(0, 3).map((p) => p.title).filter(Boolean).join('、');
@@ -2877,6 +2902,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 setGeneratedHtml(run.html);
                 setArtifactSiteUrl(run.siteUrl ?? '');
                 setArtifactPhase('done');
+                setRepairableRunId('');
                 setIsProcessing(false);
                 warnIfDegraded(run);
                 setMessages((prev) =>
@@ -2892,6 +2918,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                 hasRuntimePreviewRef.current = true;
                 setGeneratedHtml(run.latestPreviewHtml);
                 setArtifactSiteUrl('');
+                setRepairableRunId(isRestartablePresentationQualityRun(run) ? run.id : '');
               }
             }
             setMessages((prev) =>
@@ -3461,6 +3488,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const handleAbort = useCallback(() => {
     cleanupRef.current?.();
     cleanupRef.current = null;
+    const repairRestart = repairRestartKeyRef.current;
+    if (repairRestart) {
+      repairRestartKeyRef.current = null;
+      setActiveRunId(repairRestart.sourceRunId);
+      setRepairableRunId(repairRestart.sourceRunId);
+    }
     if (patchParentRef.current) {
       setActiveRunId(patchParentRef.current.runId);
       setArtifactSiteUrl(patchParentRef.current.siteUrl);
@@ -3470,7 +3503,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     setIsProcessing(false);
     setOutlineAdjusting(false);
     setOutlineStreaming(false);
-    setArtifactPhase(generatedHtml ? 'done' : 'idle');
+    setArtifactPhase(repairRestart ? 'error' : generatedHtml ? 'done' : 'idle');
     resetStreamPreview();
     updateLastAssistantMsg({ content: '已中止。', phase: 'text' });
   }, [generatedHtml, updateLastAssistantMsg, resetStreamPreview, OUTLINE_RUN_KEY]);
@@ -3483,6 +3516,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     setGeneratedHtml('');
     setArtifactSiteUrl('');
     setActiveRunId('');
+    setRepairableRunId('');
+    repairRestartKeyRef.current = null;
     setPublishedUrl('');
     setIsProcessing(false);
     setArtifactPhase('idle');
@@ -3523,6 +3558,104 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     const content = last?.content ?? '';
     return last?.phase === 'error' || content.includes('退化为') || content.includes('生成失败') || content.includes('异常');
   }, [messages]);
+
+  const handleContinuePolishing = useCallback(async () => {
+    if (!repairableRunId || isProcessing || !mountedRef.current) return;
+    const sourceRunId = repairableRunId;
+    const previousPhaseMessage = artifactPhaseMessage;
+    const existingKey = repairRestartKeyRef.current;
+    const idempotencyKey = existingKey?.sourceRunId === sourceRunId
+      ? existingKey.key
+      : buildPptRepairIdempotencyKey(sourceRunId);
+    repairRestartKeyRef.current = { sourceRunId, key: idempotencyKey };
+    const progressMessage = pushMsg({
+      role: 'assistant',
+      content: '正在用已保留的初稿继续打磨。初稿仍是只读状态，通过全部检查前不能编辑或发布。',
+      phase: 'generating',
+    });
+
+    setIsProcessing(true);
+    setArtifactPhase('generating');
+    setArtifactPhaseMessage('正在校验冻结来源并继续打磨');
+    setArtifactProgress(2);
+    setRepairableRunId('');
+    setPublishedUrl('');
+    setArtifactSiteUrl('');
+
+    const response = await restartDesignArtifactRun(sourceRunId, idempotencyKey).catch(() => null);
+    const restartedRunId = response?.success ? response.data?.runId : '';
+    if (!restartedRunId) {
+      setIsProcessing(false);
+      setArtifactPhase('error');
+      setArtifactPhaseMessage(previousPhaseMessage);
+      setRepairableRunId(sourceRunId);
+      setMessages((previous) => previous.map((message) => message.id === progressMessage.id
+        ? {
+            ...message,
+            phase: 'error',
+            content: response?.error?.message ?? '继续打磨未能启动，已保留当前只读初稿，可稍后用同一入口重试。',
+          }
+        : message));
+      return;
+    }
+
+    setActiveRunId(restartedRunId);
+    genStartAtRef.current = Date.now();
+    let cancelled = false;
+    let timer: number | undefined;
+    const stopPolling = () => {
+      cancelled = true;
+      if (timer != null) window.clearTimeout(timer);
+    };
+    cleanupRef.current = stopPolling;
+
+    const poll = async () => {
+      const run = await getMdToPptRun(restartedRunId).catch(() => null);
+      if (cancelled || !mountedRef.current) return;
+      if (!run) {
+        timer = window.setTimeout(() => void poll(), 3000);
+        return;
+      }
+      if (run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml)) {
+        hasRuntimePreviewRef.current = true;
+        setGeneratedHtml(run.latestPreviewHtml);
+        setArtifactSiteUrl('');
+      }
+      setArtifactProgress(Math.max(0, run.progress ?? 0));
+      setArtifactPhaseMessage(run.phaseMessage ?? '正在继续打磨');
+      setRuntimeModelCallCount((current) => mergeRuntimeModelCallCount(current, run.runtimeModelCallCount ?? 0));
+
+      if (run.status === 'done' && run.html) {
+        stopPolling();
+        cleanupRef.current = null;
+        repairRestartKeyRef.current = null;
+        setGeneratedHtml(run.html);
+        setArtifactSiteUrl(run.siteUrl ?? '');
+        setActiveRunId(run.id);
+        setArtifactPhase('done');
+        setArtifactPhaseMessage('');
+        setIsProcessing(false);
+        warnIfDegraded(run);
+        setMessages((previous) => previous.map((message) => message.id === progressMessage.id
+          ? { ...message, phase: 'done', content: buildRecoveredDoneMessage(run) }
+          : message));
+        return;
+      }
+      if (run.status === 'error') {
+        stopPolling();
+        cleanupRef.current = null;
+        setArtifactPhase(run.latestPreviewHtml && isPreviewableDeck(run.latestPreviewHtml) ? 'error' : 'idle');
+        setRepairableRunId(isRestartablePresentationQualityRun(run) ? run.id : '');
+        setIsProcessing(false);
+        setMessages((previous) => previous.map((message) => message.id === progressMessage.id
+          ? { ...message, phase: 'error', content: '继续打磨失败：' + (run.error ?? '未知错误') }
+          : message));
+        return;
+      }
+      timer = window.setTimeout(() => void poll(), 3000);
+    };
+    void poll();
+  }, [artifactPhaseMessage, isProcessing, pushMsg, repairableRunId]);
 
   const handleRegenerateDeck = useCallback(() => {
     if (isProcessing) return;
@@ -3577,7 +3710,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         </div>
 
         <div className="flex items-center gap-2">
-          {isStreaming && (
+          {isStreaming && !repairRestartKeyRef.current && (
             <button
               onClick={handleAbort}
               className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-red-400 hover:bg-red-500/10 border border-red-500/20"
@@ -3863,7 +3996,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                           : '继续输入即可调整方向'}
                   </div>
                 </div>
-                {isStreaming && (
+                {isStreaming && !repairRestartKeyRef.current && (
                   <button onClick={handleAbort} className="rounded-md border border-red-400/25 px-2.5 py-1.5 text-xs text-red-200">
                     中止
                   </button>
@@ -5031,8 +5164,21 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
             || (artifactPhase === 'patching' && patchingSlide != null)) && generatedHtml && (
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
               {artifactPhase === 'error' && (
-                <div className="shrink-0 border-b border-amber-400/25 bg-amber-500/10 px-3 py-2 text-[11px] text-[color:var(--accent-fg-amber)]" role="status">
-                  这是真实生成的只读初稿，但没有通过发布前质量检查。原版本未被覆盖；请重新生成或从历史记录恢复已完成版本。
+                <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-amber-400/25 bg-amber-500/10 px-3 py-2 text-[11px] text-[color:var(--accent-fg-amber)]" role="status">
+                  <span className="min-w-0 flex-1">
+                    这是真实生成的只读初稿，但没有通过发布前质量检查。原失败记录不会改成成功；可沿冻结来源继续打磨，或恢复已完成版本。
+                  </span>
+                  {repairableRunId && (
+                    <button
+                      type="button"
+                      onClick={() => void handleContinuePolishing()}
+                      disabled={isProcessing}
+                      data-testid="continue-polishing"
+                      className="min-h-11 shrink-0 rounded-md border border-amber-400/35 bg-amber-500/10 px-3 py-2 font-medium text-[color:var(--accent-fg-amber)] hover:bg-amber-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      继续打磨
+                    </button>
+                  )}
                 </div>
               )}
               {/* Toolbar */}

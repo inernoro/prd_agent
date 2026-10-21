@@ -76,7 +76,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         try
         {
             // 本控制器是匿名入口：先验工作区票据（与实时预览同一张票、同一个运行窗口），
-            // 再读请求体。反过来的话，没有票据的请求也能把最多 6 MiB 读进内存（Codex P2，PR #1533）。
+            // 再读请求体。反过来的话，没有票据的请求也能把最多 20 MiB 序列化结果包读进内存（Codex P2，PR #1533）。
             // CommitResultAsync 里仍会再验一次，这里只负责把未授权请求挡在读体之前。
             var token = ReadBearerToken();
             await _broker.ValidatePreviewAsync(runId, token, ct);

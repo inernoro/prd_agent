@@ -416,10 +416,12 @@ public sealed class DesignArtifactsController : ControllerBase
             CancellationToken.None);
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
-        if (!IsRestartableInterrupted(source))
+        var isInterruptedRestart = IsRestartableInterrupted(source);
+        var isPresentationQualityRepair = IsRestartablePresentationQualityFailure(source);
+        if (!isInterruptedRestart && !isPresentationQualityRepair)
             return Conflict(ApiResponse<object>.Fail(
                 "DESIGN_ARTIFACT_NOT_RESTARTABLE",
-                "只有被服务重启中断的 OpenDesign 任务才能用冻结输入重开"));
+                "只有被服务重启中断的任务或保留了受限候选的演示稿质量失败任务才能用冻结输入重开"));
         var key = request.IdempotencyKey?.Trim() ?? string.Empty;
         if (key.Length is < 8 or > 128 || key.Any(char.IsControl))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "重开请求缺少有效的幂等键"));
@@ -443,6 +445,40 @@ public sealed class DesignArtifactsController : ControllerBase
             return Conflict(ApiResponse<object>.Fail(
                 "RUNTIME_NOT_READY",
                 capability?.Reason ?? "设计服务尚未恢复，冻结输入已保留，请稍后再重开"));
+
+        MdToPptRun? sourceCompatibility = null;
+        if (source.ArtifactType == DesignArtifactTypes.HtmlPpt)
+        {
+            sourceCompatibility = await _db.MdToPptRuns.Find(item => item.Id == source.Id
+                    && item.UserId == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            var parentOutline = string.IsNullOrWhiteSpace(sourceCompatibility?.ParentOutlineRunId)
+                ? null
+                : await _db.MdToPptRuns.Find(item => item.Id == sourceCompatibility.ParentOutlineRunId
+                        && item.UserId == userId
+                        && item.Op == "outline"
+                        && item.Status == "done")
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            if (sourceCompatibility == null
+                || string.IsNullOrWhiteSpace(sourceCompatibility.ParentOutlineRunId)
+                || string.IsNullOrWhiteSpace(sourceCompatibility.ParentPlanContentHash)
+                || parentOutline == null
+                || !string.Equals(
+                    sourceCompatibility.ParentPlanContentHash,
+                    parentOutline.OutlineHash,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(
+                    sourceCompatibility.SourcePlanHash,
+                    source.PresentationInput?.SourcePlanHash,
+                    StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(
+                    sourceCompatibility.SourcePlanJson,
+                    source.PresentationInput?.SourcePlanJson,
+                    StringComparison.Ordinal))
+                return Conflict(ApiResponse<object>.Fail(
+                    "DESIGN_ARTIFACT_RESTART_INPUT_CHANGED",
+                    "原演示稿任务的大纲或来源边界缺失或发生变化，无法按冻结输入继续打磨"));
+        }
 
         string? currentHtml = null;
         if (source.Operation == DesignArtifactOperations.Edit)
@@ -503,12 +539,39 @@ public sealed class DesignArtifactsController : ControllerBase
 
         var now = DateTime.UtcNow;
         var restarted = CloneForRestart(source, capability, deterministicId, keyHash, now);
+        if (isPresentationQualityRepair)
+        {
+            var candidate = source.LatestPreviewHtml!.Trim();
+            restarted.PresentationInput!.RepairCandidateHtml = candidate;
+            restarted.PresentationInput.RepairCandidateHtmlHash = Convert.ToHexString(
+                    SHA256.HashData(Encoding.UTF8.GetBytes(candidate)))
+                .ToLowerInvariant();
+        }
         WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(restarted, capability, currentHtml);
         if (source.ArtifactType == DesignArtifactTypes.HtmlPpt)
         {
-            await _db.MdToPptRuns.InsertOneAsync(
-                BuildRestartedPresentationCompatibilityRun(source, restarted, now),
-                cancellationToken: CancellationToken.None);
+            var restartedCompatibility = BuildRestartedPresentationCompatibilityRun(
+                source,
+                restarted,
+                sourceCompatibility!,
+                now);
+            try
+            {
+                await _db.MdToPptRuns.InsertOneAsync(
+                    restartedCompatibility,
+                    cancellationToken: CancellationToken.None);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                var existingCompatibility = await _db.MdToPptRuns
+                    .Find(item => item.Id == deterministicId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (existingCompatibility == null
+                    || !IsEquivalentRestartCompatibility(existingCompatibility, restartedCompatibility))
+                    return Conflict(ApiResponse<object>.Fail(
+                        "DESIGN_ARTIFACT_RESTART_CONFLICT",
+                        "重开请求冲突，请刷新后重试"));
+            }
         }
         try
         {
@@ -1166,6 +1229,28 @@ public sealed class DesignArtifactsController : ControllerBase
             || run.LifecycleFailureCode == WebPageDesignArtifactLifecycleAdapter.InterruptedFailureCode
             || string.Equals(run.Error, HostedSiteEditRunWorker.RestartInterruptedMessage, StringComparison.Ordinal));
 
+    private static bool IsRestartablePresentationQualityFailure(DesignArtifactRun run) =>
+        run.Runtime == DesignArtifactRuntimes.OpenDesign
+        && run.ArtifactType == DesignArtifactTypes.HtmlPpt
+        && run.Operation == DesignArtifactOperations.Generate
+        && run.Status == RunStatuses.Error
+        && run.RuntimeFailure?.Code is "design_output_quality_rejected" or "design_browser_quality_rejected"
+        && !string.IsNullOrWhiteSpace(run.LatestPreviewHtml)
+        && run.LatestPreviewRevision.HasValue
+        && run.PresentationInput is
+        {
+            SourceContent.Length: > 0,
+            SourceContentHash.Length: > 0,
+            OutlineJson.Length: > 0,
+            OutlineHash.Length: > 0,
+            SourcePlanJson.Length: > 0,
+            SourcePlanHash.Length: > 0,
+        }
+        && string.IsNullOrWhiteSpace(run.ProducedArtifactSiteId)
+        && string.IsNullOrWhiteSpace(run.ProducedArtifactRevisionId)
+        && string.IsNullOrWhiteSpace(run.ArtifactSiteId)
+        && string.IsNullOrWhiteSpace(run.ArtifactRevisionId);
+
     private static DesignArtifactRun CloneForRestart(
         DesignArtifactRun source,
         DesignArtifactProviderCapability capability,
@@ -1198,7 +1283,7 @@ public sealed class DesignArtifactsController : ControllerBase
         DesignBrief = source.DesignBrief,
         BrandPackage = source.BrandPackage,
         DesignContextProvenance = source.DesignContextProvenance,
-        PresentationInput = source.PresentationInput,
+        PresentationInput = ClonePresentationInput(source.PresentationInput),
         UploadedSources = source.UploadedSources,
         ReferenceImages = source.ReferenceImages,
         Progress = 2,
@@ -1215,6 +1300,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private static MdToPptRun BuildRestartedPresentationCompatibilityRun(
         DesignArtifactRun source,
         DesignArtifactRun restarted,
+        MdToPptRun sourceCompatibility,
         DateTime now)
     {
         var presentation = source.PresentationInput
@@ -1231,15 +1317,17 @@ public sealed class DesignArtifactsController : ControllerBase
             ArtifactContractVersion = DesignArtifactContractVersions.Current,
             Theme = presentation.Theme,
             Op = restarted.Operation == DesignArtifactOperations.Edit ? "patch" : "convert",
+            ParentOutlineRunId = sourceCompatibility.ParentOutlineRunId,
+            ParentPlanContentHash = sourceCompatibility.ParentPlanContentHash,
             ParentRunId = presentation.ParentRunId,
             ParentHtmlHash = presentation.ParentPackageHash,
             InputAuthority = restarted.InputAuthority,
             UserSuppliedContentHash = restarted.UserSuppliedContentHash,
-            Title = restarted.Title,
+            Title = restarted.Title ?? string.Empty,
             ContentPreview = preview.Length > 200 ? preview[..200] : preview,
             SourcePlanVersion = 1,
             SourcePlanPageCount = presentation.TargetPages,
-            SourcePlanJson = presentation.SourcePlanJson ?? presentation.OutlineJson,
+            SourcePlanJson = presentation.SourcePlanJson ?? presentation.OutlineJson ?? string.Empty,
             SourcePlanHash = presentation.SourcePlanHash ?? presentation.OutlineHash,
             Total = presentation.TargetPages,
             SourceSurface = restarted.SourceSurface,
@@ -1248,6 +1336,54 @@ public sealed class DesignArtifactsController : ControllerBase
             UpdatedAt = now,
         };
     }
+
+    private static bool IsEquivalentRestartCompatibility(MdToPptRun existing, MdToPptRun expected) =>
+        existing.Id == expected.Id
+        && existing.UserId == expected.UserId
+        && existing.Status == expected.Status
+        && existing.Engine == expected.Engine
+        && existing.Runtime == expected.Runtime
+        && existing.Provider == expected.Provider
+        && existing.ArtifactContractVersion == expected.ArtifactContractVersion
+        && existing.Theme == expected.Theme
+        && existing.Op == expected.Op
+        && existing.ParentOutlineRunId == expected.ParentOutlineRunId
+        && existing.ParentPlanContentHash == expected.ParentPlanContentHash
+        && existing.ParentRunId == expected.ParentRunId
+        && existing.ParentHtmlHash == expected.ParentHtmlHash
+        && existing.InputAuthority == expected.InputAuthority
+        && existing.UserSuppliedContentHash == expected.UserSuppliedContentHash
+        && existing.Title == expected.Title
+        && existing.ContentPreview == expected.ContentPreview
+        && existing.SourcePlanVersion == expected.SourcePlanVersion
+        && existing.SourcePlanPageCount == expected.SourcePlanPageCount
+        && existing.SourcePlanJson == expected.SourcePlanJson
+        && existing.SourcePlanHash == expected.SourcePlanHash
+        && existing.Total == expected.Total
+        && existing.SourceSurface == expected.SourceSurface
+        && JsonSerializer.Serialize(existing.KnowledgeReferences) == JsonSerializer.Serialize(expected.KnowledgeReferences);
+
+    private static DesignArtifactPresentationInput? ClonePresentationInput(DesignArtifactPresentationInput? source) =>
+        source == null
+            ? null
+            : new DesignArtifactPresentationInput
+            {
+                Version = source.Version,
+                TargetPages = source.TargetPages,
+                SourceContent = source.SourceContent,
+                SourceContentHash = source.SourceContentHash,
+                OutlineJson = source.OutlineJson,
+                OutlineHash = source.OutlineHash,
+                SourcePlanJson = source.SourcePlanJson,
+                SourcePlanHash = source.SourcePlanHash,
+                Theme = source.Theme,
+                ParentRunId = source.ParentRunId,
+                ParentPackageHash = source.ParentPackageHash,
+                ManualEditHtml = source.ManualEditHtml,
+                ManualEditHtmlHash = source.ManualEditHtmlHash,
+                RepairCandidateHtml = source.RepairCandidateHtml,
+                RepairCandidateHtmlHash = source.RepairCandidateHtmlHash,
+            };
 
     private async Task ProjectCancellationBestEffortAsync(DesignArtifactRun run)
     {

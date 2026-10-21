@@ -164,7 +164,8 @@ public sealed record InfraAgentWorkspaceTransferRequest(
     [property: JsonPropertyName("baseRevision")] string BaseRevision,
     [property: JsonPropertyName("maxInputBytes")] long MaxInputBytes,
     [property: JsonPropertyName("maxOutputBytes")] long MaxOutputBytes,
-    [property: JsonPropertyName("allowedOutputPaths")] IReadOnlyList<string> AllowedOutputPaths
+    [property: JsonPropertyName("allowedOutputPaths")] IReadOnlyList<string> AllowedOutputPaths,
+    [property: JsonPropertyName("maxPublicOutputBytes")] long? MaxPublicOutputBytes = null
 );
 
 public record SendInfraAgentMessageRequest(

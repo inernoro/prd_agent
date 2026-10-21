@@ -20,6 +20,12 @@ public interface IHostedSiteService
     byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
 
     /// <summary>
+    /// 返回已通过演示稿浏览器质检的 OpenDesign 产物托管字节。
+    /// 保留父窗口导航桥接，但不向已自带导航的演示稿叠加第二套视觉提示。
+    /// </summary>
+    byte[] PrepareTrustedPresentationHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
+
+    /// <summary>
     /// 以稳定 sourceRef 创建 HTML 站点。站点 ID 和对象 key 均由 owner + sourceRef 确定，
     /// 因此并发重试或进程在写入后崩溃都不会产生第二个站点。
     /// </summary>

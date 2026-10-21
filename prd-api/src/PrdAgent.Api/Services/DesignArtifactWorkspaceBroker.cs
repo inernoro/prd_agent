@@ -26,7 +26,8 @@ public sealed record PreparedDesignArtifactWorkspace(
     string BaseRevision,
     long MaxInputBytes,
     long MaxOutputBytes,
-    IReadOnlyList<string> AllowedOutputPaths);
+    IReadOnlyList<string> AllowedOutputPaths,
+    long? MaxPublicOutputBytes = null);
 
 public sealed record DesignArtifactResultCommit(
     string ResultSha256,
@@ -76,7 +77,10 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     public const string SchemaVersion = "map-design-workspace-v1";
     public const string ManifestSchemaVersion = "map-design-artifact-public-manifest-v2";
     public const long MaxInputBytes = 1_048_576;
-    public const long MaxOutputBytes = 6_291_456;
+    // The runtime result is a JSON envelope whose file payloads are base64 encoded. Keep the
+    // published-file contract at 6 MiB while allowing that same package to cross the runtime API.
+    public const long MaxPublicOutputBytes = 6_291_456;
+    public const long MaxOutputBytes = 20L * 1024 * 1024;
     private static readonly TimeSpan TicketTtl = TimeSpan.FromMinutes(25);
     internal static string CurrentProcessEpoch { get; } = $"{Environment.ProcessId}:{Guid.NewGuid():N}";
     private static readonly string[] AllowedOutputPaths = ["index.html", "manifest.json", "assets/**"];
@@ -225,7 +229,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 package.BaseRevision,
                 MaxInputBytes,
                 MaxOutputBytes,
-                AllowedOutputPaths);
+                AllowedOutputPaths,
+                MaxPublicOutputBytes);
         }
 
         var modelGrant = await _gatewayGrants.IssueAsync(run, expiresAt, CancellationToken.None);
@@ -241,7 +246,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             package.BaseRevision,
             MaxInputBytes,
             MaxOutputBytes,
-            AllowedOutputPaths);
+            AllowedOutputPaths,
+            MaxPublicOutputBytes);
     }
 
     private async Task<IReadOnlyList<DesignWorkspaceFile>?> ReadCurrentFilesAsync(
@@ -333,10 +339,19 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 && !FixedEquals(run.PresentationInput.ParentPackageHash, parent.WorkspaceResultSha256)))
             throw CurrentVersionChanged();
         return package.Files
-            .Where(file => !string.Equals(file.Path, DesignArtifactPublicRevision.InternalManifestPath, StringComparison.Ordinal))
+            .Where(file => !string.Equals(file.Path, DesignArtifactPublicRevision.InternalManifestPath, StringComparison.Ordinal)
+                           && !IsPresentationRuntimeEvidencePath(file.Path))
             .Select(file => file with { Path = "current/" + file.Path })
             .ToList();
     }
+
+    internal static bool IsPresentationRuntimeEvidencePath(string path) =>
+        path.Equals("assets/accessibility-static-report.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/design-tokens.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/page-outline.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/provenance.json", StringComparison.OrdinalIgnoreCase)
+        || path.Equals("assets/visual-quality-report.json", StringComparison.OrdinalIgnoreCase)
+        || path.StartsWith("assets/quality/", StringComparison.OrdinalIgnoreCase);
 
     private async Task<HostedSiteEditableEntry> ReadAuthorizedCurrentEntryAsync(DesignArtifactRun run, CancellationToken ct)
     {
@@ -1028,10 +1043,13 @@ public static class DesignArtifactWorkspaceContract
         TimeSpan.FromSeconds(1));
     private static readonly Regex SafeSlug = new("[^a-zA-Z0-9._-]+", RegexOptions.Compiled);
     private static readonly Regex MapSlideNavCompatBlock = new(
-        @"<!--map-slide-nav-compat-->\s*<script\b[^>]*>[\s\S]*?</script\s*>",
+        @"<!--map-slide-nav-compat-->\s*(?:<!--map-slide-nav-bridge-only-->\s*)?<script\b[^>]*>[\s\S]*?</script\s*>",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex MapSlideNavCompatMarker = new(
         @"<!--map-slide-nav-compat-->",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex MapSlideNavBridgeOnlyMarker = new(
+        @"<!--map-slide-nav-bridge-only-->",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex CdsOfflineGuardBlock = new(
         @"<script\b(?=[^>]*\bdata-cds-offline-guard(?:\s|=|>))[^>]*>[\s\S]*?</script\s*>",
@@ -1118,6 +1136,7 @@ public static class DesignArtifactWorkspaceContract
                     run.PresentationInput.ParentRunId,
                     run.PresentationInput.ParentPackageHash,
                     run.PresentationInput.ManualEditHtmlHash,
+                    run.PresentationInput.RepairCandidateHtmlHash,
                 },
             }, JsonOptions);
         // Keep the existing HTML-only revision algorithm for callers without a
@@ -1211,6 +1230,14 @@ public static class DesignArtifactWorkspaceContract
                         path = "proposal/manual-edit.html",
                         contentHash = run.PresentationInput.ManualEditHtmlHash,
                     },
+                repairCandidate = string.IsNullOrWhiteSpace(run.PresentationInput.RepairCandidateHtmlHash)
+                    ? null
+                    : new
+                    {
+                        authority = "server-retained-failed-preview",
+                        path = "candidate/index.html",
+                        contentHash = run.PresentationInput.RepairCandidateHtmlHash,
+                    },
                 requiredSlideIndexes = Enumerable.Range(1, run.PresentationInput.TargetPages),
                 navigation = new
                 {
@@ -1230,6 +1257,8 @@ public static class DesignArtifactWorkspaceContract
             // explicit null remain accepted by the runtime compatibility check.
             if (string.IsNullOrWhiteSpace(run.PresentationInput.ManualEditHtmlHash))
                 presentationContract.Remove("manualEditProposal");
+            if (string.IsNullOrWhiteSpace(run.PresentationInput.RepairCandidateHtmlHash))
+                presentationContract.Remove("repairCandidate");
             if (string.IsNullOrWhiteSpace(run.PresentationInput.SourcePlanHash))
                 presentationContract.Remove("sourcePlan");
             completeTask["presentationContract"] = presentationContract;
@@ -1339,6 +1368,13 @@ public static class DesignArtifactWorkspaceContract
                     "text/html",
                     Encoding.UTF8.GetBytes(run.PresentationInput.ManualEditHtml)));
             }
+            if (!string.IsNullOrWhiteSpace(run.PresentationInput.RepairCandidateHtml))
+            {
+                files.Add(ToFile(
+                    "candidate/index.html",
+                    "text/html",
+                    Encoding.UTF8.GetBytes(run.PresentationInput.RepairCandidateHtml)));
+            }
         }
         for (var index = 0; index < run.KnowledgeReferences.Count; index++)
         {
@@ -1406,6 +1442,7 @@ public static class DesignArtifactWorkspaceContract
         // 任意未带这些标记的脚本均保持原样，仍会由 CDS 的产物安全闸门严格审查。
         var normalized = MapSlideNavCompatBlock.Replace(html, string.Empty);
         normalized = MapSlideNavCompatMarker.Replace(normalized, string.Empty);
+        normalized = MapSlideNavBridgeOnlyMarker.Replace(normalized, string.Empty);
         normalized = CdsOfflineGuardBlock.Replace(normalized, string.Empty);
         return HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(normalized);
     }
@@ -1459,6 +1496,8 @@ public static class DesignArtifactWorkspaceContract
 
         string? indexHtml = null;
         byte[]? manifestBytes = null;
+        long publicOutputBytes = 0;
+        var publicOutputLimit = Math.Min(maxBytes, DesignArtifactWorkspaceBroker.MaxPublicOutputBytes);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var verifiedFiles = new Dictionary<string, DesignWorkspaceFile>(StringComparer.Ordinal);
         foreach (var file in package.Files)
@@ -1477,6 +1516,9 @@ public static class DesignArtifactWorkspaceContract
             if (content.LongLength != file.Size
                 || !string.Equals(HashBytes(content), file.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("远程设计结果文件校验失败，请重新生成");
+            publicOutputBytes = checked(publicOutputBytes + content.LongLength);
+            if (publicOutputBytes > publicOutputLimit)
+                throw new InvalidOperationException("远程设计结果的公开文件总量超过 6MB，请压缩资源后重新生成");
             if (normalized == "index.html") indexHtml = Encoding.UTF8.GetString(content);
             if (normalized == "manifest.json") manifestBytes = content;
             verifiedFiles[normalized] = file with { Path = normalized };

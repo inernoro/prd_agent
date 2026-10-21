@@ -85,7 +85,9 @@ public sealed record GatewayTaskBudgetRequest(
     string LogicalModelPublicId,
     string Provider,
     string Model,
-    string? OfferingId);
+    string? OfferingId,
+    string? PptCompletionId = null,
+    string? PptCompletionPhase = null);
 
 public sealed record GatewayTaskBudgetPolicy(
     string ScopeId,
@@ -155,7 +157,9 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
                 request.LogicalModelPublicId,
                 request.Provider,
                 request.Model,
-                request.OfferingId), grant.BudgetMaxOutputTokens, ct);
+                request.OfferingId,
+                grant.PptCompletionId,
+                grant.PptCompletionPhase), grant.BudgetMaxOutputTokens, ct);
             if (!budgetAdmission.Admission.Allowed) return budgetAdmission.Admission;
             taskReservation = budgetAdmission.Reservation;
         }
@@ -214,7 +218,9 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             string.Empty,
             string.Empty,
             string.Empty,
-            null), usage, outcomeCode, ct);
+            null,
+            grant.PptCompletionId,
+            grant.PptCompletionPhase), usage, outcomeCode, ct);
     }
 
     public async Task<GatewayRuntimeGrantCallAdmission> TryReserveTaskAsync(
@@ -319,6 +325,11 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
                 && scope.RootOutlineRunId != request.RunId
                 && request.AppCallerCode == AppCallerRegistry.MdToPptAgent.Generation.Outline))
             return (new(false, 409, "GATEWAY_RUNTIME_TASK_BUDGET_INACTIVE", "runtime task budget is unavailable"), null);
+        var isPptPhysicalCaller = request.AppCallerCode is
+            AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate or
+            AppCallerRegistry.MdToPptAgent.Generation.Patch;
+        if (isPptPhysicalCaller && scope.PptCompletion is null)
+            return (new(false, 409, "GATEWAY_RUNTIME_TASK_COMPLETION_CONTRACT_REQUIRED", "PPT completion contract is required before send"), null);
         if (trustedMaxOutputTokens is not > 0
             || request.EffectiveMaxOutputTokens > trustedMaxOutputTokens.Value
             || request.EffectiveMaxOutputTokens > scope.MaxOutputTokens)
@@ -361,28 +372,93 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
             InputUsdPerMillion = rates.Input,
             OutputUsdPerMillion = rates.Output,
             ReservedUsd = amount,
+            PptCompletionId = request.PptCompletionId,
+            PptCompletionPhase = request.PptCompletionPhase,
             CreatedAt = now,
             UpdatedAt = now,
         };
-        var filter = Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+        var commonFilter = Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.Id, scope.Id),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.Status, "active"),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Gt(x => x.ExpiresAt, now),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.TenantId, request.TenantId),
             Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(x => x.UserId, request.UserId),
-            Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne("Reservations.RequestId", request.RequestId),
-            new BsonDocumentFilterDefinition<GatewayRuntimeBudgetScopeRecord>(new BsonDocument("$expr",
-                new BsonDocument("$lte", new BsonArray
-                {
-                    new BsonDocument("$add", new BsonArray { "$SpentUsd", "$ReservedUsd", new Decimal128(amount) }),
-                    "$AuthorizedLimitUsd",
-                }))));
-        var updated = await budgets.FindOneAndUpdateAsync(
-            filter,
-            Builders<GatewayRuntimeBudgetScopeRecord>.Update
+            Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Ne("Reservations.RequestId", request.RequestId));
+
+        FilterDefinition<GatewayRuntimeBudgetScopeRecord> filter;
+        UpdateDefinition<GatewayRuntimeBudgetScopeRecord> update;
+        if (isPptPhysicalCaller)
+        {
+            var completion = scope.PptCompletion!;
+            if (string.IsNullOrWhiteSpace(request.PptCompletionId)
+                || string.IsNullOrWhiteSpace(request.PptCompletionPhase)
+                || request.PptCompletionId != completion.Id)
+                return (new(false, 409, "GATEWAY_RUNTIME_TASK_COMPLETION_BINDING_INVALID", "PPT completion binding is invalid"), null);
+            var stage = request.PptCompletionPhase switch
+            {
+                GatewayPptCompletionPhases.Generation => completion.GenerationAndRepairs,
+                GatewayPptCompletionPhases.ManualSave => completion.ManualSave,
+                _ => null,
+            };
+            var requiredStatus = request.PptCompletionPhase == GatewayPptCompletionPhases.Generation
+                ? GatewayPptCompletionStatuses.GenerationActive
+                : GatewayPptCompletionStatuses.ManualActive;
+            var expectedRunId = request.PptCompletionPhase == GatewayPptCompletionPhases.Generation
+                ? completion.GenerationRunId
+                : completion.ManualRunId;
+            if (stage is null || completion.Status != requiredStatus || expectedRunId != request.RunId
+                || completion.ExpiresAt <= now
+                || request.RequestBodyUtf8Bytes > stage.MaxBodyUtf8Bytes
+                || request.EffectiveMaxOutputTokens > stage.MaxOutputTokens
+                || amount > stage.PerCallUpperUsd)
+                return (new(false, 429, "GATEWAY_RUNTIME_TASK_COMPLETION_ENVELOPE_EXCEEDED", "PPT completion request exceeds its frozen stage envelope"), null);
+
+            reservation.ReleasedFutureHoldUsd = stage.PerCallUpperUsd;
+            var stagePrefix = request.PptCompletionPhase == GatewayPptCompletionPhases.Generation
+                ? "PptCompletion.GenerationAndRepairs"
+                : "PptCompletion.ManualSave";
+            filter = Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+                commonFilter,
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq("PptCompletion.Id", completion.Id),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq("PptCompletion.Status", requiredStatus),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Eq(
+                    request.PptCompletionPhase == GatewayPptCompletionPhases.Generation
+                        ? "PptCompletion.GenerationRunId"
+                        : "PptCompletion.ManualRunId",
+                    request.RunId),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Gte("PptCompletion.FutureHeldUsd", stage.PerCallUpperUsd),
+                Builders<GatewayRuntimeBudgetScopeRecord>.Filter.Lt($"{stagePrefix}.UsedPhysicalCalls", stage.MaxPhysicalCalls));
+            update = Builders<GatewayRuntimeBudgetScopeRecord>.Update
+                .Inc(x => x.ReservedUsd, amount)
+                .Inc("PptCompletion.FutureHeldUsd", -stage.PerCallUpperUsd)
+                .Inc($"{stagePrefix}.UsedPhysicalCalls", 1)
+                .Push(x => x.Reservations, reservation)
+                .Set(x => x.UpdatedAt, now);
+        }
+        else
+        {
+            filter = Builders<GatewayRuntimeBudgetScopeRecord>.Filter.And(
+                commonFilter,
+                new BsonDocumentFilterDefinition<GatewayRuntimeBudgetScopeRecord>(new BsonDocument("$expr",
+                    new BsonDocument("$lte", new BsonArray
+                    {
+                        new BsonDocument("$add", new BsonArray
+                        {
+                            "$SpentUsd",
+                            "$ReservedUsd",
+                            new BsonDocument("$ifNull", new BsonArray { "$PptCompletion.FutureHeldUsd", new Decimal128(0m) }),
+                            new Decimal128(amount),
+                        }),
+                        "$AuthorizedLimitUsd",
+                    }))));
+            update = Builders<GatewayRuntimeBudgetScopeRecord>.Update
                 .Inc(x => x.ReservedUsd, amount)
                 .Push(x => x.Reservations, reservation)
-                .Set(x => x.UpdatedAt, now),
+                .Set(x => x.UpdatedAt, now);
+        }
+        var updated = await budgets.FindOneAndUpdateAsync(
+            filter,
+            update,
             new FindOneAndUpdateOptions<GatewayRuntimeBudgetScopeRecord> { ReturnDocument = ReturnDocument.After },
             ct);
         if (updated is not null)
@@ -417,6 +493,15 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
                 { "Reservations.$.UpdatedAt", now },
                 { "UpdatedAt", now },
             });
+        if (reservation.ReleasedFutureHoldUsd > 0m
+            && !string.IsNullOrWhiteSpace(reservation.PptCompletionPhase))
+        {
+            var stagePrefix = reservation.PptCompletionPhase == GatewayPptCompletionPhases.Generation
+                ? "PptCompletion.GenerationAndRepairs"
+                : "PptCompletion.ManualSave";
+            update["$inc"].AsBsonDocument["PptCompletion.FutureHeldUsd"] = new Decimal128(reservation.ReleasedFutureHoldUsd);
+            update["$inc"].AsBsonDocument[$"{stagePrefix}.UsedPhysicalCalls"] = -1;
+        }
         await budgets.UpdateOneAsync(filter, update, cancellationToken: ct);
     }
 
