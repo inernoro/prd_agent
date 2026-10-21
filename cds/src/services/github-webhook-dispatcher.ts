@@ -44,7 +44,7 @@ export const CI_PREBUILT_WORKFLOW_NAME = 'Branch Image';
 export function isPrebuiltImageWorkflow(run: { path?: string; name?: string }): boolean {
   const workflowPath = (run.path || '').trim();
   return workflowPath
-    ? workflowPath.split('/').pop() === CI_PREBUILT_WORKFLOW_FILE
+    ? workflowPath.split('@', 1)[0].split('/').pop() === CI_PREBUILT_WORKFLOW_FILE
     : (run.name || '').trim() === CI_PREBUILT_WORKFLOW_NAME;
 }
 
