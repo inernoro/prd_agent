@@ -6606,8 +6606,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             aria-busy={booting}
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
-              backgroundColor: '#1e1e1e',
-              backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)',
+              backgroundColor: 'var(--bg-base)',
+              backgroundImage: 'radial-gradient(circle, var(--border-subtle) 1px, transparent 1px)',
               backgroundSize: '48px 48px',
               backgroundPosition: '0px 0px',
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
@@ -9111,7 +9111,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
             ref={chatPanelRef}
-            className={`${isMobile ? 'absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
+            className={`${isMobile ? 'surface-tone-dark absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
             style={{
               // right / width 走同一组常量：图层面板要按它们算让位量，抄成两份必漂。
               right: isMobile ? undefined : CHAT_PANEL_INSET,
