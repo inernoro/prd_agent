@@ -1039,6 +1039,53 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
+    [HttpDelete("initiations/{id}")]
+    public async Task<IActionResult> DeleteInitiation(string id)
+    {
+        var userId = GetUserId();
+        var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.CreatedBy != userId && !await CanManageAsync(userId))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人或管理员可删除该立项记录"));
+        if (string.IsNullOrWhiteSpace(item.TCode) || !Version.TryParse(item.TCode.TrimStart('T', 't'), out var number))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新内部版本记录。"));
+
+        var applicationId = item.LinkedProductId ?? item.ProductId;
+        var product = await _db.Products.Find(x => x.Id == applicationId).FirstOrDefaultAsync();
+        var applicationName = item.AppName ?? product?.Name ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(applicationName))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "无法确定所属应用，请先核对产品资料。"));
+        var peers = await _db.ProductInitiations.Find(x => !x.IsDeleted
+            && (x.ProductId == applicationId || x.LinkedProductId == applicationId || x.AppName == applicationName))
+            .Project(x => new { x.Id, x.TCode }).ToListAsync();
+        var legacyCodes = await _db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Internal
+            && x.ApplicationName == applicationName).Project(x => x.Code).ToListAsync();
+        var codes = peers.Where(x => x.Id != id).Select(x => x.TCode).Concat(legacyCodes);
+        if (codes.Any(code => !string.IsNullOrWhiteSpace(code)
+            && Version.TryParse(code.TrimStart('T', 't'), out var other) && other >= number))
+            return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "同一应用已有后续或同号 T 记录，只允许删除最新一条，请保留当前记录并修改资料。"));
+
+        var history = await ProductVersionHistoryLinks.CheckAsync(_db, item.ProductId, applicationName, item.TCode, item.PlanName);
+        if (history.Blocked || history.NeedsConfirmation
+            || await _db.ProductReleases.Find(x => x.InitiationId == id).AnyAsync()
+            || await _db.Requirements.Find(x => !x.IsDeleted && x.VersionIds.Contains(id)).AnyAsync()
+            || await _db.Features.Find(x => !x.IsDeleted && x.PlannedVersionId == id).AnyAsync())
+            return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该立项已有正式版本或其他下游关联，不能删除。请保留记录并修改资料。"));
+
+        // 与正式申领使用相同永久键：并发请求只能有一方成功，不在删除后重新开放手工 T 申领。
+        var key = ProductVersionClaimPolicy.ReleaseKey(applicationName, item.TCode);
+        var target = "deleted-initiation:" + id;
+        if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database, key, target))
+            return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该 T 号已申领或正在申领正式版本，不能删除。请查看关联记录。"));
+        var deleted = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.TCode == item.TCode,
+            Builders<ProductInitiation>.Update.Set(x => x.IsDeleted, true).Set(x => x.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        if (deleted.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后重新核对，未重复删除。"));
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+    }
+
     [HttpPost("initiations/{id}/review")]
     public async Task<IActionResult> SyncInitiationReview(string id, [FromBody] SyncInitiationReviewRequest request)
     {

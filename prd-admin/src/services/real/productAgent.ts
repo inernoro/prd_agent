@@ -184,6 +184,9 @@ export function updateInitiation(id: string, body: {
 export function syncInitiationReview(id: string, submissionId: string) {
   return apiRequest<ProductInitiation>(`/api/product/initiations/${id}/review`, { method: 'POST', body: { submissionId } });
 }
+export function deleteInitiation(id: string) {
+  return apiRequest<{ deleted: boolean }>(`/api/product/initiations/${id}`, { method: 'DELETE' });
+}
 export function decideInitiation(id: string, body: {
   reviewMeetingRequired: boolean;
   expectedMeetingAt?: string;

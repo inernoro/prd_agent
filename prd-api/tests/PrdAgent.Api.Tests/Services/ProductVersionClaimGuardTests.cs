@@ -313,6 +313,63 @@ public class ProductVersionClaimGuardTests
         Assert.IsType<BadRequestObjectResult>(result);
         Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
     }
+    [Fact]
+    public async Task OnlyLatestTWithinSameApplicationCanBeSoftDeleted()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "older", ProductId = "product", AppName = "测试应用", TCode = "T1.2.9", CreatedBy = "me", Status = "approved" },
+            new ProductInitiation { Id = "latest", ProductId = "product", AppName = "测试应用", TCode = "T1.2.10", CreatedBy = "me", Status = "approved" },
+            new ProductInitiation { Id = "foreign", ProductId = "other", AppName = "其他应用", TCode = "T9.9.9", CreatedBy = "other", Status = "approved" },
+        });
+        var rejected = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteInitiation("older"));
+        Assert.Equal("INITIATION_NOT_LATEST", Assert.IsType<ApiResponse<object>>(rejected.Value).Error!.Code);
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("latest"));
+        var deleted = await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync();
+        Assert.True(deleted.IsDeleted);
+        Assert.Equal("T1.2.10", deleted.TCode);
+        Assert.False(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
+            ProductVersionClaimPolicy.ReleaseKey("测试应用", "T1.2.10"), "release:after-delete"));
+    }
+
+    [Theory]
+    [InlineData("release")]
+    [InlineData("legacy")]
+    [InlineData("claim")]
+    [InlineData("requirement")]
+    [InlineData("feature")]
+    public async Task LatestTWithDownstreamOrPendingClaimCannotBeDeleted(string kind)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "latest", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", CreatedBy = "me", Status = "approved",
+        });
+        if (kind == "release") await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { ProductId = "product", InitiationId = "latest", VCode = "V1.2.3" });
+        if (kind == "legacy") await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration { ApplicationName = "测试应用", Kind = VersionRegistrationKind.Formal, TCode = "T1.2.3", Code = "V1.2.3" });
+        if (kind == "claim") await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, ProductVersionClaimPolicy.ReleaseKey("测试应用", "T1.2.3"), "release:pending");
+        if (kind == "requirement") await fixture.Db.Requirements.InsertOneAsync(new Requirement { VersionIds = new() { "latest" } });
+        if (kind == "feature") await fixture.Db.Features.InsertOneAsync(new Feature { PlannedVersionId = "latest" });
+        var rejected = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteInitiation("latest"));
+        Assert.Equal("INITIATION_HAS_DOWNSTREAM", Assert.IsType<ApiResponse<object>>(rejected.Value).Error!.Code);
+        Assert.False((await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync()).IsDeleted);
+    }
+
+    [Fact]
+    public async Task DeleteAndFormalClaimCannotBothWinAndNonOwnerCannotDelete()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "latest", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", CreatedBy = "me", Status = "approved" },
+            new ProductInitiation { Id = "other-owner", ProductId = "product", AppName = "测试应用", TCode = "T1.2.2", CreatedBy = "other", Status = "approved" },
+        });
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller().DeleteInitiation("other-owner")).StatusCode);
+        var deletion = fixture.Controller().DeleteInitiation("latest");
+        var claim = ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, ProductVersionClaimPolicy.ReleaseKey("测试应用", "T1.2.3"), "release:concurrent");
+        await Task.WhenAll(deletion, claim);
+        Assert.NotEqual(deletion.Result is OkObjectResult, claim.Result);
+        Assert.Equal(deletion.Result is OkObjectResult, (await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync()).IsDeleted);
+    }
+
     private static CreateInitiationRequest Request(string review) => new() {
         LinkedProductId = "product", PlanName = "申领测试方案", ReviewSubmissionId = review,
     };

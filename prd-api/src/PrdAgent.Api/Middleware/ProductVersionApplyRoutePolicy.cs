@@ -22,6 +22,7 @@ public static class ProductVersionApplyRoutePolicy
         @"GET /api/product/products/[^/]+/releases/(?:inherit-manifest|history-check)|" +
         @"GET /api/product/products/[^/]+/(?:requirements|features|members|defects)|" +
         @"PATCH /api/product/initiations/[^/]+(?:/meeting)?|" +
+        @"DELETE /api/product/initiations/[^/]+|" +
         @"POST /api/product/initiations/[^/]+/(?:review|decision|approve)|" +
         @"PUT /api/product/releases/[^/]+/feature-manifest|" +
         @"POST /api/product/releases/[^/]+/complete" +
