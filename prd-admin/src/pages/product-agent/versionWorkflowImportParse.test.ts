@@ -5,6 +5,52 @@ import {
 } from './versionWorkflowImportParse';
 
 describe('versionWorkflowImportParse', () => {
+  it('识别实表E1空表头的唯一T列，保留T号及应用并跳过短横占位', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['平台', '系统', '应用', '项目类别', '', '版本类别', '产品立项方案名称'],
+      ['米多平台', '大数据引擎系统', '互动营销', '非定制项目', 'T3.6.1', '小版本', '互动营销T3.6.1（方案甲）'],
+      ['米多平台', '大数据引擎系统', '智能营销', '定制项目', 'T2.8.4', '小版本', '智能营销T2.8.4（方案乙）'],
+      ['米多平台', '大数据引擎系统', '互动营销', '非定制项目', '--', '小版本', '未编号方案'],
+    ], 'initiation');
+    expect(rows.map((row) => row.code)).toEqual(['T3.6.1', 'T2.8.4', undefined]);
+    expect(rows.map((row) => row.appName)).toEqual(['互动营销', '智能营销', '互动营销']);
+    expect(rows[0].planName).toBe('互动营销T3.6.1（方案甲）');
+  });
+
+  it('显式编号列优先于空表头列及方案名称，不用名称覆盖真实编号', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '', '立项号', '产品立项方案名称'],
+      ['互动营销', 'T8.8.8', 'T3.6.1', '互动营销T4.4.4（方案）'],
+    ], 'initiation');
+    expect(rows[0].code).toBe('T3.6.1');
+  });
+
+  it('无编号列只提取名称中唯一完整T号，多个编号及占位不猜号', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '', '产品立项方案名称'],
+      ['互动营销', '2026-10-16', '互动营销T3.6.1（方案）'],
+      ['互动营销', '', '互动营销R=TXXXX（待定方案）'],
+      ['互动营销', '', 'T1.2.3与T1.2.4合并方案'],
+      ['互动营销', '', 'T1.2.3.4不是标准T号'],
+    ], 'initiation');
+    expect(rows.map((row) => row.code)).toEqual(['T3.6.1', undefined, undefined, undefined]);
+  });
+
+  it('两个无表头T列无法唯一判断时明确阻止，不静默选第一列', () => {
+    expect(() => parseVersionWorkflowImportMatrix([
+      ['应用', '', '', '产品立项方案名称'],
+      ['互动营销', 'T3.6.1', 'T4.0.0', '方案'],
+    ], 'initiation')).toThrow('多个没有表头的 T 号列');
+  });
+
+  it('正式版本导入不套用无表头T推断或方案名T提取', () => {
+    const rows = parseVersionWorkflowImportMatrix([
+      ['应用', '', '正式版本号', '产品立项方案名称'],
+      ['互动营销', 'T3.6.1', 'V3.6.1', '互动营销T3.6.1（方案）'],
+    ], 'release');
+    expect(rows[0].code).toBe('V3.6.1');
+    expect(rows[0].tCode).toBeUndefined();
+  });
   it('ignores training columns in internal history, including dates and arbitrary placeholders', () => {
     for (const value of ['2026.10.16', '待确认', '-1', '1.5', '30']) {
       const rows = parseVersionWorkflowImportMatrix([

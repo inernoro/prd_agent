@@ -7694,7 +7694,7 @@ public class ProductAgentController : ControllerBase
     private async Task<string> GenerateWorkflowCodeAsync(string prefix, string versionType)
     {
         var legacyCodes = prefix == "T"
-            ? await _db.ProductInitiations.Find(x => x.TCode != null && !x.IsDeleted).Project(x => x.TCode!).ToListAsync()
+            ? await _db.ProductInitiations.Find(x => x.TCode != null).Project(x => x.TCode!).ToListAsync()
             : await _db.ProductReleases.Find(x => x.VCode != "" && !x.IsDeleted).Project(x => x.VCode).ToListAsync();
         var registrationCodes = await _db.VersionRegistrations
             .Find(x => x.Code.StartsWith(prefix))

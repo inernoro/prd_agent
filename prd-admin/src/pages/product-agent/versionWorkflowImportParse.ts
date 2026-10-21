@@ -122,6 +122,27 @@ function normalizeCode(value?: string): string | undefined {
   return text;
 }
 
+function normalizeInternalCode(value?: string): string | undefined {
+  const text = value?.trim();
+  return !text || /^-+$/.test(text) ? undefined : text;
+}
+
+/** 只推断无表头且非空值全部为完整T号的唯一列，不能把普通空表头列当成业务字段。 */
+function inferInternalCodeColumn(headers: string[], body: string[][]): number {
+  const candidates = headers.flatMap((header, index) => {
+    if (header.trim()) return [];
+    const values = body.map((row) => normalizeInternalCode(row[index])).filter((value): value is string => Boolean(value));
+    return values.length > 0 && values.every((value) => /^T\d+\.\d+\.\d+$/i.test(value)) ? [index] : [];
+  });
+  if (candidates.length > 1) throw new Error('发现多个没有表头的 T 号列，请为正确列补充“立项号”表头后重试。');
+  return candidates[0] ?? -1;
+}
+
+function internalCodeFromPlanName(planName: string): string | undefined {
+  const codes = [...new Set([...planName.matchAll(/(?<![A-Za-z0-9])T\d+\.\d+\.\d+(?![\d.])/gi)].map((match) => match[0].toUpperCase()))];
+  return codes.length === 1 ? codes[0] : undefined;
+}
+
 function mapBool(raw?: string): boolean | undefined {
   if (!raw) return undefined;
   const value = raw.trim().toLowerCase();
@@ -169,9 +190,10 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     ? indexOfHeader(headers, '预计培训时长', '培训时长', '预计培训时间')
     : -1;
 
-  const codeIndex = kind === 'release'
+  let codeIndex = kind === 'release'
     ? indexOfHeader(headers, '正式版本号', 'v号', 'v 号', 'v上线号', '上线号')
     : indexOfHeader(headers, 't立项号', 't 立项号', '立项号', 't号', '内部版本号');
+  if (kind === 'initiation' && codeIndex < 0) codeIndex = inferInternalCodeColumn(headers, body);
   const tCodeIndex = kind === 'release'
     ? indexOfHeader(headers, '内部版本号', 't立项号', 't 立项号', '立项号', 't号')
     : -1;
@@ -191,7 +213,9 @@ function mapRows(headers: string[], body: string[][], kind: VersionWorkflowImpor
     const trainingMinutes = parseTrainingMinutes(trainingText);
     if (trainingText && trainingMinutes == null) throw new Error(`第 ${headerRowIndex + offset + 2} 行预计培训时长应填写非负整数分钟，不能填写日期。`);
     const planName = (effectivePlanIndex >= 0 ? values[effectivePlanIndex]?.trim() : '') || '';
-    const code = codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
+    const code = kind === 'initiation'
+      ? normalizeInternalCode(codeIndex >= 0 ? values[codeIndex] : undefined) ?? internalCodeFromPlanName(planName)
+      : codeIndex >= 0 ? normalizeCode(values[codeIndex]) : undefined;
     if (!planName && !code) return;
 
     const legacyData: Record<string, string> = {};

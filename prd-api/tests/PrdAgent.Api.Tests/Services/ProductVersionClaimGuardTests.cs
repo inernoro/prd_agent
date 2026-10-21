@@ -370,6 +370,20 @@ public class ProductVersionClaimGuardTests
         Assert.Equal(deletion.Result is OkObjectResult, (await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync()).IsDeleted);
     }
 
+    [Fact]
+    public async Task IssuingTDoesNotRecycleDeletedNumbers()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "deleted-highest", ProductId = "product", TCode = "T9.2.3", IsDeleted = true },
+            new ProductInitiation { Id = "new", ProductId = "product", CreatedBy = "me", ReviewPassed = true, Status = "decision_pending" },
+        });
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation("new", new InitiationDecisionRequest {
+            ReviewMeetingRequired = true, ExpectedMeetingAt = DateTime.UtcNow.AddDays(1),
+        }));
+        Assert.Equal("T9.2.4", (await fixture.Db.ProductInitiations.Find(x => x.Id == "new").SingleAsync()).TCode);
+    }
+
     private static CreateInitiationRequest Request(string review) => new() {
         LinkedProductId = "product", PlanName = "申领测试方案", ReviewSubmissionId = review,
     };
