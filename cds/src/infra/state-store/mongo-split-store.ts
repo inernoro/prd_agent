@@ -1409,7 +1409,11 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     if (this.dirtyState) this.takeSnapshot();
     const targetGeneration = this.writeGeneration;
     if (targetGeneration <= this.persistedGeneration) return;
-    if (targetGeneration <= this.failedGeneration && this.lastWriteError) {
+    // 同代新重试在途或排队时，等待本次真实写终态，不能复用历史失败。
+    if (
+      targetGeneration <= this.failedGeneration && this.lastWriteError
+      && !this.writeInFlight && !this.pendingWrite
+    ) {
       throw this.lastWriteError;
     }
     await new Promise<void>((resolve, reject) => {
