@@ -12628,7 +12628,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const evidence = await verifyPrebuiltWorkflowRun({
       repository: entry.githubRepoFullName || project?.githubRepoFullName || '',
-      branch: entry.branch, commitSha, workflowRunUrl: plan.patch.ciWorkflowRunUrl, authorization,
+      branch: entry.branch, commitSha, workflowRunUrl, authorization,
     });
     if (!evidence.ok) {
       res.status(evidence.status).json({ error: evidence.error, message: evidence.message }); return;

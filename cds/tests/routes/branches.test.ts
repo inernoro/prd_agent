@@ -434,6 +434,21 @@ describe('Branch Routes', () => {
         expect(stateService.getBranch(entry.id)?.ciImageStatus).toBe('ready');
       } finally { globalThis.fetch = original; }
     });
+    it('省略链接时不复用旧失败运行链接，而是查询同提交的新运行', async () => {
+      const entry = seedClaim(); entry.ciWorkflowRunUrl = 'https://github.com/acme/old-repo/actions/runs/123'; entry.ciImageStatus = 'failed';
+      const original = globalThis.fetch;
+      const fetcher = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ workflow_runs: [{ ...run, id: 456 }] })))
+        .mockResolvedValueOnce(new Response(JSON.stringify(run)));
+      globalThis.fetch = fetcher;
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha });
+        expect(result.status).toBe(200);
+        expect(stateService.getBranch(entry.id)?.ciWorkflowRunUrl).toBe('https://github.com/acme/old-repo/actions/runs/456');
+        expect(fetcher.mock.calls[0][0]).toContain('/actions/workflows/branch-image.yml/runs?');
+        expect(fetcher.mock.calls[1][0]).toBe('https://api.github.com/repos/acme/old-repo/actions/runs/456');
+      } finally { globalThis.fetch = original; }
+    });
     it('同名但路径不符的成功回执不能改写运行和等待状态', async () => {
       const entry = seedClaim(); const before = JSON.stringify(entry); const original = globalThis.fetch;
       globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ ...run, path: '.github/workflows/ci.yml', name: 'Branch Image' })));

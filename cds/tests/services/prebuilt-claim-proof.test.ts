@@ -68,4 +68,13 @@ describe('手动认领镜像的真实 CI 证据', () => {
     expect(await verifyPrebuiltWorkflowRun({ ...input, workflowRunUrl: '', fetchImpl: fetcher })).toMatchObject({ ok: false, status: 409, error: 'ci_not_successful' });
   });
 
+  it.each(['main', 'feature/branch'])('带引用后缀的真实工作流路径仍能核验：%s', async ref => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ ...success, path: `.github/workflows/branch-image.yml@${ref}` }));
+    expect(await verifyPrebuiltWorkflowRun({ ...input, fetchImpl: fetcher })).toMatchObject({ ok: true });
+  });
+  it('带引用后缀的其他工作流仍不能借同名通过', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ ...success, path: '.github/workflows/ci.yml@main', name: 'Branch Image' }));
+    expect(await verifyPrebuiltWorkflowRun({ ...input, fetchImpl: fetcher })).toMatchObject({ ok: false, error: 'ci_evidence_mismatch' });
+  });
+
 });
