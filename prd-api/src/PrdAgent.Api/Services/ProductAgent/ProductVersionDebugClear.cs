@@ -7,7 +7,7 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Api.Services.ProductAgent;
 
 public sealed record ProductVersionClearPreview(string Kind, string KindLabel, int RecordCount,
-    long PreservedLegacyCount, string ConfirmPhrase, string Token);
+    string ConfirmPhrase, string Token);
 public sealed record ProductVersionClearResult(string Kind, long ClearedCount, long SkippedCount, string? BackupId);
 
 /// <summary>临时调试：仅手动清理所见产品流程记录。先备份、再按ID及修改版本软删除，不重置编号。</summary>
@@ -40,7 +40,7 @@ public static class ProductVersionDebugClear
         var snapshot = await ReadAsync(db, kind);
         return new(kind, kind == "internal" ? "内部版本（T）" : "正式版本（V）",
             snapshot.Initiations.Count + snapshot.Releases.Count,
-            await db.VersionRegistrations.CountDocumentsAsync(x => x.Kind == kind), Confirmation(kind), Token(kind, snapshot));
+            Confirmation(kind), Token(kind, snapshot));
     }
 
     public static async Task<ProductVersionClearResult?> ClearAsync(MongoDbContext db, string kind, string expectedToken, string userId)

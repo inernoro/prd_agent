@@ -1236,7 +1236,6 @@ export interface VersionDebugClearPreview {
   kind: VersionDebugClearKind;
   kindLabel: string;
   recordCount: number;
-  preservedLegacyCount: number;
   confirmPhrase: string;
   token: string;
 }

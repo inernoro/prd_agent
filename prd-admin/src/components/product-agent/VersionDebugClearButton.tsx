@@ -56,7 +56,7 @@ function VersionDebugClearDialog({ kind, onClose, onChanged }: {
       <p>另一类型版本、产品、需求、功能、评审及权限不清空。旧独立版本登记与历史备份保留；编号不会回收或从头重置。</p>
       {loading && <p className="flex items-center gap-2"><MapSpinner size={14} />正在核对清理范围…</p>}
       {preview && <>
-        <p>将清理：{preview.kindLabel} {preview.recordCount} 条。保留旧独立登记 {preview.preservedLegacyCount} 条（可能仍显示在列表）。</p>
+        <p>将清理：{preview.kindLabel} {preview.recordCount} 条。旧独立登记保留，可能仍显示在列表。</p>
         <p>执行前自动保存备份；原始记录归档保留，不物理删除关联数据。</p>
         {!result && <label className="block"><span className="mb-2 block">输入“{preview.confirmPhrase}”以确认</span>
           <input aria-label="清理确认语" value={phrase} disabled={busy} onChange={(event) => setPhrase(event.target.value)}

@@ -719,7 +719,6 @@ public class ProductVersionClaimGuardTests
         await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, "workflow-code:T:T1.2.3", "initiation:t");
         var preview = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.PreviewAsync(fixture.Db, kind);
         Assert.Equal(kind == "internal" ? 2 : 1, preview.RecordCount);
-        Assert.Equal(1, preview.PreservedLegacyCount);
         Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
         var result = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, kind, preview.Token, "me");
         Assert.NotNull(result);
