@@ -31,6 +31,7 @@ import { resolveArtifactCommitIdentity } from '../services/artifact-commit-ident
 import { refreshArtifactWaiters, registerArtifactWaitRefresher, requestArtifactWaitRefresh } from '../services/artifact-admission-wait.js';
 import { ContainerStopUnconfirmedError, resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
+import { createSelfUpdateCheckpoint, prepareDetachedCdsRestart } from '../services/self-update-handoff.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
 import { isCommitShaLike } from '../services/release-commit-clock.js';
@@ -997,6 +998,7 @@ export type ValidateProgressEvent = {
 type ValidateBuildOptions = {
   skipTsc?: boolean;
   onProgress?: (event: ValidateProgressEvent) => void;
+  onFirstFailure?: () => void;
 };
 
 function formatValidationTimings(timings: ValidateTimings): string {
@@ -1116,6 +1118,7 @@ export async function validateBuildReadiness(
   ] as const;
   const [installResult, webInstallResult] = await Promise.all(installs).catch(async (error) => {
     // 首败不能让尚在写同一维护树的兄弟脱管；只等本轮原任务，不重试或重置预算。
+    options.onFirstFailure?.();
     await Promise.allSettled(installs);
     throw error;
   });
@@ -1273,6 +1276,7 @@ export async function validateBuildReadiness(
       : Promise.resolve(null),
   ] as const;
   const [tscCdsTimed, tscWebTimed] = await Promise.all(checks).catch(async (error) => {
+    options.onFirstFailure?.();
     await Promise.allSettled(checks);
     throw error;
   });
@@ -2200,11 +2204,18 @@ export function validateWebDistCandidate(candidatePath: string): WebDistValidati
   return { ok: true, entryFiles: files };
 }
 
+interface MaintenanceArtifactCleanup {
+  assertActive(): void;
+  remove(directory: string): Promise<boolean>;
+  removeMany(directories: string[]): Promise<boolean>;
+}
+
 async function tryApplyCdsPrebuiltForSelfUpdate(input: {
   shell: IShellExecutor;
   repoRoot: string;
   targetFullSha: string;
   send: (step: string, status: string, title: string) => void;
+  createCleanup: (stagingRoot: string) => MaintenanceArtifactCleanup;
 }): Promise<{ applied: boolean; reason?: string }> {
   const { shell, repoRoot, targetFullSha, send } = input;
   const repoFullName = await resolveSelfUpdatePrebuiltRepoFullName(shell, repoRoot);
@@ -2220,6 +2231,7 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
 
   const cdsDir = path.join(repoRoot, 'cds');
   const stagingRoot = path.join(cdsDir, '.cds', `prebuilt-self-update-${Date.now()}`);
+  const cleanup = input.createCleanup(stagingRoot);
   send('prebuilt', 'running', `正在拉取 CI 预构建产物 ${decision.imageRef}`);
   const fetched = await fetchCdsPrebuilt(
     {
@@ -2231,7 +2243,9 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
           return null;
         }
       },
-      rmrf: (p) => fs.rmSync(p, { recursive: true, force: true }),
+      rmrf: async (p) => {
+        if (!await cleanup.remove(p)) throw new Error('CDS 预构建暂存清理失败，未开始复制。');
+      },
       mkdirp: (p) => fs.mkdirSync(p, { recursive: true }),
     },
     decision.imageRef,
@@ -2240,38 +2254,39 @@ async function tryApplyCdsPrebuiltForSelfUpdate(input: {
     { pullTimeoutMs: 45_000 },
   );
   if (!fetched.ok || !fetched.distDir || !fetched.webDistDir) {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
     return { applied: false, reason: fetched.reason || 'prebuilt fetch failed' };
   }
 
   const distEntry = path.join(fetched.distDir, 'index.js');
   const webValidation = validateWebDistCandidate(fetched.webDistDir);
   if (!fs.existsSync(distEntry)) {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
     return { applied: false, reason: 'prebuilt artifact missing dist/index.js' };
   }
   if (!webValidation.ok) {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
     return { applied: false, reason: `prebuilt web artifact invalid: ${webValidation.error}` };
   }
 
   try {
-    replaceDirectoriesAtomically([
+    await replaceDirectoriesAtomically([
       { currentPath: path.join(cdsDir, 'dist'), nextPath: fetched.distDir },
       {
         currentPath: path.join(cdsDir, 'web', 'dist'),
         nextPath: fetched.webDistDir,
         previousPath: path.join(cdsDir, 'web', 'dist.previous'),
       },
-    ]);
+    ], cleanup);
     try { fs.writeFileSync(path.join(cdsDir, 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
     try { fs.writeFileSync(path.join(cdsDir, 'web', 'dist', '.build-sha'), `${targetFullSha}\n`); } catch { /* ignore */ }
     send('prebuilt', 'done', `已应用 CI 预构建产物 ${targetFullSha.slice(0, 8)},跳过本机编译`);
     return { applied: true };
   } catch (err) {
+    cleanup.assertActive();
     return { applied: false, reason: `prebuilt atomic replace failed: ${(err as Error).message}` };
   } finally {
-    try { fs.rmSync(stagingRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    await cleanup.remove(stagingRoot);
   }
 }
 
@@ -2383,6 +2398,74 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function finishSelfMaintenance(owner: SelfMaintenanceOwner): void {
     selfMaintenance.finish(owner);
   }
+  function selfMaintenanceShell(owner: SelfMaintenanceOwner): IShellExecutor {
+    return {
+      // 明确投影index既有operation默认15分钟，不继承外层只读观测wrapper的30秒。
+      exec: (command, options = {}) => selfMaintenance.exec(owner, command, {
+        ...options, timeout: options.timeout ?? 15 * 60_000,
+      }),
+    };
+  }
+
+  /** 只消费本次维护的固定产物；一阶段共用原operation上界，不逐目录续时。 */
+  function maintenanceArtifactCleanup(owner: SelfMaintenanceOwner, stage: 'backend' | 'web' | 'prebuilt',
+    stagingRoot?: string): MaintenanceArtifactCleanup {
+    const cds = path.resolve(config.repoRoot, 'cds');
+    const identity = (parent: string) => {
+      const stat = fs.lstatSync(parent);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('CDS 产物父目录身份未确认，未开始清理。');
+      return { real: fs.realpathSync(parent), dev: stat.dev, ino: stat.ino };
+    };
+    const parents = new Map([cds, path.join(cds, 'web'), path.join(cds, '.cds')]
+      .map(parent => [parent, identity(parent)]));
+    const deadline = performance.now() + 15 * 60_000;
+    if (stage === 'prebuilt' && (!stagingRoot || path.dirname(stagingRoot) !== path.join(cds, '.cds')
+      || !/^prebuilt-self-update-\d+$/.test(path.basename(stagingRoot)))) {
+      throw new Error('CDS 预构建暂存身份不匹配，未开始清理。');
+    }
+    const assertActive = (): void => {
+      const view = selfMaintenance.observe();
+      if (!view || view.id !== owner.id || view.state !== 'running') {
+        throw new Error('CDS 维护写者停止尚未确认，已保留恢复点，未继续清理。');
+      }
+      if (performance.now() >= deadline) {
+        selfMaintenance.requestStop(owner);
+        throw new Error('CDS 产物清理阶段已到原截止，已停止更新并保留恢复点。');
+      }
+    };
+    const validate = (directories: string[]): void => {
+      for (const directory of directories) {
+        const relative = path.relative(cds, directory);
+        const backend = stage !== 'web' && (relative === 'dist.next' || /^dist\.old\.[A-Za-z0-9._-]+$/.test(relative)
+          || stage === 'prebuilt' && relative === 'dist');
+        const web = stage !== 'backend' && (/^web\/dist(?:\.previous)?\.old\.\d+\.\d+$/.test(relative)
+          || relative === 'web/dist' || relative === 'web/dist.next');
+        const staging = stage === 'prebuilt' && directory === stagingRoot;
+        const parent = path.dirname(directory), expectedParent = parents.get(parent);
+        if (directory !== path.resolve(directory) || !(backend || web || staging) || !expectedParent) {
+          throw new Error('CDS 产物清理路径或目录身份已变化，未执行删除。');
+        }
+        const actualParent = identity(parent);
+        if (actualParent.real !== expectedParent.real || actualParent.dev !== expectedParent.dev
+          || actualParent.ino !== expectedParent.ino) {
+          throw new Error('CDS 产物清理路径或目录身份已变化，未执行删除。');
+        }
+      }
+    };
+    const removeMany = async (directories: string[]): Promise<boolean> => {
+      assertActive();
+      if (directories.length === 0) return true;
+      validate(directories);
+      const timeout = Math.floor(deadline - performance.now());
+      if (timeout <= 0) { selfMaintenance.requestStop(owner); assertActive(); }
+      const result = await selfMaintenance.exec(owner, `/bin/rm -rf -- ${directories.map(shellQuote).join(' ')}`, {
+        cwd: cds, timeout,
+        beforeStart: () => { assertActive(); validate(directories); },
+      });
+      return result.exitCode === 0;
+    };
+    return { assertActive, removeMany, remove: directory => removeMany([directory]) };
+  }
 
   async function drainDeploysBeforeSelfUpdateRestart(context: {
     trigger: string;
@@ -2415,6 +2498,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
       }),
       now: () => Date.now(),
+      isExecutionWaiting: (runId, nowMs) => deploymentRunService?.hasQualifiedExecutionWait(runId, new Date(nowMs)) ?? false,
       sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
       timeoutMs,
       onWait: (pending, waitedMs) => {
@@ -2467,7 +2551,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     actor?: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
     onProgress?: (status: 'running' | 'done' | 'warning', title: string) => void;
-  }, maintenanceOwner: SelfMaintenanceOwner): Promise<void> {
+  }, maintenanceOwner: SelfMaintenanceOwner): Promise<BoundedFlushResult> {
     // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
     // 排空放在最前，避免等待期间新落的状态又没被 flush 到）。
     selfMaintenance.setPhase(maintenanceOwner, 'drain');
@@ -2501,25 +2585,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
         severity: 'warn',
         source: 'self-update',
         action: 'self-update.state-flush-timeout',
-        message: 'self-update state flush timed out before restart; continuing restart to avoid stale daemon',
+        message: 'self-update state flush timed out before restart; restart must be cancelled',
         details: {
           ...context,
           timeoutMs: SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
         },
       });
     }
+    return result;
   }
 
-  function scheduleDetachedCdsRestart(input: {
+  async function scheduleDetachedCdsRestart(input: {
     branchLabel: string;
     source: 'api.self-update' | 'api.self-force-sync' | 'api.self-restart';
     maintenanceOwner: SelfMaintenanceOwner;
     delayMs?: number;
-    exitOnFailure?: boolean;
-  }): void {
-    input.maintenanceOwner.restartScheduled = true;
-    selfMaintenance.setPhase(input.maintenanceOwner, 'restart-scheduled');
-    const launch = () => {
+    preserveQueued?: boolean;
+    rollback?: () => Promise<void>;
+  }): Promise<void> {
+      selfMaintenance.setPhase(input.maintenanceOwner, 'handoff');
+      await new Promise<void>(resolve => setTimeout(resolve, Math.max(0, input.delayMs || 0)));
+      const deadline = Date.now() + SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS;
       const cdsDir = path.join(config.repoRoot, 'cds');
       const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
       const waitSoFar = getRestartWait();
@@ -2531,18 +2617,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         timeoutMs: waitSoFar?.timeoutMs ?? 0,
         pendingRuns: [],
       });
-      /**
-       * 记账动作一律各自 try/catch。
-       *
-       * 2026-07-30 真实事故：一次强制同步把 dist/ 和 web/dist 都换成了新版本，
-       * 但进程没重启 —— 生产变成「新前端 + 旧后端」，而 lastSelfUpdate 还写着
-       * success。根因是整个 launch 被一个大 try 包着，而 `process.exit(0)` 排在
-       * 写日志文件、`fs.openSync`、`interruptAll` **后面**：这些记账动作里任意
-       * 一处同步抛异常，都会跳到 catch，而 catch 在 exitOnFailure 未设时**不退出**。
-       * 于是一个写日志的小失败取消掉了整件事的目的。
-       *
-       * 现在的顺序保证：spawn 成功 → 退出一定会被排上，任何记账失败都碰不到它。
-       */
+      // 日志失败不阻断交接；状态保存失败必须取消脚本并恢复旧源码/真实产物。
       const safely = (label: string, fn: () => void): void => {
         try {
           fn();
@@ -2561,58 +2636,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // stdio 目标拿不到就退回 'ignore'：日志重定向失败绝不能成为不重启的理由。
       let stdio: ['ignore', number | 'ignore', number | 'ignore'] = ['ignore', 'ignore', 'ignore'];
+      const fds: number[] = [];
       safely('open-log-fd', () => {
-        stdio = ['ignore', fs.openSync(errorLogPath, 'a'), fs.openSync(errorLogPath, 'a')];
+        for (let index = 0; index < 2; index++) fds.push(fs.openSync(errorLogPath, 'a'));
+        stdio = ['ignore', fds[0], fds[1]];
       });
 
-      let spawned = false;
+      let permit: ReturnType<typeof prepareDetachedCdsRestart> | undefined;
+      let operationsInterrupted = false;
       try {
-        const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
-          cwd: cdsDir,
-          detached: true,
-          stdio,
-          env: { ...process.env },
-        });
-        child.on('error', (err) => {
-          safely('spawn-error-log', () => {
-            fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
-          });
-        });
-        child.unref();
-        spawned = true;
-      } catch (spawnErr) {
-        safely('pre-spawn-log', () => {
-          fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
-        });
-      }
-
-      if (!spawned) {
-        // 只有**spawn 本身**失败才不退出：退出了就没人把 CDS 拉起来，等于自己造停机。
-        safely('interrupt-on-failure', () => {
-          branchOperationCoordinator?.interruptAll(
-            `CDS restart failed for ${input.source}`,
-            input.source,
-          );
-        });
-        if (input.exitOnFailure) {
-          setTimeout(() => process.exit(1), 1000);
-        } else {
-          // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
-          if (releaseSelfMaintenance(input.maintenanceOwner)) {
-            endSelfUpdateDrain();
-            setRestartWait(null);
-          }
+        try { permit = prepareDetachedCdsRestart(spawn, cdsDir, { ...process.env }, stdio); }
+        catch (error) { safely('spawn-error', () => fs.appendFileSync(errorLogPath, `spawn error: ${(error as Error).message}\n`)); }
+        // 已知保存失败或没有子进程时，旧服务继续运行，不能先破坏其部署任务。
+        if (input.preserveQueued !== true || !permit?.hasChildPid) {
+          throw new Error('CDS 重启未获可靠交接许可，已取消更新与重启。请检查状态存储及重启脚本后重试。');
         }
-        return;
-      }
-
-      // 退出先排上，再做剩下的记账 —— 顺序即保障。
-      setTimeout(() => process.exit(0), 1000);
-      // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
-      // 只有「重启没真的发生」时它才会跑到，把排空闸提前放掉。否则闸要等满
-      // timeoutMs+60s（默认 6 分钟）才 fail-open，这期间每一次 webhook 部署都拿
-      // 503 + 红灯 CI —— 2026-07-28 实际中招一次。
-      safely('gate-release-timer', () => {
+        operationsInterrupted = Boolean(branchOperationCoordinator);
+        branchOperationCoordinator?.interruptAll(
+          `CDS restart requested by ${input.source}`, input.source,
+          { normalShutdown: input.preserveQueued === true && permit?.hasChildPid === true },
+        );
+        const saved = await waitForFlushWithTimeout(() => stateService.flush(), Math.max(0, deadline - Date.now()));
+        if (saved !== 'flushed' || input.preserveQueued !== true || !permit?.hasChildPid) {
+          throw new Error('CDS 重启未获可靠交接许可，已取消更新与重启。请检查状态存储及重启脚本后重试。');
+        }
+        await permit.release();
+        // 原一秒退出期限从本次launch开始计算；不串联新的等待预算。
+        setTimeout(() => process.exit(0), Math.max(0, deadline - Date.now()));
         setTimeout(() => {
           if (releaseSelfMaintenance(input.maintenanceOwner)) {
             endSelfUpdateDrain();
@@ -2620,15 +2670,25 @@ export function createBranchRouter(deps: RouterDeps): Router {
             console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
           }
         }, RESTART_GATE_RELEASE_MS).unref?.();
-      });
-      safely('interrupt-all', () => {
-        branchOperationCoordinator?.interruptAll(
-          `CDS restart requested by ${input.source}`,
-          input.source,
-        );
-      });
-    };
-    setTimeout(launch, Math.max(0, input.delayMs || 0));
+        input.maintenanceOwner.restartScheduled = true;
+        selfMaintenance.setPhase(input.maintenanceOwner, 'restart-scheduled');
+      } catch (error) {
+        try {
+          // 先确认许可子进程已停，再恢复原合法待办；回滚失败不能跳过队列收尾。
+          await permit?.cancel();
+          try { await input.rollback?.(); }
+          finally {
+            if (operationsInterrupted && branchOperationCoordinator) deploymentRunService?.restoreQueued(branchOperationCoordinator);
+          }
+        }
+        finally {
+          endSelfUpdateDrain();
+          setRestartWait(null);
+        }
+        throw error;
+      } finally {
+        for (const fd of fds) safely('close-log-fd', () => fs.closeSync(fd));
+      }
   }
 
   async function flushBranchStateBeforeSuccess(context: {
@@ -11178,6 +11238,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     newHead: string,
     send: (step: string, status: string, title: string) => void,
     res: import('express').Response,
+    shell: IShellExecutor,
+    maintenanceOwner: SelfMaintenanceOwner,
   ): Promise<Partial<SelfUpdateTimingBreakdown>> => {
     const webBuildOverallStartedAt = Date.now();
     const finishWebBuildTiming = (
@@ -11261,6 +11323,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return finishWebBuildTiming(true, 'web-input-match');
     }
     send('web-build', 'running', `正在候选目录重建 web/dist (日志: cds/.cds/web-build.log)`);
+    const cleanup = maintenanceArtifactCleanup(maintenanceOwner, 'web');
     try {
       const buildStartedAt = Date.now();
       // 用户反馈 2026-05-06:"network error 用时 2m12s" — 中间层(浏览器/nginx)
@@ -11305,7 +11368,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 禁止 Vite 直接清空在线 web/dist。候选目录必须与 dist 同父目录，
           // 这样后续 rename 是同文件系统原子操作。构建失败期间旧 index 和旧 chunk
           // 始终保持可读。
-          try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
+          await cleanup.remove(webDistNext);
           const wBuild = await shell.exec(
             WEB_DIST_BUILD_COMMAND,
             { cwd: webDir, timeout: 300_000 },
@@ -11348,11 +11411,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
               abortWebBuild(message);
             }
             try {
-              replaceDirectoriesAtomically([{
+              await replaceDirectoriesAtomically([{
                 currentPath: webDist,
                 nextPath: webDistNext,
                 previousPath: webDistPrevious,
-              }]);
+              }], cleanup);
             } catch (err) {
               const message = `web/dist 原子切换失败，已保留旧产物: ${(err as Error).message}`;
               send('web-build', 'error', message);
@@ -11387,7 +11450,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       } finally {
         clearInterval(heartbeat);
-        try { fs.rmSync(webDistNext, { recursive: true, force: true }); } catch { /* ignore */ }
+        await cleanup.remove(webDistNext);
       }
     } catch (err) {
       if (!res.writableEnded) {
@@ -23919,10 +23982,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
 
+    const shell = selfMaintenanceShell(maintenanceOwner);
     const startedAt = Date.now();
     let branch = '';
     let fullSha = '';
-    let terminalStateCommitted = false;
     const commitSelfRestartState = (terminal = false): void => {
       const history = stateService.getSelfUpdateHistory(20);
       selfStatusCache.commitSelfUpdateState(
@@ -23933,7 +23996,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         },
         { terminal },
       );
-      if (terminal) terminalStateCommitted = true;
     };
     try {
       branch = resolveSelfUpdateTargetBranch(
@@ -23976,7 +24038,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         updateMode: 'restart-only',
       });
       commitSelfRestartState(true);
-      await flushSelfUpdateStateBeforeRestart({
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'manual',
         branch,
         fromSha: fullSha.slice(0, 8),
@@ -23985,7 +24047,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-restart',
         onProgress: (status, title) => sendSSE(res, 'step', { step: 'drain-deploys', status, title, timestamp: new Date().toISOString() }),
       }, maintenanceOwner);
-      selfMaintenance.setPhase(maintenanceOwner, 'handoff');
+      await scheduleDetachedCdsRestart({ branchLabel: branch, source: 'api.self-restart', delayMs: 500,
+        maintenanceOwner, preserveQueued: restartFlush === 'flushed' });
       sendSSE(res, 'step', {
         step: 'restart',
         status: 'running',
@@ -23998,16 +24061,12 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         mode: 'restart-only',
       });
       res.end();
-      scheduleDetachedCdsRestart({
-        branchLabel: branch,
-        source: 'api.self-restart',
-        maintenanceOwner,
-        delayMs: 500,
-        exitOnFailure: true,
-      });
     } catch (err) {
+      stateService.recordSelfUpdate({ ts: new Date().toISOString(), branch, fromSha: fullSha.slice(0, 8),
+        toSha: fullSha.slice(0, 8), trigger: 'manual', status: 'failed', durationMs: Date.now() - startedAt,
+        actor, updateMode: 'restart-only', error: (err as Error).message });
       stateService.clearSelfUpdateActive();
-      if (!terminalStateCommitted) commitSelfRestartState(true);
+      commitSelfRestartState(true);
       sendSSE(res, 'error', {
         code: 'self_restart_failed',
         message: (err as Error).message,
@@ -24087,6 +24146,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       res.end();
       return;
     }
+    const shell = selfMaintenanceShell(maintenanceOwner);
+    let maintenanceComplete = true;
     // 外层finally同时覆盖首次分支/SHA await和原流程的全部失败出口。
     try {
     branch = resolveSelfUpdateTargetBranch(typeof branch === 'string' ? branch : '');
@@ -24113,6 +24174,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
     let transitionMode: string | undefined;
     let acceptedTransitionReason: string | undefined;
+    let checkpoint: Awaited<ReturnType<typeof createSelfUpdateCheckpoint>> | undefined, keepUpdate = false;
+    const rollbackCheckpoint = async (): Promise<void> => {
+      maintenanceComplete = false;
+      selfMaintenance.requestStop(maintenanceOwner);
+      await checkpoint?.rollback();
+      maintenanceComplete = true;
+    };
 
     // 2026-05-07 状态落盘(用户反馈"卡 web-build 看不见状态"):
     // markSelfUpdateActive 现在写 .cds/active-update.json(SSOT),包含
@@ -24147,6 +24215,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         .stdout.trim();
     } catch { /* tolerated — 极少数情况下 fromSha=''仍可继续 */ }
     const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
+      if (record.status === 'success' && ['noOp', 'web-only', 'doc-only'].includes(record.updateMode || '')) keepUpdate = true;
       stateService.recordSelfUpdate({
         ...record,
         timings: timingRecorder.snapshot(),
@@ -24304,6 +24373,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // Use -f to discard tracked-file changes (safe: untracked files like .cds/state.json are untouched).
         // main 可能已被应用 worktree 占用；共享 helper 会改用控制面专属 runtime 分支，
         // 不移动应用工作树使用的本地分支引用。
+        checkpoint = await createSelfUpdateCheckpoint(selfMaintenance, maintenanceOwner, repoRoot);
         const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, branch);
         if (!checkoutResult.ok) {
           const errMsg = checkoutResult.error || '未知错误';
@@ -24432,6 +24502,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         return;
       }
 
+      // 未指定分支的路径也只在首次实际改源码前备份，早期拒绝不得回滚既有修改。
+      checkpoint ??= await createSelfUpdateCheckpoint(selfMaintenance, maintenanceOwner, repoRoot);
       const resetResult = await shell.exec(
         `git reset --hard origin/${targetBranch}`,
         { cwd: repoRoot },
@@ -24494,7 +24566,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!forceMode && suDiffOk && isWebOnlyChange(suImpact, suChangedPaths)) {
         send('analyze', 'done', `本次改动 ${suChangedPaths.length} 文件全部在 cds/web/src/** — 走零停机前端更新路径(跳过 validate / 后端 build / systemd 重启)`);
         try {
-          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
+          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
         } catch (webBuildErr) {
           recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
           return;
@@ -24535,6 +24607,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           repoRoot,
           targetFullSha: newFullHead,
           send,
+          createCleanup: stagingRoot => maintenanceArtifactCleanup(maintenanceOwner, 'prebuilt', stagingRoot),
         });
         timingRecorder.merge({ prebuiltMs: Date.now() - prebuiltStart });
         if (prebuilt.applied) {
@@ -24587,6 +24660,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       let validation: Awaited<ReturnType<typeof validateBuildReadiness>>;
       try {
         validation = await validateBuildReadiness(shell, cdsDirForCheck, {
+          onFirstFailure: () => selfMaintenance.requestStop(maintenanceOwner),
           onProgress: (event) => {
             validateHeartbeatLabel = event.message;
             sendSSE(res, 'validate-progress', {
@@ -24673,15 +24747,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 不并行跑 tsc --noEmit:validate 阶段已经跑过(line 8856),不重复。
       send('build-backend', 'running', '正在重编后端 dist.next/(esbuild)...');
       const cdsBackendStart = Date.now();
+      const backendCleanup = maintenanceArtifactCleanup(maintenanceOwner, 'backend');
       const backendHeartbeat = setInterval(() => {
         const elapsed = Math.floor((Date.now() - cdsBackendStart) / 1000);
         sendSSE(res, 'backend-build-tick', { elapsed, message: `后端编译进行中 ${elapsed}s` });
         stateService.tickSelfUpdate();
       }, 5_000);
       // 清掉上一次失败留下的 dist.next 残留(若有)
-      try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
       let esbuildRes: Awaited<ReturnType<typeof shell.exec>>;
       try {
+        await backendCleanup.remove(path.join(cdsDirForCheck, 'dist.next'));
         esbuildRes = await shell.exec(
           'node scripts/build-dist-esbuild.mjs',
           { cwd: cdsDirForCheck, timeout: 60_000, env: { OUT_DIR: 'dist.next' } },
@@ -24691,7 +24766,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       }
       if (esbuildRes.exitCode !== 0) {
         const errMsg = (combinedOutput(esbuildRes) || '').slice(0, 800);
-        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDirForCheck, 'dist.next'));
         send('build-backend', 'error', `后端 esbuild 失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
         failWith('build', { raw: errMsg });
         return;
@@ -24699,7 +24774,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 验证 dist.next/index.js 真的写出来
       const distNextEntry = path.join(cdsDirForCheck, 'dist.next', 'index.js');
       if (!fs.existsSync(distNextEntry)) {
-        try { fs.rmSync(path.join(cdsDirForCheck, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDirForCheck, 'dist.next'));
         send('build-backend', 'error', 'esbuild 报成功但 dist.next/index.js 不存在(旧 dist 保留)');
         failWith('build', {
           message: '编译报告成功但没有产出可执行文件(dist.next/index.js 缺失)，已中止重启避免 CDS 起不来。',
@@ -24712,6 +24787,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const distOldPath = path.join(cdsDirForCheck, `dist.old.${swapTs}`);
       const distNextPath = path.join(cdsDirForCheck, 'dist.next');
       try {
+        backendCleanup.assertActive();
         if (fs.existsSync(distPath)) fs.renameSync(distPath, distOldPath);
         try {
           fs.renameSync(distNextPath, distPath);
@@ -24725,7 +24801,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // 写 .build-sha 让 master-run sentinel 不会跑冗余 tsc
         try { fs.writeFileSync(path.join(distPath, '.build-sha'), newHead + '\n'); } catch { /* ignore */ }
         // 删旧 dist.old(成功才删,失败保留以便人工回滚)
-        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(distOldPath);
       } catch (swapErr) {
         send('build-backend', 'error', `dist 原子替换失败: ${(swapErr as Error).message}`);
         failWith('swap', { raw: (swapErr as Error).message });
@@ -24755,7 +24831,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 
       // In-process 重建 cds/web/dist —— 详见 runInProcessWebBuild 注释
       // (Bugbot PR #524 第九轮重构:抽到顶层 helper,与 self-force-sync 共用)
-      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
+      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
       }
 
       // 2026-06-14:默认不等排空。master work / branch operation coordinator
@@ -24801,9 +24877,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         } as Record<string, unknown>),
       });
       // Mongo-backed state is write-behind. This path exits the process about
-      // one second after sending the restart event. A stuck Mongo write must
-      // not keep the old daemon alive after dist/ has already been swapped.
-      await flushSelfUpdateStateBeforeRestart({
+      // one second after handoff. Failed persistence cancels the handoff and
+      // restores the original source and exact dist/web bytes.
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'manual',
         branch: branch || '',
         fromSha,
@@ -24812,6 +24888,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-update',
         onProgress: (status, title) => send('drain-deploys', status, title),
       }, maintenanceOwner);
+      await scheduleDetachedCdsRestart({ branchLabel: branch || '', source: 'api.self-update', delayMs: 500,
+        maintenanceOwner, preserveQueued: restartFlush === 'flushed', rollback: rollbackCheckpoint });
+      keepUpdate = true;
 
       // Step 4: restart CDS via detached process
       // 自更新前段总耗时(从 startedAt 到 spawn 之前):验证 + git + web build。
@@ -24838,13 +24917,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // so that silent spawn failures (e.g., exec_cds.sh not understanding an
       // argument) leave a forensic trail. Without this, the whole CDS cluster
       // goes dark with no clue why.
-      scheduleDetachedCdsRestart({
-        branchLabel: branch || '',
-        source: 'api.self-update',
-        maintenanceOwner,
-        delayMs: 500,
-        exitOnFailure: true,
-      });
     } catch (err) {
       send('error', 'error', `更新失败: ${(err as Error).message}`);
       if (!res.writableEnded) {
@@ -24859,6 +24931,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         });
       }
     } finally {
+      try {
+        if (keepUpdate) {
+          if (maintenanceOwner.restartScheduled) checkpoint?.retainForRestart();
+          else {
+            try { await checkpoint?.commit(); }
+            catch (error) { console.warn('[self-update] 更新已保留，但恢复副本清理未确认', error); }
+          }
+        } else await rollbackCheckpoint();
+      }
+      catch (error) { recordFailure((error as Error).message); console.error('[self-update] rollback failed', error); }
       // Bugbot 31da8d97 (HIGH):兜底清 in-progress 标记。
       // recordSelfUpdate 已经在 success/aborted/failed 三种正常路径上清掉,
       // 但若 catch handler 自身抛(send / sendSSE / res.end 在异常态下),
@@ -24870,7 +24952,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       }
     }
     } finally {
-      finishSelfMaintenance(maintenanceOwner);
+      if (maintenanceComplete) finishSelfMaintenance(maintenanceOwner);
     }
   });
 
@@ -24897,10 +24979,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
     const cdsDir = path.join(config.repoRoot, 'cds');
+    const shell = selfMaintenanceShell(maintenanceOwner);
     try {
       const started = Date.now();
       selfMaintenance.setPhase(maintenanceOwner, 'validate');
-      const result = await validateBuildReadiness(shell, cdsDir);
+      const result = await validateBuildReadiness(shell, cdsDir, {
+        onFirstFailure: () => selfMaintenance.requestStop(maintenanceOwner),
+      });
       const durationMs = Date.now() - started;
       if (result.ok) {
         // 2026-05-04 v2:webWarning(前端 tsc 失败)是 warning,不阻断,加到响应里。
@@ -25021,6 +25106,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       res.end();
       return;
     }
+    const shell = selfMaintenanceShell(maintenanceOwner);
+    let maintenanceComplete = true;
     try {
     if (existingActive) stateService.clearSelfUpdateActive();
     // 2026-05-13 复查用结构化耗时:每个 step 独立计时,最后落到 history.timings。
@@ -25028,7 +25115,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     const timingRecorder = createSelfUpdateTimingRecorder(startedAt);
     let forceSyncTransitionMode: string | undefined;
     let forceSyncTransitionReason: string | undefined;
+    let checkpoint: Awaited<ReturnType<typeof createSelfUpdateCheckpoint>> | undefined, keepUpdate = false;
+    const rollbackCheckpoint = async (): Promise<void> => {
+      maintenanceComplete = false;
+      selfMaintenance.requestStop(maintenanceOwner);
+      await checkpoint?.rollback();
+      maintenanceComplete = true;
+    };
 
+    // 首次await前取得占用，所有准备期异常也必须可靠释放。
     stateService.markSelfUpdateActive({
       startedAt: new Date().toISOString(),
       branch: branch || '',
@@ -25054,6 +25149,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         .stdout.trim();
     } catch { /* tolerated */ }
     const recordSelfUpdate = (record: Omit<import('../types.js').SelfUpdateRecord, 'timings'>): void => {
+      if (record.status === 'success' && ['noOp', 'web-only', 'doc-only'].includes(record.updateMode || '')) keepUpdate = true;
       stateService.recordSelfUpdate({
         ...record,
         timings: timingRecorder.snapshot(),
@@ -25206,6 +25302,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // tracking. self-update does this right; we were missing it.
       // Caught by Cursor Bugbot #450 round 7 (HIGH).
       send('checkout', 'running', `切换到 ${target} 分支...`);
+      checkpoint = await createSelfUpdateCheckpoint(selfMaintenance, maintenanceOwner, repoRoot);
       const checkoutResult = await checkoutSelfUpdateTarget(shell, repoRoot, target);
       if (!checkoutResult.ok) {
         const errMsg = checkoutResult.error || '未知错误';
@@ -25337,7 +25434,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         // 失败时 runInProcessWebBuild 会 sendSSE error + res.end + throw,
         // 我们用 try/catch 捕获,记录失败流水,直接 return(daemon 不重启)。
         try {
-          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
+          timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
         } catch (webBuildErr) {
           // runInProcessWebBuild 内部已经 send error + res.end,这里只补记流水。
           recordFailure(`web-only build 失败: ${(webBuildErr as Error).message}`);
@@ -25458,6 +25555,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         try {
           return await validateBuildReadiness(shell, cdsDir, {
             ...options,
+            onFirstFailure: () => selfMaintenance.requestStop(maintenanceOwner),
             onProgress: (event) => {
               validateHeartbeatLabel = event.message;
               sendSSE(res, 'validate-progress', {
@@ -25585,12 +25683,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // 主动清等于自废武功。**不**清 .tsbuildinfo,只清 dist.next/(上一次失败
       // 的孤儿)+ dist.old.*(rmSync 失败的孤儿)。
       send('cache', 'running', '清理孤儿目录(保留 .tsbuildinfo 让 tsc 走增量)…');
+      const backendCleanup = maintenanceArtifactCleanup(maintenanceOwner, 'backend');
       const removed: string[] = [];
+      const staleDirectories: string[] = [];
       // dist.next 残留(上次失败留下的)
       try {
         const next = path.join(cdsDir, 'dist.next');
         if (fs.existsSync(next)) {
-          fs.rmSync(next, { recursive: true, force: true });
+          staleDirectories.push(next);
           removed.push('dist.next/ (stale)');
         }
       } catch { /* tolerate */ }
@@ -25603,13 +25703,15 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         for (const name of entries) {
           if (name.startsWith('dist.old.')) {
             try {
-              fs.rmSync(path.join(cdsDir, name), { recursive: true, force: true });
+              staleDirectories.push(path.join(cdsDir, name));
               removed.push(`${name} (orphan)`);
             } catch { /* tolerate */ }
           }
         }
       } catch { /* tolerate */ }
-      send('cache', 'done', removed.length > 0 ? `已清: ${removed.join(', ')}` : '无缓存可清');
+      const staleRemoved = await backendCleanup.removeMany(staleDirectories);
+      send('cache', 'done', staleRemoved && removed.length > 0 ? `已清: ${removed.join(', ')}`
+        : staleDirectories.length > 0 ? '孤儿清理未完成，已保留原目录' : '无缓存可清');
 
       // 编译到 dist.next/,旧 dist/ 全程不动。
       // 用户反馈 2026-05-06:tsc 30-50s 太慢,改 esbuild + 按需并行 tsc --noEmit:
@@ -25641,6 +25743,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         );
       }
       const buildResults = await Promise.all(tasks).catch(async (error) => {
+        selfMaintenance.requestStop(maintenanceOwner);
         await Promise.allSettled(tasks);
         throw error;
       });
@@ -25650,14 +25753,14 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       timingRecorder.merge({ buildBackendMs: Date.now() - buildStartedAt });
       if (esbuildRes.exitCode !== 0) {
         const errMsg = combinedOutput(esbuildRes).slice(0, 1500);
-        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDir, 'dist.next'));
         send('build-backend', 'error', `esbuild 编译失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
         failWith('build', { raw: errMsg });
         return;
       }
       if (tscCheckRes && tscCheckRes.exitCode !== 0) {
         const errMsg = combinedOutput(tscCheckRes).slice(0, 1500);
-        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDir, 'dist.next'));
         send('build-backend', 'error', `tsc 类型检查失败(旧 dist 保留): ${errMsg.slice(0, 300)}`);
         failWith('typecheck', { raw: errMsg });
         return;
@@ -25671,7 +25774,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       );
       const nextEntry = path.join(cdsDir, 'dist.next', 'index.js');
       if (!fs.existsSync(nextEntry)) {
-        try { fs.rmSync(path.join(cdsDir, 'dist.next'), { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(path.join(cdsDir, 'dist.next'));
         send('build-backend', 'error', 'tsc 报成功但 dist.next/index.js 不存在（旧 dist 保留）');
         failWith('build', {
           message: '编译报告成功但没有产出可执行文件(dist.next/index.js 缺失)，已中止重启避免 CDS 起不来。',
@@ -25685,6 +25788,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const distOldPath = path.join(cdsDir, `dist.old.${swapTs}`);
       const distNextPath = path.join(cdsDir, 'dist.next');
       try {
+        backendCleanup.assertActive();
         if (fs.existsSync(distPath)) {
           fs.renameSync(distPath, distOldPath);
         }
@@ -25698,7 +25802,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           throw renameErr;
         }
         // 清理备份（保不保都不影响 cds 运行，rmSync 失败也忽略）
-        try { fs.rmSync(distOldPath, { recursive: true, force: true }); } catch { /* ignore */ }
+        await backendCleanup.remove(distOldPath);
         // 警告 Bugbot 2026-05-06 0c17e470:之前没人写 dist/.build-sha,
         // self-force-sync 顶部的 fast-path no-op 检测永远 false → 死代码。
         // swap 成功后**显式写**当前 commit 的 full SHA,下次同 commit 触发
@@ -25717,7 +25821,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // self-force-sync 走 daemon build_web(实测 production 不可靠),会复现
       // "已 force-sync 但前端没变"。与 self-update 共用 runInProcessWebBuild
       // helper 保证两端口行为一致。
-      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res));
+      timingRecorder.merge(await runInProcessWebBuild(newHead, send, res, shell, maintenanceOwner));
 
       // 同 self-update:默认不等排空;显式 drain=true 或 drainTimeoutMs>0 才等待。
       const drainStartedAt = Date.now();
@@ -25760,8 +25864,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       // Same durability requirement as /api/self-update: this code path
       // intentionally exits the daemon. Bound this flush so a stuck write-behind
-      // queue cannot leave old code running after dist/ has already been swapped.
-      await flushSelfUpdateStateBeforeRestart({
+      // queue cancels the handoff and restores the exact original artifacts.
+      const restartFlush = await flushSelfUpdateStateBeforeRestart({
         trigger: 'force-sync',
         branch: branch || target || '',
         fromSha,
@@ -25770,6 +25874,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         source: 'api.self-force-sync',
         onProgress: (status, title) => send('drain-deploys', status, title),
       }, maintenanceOwner);
+      await scheduleDetachedCdsRestart({ branchLabel: target, source: 'api.self-force-sync',
+        maintenanceOwner, preserveQueued: restartFlush === 'flushed', rollback: rollbackCheckpoint });
+      keepUpdate = true;
 
       // * 2026-05-06 双模式 self-update 出口:
       // 不论 hot 还是 cold,都通过 process.exit + systemd Restart 重启进程。
@@ -25794,11 +25901,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       });
       res.end();
 
-      scheduleDetachedCdsRestart({
-        branchLabel: target,
-        source: 'api.self-force-sync',
-        maintenanceOwner,
-      });
     } catch (err) {
       const catchDiagnosis = diagnoseSelfUpdateFailure({ stage: 'unknown', raw: (err as Error).message });
       if (!res.writableEnded) {
@@ -25818,6 +25920,16 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         raw: catchDiagnosis.raw,
       });
     } finally {
+      try {
+        if (keepUpdate) {
+          if (maintenanceOwner.restartScheduled) checkpoint?.retainForRestart();
+          else {
+            try { await checkpoint?.commit(); }
+            catch (error) { console.warn('[self-force-sync] 更新已保留，但恢复副本清理未确认', error); }
+          }
+        } else await rollbackCheckpoint();
+      }
+      catch (error) { recordFailure((error as Error).message); console.error('[self-force-sync] rollback failed', error); }
       // Bugbot 31da8d97 (HIGH):同 /self-update,兜底清 marker。
       stateService.clearSelfUpdateActive();
       if (!terminalStateCommitted) {
@@ -25825,7 +25937,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       }
     }
     } finally {
-      finishSelfMaintenance(maintenanceOwner);
+      if (maintenanceComplete) finishSelfMaintenance(maintenanceOwner);
     }
   });
 

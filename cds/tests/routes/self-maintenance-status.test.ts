@@ -12,6 +12,7 @@ import { WorktreeService } from '../../src/services/worktree.js';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor, ShellExecutor } from '../../src/services/shell-executor.js';
 import { IsolatedShellExecutor, OperationExecutionError } from '../../src/services/isolated-shell-executor.js';
+import { shellQuote } from '../../src/services/sidecar/sidecar-deployer.js';
 import { selfStatusCache } from '../../src/services/self-status-cache.js';
 import { endSelfUpdateDrain } from '../../src/services/deploy-drain.js';
 import { setRestartWait } from '../../src/services/self-restart-wait.js';
@@ -31,9 +32,12 @@ function deferred() {
 describe('真实服务器的维护占用观察入口', () => {
   let root: string, server: http.Server, state: StateService, operation: IsolatedShellExecutor;
   let cookie: string, armFirstGit: boolean, held: boolean;
-  let entered: ReturnType<typeof deferred>, release: ReturnType<typeof deferred>;
+  let entered: ReturnType<typeof deferred>;
   let requests: Promise<Reply>[], resourceClosers: Array<() => Promise<void>>;
   let maintenance: SelfMaintenanceRuntime;
+  function releaseFirstGit(): void {
+    fs.writeFileSync(path.join(root, 'release-first-git'), 'release');
+  }
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-maintenance-status-'));
@@ -45,9 +49,9 @@ describe('真实服务器的维护占用观察入口', () => {
     vi.stubEnv('CDS_REPO_ROOT', root); vi.stubEnv('CDS_PUBLIC_BASE_URL', 'http://127.0.0.1');
     state = new StateService(path.join(root, 'state.json'), root); state.load();
     requests = []; resourceClosers = []; cookie = ''; armFirstGit = false; held = false;
-    entered = deferred(); release = deferred();
+    entered = deferred();
 
-    // 这里只控制普通Git读取；不把MockShell的返回值冒充owned执行/物理停止回执。
+    // Git读值是本侧有限控制数据；维护通道仍用真实owned Node进程，不伪造assignment或停止。
     const reads = new MockShellExecutor();
     reads.addResponsePattern(/.*/, ([command]) => {
       if (command === 'git rev-parse --abbrev-ref HEAD') return ok('main');
@@ -61,13 +65,27 @@ describe('真实服务器的维护占用观察入口', () => {
     });
     operation = new IsolatedShellExecutor(new ShellExecutor(), { isolatedLane: 'operation' });
     const shell: IShellExecutor = {
-      async exec(command, options) {
-        if (armFirstGit && !held && command === 'git rev-parse --abbrev-ref HEAD') {
-          held = true; entered.resolve(); await release.promise;
-        }
-        return reads.exec(command, options);
+      exec: reads.exec.bind(reads),
+      async execOwnedOperation(command, options) {
+        const result = await reads.exec(command);
+        const hold = armFirstGit && !held && command === 'git rev-parse --abbrev-ref HEAD';
+        if (hold) held = true;
+        const finish = `process.stdout.write(${JSON.stringify(result.stdout)});process.stderr.write(${JSON.stringify(result.stderr)});process.exit(${result.exitCode});`;
+        const source = hold
+          ? `const fs=require('node:fs');process.stderr.write('fixture-first-git-held');const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(path.join(root, 'release-first-git'))})){clearInterval(timer);${finish}}},10);`
+          : finish;
+        let gateOutput = '';
+        return operation.execOwnedOperation(`${shellQuote(process.execPath)} --eval ${shellQuote(source)}`, {
+          ...options,
+          onData: (chunk, channel) => {
+            if (hold && channel === 'stderr') {
+              gateOutput += chunk;
+              if (gateOutput.includes('fixture-first-git-held')) entered.resolve();
+            }
+            options.onData?.(chunk, channel);
+          },
+        });
       },
-      execOwnedOperation: operation.execOwnedOperation.bind(operation),
       execBackgroundObservation: operation.execBackgroundObservation.bind(operation),
     };
     const config: CdsConfig = { repoRoot: root, worktreeBase: path.join(root, 'worktrees'),
@@ -97,7 +115,7 @@ describe('真实服务器的维护占用观察入口', () => {
   });
 
   afterEach(async () => {
-    release?.resolve();
+    if (root) releaseFirstGit();
     await Promise.allSettled(requests ?? []);
     await Promise.allSettled((resourceClosers ?? []).map(close => close()));
     await operation?.close();
@@ -157,7 +175,7 @@ describe('真实服务器的维护占用观察入口', () => {
         expect(second.id).toBe(first.id);
       }
     } finally {
-      release.resolve();
+      releaseFirstGit();
       const stopped = await restarting;
       expect(stopped.status).toBe(200);
       expect(stopped.raw).toContain('event: error');
