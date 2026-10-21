@@ -74,6 +74,7 @@ function makeBranches() {
     }),
     base('b-test', 'test', {
       status: 'running', services: services(22331, 'running'),
+      runningCommitSha: '1234567' + 'a'.repeat(33), targetCommitSha: '7654321' + 'b'.repeat(33),
       // 容器级复制集：三个容器各做了复制。标识与端口挤在同一条单行槽里，「+N」不能被挤出卡片。
       // 同时带「CI 失败」标记（极速版 CI 出镜像失败、旧版本仍在跑）：端口行最挤的情形，只剩一个端口名额。
       ciImageStatus: 'failed', ciWorkflowConclusion: 'failure', ciWorkflowRunUrl: 'https://github.com/example/actions/runs/1',
@@ -83,10 +84,12 @@ function makeBranches() {
       replicaSets: Object.fromEntries(['api', 'admin', 'web'].map((id) => [id, { enabled: true, members: [{ status: 'running' }, { status: 'running' }] }])),
       lastDeployAt: iso(-40 * MIN), lastAccessedAt: iso(-5 * MIN),
     }),
-    base('b-scan', 'codex/scan-risk-admin-fix-branch', {
+    base('b-scan', 'codex/stable-smoke-20261021-long-branch-name-card-overlap-regression', {
       status: 'error',
       services: services(22400, 'running', { api: { status: 'error', errorMessage: '就绪探测超时（120 秒内 /health 未返回 200）' } }),
-      errorMessage: 'imp-api-mdimp: 就绪探测超时（120 秒内 /health 未返回 200），旧版本已下线',
+      errorMessage: 'admin-prd-agent: 部署阶段等待超时，旧服务保持可用 llmgw-prd-agent: 部署阶段等待超时，旧服务保持可用 '.repeat(8),
+      targetCommitSha: '7df226a' + 'c'.repeat(33),
+      tags: ['固定尺寸卡片长标签不换行', '异常摘要省略', '中部版本信息'],
       lastAccessedAt: iso(-19 * MIN),
     }),
     base('b-edison', 'claude/beautiful-edison-mx81', {
@@ -112,6 +115,7 @@ function makeBranches() {
       deployEstimate: { releaseMedianMs: 370_000, releaseSamples: 8, sourceMedianMs: null, sourceSamples: 0 },
     }),
     base('b-relaxed', 'claude/relaxed-brown-hcib', {
+      runningCommitSha: 'abcdef0' + 'd'.repeat(33), targetCommitSha: 'abcdef0' + 'd'.repeat(33),
       status: 'idle', services: services(24300, 'stopped'),
       lastStopSource: 'webhook', lastStopReason: 'GitHub webhook 触发停止', lastStoppedAt: iso(-15 * 60 * MIN),
       lastDeployAt: iso(-16 * 60 * MIN),
@@ -283,6 +287,8 @@ async function main() {
       for (const f of await footerTruncation(page)) {
         check(!f.clipped, `[${theme}] ${f.id} 页脚构建文字没被截断：「${f.text}」`);
       }
+      const sameVersion = await page.textContent('[data-branch-card-id="b-relaxed"] [data-card-versions]');
+      check(/运行 abcdef0/.test(sameVersion || '') && !/目标/.test(sameVersion || ''), `[${theme}] 运行与目标一致时只展示运行版本`);
       await page.screenshot({ path: path.join(OUT, `grid-${theme}.png`), fullPage: true });
 
       // 复制集标识 + 端口 + 「+N」同在一条单行槽：各档视口宽度下「+N」都要完整落在卡片里、点得到。
@@ -302,11 +308,48 @@ async function main() {
           return {
             cardW: Math.round(c.width),
             inside: inside(btn)
-              && inside(card.querySelector('button[aria-label^="CI 构建失败"]'))
+              && inside(card.querySelector('button[aria-label^="新版本 CI 失败"]'))
               && inside(infra)
               && inside(card.querySelector('[data-drift-chip]')),
           };
         });
+        const geometry = await page.$$eval('[data-branch-card-id]', (cards) => cards.map((card) => {
+          const c = card.getBoundingClientRect();
+          const footer = card.querySelector('footer');
+          const f = footer.getBoundingClientRect();
+          const info = card.querySelector('[data-card-info]');
+          const i = info.getBoundingClientRect();
+          const actions = [...footer.querySelectorAll('button')];
+          const actionRects = actions.map((button) => button.getBoundingClientRect());
+          const summary = card.querySelector('[data-card-error-summary]');
+          const versions = card.querySelector('[data-card-versions]');
+          const singleLine = (el) => !el || (getComputedStyle(el).whiteSpace === 'nowrap'
+            && el.clientHeight <= parseFloat(getComputedStyle(el).lineHeight) + 1);
+          return {
+            id: card.getAttribute('data-branch-card-id'),
+            fixedHeight: Math.abs(c.height - parseFloat(getComputedStyle(document.documentElement).fontSize) * 15.25) <= 1,
+            infoInside: i.top >= c.top && i.bottom <= f.top + 1 && i.right <= c.right,
+            footerInside: f.bottom <= c.bottom && f.top > i.top,
+            footerOnlyActions: actions.length === 2 && actions.map((b) => b.textContent.trim()).join('|') === '日志|部署'
+              && !footer.querySelector('[data-card-versions], [data-footer-status]'),
+            actionsFit: actionRects.every((r) => r.left >= c.left && r.right <= c.right && r.top >= f.top && r.bottom <= f.bottom)
+              && actionRects[0].right <= actionRects[1].left,
+            summarySingleLine: singleLine(summary),
+            versionsSingleLine: !versions || [...versions.children].every(singleLine),
+          };
+        }));
+        const broken = geometry.filter((g) => !g.fixedHeight || !g.infoInside || !g.footerInside || !g.footerOnlyActions
+          || !g.actionsFit || !g.summarySingleLine || !g.versionsSingleLine);
+        check(broken.length === 0, `[${theme}] ${vw}px 固定卡高、中部单行、页脚仅头像与日志/部署且无覆盖${broken.length ? ': ' + JSON.stringify(broken) : ''}`);
+        const versionChecks = await page.$eval('[data-branch-card-id="b-scan"]', (card) => {
+          const versions = card.querySelector('[data-card-versions]');
+          const summary = card.querySelector('[data-card-error-summary]');
+          return Boolean(versions && !versions.closest('footer') && versions.textContent.includes('运行 未确认')
+            && versions.textContent.includes('目标 7df226a') && summary.scrollWidth > summary.clientWidth
+            && getComputedStyle(summary).textOverflow === 'ellipsis');
+        });
+        check(versionChecks, `[${theme}] ${vw}px 长报错省略、未知运行版本与目标版本在中部独立显示`);
+        if (vw === 390) await shotCard(page, 'b-scan', `error-card-${theme}-390.png`);
         if (vw === 1000) await shotCard(page, 'b-test', `port-row-markers-${theme}-${vw}.png`);
         check(Boolean(fit && fit.inside), `[${theme}] 视口 ${vw}px（卡宽 ${fit?.cardW ?? '?'}px）复制集 / CI 失败 / 基础设施异常 / 漂移四种标记都在时，它们与「+N」都完整落在卡内`);
       }
@@ -440,6 +483,8 @@ async function main() {
         // 60 秒后：「刚部署成功」退场，页脚换回提交信息。
         const remain = 61_500 - (Date.now() - finishedAt);
         if (remain > 0) await page.waitForTimeout(remain);
+        // 收尾计时从卡片进入视野起算；负载高时 DOM 推进可能晚几帧，等真实退场再取证。
+        await page.waitForFunction(() => document.querySelector('[data-branch-card-id="b-ident"]')?.getAttribute('data-deploy-phase') === null, null, { timeout: 10000 });
         await shotCard(page, 'b-ident', 'finish-6-after-60s.png');
         const settledPhase = await page.getAttribute('[data-branch-card-id="b-ident"]', 'data-deploy-phase');
         check(settledPhase === null, `60 秒后收尾态退场（实际 data-deploy-phase=${settledPhase}）`);
