@@ -279,6 +279,71 @@ describe('CDS 可撤销重启交接', () => {
     expect(runtime.finish(owner)).toBe(true);
   });
 
+  it('延迟产物保存保留早期Git身份，保存成功后仍恢复全部五目录', async () => {
+    const { root, git, sha, oldFiles } = gitFixture(true);
+    const { runtime, dispatches } = realCheckpointRuntime(root);
+    const owner = runtime.acquire({ source: 'self-update', actor: 'fixture-late-capture' })!;
+    const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root, { deferArtifacts: true });
+    expect(dispatches).toEqual([]); expect(fs.existsSync(path.join(root, 'cds/.cds'))).toBe(false);
+    expect(() => checkpoint.retainForRestart()).toThrow('尚未确认');
+    git('checkout', '-b', 'after'); fs.writeFileSync(path.join(root, 'source.txt'), 'new source');
+    git('add', 'source.txt'); git('commit', '-m', '测试晚期产物保护');
+    expect(git('rev-parse', 'HEAD')).not.toBe(sha);
+    await checkpoint.captureArtifacts(); await checkpoint.captureArtifacts();
+    expect(dispatches.map(job => job.action)).toEqual(['snapshot']);
+    for (const [file] of oldFiles) fs.writeFileSync(path.join(root, file), 'new bytes');
+    await checkpoint.rollback(); await checkpoint.rollback();
+    expect(git('rev-parse', 'HEAD')).toBe(sha); expect(git('branch', '--show-current')).toBe('before');
+    expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toBe('old source');
+    for (const [file, content] of oldFiles) expect(fs.readFileSync(path.join(root, file), 'utf8')).toBe(content);
+    expect(dispatches.map(job => job.action)).toEqual(['snapshot', 'restore', 'discard']);
+    expect(fs.readdirSync(path.join(root, 'cds/.cds'))).toEqual([]);
+    expect(runtime.finish(owner)).toBe(true); expect(runtime.observe()).toBeNull();
+  });
+
+  it('晚期真实复制拒绝后丢弃局部副本不结束源码保护，也不恢复未确认的五目录', async () => {
+    const { root, git, sha, oldFiles } = gitFixture(true);
+    const { runtime, dispatches } = realCheckpointRuntime(root);
+    const owner = runtime.acquire({ source: 'self-force-sync', actor: 'fixture-late-copy-failure' })!;
+    const checkpoint = await createSelfUpdateCheckpoint(runtime, owner, root, { deferArtifacts: true });
+    expect(dispatches).toEqual([]); expect(fs.existsSync(path.join(root, 'cds/.cds'))).toBe(false);
+    git('checkout', '-b', 'after'); fs.writeFileSync(path.join(root, 'source.txt'), 'new source');
+    git('add', 'source.txt'); git('commit', '-m', '测试晚期复制故障源码');
+    expect(git('rev-parse', 'HEAD')).not.toBe(sha);
+    const unreadable = path.join(root, 'cds/node_modules/fixture.js');
+    const mode = fs.statSync(unreadable).mode & 0o777;
+    const results: Array<{ action: string; exitCode: number; stderr: string }> = [];
+    const execute = runtime.exec.bind(runtime);
+    const observe = vi.spyOn(runtime, 'exec').mockImplementation(async (ticket, command, options, recovery) => {
+      const result = await execute(ticket, command, options, recovery);
+      if (/self-maintenance-files-process\.(ts|js)/.test(command)) {
+        const input = JSON.parse(options?.stdin || '{}') as { action: string };
+        results.push({ action: input.action, exitCode: result.exitCode, stderr: result.stderr });
+      }
+      return result;
+    });
+    try {
+      fs.chmodSync(unreadable, 0o000);
+      expect(() => fs.readFileSync(unreadable)).toThrow(expect.objectContaining({ code: 'EACCES' }));
+      await expect(checkpoint.captureArtifacts()).rejects.toThrow('维护文件操作未完成');
+      // worker按既有合同只输出安全文案；EACCES由上面的真实文件读取证明，不要求泄露原始异常。
+      expect(results[0]).toEqual({ action: 'snapshot', exitCode: 1,
+        stderr: 'CDS 维护文件操作未完成，已保留可用恢复点，请核对维护状态。' });
+      expect(results[1]).toMatchObject({ action: 'discard', exitCode: 0 });
+      expect(runtime.observe()).toMatchObject({ id: owner.id, stopRequested: true,
+        activeJobCount: 0, unconfirmedJobCount: 0 });
+      expect(git('branch', '--show-current')).toBe('after');
+      fs.chmodSync(unreadable, mode);
+      await checkpoint.rollback(); await checkpoint.rollback();
+      expect(git('rev-parse', 'HEAD')).toBe(sha); expect(git('branch', '--show-current')).toBe('before');
+      expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toBe('old source');
+      for (const [file, content] of oldFiles) expect(fs.readFileSync(path.join(root, file), 'utf8')).toBe(content);
+      expect(dispatches.map(job => job.action)).toEqual(['snapshot', 'discard']);
+      expect(fs.readdirSync(path.join(root, 'cds/.cds'))).toEqual([]);
+      expect(runtime.finish(owner)).toBe(true); expect(runtime.observe()).toBeNull();
+    } finally { fs.chmodSync(unreadable, mode); observe.mockRestore(); }
+  });
+
   it.each(['git', 'nginx'] as const)('真实%s恢复失败后仍观察同票，二次确认不重复替换已恢复目录', async failure => {
     const { root, git, sha, oldFiles } = gitFixture(true);
     const { runtime, dispatches } = realCheckpointRuntime(root);

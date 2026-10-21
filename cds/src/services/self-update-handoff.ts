@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { spawn } from 'node:child_process';
 import type { Writable } from 'node:stream';
-import type { SelfMaintenanceRuntime, SelfMaintenanceOwner } from './self-maintenance-runtime.js';
+import type { SelfMaintenanceRuntime, SelfMaintenanceOwner, SelfMaintenanceCheckpoint } from './self-maintenance-runtime.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 
 export const CDS_RESTART_PERMIT_COMMAND = 'IFS= read -r permit <&3 && [ "$permit" = restart ] && exec bash ./exec_cds.sh daemon';
@@ -33,35 +33,48 @@ export function prepareDetachedCdsRestart(spawnProcess: typeof spawn, cwd: strin
 
 /** 独立副本包含产物及依赖；产物去引用，pnpm符号链保留原链接，不使用硬链接或重签SHA。 */
 export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime, owner: SelfMaintenanceOwner,
-  repoRoot: string) {
+  repoRoot: string, captureOptions: { deferArtifacts?: boolean } = {}) {
   const options = { cwd: repoRoot, timeout: 30_000 };
   const sha = (await runtime.exec(owner, 'git rev-parse HEAD', options)).stdout.trim();
   const branchResult = await runtime.exec(owner, 'git symbolic-ref --quiet --short HEAD', options);
   if (!/^[0-9a-f]{40}$/i.test(sha) || branchResult.exitCode > 1) throw new Error('无法保存 CDS 原版本，已停止更新。');
   const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : '';
   const cdsDir = path.join(repoRoot, 'cds');
-  const checkpoint = runtime.prepareCheckpoint(owner);
-  let finished = false, artifactsRestored = false;
-  const commit = async () => {
-    if (finished) return;
-    try { await runtime.files(owner, 'discard', checkpoint); }
+  let checkpoint: SelfMaintenanceCheckpoint | undefined;
+  let finished = false, artifactsSaved = false, artifactsRestored = false, discarded = false;
+  const discard = async () => {
+    if (!checkpoint || discarded) return;
+    try { await runtime.files(owner, 'discard', checkpoint); discarded = true; }
     catch (error) {
       // 清理失败不能反向回滚已保持的新代或二次破坏已恢复的五目录；unknown仍由runtime持票。
       console.warn(`[self-update] 恢复副本清理未确认，未将其记作已删除：${checkpoint.backupPath}`, error);
     }
-    finished = true;
   };
-  try {
-    await runtime.files(owner, 'snapshot', checkpoint);
-  } catch (error) {
-    runtime.requestStop(owner);
-    await commit();
-    throw error;
-  }
+  const commit = async () => {
+    if (finished) return;
+    await discard(); finished = true;
+  };
+  // Git身份必须在checkout/reset前取得；五目录只在实际改产物/依赖前保存。
+  const captureArtifacts = async () => {
+    if (finished) throw new Error('CDS 版本恢复保护已经结束，已停止保存产物。');
+    if (artifactsSaved) return;
+    if (checkpoint) throw new Error('CDS 产物恢复点未完整保存，已停止重复保存。');
+    checkpoint = runtime.prepareCheckpoint(owner);
+    try {
+      await runtime.files(owner, 'snapshot', checkpoint); artifactsSaved = true;
+    } catch (error) {
+      runtime.requestStop(owner);
+      // discard只处置未完成副本，不结束Git保护；晚期失败仍须恢复早期源码身份。
+      await discard(); throw error;
+    }
+  };
+  if (!captureOptions.deferArtifacts) await captureArtifacts();
   return {
-    commit,
+    commit, captureArtifacts,
     retainForRestart() {
-      if (!owner.restartScheduled) throw new Error('CDS 重启许可尚未确认，不能结束版本恢复保护。');
+      if (!owner.restartScheduled || !artifactsSaved || !checkpoint) {
+        throw new Error('CDS 重启许可或产物恢复点尚未确认，不能结束版本恢复保护。');
+      }
       // permit写出后新daemon可立即启动；此处绝不派发深删或借用旧一秒退出窗口。
       finished = true;
       console.warn(`[self-update] 重启已交接，安全恢复副本保留待清理：${checkpoint.backupPath}`);
@@ -69,13 +82,15 @@ export async function createSelfUpdateCheckpoint(runtime: SelfMaintenanceRuntime
     async rollback() {
       if (finished) return;
       runtime.requestStop(owner);
-      if (!artifactsRestored) {
-        const receipt = await runtime.files(owner, 'restore', checkpoint);
+      if (artifactsSaved && !artifactsRestored) {
+        const receipt = await runtime.files(owner, 'restore', checkpoint!);
         artifactsRestored = receipt.artifactsRestored;
       }
       const restored = await runtime.exec(owner, branch
         ? `git checkout -f -B ${shellQuote(branch)} ${sha}` : `git checkout -f --detach ${sha}`, options, true);
-      if (restored.exitCode !== 0) throw new Error('CDS 产物已恢复，但源码恢复失败；已停止更新，请检查控制面工作树。');
+      if (restored.exitCode !== 0) throw new Error(artifactsSaved
+        ? 'CDS 产物已恢复，但源码恢复失败；已停止更新，请检查控制面工作树。'
+        : 'CDS 源码恢复失败；已停止更新，请检查控制面工作树。');
       const rendered = await runtime.exec(owner, './exec_cds.sh nginx-render', { cwd: cdsDir, timeout: 15_000 }, true);
       if (rendered.exitCode !== 0) throw new Error('CDS 原版本已恢复，但入口配置恢复失败；请检查 CDS 系统日志。');
       await commit();

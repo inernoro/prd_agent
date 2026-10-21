@@ -56,6 +56,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
   let requests: Promise<Reply>[], executions: Promise<ExecResult>[], gates: ReturnType<typeof deferred>[];
   let logFds: Set<number>;
   let realArtifactDeletes: boolean, artifactDeletePaths: Set<string>;
+  let realNoopGitEnv: Record<string, string> | undefined;
   let ownedDeletes: Array<{ ownerId: string | null; assignment?: ExecAssignment; result: ExecResult;
     removed: string[]; timeout?: number }>;
   function gate() { const value = deferred(); gates.push(value); return value; }
@@ -67,6 +68,7 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     fs.writeFileSync(path.join(root, 'cds/dist/index.js'), 'old backend');
     fullWorkflow = false; transport = undefined; requests = []; executions = []; gates = []; logFds = new Set();
     realArtifactDeletes = false; artifactDeletePaths = new Set(); ownedDeletes = [];
+    realNoopGitEnv = undefined;
     permitWrites = []; childExitCode = undefined; permitWrite = undefined; pipeClose = undefined;
     tearingDown = false; pendingDelays = [];
     vi.stubEnv('CDS_PREVIEW_INSTANCE', '0');
@@ -121,6 +123,10 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
     // 旧Mock命令只作受控控制流/分类，不伪造assignment或物理停止；五目录交给真实owned worker。
     const controlledShell: IShellExecutor = { exec: shell.exec.bind(shell), execOwnedOperation: async (cmd, options) => {
       if (/self-maintenance-files-process\.(ts|js)/.test(cmd)) return filesPool.execOwnedOperation(cmd, options);
+      // 仅noOp代表例开启；Git命令原样经真实owned进程执行，不让Mock伪造checkout/reset。
+      if (realNoopGitEnv && cmd.startsWith('git ')) {
+        return filesPool.execOwnedOperation(cmd, { ...options, env: { ...options.env, ...realNoopGitEnv } });
+      }
       // 仅产物I/O代表例启用固定系统rm；Git/build/Docker仍由原Mock控制，绝不执行它们。
       if (realArtifactDeletes && /^(?:\/bin\/)?rm -rf -- /.test(cmd)) {
         // 只接受原shellQuote形状及本fixture有限产物路径，不给真实OS透传任意删除目标。
@@ -258,6 +264,107 @@ describe('同实例四入口维护准入与真实请求完成条件', () => {
       expect.soft(ownedDeletes.some(receipt => receipt.removed.includes(target)), target).toBe(true);
     }
   }
+
+  it.each(['self-update', 'self-force-sync'] as const)('%s真实同SHA与dirty源码仍对齐目标，noOp不创建五目录快照或删除任务', async endpoint => {
+    const env = { PATH: '/usr/bin:/bin', LANG: 'C', LC_ALL: 'C', TZ: 'UTC', GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: '/dev/null', GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0',
+      GIT_SSH_COMMAND: '/usr/bin/false', GIT_ALLOW_PROTOCOL: 'file' };
+    const git = (args: string[]) => execFileSync('/usr/bin/git', ['-C', root, ...args], {
+      env, encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    git(['init', '--quiet', '--initial-branch=before']);
+    fs.writeFileSync(path.join(root, '.gitignore'), '/state.json*\n/.cds/\n/cds/\n');
+    fs.writeFileSync(path.join(root, 'tracked.txt'), 'committed tracked\n');
+    git(['add', '--', '.gitignore', 'tracked.txt']);
+    git(['-c', 'user.name=本轮Git夹具', '-c', 'user.email=owned-fixture@example.test',
+      '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', '无变化更新夹具基线']);
+    const head = git(['rev-parse', 'HEAD']);
+    git(['branch', 'main', head]);
+    git(['remote', 'add', 'origin', root]);
+    git(['update-ref', 'refs/remotes/origin/main', head]);
+    // origin仅指向本fixture自身；真实fetch走本地file传输，禁止外部网络协议。
+    expect(git(['remote', 'get-url', 'origin'])).toBe(root);
+    expect(git(['rev-parse', 'main'])).toBe(head);
+    expect(git(['rev-parse', 'origin/main'])).toBe(head);
+    expect(git(['symbolic-ref', '--quiet', '--short', 'HEAD'])).toBe('before');
+    fs.writeFileSync(path.join(root, 'tracked.txt'), 'staged dirty\n');
+    git(['add', '--', 'tracked.txt']);
+    fs.writeFileSync(path.join(root, 'tracked.txt'), 'unstaged dirty after staging\n');
+    expect(git(['status', '--porcelain=v1', '--untracked-files=all'])).toBe('MM tracked.txt');
+    const files = new Map([
+      ['dist/index.js', 'original backend\n'], ['dist/.build-sha', head],
+      ['web/dist/index.html', '<html>original web</html>\n'], ['web/dist/.build-sha', head],
+      ['web/dist.previous/previous.js', 'original previous web\n'],
+      ['node_modules/fixture.js', 'original backend dependency\n'],
+      ['node_modules/.cds-install-stamp', 'original backend install stamp\n'],
+      ['web/node_modules/fixture.js', 'original web dependency\n'],
+      ['web/node_modules/.cds-install-stamp', 'original web install stamp\n'],
+    ]);
+    const cds = path.join(root, 'cds');
+    for (const [relative, value] of files) {
+      const file = path.join(cds, relative);
+      fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, value);
+    }
+    for (const relative of ['dist', 'web/dist', 'web/dist.previous', 'node_modules', 'web/node_modules']) {
+      expect(fs.statSync(path.join(cds, relative)).isDirectory()).toBe(true);
+    }
+    expect(fs.existsSync(path.join(cds, 'dist/.build-error'))).toBe(false);
+    expect(fs.existsSync(path.join(cds, 'web/dist/.build-error'))).toBe(false);
+    type Dispatch = { command: string; action?: string; ownerId: string | null;
+      assignment?: ExecAssignment; exitCode?: number };
+    const gitJobs: Dispatch[] = [], fileJobs: Dispatch[] = [];
+    const execute = filesPool.execOwnedOperation.bind(filesPool);
+    vi.spyOn(filesPool, 'execOwnedOperation').mockImplementation(async (command, options) => {
+      const worker = /self-maintenance-files-process\.(ts|js)/.test(command);
+      const input = worker ? JSON.parse(options.stdin || '{}') as { action: string; ownerId: string } : undefined;
+      const dispatch: Dispatch = { command, action: input?.action, ownerId: maintenance.observe()?.id ?? null };
+      if (input) {
+        expect(input.ownerId).toBe(dispatch.ownerId); fileJobs.push(dispatch);
+      } else {
+        expect(command.startsWith('git ')).toBe(true); gitJobs.push(dispatch);
+      }
+      const result = await execute(command, { ...options, onAssigned: assignment => {
+        dispatch.assignment = { ...assignment }; options.onAssigned?.(assignment);
+      } });
+      dispatch.exitCode = result.exitCode;
+      return result;
+    });
+    const backupPrefix = path.join(fs.realpathSync(root), 'cds/.cds/restart-rollback-');
+    const backup = vi.spyOn(fs, 'mkdtempSync');
+    realNoopGitEnv = env;
+    const trace = getHttpFixtureTrace(server)!;
+    const arrivalCount = trace.arrivals.length;
+    const reply = await post(endpoint, { branch: 'main', force: false, drainTimeoutMs: 0 });
+    // HTTP结束不冒充业务finally完成；沿原it预算等同票清理真实终态，不增加时间预算。
+    while (maintenance.observe() !== null) await nextTurn();
+    expect(reply.status).toBe(200);
+    expect(reply.raw).toContain('event: done');
+    expect(reply.raw).toMatch(/"step"\s*:\s*"no-op"/);
+    expect(reply.raw).toMatch(/"mode"\s*:\s*"noOp"/);
+    expect(reply.raw).not.toContain('event: error');
+    expect(trace.arrivals.slice(arrivalCount)).toEqual([expect.objectContaining({ method: 'POST',
+      url: '/api/' + endpoint, localAddress: '127.0.0.1', status: 200 })]);
+    expect(git(['rev-parse', 'HEAD'])).toBe(head);
+    expect(git(['symbolic-ref', '--quiet', '--short', 'HEAD'])).toBe('main');
+    expect(git(['status', '--porcelain=v1', '--untracked-files=all'])).toBe('');
+    expect(git(['show', ':tracked.txt'])).toBe('committed tracked');
+    expect(fs.readFileSync(path.join(root, 'tracked.txt'), 'utf8')).toBe('committed tracked\n');
+    expect(gitJobs.some(job => job.command === 'git checkout -f main')).toBe(true);
+    expect(gitJobs.some(job => job.command === 'git reset --hard origin/main')).toBe(endpoint === 'self-force-sync');
+    for (const job of [...gitJobs, ...fileJobs]) {
+      expect(job.exitCode).toBe(0); expect(job.ownerId).not.toBeNull();
+      expect(job.assignment).toMatchObject({ lane: 'operation' });
+      expect(Number.isSafeInteger(job.assignment?.actorPid) && job.assignment!.actorPid! > 1).toBe(true);
+      expect(job.assignment?.actorPid).not.toBe(process.pid);
+    }
+    for (const [relative, value] of files) expect(fs.readFileSync(path.join(cds, relative), 'utf8')).toBe(value);
+    expect(permitWrites).toEqual([]); expect(restartSpawn).not.toHaveBeenCalled();
+    expect(process.exit).not.toHaveBeenCalled();
+    expect(state.getSelfUpdateHistory(1)[0]).toMatchObject({ status: 'success', updateMode: 'noOp', noOp: true });
+    // 旧b7应仅在以下工作量断言语义RED：已成功noOp却先snapshot再discard并创建过备份。
+    expect.soft(fileJobs.map(job => job.action)).toEqual([]);
+    expect.soft(backup.mock.calls.filter(([name]) => String(name).startsWith(backupPrefix))).toEqual([]);
+  });
 
   it.each([
     ['self-update', 'fetch'], ['self-force-sync', 'fetch'],
