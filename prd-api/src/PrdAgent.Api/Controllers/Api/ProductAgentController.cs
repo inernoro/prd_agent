@@ -1474,7 +1474,8 @@ public class ProductAgentController : ControllerBase
         if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
                 ProductVersionClaimPolicy.ReleaseKey(claimApplicationName, item.TCode!), "release:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
-        item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id);
+        item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id,
+            string.IsNullOrWhiteSpace(initiation?.LinkedProductId) ? productId : initiation.LinkedProductId);
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(item));
     }

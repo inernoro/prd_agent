@@ -44,7 +44,8 @@ public static class ProductInitiationIssuance
 
         var target = "initiation:" + id;
         // 结果不明确后的重试沿用该记录已占用的编号，不释放或重用编号。
-        var code = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(db, "T", item.VersionType, target);
+        var code = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(db, "T", item.VersionType, target,
+            string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId);
 
         var update = Builders<ProductInitiation>.Update.Set(x => x.TCode, code).Set(x => x.Status, "approved")
             .Set(x => x.RequirementSyncPending, true).Set(x => x.UpdatedAt, DateTime.UtcNow);
