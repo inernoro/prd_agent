@@ -129,7 +129,11 @@ describe('PPT 文档导航就绪合同', () => {
     expect(source).toContain("d.type === 'map-ppt-html' && typeof d.html === 'string' && isPreviewableDeck(d.html)");
     expect(source).toContain('editedHtmlRef.current && isPreviewableDeck(editedHtmlRef.current)');
     expect(source).toContain('!isPreviewableDeck(editedHtml) || !activeRunId');
-    expect(source).toContain('!run || !run.html || !isPreviewableDeck(run.html)');
+    expect(source).toContain("const completedHtml = run?.status === 'done'");
+    expect(source).toContain('&& run.html && isPreviewableDeck(run.html)');
+    expect(source).toContain("const failedPreviewHtml = run?.status === 'error'");
+    expect(source).toContain('&& run.latestPreviewHtml');
+    expect(source).toContain('setRepairableRunId(!isCompleted && isRestartablePresentationQualityRun(run) ? run.id : \'\')');
     expect(source).toContain('if (!isPreviewableDeck(base))');
     expect(source.match(/looksLikeDeck\(/g)).toHaveLength(2);
   });

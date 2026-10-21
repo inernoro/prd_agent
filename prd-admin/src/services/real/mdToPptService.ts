@@ -761,6 +761,7 @@ export interface MdToPptRunDetail {
     contentHash: string;
   }>;
   error?: string | null;
+  errorCode?: string | null;
   model?: string | null;
   platform?: string | null;
   resolvedModels?: string[];
@@ -789,6 +790,7 @@ export interface MdToPptRunSummary {
   title: string;
   contentPreview: string;
   hasHtml: boolean;
+  errorCode?: string | null;
   model?: string | null;
   platform?: string | null;
   resolvedModels?: string[];

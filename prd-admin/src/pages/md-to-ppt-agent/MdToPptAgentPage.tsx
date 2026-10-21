@@ -78,6 +78,14 @@ export function isRestartablePresentationQualityRun(run: PresentationQualityFail
     && (errorCode === 'design_output_quality_rejected' || errorCode === 'design_browser_quality_rejected');
 }
 
+export function isOpenableHistoryRun(run: MdToPptRunSummary): boolean {
+  if (run.hasHtml) return true;
+  if (run.status !== 'error' || run.runtime !== 'open-design' || run.op !== 'convert') return false;
+  return run.errorCode === 'design_output_quality_rejected'
+    || run.errorCode === 'design_browser_quality_rejected'
+    || run.errorCode === 'open_design_run_failed';
+}
+
 export function buildPptRepairIdempotencyKey(sourceRunId: string): string {
   return `mdppt-repair:${sourceRunId}`;
 }
@@ -3341,15 +3349,25 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const run = await getMdToPptRun(summary.id);
       if (!mountedRef.current) return;
       setHistoryOpeningId(null);
-      if (!run || !run.html || !isPreviewableDeck(run.html)) {
+      const completedHtml = run?.status === 'done' && run.html && isPreviewableDeck(run.html)
+        ? run.html
+        : '';
+      const failedPreviewHtml = run?.status === 'error'
+        && run.latestPreviewHtml
+        && isPreviewableDeck(run.latestPreviewHtml)
+        ? run.latestPreviewHtml
+        : '';
+      if (!run || (!completedHtml && !failedPreviewHtml)) {
         pushMsg({ role: 'assistant', content: `历史记录「${summary.title || '未命名'}」没有可用的 PPT 产物（状态：${run?.status ?? '未知'}）。`, phase: 'error' });
         return;
       }
-      // 载入为当前产物：可继续对话精修 / 编辑 / 换风格 / 发布
-      setGeneratedHtml(run.html);
-      setArtifactSiteUrl(run.siteUrl ?? '');
+      const isCompleted = Boolean(completedHtml);
+      setGeneratedHtml(completedHtml || failedPreviewHtml);
+      setArtifactSiteUrl(isCompleted ? (run.siteUrl ?? '') : '');
       setActiveRunId(run.id);
-      setArtifactPhase('done');
+      setArtifactPhase(isCompleted ? 'done' : 'error');
+      setRepairableRunId(!isCompleted && isRestartablePresentationQualityRun(run) ? run.id : '');
+      if (!isCompleted) hasRuntimePreviewRef.current = true;
       setPublishedUrl('');
       setEditMode(false);
       setDirtyEdits(false);
@@ -3360,8 +3378,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       setShowHistory(false);
       pushMsg({
         role: 'assistant',
-        content: `已载入历史生成「${run.title || '未命名 PPT'}」（${new Date(run.createdAt).toLocaleString()}）。可以继续对话精修、编辑内容、换风格或发布。`,
-        phase: 'text',
+        content: isCompleted
+          ? `已载入历史生成「${run.title || '未命名 PPT'}」（${new Date(run.createdAt).toLocaleString()}）。可以继续对话精修、编辑内容、换风格或发布。`
+          : `已载入历史失败任务「${run.title || '未命名 PPT'}」的只读初稿。它尚未通过检查，不能编辑或发布。`,
+        phase: isCompleted ? 'text' : 'error',
       });
     },
     [isProcessing, historyOpeningId, pushMsg]
@@ -5560,12 +5580,18 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   还没有历史生成。左侧发个需求，生成的每一份 PPT 都会留在这里，随时回来继续改。
                 </div>
               )}
-              {!historyLoading && historyRuns.map((r) => (
-                <button
+              {!historyLoading && historyRuns.map((r) => {
+                const openable = isOpenableHistoryRun(r);
+                return (
+                  <button
                   key={r.id}
                   onClick={() => void loadHistoryRun(r)}
-                  disabled={!r.hasHtml || historyOpeningId != null}
-                  title={r.hasHtml ? '载入这份 PPT 继续精修/编辑/发布' : '该次运行没有产物（' + r.status + '）'}
+                  disabled={!openable || historyOpeningId != null}
+                  title={r.hasHtml
+                    ? '载入这份 PPT 继续精修/编辑/发布'
+                    : openable
+                      ? '查看该次失败任务保留的只读初稿'
+                      : '该次运行没有可用的 PPT 产物（' + r.status + '）'}
                   className="w-full flex items-center gap-3 px-4 py-3 hover-bg-soft border-b border-token-subtle text-left disabled:opacity-45"
                 >
                   {historyOpeningId === r.id ? (
@@ -5594,8 +5620,9 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                       {new Date(r.createdAt).toLocaleString()}
                     </div>
                   </div>
-                </button>
-              ))}
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>,
