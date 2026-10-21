@@ -1362,15 +1362,15 @@ function branchIssueLabel(branch: BranchSummary, projectProfileIds: ReadonlySet<
 function branchIssueClass(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): string {
   const category = branchIssueCategory(branch, projectProfileIds);
   if (category === 'cds-runtime') {
-    return 'border-destructive/40 bg-destructive/15 text-destructive font-semibold';
+    return 'border-destructive/15 bg-destructive/[0.035] text-bad font-medium';
   }
   if (category === 'app-code') {
-    return 'border-warn/45 bg-warn-soft text-warn font-semibold';
+    return 'border-warn/15 bg-warn/[0.035] text-[hsl(var(--warn-ink))] font-medium';
   }
   if (category === 'deploy-config') {
-    return 'border-warn/45 bg-warn-soft text-warn font-semibold';
+    return 'border-warn/15 bg-warn/[0.035] text-[hsl(var(--warn-ink))] font-medium';
   }
-  return 'border-muted-foreground/30 bg-muted/30 text-muted-foreground font-semibold';
+  return 'border-[hsl(var(--hairline))] bg-muted/20 text-muted-foreground font-medium';
 }
 
 function branchIssueRailClass(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): string {
@@ -1381,20 +1381,13 @@ function branchIssueRailClass(branch: BranchSummary, projectProfileIds: Readonly
   return 'bg-muted-foreground/40';
 }
 
-// 错误卡片整体描边/底色/光晕 —— 必须与 badge/rail 同一 category 配色,
-// 否则胶囊显橙(deploy-config)/灰(unknown)而卡片边框还是琥珀,视觉割裂。
+// 异常卡保留分类色的细描边，状态集中在提醒条；阴影使用中性色，避免整卡泛红或泛黄。
 function branchIssueCardClass(branch: BranchSummary, projectProfileIds: ReadonlySet<string> | null = null): string {
   const category = branchIssueCategory(branch, projectProfileIds);
-  if (category === 'cds-runtime') {
-    return 'border-destructive/60 bg-[hsl(var(--surface-raised))] ring-1 ring-destructive/30 shadow-[0_0_0_1px_hsl(var(--destructive)/0.25),0_0.25rem_1rem_-0.25rem_hsl(var(--destructive)/0.35)]';
-  }
-  if (category === 'app-code') {
-    return 'border-warn/55 bg-[hsl(var(--surface-raised))] ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-0.25rem_rgba(245,158,11,0.32)]';
-  }
-  if (category === 'deploy-config') {
-    return 'border-warn/55 bg-[hsl(var(--surface-raised))] ring-1 ring-warn/20 shadow-[0_0.25rem_1rem_-0.25rem_rgba(249,115,22,0.32)]';
-  }
-  return 'border-muted-foreground/40 bg-[hsl(var(--surface-raised))] ring-1 ring-muted-foreground/15 shadow-[0_0.25rem_1rem_-0.25rem_rgba(100,116,139,0.28)]';
+  const surface = 'bg-[hsl(var(--surface-raised))] shadow-sm';
+  if (category === 'cds-runtime') return `border-destructive/25 ${surface}`;
+  if (category === 'app-code' || category === 'deploy-config') return `border-warn/25 ${surface}`;
+  return `border-[hsl(var(--hairline-strong))] ${surface}`;
 }
 
 // 错误提示条文字色 —— 同样按 category 派发,与卡片/胶囊一致。
@@ -6707,7 +6700,7 @@ const BranchCard = memo(function BranchCard({
         failedPhase
           // 刚在眼前失败（含单服务部署失败、分支仍 running）：红边框承担「构建失败」信号；
           // 历史错误仍按错误分类配色。
-          ? 'border-destructive/60 bg-[hsl(var(--surface-raised))] ring-1 ring-destructive/25'
+          ? 'border-destructive/30 bg-[hsl(var(--surface-raised))] shadow-sm'
           : showsIssue
             ? branchIssueCardClass(branch, projectProfileIds)
           : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -7683,7 +7676,7 @@ const BranchCard = memo(function BranchCard({
       </div>
 
       <footer
-        className={`relative mt-auto flex h-[3.5rem] shrink-0 items-center gap-2.5 border-t border-[hsl(var(--hairline))] px-5 ${buildPhase ? 'bg-[hsl(var(--surface-sunken))]' : 'bg-[hsl(var(--surface-sunken))]/42'}`}
+        className="relative mt-auto flex h-[3.5rem] shrink-0 items-center gap-2.5 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/10 px-5"
         onClick={(event) => {
           const target = event.target as HTMLElement;
           if (target.closest('button,a,input,textarea,select,[role="menuitem"]')) {
@@ -7752,9 +7745,7 @@ const BranchCard = memo(function BranchCard({
           <Button
             size="sm"
             variant="outline"
-            className={`h-8 w-[4.5rem] px-2 shadow-none ${failedPhase
-              ? 'border-destructive/55 bg-destructive/10 text-destructive hover:bg-destructive/15 hover:text-destructive'
-              : 'border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground'}`}
+            className="h-8 w-[4.5rem] border-transparent bg-transparent px-2 text-foreground/70 shadow-none [&_svg]:size-[1.125rem] hover:border-[hsl(var(--hairline))] hover:bg-muted/50 hover:text-foreground focus-visible:ring-foreground/25"
             title="打开分支详情查看部署日志"
             aria-label={`查看 ${branch.branch} 的部署日志`}
             onClick={(event) => {
@@ -7767,8 +7758,8 @@ const BranchCard = memo(function BranchCard({
           </Button>
           <Button
             size="sm"
-            variant="outline"
-            className="h-8 w-[4.5rem] border-warn/45 bg-warn-soft px-2 text-warn shadow-none hover:bg-warn-soft hover:text-warn"
+            variant="default"
+            className="h-8 w-[4.5rem] border border-foreground/10 bg-foreground px-2 text-background shadow-sm [&_svg]:size-[1.125rem] hover:bg-foreground/90 hover:text-background focus-visible:ring-foreground/25"
             disabled={busy || Boolean(buildPhase)}
             title="按项目最新构建配置重新部署这个分支"
             aria-label={`${showsIssue || failedPhase ? '重新部署' : '部署'} ${branch.branch}`}
