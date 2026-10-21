@@ -331,6 +331,41 @@ public class ProductAgentController : ControllerBase
         }));
     }
 
+    [HttpGet("settings/debug/version-records")]
+    public async Task<IActionResult> PreviewVersionDebugClear([FromQuery] string kind)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!ProductVersionDebugClear.IsValidKind(kind))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择内部版本或正式版本。"));
+        return Ok(ApiResponse<object>.Ok(await ProductVersionDebugClear.PreviewAsync(_db, kind)));
+    }
+
+    [HttpPost("settings/debug/version-records")]
+    public async Task<IActionResult> ClearVersionDebugRecords([FromBody] ProductVersionDebugClearRequest request)
+    {
+        var denied = await RequireProductApplicationAdminAsync();
+        if (denied != null) return denied;
+        if (!ProductVersionDebugClear.IsValidKind(request.Kind)
+            || request.ConfirmPhrase?.Trim() != ProductVersionDebugClear.Confirmation(request.Kind)
+            || string.IsNullOrWhiteSpace(request.Token))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先预览清理范围，并输入当前类型对应的确认语。"));
+        try
+        {
+            var result = await ProductVersionDebugClear.ClearAsync(_db, request.Kind, request.Token, GetUserId());
+            if (result == null)
+                return Conflict(ApiResponse<object>.Fail("VERSION_CLEAR_STALE", "版本记录已变化，未执行本次清理。请关闭弹窗后重新预览并确认。"));
+            _logger.LogWarning("版本调试清理：用户 {UserId} 类型 {Kind} 清理 {Count} 跳过 {Skipped} 备份 {BackupId}",
+                GetUserId(), result.Kind, result.ClearedCount, result.SkippedCount, result.BackupId);
+            return Ok(ApiResponse<object>.Ok(result));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "版本调试清理未确认，类型 {Kind}", request.Kind);
+            return StatusCode(503, ApiResponse<object>.Fail("VERSION_CLEAR_UNCONFIRMED", "未能确认清理结果，请刷新列表核对后再操作；已生成的备份会保留。"));
+        }
+    }
+
     // ════════════════════════ 产品 Product ════════════════════════
 
     /// <summary>创建产品（自动生成「类型前缀-全局序号」编号）</summary>
@@ -8410,6 +8445,13 @@ public class ImportSimpleItemRow
 public class ProductApplicationAdminRequest
 {
     public string UserId { get; set; } = string.Empty;
+}
+
+public class ProductVersionDebugClearRequest
+{
+    public string Kind { get; set; } = string.Empty;
+    public string? ConfirmPhrase { get; set; }
+    public string Token { get; set; } = string.Empty;
 }
 
 public class ProductAgentDebugResetRequest

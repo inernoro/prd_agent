@@ -701,6 +701,111 @@ public class ProductVersionClaimGuardTests
         Assert.Equal("T9.2.4", (await fixture.Db.ProductInitiations.Find(x => x.Id == "new").SingleAsync()).TCode);
     }
 
+    [Theory]
+    [InlineData("internal")]
+    [InlineData("formal")]
+    public async Task DebugClearBacksUpAndArchivesOnlyItsVersionType(string kind)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "t", ProductId = "product", TCode = "T1.2.3", Status = "approved" },
+            new ProductInitiation { Id = "draft", ProductId = "other-product", Status = "draft" },
+        });
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease {
+            Id = "v", ProductId = "product", InitiationId = "t", VCode = "V1.2.3", TCode = "T1.2.3",
+        });
+        await fixture.Db.Requirements.InsertOneAsync(new Requirement { Id = "req", VersionIds = new() { "t", "v" } });
+        await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration { Kind = kind, Code = "T9.0.0" });
+        await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, "workflow-code:T:T1.2.3", "initiation:t");
+        var preview = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.PreviewAsync(fixture.Db, kind);
+        Assert.Equal(kind == "internal" ? 2 : 1, preview.RecordCount);
+        Assert.Equal(1, preview.PreservedLegacyCount);
+        Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+        var result = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, kind, preview.Token, "me");
+        Assert.NotNull(result);
+        Assert.Equal(preview.RecordCount, result.ClearedCount);
+        Assert.Equal(0, result.SkippedCount);
+        var backup = await fixture.Db.ProductVersionWorkflowSnapshots.Find(x => x.Id == result.BackupId).SingleAsync();
+        Assert.Equal("me", backup.CreatedBy);
+        Assert.Equal("debug_clear_" + kind, backup.SourceType);
+        Assert.Equal(kind == "internal" ? 2 : 0, backup.Initiations.Count);
+        Assert.Equal(kind == "formal" ? 1 : 0, backup.Releases.Count);
+        Assert.All(backup.Initiations, x => Assert.False(x.IsDeleted));
+        Assert.All(backup.Releases, x => Assert.False(x.IsDeleted));
+        Assert.Equal(kind == "internal" ? 0 : 2, await fixture.Db.ProductInitiations.CountDocumentsAsync(x => !x.IsDeleted));
+        Assert.Equal(kind == "formal" ? 0 : 1, await fixture.Db.ProductReleases.CountDocumentsAsync(x => !x.IsDeleted));
+        Assert.Equal(2, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        Assert.Equal(1, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+        Assert.Equal(new[] { "t", "v" }, (await fixture.Db.Requirements.Find(x => x.Id == "req").SingleAsync()).VersionIds);
+        Assert.Equal(1, await fixture.Db.Products.CountDocumentsAsync(_ => true));
+        Assert.Equal(1, await fixture.Db.VersionRegistrations.CountDocumentsAsync(_ => true));
+        Assert.Equal(1, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
+        Assert.Null(await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, kind, preview.Token, "me"));
+        Assert.Equal(1, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task DebugClearRejectsNonAdminAndWrongKindOrConfirmation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = new ProductVersionDebugClearRequest { Kind = "internal", ConfirmPhrase = "清空T记录", Token = "any" };
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller().PreviewVersionDebugClear("internal")).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller().ClearVersionDebugRecords(request)).StatusCode);
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller(admin: true).PreviewVersionDebugClear("all"));
+        request.ConfirmPhrase = "清空V记录";
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller(admin: true).ClearVersionDebugRecords(request));
+        request.Kind = "all";
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller(admin: true).ClearVersionDebugRecords(request));
+        Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DebugClearRejectsChangedOrNewRecordsAfterPreview(bool newRecord)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "t", TCode = "T1.2.3" });
+        var preview = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.PreviewAsync(fixture.Db, "internal");
+        if (newRecord) await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "new" });
+        else await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t",
+            Builders<ProductInitiation>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow.AddMinutes(1)));
+        var response = Assert.IsType<ConflictObjectResult>(await fixture.Controller(admin: true).ClearVersionDebugRecords(
+            new ProductVersionDebugClearRequest { Kind = "internal", ConfirmPhrase = "清空T记录", Token = preview.Token }));
+        Assert.Equal("VERSION_CLEAR_STALE", Assert.IsType<ApiResponse<object>>(response.Value).Error!.Code);
+        Assert.Equal(newRecord ? 2 : 1, await fixture.Db.ProductInitiations.CountDocumentsAsync(x => !x.IsDeleted));
+        Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task DebugClearBackupFailureDoesNotClearAnything()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "t", TCode = "T1.2.3" });
+        await fixture.Db.Database.CreateCollectionAsync("product_version_workflow_snapshots", new CreateCollectionOptions<ProductVersionWorkflowSnapshot> {
+            Validator = Builders<ProductVersionWorkflowSnapshot>.Filter.Ne(x => x.SourceType, "debug_clear_internal"),
+        });
+        var preview = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.PreviewAsync(fixture.Db, "internal");
+        var response = Assert.IsType<ObjectResult>(await fixture.Controller(admin: true).ClearVersionDebugRecords(
+            new ProductVersionDebugClearRequest { Kind = "internal", ConfirmPhrase = "清空T记录", Token = preview.Token }));
+        Assert.Equal(503, response.StatusCode);
+        Assert.False((await fixture.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).IsDeleted);
+        Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task DebugClearTokensAreTypeBoundAndEmptyClearDoesNotWriteBackup()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var t = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.PreviewAsync(fixture.Db, "internal");
+        Assert.Null(await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, "formal", t.Token, "me"));
+        var result = await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, "internal", t.Token, "me");
+        Assert.NotNull(result);
+        Assert.Equal(0, result.ClearedCount);
+        Assert.Null(result.BackupId);
+        Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+    }
+
     private static CreateInitiationRequest Request(string review) => new() {
         LinkedProductId = "product", PlanName = "申领测试方案", ReviewSubmissionId = review,
     };
@@ -725,10 +830,11 @@ public class ProductVersionClaimGuardTests
             await fixture.Db.VersionRegistryApplications.InsertOneAsync(new VersionRegistryApplication { Id = "application", Name = "测试应用", SystemId = "system", SystemName = "测试系统" });
             return fixture;
         }
-        public ProductAgentController Controller(bool test = false)
+        public ProductAgentController Controller(bool test = false, bool admin = false)
         {
             var claims = new List<Claim> { new("sub", "me"), new("permissions", AdminPermissionCatalog.ProductAgentUse) };
             if (test) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentVersionClaimTest));
+            if (admin) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentAdmin));
             var http = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")) };
             return new ProductAgentController(Db, NullLogger<ProductAgentController>.Instance, null!, null!, null!, null!, null!, null!) {
                 ControllerContext = new ControllerContext { HttpContext = http },

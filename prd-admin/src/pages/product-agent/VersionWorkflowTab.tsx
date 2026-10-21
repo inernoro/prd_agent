@@ -27,6 +27,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { InitiationDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { VersionDebugClearButton } from '@/components/product-agent/VersionDebugClearButton';
 import { useProductListScope } from '@/lib/productListScope';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -220,6 +221,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {isAdmin && <VersionDebugClearButton key={tab} kind={tab === 'initiation' ? 'internal' : 'formal'} onChanged={reload} />}
         {isAdmin && <Secondary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => setImportKind(tab)}><Upload size={14} />导入历史{tab === 'release' ? '正式' : '内部'}版本</Secondary>}
         <Secondary disabled={listLoading || Boolean(catalogError) || Boolean(loadError) || (tab === 'release' ? visibleReleases : visibleInitiations).length === 0}
           onClick={() => tab === 'release'

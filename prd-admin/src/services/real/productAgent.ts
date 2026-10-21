@@ -1231,6 +1231,27 @@ export function resetProductAgentDemoData(confirmPhrase: string) {
     message: string;
   }>('/api/product/settings/debug/reset-all-data', { method: 'POST', body: { confirmPhrase } });
 }
+export type VersionDebugClearKind = 'internal' | 'formal';
+export interface VersionDebugClearPreview {
+  kind: VersionDebugClearKind;
+  kindLabel: string;
+  recordCount: number;
+  preservedLegacyCount: number;
+  confirmPhrase: string;
+  token: string;
+}
+export interface VersionDebugClearResult {
+  kind: VersionDebugClearKind;
+  clearedCount: number;
+  skippedCount: number;
+  backupId: string | null;
+}
+export function previewVersionDebugClear(kind: VersionDebugClearKind) {
+  return apiRequest<VersionDebugClearPreview>(`/api/product/settings/debug/version-records?kind=${kind}`);
+}
+export function clearVersionDebugRecords(body: { kind: VersionDebugClearKind; confirmPhrase: string; token: string }) {
+  return apiRequest<VersionDebugClearResult>('/api/product/settings/debug/version-records', { method: 'POST', body });
+}
 export function createProductDefect(productId: string, body: { title: string; description?: string; grade?: string; assigneeId?: string | null; featureId?: string; versionId?: string }) {
   return apiRequest<TracedDefect>(`/api/product/products/${productId}/defects`, { method: 'POST', body });
 }
