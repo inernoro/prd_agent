@@ -1,0 +1,57 @@
+name: Notice Candidate Check
+on:
+  push:
+    branches: [codex/notice-parse-validation-20261021]
+jobs:
+  exact-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: b3384fc7a7fdcac456efa0fa7a2fad00b3a4d89a
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '9'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+          cache-dependency-path: prd-admin/pnpm-lock.yaml
+      - name: Restore locked CI dependencies
+        working-directory: prd-admin
+        run: pnpm install --frozen-lockfile
+      - name: Candidate type and product behavior tests
+        working-directory: prd-admin
+        run: |
+          pnpm tsc --noEmit
+          pnpm exec vitest run src/pages/product-agent
+      - name: Changed files have no new lint findings
+        if: always()
+        working-directory: prd-admin
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import path from 'node:path';
+          import { execFileSync } from 'node:child_process';
+          import { ESLint } from 'eslint';
+          const git = (...args) => execFileSync('git', args, {encoding:'utf8',cwd:'..'});
+          const base = '33f1ccbccae5328e30b95c67d83fa1251a59acc3';
+          const expected = 'b3384fc7a7fdcac456efa0fa7a2fad00b3a4d89a';
+          if (git('rev-parse','HEAD').trim() !== expected) throw new Error('Wrong candidate');
+          const files = git('diff','--name-only','--diff-filter=ACMR',base,expected,'--','prd-admin/src').trim().split('\n').filter(p => /\.(ts|tsx)$/.test(p));
+          if (!files.length) throw new Error('No files checked');
+          const eslint = new ESLint(); let introduced = 0, baseline = 0, current = 0;
+          for (const file of files) {
+            const local = path.resolve('..',file); const text = fs.readFileSync(local,'utf8');
+            let previous = ''; try { previous = git('show',base+':'+file); } catch {}
+            const after = (await eslint.lintText(text,{filePath:local}))[0].messages;
+            const before = previous ? (await eslint.lintText(previous,{filePath:local}))[0].messages : [];
+            baseline += before.length; current += after.length;
+            const key = (m,t) => JSON.stringify([m.ruleId,m.severity,m.message,t.split(/\r?\n/)[(m.line||1)-1]?.trim()]);
+            const counts = new Map(); for (const m of before) { const k=key(m,previous); counts.set(k,(counts.get(k)||0)+1); }
+            for (const m of after) { const k=key(m,text); if (counts.get(k)) counts.set(k,counts.get(k)-1); else { introduced++; console.log(JSON.stringify({file,line:m.line,message:m.message})); } }
+          }
+          console.log(JSON.stringify({candidate:expected,files:files.length,baseline,current,introduced}));
+          if (introduced) process.exitCode=1;
+          NODE
