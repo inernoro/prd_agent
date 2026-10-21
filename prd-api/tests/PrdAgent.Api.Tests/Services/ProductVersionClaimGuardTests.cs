@@ -271,8 +271,8 @@ public class ProductVersionClaimGuardTests
         await fixture.Db.Requirements.InsertOneAsync(new Requirement {
             Id = "req", ProductId = "product", CurrentState = RequirementWorkflowCatalog.Planning,
         });
-        Assert.Equal(1, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
-        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        Assert.Equal(1, await ProductInitiationIssuance.BackfillAsync(fixture.Db, pending.Id));
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db, pending.Id));
         var saved = await fixture.Db.ProductInitiations.Find(x => x.Id == pending.Id).SingleAsync();
         Assert.Equal("approved", saved.Status); Assert.Equal("T8.0.2", saved.TCode);
         Assert.Equal(pending.PlanName, saved.PlanName); Assert.Equal(pending.Remark, saved.Remark);
@@ -293,17 +293,17 @@ public class ProductVersionClaimGuardTests
         await using var fixture = await Fixture.CreateAsync();
         await fixture.Db.ProductInitiations.InsertManyAsync(Enumerable.Range(0, 12).Select(i => new ProductInitiation {
             Id = "pending-" + i, ProductId = "product", CreatedBy = "me", ReviewPassed = true,
-            Status = i % 2 == 0 ? "owner_pending" : "decision_pending",
+            Status = i == 0 ? "owner_pending" : "decision_pending",
         }));
-        var tasks = Enumerable.Range(0, 12).Where(i => i % 2 == 1)
+        var tasks = Enumerable.Range(1, 11)
             .Select(i => fixture.Controller().DecideInitiation("pending-" + i, new InitiationDecisionRequest())).Cast<Task>().ToList();
-        tasks.Add(ProductInitiationIssuance.BackfillAsync(fixture.Db));
-        tasks.Add(ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        tasks.Add(ProductInitiationIssuance.BackfillAsync(fixture.Db, "pending-0"));
+        tasks.Add(ProductInitiationIssuance.BackfillAsync(fixture.Db, "pending-0"));
         await Task.WhenAll(tasks);
         var first = await fixture.Db.ProductInitiations.Find(_ => true).ToListAsync();
         Assert.All(first, x => { Assert.Equal("approved", x.Status); Assert.False(string.IsNullOrWhiteSpace(x.TCode)); });
         Assert.Equal(12, first.Select(x => x.TCode).Distinct().Count());
-        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db, "pending-0"));
         foreach (var item in first)
             Assert.Equal(item.TCode, (await fixture.Db.ProductInitiations.Find(x => x.Id == item.Id).SingleAsync()).TCode);
     }
@@ -328,6 +328,7 @@ public class ProductVersionClaimGuardTests
         await using var fixture = await Fixture.CreateAsync();
         await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
             Id = "startup-pending", ProductId = "product", Status = "owner_pending", ReviewPassed = true, CreatedBy = "me",
+            CreatedAt = new DateTime(2026, 10, 21, 5, 0, 0, DateTimeKind.Utc),
         });
         using var services = new ServiceCollection().AddSingleton(fixture.Db).BuildServiceProvider();
         using var worker = new PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker(services, new ConfigurationBuilder().Build(),
@@ -398,11 +399,66 @@ public class ProductVersionClaimGuardTests
             RequirementSyncPending = true, RequirementIds = new() { "req" },
         });
         await fixture.Db.Requirements.InsertOneAsync(new Requirement { Id = "req", ProductId = "product", CurrentState = RequirementWorkflowCatalog.Planning });
-        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
-        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db));
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db, null));
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db, null));
         var saved = await fixture.Db.ProductInitiations.Find(x => x.Id == "issued").SingleAsync();
         Assert.Equal("T7.8.9", saved.TCode); Assert.False(saved.RequirementSyncPending);
         Assert.Equal(1, await fixture.Db.ProductItemActivities.CountDocumentsAsync(x => x.EntityId == "req"));
+    }
+
+    private static ProductInitiation LegacyPending(string id) => new() {
+        Id = id, ProductId = "product", CreatedBy = "me", Status = "owner_pending", ReviewPassed = true,
+        CreatedAt = new DateTime(2026, 10, 21, 5, 0, 0, DateTimeKind.Utc),
+    };
+
+    [Fact]
+    public async Task OneTimeLegacyTargetNeverAdoptsAnotherRecordAfterIssuanceOrRestart()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(LegacyPending("authorized"));
+        var targets = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => ProductInitiationIssuance.ResolveLegacyTargetAsync(fixture.Db)));
+        Assert.All(targets, id => Assert.Equal("authorized", id));
+        Assert.Equal(1, await ProductInitiationIssuance.BackfillAsync(fixture.Db, targets[0]));
+        await fixture.Db.ProductInitiations.InsertOneAsync(LegacyPending("not-authorized"));
+        var afterRestart = await ProductInitiationIssuance.ResolveLegacyTargetAsync(fixture.Db);
+        Assert.Equal("authorized", afterRestart);
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db, afterRestart));
+        Assert.Null((await fixture.Db.ProductInitiations.Find(x => x.Id == "not-authorized").SingleAsync()).TCode);
+    }
+
+    [Fact]
+    public async Task MultipleLegacyPendingRecordsFailClosedEvenWhenOnlyOnePassesReview()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var failed = LegacyPending("not-passed"); failed.ReviewPassed = false;
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] { LegacyPending("one"), failed });
+        var target = await ProductInitiationIssuance.ResolveLegacyTargetAsync(fixture.Db);
+        Assert.Null(target);
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db, target));
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "not-passed", Builders<ProductInitiation>.Update.Set(x => x.IsDeleted, true));
+        Assert.Null(await ProductInitiationIssuance.ResolveLegacyTargetAsync(fixture.Db));
+        Assert.Null((await fixture.Db.ProductInitiations.Find(x => x.Id == "one").SingleAsync()).TCode);
+    }
+
+    [Fact]
+    public async Task EmptyLegacySnapshotDoesNotAdoptLaterOrBackdatedRecords()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        Assert.Null(await ProductInitiationIssuance.ResolveLegacyTargetAsync(fixture.Db));
+        await fixture.Db.ProductInitiations.InsertOneAsync(LegacyPending("later"));
+        var target = await ProductInitiationIssuance.ResolveLegacyTargetAsync(fixture.Db);
+        Assert.Null(target);
+        Assert.Equal(0, await ProductInitiationIssuance.BackfillAsync(fixture.Db, target));
+        Assert.Null((await fixture.Db.ProductInitiations.Find(x => x.Id == "later").SingleAsync()).TCode);
+    }
+
+    [Fact]
+    public async Task LegacySelectionCannotChooseAnApplicationCreatedAfterAuthorizationCutoff()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var later = LegacyPending("future"); later.CreatedAt = new DateTime(2026, 10, 22, 0, 0, 0, DateTimeKind.Utc);
+        await fixture.Db.ProductInitiations.InsertOneAsync(later);
+        Assert.Null(await ProductInitiationIssuance.ResolveLegacyTargetAsync(fixture.Db));
     }
 
     private static ReviewSubmission Review(string id, string submitter, bool passed = true) => new() {

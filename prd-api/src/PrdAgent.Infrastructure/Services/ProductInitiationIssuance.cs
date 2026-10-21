@@ -10,6 +10,28 @@ namespace PrdAgent.Infrastructure.Services;
 public static class ProductInitiationIssuance
 {
     private const string CodeKeyPrefix = "workflow-code:T:";
+    private const string LegacyMigrationKey = "migration:product-initiation-single-auto-issue-20261021";
+    // 本次仅授权处理用户已创建的唯一待审批记录；不能滑动到后续申请。
+    private static readonly DateTime LegacyCreatedBeforeUtc = new(2026, 10, 21, 6, 26, 1, DateTimeKind.Utc);
+
+    public static async Task<string?> ResolveLegacyTargetAsync(MongoDbContext db)
+    {
+        var claims = db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName);
+        var filter = Builders<BsonDocument>.Filter.Eq("_id", LegacyMigrationKey);
+        var claim = await claims.Find(filter).FirstOrDefaultAsync();
+        if (claim == null)
+        {
+            // 只允许唯一候选；失败/未完成的待审批也计入歧义，不能悄悄挑另一个人。
+            var candidates = await db.ProductInitiations.Find(x => !x.IsDeleted && x.Status == "owner_pending"
+                    && (x.TCode == null || x.TCode == "") && x.CreatedAt <= LegacyCreatedBeforeUtc)
+                .Limit(2).Project(x => x.Id).ToListAsync();
+            var target = candidates.Count == 1 ? "initiation:" + candidates[0] : "blocked:not-unique";
+            await ProductVersionClaimGuard.TryReserveAsync(db.Database, LegacyMigrationKey, target);
+            claim = await claims.Find(filter).FirstOrDefaultAsync();
+        }
+        var savedTarget = claim?.GetValue("targetId", "").AsString;
+        return savedTarget?.StartsWith("initiation:", StringComparison.Ordinal) == true ? savedTarget["initiation:".Length..] : null;
+    }
 
     public static async Task<ProductInitiation?> IssueAsync(MongoDbContext db, string id,
         string expectedStatus, UpdateDefinition<ProductInitiation>? decision = null)
@@ -53,10 +75,11 @@ public static class ProductInitiationIssuance
         return issued;
     }
 
-    public static async Task<int> BackfillAsync(MongoDbContext db, CancellationToken stoppingToken = default)
+    public static async Task<int> BackfillAsync(MongoDbContext db, string? legacyPendingId, CancellationToken stoppingToken = default)
     {
         var eligible = Builders<ProductInitiation>.Filter.Where(x => !x.IsDeleted && (
-            (x.Status == "owner_pending" && x.ReviewPassed == true && (x.TCode == null || x.TCode == ""))
+            (legacyPendingId != null && x.Id == legacyPendingId && x.Status == "owner_pending"
+                && x.ReviewPassed == true && (x.TCode == null || x.TCode == ""))
             || (x.Status == "approved" && x.TCode != null && x.TCode != "" && x.RequirementSyncPending)));
         using var cursor = await db.ProductInitiations.Find(eligible)
             .SortBy(x => x.CreatedAt).ToCursorAsync(stoppingToken);

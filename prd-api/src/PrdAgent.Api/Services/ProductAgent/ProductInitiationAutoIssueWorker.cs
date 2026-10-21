@@ -4,7 +4,7 @@ using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services.ProductAgent;
 
-/// <summary>自动处理历史待人工审批立项；只补已通过评审且未发号的记录，重启/多实例可重入。</summary>
+/// <summary>一次性锁定用户授权的唯一存量待审批立项，并恢复本流程中断的需求同步；不接管其它旧申请。</summary>
 public sealed class ProductInitiationAutoIssueWorker(
     IServiceProvider services, IConfiguration configuration, ILogger<ProductInitiationAutoIssueWorker> logger) : BackgroundService
 {
@@ -22,7 +22,9 @@ public sealed class ProductInitiationAutoIssueWorker(
             try
             {
                 using var scope = services.CreateScope();
-                var count = await ProductInitiationIssuance.BackfillAsync(scope.ServiceProvider.GetRequiredService<MongoDbContext>(), stoppingToken);
+                var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+                var targetId = await ProductInitiationIssuance.ResolveLegacyTargetAsync(db);
+                var count = await ProductInitiationIssuance.BackfillAsync(db, targetId, stoppingToken);
                 if (count > 0) logger.LogInformation("产品内部版本已自动发放 {Count} 条待审批记录", count);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
