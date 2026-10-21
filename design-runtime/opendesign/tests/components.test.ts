@@ -435,7 +435,7 @@ describe('wiring guards', () => {
 
   it('installs a reproducible Chromium and separates browser evidence from the root-only export directory', () => {
     const dockerfile = fs.readFileSync(path.join(SERVICE_ROOT, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_VERSION=155.0.8059.39');
+    expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_VERSION=155.0.8059.84');
     expect(dockerfile).toContain('DESIGN_RUNTIME_CHROMIUM_RELEASE=0');
     expect(dockerfile).toContain('apk add --no-cache chromium="${DESIGN_RUNTIME_CHROMIUM_VERSION}-r${DESIGN_RUNTIME_CHROMIUM_RELEASE}"');
     expect(dockerfile).toContain('DESIGN_RUNTIME_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser');
