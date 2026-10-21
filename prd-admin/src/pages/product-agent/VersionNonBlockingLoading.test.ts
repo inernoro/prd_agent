@@ -44,10 +44,10 @@ describe('version pages show content without waiting for every dependency', () =
     expect(picker).toContain('方案仍在加载，可先填写其他字段');
   });
 
-  it('mounts the internal form before the member directory finishes', () => {
+  it('mounts the internal form without loading a removed approver directory', () => {
     expect(versions).not.toContain('if (!members) return');
-    expect(versions).toContain('members={members ?? []}');
-    expect(versions).toContain('memberNotice={memberNotice}');
-    expect(versions).toContain('正在加载可选成员，可以先填写基础信息');
+    expect(versions).not.toContain('listProductMembers(');
+    expect(versions).not.toContain('memberNotice=');
+    expect(versions).not.toContain('正在加载可选成员，可以先填写基础信息');
   });
 });

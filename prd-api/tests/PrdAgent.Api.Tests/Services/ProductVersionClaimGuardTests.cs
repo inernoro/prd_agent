@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
@@ -329,7 +330,7 @@ public class ProductVersionClaimGuardTests
             Id = "startup-pending", ProductId = "product", Status = "owner_pending", ReviewPassed = true, CreatedBy = "me",
         });
         using var services = new ServiceCollection().AddSingleton(fixture.Db).BuildServiceProvider();
-        using var worker = new PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker(services,
+        using var worker = new PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker(services, new ConfigurationBuilder().Build(),
             NullLogger<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>.Instance);
         await worker.StartAsync(CancellationToken.None);
         try
@@ -340,6 +341,25 @@ public class ProductVersionClaimGuardTests
             Assert.NotNull((await fixture.Db.ProductInitiations.Find(x => x.Id == "startup-pending").SingleAsync()).TCode);
         }
         finally { await worker.StopAsync(CancellationToken.None); }
+    }
+
+    [Theory]
+    [InlineData("preview", null)]
+    [InlineData("preview", "true")]
+    [InlineData(null, "false")]
+    public async Task PreviewAndStandbyNeverRunLegacyBackfill(string? project, string? sharedFlag)
+    {
+        // 故意不注册数据库：非权威部署必须在取库前返回，不能扫描或补发共库记录。
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+            ["CDS_PROJECT_ID"] = project,
+            [PrdAgent.Infrastructure.Security.DeploymentAuthority.ManageGlobalNotificationKey] = sharedFlag,
+        }).Build();
+        using var worker = new PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker(services, configuration,
+            NullLogger<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>.Instance);
+        await worker.StartAsync(CancellationToken.None);
+        Assert.True(worker.ExecuteTask!.IsCompletedSuccessfully);
+        await worker.StopAsync(CancellationToken.None);
     }
 
     [Fact]

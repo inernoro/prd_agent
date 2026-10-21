@@ -15,17 +15,16 @@ describe('内部版本在申领表单内选择应用', () => {
     expect(application).not.toContain('setProductId(');
   });
 
-  it('切换应用不按产品重新挂载表单，保留已填资料并更新成员目录', () => {
+  it('切换应用不按产品重新挂载表单，保留已填资料，不加载审批人目录', () => {
     expect(application).toContain("key={seed?.id ?? 'new'}");
     expect(application).not.toContain('key={productId}');
     expect(application).toContain('if (!item) onApplicationProductChange?.(linkedProductId)');
     expect(application).toContain('onApplicationProductChange={applicationProducts ? setApplicationProductId : undefined}');
-    expect(application).toContain('listProductMembers(memberProductId)');
-    expect(application).toContain('return () => { active = false; }');
+    expect(application).not.toContain('listProductMembers(');
   });
 
   it('未选应用不请求空产品目录，也不能继续申领', () => {
-    expect(application).toContain('if (!memberProductId) { setMembers([]); return; }');
+    expect(application).not.toContain('listProductMembers(');
     expect(application).toContain("if (!linkedProductId.trim()) return setMessage('请选择所属应用')");
     expect(application).toContain('disabled={busy || !linkedProductId.trim()}');
   });
@@ -95,7 +94,9 @@ describe('内部版本在申领表单内选择应用', () => {
 
   it('评审前保存所有填写项，只对服务端通过结果继续发号，失败继续原记录', () => {
     expect(application).toContain('reviewMeetingRequired: meeting');
-    expect(application).toContain("useState(seed?.primaryOwnerId ?? '')");
+    expect(application).toContain('primaryOwnerId: item?.primaryOwnerId ?? undefined');
+    expect(application).not.toContain('产品主负责人 *');
+    expect(application).toContain('无需人工审批');
     expect(application).toContain('useState(seed?.reviewMeetingRequired ?? false)');
     expect(application).toContain('if (reviewed.reviewPassed !== true)');
     expect(application).toContain('await submitDecision(reviewed)');

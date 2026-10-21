@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, FileText, HelpCircle, Plus, Search, Upload, X } from 'lucide-react';
 import {
   completeRelease, createInitiation, decideInitiation,
-  listProductMembers, listVersionApplicationProducts, getWorkflowInitiations, getWorkflowReleases,
+  listVersionApplicationProducts, getWorkflowInitiations, getWorkflowReleases,
   syncInitiationReview, updateInitiation, listProductVersionReviewSources, parseProductVersionMessage,
   getInitiationPlanDefaults,
   type VersionApplicationProduct, type WorkflowVersionRecord,
@@ -264,33 +264,12 @@ function InitiationApplication({ productId, applicationProducts, seed, onClose, 
   applicationProducts?: VersionApplicationProduct[];
 }) {
   const [applicationProductId, setApplicationProductId] = useState(productId);
-  const memberProductId = seed?.productId ?? applicationProductId;
-  const [members, setMembers] = useState<ProductMember[] | null>(null);
-  const [error, setError] = useState('');
-  const [attempt, setAttempt] = useState(0);
-  useEffect(() => {
-    let active = true;
-    setMembers(null);
-    setError('');
-    if (!memberProductId) { setMembers([]); return; }
-    void listProductMembers(memberProductId).then((result) => {
-      if (!active) return;
-      if (result.success) setMembers(result.data.members);
-      else setError(result.error?.message ?? '产品成员加载失败，请重试。');
-    }).catch(() => { if (active) setError('产品成员加载失败，请重试。'); });
-    return () => { active = false; };
-  }, [memberProductId, attempt]);
-  const memberNotice = memberProductId && !members ? <div className="mb-3">
-    {error ? <div role="alert" className="text-sm text-token-secondary">{error}<button type="button" className="ml-2 hover:underline" onClick={() => setAttempt((value) => value + 1)}>重试</button></div>
-      : <p role="status" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />正在加载可选成员，可以先填写基础信息…</p>}
-  </div> : null;
-  return <InitiationWizard key={seed?.id ?? 'new'} productId={memberProductId} applicationProducts={applicationProducts}
+  return <InitiationWizard key={seed?.id ?? 'new'} productId={seed?.productId ?? applicationProductId} applicationProducts={applicationProducts}
     onApplicationProductChange={applicationProducts ? setApplicationProductId : undefined}
-    requirements={[]} members={members ?? []} seed={seed} onClose={onClose} onChanged={onChanged} memberNotice={memberNotice} />;
+    requirements={[]} members={[]} seed={seed} onClose={onClose} onChanged={onChanged} />;
 }
 
-export function InitiationWizard({ productId, applicationProducts, onApplicationProductChange, onClose, onChanged, seed, memberNotice }: {
-  memberNotice?: ReactNode;
+export function InitiationWizard({ productId, applicationProducts, onApplicationProductChange, onClose, onChanged, seed }: {
   productId: string;
   applicationProducts?: VersionApplicationProduct[];
   onApplicationProductChange?: (productId: string) => void;
@@ -727,7 +706,6 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       </Button>}
     </>}
     content={<div className="space-y-5">
-      {memberNotice}
       {completed ? <section className="space-y-3 rounded-md border border-token-subtle bg-token-nested p-4">
         <div className="flex items-center gap-2 text-sm font-medium text-token-primary"><CheckCircle2 size={18} />内部版本号已生成</div>
         {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /></>}
