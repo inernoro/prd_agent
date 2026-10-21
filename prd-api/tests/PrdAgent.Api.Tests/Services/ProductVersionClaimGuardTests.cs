@@ -479,7 +479,7 @@ public class ProductVersionClaimGuardTests
             new ProductInitiation { Id = "failed", Status = "owner_pending", ReviewPassed = false },
             new ProductInitiation { Id = "unfinished", Status = "owner_pending" },
             new ProductInitiation { Id = "deleted", Status = "owner_pending", ReviewPassed = true, IsDeleted = true },
-            new ProductInitiation { Id = "issued", Status = "owner_pending", ReviewPassed = true, TCode = "T8.0.1" },
+            new ProductInitiation { Id = "issued", ProductId = "product", Status = "owner_pending", ReviewPassed = true, TCode = "T8.0.1" },
             new ProductInitiation { Id = "decision", Status = "decision_pending", ReviewPassed = true },
             new ProductInitiation { Id = "review", Status = "review_pending", ReviewPassed = true },
         });

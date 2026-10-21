@@ -2,7 +2,6 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
