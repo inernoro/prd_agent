@@ -118,6 +118,34 @@ describe('排空流程', () => {
     await drainInFlightDeploys({ ...deps, onWait: (p) => seen.push(p.map((r) => r.id)) });
     expect(seen[0]).toEqual(['a']);
   });
+
+  it('静默部署的合格等待从首判到每轮复核，资格消失才按原心跳收口', async () => {
+    const stale = run('waiter', 'building', new Date(T0 - 16 * 60_000).toISOString());
+    const { deps, waits } = mkDeps([[stale], [stale]]);
+    const observed: number[] = [];
+    const out = await drainInFlightDeploys({ ...deps, isExecutionWaiting: (id, now) => {
+      expect(id).toBe('waiter'); observed.push(now); return now === T0;
+    } });
+    expect(out).toMatchObject({ drained: true, skipped: false, waitedMs: 1000 });
+    expect(observed).toEqual([T0, T0 + 1000]); expect(waits).toEqual([1000]);
+  });
+
+  it('持续合格等待仍受原排空上限约束，回调异常不生成等待事实', async () => {
+    const stale = run('waiter', 'building', new Date(T0 - 16 * 60_000).toISOString());
+    const { deps } = mkDeps([[stale]], 3000);
+    expect(await drainInFlightDeploys({ ...deps, isExecutionWaiting: () => true }))
+      .toMatchObject({ drained: false, skipped: false, waitedMs: 3000, remaining: ['waiter'] });
+    expect(pendingRunsToDrain([stale], T0, () => { throw new Error('资格未知'); })).toEqual([]);
+  });
+
+  it('deployment终态与release不能借部署等待回调复活', () => {
+    const heartbeatAt = new Date(T0 - 16 * 60_000).toISOString();
+    const values = [run('done', 'running', heartbeatAt), run('failed', 'failed', heartbeatAt),
+      run('cancelled', 'cancelled', heartbeatAt), { ...run('release', 'running', heartbeatAt), kind: 'release' as const }];
+    let calls = 0;
+    expect(pendingRunsToDrain(values, T0, () => { calls++; return true; })).toEqual([]);
+    expect(calls).toBe(0);
+  });
 });
 
 describe('排空窗口闸门（第三十六轮 P1）', () => {
