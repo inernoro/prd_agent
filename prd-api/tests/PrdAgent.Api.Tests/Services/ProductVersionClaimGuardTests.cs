@@ -65,13 +65,17 @@ public class ProductVersionClaimGuardTests
         await using var fixture = await Fixture.CreateAsync();
         await fixture.Db.ReviewSubmissions.InsertManyAsync(new[] {
             Review("mine", "me"), Review("other", "someone"), Review("failed", "someone", false),
+            Review("mine-failed", "me", false),
+            new ReviewSubmission { Id = "pending", SubmitterId = "me", Status = ReviewStatuses.Running },
         });
         var list = await fixture.Controller(claimTest).ListProductVersionReviewSources();
         var payload = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(list).Value).Data);
         var ids = payload.GetProperty("items").EnumerateArray().Select(x => x.GetProperty("Id").GetString()).ToArray();
         Assert.Contains("mine", ids);
         Assert.Equal(claimTest, ids.Contains("other"));
-        Assert.DoesNotContain("failed", ids);
+        Assert.Equal(claimTest, ids.Contains("failed"));
+        Assert.Contains("mine-failed", ids);
+        Assert.Contains("pending", ids);
         var request = Request("other");
         var created = await fixture.Controller(claimTest).CreateInitiation("product", request);
         if (claimTest) Assert.IsType<OkObjectResult>(created);
@@ -90,7 +94,59 @@ public class ProductVersionClaimGuardTests
         Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
         var list = await fixture.Controller().ListProductVersionReviewSources();
         var payload = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(list).Value).Data);
-        Assert.Empty(payload.GetProperty("items").EnumerateArray());
+        Assert.Single(payload.GetProperty("items").EnumerateArray());
+        var rejected = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateInitiation("product", Request("source")));
+        Assert.Equal("REVIEW_ALREADY_REGISTERED", Assert.IsType<ApiResponse<object>>(rejected.Value).Error!.Code);
+        Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+    }
+
+    [Theory]
+    [InlineData(ReviewStatuses.Done, false, "REVIEW_NOT_PASSED")]
+    [InlineData(ReviewStatuses.Running, null, "REVIEW_NOT_READY")]
+    [InlineData(ReviewStatuses.Queued, null, "REVIEW_NOT_READY")]
+    [InlineData(ReviewStatuses.Error, null, "REVIEW_NOT_READY")]
+    public async Task IneligibleSourcesRemainVisibleButConfirmationWritesNothing(string status, bool? passed, string code)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ReviewSubmissions.InsertOneAsync(new ReviewSubmission { Id = "source", SubmitterId = "me", Status = status, IsPassed = passed });
+        var result = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateInitiation("product", Request("source")));
+        Assert.Equal(code, Assert.IsType<ApiResponse<object>>(result.Value).Error!.Code);
+        Assert.Equal(0, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task ListDoesNotTruncateAtNinetyThreeOrHideClaimedSources()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ReviewSubmissions.InsertManyAsync(Enumerable.Range(0, 125).Select(i => Review("source" + i, "me", i % 2 == 0)));
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { ReviewSubmissionId = "source0" });
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().ListProductVersionReviewSources());
+        var payload = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(result.Value).Data);
+        Assert.Equal(125, payload.GetProperty("items").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task IssuedRecordCanEditMetadataWithoutChangingCodeOrReview()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "issued", ProductId = "product", LinkedProductId = "product", CreatedBy = "me",
+            TCode = "T1.2.3", Status = "approved", VersionType = "minor", ReviewPassed = true,
+            ReviewSubmissionId = "original", ReviewMeetingRequired = true, MeetingDraftCount = 2,
+        });
+        var request = new CreateInitiationRequest { LinkedProductId = "product", PlanName = "修改后方案", VersionType = "minor", ReviewMeetingRequired = true, Remark = "补充资料" };
+        Assert.IsType<OkObjectResult>(await fixture.Controller().UpdateInitiation("issued", request));
+        var record = await fixture.Db.ProductInitiations.Find(x => x.Id == "issued").SingleAsync();
+        Assert.Equal("修改后方案", record.PlanName);
+        Assert.Equal("补充资料", record.Remark);
+        Assert.Equal("T1.2.3", record.TCode);
+        Assert.Equal("approved", record.Status);
+        Assert.Equal("original", record.ReviewSubmissionId);
+        Assert.True(record.ReviewPassed);
+        Assert.Equal(2, record.MeetingDraftCount);
+        request.VersionType = "major";
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().UpdateInitiation("issued", request));
     }
 
     [Fact]

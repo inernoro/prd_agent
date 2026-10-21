@@ -14,8 +14,8 @@ describe('T 申领来源权限由服务端决定', () => {
   });
   it('读取服务端范围提示，不发送可被伪造的全员开关', () => {
     expect(workflow).toContain('setCanUseAllReviews(res.data.canUseAllReviews)');
-    expect(workflow).toContain('当前可选择所有人的已通过方案。');
-    expect(workflow).toContain('仅显示本人已通过且未申领的方案。');
+    expect(workflow).toContain('当前可查看所有人的方案。');
+    expect(workflow).toContain('显示本人全部方案。');
     expect(workflow).toContain('每个方案仅能申领一个 T，每个 T 仅能申领一个 V。');
     const sourceApi = client.slice(client.indexOf('export function listProductVersionReviewSources()'), client.indexOf('export function parseProductVersionMessage'));
     expect(sourceApi).toContain('canUseAllReviews: boolean');

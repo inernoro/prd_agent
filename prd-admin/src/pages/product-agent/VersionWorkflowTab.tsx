@@ -288,7 +288,7 @@ function InitiationApplication({ productId, applicationProducts, seed, onClose, 
     requirements={[]} members={members ?? []} seed={seed} onClose={onClose} onChanged={onChanged} memberNotice={memberNotice} />;
 }
 
-export function InitiationWizard({ productId, applicationProducts, onApplicationProductChange, members, onClose, onChanged, seed, memberNotice }: {
+export function InitiationWizard({ productId, applicationProducts, onApplicationProductChange, onClose, onChanged, seed, memberNotice }: {
   memberNotice?: ReactNode;
   productId: string;
   applicationProducts?: VersionApplicationProduct[];
@@ -338,6 +338,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [ownerId, setOwnerId] = useState(seed?.primaryOwnerId ?? '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [sourceRejection, setSourceRejection] = useState<{ title: string; message: string } | null>(null);
+  const editingIssued = Boolean(seed?.tCode);
   const submittingRef = useRef(false);
   const [draftDefaultsPending, setDraftDefaultsPending] = useState(false);
   const reviewPanelRef = useRef<HTMLDivElement>(null);
@@ -401,7 +403,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
 
   const reviewRunning = reviewStage !== 'idle';
   const issuedCode = item?.tCode ?? '';
-  const completed = Boolean(issuedCode || item?.status === 'owner_pending');
+  const completed = !editingIssued && Boolean(issuedCode || item?.status === 'owner_pending');
   const sourceFileName = reviewSources.find((source) => source.id === reviewSubmissionId)?.fileName;
   const planFileName = sourceMode === 'upload'
     ? file?.name ?? item?.reviewAttempts?.slice(-1)[0]?.planFileName ?? undefined
@@ -627,8 +629,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const confirmApplication = async () => {
     if (submittingRef.current || completed) return;
     if (!linkedProductId.trim()) return setMessage('请选择所属应用');
-    if (sourceMode === 'existing' && !reviewSubmissionId && !item?.reviewPassed) return setMessage('请选择一个已通过评审的方案，或切换到上传新方案。');
-    if (sourceMode === 'upload' && !file && !item?.reviewPassed
+    if (!editingIssued && sourceMode === 'existing' && !reviewSubmissionId && !item?.reviewPassed) return setMessage('请选择一个已有方案，或切换到上传新方案。');
+    if (!editingIssued && sourceMode === 'upload' && !file && !item?.reviewPassed
       && !(item?.status === 'review_pending' && item.reviewSubmissionId)) return setMessage('请在当前页面选择方案文件。');
     if (!planName.trim()) return setMessage('请填写方案名称');
     if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
@@ -648,10 +650,21 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       const saved = item
         ? await updateInitiation(item.id, payload)
         : await createInitiation(applicationProducts ? linkedProductId : productId, payload);
-      if (!saved.success) throw new Error(saved.error?.message ?? '填写内容保存失败，请重试。');
+      if (!saved.success) {
+        const rejectionTitle = INITIATION_SOURCE_REJECTION_TITLES[saved.error?.code ?? ''];
+        if (rejectionTitle) {
+          setSourceRejection({ title: rejectionTitle, message: saved.error.message });
+          return;
+        }
+        throw new Error(saved.error?.message ?? '填写内容保存失败，请重试。');
+      }
       hasSavedRecord = true;
       setItem(saved.data);
       setMeetingDraftCount(saved.data.meetingDraftCount ?? 1);
+      if (editingIssued) {
+        setMessage('基础资料已保存，原 T 号、评审、审批及下游关联保持不变。');
+        return;
+      }
       const reviewed = saved.data.reviewPassed && (sourceMode === 'existing' || !file) ? saved.data : await runReview(saved.data);
       if (reviewed.reviewPassed !== true) {
         setMessage(reviewed.reviewPassed === false
@@ -698,7 +711,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   if (item?.reviewPassed && item.reviewSubmissionId && !sourceOptions.some((option) => option.id === item.reviewSubmissionId)) {
     sourceOptions.unshift({ id: item.reviewSubmissionId, label: item.planName, searchExtra: planFileName ?? '' });
   }
-  const confirmationLabel = sourceMode === 'upload' && (!item?.reviewPassed || file)
+  const confirmationLabel = editingIssued ? '保存修改' : sourceMode === 'upload' && (!item?.reviewPassed || file)
     ? '确认并评审，通过后自动申领' : '确认申领';
 
   return <Dialog
@@ -709,7 +722,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     maxWidth={920}
     contentStyle={{ height: 'min(94vh, 960px)', maxHeight: '94vh' }}
     actions={<>
-      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{meeting ? '评审通过后申领 T 号' : '评审通过后交主负责人审批'}</span>}
+      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '仅修改资料，不重新发号' : meeting ? '评审通过后申领 T 号' : '评审通过后交主负责人审批'}</span>}
       <Button size="sm" onClick={onClose} disabled={busy}>{completed ? '完成' : '取消'}</Button>
       {!completed && <Button size="sm" variant="primary" type="submit" form={formId} disabled={busy || !linkedProductId.trim()}>
         {busy && <MapSpinner size={14} />}{busy ? (reviewRunning ? '评审中，通过后自动继续…' : '正在保存并提交…') : confirmationLabel}
@@ -722,12 +735,12 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
         {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /></>}
       </section> : <form id={formId} onSubmit={(event) => { event.preventDefault(); void confirmApplication(); }} aria-busy={busy}>
         <fieldset disabled={busy} className="min-w-0 space-y-5 border-0 p-0">
-          <section className="space-y-3" aria-labelledby={`${formId}-source`}>
+          <section hidden={editingIssued} className="space-y-3" aria-labelledby={`${formId}-source`}>
             <h4 id={`${formId}-source`} className="text-sm font-semibold text-token-primary">方案来源 <span className="text-xs font-normal text-token-muted">两种方式，任选其一</span></h4>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3" style={{ borderColor: sourceMode === 'existing' ? 'var(--accent-primary)' : 'var(--border-subtle)', background: sourceMode === 'existing' ? 'var(--bg-input)' : undefined }}>
                 <input type="radio" name={`${formId}-mode`} checked={sourceMode === 'existing'} onChange={() => chooseSourceMode('existing')} disabled={Boolean(item)} style={{ accentColor: 'var(--accent-primary)' }} className="mt-0.5" />
-                <span><span className="block text-sm font-medium text-token-primary">选择已有方案</span><span className="mt-1 block text-xs text-token-secondary">使用已通过的评审记录，无需上传、无需重复评审</span></span>
+                <span><span className="block text-sm font-medium text-token-primary">选择已有方案</span><span className="mt-1 block text-xs text-token-secondary">浏览已有方案，无需重新上传；确认时校验评审和申领状态</span></span>
               </label>
               <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3" style={{ borderColor: sourceMode === 'upload' ? 'var(--accent-primary)' : 'var(--border-subtle)', background: sourceMode === 'upload' ? 'var(--bg-input)' : undefined }}>
                 <input type="radio" name={`${formId}-mode`} checked={sourceMode === 'upload'} onChange={() => chooseSourceMode('upload')} disabled={Boolean(item)} style={{ accentColor: 'var(--accent-primary)' }} className="mt-0.5" />
@@ -736,9 +749,9 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
             </div>
             {sourceMode === 'existing' ? <div className="space-y-2">
               <Field label="已有方案 *">
-                <ItemSearchSelect value={reviewSubmissionId} onChange={chooseReviewSource} options={sourceOptions} disabled={busy || Boolean(item)} placeholder="搜索方案名称或文件名" countUnit="个方案" emptyText={reviewSourcesLoaded ? '暂无可申领的已通过方案，请选择上传新方案' : '正在读取已有方案'} />
+                <ItemSearchSelect value={reviewSubmissionId} onChange={chooseReviewSource} options={sourceOptions} disabled={busy || Boolean(item)} placeholder="搜索方案名称或文件名" countUnit="个方案" emptyText={reviewSourcesLoaded ? '暂无可查看的方案，请选择上传新方案' : '正在读取已有方案'} />
               </Field>
-              <p className="text-xs leading-5 text-token-secondary">{canUseAllReviews ? '当前可选择所有人的已通过方案。' : '仅显示本人已通过且未申领的方案。'}每个方案仅能申领一个 T，每个 T 仅能申领一个 V。</p>
+              <p className="text-xs leading-5 text-token-secondary">{canUseAllReviews ? '当前可查看所有人的方案。' : '显示本人全部方案。'}不按评审或申领状态隐藏，确认时校验。每个方案仅能申领一个 T，每个 T 仅能申领一个 V。</p>
               {!item && reviewSourcesLoaded && !reviewSourcesError && sourceOptions.length === 0 && <Button size="sm" onClick={() => chooseSourceMode('upload')}>暂无已有方案，改为上传新方案</Button>}
               {reviewSourcesError && <div className="flex items-center gap-2 text-xs text-token-secondary"><span>{reviewSourcesError}</span><button type="button" onClick={() => setSourceAttempt((value) => value + 1)} className="underline">重试</button></div>}
             </div> : <div className="space-y-2">
@@ -757,12 +770,12 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
               <Field label="所属应用 *" full>
-                <ItemSearchSelect value={linkedProductId} onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }} options={productOptions} disabled={busy} placeholder="搜索应用名称或编号" countUnit="个应用" emptyText="暂无可选应用" />
+                <ItemSearchSelect value={linkedProductId} onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }} options={productOptions} disabled={busy || editingIssued} placeholder="搜索应用名称或编号" countUnit="个应用" emptyText="暂无可选应用" />
                 {reviewApplicationMatching && <p role="status" className="mt-1.5 flex items-center gap-2 text-xs text-token-muted"><MapSpinner size={14} />正在识别方案所属应用，也可手动选择。</p>}
               </Field>
               <Field label="方案名称 *" full><InitiationInput value={planName} onChange={(e) => { cancelReviewApplicationLookup(); planNameDraft.setManual(e.target.value); }} /></Field>
               <Field label="项目类别"><InitiationSelect value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></InitiationSelect></Field>
-              <Field label="版本级别"><InitiationSelect value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</InitiationSelect></Field>
+              <Field label="版本级别"><InitiationSelect disabled={editingIssued} value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</InitiationSelect></Field>
               {projectType === 'custom' && <Field label="客户来源 *"><InitiationInput value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
               <Field label="需求来源 *"><InitiationInput value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
               <Field label="是否需要 UI 设计 *"><InitiationSelect value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
@@ -774,14 +787,14 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
           <section className="space-y-3 border-t border-token-subtle pt-4" aria-labelledby={`${formId}-decision`}>
             <h4 id={`${formId}-decision`} className="text-sm font-semibold text-token-primary">立项安排</h4>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Field label="是否需要开评审会"><InitiationSelect value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></InitiationSelect></Field>
-              {!meeting && <Field label="产品主负责人 *"><InitiationSelect value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">请选择</option>{members.map((member) => <option key={member.userId} value={member.userId}>{member.displayName}</option>)}</InitiationSelect></Field>}
+              <Field label="是否需要开评审会"><InitiationSelect disabled={editingIssued} value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></InitiationSelect></Field>
+              {!meeting && <Field label="产品主负责人 *"><fieldset disabled={busy || editingIssued} className="m-0 min-w-0 border-0 p-0"><UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品主负责人" /></fieldset></Field>}
               <div className="grid grid-cols-1 gap-4 md:col-span-2 md:grid-cols-2">
                 <Field label="计划立项时间 *"><InitiationInput type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} />{meeting && <span className="mt-1 block text-xs text-token-muted">同时作为预计评审会时间，无需重复填写。</span>}</Field>
                 {meeting && <Field label="计划召开稿次（自动识别）"><output className="block rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary">{draftDefaultsPending && !busy ? '正在识别，未标注时默认第一稿' : `${['', '第一稿', '第二稿', '第三稿'][meetingDraftCount] ?? '第一稿'}${meetingDraftCount > 1 ? `（计划共 ${meetingDraftCount} 稿）` : '（默认）'}`}</output><span className="mt-1 block text-xs text-token-muted">按方案名称或文件名中的明确稿次识别，不按版本号或评审次数推断。</span></Field>}
               </div>
             </div>
-            <p className="text-xs leading-5 text-token-secondary">{meeting ? 'Agent 评审通过后自动申领 T 号，线下各稿会议结果在详情中后续回填。' : 'Agent 评审通过后提交主负责人审批，同意后生成 T 号。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</p>
+            <p className="text-xs leading-5 text-token-secondary">{editingIssued ? `当前立项号：${issuedCode}。所属应用、版本级别和原审批方式保持不变，仅保存资料修改。` : <>{meeting ? 'Agent 评审通过后自动申领 T 号，线下各稿会议结果在详情中后续回填。' : 'Agent 评审通过后提交主负责人审批，同意后生成 T 号。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</>}</p>
           </section>
         </fieldset>
       </form>}
@@ -790,11 +803,19 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       {!reviewRunning && !completed && item?.reviewScore != null && <p className="text-sm text-token-secondary">上次 Agent 评审：{item.reviewScore} 分，{item.reviewPassed ? '已通过，可继续申领' : '未通过，填写记录已保留'}。</p>}
       {!reviewRunning && item?.reviewAttempts && item.reviewAttempts.length > 0 && <details className="border-t border-token-subtle pt-3 text-xs text-token-secondary"><summary className="cursor-pointer">已保存的评审记录（{item.reviewAttempts.length} 次）</summary><ul className="mt-2 space-y-2">{item.reviewAttempts.map((attempt) => <li key={attempt.id}>{`第 ${attempt.attemptNo} 次：${attempt.planFileName ?? '方案'}，${attempt.reviewPassed == null ? '待完成' : attempt.reviewPassed ? '通过' : '未通过'}${attempt.reviewScore == null ? '' : `，${attempt.reviewScore} 分`}`}</li>)}</ul></details>}
       {message && <div role="status" aria-live="polite" className="rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-xs leading-5 text-token-secondary">{message}</div>}
+      {sourceRejection && <Dialog open onOpenChange={(open) => { if (!open) setSourceRejection(null); }} zIndex={110}
+        title={sourceRejection.title} content={<div className="space-y-2 text-sm text-token-secondary"><p className="break-words font-medium text-token-primary">{planName}</p><p>{sourceRejection.message}</p><p>填写内容已保留，可返回修改。</p></div>}
+        actions={<Button size="sm" onClick={() => setSourceRejection(null)}>返回修改</Button>} />}
     </div>}
   />;
 }
 
 const INITIATION_CONTROL_CLASS = 'w-full rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none placeholder-token-muted focus-visible:ring-1 focus-visible:ring-[var(--border-focus)]';
+const INITIATION_SOURCE_REJECTION_TITLES: Record<string, string> = {
+  REVIEW_ALREADY_REGISTERED: '该方案已有申领记录',
+  REVIEW_NOT_PASSED: '该方案评审未通过',
+  REVIEW_NOT_READY: '该方案评审尚未完成',
+};
 function InitiationInput(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={INITIATION_CONTROL_CLASS} />; }
 function InitiationSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={INITIATION_CONTROL_CLASS}>{props.children}</select>; }
 
@@ -858,6 +879,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       </Td>
       <Td onClick={(e) => e.stopPropagation()}>
         {item.legacyRegistration && <button type="button" onClick={() => onOpenLegacy(item.legacyRegistration!)} className="text-token-secondary hover:underline">历史详情</button>}
+        {isOwner && item.tCode && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">修改资料</button>}
         {(showRetryReview || showFillMeeting) ? (
           <div className="flex flex-col items-start gap-1">
             {showRetryReview && (

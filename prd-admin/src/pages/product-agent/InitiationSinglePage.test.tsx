@@ -32,6 +32,7 @@ vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) =
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, description, content, actions }: { title: ReactNode; description: string; content: ReactNode; actions: ReactNode }) => <div role="dialog"><h3>{title}</h3><p>{description}</p>{content}{actions}</div> }));
 vi.mock('@/components/ItemSearchSelect', () => ({ ItemSearchSelect: ({ value, onChange, options, placeholder, disabled }: { value: string; onChange: (id: string) => void; options: Array<{ id: string; label: string }>; placeholder: string; disabled?: boolean }) => <select aria-label={placeholder} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}><option value="">请选择</option>{options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
 vi.mock('./ProductVersionMessagePaste', () => ({ ProductVersionMessagePaste: () => null }));
+vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: ({ value, onChange, placeholder }: { value: string; onChange: (id: string) => void; placeholder: string }) => <select aria-label={placeholder} value={value} onChange={(event) => onChange(event.target.value)}><option value="">请选择</option><option value="owner">其他负责人</option></select> }));
 vi.mock('./VersionCopyActions', () => ({ VersionCopyActions: () => null }));
 vi.mock('./InitiationReviewLivePanel', async (original) => ({ ...await original<typeof import('./InitiationReviewLivePanel')>(), InitiationReviewLivePanel: () => <div>正在展示评审进度</div> }));
 
@@ -89,9 +90,53 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); });
 
 describe('内部立项单页来源与失败恢复', () => {
+  it.each(['REVIEW_ALREADY_REGISTERED', 'REVIEW_NOT_PASSED', 'REVIEW_NOT_READY'])('确认被 %s 拒绝弹窗说明且保留输入，不触发后续流程', async (code) => {
+    api.createInitiation.mockResolvedValue({ success: false, error: { code, message: '服务端拒绝原因' } });
+    await mount();
+    await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
+    await change(field('需求来源 *'), '保留需求');
+    await change(field('计划立项时间 *'), '2026-10-21');
+    await change(field('是否需要开评审会'), 'yes');
+    await confirm();
+    expect(host.querySelectorAll('[role=dialog]')).toHaveLength(2);
+    expect(host.textContent).toContain('服务端拒绝原因');
+    expect(field<HTMLInputElement>('需求来源 *').value).toBe('保留需求');
+    expect(field<HTMLInputElement>('计划立项时间 *').value).toBe('2026-10-21');
+    expect(api.decideInitiation).not.toHaveBeenCalled();
+    expect(api.upload).not.toHaveBeenCalled();
+    expect(onChanged).not.toHaveBeenCalled();
+    await act(async () => [...host.querySelectorAll('button')].find((button) => button.textContent === '返回修改')?.click());
+    expect(host.querySelectorAll('[role=dialog]')).toHaveLength(1);
+    expect(field<HTMLInputElement>('需求来源 *').value).toBe('保留需求');
+  });
+
+  it('空产品成员目录仍可选择其他产品主负责人并提交', async () => {
+    api.createInitiation.mockResolvedValue({ success: true, data: seed({ reviewPassed: true, status: 'decision_pending' }) });
+    await mount();
+    await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
+    await change(field('需求来源 *'), '客户');
+    await change(field('计划立项时间 *'), '2026-10-21');
+    await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索并选择产品主负责人"]')!, 'owner');
+    await confirm();
+    expect(api.createInitiation).toHaveBeenCalledWith('product', expect.objectContaining({ primaryOwnerId: 'owner' }));
+  });
+
+  it('已发号记录修改只保存资料，不上传、不评审、不重新发号', async () => {
+    const issued = seed({ tCode: 'T1.2.3', status: 'approved', reviewPassed: true });
+    api.updateInitiation.mockResolvedValue({ success: true, data: issued });
+    await mount(issued);
+    await change(field('备注（选填）'), '修改备注');
+    await confirm();
+    expect(api.updateInitiation).toHaveBeenCalledWith('initiation', expect.objectContaining({ remark: '修改备注' }));
+    expect(api.createInitiation).not.toHaveBeenCalled();
+    expect(api.decideInitiation).not.toHaveBeenCalled();
+    expect(api.upload).not.toHaveBeenCalled();
+    expect(api.submit).not.toHaveBeenCalled();
+    expect(host.textContent).toContain('原 T 号、评审、审批及下游关联保持不变');
+  });
   it('两种来源显式分开，切换上传立即出现文件控件，不出现下一步', async () => {
     await mount();
-    expect(host.textContent).toContain('无需上传、无需重复评审');
+    expect(host.textContent).toContain('确认时校验评审和申领状态');
     expect(host.querySelector('input[type=file]')).toBeNull();
     await act(async () => host.querySelectorAll<HTMLInputElement>('input[type=radio]')[1].click());
     expect(host.querySelector('input[type=file]')).not.toBeNull();

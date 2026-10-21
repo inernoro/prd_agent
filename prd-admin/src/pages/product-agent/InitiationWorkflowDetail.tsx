@@ -172,6 +172,9 @@ export function InitiationWorkflowDetail({
             继续立项决策
           </button>
         )}
+        {initiation.tCode && initiation.createdBy === currentUserId && (
+          <button type="button" onClick={() => setRetryOpen(true)} className="rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary hover-bg-soft">修改资料</button>
+        )}
       </div>
 
       {initiation.tCode && <VersionCopyActions kind="initiation" id={initiation.id} code={initiation.tCode} />}

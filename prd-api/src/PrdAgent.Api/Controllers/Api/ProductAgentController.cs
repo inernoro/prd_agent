@@ -762,15 +762,14 @@ public class ProductAgentController : ControllerBase
         if (!HasPermission(AdminPermissionCatalog.ProductAgentUse)
             && !HasPermission(AdminPermissionCatalog.ReviewAgentUse)
             && !HasPermission(AdminPermissionCatalog.ProductAgentVersionApply))
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要评审或版本申领权限才能复用已通过的评审记录"));
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "需要评审或版本申领权限才能查看方案记录"));
         var userId = GetUserId();
-        var used = await ProductVersionClaimGuard.UsedReviewIdsAsync(_db);
         var canUseAllReviews = HasPermission(AdminPermissionCatalog.ProductAgentVersionClaimTest);
-        var items = await _db.ReviewSubmissions.Find(x => (canUseAllReviews || x.SubmitterId == userId) && x.Status == ReviewStatuses.Done && x.IsPassed == true)
+        var items = await _db.ReviewSubmissions.Find(x => canUseAllReviews || x.SubmitterId == userId)
             .SortByDescending(x => x.CompletedAt)
             .Project(x => new { x.Id, x.Title, x.FileName, x.CompletedAt })
             .ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items = items.Where(x => !used.Contains(x.Id)).ToList(), canUseAllReviews }));
+        return Ok(ApiResponse<object>.Ok(new { items, canUseAllReviews }));
     }
 
     [HttpGet("version-workflow/initiation-defaults")]
@@ -898,11 +897,14 @@ public class ProductAgentController : ControllerBase
             var sourceId = request.ReviewSubmissionId.Trim();
             passedSource = await _db.ReviewSubmissions.Find(x => x.Id == sourceId).FirstOrDefaultAsync();
             if (passedSource == null || !ProductVersionClaimPolicy.CanUseReview(userId, passedSource.SubmitterId,
-                    HasPermission(AdminPermissionCatalog.ProductAgentVersionClaimTest))
-                || passedSource.Status != ReviewStatuses.Done || passedSource.IsPassed != true)
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择当前申领权限允许使用的已通过评审记录"));
+                    HasPermission(AdminPermissionCatalog.ProductAgentVersionClaimTest)))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择当前申领权限允许使用的方案记录"));
             if (await IsVersionReviewSourceUsedAsync(sourceId))
-                return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "这条评审记录已用于版本立项"));
+                return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "该方案已有申领记录或正在申领 T 号，请查看原记录，不要重复提交。"));
+            if (passedSource.Status != ReviewStatuses.Done)
+                return BadRequest(ApiResponse<object>.Fail("REVIEW_NOT_READY", "该方案评审尚未完成，暂不能申领内部版本号。请等待评审完成并通过后重试。"));
+            if (passedSource.IsPassed != true)
+                return BadRequest(ApiResponse<object>.Fail("REVIEW_NOT_PASSED", "该方案评审未通过，暂不能申领内部版本号。请修改方案并重新评审。"));
             if (!string.IsNullOrWhiteSpace(passedSource.ResultId))
                 passedResult = await _db.ReviewResults.Find(x => x.Id == passedSource.ResultId).FirstOrDefaultAsync();
         }
@@ -965,8 +967,14 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         if (item.CreatedBy != userId && !await CanManageAsync(userId))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可修改该立项记录"));
-        if (item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
+        var issued = !string.IsNullOrWhiteSpace(item.TCode);
+        if (!issued && item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许修改基础信息"));
+        if (issued && (request.LinkedProductId?.Trim() != (item.LinkedProductId ?? item.ProductId)
+            || NormalizeVersionType(request.VersionType) != item.VersionType
+            || (request.ReviewMeetingRequired ?? false) != (item.ReviewMeetingRequired ?? false)
+            || (request.ReviewMeetingRequired == false && request.PrimaryOwnerId?.Trim() != item.PrimaryOwnerId)))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已发号记录可修改基础资料，不能变更所属应用、版本级别或原审批方式。"));
 
         if (string.IsNullOrWhiteSpace(request.PlanName))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空"));
@@ -994,8 +1002,8 @@ public class ProductAgentController : ControllerBase
             ? await ResolveDefaultInitiationDepartmentAsync(item.CreatedBy)
             : item.DepartmentName;
 
-        var saved = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && x.Status == item.Status
-                && (x.TCode == null || x.TCode == ""),
+        var saved = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status == item.Status
+                && x.TCode == item.TCode && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductInitiation>.Update
                 .Set(x => x.LinkedProductId, linkedProduct.Id)
                 .Set(x => x.ProjectType, request.ProjectType == "custom" ? "custom" : "standard")
@@ -1012,13 +1020,13 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.VersionType, NormalizeVersionType(request.VersionType))
                 .Set(x => x.RequirementIds, request.RequirementIds?.Distinct().ToList() ?? new())
                 .Set(x => x.PlannedProjectAt, request.PlannedProjectAt)
-                .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired ?? item.ReviewMeetingRequired)
-                .Set(x => x.ExpectedMeetingAt, request.ReviewMeetingRequired.HasValue
+                .Set(x => x.ReviewMeetingRequired, issued ? item.ReviewMeetingRequired : request.ReviewMeetingRequired ?? item.ReviewMeetingRequired)
+                .Set(x => x.ExpectedMeetingAt, !issued && request.ReviewMeetingRequired.HasValue
                     ? (request.ReviewMeetingRequired == true ? request.PlannedProjectAt : null) : item.ExpectedMeetingAt)
-                .Set(x => x.MeetingDraftCount, request.ReviewMeetingRequired.HasValue
+                .Set(x => x.MeetingDraftCount, !issued && request.ReviewMeetingRequired.HasValue
                     ? (request.ReviewMeetingRequired == true
                         ? ProductInitiationPlanDefaults.MeetingDraftCount(request.PlanName, request.PlanFileName ?? item.ReviewAttempts.LastOrDefault()?.PlanFileName) : null) : item.MeetingDraftCount)
-                .Set(x => x.PrimaryOwnerId, request.ReviewMeetingRequired.HasValue
+                .Set(x => x.PrimaryOwnerId, !issued && request.ReviewMeetingRequired.HasValue
                     ? (request.ReviewMeetingRequired == false ? request.PrimaryOwnerId?.Trim() : null) : item.PrimaryOwnerId)
                 .Set(x => x.NeedUiDesign, request.NeedUiDesign)
                 .Set(x => x.IsAiPoc, request.IsAiPoc)
