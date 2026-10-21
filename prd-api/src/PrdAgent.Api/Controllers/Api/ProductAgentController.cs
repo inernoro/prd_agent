@@ -773,6 +773,13 @@ public class ProductAgentController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { items = items.Where(x => !used.Contains(x.Id)).ToList(), canUseAllReviews }));
     }
 
+    [HttpGet("version-workflow/initiation-defaults")]
+    public IActionResult GetInitiationPlanDefaults([FromQuery] string? planName, [FromQuery] string? planFileName)
+        => Ok(ApiResponse<object>.Ok(new
+        {
+            meetingDraftCount = ProductInitiationPlanDefaults.MeetingDraftCount(planName, planFileName),
+        }));
+
     private async Task<bool> IsVersionReviewSourceUsedAsync(string submissionId, string? excludedInitiationId = null)
         => await ProductVersionClaimGuard.IsReviewUsedAsync(_db, submissionId, excludedInitiationId);
 
@@ -918,6 +925,11 @@ public class ProductAgentController : ControllerBase
             VersionType = NormalizeVersionType(request.VersionType),
             RequirementIds = request.RequirementIds?.Distinct().ToList() ?? new(),
             PlannedProjectAt = request.PlannedProjectAt,
+            ReviewMeetingRequired = request.ReviewMeetingRequired,
+            ExpectedMeetingAt = request.ReviewMeetingRequired == true ? request.PlannedProjectAt : null,
+            MeetingDraftCount = request.ReviewMeetingRequired == true
+                ? ProductInitiationPlanDefaults.MeetingDraftCount(request.PlanName, passedSource?.FileName ?? request.PlanFileName) : null,
+            PrimaryOwnerId = request.ReviewMeetingRequired == false ? request.PrimaryOwnerId?.Trim() : null,
             NeedUiDesign = request.NeedUiDesign,
             IsAiPoc = request.IsAiPoc,
             DevelopmentStatus = string.IsNullOrWhiteSpace(request.DevelopmentStatus) ? "待开发" : request.DevelopmentStatus.Trim(),
@@ -982,7 +994,8 @@ public class ProductAgentController : ControllerBase
             ? await ResolveDefaultInitiationDepartmentAsync(item.CreatedBy)
             : item.DepartmentName;
 
-        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+        var saved = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && x.Status == item.Status
+                && (x.TCode == null || x.TCode == ""),
             Builders<ProductInitiation>.Update
                 .Set(x => x.LinkedProductId, linkedProduct.Id)
                 .Set(x => x.ProjectType, request.ProjectType == "custom" ? "custom" : "standard")
@@ -999,11 +1012,21 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.VersionType, NormalizeVersionType(request.VersionType))
                 .Set(x => x.RequirementIds, request.RequirementIds?.Distinct().ToList() ?? new())
                 .Set(x => x.PlannedProjectAt, request.PlannedProjectAt)
+                .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired ?? item.ReviewMeetingRequired)
+                .Set(x => x.ExpectedMeetingAt, request.ReviewMeetingRequired.HasValue
+                    ? (request.ReviewMeetingRequired == true ? request.PlannedProjectAt : null) : item.ExpectedMeetingAt)
+                .Set(x => x.MeetingDraftCount, request.ReviewMeetingRequired.HasValue
+                    ? (request.ReviewMeetingRequired == true
+                        ? ProductInitiationPlanDefaults.MeetingDraftCount(request.PlanName, request.PlanFileName ?? item.ReviewAttempts.LastOrDefault()?.PlanFileName) : null) : item.MeetingDraftCount)
+                .Set(x => x.PrimaryOwnerId, request.ReviewMeetingRequired.HasValue
+                    ? (request.ReviewMeetingRequired == false ? request.PrimaryOwnerId?.Trim() : null) : item.PrimaryOwnerId)
                 .Set(x => x.NeedUiDesign, request.NeedUiDesign)
                 .Set(x => x.IsAiPoc, request.IsAiPoc)
                 .Set(x => x.DevelopmentStatus, string.IsNullOrWhiteSpace(request.DevelopmentStatus) ? "待开发" : request.DevelopmentStatus.Trim())
                 .Set(x => x.Remark, request.Remark?.Trim())
-                .Set(x => x.UpdatedAt, DateTime.UtcNow));
+                .Set(x => x.UpdatedAt, DateTime.UtcNow), cancellationToken: CancellationToken.None);
+        if (saved.MatchedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项状态已变化，请刷新后从原记录继续，不要重复新建"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -1085,8 +1108,9 @@ public class ProductAgentController : ControllerBase
         if (item.ReviewPassed != true)
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "Agent 评审通过后才能提交立项决策"));
 
-        if (request.ReviewMeetingRequired && !request.ExpectedMeetingAt.HasValue)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计评审会时间"));
+        var expectedMeetingAt = item.PlannedProjectAt ?? request.ExpectedMeetingAt;
+        if (request.ReviewMeetingRequired && !expectedMeetingAt.HasValue)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写计划立项时间，作为预计评审会时间"));
         if (request.ReviewMeetingRequired)
         {
             var draftCount = request.MeetingDraftCount is >= 1 and <= 3 ? request.MeetingDraftCount.Value : 1;
@@ -1109,7 +1133,7 @@ public class ProductAgentController : ControllerBase
         var decision = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && x.Status == "decision_pending" && (x.TCode == null || x.TCode == ""),
             Builders<ProductInitiation>.Update
                 .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
-                .Set(x => x.ExpectedMeetingAt, request.ExpectedMeetingAt)
+                .Set(x => x.ExpectedMeetingAt, request.ReviewMeetingRequired ? expectedMeetingAt : null)
                 .Set(x => x.MeetingDraftCount, meetingDraftCount)
                 .Set(x => x.MeetingDraftRounds, meetingRounds)
                 .Set(x => x.PrimaryOwnerId, request.PrimaryOwnerId)
@@ -7994,6 +8018,10 @@ public class CreateInitiationRequest
     public string? OwnerName { get; set; }
     public List<string>? ProjectMemberNames { get; set; }
     public DateTime? PlannedProjectAt { get; set; }
+    /// <summary>评审前保存立项设置，失败后继续使用同一记录。</summary>
+    public bool? ReviewMeetingRequired { get; set; }
+    public string? PrimaryOwnerId { get; set; }
+    public string? PlanFileName { get; set; }
     public bool? NeedUiDesign { get; set; }
     public bool? IsAiPoc { get; set; }
     public string? DevelopmentStatus { get; set; }

@@ -13,6 +13,7 @@ public static class ProductVersionApplyRoutePolicy
         @"\A(?:" +
         @"GET /api/product/version-workflow/products(?:/[^/]+)?|" +
         @"GET /api/product/version-workflow/review-sources|" +
+        @"GET /api/product/version-workflow/initiation-defaults|" +
         @"POST /api/product/version-workflow/parse-message|" +
         @"GET /api/product/overview/(?:releases|initiations)|" +
         @"GET /api/product/overview/version-workflow/(?:legacy(?:/[^/]+/copy-template)?|snapshots(?:/[^/]+)?)|" +

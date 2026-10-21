@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, Download, HelpCircle, Loader2, Plus, Search, Upload, X } from 'lucide-react';
+import { CheckCircle2, Download, FileText, HelpCircle, Plus, Search, Upload, X } from 'lucide-react';
 import {
   approveInitiation, completeRelease, createInitiation, decideInitiation,
   listProductMembers, listVersionApplicationProducts, getWorkflowInitiations, getWorkflowReleases,
   syncInitiationReview, updateInitiation, listProductVersionReviewSources, parseProductVersionMessage,
+  getInitiationPlanDefaults,
   type VersionApplicationProduct, type WorkflowVersionRecord,
 } from '@/services/real/productAgent';
 import { uploadAttachment } from '@/services/real/aiToolbox';
@@ -23,6 +24,8 @@ import { hasRecoverableSseOutcome, waitForSubmissionDone } from './initiationRev
 import { getUserCards } from '@/services/real/teams';
 import { useAuthStore } from '@/stores/authStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { Dialog } from '@/components/ui/Dialog';
+import { Button } from '@/components/design/Button';
 import { useProductListScope } from '@/lib/productListScope';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
@@ -247,7 +250,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     {legacyDetail && <Modal title="历史版本详情（只读）" onClose={() => setLegacyDetail(null)} width="max-w-2xl">
       <LegacyVersionDetail record={legacyDetail} />
     </Modal>}
-    {retrySeed && <InitiationApplication productId={retrySeed.productId} seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={async () => { setRetrySeed(null); await reload(); }} />}
+    {retrySeed && <InitiationApplication productId={retrySeed.productId} seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={reload} />}
     {meetingFillItem && <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
       <InitiationMeetingRoundsEditor initiation={meetingFillItem} editable={meetingFillItem.createdBy === currentUserId}
         onSaved={async () => { setMeetingFillItem(null); await reload(); }} />
@@ -294,7 +297,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   members: ProductMember[];
   onClose: () => void;
   onChanged: () => Promise<void>;
-  /** 评审未通过时重新发起：预填基础信息并直接进入 Agent 评审步骤 */
+  /** 失败或中断后继续同一立项，保留填写内容与历次评审。 */
   seed?: ProductInitiation;
 }) {
   const permissions = useAuthStore((state) => state.permissions ?? []);
@@ -306,11 +309,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     : isRetry
       ? '重新发起立项'
       : '申领内部版本号';
-  const [step, setStep] = useState(() => {
-    if (seed?.status === 'review_failed') return 2;
-    if (seed?.status === 'decision_pending') return 3;
-    return 1;
-  });
+  const formId = useId();
+  const [sourceMode, setSourceMode] = useState<'existing' | 'upload'>(seed && !seed.reviewPassed ? 'upload' : 'existing');
   const [item, setItem] = useState<ProductInitiation | null>(seed ?? null);
   const [projectType, setProjectType] = useState<'standard' | 'custom'>(seed?.projectType ?? 'standard');
   const [customerSource, setCustomerSource] = useState(seed?.customerSource ?? '');
@@ -323,20 +323,24 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [needUiDesign, setNeedUiDesign] = useState(seed ? (seed.needUiDesign == null ? '' : seed.needUiDesign ? 'yes' : 'no') : 'no');
   const [isAiPoc, setIsAiPoc] = useState(seed ? (seed.isAiPoc == null ? '' : seed.isAiPoc ? 'yes' : 'no') : 'yes');
   const [remark, setRemark] = useState(seed?.remark ?? '');
-  const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewSubmissionId ?? '');
-  const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string }>>([]);
+  const [reviewSubmissionId, setReviewSubmissionId] = useState(seed?.reviewPassed ? seed.reviewSubmissionId ?? '' : '');
+  const [reviewSources, setReviewSources] = useState<Array<{ id: string; title: string; fileName: string }>>([]);
+  const [reviewSourcesLoaded, setReviewSourcesLoaded] = useState(false);
+  const [reviewSourcesError, setReviewSourcesError] = useState('');
+  const [sourceAttempt, setSourceAttempt] = useState(0);
   const [canUseAllReviews, setCanUseAllReviews] = useState(false);
   const reviewApplicationSequence = useRef(0);
   const [reviewApplicationMatching, setReviewApplicationMatching] = useState(false);
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
   const [file, setFile] = useState<File | null>(null);
-  const [meeting, setMeeting] = useState(false);
-  const [meetingAt, setMeetingAt] = useState('');
+  const [meeting, setMeeting] = useState(seed?.reviewMeetingRequired ?? false);
   const [meetingDraftCount, setMeetingDraftCount] = useState(seed?.meetingDraftCount ?? 1);
-  const [ownerId, setOwnerId] = useState('');
+  const [ownerId, setOwnerId] = useState(seed?.primaryOwnerId ?? '');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const [issuedCode, setIssuedCode] = useState('');
+  const submittingRef = useRef(false);
+  const [draftDefaultsPending, setDraftDefaultsPending] = useState(false);
+  const reviewPanelRef = useRef<HTMLDivElement>(null);
   const [reviewStage, setReviewStage] = useState<InitiationReviewStage>('idle');
   const [processLogs, setProcessLogs] = useState<ProcessLogEntry[]>([]);
   const [dimensionScores, setDimensionScores] = useState<ReviewDimensionScore[]>([]);
@@ -396,10 +400,20 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   });
 
   const reviewRunning = reviewStage !== 'idle';
+  const issuedCode = item?.tCode ?? '';
+  const completed = Boolean(issuedCode || item?.status === 'owner_pending');
+  const sourceFileName = reviewSources.find((source) => source.id === reviewSubmissionId)?.fileName;
+  const planFileName = sourceMode === 'upload'
+    ? file?.name ?? item?.reviewAttempts?.slice(-1)[0]?.planFileName ?? undefined
+    : sourceFileName ?? item?.reviewAttempts?.slice(-1)[0]?.planFileName ?? undefined;
   const progressPercent = useMemo(
     () => computeInitiationReviewProgress(reviewStage, dimensionScores.length, expectedDimCount),
     [reviewStage, dimensionScores.length, expectedDimCount],
   );
+
+  useEffect(() => {
+    if (reviewRunning) reviewPanelRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [reviewRunning]);
 
   useEffect(() => {
     if (applicationProducts) return;
@@ -407,22 +421,42 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   }, [applicationProducts]);
 
   useEffect(() => {
+    let active = true;
+    setReviewSourcesError('');
     void listProductVersionReviewSources().then((res) => {
+      if (!active) return;
       if (res.success) {
         setReviewSources(res.data.items);
         setCanUseAllReviews(res.data.canUseAllReviews);
-      }
+      } else setReviewSourcesError('已有方案暂时无法读取，请重试或上传新方案。');
+      setReviewSourcesLoaded(true);
+    }).catch(() => {
+      if (active) { setReviewSourcesError('已有方案暂时无法读取，请重试或上传新方案。'); setReviewSourcesLoaded(true); }
     });
-  }, []);
+    return () => { active = false; };
+  }, [sourceAttempt]);
 
   useEffect(() => {
-    if (step !== 2) return;
+    if (sourceMode !== 'upload') return;
     void getDimensions().then((res) => {
       if (res.success) {
         setExpectedDimCount(res.data.dimensions.filter((d) => d.isActive).length);
       }
-    });
-  }, [step]);
+    }).catch(() => { /* 维度数仅用于进度展示，不阻断提交。 */ });
+  }, [sourceMode]);
+
+  useEffect(() => {
+    if (completed || busy) return;
+    let active = true;
+    setDraftDefaultsPending(true);
+    const timer = window.setTimeout(() => {
+      void getInitiationPlanDefaults(planName, planFileName).then((res) => {
+        if (active && res.success) setMeetingDraftCount(res.data.meetingDraftCount);
+      }).catch(() => { /* 预览失败不阻断填写，保存时由同一服务端规则确认。 */ })
+        .finally(() => { if (active) setDraftDefaultsPending(false); });
+    }, 250);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [planName, planFileName, busy, completed]);
 
   useEffect(() => {
     if (!item) onApplicationProductChange?.(linkedProductId);
@@ -470,6 +504,13 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     });
   };
 
+  const chooseSourceMode = (mode: 'existing' | 'upload') => {
+    if (item || busy) return;
+    cancelReviewApplicationLookup();
+    setSourceMode(mode);
+    setMessage('');
+  };
+
   const basePayload = () => ({
     linkedProductId,
     projectType,
@@ -480,42 +521,19 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     requirementDescription: item?.requirementDescription ?? undefined,
     projectMemberNames: item?.projectMemberNames,
     plannedProjectAt: plannedProjectAt ? new Date(`${plannedProjectAt}T00:00:00+08:00`).toISOString() : undefined,
+    reviewMeetingRequired: meeting,
+    primaryOwnerId: meeting ? undefined : ownerId,
+    planFileName,
     needUiDesign: needUiDesign === 'yes',
     isAiPoc: isAiPoc === 'yes',
     developmentStatus: item?.developmentStatus,
     remark: remark.trim() || undefined,
-    reviewSubmissionId: reviewSubmissionId || undefined,
+    reviewSubmissionId: item?.reviewSubmissionId || (sourceMode === 'existing' ? reviewSubmissionId || undefined : undefined),
     versionType,
     requirementIds: item?.requirementIds ?? [],
   });
 
-  const goPrevStep = () => {
-    if (step <= 1 || reviewRunning || busy) return;
-    setMessage('');
-    setStep((s) => s - 1);
-  };
-
-  const saveStep1 = async () => {
-    if (!linkedProductId.trim()) return setMessage('请选择所属应用');
-    if (!planName.trim()) return setMessage('请填写方案名称');
-    if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
-    if (!demandSource.trim()) return setMessage('请填写需求来源');
-    if (!plannedProjectAt) return setMessage('请填写计划立项时间');
-    if (!needUiDesign || !isAiPoc) return setMessage('请选择 UI 设计和 AI POC 状态');
-    setBusy(true);
-    const payload = basePayload();
-    const editable = item && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
-    const res = editable && item
-      ? await updateInitiation(item.id, payload)
-      : await createInitiation(applicationProducts ? linkedProductId : productId, payload);
-    setBusy(false);
-    if (!res.success) return setMessage(res.error?.message ?? '保存失败');
-    setItem(res.data); setStep(res.data.reviewPassed ? 3 : 2); setMessage('');
-  };
-  const runReview = async () => {
-    if (!file || !item) return setMessage('请先上传方案文件');
-    setBusy(true);
-    setMessage('');
+  const runReview = async (saved: ProductInitiation): Promise<ProductInitiation> => {
     setDimensionScores([]);
     setTotalScore(null);
     setReviewPassed(null);
@@ -525,26 +543,26 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     streamErrorRef.current = null;
     sseOutcomeRef.current = { hasResult: false, dimensionCount: 0, streamDone: false };
 
-    setReviewStage('uploading');
-    appendLog(`开始上传：${file.name}`);
-    const uploaded = await uploadAttachment(file);
-    if (!uploaded.success) {
-      setBusy(false);
-      setReviewStage('idle');
-      return setMessage(uploaded.error?.message ?? '上传失败');
-    }
-    appendLog('方案文件上传成功');
+    let submissionId = saved.reviewSubmissionId;
+    if (sourceMode === 'upload' && file) {
+      setReviewStage('uploading');
+      appendLog(`开始上传：${file.name}`);
+      const uploaded = await uploadAttachment(file);
+      if (!uploaded.success) throw new Error(uploaded.error?.message ?? '上传失败，请重新选择文件后重试。');
+      appendLog('方案文件上传成功');
 
-    setReviewStage('submitting');
-    appendLog('正在创建 Agent 评审任务…');
-    const submitted = await createSubmission(planName, uploaded.data.attachmentId);
-    if (!submitted.success) {
-      setBusy(false);
-      setReviewStage('idle');
-      return setMessage(submitted.error?.message ?? '提交评审失败');
+      setReviewStage('submitting');
+      appendLog('正在创建 Agent 评审任务…');
+      const submitted = await createSubmission(planName, uploaded.data.attachmentId);
+      if (!submitted.success) throw new Error(submitted.error?.message ?? '提交评审失败，请重试。');
+      submissionId = submitted.data.submission.id;
+      // 先关联任务，再等待流：断线后仍能从原立项恢复，不丢失填写内容。
+      const linked = await syncInitiationReview(saved.id, submissionId);
+      if (!linked.success) throw new Error(linked.error?.message ?? '评审任务关联失败，请查看评审记录后重试。');
+      setItem(linked.data);
+      appendLog('评审任务已关联到当前立项');
     }
-    const submissionId = submitted.data.submission.id;
-    appendLog(`评审任务已创建（${submissionId.slice(0, 8)}…）`);
+    if (!submissionId) throw new Error('请选择方案文件后重试。');
 
     setReviewStage('streaming');
     appendLog('连接评审流，等待 Agent 分析打分…');
@@ -554,9 +572,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     const recoverable = hasRecoverableSseOutcome(outcome);
 
     if (streamErrorRef.current && !recoverable) {
-      setBusy(false);
-      setReviewStage('idle');
-      return setMessage(streamErrorRef.current);
+      throw new Error(streamErrorRef.current);
     }
     if (streamErrorRef.current && recoverable) {
       appendLog('评审结果已从流中获取，忽略连接异常并继续同步…');
@@ -566,9 +582,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       appendLog('确认服务端评审状态…');
       const waited = await waitForSubmissionDone(submissionId);
       if (!waited.ok && !recoverable) {
-        setBusy(false);
-        setReviewStage('idle');
-        return setMessage(waited.message);
+        throw new Error(waited.message);
       }
       if (!waited.ok && recoverable) {
         appendLog(`详情查询失败（${waited.message}），仍尝试同步立项…`);
@@ -577,39 +591,28 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
 
     setReviewStage('syncing');
     appendLog('正在同步评审结果到立项记录…');
-    const synced = await syncInitiationReview(item.id, submissionId);
-    setBusy(false);
-    setReviewStage('idle');
+    const synced = await syncInitiationReview(saved.id, submissionId);
     if (!synced.success) {
       if (recoverable) {
-        return setMessage(`评审已完成，但同步立项失败：${synced.error?.message ?? '未知错误'}。请刷新页面或联系管理员。`);
+        throw new Error(`评审已完成，但同步立项失败：${synced.error?.message ?? '未知错误'}。请从当前记录继续。`);
       }
-      return setMessage(synced.error?.message ?? '同步评审结果失败');
+      throw new Error(synced.error?.message ?? '同步评审结果失败，请从当前记录继续。');
     }
     setItem(synced.data);
     appendLog('立项记录已更新');
-    if (synced.data.reviewPassed) {
-      setStep(3);
-      setMessage('评审通过，可以提交立项决策。');
-    } else {
-      setMessage(`评审未通过，得分 ${synced.data.reviewScore ?? 0}。请修改方案后重新立项。`);
-    }
+    return synced.data;
   };
-  const submitDecision = async () => {
-    if (!item) return;
-    setBusy(true);
-    const res = await decideInitiation(item.id, {
+  const submitDecision = async (reviewed: ProductInitiation) => {
+    if (reviewed.reviewPassed !== true) return;
+    const res = await decideInitiation(reviewed.id, {
       reviewMeetingRequired: meeting,
-      expectedMeetingAt: meeting && meetingAt ? new Date(meetingAt).toISOString() : undefined,
+      expectedMeetingAt: meeting ? reviewed.plannedProjectAt ?? undefined : undefined,
       primaryOwnerId: meeting ? undefined : ownerId,
-      meetingDraftCount: meeting ? meetingDraftCount : undefined,
+      meetingDraftCount: meeting ? reviewed.meetingDraftCount ?? 1 : undefined,
     });
-    setBusy(false);
-    if (!res.success) return setMessage(res.error?.message ?? '提交失败');
-    await onChanged();
+    if (!res.success) throw new Error(res.error?.message ?? '提交失败，请从当前记录继续。');
     setItem(res.data);
     if (res.data.tCode) {
-      setIssuedCode(res.data.tCode);
       try {
         await navigator.clipboard.writeText(res.data.tCode);
         setMessage('立项号已生成并自动复制。');
@@ -617,7 +620,57 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
         setMessage('立项号已生成；浏览器未允许自动复制，请点击复制编号。');
       }
     } else {
-      onClose();
+      setMessage('已提交主负责人审批，同意后自动生成 T 立项号。填写内容已保存。');
+    }
+  };
+
+  const confirmApplication = async () => {
+    if (submittingRef.current || completed) return;
+    if (!linkedProductId.trim()) return setMessage('请选择所属应用');
+    if (sourceMode === 'existing' && !reviewSubmissionId && !item?.reviewPassed) return setMessage('请选择一个已通过评审的方案，或切换到上传新方案。');
+    if (sourceMode === 'upload' && !file && !item?.reviewPassed
+      && !(item?.status === 'review_pending' && item.reviewSubmissionId)) return setMessage('请在当前页面选择方案文件。');
+    if (!planName.trim()) return setMessage('请填写方案名称');
+    if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
+    if (!demandSource.trim()) return setMessage('请填写需求来源');
+    if (!plannedProjectAt) return setMessage('请填写计划立项时间');
+    if (!meeting && !ownerId) return setMessage('请选择产品主负责人');
+    if (!needUiDesign || !isAiPoc) return setMessage('请选择 UI 设计和 AI POC 状态');
+
+    submittingRef.current = true;
+    cancelReviewApplicationLookup();
+    setBusy(true);
+    setMessage('');
+    let hasSavedRecord = Boolean(item);
+    try {
+      // 全部填写项先落在原记录上，失败重试不会另建一条立项。
+      const payload = basePayload();
+      const saved = item
+        ? await updateInitiation(item.id, payload)
+        : await createInitiation(applicationProducts ? linkedProductId : productId, payload);
+      if (!saved.success) throw new Error(saved.error?.message ?? '填写内容保存失败，请重试。');
+      hasSavedRecord = true;
+      setItem(saved.data);
+      setMeetingDraftCount(saved.data.meetingDraftCount ?? 1);
+      const reviewed = saved.data.reviewPassed && (sourceMode === 'existing' || !file) ? saved.data : await runReview(saved.data);
+      if (reviewed.reviewPassed !== true) {
+        setMessage(reviewed.reviewPassed === false
+          ? `评审未通过${reviewed.reviewScore == null ? '' : `，得分 ${reviewed.reviewScore}`}，未生成 T 号。填写内容及本次评审记录已保存，修改方案后可继续。`
+          : '评审尚未完成，暂未生成 T 号。填写内容及当前任务已保存，可从原记录继续。');
+        return;
+      }
+      setFile(null);
+      await submitDecision(reviewed);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '处理未完成，请重试。';
+      setMessage(`${reason}${hasSavedRecord ? ' 已保存填写内容，请从当前记录继续，不要重复新建。' : ''}`);
+    } finally {
+      setReviewStage('idle');
+      setBusy(false);
+      submittingRef.current = false;
+      if (hasSavedRecord) {
+        try { await onChanged(); } catch { /* 保存结果不依赖列表刷新；原记录可再次打开。 */ }
+      }
     }
   };
 
@@ -629,7 +682,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     if (parsed.planName && planNameDraft.isCurrentEdit(editVersion)) {
       planNameDraft.setPasted(parsed.planName, editVersion);
       const match = reviewSources.find((source) => source.title.replace(/\s+/g, '') === parsed.planName?.replace(/\s+/g, ''));
-      if (match) setReviewSubmissionId(match.id);
+      if (match && !item && sourceMode === 'existing') setReviewSubmissionId(match.id);
       const productMatches = availableProducts.filter((product) =>
         (canSelectApplication || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
       if (parsed.matchedApplicationId && availableProducts.some((product) => product.id === parsed.matchedApplicationId && (canSelectApplication || product.id === productId))) setLinkedProductId(parsed.matchedApplicationId);
@@ -641,111 +694,109 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     if (parsed.remark) setRemark(parsed.remark);
   };
 
-  return <Modal title={wizardTitle} onClose={onClose} width="max-w-3xl">
-    {memberNotice}
-    <Stepper step={step} />
-    {step === 1 && <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
-      <Field label="已通过的产品评审记录（选填，可跳过重复评审）" full>
-        <Select value={reviewSubmissionId} onChange={(event) => chooseReviewSource(event.target.value)}>
-          <option value="">新上传方案并进行 Agent 评审</option>
-          {reviewSources.map((source) => <option key={source.id} value={source.id}>{source.title}</option>)}
-        </Select>
-        <p className="mt-1.5 text-xs text-token-muted">{canUseAllReviews ? '申领测试已开启：可选择所有人的已通过方案。' : '仅可选择本人提交的已通过方案。'}每个评审方案只能申领一个 T，每个 T 只能申领一个 V。</p>
-      </Field>
-      <Field label="项目类别"><Select value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
-      {projectType === 'custom' && <Field label="客户来源 *"><Input value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
-      <Field label="所属应用 *" full>
-        <ItemSearchSelect
-          value={linkedProductId}
-          onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }}
-          options={productOptions}
-          placeholder="搜索应用名称或编号"
-          countUnit="个应用"
-          emptyText="暂无可选应用"
-        />
-        {reviewApplicationMatching && <p role="status" className="mt-1.5 flex items-center gap-2 text-xs text-token-muted"><MapSpinner size={14} />正在识别方案所属应用，也可手动选择。</p>}
-      </Field>
-      <Field label="方案名称 *"><Input value={planName} onChange={(e) => { cancelReviewApplicationLookup(); planNameDraft.setManual(e.target.value); }} /></Field>
-      <Field label="版本级别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select></Field>
-      <Field label="需求来源 *"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
-      <Field label="计划立项时间 *"><Input type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} /></Field>
-      <Field label="是否需要 UI 设计 *"><Select value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
-      <Field label="是否属于 AI POC 项目 *"><Select value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select></Field>
-      <Field label="备注" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
+  const sourceOptions = reviewSources.map((source) => ({ id: source.id, label: source.title, searchExtra: source.fileName }));
+  if (item?.reviewPassed && item.reviewSubmissionId && !sourceOptions.some((option) => option.id === item.reviewSubmissionId)) {
+    sourceOptions.unshift({ id: item.reviewSubmissionId, label: item.planName, searchExtra: planFileName ?? '' });
+  }
+  const confirmationLabel = sourceMode === 'upload' && (!item?.reviewPassed || file)
+    ? '确认并评审，通过后自动申领' : '确认申领';
+
+  return <Dialog
+    open
+    onOpenChange={(open) => { if (!open && !submittingRef.current) onClose(); }}
+    title={wizardTitle}
+    description="一次填写并确认。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。"
+    maxWidth={920}
+    contentStyle={{ height: 'min(94vh, 960px)', maxHeight: '94vh' }}
+    actions={<>
+      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{meeting ? '评审通过后申领 T 号' : '评审通过后交主负责人审批'}</span>}
+      <Button size="sm" onClick={onClose} disabled={busy}>{completed ? '完成' : '取消'}</Button>
+      {!completed && <Button size="sm" variant="primary" type="submit" form={formId} disabled={busy || !linkedProductId.trim()}>
+        {busy && <MapSpinner size={14} />}{busy ? (reviewRunning ? '评审中，通过后自动继续…' : '正在保存并提交…') : confirmationLabel}
+      </Button>}
+    </>}
+    content={<div className="space-y-5">
+      {memberNotice}
+      {completed ? <section className="space-y-3 rounded-md border border-token-subtle bg-token-nested p-4">
+        <div className="flex items-center gap-2 text-sm font-medium text-token-primary"><CheckCircle2 size={18} />{issuedCode ? '内部版本号已生成' : '已提交主负责人审批'}</div>
+        {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /></>}
+      </section> : <form id={formId} onSubmit={(event) => { event.preventDefault(); void confirmApplication(); }} aria-busy={busy}>
+        <fieldset disabled={busy} className="min-w-0 space-y-5 border-0 p-0">
+          <section className="space-y-3" aria-labelledby={`${formId}-source`}>
+            <h4 id={`${formId}-source`} className="text-sm font-semibold text-token-primary">方案来源 <span className="text-xs font-normal text-token-muted">两种方式，任选其一</span></h4>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3" style={{ borderColor: sourceMode === 'existing' ? 'var(--accent-primary)' : 'var(--border-subtle)', background: sourceMode === 'existing' ? 'var(--bg-input)' : undefined }}>
+                <input type="radio" name={`${formId}-mode`} checked={sourceMode === 'existing'} onChange={() => chooseSourceMode('existing')} disabled={Boolean(item)} style={{ accentColor: 'var(--accent-primary)' }} className="mt-0.5" />
+                <span><span className="block text-sm font-medium text-token-primary">选择已有方案</span><span className="mt-1 block text-xs text-token-secondary">使用已通过的评审记录，无需上传、无需重复评审</span></span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3" style={{ borderColor: sourceMode === 'upload' ? 'var(--accent-primary)' : 'var(--border-subtle)', background: sourceMode === 'upload' ? 'var(--bg-input)' : undefined }}>
+                <input type="radio" name={`${formId}-mode`} checked={sourceMode === 'upload'} onChange={() => chooseSourceMode('upload')} disabled={Boolean(item)} style={{ accentColor: 'var(--accent-primary)' }} className="mt-0.5" />
+                <span><span className="block text-sm font-medium text-token-primary">上传新方案</span><span className="mt-1 block text-xs text-token-secondary">现在选择文件，确认后评审，通过后自动继续申领</span></span>
+              </label>
+            </div>
+            {sourceMode === 'existing' ? <div className="space-y-2">
+              <Field label="已有方案 *">
+                <ItemSearchSelect value={reviewSubmissionId} onChange={chooseReviewSource} options={sourceOptions} disabled={busy || Boolean(item)} placeholder="搜索方案名称或文件名" countUnit="个方案" emptyText={reviewSourcesLoaded ? '暂无可申领的已通过方案，请选择上传新方案' : '正在读取已有方案'} />
+              </Field>
+              <p className="text-xs leading-5 text-token-secondary">{canUseAllReviews ? '当前可选择所有人的已通过方案。' : '仅显示本人已通过且未申领的方案。'}每个方案仅能申领一个 T，每个 T 仅能申领一个 V。</p>
+              {!item && reviewSourcesLoaded && !reviewSourcesError && sourceOptions.length === 0 && <Button size="sm" onClick={() => chooseSourceMode('upload')}>暂无已有方案，改为上传新方案</Button>}
+              {reviewSourcesError && <div className="flex items-center gap-2 text-xs text-token-secondary"><span>{reviewSourcesError}</span><button type="button" onClick={() => setSourceAttempt((value) => value + 1)} className="underline">重试</button></div>}
+            </div> : <div className="space-y-2">
+              <label className="flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-token-subtle bg-token-nested p-4 focus-within:ring-1 focus-within:ring-[var(--border-focus)]" onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); if (!busy) setFile(event.dataTransfer.files[0] ?? null); }}>
+                {file ? <FileText size={24} className="shrink-0 text-token-secondary" /> : <Upload size={24} className="shrink-0 text-token-secondary" />}
+                <span className="min-w-0"><span className="block break-all text-sm font-medium text-token-primary">{file ? file.name : '方案文件 *：点击选择或拖放到这里'}</span><span className="mt-1 block text-xs text-token-secondary">{file ? '文件已选择；确认后上传并评审，点击可更换' : '支持 PDF、Word、Markdown、TXT、Excel、PPT，无需进入下一页'}</span></span>
+                <input type="file" aria-label="方案文件" className="sr-only" accept=".pdf,.doc,.docx,.md,.txt,.xls,.xlsx,.ppt,.pptx" onChange={(event) => { setFile(event.target.files?.[0] ?? null); event.target.value = ''; }} />
+              </label>
+              {planFileName && !file && <p className="text-xs text-token-secondary">上次方案文件：{planFileName}。{item?.reviewPassed ? '评审已通过，无需重复上传。' : item?.status === 'review_pending' ? '可继续当前评审，或选择新文件。' : '修改后在此选择文件，填写内容无需重填。'}</p>}
+            </div>}
+            {item && !completed && <p className="text-xs text-token-muted">正在继续已保存的立项，方案来源不变；修改后仍保存到同一条记录。</p>}
+          </section>
+
+          <section className="space-y-3 border-t border-token-subtle pt-4" aria-labelledby={`${formId}-basic`}>
+            <h4 id={`${formId}-basic`} className="text-sm font-semibold text-token-primary">基础信息</h4>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
+              <Field label="所属应用 *" full>
+                <ItemSearchSelect value={linkedProductId} onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }} options={productOptions} disabled={busy} placeholder="搜索应用名称或编号" countUnit="个应用" emptyText="暂无可选应用" />
+                {reviewApplicationMatching && <p role="status" className="mt-1.5 flex items-center gap-2 text-xs text-token-muted"><MapSpinner size={14} />正在识别方案所属应用，也可手动选择。</p>}
+              </Field>
+              <Field label="方案名称 *" full><InitiationInput value={planName} onChange={(e) => { cancelReviewApplicationLookup(); planNameDraft.setManual(e.target.value); }} /></Field>
+              <Field label="项目类别"><InitiationSelect value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></InitiationSelect></Field>
+              <Field label="版本级别"><InitiationSelect value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</InitiationSelect></Field>
+              {projectType === 'custom' && <Field label="客户来源 *"><InitiationInput value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
+              <Field label="需求来源 *"><InitiationInput value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
+              <Field label="是否需要 UI 设计 *"><InitiationSelect value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
+              <Field label="是否属于 AI POC 项目 *"><InitiationSelect value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
+              <Field label="备注（选填）" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className={INITIATION_CONTROL_CLASS} /></Field>
+            </div>
+          </section>
+
+          <section className="space-y-3 border-t border-token-subtle pt-4" aria-labelledby={`${formId}-decision`}>
+            <h4 id={`${formId}-decision`} className="text-sm font-semibold text-token-primary">立项安排</h4>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <Field label="是否需要开评审会"><InitiationSelect value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></InitiationSelect></Field>
+              {!meeting && <Field label="产品主负责人 *"><InitiationSelect value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">请选择</option>{members.map((member) => <option key={member.userId} value={member.userId}>{member.displayName}</option>)}</InitiationSelect></Field>}
+              <div className="grid grid-cols-1 gap-4 md:col-span-2 md:grid-cols-2">
+                <Field label="计划立项时间 *"><InitiationInput type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} />{meeting && <span className="mt-1 block text-xs text-token-muted">同时作为预计评审会时间，无需重复填写。</span>}</Field>
+                {meeting && <Field label="计划召开稿次（自动识别）"><output className="block rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary">{draftDefaultsPending && !busy ? '正在识别，未标注时默认第一稿' : `${['', '第一稿', '第二稿', '第三稿'][meetingDraftCount] ?? '第一稿'}${meetingDraftCount > 1 ? `（计划共 ${meetingDraftCount} 稿）` : '（默认）'}`}</output><span className="mt-1 block text-xs text-token-muted">按方案名称或文件名中的明确稿次识别，不按版本号或评审次数推断。</span></Field>}
+              </div>
+            </div>
+            <p className="text-xs leading-5 text-token-secondary">{meeting ? 'Agent 评审通过后自动申领 T 号，线下各稿会议结果在详情中后续回填。' : 'Agent 评审通过后提交主负责人审批，同意后生成 T 号。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</p>
+          </section>
+        </fieldset>
+      </form>}
+
+      {reviewRunning && <div ref={reviewPanelRef}><InitiationReviewLivePanel stage={reviewStage} ssePhase={sse.phase} phaseMessage={sse.phaseMessage} progressPercent={progressPercent} logs={processLogs} typing={sse.typing} dimensionScores={dimensionScores} totalScore={totalScore} isPassed={reviewPassed} adjustmentLog={adjustmentLog} expectedDimCount={expectedDimCount} /></div>}
+      {!reviewRunning && !completed && item?.reviewScore != null && <p className="text-sm text-token-secondary">上次 Agent 评审：{item.reviewScore} 分，{item.reviewPassed ? '已通过，可继续申领' : '未通过，填写记录已保留'}。</p>}
+      {!reviewRunning && item?.reviewAttempts && item.reviewAttempts.length > 0 && <details className="border-t border-token-subtle pt-3 text-xs text-token-secondary"><summary className="cursor-pointer">已保存的评审记录（{item.reviewAttempts.length} 次）</summary><ul className="mt-2 space-y-2">{item.reviewAttempts.map((attempt) => <li key={attempt.id}>{`第 ${attempt.attemptNo} 次：${attempt.planFileName ?? '方案'}，${attempt.reviewPassed == null ? '待完成' : attempt.reviewPassed ? '通过' : '未通过'}${attempt.reviewScore == null ? '' : `，${attempt.reviewScore} 分`}`}</li>)}</ul></details>}
+      {message && <div role="status" aria-live="polite" className="rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-xs leading-5 text-token-secondary">{message}</div>}
     </div>}
-    {step === 2 && <div className="space-y-4">
-      {!reviewRunning && (
-        <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-cyan-400/35 bg-cyan-400/5 text-center">
-          <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-token-secondary">{file ? file.name : '拖动或点击上传方案文件'}</span>
-          <span className="mt-1 text-xs text-token-muted">PDF、Word、Markdown、TXT、Excel、PPT</span>
-          <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-        </label>
-      )}
-      {reviewRunning && file && (
-        <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">
-          方案文件：<span className="text-token-primary">{file.name}</span>
-        </div>
-      )}
-      {reviewRunning && (
-        <InitiationReviewLivePanel
-          stage={reviewStage}
-          ssePhase={sse.phase}
-          phaseMessage={sse.phaseMessage}
-          progressPercent={progressPercent}
-          logs={processLogs}
-          typing={sse.typing}
-          dimensionScores={dimensionScores}
-          totalScore={totalScore}
-          isPassed={reviewPassed}
-          adjustmentLog={adjustmentLog}
-          expectedDimCount={expectedDimCount}
-        />
-      )}
-      {!reviewRunning && item?.reviewScore != null && <Score score={item.reviewScore} passed={item.reviewPassed === true} />}
-    </div>}
-    {step === 3 && issuedCode && item ? <div className="space-y-3 rounded-xl border border-cyan-400/30 bg-cyan-400/5 p-4">
-      <p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p>
-      <VersionCopyActions kind="initiation" id={item.id} code={issuedCode} />
-    </div> : null}
-    {step === 3 && !issuedCode && <div className="space-y-4">
-      <Field label="是否需要开评审会"><Select value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></Select></Field>
-      {meeting ? <>
-        <Field label="预计评审会时间 *"><Input type="datetime-local" value={meetingAt} onChange={(e) => setMeetingAt(e.target.value)} /></Field>
-        <Field label="计划召开稿次 *">
-          <Select value={String(meetingDraftCount)} onChange={(e) => setMeetingDraftCount(Number(e.target.value))}>
-            <option value="1">1 稿（仅第一稿）</option>
-            <option value="2">2 稿（第一稿 + 第二稿）</option>
-            <option value="3">3 稿（第一稿 + 第二稿 + 第三稿）</option>
-          </Select>
-        </Field>
-        <Info>提交后立即获取 T 立项号。线下各稿会议时间与是否通过请在立项详情中后续回填。</Info>
-      </> : <>
-        <Field label="产品主负责人 *"><Select value={ownerId} onChange={(e) => setOwnerId(e.target.value)}><option value="">请选择</option>{members.map((m) => <option key={m.userId} value={m.userId}>{m.displayName}</option>)}</Select></Field>
-        <Info>提交后流转给主负责人，负责人同意后生成 T 立项号。</Info>
-      </>}
-    </div>}
-    {message && <div className="mt-4 rounded-lg bg-token-nested px-3 py-2 text-xs text-token-secondary">{message}</div>}
-    <div className="mt-6 flex items-center justify-between gap-2">
-      <div>
-        {step > 1 && (
-          <Secondary onClick={goPrevStep} disabled={busy || reviewRunning}>上一步</Secondary>
-        )}
-      </div>
-      <div className="flex gap-2">
-        <Secondary onClick={onClose} disabled={reviewRunning}>取消</Secondary>
-      {step === 1 && <Primary onClick={saveStep1} disabled={busy || !linkedProductId.trim()}>{busy ? '保存中...' : '下一步'}</Primary>}
-      {step === 2 && (
-        <Primary onClick={runReview} disabled={busy || !file}>
-          {reviewRunning && <Loader2 size={14} className="animate-spin" />}
-          {reviewRunning ? '评审进行中…' : '上传并打分'}
-        </Primary>
-      )}
-      {step === 3 && !issuedCode && <Primary onClick={submitDecision} disabled={busy || (meeting ? !meetingAt : !ownerId)}>提交立项</Primary>}
-      </div>
-    </div>
-  </Modal>;
+  />;
 }
+
+const INITIATION_CONTROL_CLASS = 'w-full rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none placeholder-token-muted focus-visible:ring-1 focus-visible:ring-[var(--border-focus)]';
+function InitiationInput(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={INITIATION_CONTROL_CLASS} />; }
+function InitiationSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={INITIATION_CONTROL_CLASS}>{props.children}</select>; }
 
 function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged, pending, onOpenLegacy }: {
   pending?: boolean;
@@ -771,7 +822,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
           const isOwner = !item.legacyRegistration && item.createdBy === currentUserId;
-          const showRetryReview = isOwner && item.status === 'review_failed';
+          const showRetryReview = isOwner && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
           const showFillMeeting = isOwner && isMeetingResultPending(item);
           const reviewScoreText = formatInitiationReviewScore(item);
           return (
@@ -810,7 +861,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
         {(showRetryReview || showFillMeeting) ? (
           <div className="flex flex-col items-start gap-1">
             {showRetryReview && (
-              <button type="button" onClick={() => onRetryReview(item)} className="text-amber-200 hover:underline">重新发起立项</button>
+              <button type="button" onClick={() => onRetryReview(item)} className="text-amber-200 hover:underline">{item.status === 'review_failed' ? '修改并重新评审' : '继续申领'}</button>
             )}
             {showFillMeeting && (
               <button type="button" onClick={() => onFillMeeting(item)} className="text-cyan-300 hover:underline">会议结果</button>
@@ -949,7 +1000,6 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   </div>;
 }
 
-function Stepper({ step }: { step: number }) { return <div className="mb-6 flex">{['基础信息', 'Agent 评审', '立项决策'].map((label, i) => <div key={label} className="flex flex-1 items-center last:flex-none"><div className={`flex items-center gap-2 text-xs ${step >= i + 1 ? 'text-cyan-300' : 'text-token-muted'}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full border ${step > i + 1 ? 'border-cyan-400 bg-cyan-400 text-slate-950' : step === i + 1 ? 'border-cyan-400' : 'border-token-subtle'}`}>{step > i + 1 ? <CheckCircle2 size={15} /> : i + 1}</span>{label}</div>{i < 2 && <div className={`mx-3 h-px flex-1 ${step > i + 1 ? 'bg-cyan-400' : 'bg-token-nested'}`} />}</div>)}</div>; }
 function Modal({ title, onClose, width, children, compact = false }: { title: string; onClose: () => void; width: string; children: React.ReactNode; compact?: boolean }) {
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
@@ -979,7 +1029,6 @@ function Modal({ title, onClose, width, children, compact = false }: { title: st
 }
 function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) { return <label className={full ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>; }
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50" />; }
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className="surface-tone-dark w-full rounded-lg border border-token-subtle bg-[#111318] px-3 py-2 text-sm text-token-primary outline-none">{props.children}</select>; }
 function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
 function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary">{props.children}</button>; }
 function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted'}`}>{children}</button>; }
@@ -1018,5 +1067,3 @@ function Td({ children, mono, onClick, className }: { children: React.ReactNode;
 }
 function Empty({ cols, children }: { cols: number; children: React.ReactNode }) { return <tr><td colSpan={cols} className="px-3 py-12 text-center text-token-muted">{children}</td></tr>; }
 function Status({ value }: { value: string }) { const good = value === 'approved' || value === 'released'; return <span className={`rounded-full border px-2 py-0.5 ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>{STATUS_LABEL[value] ?? value}</span>; }
-function Info({ children }: { children: React.ReactNode }) { return <div className="rounded-lg border border-token-subtle bg-token-nested p-3 text-xs leading-5 text-token-secondary">{children}</div>; }
-function Score({ score, passed }: { score: number; passed: boolean }) { return <div className={`rounded-xl border p-5 text-center ${passed ? 'border-emerald-400/25 bg-emerald-400/10' : 'border-red-400/25 bg-red-400/10'}`}><div className={`text-4xl font-semibold ${passed ? 'text-emerald-300' : 'text-red-300'}`}>{score}</div><div className="mt-1 text-sm text-token-secondary">{passed ? '评审通过' : '评审未通过'}</div></div>; }

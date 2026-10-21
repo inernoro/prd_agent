@@ -125,6 +125,71 @@ public class ProductVersionClaimGuardTests
         Assert.Equal("approved", stored.Status);
     }
 
+    [Fact]
+    public async Task FailedReviewRetainsAllInputsAndRetryUsesSameInitiation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var plannedAt = new DateTime(2026, 10, 21, 0, 0, 0, DateTimeKind.Utc);
+        var input = new CreateInitiationRequest {
+            LinkedProductId = "product", PlanName = "测试应用（方案）第二稿", PlanFileName = "第二稿.md",
+            ProjectType = "custom", CustomerSource = "客户", DemandSource = "拜耳", Remark = "保留填写内容",
+            VersionType = "medium", PlannedProjectAt = plannedAt, NeedUiDesign = false, IsAiPoc = true,
+            ReviewMeetingRequired = true,
+        };
+        var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateInitiation("product", input));
+        var item = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
+        var failedReview = Review("failed-review", "me", false);
+        failedReview.FileName = "第二稿.md";
+        await fixture.Db.ReviewSubmissions.InsertOneAsync(failedReview);
+        Assert.IsType<OkObjectResult>(await fixture.Controller().SyncInitiationReview(item.Id,
+            new SyncInitiationReviewRequest { SubmissionId = failedReview.Id }));
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DecideInitiation(item.Id,
+            new InitiationDecisionRequest { ReviewMeetingRequired = true }));
+
+        var failed = await fixture.Db.ProductInitiations.Find(x => x.Id == item.Id).SingleAsync();
+        Assert.Equal("review_failed", failed.Status); Assert.Null(failed.TCode);
+        Assert.Equal(input.PlanName, failed.PlanName); Assert.Equal("拜耳", failed.DemandSource);
+        Assert.Equal("客户", failed.CustomerSource); Assert.Equal("custom", failed.ProjectType);
+        Assert.Equal("medium", failed.VersionType); Assert.Equal(input.Remark, failed.Remark);
+        Assert.Equal(plannedAt, failed.PlannedProjectAt); Assert.Equal(plannedAt, failed.ExpectedMeetingAt);
+        Assert.True(failed.ReviewMeetingRequired); Assert.Equal(2, failed.MeetingDraftCount);
+        Assert.False(failed.NeedUiDesign); Assert.True(failed.IsAiPoc);
+        Assert.Equal("第二稿.md", Assert.Single(failed.ReviewAttempts).PlanFileName);
+
+        input.Remark = "修改后继续";
+        Assert.IsType<OkObjectResult>(await fixture.Controller().UpdateInitiation(item.Id, input));
+        var passedReview = Review("passed-review", "me"); passedReview.FileName = "第二稿.md";
+        await fixture.Db.ReviewSubmissions.InsertOneAsync(passedReview);
+        Assert.IsType<OkObjectResult>(await fixture.Controller().SyncInitiationReview(item.Id,
+            new SyncInitiationReviewRequest { SubmissionId = passedReview.Id }));
+        // 无需再传另一份预计会议时间，直接复用已保存的计划立项日期。
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation(item.Id,
+            new InitiationDecisionRequest { ReviewMeetingRequired = true, MeetingDraftCount = 2 }));
+        var approved = await fixture.Db.ProductInitiations.Find(x => x.Id == item.Id).SingleAsync();
+        Assert.False(string.IsNullOrWhiteSpace(approved.TCode));
+        Assert.Equal(plannedAt, approved.ExpectedMeetingAt); Assert.Equal("修改后继续", approved.Remark);
+        Assert.Equal(2, approved.ReviewAttempts.Count);
+        Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task OwnerChoiceIsSavedBeforeReviewAndStillRequiresApproval()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateInitiation("product", new CreateInitiationRequest {
+            LinkedProductId = "product", PlanName = "测试应用（无需线下会议）", ReviewMeetingRequired = false,
+            PrimaryOwnerId = "owner", PlannedProjectAt = DateTime.UtcNow,
+        }));
+        var item = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
+        Assert.Equal("owner", item.PrimaryOwnerId); Assert.Null(item.TCode);
+        await fixture.Db.ReviewSubmissions.InsertOneAsync(Review("passed", "me"));
+        await fixture.Controller().SyncInitiationReview(item.Id, new SyncInitiationReviewRequest { SubmissionId = "passed" });
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation(item.Id,
+            new InitiationDecisionRequest { ReviewMeetingRequired = false, PrimaryOwnerId = "owner" }));
+        var pending = await fixture.Db.ProductInitiations.Find(x => x.Id == item.Id).SingleAsync();
+        Assert.Equal("owner_pending", pending.Status); Assert.Equal("owner", pending.PrimaryOwnerId); Assert.Null(pending.TCode);
+    }
+
     private static ReviewSubmission Review(string id, string submitter, bool passed = true) => new() {
         Id = id, SubmitterId = submitter, Title = id, Status = ReviewStatuses.Done, IsPassed = passed,
     };

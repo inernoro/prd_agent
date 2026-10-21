@@ -143,6 +143,9 @@ export function createInitiation(productId: string, body: {
   ownerName?: string;
   projectMemberNames?: string[];
   plannedProjectAt?: string;
+  reviewMeetingRequired?: boolean;
+  primaryOwnerId?: string;
+  planFileName?: string;
   needUiDesign?: boolean;
   isAiPoc?: boolean;
   developmentStatus?: string;
@@ -165,6 +168,9 @@ export function updateInitiation(id: string, body: {
   ownerName?: string;
   projectMemberNames?: string[];
   plannedProjectAt?: string;
+  reviewMeetingRequired?: boolean;
+  primaryOwnerId?: string;
+  planFileName?: string;
   needUiDesign?: boolean;
   isAiPoc?: boolean;
   developmentStatus?: string;
@@ -229,6 +235,11 @@ export function listProductVersionReviewSources() {
   return apiRequest<{ items: Array<{ id: string; title: string; fileName: string; completedAt?: string | null }>; canUseAllReviews: boolean }>(
     '/api/product/version-workflow/review-sources',
   );
+}
+export function getInitiationPlanDefaults(planName: string, planFileName?: string) {
+  const query = new URLSearchParams({ planName });
+  if (planFileName) query.set('planFileName', planFileName);
+  return apiRequest<{ meetingDraftCount: number }>(`/api/product/version-workflow/initiation-defaults?${query}`);
 }
 export type VersionReleaseHistoryCheck = {
   blocked: boolean;

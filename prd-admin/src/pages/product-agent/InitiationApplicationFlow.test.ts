@@ -48,7 +48,7 @@ describe('内部版本在申领表单内选择应用', () => {
 
   it('选择评审方案先清空旧应用，仅接受服务端唯一识别且当前可选的结果', () => {
     const choose = application.slice(application.indexOf('const chooseReviewSource ='), application.indexOf('const basePayload'));
-    expect(application).toContain('onChange={(event) => chooseReviewSource(event.target.value)}');
+    expect(application).toContain('onChange={chooseReviewSource}');
     expect(choose.indexOf("setLinkedProductId('')")).toBeLessThan(choose.indexOf('parseProductVersionMessage('));
     expect(choose).toContain("parseProductVersionMessage('internal', `产品立项方案名称：${source.title}`)");
     expect(choose).toContain('response.data.result.matchedApplicationId');
@@ -77,5 +77,33 @@ describe('内部版本在申领表单内选择应用', () => {
     expect(application).toContain('暂时无法识别方案所属应用，请手动选择所属应用后继续。');
     expect(application).toContain('正在识别方案所属应用，也可手动选择。');
     expect(application).not.toContain('disabled={reviewApplicationMatching}');
+  });
+
+  it('使用产品系统弹窗与固定动作栏，不再按步骤隐藏表单或上传区', () => {
+    expect(application).toContain('return <Dialog');
+    expect(application).toContain("height: 'min(94vh, 960px)'");
+    expect(application).toContain('actions={<>');
+    expect(application).not.toContain('<Stepper');
+    expect(application).not.toContain('setStep(');
+    expect(application).toContain('选择已有方案');
+    expect(application).toContain('上传新方案');
+    expect(application).toContain("sourceMode === 'existing' ?");
+    expect(application).toContain('type="file"');
+    expect(application).not.toContain('预计评审会时间 *');
+    expect(application).not.toContain('type="datetime-local"');
+  });
+
+  it('评审前保存所有填写项，只对服务端通过结果继续发号，失败继续原记录', () => {
+    expect(application).toContain('reviewMeetingRequired: meeting');
+    expect(application).toContain("useState(seed?.primaryOwnerId ?? '')");
+    expect(application).toContain('useState(seed?.reviewMeetingRequired ?? false)');
+    expect(application).toContain('if (reviewed.reviewPassed !== true)');
+    expect(application).toContain('await submitDecision(reviewed)');
+    expect(application).toContain('填写内容及本次评审记录已保存');
+    expect(application).toContain('if (submittingRef.current || completed) return');
+    expect(application).toContain('planFileName,');
+    expect(application).toContain('getInitiationPlanDefaults(planName, planFileName)');
+    expect(versions).toContain('seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={reload}');
+    expect(versions).not.toContain('onChanged={async () => { setRetrySeed(null); await reload(); }}');
   });
 });
