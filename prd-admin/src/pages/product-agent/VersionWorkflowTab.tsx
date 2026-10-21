@@ -305,7 +305,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const isRoot = useAuthStore((state) => state.isRoot);
   const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
   const isRetry = Boolean(seed);
-  const wizardTitle = seed?.status === 'decision_pending'
+  const wizardTitle = seed?.tCode ? '修改内部版本资料' : seed?.status === 'decision_pending'
     ? '继续立项决策'
     : isRetry
       ? '重新发起立项'
@@ -527,8 +527,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     reviewMeetingRequired: meeting,
     primaryOwnerId: meeting ? undefined : ownerId,
     planFileName,
-    needUiDesign: needUiDesign === 'yes',
-    isAiPoc: isAiPoc === 'yes',
+    needUiDesign: editingIssued && !needUiDesign ? item?.needUiDesign ?? undefined : needUiDesign === 'yes',
+    isAiPoc: editingIssued && !isAiPoc ? item?.isAiPoc ?? undefined : isAiPoc === 'yes',
     developmentStatus: item?.developmentStatus,
     remark: remark.trim() || undefined,
     reviewSubmissionId: item?.reviewSubmissionId || (sourceMode === 'existing' ? reviewSubmissionId || undefined : undefined),
@@ -635,10 +635,10 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       && !(item?.status === 'review_pending' && item.reviewSubmissionId)) return setMessage('请在当前页面选择方案文件。');
     if (!planName.trim()) return setMessage('请填写方案名称');
     if (projectType === 'custom' && !customerSource.trim()) return setMessage('请填写客户来源');
-    if (!demandSource.trim()) return setMessage('请填写需求来源');
-    if (!plannedProjectAt) return setMessage('请填写计划立项时间');
-    if (!meeting && !ownerId) return setMessage('请选择产品主负责人');
-    if (!needUiDesign || !isAiPoc) return setMessage('请选择 UI 设计和 AI POC 状态');
+    if (!editingIssued && !demandSource.trim()) return setMessage('请填写需求来源');
+    if (!editingIssued && !plannedProjectAt) return setMessage('请填写计划立项时间');
+    if (!editingIssued && !meeting && !ownerId) return setMessage('请选择产品主负责人');
+    if (!editingIssued && (!needUiDesign || !isAiPoc)) return setMessage('请选择 UI 设计和 AI POC 状态');
 
     submittingRef.current = true;
     cancelReviewApplicationLookup();
@@ -719,7 +719,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     open
     onOpenChange={(open) => { if (!open && !submittingRef.current) onClose(); }}
     title={wizardTitle}
-    description="一次填写并确认。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。"
+    description={editingIssued ? '修改基础资料，保留原编号、评审和审批记录，不重新发号。' : '一次填写并确认。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
     maxWidth={920}
     contentStyle={{ height: 'min(94vh, 960px)', maxHeight: '94vh' }}
     actions={<>
@@ -769,7 +769,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
           <section className="space-y-3 border-t border-token-subtle pt-4" aria-labelledby={`${formId}-basic`}>
             <h4 id={`${formId}-basic`} className="text-sm font-semibold text-token-primary">基础信息</h4>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
+              {!editingIssued && <ProductVersionMessagePaste kind="internal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />}
               <Field label="所属应用 *" full>
                 <ItemSearchSelect value={linkedProductId} onChange={(id) => { cancelReviewApplicationLookup(); setLinkedProductId(id); }} options={productOptions} disabled={busy || editingIssued} placeholder="搜索应用名称或编号" countUnit="个应用" emptyText="暂无可选应用" />
                 {reviewApplicationMatching && <p role="status" className="mt-1.5 flex items-center gap-2 text-xs text-token-muted"><MapSpinner size={14} />正在识别方案所属应用，也可手动选择。</p>}
@@ -789,7 +789,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
             <h4 id={`${formId}-decision`} className="text-sm font-semibold text-token-primary">立项安排</h4>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               <Field label="是否需要开评审会"><InitiationSelect disabled={editingIssued} value={meeting ? 'yes' : 'no'} onChange={(e) => setMeeting(e.target.value === 'yes')}><option value="no">不需要</option><option value="yes">需要</option></InitiationSelect></Field>
-              {!meeting && <Field label="产品主负责人 *"><fieldset disabled={busy || editingIssued} className="m-0 min-w-0 border-0 p-0"><UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品主负责人" /></fieldset></Field>}
+              {!meeting && <Field label="产品主负责人 *"><fieldset disabled={busy || editingIssued} style={{ pointerEvents: busy || editingIssued ? 'none' : undefined }} className="m-0 min-w-0 border-0 p-0"><UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品主负责人" /></fieldset></Field>}
               <div className="grid grid-cols-1 gap-4 md:col-span-2 md:grid-cols-2">
                 <Field label="计划立项时间 *"><InitiationInput type="date" value={plannedProjectAt} onChange={(e) => setPlannedProjectAt(e.target.value)} />{meeting && <span className="mt-1 block text-xs text-token-muted">同时作为预计评审会时间，无需重复填写。</span>}</Field>
                 {meeting && <Field label="计划召开稿次（自动识别）"><output className="block rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary">{draftDefaultsPending && !busy ? '正在识别，未标注时默认第一稿' : `${['', '第一稿', '第二稿', '第三稿'][meetingDraftCount] ?? '第一稿'}${meetingDraftCount > 1 ? `（计划共 ${meetingDraftCount} 稿）` : '（默认）'}`}</output><span className="mt-1 block text-xs text-token-muted">按方案名称或文件名中的明确稿次识别，不按版本号或评审次数推断。</span></Field>}

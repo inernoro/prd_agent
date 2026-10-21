@@ -973,7 +973,7 @@ public class ProductAgentController : ControllerBase
         if (issued && (request.LinkedProductId?.Trim() != (item.LinkedProductId ?? item.ProductId)
             || NormalizeVersionType(request.VersionType) != item.VersionType
             || (request.ReviewMeetingRequired ?? false) != (item.ReviewMeetingRequired ?? false)
-            || (request.ReviewMeetingRequired == false && request.PrimaryOwnerId?.Trim() != item.PrimaryOwnerId)))
+            || (request.ReviewMeetingRequired == false && (request.PrimaryOwnerId?.Trim() ?? "") != (item.PrimaryOwnerId ?? ""))))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已发号记录可修改基础资料，不能变更所属应用、版本级别或原审批方式。"));
 
         if (string.IsNullOrWhiteSpace(request.PlanName))
@@ -1018,7 +1018,7 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.ProjectMemberNames, NormalizeVersionMemberNames(request.ProjectMemberNames))
                 .Set(x => x.PlanUrl, string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim())
                 .Set(x => x.VersionType, NormalizeVersionType(request.VersionType))
-                .Set(x => x.RequirementIds, request.RequirementIds?.Distinct().ToList() ?? new())
+                .Set(x => x.RequirementIds, issued ? item.RequirementIds : request.RequirementIds?.Distinct().ToList() ?? new())
                 .Set(x => x.PlannedProjectAt, request.PlannedProjectAt)
                 .Set(x => x.ReviewMeetingRequired, issued ? item.ReviewMeetingRequired : request.ReviewMeetingRequired ?? item.ReviewMeetingRequired)
                 .Set(x => x.ExpectedMeetingAt, !issued && request.ReviewMeetingRequired.HasValue
