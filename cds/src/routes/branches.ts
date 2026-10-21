@@ -12618,15 +12618,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const project = stateService.getProject(entry.projectId || 'default');
     let authorization: string | undefined;
     try {
-      const token = githubApp && project?.githubInstallationId
-        ? await githubApp.getInstallationToken(project.githubInstallationId)
+      const installationId = entry.githubInstallationId || project?.githubInstallationId;
+      const token = githubApp && installationId
+        ? await githubApp.getInstallationToken(installationId)
         : stateService.getGithubDeviceAuth(project?.githubCredentialUserId)?.token;
       authorization = token ? `Bearer ${token}` : undefined;
     } catch {
       res.status(503).json({ error: 'ci_evidence_unavailable', message: '暂时无法核对项目的 GitHub 回执，未认领镜像；请稍后重试。' }); return;
     }
     const evidence = await verifyPrebuiltWorkflowRun({
-      repository: project?.githubRepoFullName || entry.githubRepoFullName || '',
+      repository: entry.githubRepoFullName || project?.githubRepoFullName || '',
       branch: entry.branch, commitSha, workflowRunUrl: plan.patch.ciWorkflowRunUrl, authorization,
     });
     if (!evidence.ok) {
@@ -12637,6 +12638,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       || current.githubCommitSha !== plan.previous.githubCommitSha) {
       res.status(409).json({ error: 'ci_target_changed', message: '核对期间分支目标已更新，未覆盖新状态；请重试。' }); return;
     }
+
+    plan.patch.ciWorkflowRunUrl = evidence.workflowRunUrl;
+    plan.noChange = plan.noChange && plan.previous.ciWorkflowRunUrl === evidence.workflowRunUrl;
 
     if (!dryRun) {
       stateService.updateBranchGithubMeta(id, plan.patch);

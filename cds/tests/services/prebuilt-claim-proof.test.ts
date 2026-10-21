@@ -34,4 +34,38 @@ describe('手动认领镜像的真实 CI 证据', () => {
     expect(result).toMatchObject({ ok: false, status: 503 });
     expect(JSON.stringify(result)).not.toContain('private-token');
   });
+  it('显式非镜像工作流不能借同名 Branch Image 绕过路径核验', async () => {
+    const result = await verifyPrebuiltWorkflowRun({ ...input, fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(response({ ...success, path: '.github/workflows/ci.yml', name: 'Branch Image' })) });
+    expect(result).toMatchObject({ ok: false, status: 409, error: 'ci_evidence_mismatch' });
+  });
+  it('缺少工作流路径的旧回执仍可按名称核对', async () => {
+    expect(await verifyPrebuiltWorkflowRun({ ...input, fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(response({ ...success, path: undefined, name: 'Branch Image' })) })).toMatchObject({ ok: true });
+  });
+  it('省略链接时自动定位精确仓库、分支和提交的工作流并复核实际运行', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ workflow_runs: [{ ...success, id: 123 }] }))
+      .mockResolvedValueOnce(response(success));
+    expect(await verifyPrebuiltWorkflowRun({ ...input, workflowRunUrl: '', fetchImpl: fetcher })).toEqual({ ok: true, workflowRunUrl: input.workflowRunUrl });
+    const query = new URL(String(fetcher.mock.calls[0][0]));
+    expect(query.pathname).toBe('/repos/acme/demo/actions/workflows/branch-image.yml/runs');
+    expect(query.searchParams.get('head_sha')).toBe(input.commitSha);
+    expect(query.searchParams.get('branch')).toBe(input.branch);
+    expect(fetcher.mock.calls[1][0]).toBe('https://api.github.com/repos/acme/demo/actions/runs/123');
+  });
+  it.each([
+    { workflow_runs: [] },
+    { workflow_runs: [{ ...success, id: 123, head_branch: 'other' }] },
+    { workflow_runs: [{ ...success, id: 123, path: '.github/workflows/ci.yml', name: 'Branch Image' }] },
+  ])('自动查询没有精确镜像回执时拒绝，不猜成功', async body => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(body));
+    expect(await verifyPrebuiltWorkflowRun({ ...input, workflowRunUrl: '', fetchImpl: fetcher })).toMatchObject({ ok: false, status: 409 });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it('自动定位后复核发现运行失败仍拒绝认领', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ workflow_runs: [{ ...success, id: 123 }] }))
+      .mockResolvedValueOnce(response({ ...success, conclusion: 'failure' }));
+    expect(await verifyPrebuiltWorkflowRun({ ...input, workflowRunUrl: '', fetchImpl: fetcher })).toMatchObject({ ok: false, status: 409, error: 'ci_not_successful' });
+  });
+
 });
