@@ -1419,6 +1419,21 @@ describe('AgentWorkspaceSessionRuntime', () => {
       ),
     );
     expect(sessionResourceCreates.length).toBeGreaterThanOrEqual(6);
+    const logCreators = shell.calls.filter((call) => /^docker (?:run|create)\b/.test(call.command));
+    expect(logCreators.length).toBeGreaterThanOrEqual(7);
+    for (const { command } of logCreators) {
+      expect(command).toContain('--log-driver json-file');
+      expect(command.match(/--log-driver\b/g)).toHaveLength(1);
+      if (command.startsWith('docker create ')) {
+        expect(command).toContain('--log-opt max-size=20m');
+        expect(command).toContain('--log-opt max-file=2');
+        expect(command).not.toContain('max-size=50m');
+      } else {
+        expect(command).toContain('--log-opt max-size=50m');
+        expect(command).toContain('--log-opt max-file=3');
+      }
+    }
+
     for (const call of sessionResourceCreates) {
       expect(call.command).toContain('cds.instance=instance-a');
       expect(call.command).not.toContain('model-secret');

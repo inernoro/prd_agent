@@ -485,7 +485,7 @@ audit_cds_mongo_protection() {
   echo "         docker rm -f $c && \\"
   echo "           docker run -d --name $c --restart unless-stopped \\"
   echo "             --label cds.managed=true --label cds.type=cds-state --label cds.protected=true \\"
-  echo "             --log-opt max-size=50m --log-opt max-file=3 \\"
+  echo "             --log-driver json-file --log-opt max-size=50m --log-opt max-file=3 \\"
   echo "             -p $port:27017 -v $vol:/data/db $image"
   echo
   echo "       执行后跑 ./exec_cds.sh restart 让 CDS 重连状态库。"
@@ -1630,8 +1630,8 @@ http {
 
     server_tokens off;
 
-    access_log  /var/log/nginx/access.log;
-    error_log   /var/log/nginx/error.log warn;
+    access_log  /dev/stdout;
+    error_log   /dev/stderr warn;
 
     map $http_upgrade $connection_upgrade {
         default upgrade;
@@ -1739,41 +1739,93 @@ nginx_running() {
   docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$NGINX_CONTAINER"
 }
 
+# Only a proven not-found means absence. Never dump driver options (may contain credentials).
+nginx_observe_runtime() {
+  NGINX_RUNTIME_STATE=unknown
+  NGINX_RUNTIME_BOUNDED=false
+  NGINX_RUNTIME_ID=
+  local projection status stderr_file
+  stderr_file="$(mktemp)" || return 0
+  if projection="$(docker inspect --format '{{.Id}}|{{.State.Running}}|{{.HostConfig.LogConfig.Type}}|{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .HostConfig.LogConfig.Config "max-file"}}' "$NGINX_CONTAINER" 2>"$stderr_file")"; then status=0; else status=$?; fi
+  if [ "$status" -ne 0 ]; then
+    # Docker inspect uses exit 1 for this exact one-object diagnostic. Timeouts,
+    # permission errors, mixed diagnostics or stdout are never proof of absence.
+    local diagnostic
+    diagnostic="$(cat "$stderr_file")"
+    if [ "$status" -eq 1 ] && [ -z "$projection" ] && { [ "$diagnostic" = "Error: No such object: $NGINX_CONTAINER" ] || [ "$diagnostic" = "Error response from daemon: No such container: $NGINX_CONTAINER" ]; }; then
+      NGINX_RUNTIME_STATE=absent
+    fi
+    rm -f "$stderr_file"
+    return 0
+  fi
+  if [ -s "$stderr_file" ]; then rm -f "$stderr_file"; return 0; fi
+  rm -f "$stderr_file"
+  local cid running driver size files extra
+  IFS='|' read -r cid running driver size files extra <<< "$projection"
+  if [[ ! "$cid" =~ ^[a-f0-9]{64}$ ]] || [[ "$projection" == *$'\n'* ]] || [ -n "$extra" ]; then return 0; fi
+  case "$running" in true) NGINX_RUNTIME_STATE=running;; false) NGINX_RUNTIME_STATE=stopped;; *) return 0;; esac
+  NGINX_RUNTIME_ID="$cid"
+  # Docker size units are decimal; accept tighter existing policies as well.
+  local amount suffix multiplier bytes
+  if [ "$driver" = json-file ] && [[ "$size" =~ ^([1-9][0-9]{0,7})([kKmM]?)$ ]] && [[ "$files" =~ ^[1-3]$ ]]; then
+    # The second regex above replaces BASH_REMATCH; extract size separately.
+    [[ "$size" =~ ^([1-9][0-9]{0,7})([kKmM]?)$ ]]
+    amount="${BASH_REMATCH[1]}"; suffix="${BASH_REMATCH[2]}"
+    case "$suffix" in k|K) multiplier=1000;; m|M) multiplier=1000000;; *) multiplier=1;; esac
+    bytes=$((amount * multiplier))
+    if [ "$bytes" -le 50000000 ]; then NGINX_RUNTIME_BOUNDED=true; fi
+  fi
+}
+
 nginx_up() {
-  render_nginx || return 0
-
-  local running=false
-  nginx_running && running=true
-
-  # Case 1: container not running OR compose file changed → (re)create it
-  if ! $running || nginx_changed "nginx.compose.yml"; then
-    local up_log; up_log="$(mktemp 2>/dev/null || echo /tmp/cds-nginx-up.$$.log)"
-    if nginx_compose up -d >"$up_log" 2>&1; then
-      ok "nginx 已启动 (容器: $NGINX_CONTAINER)"
-      rm -f "$up_log" 2>/dev/null || true
-    else
-      warn "nginx 启动失败 — 输出如下:"
-      sed 's/^/    /' "$up_log" >&2
-      echo "    手动复现: docker compose -f $NGINX_COMPOSE_FILE up -d" >&2
-      rm -f "$up_log" 2>/dev/null || true
+  render_nginx || return 1
+  nginx_observe_runtime
+  if [ "$NGINX_RUNTIME_STATE" = unknown ]; then
+    warn "nginx 实际身份或日志配置无法确认；保持原容器，不自动重建"
+    return 1
+  fi
+  if [ "$NGINX_RUNTIME_STATE" != absent ] && [ "$NGINX_RUNTIME_BOUNDED" != true ]; then
+    # cert_cmd has an explicit maintenance handover after issuance. Reuse only
+    # its proven running ingress for HTTP-01; never start/recreate an old one.
+    if [ "${1:-}" = certificate-maintenance ] && [ "$NGINX_RUNTIME_STATE" = running ]; then
+      docker exec "$NGINX_RUNTIME_ID" nginx -t >/dev/null 2>&1 || return 1
+      if nginx_changed "cds-site.conf" || nginx_changed "nginx.conf"; then
+        docker exec "$NGINX_RUNTIME_ID" nginx -s reload >/dev/null 2>&1 || return 1
+      fi
+      warn "证书维护暂时复用原运行入口；日志限额仍未通过，签发后按显式维护流程交接"
+      return 0
+    fi
+    warn "nginx 实际日志未满足 json-file/50m/3；需要受保护交接，未停止、重建或截断现有容器"
+    return 1
+  fi
+  if [ "$NGINX_RUNTIME_STATE" = running ]; then
+    if nginx_changed "nginx.compose.yml"; then
+      warn "nginx 运行配置已变化；需要受保护交接，普通启动不会重建共享入口"
       return 1
     fi
-    return 0
-  fi
-
-  # Case 2: container running, only site/base conf changed → hot reload
-  if nginx_changed "cds-site.conf" || nginx_changed "nginx.conf"; then
-    if docker exec "$NGINX_CONTAINER" nginx -t >/dev/null 2>&1; then
-      docker exec "$NGINX_CONTAINER" nginx -s reload >/dev/null 2>&1 || true
-      ok "nginx 热重载完成 (无停机)"
-    else
-      warn "nginx 新配置 -t 校验失败，跳过 reload 以保持现有配置可用"
+    if nginx_changed "cds-site.conf" || nginx_changed "nginx.conf"; then
+      if docker exec "$NGINX_RUNTIME_ID" nginx -t >/dev/null 2>&1 && docker exec "$NGINX_RUNTIME_ID" nginx -s reload >/dev/null 2>&1; then
+        ok "nginx 热重载完成，实际日志限额已核验"
+      else
+        warn "nginx 配置检查或热重载失败；保留原容器"
+        return 1
+      fi
     fi
     return 0
   fi
-
-  # Case 3: nothing changed, container running → silent no-op
-  return 0
+  if [ "$NGINX_RUNTIME_STATE" = stopped ]; then
+    # Original immutable ID only, preserving its already verified bounded log contract.
+    docker start "$NGINX_RUNTIME_ID" >/dev/null 2>&1 || return 1
+  else
+    # First creation only. Running/unknown is never treated as absence.
+    nginx_compose up -d || return 1
+  fi
+  nginx_observe_runtime
+  if [ "$NGINX_RUNTIME_STATE" != running ] || [ "$NGINX_RUNTIME_BOUNDED" != true ]; then
+    warn "nginx 启动后实际身份或日志限额未通过，未宣称启动完成；保留现场"
+    return 1
+  fi
+  ok "nginx 已启动，实际 json-file/50m/3 已核验"
 }
 
 nginx_down() {
@@ -2305,7 +2357,7 @@ init_cmd() {
       --label cds.managed=true \
       --label cds.type=cds-state \
       --label cds.protected=true \
-      --log-opt max-size=50m --log-opt max-file=3 \
+      --log-driver json-file --log-opt max-size=50m --log-opt max-file=3 \
       -p "127.0.0.1:${MONGO_PORT}:27017" \
       -v cds-state-mongo-data:/data/db \
       mongo:7 >/dev/null 2>&1 \
@@ -2626,7 +2678,7 @@ cert_cmd() {
   [ -n "$domains_csv" ] || { err "CDS_ROOT_DOMAINS 未配置"; exit 1; }
 
   render_nginx || true
-  if ! nginx_up; then
+  if ! nginx_up certificate-maintenance; then
     err "nginx 未能启动 — Let's Encrypt 的 HTTP-01 验证需要 nginx 监听 80 端口"
     echo  "  排查顺序:"
     echo  "    1) 看上面的 docker compose 输出，定位真正报错"

@@ -46,6 +46,7 @@ describe('R2 Mongo 恢复演练', () => {
     const run = calls.find((args) => args[0] === 'run');
     expect(run).toEqual(expect.arrayContaining(['--network', 'none']));
     expect(run).not.toContain('-p');
+    expect(run).toEqual(expect.arrayContaining(['--log-driver', 'json-file', '--log-opt', 'max-size=50m', 'max-file=3']));
     expect(calls.some((args) => args[0] === 'exec' && args.includes('mongorestore'))).toBe(true);
     expect(calls.at(-1)?.slice(0, 2)).toEqual(['rm', '-f']);
   });
