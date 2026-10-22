@@ -1785,6 +1785,16 @@ nginx_up() {
     return 1
   fi
   if [ "$NGINX_RUNTIME_STATE" != absent ] && [ "$NGINX_RUNTIME_BOUNDED" != true ]; then
+    # cert_cmd has an explicit maintenance handover after issuance. Reuse only
+    # its proven running ingress for HTTP-01; never start/recreate an old one.
+    if [ "${1:-}" = certificate-maintenance ] && [ "$NGINX_RUNTIME_STATE" = running ]; then
+      docker exec "$NGINX_RUNTIME_ID" nginx -t >/dev/null 2>&1 || return 1
+      if nginx_changed "cds-site.conf" || nginx_changed "nginx.conf"; then
+        docker exec "$NGINX_RUNTIME_ID" nginx -s reload >/dev/null 2>&1 || return 1
+      fi
+      warn "证书维护暂时复用原运行入口；日志限额仍未通过，签发后按显式维护流程交接"
+      return 0
+    fi
     warn "nginx 实际日志未满足 json-file/50m/3；需要受保护交接，未停止、重建或截断现有容器"
     return 1
   fi
@@ -2668,7 +2678,7 @@ cert_cmd() {
   [ -n "$domains_csv" ] || { err "CDS_ROOT_DOMAINS 未配置"; exit 1; }
 
   render_nginx || true
-  if ! nginx_up; then
+  if ! nginx_up certificate-maintenance; then
     err "nginx 未能启动 — Let's Encrypt 的 HTTP-01 验证需要 nginx 监听 80 端口"
     echo  "  排查顺序:"
     echo  "    1) 看上面的 docker compose 输出，定位真正报错"

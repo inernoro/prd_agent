@@ -8,7 +8,7 @@ const script = fs.readFileSync(path.resolve(__dirname, '../../exec_cds.sh'), 'ut
 // Execute the production shell functions, keeping docker/compose effects observable.
 const start = script.indexOf('nginx_observe_runtime() {');
 const end = script.indexOf('\nnginx_down() {', start);
-function run(code: number, output: string, error: string) {
+function run(code: number, output: string, error: string, mode = '', changed = false) {
   expect(start, 'production observer exists').toBeGreaterThan(0);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-nginx-runtime-'));
   try {
@@ -17,7 +17,7 @@ function run(code: number, output: string, error: string) {
     const shell = `NGINX_CONTAINER=cds_nginx
 trace() { printf '%s\\n' "$*" >> "$PROBE/trace"; }
 render_nginx() { return 0; }
-nginx_changed() { return 1; }
+nginx_changed() { return ${changed ? 0 : 1}; }
 warn() { :; }
 ok() { :; }
 docker() {
@@ -28,7 +28,7 @@ docker() {
 }
 nginx_compose() { trace "compose $*"; }
 ${script.slice(start, end)}
-nginx_up
+nginx_up "${mode}"
 status=$?
 printf '%s|%s|%s\\n' "$status" "$NGINX_RUNTIME_STATE" "$NGINX_RUNTIME_BOUNDED"
 `;
@@ -68,4 +68,21 @@ describe('Nginx runtime logging protection',()=>{
     expect(r.calls).toBe('docker start '+cid+'\n');
     expect(r.result.startsWith('1|stopped|')).toBe(true);
   });
+});
+
+// Explicit certificate maintenance may reuse a proven running legacy ingress until
+// cert_cmd reaches its already explicit maintenance handover. It must not start it.
+it('certificate maintenance can reuse a proven running legacy ingress without recreation',()=>{
+ const r=run(0,cid+'|true|json-file|<no value>|<no value>','','certificate-maintenance',true);
+ expect(r.result).toBe('0|running|false');
+ expect(r.calls).toBe('docker exec '+cid+' nginx -t\ndocker exec '+cid+' nginx -s reload\n');
+ expect(script.slice(script.indexOf('cert_cmd() {'),script.indexOf('# ══ cluster bootstrap'))).toContain('nginx_up certificate-maintenance');
+});
+it('certificate maintenance cannot start a stopped unbounded ingress',()=>{
+ const r=run(0,cid+'|false|json-file|<no value>|<no value>','','certificate-maintenance');
+ expect(r.result).toBe('1|stopped|false');expect(r.calls).toBe('');
+});
+it('certificate maintenance cannot bypass unknown identity',()=>{
+ const r=run(124,'','Error: No such object: cds_nginx\n','certificate-maintenance');
+ expect(r.result).toBe('1|unknown|false');expect(r.calls).toBe('');
 });
