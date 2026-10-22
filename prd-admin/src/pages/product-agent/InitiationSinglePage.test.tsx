@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type ReactNode } from 'react';
+import { act, type CSSProperties, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InitiationWizard } from './VersionWorkflowTab';
@@ -29,7 +29,7 @@ vi.mock('@/lib/useSseStream', () => ({
   }),
 }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) => unknown) => select({ user: { userId: 'me', displayName: '申请人' }, permissions: ['product-agent.use'], isRoot: false }) }));
-vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, description, content, actions }: { title: ReactNode; description: string; content: ReactNode; actions: ReactNode }) => <div role="dialog"><h3>{title}</h3><p>{description}</p>{content}{actions}</div> }));
+vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, description, content, actions, maxWidth, contentStyle }: { title: ReactNode; description: string; content: ReactNode; actions: ReactNode; maxWidth?: number; contentStyle?: CSSProperties }) => <div role="dialog" style={{ maxWidth, ...contentStyle }}><h3>{title}</h3><p>{description}</p>{content}{actions}</div> }));
 vi.mock('@/components/ItemSearchSelect', () => ({ ItemSearchSelect: ({ value, onChange, options, placeholder, disabled }: { value: string; onChange: (id: string) => void; options: Array<{ id: string; label: string }>; placeholder: string; disabled?: boolean }) => <select aria-label={placeholder} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}><option value="">请选择</option>{options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
 vi.mock('./ProductVersionMessagePaste', () => ({ ProductVersionMessagePaste: () => null }));
 vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: ({ value, onChange, placeholder }: { value: string; onChange: (id: string) => void; placeholder: string }) => <select aria-label={placeholder} value={value} onChange={(event) => onChange(event.target.value)}><option value="">请选择</option><option value="me">申请人</option><option value="owner">其他负责人</option></select> }));
@@ -90,6 +90,23 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); });
 
 describe('内部立项单页来源与失败恢复', () => {
+  it('填写保持大表单，发号成功后缩为自动高度的小弹窗并居中完成按钮', async () => {
+    api.createInitiation.mockResolvedValue({ success: true, data: seed({ reviewPassed: true, status: 'decision_pending' }) });
+    await mount();
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(dialog.style.maxWidth).toBe('920px');
+    await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
+    await change(field('需求来源 *'), '客户');
+    await change(field('计划立项时间 *'), '2026-10-22');
+    await confirm();
+    expect(dialog.style.maxWidth).toBe('480px');
+    expect(dialog.style.height).toBe('auto');
+    expect(dialog.style.maxHeight).toBe('min(85vh, 640px)');
+    expect(host.querySelector('form')).toBeNull();
+    expect(host.textContent).toContain('T1.2.3');
+    expect([...host.querySelectorAll('button')].find(button => button.textContent === '完成')?.classList.contains('mx-auto')).toBe(true);
+  });
+
   it('业务负责人默认申请人且可代他人申领，不传审批人', async () => {
     api.createInitiation.mockResolvedValue({ success: true, data: seed({ ownerId: 'owner', ownerName: '其他负责人', reviewPassed: true, status: 'decision_pending' }) });
     await mount();

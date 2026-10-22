@@ -101,7 +101,7 @@ describe('正式申领字段和开放规则', () => {
   it('负责人直接使用搜索单选框，不需要加号展开或固定显示登录人', () => {
     const fieldStart = workflow.indexOf('<Field label="产品负责人 *">');
     const field = workflow.slice(fieldStart, workflow.indexOf('</Field>', fieldStart));
-    expect(field).toContain('<UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品负责人" />');
+    expect(field).toContain('<UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品负责人" inlineOptions />');
     expect(field.match(/<UserSearchSelect/g)).toHaveLength(1);
     expect(field).not.toContain('currentUser?.displayName');
     expect(field).not.toContain('<button');

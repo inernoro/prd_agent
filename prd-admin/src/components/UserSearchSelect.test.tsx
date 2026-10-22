@@ -19,10 +19,10 @@ const snapshot = vi.fn();
 let root: Root;
 let host: HTMLDivElement;
 
-function Fixture({ modal }: { modal: boolean }) {
+function Fixture({ modal, inlineOptions = false }: { modal: boolean; inlineOptions?: boolean }) {
   const [value, setValue] = useState('');
   const content = <>
-    <UserSearchSelect value={value} onChange={(id) => { setValue(id); selected(id); }} onSelectUser={snapshot} placeholder="搜索并选择产品主负责人" />
+    <label>产品负责人<UserSearchSelect value={value} onChange={(id) => { setValue(id); selected(id); }} onSelectUser={snapshot} placeholder="搜索并选择产品主负责人" inlineOptions={inlineOptions} /></label>
     <output>{value}</output><button type="button">列表外按钮</button>
   </>;
   return modal ? <Dialog open onOpenChange={() => {}} title="申领内部版本号" content={content} /> : content;
@@ -32,8 +32,8 @@ async function settle(ms = 30) {
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
 }
 
-async function mount(modal = true) {
-  await act(async () => root.render(<Fixture modal={modal} />));
+async function mount(modal = true, inlineOptions = false) {
+  await act(async () => root.render(<Fixture modal={modal} inlineOptions={inlineOptions} />));
   const input = document.querySelector<HTMLInputElement>('input[placeholder="搜索并选择产品主负责人"]')!;
   await act(async () => input.focus());
   await settle();
@@ -75,6 +75,53 @@ afterEach(async () => {
 });
 
 describe('UserSearchSelect 真实模态交互', () => {
+  it.each(['dark', 'light'])('%s 产品负责人就地候选在输入框之后，不创建悬浮portal，搜索后仍可单选', async (theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
+    const input = await mount(true, true);
+    const trigger = input.parentElement!;
+    const menu = trigger.nextElementSibling as HTMLElement;
+    expect(menu.contains(row())).toBe(true);
+    expect(menu.style.position).toBe('static');
+    expect(menu.style.maxHeight).toBe('256px');
+    expect(menu.style.width).toBe('100%');
+    expect(list().style.overflowY).toBe('auto');
+    expect(list().style.overscrollBehavior).toBe('contain');
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '负责人乙');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      window.dispatchEvent(new Event('resize'));
+      trigger.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    await settle(240);
+    expect(input.parentElement!.nextElementSibling).toBe(menu);
+    expect(menu.style.top).toBe('');
+    const down = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    await act(async () => { row().dispatchEvent(down); });
+    expect(down.defaultPrevented).toBe(true);
+    await click(row());
+    expect(input.value).toBe(people[1].displayName);
+    expect(selected).toHaveBeenCalledTimes(1);
+    expect(selected).toHaveBeenCalledWith('owner-b');
+    expect(trigger.nextElementSibling).toBeNull();
+  });
+
+  it('就地候选ESC仅收起名单；点外关闭及清除后重新选择不改业务回调', async () => {
+    const input = await mount(true, true);
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+    expect(document.body.textContent).not.toContain('共 2 人');
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+    await act(async () => { input.blur(); input.focus(); });
+    await settle();
+    await click(row());
+    await click(document.querySelector<HTMLButtonElement>('button[aria-label="清除"]')!);
+    expect(input.value).toBe('');
+    await click(input);
+    await settle();
+    await click([...document.querySelectorAll('button')].find((button) => button.textContent === '列表外按钮')!);
+    expect(document.body.textContent).not.toContain('共 2 人');
+    expect(selected.mock.calls.map(([id]) => id)).toEqual(['owner-b', '']);
+  });
+
   it.each(['dark', 'light'])('%s 主题真实Dialog内搜索并点击候选，只关闭下拉并回填姓名', async (theme) => {
     document.documentElement.setAttribute('data-theme', theme);
     const input = await mount();

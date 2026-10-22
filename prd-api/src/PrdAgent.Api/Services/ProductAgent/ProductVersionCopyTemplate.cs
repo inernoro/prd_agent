@@ -1,4 +1,5 @@
 using PrdAgent.Core.Models;
+using System.Text.RegularExpressions;
 
 namespace PrdAgent.Api.Services.ProductAgent;
 
@@ -14,7 +15,7 @@ internal static class ProductVersionCopyTemplate
         NeedUiDesign = item.NeedUiDesign,
         IsAiPoc = item.IsAiPoc,
         DemandSource = item.DemandSource,
-        PlanName = item.PlanName,
+        PlanName = WithInternalCode(item.PlanName, item.TCode),
         PlannedProjectAt = item.PlannedProjectAt,
     }), item.OwnerName);
 
@@ -32,6 +33,17 @@ internal static class ProductVersionCopyTemplate
         PlannedReleaseAt = item.PlannedReleaseAt,
         PlannedTrainingMinutes = item.PlannedTrainingMinutes,
     }), item.OwnerName);
+
+    private static string WithInternalCode(string? name, string? code)
+    {
+        var title = name?.Trim() ?? string.Empty;
+        if (title.Length == 0 || string.IsNullOrWhiteSpace(code)) return title;
+        var bracket = title.IndexOfAny(new[] { '（', '(' });
+        var prefix = bracket < 0 ? title : title[..bracket];
+        // 仅替换名称前缀末尾的版本号，括号内的业务描述保持原样。
+        prefix = Regex.Replace(prefix.TrimEnd(), @"T\d+(?:\.\d+)+$", string.Empty, RegexOptions.IgnoreCase).TrimEnd();
+        return prefix + code.Trim() + (bracket < 0 ? string.Empty : title[bracket..]);
+    }
 
     private static string WithOwner(string text, string? name)
     {

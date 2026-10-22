@@ -708,12 +708,12 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     open
     onOpenChange={(open) => { if (!open && !submittingRef.current) onClose(); }}
     title={wizardTitle}
-    description={editingIssued ? '普通资料修改不改号；只有全局最新且无下游关联的记录可修改版本级别并重新发号。' : '一次填写并确认，无需人工审批。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
-    maxWidth={920}
-    contentStyle={{ height: 'min(94vh, 960px)', maxHeight: '94vh' }}
+    description={completed ? '版本号已生成，可复制完整通知后完成。' : editingIssued ? '普通资料修改不改号；只有全局最新且无下游关联的记录可修改版本级别并重新发号。' : '一次填写并确认，无需人工审批。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
+    maxWidth={completed ? 480 : 920}
+    contentStyle={{ height: completed ? 'auto' : 'min(94vh, 960px)', maxHeight: completed ? 'min(85vh, 640px)' : '94vh' }}
     actions={<>
       {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '版本级别变更会重新发号，普通资料不改号' : '评审通过后自动发放 T 号，无需人工审批'}</span>}
-      <Button size="sm" onClick={onClose} disabled={busy}>{completed ? '完成' : '取消'}</Button>
+      <Button size="sm" className={completed ? 'mx-auto' : undefined} variant={completed ? 'primary' : 'secondary'} onClick={onClose} disabled={busy}>{completed ? '完成' : '取消'}</Button>
       {!completed && <Button size="sm" variant="primary" type="submit" form={formId} disabled={busy || !linkedProductId.trim()}>
         {busy && <MapSpinner size={14} />}{busy ? (reviewRunning ? '评审中，通过后自动继续…' : '正在保存并提交…') : confirmationLabel}
       </Button>}
@@ -769,7 +769,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
               <Field label="需求来源 *"><InitiationInput value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
               <Field label="是否需要 UI 设计 *"><InitiationSelect value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
               <Field label="是否属于 AI POC 项目 *"><InitiationSelect value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
-              <Field label="产品负责人 *"><UserSearchSelect value={ownerId} onChange={setOwnerId} onSelectUser={(user) => setOwnerDisplayName(user.displayName)} placeholder={ownerDisplayName ? `当前：${ownerDisplayName}（可搜索改选）` : '搜索并选择产品负责人'} /><span className="mt-1 block text-xs text-token-muted">默认申请人，代申请时可改选；不需要负责人审批。</span></Field>
+              <Field label="产品负责人 *"><UserSearchSelect value={ownerId} onChange={setOwnerId} onSelectUser={(user) => setOwnerDisplayName(user.displayName)} placeholder={ownerDisplayName ? `当前：${ownerDisplayName}（可搜索改选）` : '搜索并选择产品负责人'} inlineOptions /><span className="mt-1 block text-xs text-token-muted">默认申请人，代申请时可改选；不需要负责人审批。</span></Field>
               <Field label="备注（选填）" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className={INITIATION_CONTROL_CLASS} /></Field>
             </div>
           </section>
