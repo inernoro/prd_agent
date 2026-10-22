@@ -24,10 +24,8 @@ public class HostedSiteService : IHostedSiteService
     private readonly IAskOpeningQuestionGenerator _askOpeners;
     private readonly ILogger<HostedSiteService> _logger;
 
-    // 与 WebPagesController.MaxSingleFileSize (500MB) 对齐：视频/PDF 单文件上传上限提到 500MB
-    // 后，控制器会把媒体包装成 ZIP 走这条路径，解压上限若仍是 200MB 会让 200-500MB 的上传
-    // "过了控制器、却被服务层拒收"。该值同时保留 zip bomb 防御（停止解压超出此总大小的归档）。
-    private const long MaxExtractedSize = 500L * 1024 * 1024; // 500MB
+    // ZIP 上传与解压共用总量边界，防止入口已接受而发布阶段拒绝。
+    private const long MaxExtractedSize = HostedSiteUploadLimits.MaxPackageBytes;
     // 现代原型导出会生成大量切片、字体和静态资源；5000 会拒绝体积很小但条目较多的正常包。
     // 文件数仍保留硬上限以避免用海量空条目消耗解析与对象存储资源；解压总量另由
     // MaxExtractedSize 独立限制，不能用提高文件数上限绕过 zip bomb 防护。
@@ -346,9 +344,22 @@ public class HostedSiteService : IHostedSiteService
         string? uploadId = null,
         string? sourceRef = null)
     {
+        using var stream = new MemoryStream(zipBytes, writable: false);
+        return await CreateFromZipAsync(userId, stream, title, description, folder, tags,
+            wrappedAssetType, ct, uploadId, sourceRef);
+    }
+
+    public async Task<HostedSite> CreateFromZipAsync(
+        string userId, Stream zipStream,
+        string? title, string? description, string? folder, List<string>? tags,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? sourceRef = null)
+    {
         var siteId = Guid.NewGuid().ToString("N");
         var now = DateTime.UtcNow;
-        var result = await ExtractAndUploadZip(siteId, zipBytes, uploadId);
+        var result = await ExtractAndUploadZip(siteId, zipStream, uploadId);
         if (result.Error != null)
             throw new InvalidOperationException(result.Error);
 
@@ -720,6 +731,30 @@ public class HostedSiteService : IHostedSiteService
         string? uploadId = null,
         string? reuploadRef = null)
     {
+        using var stream = new MemoryStream(fileBytes, writable: false);
+        return await ReuploadCoreAsync(siteId, userId, stream, fileBytes, fileName,
+            wrappedAssetType, ct, uploadId, reuploadRef);
+    }
+
+    public Task<HostedSite> ReuploadAsync(
+        string siteId, string userId, Stream zipStream, string fileName,
+        string? wrappedAssetType = null, CancellationToken ct = default,
+        string? uploadId = null, string? reuploadRef = null)
+    {
+        if (!string.Equals(Path.GetExtension(fileName), ".zip", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("流式上传仅支持 ZIP 文件");
+        return ReuploadCoreAsync(siteId, userId, zipStream, null, fileName,
+            wrappedAssetType, ct, uploadId, reuploadRef);
+    }
+
+    private async Task<HostedSite> ReuploadCoreAsync(
+        string siteId, string userId,
+        Stream zipStream, byte[]? fileBytes, string fileName,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? reuploadRef = null)
+    {
         // 角色门控：editor / owner / 站点创建者可重传内容；viewer 与非成员一律拒绝
         var site = await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct);
         if (site == null)
@@ -743,10 +778,10 @@ public class HostedSiteService : IHostedSiteService
 
         if (ext == ".zip")
         {
-            var validationError = ValidateZip(siteId, fileBytes);
+            var validationError = ValidateZip(siteId, zipStream);
             if (validationError != null)
                 throw new InvalidOperationException(validationError);
-            newKeys = GetValidatedZipPaths(fileBytes, siteId)
+            newKeys = GetValidatedZipPaths(zipStream, siteId)
                 .Select(path => _storage.BuildSiteKey(siteId, $"{versionRoot}/{path}"))
                 .ToArray();
         }
@@ -766,7 +801,7 @@ public class HostedSiteService : IHostedSiteService
         {
             if (ext == ".zip")
             {
-                var result = await ExtractAndUploadZip(siteId, fileBytes, uploadId, versionRoot);
+                var result = await ExtractAndUploadZip(siteId, zipStream, uploadId, versionRoot);
                 if (result.Error != null)
                     throw new InvalidOperationException(result.Error);
                 siteFiles = result.Files;
@@ -776,7 +811,7 @@ public class HostedSiteService : IHostedSiteService
             }
             else
             {
-                var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes, "index.html"));
+                var rewritten = InjectSlideNavCompat(RewriteAbsolutePathsInHtml(fileBytes!, "index.html"));
                 replacedIsSlideDeck = DetectSlideDeck(rewritten);
                 await _storage.UploadToKeyAsync(
                     newKeys[0], rewritten, "text/html; charset=utf-8", CancellationToken.None, SiteCacheControl);
@@ -4416,12 +4451,18 @@ public class HostedSiteService : IHostedSiteService
             if (BlockedExtensions.Contains(fileExt))
                 continue;
 
-            totalSize += entry.Length;
-            if (totalSize > MaxExtractedSize)
+            var singleFileError = HostedSiteUploadLimits.ValidateSingleFileSize(entry.Length);
+            if (singleFileError != null)
             {
-                plan.Error = $"解压后总大小超过限制 ({MaxExtractedSize / 1024 / 1024}MB)";
+                plan.Error = singleFileError;
                 return plan;
             }
+            if (entry.Length > MaxExtractedSize - totalSize)
+            {
+                plan.Error = HostedSiteUploadLimits.ValidateExtractedSize(MaxExtractedSize + 1);
+                return plan;
+            }
+            totalSize += entry.Length;
 
             if (entry.Length == 0) continue;
 
@@ -4458,7 +4499,7 @@ public class HostedSiteService : IHostedSiteService
 
     private async Task<ZipExtractResult> ExtractAndUploadZip(
         string siteId,
-        byte[] zipBytes,
+        Stream zipStream,
         string? uploadId = null,
         string? versionRoot = null)
     {
@@ -4466,8 +4507,8 @@ public class HostedSiteService : IHostedSiteService
 
         try
         {
-            using var zipStream = new MemoryStream(zipBytes);
-            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+            zipStream.Position = 0;
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
 
             var plan = PlanZipEntries(archive, siteId);
             if (plan.Error != null)
@@ -4506,9 +4547,7 @@ public class HostedSiteService : IHostedSiteService
                 });
 
                 using var entryStream = entry.Open();
-                using var entryMs = new MemoryStream();
-                await entryStream.CopyToAsync(entryMs);
-                var entryBytes = entryMs.ToArray();
+                var entryBytes = await ReadZipEntryAsync(entryStream, entry.Length);
 
                 if (mimeType == "text/html")
                 {
@@ -4547,16 +4586,35 @@ public class HostedSiteService : IHostedSiteService
         }
     }
 
+    internal static async Task<byte[]> ReadZipEntryAsync(Stream input, long declaredLength)
+    {
+        var sizeError = HostedSiteUploadLimits.ValidateSingleFileSize(declaredLength);
+        if (sizeError != null) throw new InvalidOperationException(sizeError);
+        // 单个资源仍受 500MB 上限保护；只分配一次，不再同时持有 MemoryStream 与 ToArray 副本。
+        var output = new byte[checked((int)declaredLength)];
+        var offset = 0;
+        while (offset < output.Length)
+        {
+            var read = await input.ReadAsync(output.AsMemory(offset));
+            if (read == 0)
+                throw new InvalidOperationException("ZIP 文件大小校验失败，请重新导出后再上传");
+            offset += read;
+        }
+        if (await input.ReadAsync(new byte[1]) != 0)
+            throw new InvalidOperationException("ZIP 文件大小校验失败，请重新导出后再上传");
+        return output;
+    }
+
     /// <summary>
     /// 纯元数据校验 ZIP（不解压内容、不写任何 COS）。与 ExtractAndUploadZip 共用
     /// PlanZipEntries，条件结构上一致。用于重传替换：先校验后写入，失败时零副作用。
     /// </summary>
-    private string? ValidateZip(string siteId, byte[] zipBytes)
+    internal string? ValidateZip(string siteId, Stream zipStream)
     {
         try
         {
-            using var zipStream = new MemoryStream(zipBytes);
-            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+            zipStream.Position = 0;
+            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
             return PlanZipEntries(archive, siteId).Error;
         }
         catch (InvalidDataException)
@@ -4567,10 +4625,10 @@ public class HostedSiteService : IHostedSiteService
 
     // PlanZipEntries 现在要 siteId 才能算出每个条目的对象键（主干把站点隔离并进了这一层）。
     // 这里只取相对路径，但仍须把 siteId 透传下去，不能用空串糊过去——那会让键前缀失去站点作用域。
-    private string[] GetValidatedZipPaths(byte[] zipBytes, string siteId)
+    private string[] GetValidatedZipPaths(Stream zipStream, string siteId)
     {
-        using var zipStream = new MemoryStream(zipBytes);
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        zipStream.Position = 0;
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read, leaveOpen: true);
         var plan = PlanZipEntries(archive, siteId);
         if (plan.Error != null)
             throw new InvalidOperationException(plan.Error);

@@ -1,3 +1,4 @@
+import { getWebHostingUploadError } from '@/lib/webHostingUploadLimits';
 import { apiDownload, apiRequest, type ApiDownloadedFile } from '@/services/real/apiClient';
 import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
@@ -550,6 +551,9 @@ export async function uploadSite(input: {
   /** 拿到 XHR 句柄，调用方据此实现「中止」 */
   onStart?: (xhr: XMLHttpRequest) => void;
 }): Promise<ApiResponse<HostedSite>> {
+  const sizeError = getWebHostingUploadError(input.file);
+  if (sizeError) return { success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: sizeError } };
+
   const token = useAuthStore.getState().token;
 
   const fd = new FormData();
@@ -612,6 +616,9 @@ export async function reviewSiteZip(input: {
   onStage?: (stage: string) => void;
   signal?: AbortSignal;
 }): Promise<ApiResponse<HostedSiteOptimizationReviewResult>> {
+  const sizeError = getWebHostingUploadError(input.file);
+  if (sizeError) return { success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: sizeError } };
+
   const created = await apiRequest<HostedSiteOptimizationUploadCreatedResult>(
     api.webPages.optimizationUploads(),
     {
@@ -861,6 +868,9 @@ export async function cancelSiteOptimization(sessionId: string): Promise<ApiResp
 export async function reuploadSite(
   id: string, file: File, uploadId?: string, signal?: AbortSignal,
 ): Promise<ApiResponse<HostedSite>> {
+  const sizeError = getWebHostingUploadError(file);
+  if (sizeError) return { success: false, data: null as never, error: { code: 'INVALID_FORMAT', message: sizeError } };
+
   const token = useAuthStore.getState().token;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;

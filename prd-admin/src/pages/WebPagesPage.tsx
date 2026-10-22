@@ -1,3 +1,4 @@
+import { getWebHostingUploadError } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -3341,6 +3342,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
   const handleSave = async () => {
     if (!isEdit && !file) return;
+    const sizeError = file ? getWebHostingUploadError(file) : null;
+    if (sizeError) {
+      toast.error('文件过大或为空', sizeError);
+      return;
+    }
     // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
     const pendingTag = tagInput.trim();
     const effectiveTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
@@ -3830,7 +3836,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
                     <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
-                    <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
+                    <p className="text-xs text-token-muted">ZIP 包与解压总量上限 5000 MB；单个文件上限 500 MB</p>
                   </div>
                 )}
                 <input

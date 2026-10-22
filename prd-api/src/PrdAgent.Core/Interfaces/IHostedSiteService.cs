@@ -54,6 +54,15 @@ public interface IHostedSiteService
         string? uploadId = null,
         string? sourceRef = null);
 
+    /// <summary>从可寻址 ZIP 流创建站点，调用方负责流的生命周期。</summary>
+    Task<HostedSite> CreateFromZipAsync(
+        string userId, Stream zipStream,
+        string? title, string? description, string? folder, List<string>? tags,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? sourceRef = null);
+
     /// <summary>从 HTML 字符串创建站点（供工作流/Agent 调用）</summary>
     /// <param name="maxStoredBytes">
     /// 落盘上限（字节）。服务端还会重写绝对路径并注入翻页垫片，**存下去的那份比调用方给的大**；
@@ -91,6 +100,14 @@ public interface IHostedSiteService
     Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? reuploadRef = null);
+
+    /// <summary>用可寻址 ZIP 流替换站点，调用方负责流的生命周期。</summary>
+    Task<HostedSite> ReuploadAsync(
+        string siteId, string userId, Stream zipStream, string fileName,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
