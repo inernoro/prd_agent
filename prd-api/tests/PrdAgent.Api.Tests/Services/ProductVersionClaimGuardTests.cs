@@ -20,6 +20,89 @@ namespace PrdAgent.Api.Tests.Services;
 public class ProductVersionClaimGuardTests
 {
     [Theory]
+    [InlineData(null, "me", "真实申请人")]
+    [InlineData("owner", "owner", "其他负责人")]
+    public async Task BusinessOwnerDefaultsToApplicantAndCanBeSelectedWithoutApproval(string? selected, string expectedId, string expectedName)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertManyAsync(new[] {
+            new User { UserId = "me", DisplayName = "真实申请人" },
+            new User { UserId = "owner", DisplayName = "其他负责人" },
+        });
+        var request = new CreateInitiationRequest { LinkedProductId = "product", PlanName = "代申请方案", OwnerId = selected, OwnerName = "不能信任的姓名" };
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateInitiation("product", request));
+        var item = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(result.Value).Data);
+        Assert.Equal(expectedId, item.OwnerId);
+        Assert.Equal(expectedName, item.OwnerName);
+        Assert.Equal("me", item.CreatedBy);
+        Assert.Null(item.PrimaryOwnerId);
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == item.Id,
+            Builders<ProductInitiation>.Update.Set(x => x.ReviewPassed, true).Set(x => x.Status, "decision_pending"));
+        var issued = Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation(item.Id, new InitiationDecisionRequest()));
+        var saved = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(issued.Value).Data);
+        Assert.NotNull(saved.TCode);
+        Assert.Equal("approved", saved.Status);
+        Assert.Equal(expectedId, saved.OwnerId);
+        Assert.Equal(expectedName, saved.OwnerName);
+        Assert.Equal("me", saved.CreatedBy);
+        Assert.Null(saved.PrimaryOwnerId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IssuedBusinessOwnerCanChangeWithoutChangingNumberCreatorOrApprovalHistory(bool selectOwner)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertOneAsync(new User { UserId = "owner", DisplayName = "其他负责人" });
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "owner-issued", ProductId = "product", LinkedProductId = "product", PlanName = "历史方案", TCode = "T6.19.5",
+            VersionType = "minor", Status = "approved", ReviewPassed = true, CreatedBy = "me", SourceType = "import",
+            OwnerName = "历史负责人", PrimaryOwnerId = "old-approver", ApprovalComment = "保留审批历史", ReviewMeetingRequired = false,
+        });
+        var request = new CreateInitiationRequest { LinkedProductId = "product", PlanName = "历史方案", VersionType = "minor",
+            ReviewMeetingRequired = false, PrimaryOwnerId = "old-approver", OwnerId = selectOwner ? "owner" : null, OwnerName = "不应覆盖姓名" };
+        Assert.IsType<OkObjectResult>(await fixture.Controller().UpdateInitiation("owner-issued", request));
+        var saved = await fixture.Db.ProductInitiations.Find(x => x.Id == "owner-issued").SingleAsync();
+        Assert.Equal(selectOwner ? "owner" : null, saved.OwnerId);
+        Assert.Equal(selectOwner ? "其他负责人" : "历史负责人", saved.OwnerName);
+        Assert.Equal("me", saved.CreatedBy);
+        Assert.Equal("old-approver", saved.PrimaryOwnerId);
+        Assert.Equal("保留审批历史", saved.ApprovalComment);
+        Assert.Equal("T6.19.5", saved.TCode);
+        Assert.Equal("approved", saved.Status);
+        Assert.True(saved.ReviewPassed);
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
+        var list = await PrdAgent.Api.Services.ProductAgent.ProductVersionListReader.ReadInitiationsAsync(fixture.Db, null, "me", false);
+        Assert.Equal(saved.OwnerId, Assert.Single(list.Items).Record.OwnerId);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("missing")]
+    public async Task InvalidBusinessOwnerIsRejectedBeforeCreatingOrUpdating(string owner)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var request = new CreateInitiationRequest { LinkedProductId = "product", PlanName = "方案", OwnerId = owner };
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateInitiation("product", request));
+        Assert.Equal(0, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "draft", ProductId = "product", CreatedBy = "me", OwnerName = "原负责人" });
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().UpdateInitiation("draft", request));
+        Assert.Equal("原负责人", (await fixture.Db.ProductInitiations.Find(x => x.Id == "draft").SingleAsync()).OwnerName);
+    }
+
+    [Fact]
+    public async Task BusinessOwnerDoesNotReplaceCreatorEditPermission()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "others", ProductId = "product", CreatedBy = "someone", OwnerId = "me", OwnerName = "业务负责人",
+        });
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller().UpdateInitiation("others",
+            new CreateInitiationRequest { LinkedProductId = "product", PlanName = "不能借负责人身份修改" })).StatusCode);
+    }
+
+    [Theory]
     [InlineData("minor", "T6.19.6", "V6.19.6")]
     [InlineData("medium", "T6.20.0", "V6.20.0")]
     [InlineData("major", "T7.0.0", "V7.0.0")]

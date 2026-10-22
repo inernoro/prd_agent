@@ -140,6 +140,7 @@ export function createInitiation(productId: string, body: {
   planUrl?: string;
   requirementDescription?: string;
   departmentName?: string;
+  ownerId?: string;
   ownerName?: string;
   projectMemberNames?: string[];
   plannedProjectAt?: string;
@@ -165,6 +166,7 @@ export function updateInitiation(id: string, body: {
   planUrl?: string;
   requirementDescription?: string;
   departmentName?: string;
+  ownerId?: string;
   ownerName?: string;
   projectMemberNames?: string[];
   plannedProjectAt?: string;

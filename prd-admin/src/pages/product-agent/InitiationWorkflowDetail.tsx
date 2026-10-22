@@ -102,6 +102,7 @@ export function InitiationWorkflowDetail({
 
   useEffect(() => {
     const ids = [
+      initiation?.ownerId,
       initiation?.primaryOwnerId,
       initiation?.createdBy,
     ].filter(Boolean) as string[];
@@ -112,7 +113,7 @@ export function InitiationWorkflowDetail({
       setDisplayNames(new Map(res.data.items.map((u) => [u.userId, u.displayName])));
     });
     return () => { cancelled = true; };
-  }, [initiation?.createdBy, initiation?.primaryOwnerId]);
+  }, [initiation?.createdBy, initiation?.ownerId, initiation?.primaryOwnerId]);
 
   const resolveName = (userId?: string | null) => {
     if (!userId) return '—';

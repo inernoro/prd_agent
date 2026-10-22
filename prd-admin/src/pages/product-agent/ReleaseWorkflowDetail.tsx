@@ -770,7 +770,7 @@ export function ReleaseWorkflowDetail({
           {isNew ? (
             <>
               <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
-              <Field label="产品负责人（申领人）*">
+              <Field label="产品负责人 *">
                 <UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品负责人" />
               </Field>
               {!temporary && (

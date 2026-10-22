@@ -207,6 +207,7 @@ export interface ProductInitiation {
   planName: string;
   requirementDescription?: string | null;
   departmentName?: string | null;
+  ownerId?: string | null;
   ownerName?: string | null;
   projectMemberNames?: string[];
   planUrl?: string | null;

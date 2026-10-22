@@ -28,11 +28,11 @@ vi.mock('@/lib/useSseStream', () => ({
     phase: 'idle', phaseMessage: '', typing: '',
   }),
 }));
-vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) => unknown) => select({ permissions: ['product-agent.use'], isRoot: false }) }));
+vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) => unknown) => select({ user: { userId: 'me', displayName: '申请人' }, permissions: ['product-agent.use'], isRoot: false }) }));
 vi.mock('@/components/ui/Dialog', () => ({ Dialog: ({ title, description, content, actions }: { title: ReactNode; description: string; content: ReactNode; actions: ReactNode }) => <div role="dialog"><h3>{title}</h3><p>{description}</p>{content}{actions}</div> }));
 vi.mock('@/components/ItemSearchSelect', () => ({ ItemSearchSelect: ({ value, onChange, options, placeholder, disabled }: { value: string; onChange: (id: string) => void; options: Array<{ id: string; label: string }>; placeholder: string; disabled?: boolean }) => <select aria-label={placeholder} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}><option value="">请选择</option>{options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
 vi.mock('./ProductVersionMessagePaste', () => ({ ProductVersionMessagePaste: () => null }));
-vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: ({ value, onChange, placeholder }: { value: string; onChange: (id: string) => void; placeholder: string }) => <select aria-label={placeholder} value={value} onChange={(event) => onChange(event.target.value)}><option value="">请选择</option><option value="owner">其他负责人</option></select> }));
+vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: ({ value, onChange, placeholder }: { value: string; onChange: (id: string) => void; placeholder: string }) => <select aria-label={placeholder} value={value} onChange={(event) => onChange(event.target.value)}><option value="">请选择</option><option value="me">申请人</option><option value="owner">其他负责人</option></select> }));
 vi.mock('./VersionCopyActions', () => ({ VersionCopyActions: () => null }));
 vi.mock('./InitiationReviewLivePanel', async (original) => ({ ...await original<typeof import('./InitiationReviewLivePanel')>(), InitiationReviewLivePanel: () => <div>正在展示评审进度</div> }));
 
@@ -90,6 +90,32 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); });
 
 describe('内部立项单页来源与失败恢复', () => {
+  it('业务负责人默认申请人且可代他人申领，不传审批人', async () => {
+    api.createInitiation.mockResolvedValue({ success: true, data: seed({ ownerId: 'owner', ownerName: '其他负责人', reviewPassed: true, status: 'decision_pending' }) });
+    await mount();
+    expect(field<HTMLSelectElement>('产品负责人 *').value).toBe('me');
+    await change(field('产品负责人 *'), 'owner');
+    await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
+    await change(field('需求来源 *'), '客户');
+    await change(field('计划立项时间 *'), '2026-10-22');
+    await confirm();
+    expect(api.createInitiation).toHaveBeenCalledWith('product', expect.objectContaining({ ownerId: 'owner' }));
+    expect(api.decideInitiation.mock.calls[0][1]).not.toHaveProperty('primaryOwnerId');
+    expect(host.textContent).toContain('T1.2.3');
+  });
+
+  it('已发号改负责人只保存资料，导入未改选保留原姓名', async () => {
+    const issued = seed({ tCode: 'T1.2.3', status: 'approved', sourceType: 'import', ownerName: '历史负责人' });
+    api.updateInitiation.mockResolvedValue({ success: true, data: issued });
+    await mount(issued);
+    await confirm();
+    expect(api.updateInitiation.mock.calls[0][1].ownerId).toBeUndefined();
+    await change(field('产品负责人 *'), 'owner');
+    await confirm();
+    expect(api.updateInitiation.mock.calls[1][1].ownerId).toBe('owner');
+    expect(api.decideInitiation).not.toHaveBeenCalled();
+    expect(api.createInitiation).not.toHaveBeenCalled();
+  });
   it.each(['REVIEW_ALREADY_REGISTERED', 'REVIEW_NOT_PASSED', 'REVIEW_NOT_READY'])('确认被 %s 拒绝弹窗说明且保留输入，不触发后续流程', async (code) => {
     api.createInitiation.mockResolvedValue({ success: false, error: { code, message: '服务端拒绝原因' } });
     await mount();

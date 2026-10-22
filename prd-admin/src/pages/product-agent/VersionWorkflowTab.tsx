@@ -150,7 +150,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     let active = true;
     const ids = Array.from(new Set(tab === 'release'
       ? releases.flatMap((item) => [item.createdBy, item.ownerId, ...item.teamMemberIds].filter((id): id is string => Boolean(id)))
-      : initiations.flatMap((item) => [item.createdBy, item.primaryOwnerId].filter((id): id is string => Boolean(id)))));
+      : initiations.flatMap((item) => [item.createdBy, item.ownerId, item.primaryOwnerId].filter((id): id is string => Boolean(id)))));
     if (!ids.length) { setNames(new Map()); return; }
     void getUserCards(ids).then((result) => {
       if (active && result.success) setNames(new Map(result.data.items.map((user) => [user.userId, user.displayName])));
@@ -283,6 +283,8 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   seed?: ProductInitiation;
 }) {
   const permissions = useAuthStore((state) => state.permissions ?? []);
+  const currentUser = useAuthStore((state) => state.user);
+  const currentUserId = currentUser?.userId ?? '';
   const isRoot = useAuthStore((state) => state.isRoot);
   const canUseProduct = hasEffectivePermission(permissions, 'product-agent.use', isRoot);
   const isRetry = Boolean(seed);
@@ -294,6 +296,11 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const formId = useId();
   const [sourceMode, setSourceMode] = useState<'existing' | 'upload'>(seed && !seed.reviewPassed ? 'upload' : 'existing');
   const [item, setItem] = useState<ProductInitiation | null>(seed ?? null);
+  const [ownerId, setOwnerId] = useState(seed ? seed.ownerId ?? (seed.ownerName || seed.sourceType === 'import' ? '' : seed.createdBy) : currentUserId);
+  const [ownerDisplayName, setOwnerDisplayName] = useState(seed?.ownerName ?? currentUser?.displayName ?? '');
+  useEffect(() => {
+    if (!seed && !ownerId && currentUserId) setOwnerId(currentUserId);
+  }, [seed, ownerId, currentUserId]);
   const [projectType, setProjectType] = useState<'standard' | 'custom'>(seed?.projectType ?? 'standard');
   const [customerSource, setCustomerSource] = useState(seed?.customerSource ?? '');
   const [demandSource, setDemandSource] = useState(seed?.demandSource ?? '');
@@ -499,6 +506,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     projectType,
     customerSource: projectType === 'custom' ? customerSource : undefined,
     demandSource: demandSource.trim(),
+    ownerId: ownerId || undefined,
     planName,
     planUrl: item?.planUrl ?? undefined,
     requirementDescription: item?.requirementDescription ?? undefined,
@@ -609,6 +617,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const confirmApplication = async () => {
     if (submittingRef.current || completed) return;
     if (!linkedProductId.trim()) return setMessage('请选择所属应用');
+    if (!ownerId && !item?.ownerName?.trim()) return setMessage('请选择产品负责人');
     if (!editingIssued && sourceMode === 'existing' && !reviewSubmissionId && !item?.reviewPassed) return setMessage('请选择一个已有方案，或切换到上传新方案。');
     if (!editingIssued && sourceMode === 'upload' && !file && !item?.reviewPassed
       && !(item?.status === 'review_pending' && item.reviewSubmissionId)) return setMessage('请在当前页面选择方案文件。');
@@ -758,6 +767,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
               <Field label="需求来源 *"><InitiationInput value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
               <Field label="是否需要 UI 设计 *"><InitiationSelect value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
               <Field label="是否属于 AI POC 项目 *"><InitiationSelect value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
+              <Field label="产品负责人 *"><UserSearchSelect value={ownerId} onChange={setOwnerId} onSelectUser={(user) => setOwnerDisplayName(user.displayName)} placeholder={ownerDisplayName ? `当前：${ownerDisplayName}（可搜索改选）` : '搜索并选择产品负责人'} /><span className="mt-1 block text-xs text-token-muted">默认申请人，代申请时可改选；不需要负责人审批。</span></Field>
               <Field label="备注（选填）" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className={INITIATION_CONTROL_CLASS} /></Field>
             </div>
           </section>
@@ -836,7 +846,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Td>{item.demandSource || '-'}</Td>
       <Td>{item.requirementDescription || '-'}</Td><Td>{item.departmentName || '-'}</Td>
       <Td>
-        <div>{item.ownerName || names.get(item.primaryOwnerId ?? item.createdBy) || item.legacyData?.['产品负责人'] || item.primaryOwnerId || item.createdBy || '-'}</div>
+        <div>{item.ownerName || names.get(item.ownerId ?? item.primaryOwnerId ?? item.createdBy) || item.legacyData?.['产品负责人'] || item.ownerId || item.primaryOwnerId || item.createdBy || '-'}</div>
       </Td>
       <Td>{formatDate(item.firstDraftMeetingAt)}</Td><Td>{formatDate(item.secondDraftMeetingAt)}</Td><Td>{formatDate(item.thirdDraftMeetingAt)}</Td>
       <Td>{formatDate(item.projectAt)}</Td><Td>{formatDate(item.plannedProjectAt)}</Td><Td>{formatBool(item.needUiDesign)}</Td><Td>{formatBool(item.isAiPoc)}</Td>
@@ -898,7 +908,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>

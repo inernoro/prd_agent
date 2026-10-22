@@ -19,6 +19,8 @@ public class ProductInitiation
     public string PlanName { get; set; } = string.Empty;
     public string? RequirementDescription { get; set; }
     public string? DepartmentName { get; set; }
+    /// <summary>业务产品负责人；与实际提交人CreatedBy、历史审批人PrimaryOwnerId分别保留。</summary>
+    public string? OwnerId { get; set; }
     public string? OwnerName { get; set; }
     public List<string> ProjectMemberNames { get; set; } = new();
     public string? PlanUrl { get; set; }

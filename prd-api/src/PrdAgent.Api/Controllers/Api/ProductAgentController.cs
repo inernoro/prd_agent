@@ -922,7 +922,10 @@ public class ProductAgentController : ControllerBase
 
         var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
         var departmentName = await ResolveDefaultInitiationDepartmentAsync(userId);
-        var ownerName = await ResolveInitiationApplicantNameAsync(userId);
+        var ownerId = request.OwnerId?.Trim() ?? userId;
+        if (request.OwnerId != null && (ownerId.Length == 0 || !await _db.Users.Find(x => x.UserId == ownerId).AnyAsync()))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的产品负责人"));
+        var ownerName = await ResolveInitiationApplicantNameAsync(ownerId) ?? ownerId;
         ReviewSubmission? passedSource = null;
         ReviewResult? passedResult = null;
         if (!string.IsNullOrWhiteSpace(request.ReviewSubmissionId))
@@ -958,6 +961,7 @@ public class ProductAgentController : ControllerBase
             PlanName = request.PlanName.Trim(),
             RequirementDescription = request.RequirementDescription?.Trim(),
             DepartmentName = departmentName,
+            OwnerId = ownerId,
             OwnerName = ownerName,
             ProjectMemberNames = NormalizeVersionMemberNames(request.ProjectMemberNames),
             PlanUrl = string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim(),
@@ -1032,7 +1036,12 @@ public class ProductAgentController : ControllerBase
 
         var (systemName, appName) = await ResolveInitiationSystemAppNamesAsync(linkedProduct);
 
-        var ownerName = string.IsNullOrWhiteSpace(item.OwnerName)
+        var ownerId = request.OwnerId?.Trim() ?? item.OwnerId;
+        if (request.OwnerId != null && (string.IsNullOrWhiteSpace(ownerId) || !await _db.Users.Find(x => x.UserId == ownerId).AnyAsync()))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择有效的产品负责人"));
+        var ownerName = request.OwnerId != null
+            ? await ResolveInitiationApplicantNameAsync(ownerId!) ?? ownerId
+            : string.IsNullOrWhiteSpace(item.OwnerName)
             ? await ResolveInitiationApplicantNameAsync(item.CreatedBy)
             : item.OwnerName;
         var departmentName = string.IsNullOrWhiteSpace(item.DepartmentName)
@@ -1051,6 +1060,7 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.PlanName, request.PlanName.Trim())
                 .Set(x => x.RequirementDescription, request.RequirementDescription?.Trim())
                 .Set(x => x.DepartmentName, departmentName)
+                .Set(x => x.OwnerId, ownerId)
                 .Set(x => x.OwnerName, ownerName)
                 .Set(x => x.ProjectMemberNames, NormalizeVersionMemberNames(request.ProjectMemberNames))
                 .Set(x => x.PlanUrl, string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim())
@@ -7173,7 +7183,7 @@ public class ProductAgentController : ControllerBase
                 _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
         var items = await FindInScopeAsync<ProductInitiation>(scope, i => i.ProductId, i => i.IsDeleted);
         var names = await ProductNamesAsync(items.Select(i => i.ProductId));
-        var userNames = await UserNamesAsync(items.SelectMany(i => new[] { i.PrimaryOwnerId, i.CreatedBy }));
+        var userNames = await UserNamesAsync(items.SelectMany(i => new[] { i.OwnerId, i.PrimaryOwnerId, i.CreatedBy }));
         var rows = items
             .Where(i => string.IsNullOrWhiteSpace(keyword) ||
                 (i.TCode?.Contains(keyword, StringComparison.OrdinalIgnoreCase) ?? false) ||
@@ -7182,7 +7192,7 @@ public class ProductAgentController : ControllerBase
             .Select(i =>
             {
                 var legacyOwner = i.LegacyData.GetValueOrDefault("产品负责人");
-                var ownerId = i.PrimaryOwnerId ?? i.CreatedBy;
+                var ownerId = i.OwnerId ?? i.PrimaryOwnerId ?? i.CreatedBy;
                 var ownerName = !string.IsNullOrWhiteSpace(i.OwnerName) ? i.OwnerName
                     : !string.IsNullOrWhiteSpace(legacyOwner) ? legacyOwner
                     : (!string.IsNullOrEmpty(ownerId) ? userNames.GetValueOrDefault(ownerId, ownerId) : null);
@@ -8048,6 +8058,7 @@ public class CreateInitiationRequest
     public string? PlanUrl { get; set; }
     public string? RequirementDescription { get; set; }
     public string? DepartmentName { get; set; }
+    public string? OwnerId { get; set; }
     public string? OwnerName { get; set; }
     public List<string>? ProjectMemberNames { get; set; }
     public DateTime? PlannedProjectAt { get; set; }

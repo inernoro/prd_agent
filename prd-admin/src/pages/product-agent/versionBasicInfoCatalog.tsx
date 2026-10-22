@@ -122,7 +122,7 @@ export function buildInitiationBasicInfoRows(
   productName?: string | null,
 ): VersionBasicInfoRow[] {
   const legacy = initiation.legacyData ?? {};
-  const owner = initiation.ownerName?.trim() || legacy['产品负责人']?.trim() || resolveUserName(initiation.primaryOwnerId ?? initiation.createdBy);
+  const owner = initiation.ownerName?.trim() || legacy['产品负责人']?.trim() || resolveUserName(initiation.ownerId ?? initiation.primaryOwnerId ?? initiation.createdBy);
 
   return [
     { label: '产品', value: resolveVersionProductLabel(initiation, productName) },
