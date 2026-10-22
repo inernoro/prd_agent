@@ -7,7 +7,7 @@ import { deploymentPhaseBudget } from '../services/deployment-phase-budget.js';
 import type { BuildProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import type { ContainerService } from '../services/container.js';
-import { WorktreeService } from '../services/worktree.js';
+import { WorktreeService, deploymentNeedsSourceCheckout } from '../services/worktree.js';
 import { worktreePathActivity } from '../services/worktree-path-activity.js';
 import type { CdsConfig, IShellExecutor, BranchEntry, OperationLog, OperationLogEvent } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
@@ -249,7 +249,10 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       }
       assertCurrent();
 
-      const artifactOnly = admission?.state === 'ready' && profilesData.every(profile => profile.prebuiltImage && !profile.managedBuild);
+      // Admission stamps immutable runtime images localArtifact=true; that alone is not a source dependency.
+      // Classify the accepted profiles using the same host-file dependency rule as the Master.
+      const artifactOnly = admission?.state === 'ready' && !deploymentNeedsSourceCheckout(profilesData.map(profile =>
+        profile.prebuiltImage && !profile.managedBuild ? { ...profile, localArtifact: false } : profile));
       let entry = currentEntry;
       if (!entry) {
         assertCurrent(); executionStarted = true;

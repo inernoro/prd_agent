@@ -1837,6 +1837,23 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     // run an arbitrary command, streaming logs. A project-scoped key has no authorized
     // target project/repo, so allowing it = borrowing the server token to clone + exfil
     // any private repo. Only admin / cookie auth (no cdsProjectKey) may call them.
+    it('validate-runtime bounds the emitted newborn create even when its probe fails', async () => {
+      shell.addResponsePattern(/^git clone --depth 1 /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^docker pull /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^docker create /, () => ({ stdout: '', stderr: 'fixture create rejected', exitCode: 1 }));
+      const res = await request(server, 'POST', '/api/validate-runtime', {
+        gitRepoUrl: 'https://github.com/example/log-fixture.git', image: 'node:22', command: 'exit 0',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body).toContain('容器无法创建');
+      const command = shell.commands.find((value) => value.startsWith('docker create '));
+      expect(command).toBeDefined();
+      for (const flag of ['--log-driver json-file', '--log-opt max-size=50m', '--log-opt max-file=3']) {
+        expect(command).toContain(flag);
+        expect(command!.indexOf(flag)).toBeLessThan(command!.indexOf("'node:22'"));
+      }
+    });
+
     it('validate-runtime → 403 project_key_forbidden for a project-scoped key', async () => {
       const res = await request(server, 'POST', '/api/validate-runtime',
         { gitRepoUrl: 'https://github.com/foo/bar.git', image: 'node:20', command: 'node x.js' },

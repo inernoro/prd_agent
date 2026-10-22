@@ -1,5 +1,5 @@
 import { WorktreeService } from './worktree.js';
-import { reclaimDeploymentSources, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
+import { reclaimDeploymentSources, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -542,7 +542,8 @@ export interface JanitorSnapshot {
     } | null;
     /** 孤儿 worktree 对账摘要。null = 本次未执行。 */
     orphanWorktrees: { removed: number; failed: number; deferred: number } | null;
-    deploymentSources?: { scanned: number; attempted: number; removed: number; held: number; deferred: number };
+    deploymentSources?: { scanned: number; attempted: number; removed: number; failed: number; held: number; deferred: number;
+      heldReasons?: Partial<Record<DeploymentSourceHoldReason, number>> };
     dockerPrune: string[] | null;
     errors: number;
   } | null;
@@ -979,10 +980,11 @@ export class JanitorService {
               deferred: report.orphanWorktrees.deferred,
             }
             : null,
-          ...(report.deploymentSources && (report.deploymentSources.scanned || report.deploymentSources.failed.length
-            || Object.keys(report.deploymentSources.held).length) ? { deploymentSources: {
+          ...(report.deploymentSources ? { deploymentSources: {
             scanned: report.deploymentSources.scanned, attempted: report.deploymentSources.attempted,
-            removed: report.deploymentSources.removed.length, held: Object.keys(report.deploymentSources.held).length,
+            removed: report.deploymentSources.removed.length, failed: report.deploymentSources.failed.length,
+            held: Object.keys(report.deploymentSources.held).length,
+            ...(Object.keys(report.deploymentSources.held).length ? { heldReasons: summarizeDeploymentSourceHolds(report.deploymentSources.held) } : {}),
             deferred: report.deploymentSources.deferred,
           } } : {}),
           dockerPrune: report.dockerPrune?.reclaimed ?? null,

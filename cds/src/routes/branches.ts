@@ -1,3 +1,4 @@
+import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { createPreviewAddressRouter } from './preview-address.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
 import { recoverBranchRuntime } from '../services/branch-runtime-recovery.js';
@@ -9318,6 +9319,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     ];
     const cmd = [
       'docker run -d',
+      ...DOCKER_LOG_LIMIT_FLAGS,
       // 资源代理也是托管工作负载，同样挂低权重 slice（Codex PR #1516 P2）。
       ...workloadCgroupFlags(),
       `--name ${routeShellQuote(proxyContainerName)}`,
