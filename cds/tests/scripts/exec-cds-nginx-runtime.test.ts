@@ -86,3 +86,13 @@ it('certificate maintenance cannot bypass unknown identity',()=>{
  const r=run(124,'','Error: No such object: cds_nginx\n','certificate-maintenance');
  expect(r.result).toBe('1|unknown|false');expect(r.calls).toBe('');
 });
+
+it('observed lowercase formatted absence accepts only exit1 and empty normalized stdout',()=>{
+ const r=run(1,'\n','error: no such object: cds_nginx\n');
+ // A second identical absent read is not a successful start.
+ expect(r.result).toBe('1|absent|false');expect(r.calls).toBe('compose up -d\n');
+});
+it('lowercase diagnostic does not make an unformatted JSON empty array into formatted absence',()=>{
+ const r=run(1,'[]','error: no such object: cds_nginx\n');
+ expect(r.result).toBe('1|unknown|false');expect(r.calls).toBe('');
+});
