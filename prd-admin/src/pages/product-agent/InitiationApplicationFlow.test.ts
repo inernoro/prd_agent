@@ -97,7 +97,7 @@ describe('内部版本在申领表单内选择应用', () => {
     expect(application).toContain('primaryOwnerId: item?.primaryOwnerId ?? undefined');
     expect(application).not.toContain('产品主负责人 *');
     expect(application).toContain('无需人工审批');
-    expect(application).toContain('useState(seed?.reviewMeetingRequired ?? false)');
+    expect(application).toContain('useState(seed?.reviewMeetingRequired ?? !seed)');
     expect(application).toContain('if (reviewed.reviewPassed !== true)');
     expect(application).toContain('await submitDecision(reviewed)');
     expect(application).toContain('填写内容及本次评审记录已保存');
