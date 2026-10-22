@@ -28,7 +28,19 @@ describe('shared requirement and version lists', () => {
     expect(routes).toContain("productListPath('requirements', productId)");
     expect(routes).toContain("productListPath('versions', productId, searchParams)");
     expect(singleProduct).toContain('navigate(productListPath(key, productId))');
-    expect(versions).toContain("useState<RecordScope>('all')");
+    expect(versions).not.toContain('RecordScope');
     expect(versions).toContain('aria-label="按产品筛选版本"');
+  });
+
+  it('filters both version lists by scale and adds applicants only where missing', () => {
+    expect(versions).toContain('options={SCALE_OPTIONS}');
+    expect(versions.match(/item.versionType === versionTypeFilter/g)).toHaveLength(2);
+    expect(versions).toContain('item.createdBy === initiationApplicantId');
+    expect(versions).toContain('item.ownerId === releaseOwnerId');
+    expect(versions).toContain("ownerPlaceholder={tab === 'release' ? '全部负责人' : '全部申请人'}");
+    expect(versions).not.toContain('我的申请');
+    expect(versions).not.toContain('全部申请</option>');
+    expect(versions).toContain('visibleReleases.map(formalExport.mapRow)');
+    expect(versions).toContain('visibleInitiations.map(internalExport.mapRow)');
   });
 });

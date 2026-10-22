@@ -56,8 +56,8 @@ import { downloadListCsv } from './listExport';
 import { initiationExportConfig, releaseExportConfig, VERSION_WORKFLOW_STATUS_LABEL as STATUS_LABEL } from './versionWorkflowExport';
 
 type MainTab = 'release' | 'initiation';
-type RecordScope = 'mine' | 'all';
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
+const SCALE_OPTIONS = Object.entries(SCALE_LABEL).map(([id, label]) => ({ id, label }));
 
 export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin = false }: { productId?: string; isAdmin?: boolean }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -81,8 +81,9 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [legacyDetail, setLegacyDetail] = useState<VersionRegistration | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
   const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
-  const [recordScope, setRecordScope] = useState<RecordScope>('all');
+  const [initiationApplicantId, setInitiationApplicantId] = useState('');
   const [releaseOwnerId, setReleaseOwnerId] = useState('');
+  const [versionTypeFilter, setVersionTypeFilter] = useState('');
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [trackedOnly, setTrackedOnly] = useState(false);
@@ -177,16 +178,18 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   };
   const visibleInitiations = useMemo(() => filterByTracked(
     initiations.filter((item) => (!productId || item.productId === productId)
-      && (recordScope === 'all' || item.createdBy === currentUserId)
+      && (!initiationApplicantId || item.createdBy === initiationApplicantId)
+      && (!versionTypeFilter || item.versionType === versionTypeFilter)
       && matchesRecord(item, query, statusFilter)),
     trackedOnly, 'initiation', (item) => ({ productId: item.productId, recordId: item.id }),
-  ), [initiations, productId, recordScope, currentUserId, query, statusFilter, trackedOnly]);
+  ), [initiations, productId, initiationApplicantId, versionTypeFilter, query, statusFilter, trackedOnly]);
   const visibleReleases = useMemo(() => filterByTracked(
     releases.filter((item) => (!productId || item.productId === productId)
       && (!releaseOwnerId || item.ownerId === releaseOwnerId)
+      && (!versionTypeFilter || item.versionType === versionTypeFilter)
       && matchesRecord(item, query, statusFilter)),
     trackedOnly, 'release', (item) => ({ productId: item.productId, recordId: item.id }),
-  ), [releases, productId, releaseOwnerId, query, statusFilter, trackedOnly]);
+  ), [releases, productId, releaseOwnerId, versionTypeFilter, query, statusFilter, trackedOnly]);
   const statuses = useMemo(() => Array.from(new Set(
     (tab === 'release' ? releases : initiations)
       .filter((item) => !productId || item.productId === productId).map((item) => item.status),
@@ -208,9 +211,10 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
             clearOptionLabel="全部产品" uiSize="sm" countUnit="个产品" />
         </div>
         <RecordToolbar query={query} onQueryChange={setQuery}
-          scope={recordScope} onScopeChange={setRecordScope}
-          ownerId={tab === 'release' ? releaseOwnerId : undefined}
-          onOwnerChange={tab === 'release' ? setReleaseOwnerId : undefined}
+          ownerId={tab === 'release' ? releaseOwnerId : initiationApplicantId}
+          onOwnerChange={tab === 'release' ? setReleaseOwnerId : setInitiationApplicantId}
+          ownerPlaceholder={tab === 'release' ? '全部负责人' : '全部申请人'}
+          versionType={versionTypeFilter} onVersionTypeChange={setVersionTypeFilter}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
       </div>
@@ -908,13 +912,14 @@ function matchesRecord(
   });
 }
 
-function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, onOwnerChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
+function RecordToolbar({ query, onQueryChange, ownerId, onOwnerChange, ownerPlaceholder, versionType, onVersionTypeChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
   query: string;
   onQueryChange: (value: string) => void;
-  scope?: RecordScope;
-  onScopeChange?: (value: RecordScope) => void;
-  ownerId?: string;
-  onOwnerChange?: (value: string) => void;
+  ownerId: string;
+  onOwnerChange: (value: string) => void;
+  ownerPlaceholder: string;
+  versionType: string;
+  onVersionTypeChange: (value: string) => void;
   status: string;
   onStatusChange: (value: string) => void;
   statuses: string[];
@@ -932,19 +937,13 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
         className="min-w-0 flex-1 bg-transparent text-xs text-token-primary outline-none placeholder-token-muted"
       />
     </div>
-    {onOwnerChange
-      ? <div className="h-8 w-52">
-          <UserSearchSelect value={ownerId ?? ''} onChange={onOwnerChange} placeholder="全部负责人" showAllOption allOptionLabel="全部负责人" uiSize="sm" />
-        </div>
-      : <select
-          aria-label="记录范围"
-          value={scope}
-          onChange={(event) => onScopeChange?.(event.target.value as RecordScope)}
-          className={filterClassName}
-        >
-          <option value="mine">我的申请</option>
-          <option value="all">全部申请</option>
-        </select>}
+    <div role="group" aria-label="按版本类型筛选" className="h-8 w-40">
+      <ItemSearchSelect value={versionType} onChange={onVersionTypeChange} options={SCALE_OPTIONS}
+        placeholder="搜索版本类型" clearOptionLabel="全部版本类型" uiSize="sm" />
+    </div>
+    <div role="group" aria-label={ownerPlaceholder} className="h-8 w-52">
+      <UserSearchSelect value={ownerId} onChange={onOwnerChange} placeholder={ownerPlaceholder} showAllOption allOptionLabel={ownerPlaceholder} uiSize="sm" />
+    </div>
     <select
       aria-label="状态"
       value={status}
