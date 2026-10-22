@@ -39,6 +39,7 @@ vi.mock('./InitiationReviewLivePanel', async (original) => ({ ...await original<
 let root: Root | undefined;
 let host: HTMLDivElement;
 const onChanged = vi.fn(async () => {});
+const onClosed = vi.fn();
 const seed = (overrides: Partial<ProductInitiation> = {}): ProductInitiation => ({
   id: 'initiation', productId: 'product', linkedProductId: 'product', projectType: 'standard',
   demandSource: '客户', planName: '测试应用（方案）第二稿', versionType: 'minor', requirementIds: [],
@@ -53,7 +54,7 @@ const seed = (overrides: Partial<ProductInitiation> = {}): ProductInitiation => 
 async function mount(item?: ProductInitiation) {
   host = document.createElement('div'); document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root?.render(<InitiationWizard productId="product" applicationProducts={[{ id: 'product', name: '测试应用', productNo: 'P1' }]} requirements={[]} members={[]} seed={item} onClose={() => {}} onChanged={onChanged} />); });
+  await act(async () => { root?.render(<InitiationWizard productId="product" applicationProducts={[{ id: 'product', name: '测试应用', productNo: 'P1' }]} requirements={[]} members={[]} seed={item} onClose={onClosed} onChanged={onChanged} />); });
 }
 function field<T extends HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(label: string): T {
   const wrapper = [...host.querySelectorAll('label')].find((node) => node.querySelector('span')?.textContent === label);
@@ -90,7 +91,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root?.unmount()); host?.remove(); });
 
 describe('内部立项单页来源与失败恢复', () => {
-  it('填写保持大表单，发号成功后缩为自动高度的小弹窗并居中完成按钮', async () => {
+  it('发号成功后卸载原申领大表单并打开独立小弹窗，完成按钮关闭结果', async () => {
     api.createInitiation.mockResolvedValue({ success: true, data: seed({ reviewPassed: true, status: 'decision_pending' }) });
     await mount();
     const dialog = host.querySelector<HTMLElement>('[role="dialog"]')!;
@@ -99,12 +100,18 @@ describe('内部立项单页来源与失败恢复', () => {
     await change(field('需求来源 *'), '客户');
     await change(field('计划立项时间 *'), '2026-10-22');
     await confirm();
-    expect(dialog.style.maxWidth).toBe('480px');
-    expect(dialog.style.height).toBe('auto');
-    expect(dialog.style.maxHeight).toBe('min(85vh, 640px)');
+    expect(dialog.isConnected).toBe(false);
+    const result = host.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(result).not.toBe(dialog);
+    expect(result.style.maxWidth).toBe('480px');
+    expect(result.style.height).toBe('auto');
+    expect(result.style.maxHeight).toBe('min(85vh, 640px)');
+    expect(result.querySelector('h3')?.textContent).toBe('申领成功');
     expect(host.querySelector('form')).toBeNull();
     expect(host.textContent).toContain('T1.2.3');
     expect([...host.querySelectorAll('button')].find(button => button.textContent === '完成')?.classList.contains('mx-auto')).toBe(true);
+    await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === '完成')?.click());
+    expect(onClosed).toHaveBeenCalledTimes(1);
   });
 
   it('业务负责人默认申请人且可代他人申领，不传审批人', async () => {

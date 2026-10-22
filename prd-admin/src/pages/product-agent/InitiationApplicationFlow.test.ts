@@ -80,9 +80,9 @@ describe('内部版本在申领表单内选择应用', () => {
 
   it('使用产品系统弹窗与固定动作栏，不再按步骤隐藏表单或上传区', () => {
     expect(application).toContain('return <Dialog');
-    expect(application).toContain("height: completed ? 'auto' : 'min(94vh, 960px)'");
-    expect(application).toContain('maxWidth={completed ? 480 : 920}');
-    expect(application).toContain("maxHeight: completed ? 'min(85vh, 640px)' : '94vh'");
+    expect(application).toContain("height: 'min(94vh, 960px)'");
+    expect(application).toContain('maxWidth={920}');
+    expect(application).toContain('if (completed && item) return <InitiationSuccessDialog');
     expect(application).toContain('actions={<>');
     expect(application).not.toContain('<Stepper');
     expect(application).not.toContain('setStep(');

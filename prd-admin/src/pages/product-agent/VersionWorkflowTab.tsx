@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
-import { CheckCircle2, Download, FileText, HelpCircle, Plus, Search, Upload, X } from 'lucide-react';
+import { Download, FileText, HelpCircle, Plus, Search, Upload, X } from 'lucide-react';
 import {
   completeRelease, createInitiation, decideInitiation,
   listVersionApplicationProducts, getWorkflowInitiations, getWorkflowReleases,
@@ -54,7 +54,7 @@ import {
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
 import { useVersionPlanName } from './useVersionPlanName';
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
-import { VersionCopyActions } from './VersionCopyActions';
+import { InitiationSuccessDialog } from './InitiationSuccessDialog';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { LegacyVersionDetail } from './LegacyVersionDetail';
@@ -704,25 +704,24 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const confirmationLabel = editingIssued ? '保存修改' : sourceMode === 'upload' && (!item?.reviewPassed || file)
     ? '确认并评审，通过后自动申领' : '确认申领';
 
+  if (completed && item) return <InitiationSuccessDialog item={item} busy={busy} onClose={onClose} />;
+
   return <Dialog
     open
     onOpenChange={(open) => { if (!open && !submittingRef.current) onClose(); }}
     title={wizardTitle}
-    description={completed ? '版本号已生成，可复制完整通知后完成。' : editingIssued ? '普通资料修改不改号；只有全局最新且无下游关联的记录可修改版本级别并重新发号。' : '一次填写并确认，无需人工审批。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
-    maxWidth={completed ? 480 : 920}
-    contentStyle={{ height: completed ? 'auto' : 'min(94vh, 960px)', maxHeight: completed ? 'min(85vh, 640px)' : '94vh' }}
+    description={editingIssued ? '普通资料修改不改号；只有全局最新且无下游关联的记录可修改版本级别并重新发号。' : '一次填写并确认，无需人工审批。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
+    maxWidth={920}
+    contentStyle={{ height: 'min(94vh, 960px)', maxHeight: '94vh' }}
     actions={<>
-      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '版本级别变更会重新发号，普通资料不改号' : '评审通过后自动发放 T 号，无需人工审批'}</span>}
-      <Button size="sm" className={completed ? 'mx-auto' : undefined} variant={completed ? 'primary' : 'secondary'} onClick={onClose} disabled={busy}>{completed ? '完成' : '取消'}</Button>
-      {!completed && <Button size="sm" variant="primary" type="submit" form={formId} disabled={busy || !linkedProductId.trim()}>
+      <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '版本级别变更会重新发号，普通资料不改号' : '评审通过后自动发放 T 号，无需人工审批'}</span>
+      <Button size="sm" onClick={onClose} disabled={busy}>取消</Button>
+      <Button size="sm" variant="primary" type="submit" form={formId} disabled={busy || !linkedProductId.trim()}>
         {busy && <MapSpinner size={14} />}{busy ? (reviewRunning ? '评审中，通过后自动继续…' : '正在保存并提交…') : confirmationLabel}
-      </Button>}
+      </Button>
     </>}
     content={<div className="space-y-5">
-      {completed ? <section className="space-y-3 rounded-md border border-token-subtle bg-token-nested p-4">
-        <div className="flex items-center gap-2 text-sm font-medium text-token-primary"><CheckCircle2 size={18} />内部版本号已生成</div>
-        {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /></>}
-      </section> : <form id={formId} onSubmit={(event) => { event.preventDefault(); void confirmApplication(); }} aria-busy={busy}>
+      <form id={formId} onSubmit={(event) => { event.preventDefault(); void confirmApplication(); }} aria-busy={busy}>
         <fieldset disabled={busy} className="min-w-0 space-y-5 border-0 p-0">
           <section hidden={editingIssued} className="space-y-3" aria-labelledby={`${formId}-source`}>
             <h4 id={`${formId}-source`} className="text-sm font-semibold text-token-primary">方案来源 <span className="text-xs font-normal text-token-muted">两种方式，任选其一</span></h4>
@@ -786,7 +785,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
             <p className="text-xs leading-5 text-token-secondary">{editingIssued ? `当前立项号：${issuedCode}。所属应用和原会议安排保持不变；可修改版本级别时将按新类别重新发号，旧号不回收。` : <>Agent 评审通过后自动发放 T 号，无需人工审批。{meeting && '线下各稿会议结果在详情中后续回填。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</>}</p>
           </section>
         </fieldset>
-      </form>}
+      </form>
 
       {reviewRunning && <div ref={reviewPanelRef}><InitiationReviewLivePanel stage={reviewStage} ssePhase={sse.phase} phaseMessage={sse.phaseMessage} progressPercent={progressPercent} logs={processLogs} typing={sse.typing} dimensionScores={dimensionScores} totalScore={totalScore} isPassed={reviewPassed} adjustmentLog={adjustmentLog} expectedDimCount={expectedDimCount} /></div>}
       {!reviewRunning && !completed && item?.reviewScore != null && <p className="text-sm text-token-secondary">上次 Agent 评审：{item.reviewScore} 分，{item.reviewPassed ? '已通过，可继续申领' : '未通过，填写记录已保留'}。</p>}
