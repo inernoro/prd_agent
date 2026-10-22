@@ -12,6 +12,7 @@ function loadSource(relative: string) {
 }
 const fullscreen = loadSource('../../visual-agent/VisualAgentFullscreenPage.tsx');
 const editor = loadSource('../AdvancedVisualAgentTab.tsx');
+const message = loadSource('../components/ChatMessageItem.tsx');
 
 function openings(source: ts.SourceFile) {
   const found: ts.JsxOpeningElement[] = [];
@@ -46,6 +47,8 @@ const back = one(openings(fullscreen).filter(node =>
   node.tagName.getText() === 'button' && attribute(node, 'onClick')?.getText() === '{onBack}'), '编辑器返回按钮');
 const chat = one(openings(editor).filter(node =>
   attribute(node, 'ref')?.getText() === '{chatPanelRef}'), '浮动对话面板');
+const messageBubble = one(openings(message).filter(node =>
+  attribute(node, 'className')?.getText().includes('leading-[16px]')), '普通消息气泡');
 
 describe('视觉创作编辑器双主题接线', () => {
   it('编辑页不再继承固定暗岛，根背景使用现有主题底色', () => {
@@ -88,6 +91,12 @@ describe('视觉创作编辑器双主题接线', () => {
   it('仅手机固定深色对话区保留局部暗岛，不让深色背景配上浅色主题深字', () => {
     expect(evaluate<string>(chat, 'className', { isMobile: true }).split(/\s+/)).toContain('surface-tone-dark');
     expect(evaluate<string>(chat, 'className', { isMobile: false }).split(/\s+/)).not.toContain('surface-tone-dark');
+  });
+
+  it.each([false, true])('普通消息用户=%s时背景与正文使用同一主题层，不留下深底深字', (isUser) => {
+    const style = evaluate<Record<string, string>>(messageBubble, 'style', { isUser });
+    expect(style.background).toBe('var(--nested-block-bg)');
+    expect(style.color).toBe('var(--text-primary)');
   });
 
   it('消费的底色、点阵和按钮token都有真实明暗定义，且随主题发生变化', () => {
