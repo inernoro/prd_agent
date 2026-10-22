@@ -357,6 +357,7 @@ describe('四来源维护runtime与真实owned文件组件', () => {
       'services/atomic-directory-replacement.ts', 'services/isolated-shell-executor.ts',
       'services/observation-process-launcher.ts', 'services/observation-process-group.ts',
       'services/sidecar/sidecar-deployer.ts', 'services/sidecar/remote-host-service.ts',
+      'services/docker-log-policy.ts',
       'services/ssh-exec-failure.ts', 'infra/secret-seal.ts',
       'services/shell-executor.ts', 'services/observation-process.ts',
       'services/observation-executor-process.ts', 'services/observation-supervisor-process.ts',

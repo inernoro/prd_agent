@@ -92,7 +92,7 @@ describe('fetchCdsPrebuilt', () => {
         expect.soft(fs.existsSync(stale)).toBe(false);
         expect.soft(fs.statSync(path.join(staging, 'dist'), { throwIfNoEntry: false })?.isDirectory() ?? false).toBe(true);
         expect.soft(fs.statSync(path.join(staging, 'web-dist'), { throwIfNoEntry: false })?.isDirectory() ?? false).toBe(true);
-        expect(cmds).toContain(`docker create ${REF} ${DOCKER_CREATE_PLACEHOLDER_CMD}`);
+        expect(cmds).toContain(`docker create --log-driver json-file --log-opt max-size=50m --log-opt max-file=3 ${REF} ${DOCKER_CREATE_PLACEHOLDER_CMD}`);
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     }
   });
