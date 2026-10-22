@@ -116,12 +116,13 @@ export function VersionWorkflowImportDialog({
     const created = result.data.created ?? 0;
     const updated = result.data.updated ?? 0;
     const errorCount = result.data.errors?.length ?? 0;
+    const reasons = result.data.errors?.slice(0, 8).map((item) => `第 ${item.row} 行：${item.message}`).join('；') ?? '';
     if (created + updated === 0) {
-      setMessage(errorCount > 0 ? `导入未写入任何记录，${errorCount} 条被跳过或校验失败。` : '导入未写入任何记录，请检查「应用」列与系统产品名称是否一致。');
+      setMessage(errorCount > 0 ? `导入未写入任何记录，${errorCount} 条被跳过或校验失败。${reasons}` : '导入未写入任何记录，请检查「应用」列与系统产品名称是否一致。');
       return;
     }
     setMessage(
-      `导入完成：新增 ${created} 条，更新 ${updated} 条，跳过 ${result.data.skipped ?? errorCount} 条。${result.data.errors?.slice(0, 8).map((item) => `第 ${item.row} 行：${item.message}`).join('；') ?? ''}`,
+      `导入完成：新增 ${created} 条，更新 ${updated} 条，跳过 ${result.data.skipped ?? errorCount} 条。${reasons}`,
     );
     await onImported();
   };

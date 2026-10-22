@@ -10,7 +10,7 @@ using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Api.Services.ProductAgent;
 
-public sealed class ProductVersionImportConflictException(string message) : Exception(message);
+public sealed class ProductVersionImportConflictException(string message) : Exception(message) { }
 
 /// <summary>导入只覆盖联合键对应的原记录；新记录使用稳定ID防止并发重复插入。</summary>
 public static class ProductVersionImportWriter
