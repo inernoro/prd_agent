@@ -83,11 +83,11 @@ describe('WebPagesPage SiteCard', () => {
 
   it('修改只出现在原更多菜单，点击调用原面板回调且遵守编辑权限', () => {
     const onAiEdit = vi.fn();
-    const args = { site: baseSite, caps: ownerCaps, onEdit: vi.fn(), onQrCode: vi.fn(), onTogglePublic: vi.fn(), onTransferToLibrary: vi.fn(), onDelete: vi.fn(), onAiEdit };
+    const args = { site: baseSite, caps: ownerCaps, onShare: vi.fn(), onEdit: vi.fn(), onQrCode: vi.fn(), onTogglePublic: vi.fn(), onTransferToLibrary: vi.fn(), onDelete: vi.fn(), onAiEdit };
     const actions = buildCardActionLayers(args);
     expect(actions.hover.map((action) => action.label)).not.toContain('帮我修改');
     expect(actions.menu.filter((action) => action.label === '帮我修改')).toHaveLength(1);
-    actions.menu.find((action) => action.label === '帮我修改')!.onClick();
+    actions.menu.find((action) => action.label === '帮我修改')!.onClick({} as HTMLElement);
     expect(onAiEdit).toHaveBeenCalledTimes(1);
     expect(actions.menu.map((action) => action.label)).not.toContain('版本记录');
     expect(buildCardActionLayers({ ...args, caps: { ...ownerCaps, canEdit: false } }).menu.map((action) => action.label)).not.toContain('帮我修改');
@@ -120,6 +120,7 @@ describe('WebPagesPage SiteCard', () => {
       const { hover, menu } = buildCardActionLayers({
         site: baseSite,
         caps,
+        onShare: vi.fn(),
         onEdit: vi.fn(),
         onQrCode: vi.fn(),
         onTogglePublic: vi.fn(),
@@ -128,15 +129,39 @@ describe('WebPagesPage SiteCard', () => {
       });
       const menuLabels = menu.map((a) => a.label);
       for (const a of hover) expect(menuLabels).toContain(a.label);
-      // 且置顶：CardMoreButton 按 hover 条数画分隔线，顺序错位分隔线就画在错的地方
-      expect(menuLabels.slice(0, hover.length)).toEqual(hover.map((a) => a.label));
+      // 分享先置顶，再接 hover 等价项；分隔线位于这组操作之后。
+      expect(menuLabels.slice(1, 1 + hover.length)).toEqual(hover.map((a) => a.label));
     }
+  });
+
+  it.each([
+    { shared: false, linkCount: 0, label: '分享' },
+    { shared: true, linkCount: 0, label: '管理分享' },
+    { shared: true, linkCount: 2, label: '管理分享 · 2' },
+  ])('更多菜单保留 $label 并调用分享回调', ({ shared, linkCount, label }) => {
+    const onShare = vi.fn();
+    const args = {
+      site: baseSite, caps: ownerCaps, shared, linkCount, onShare,
+      onEdit: vi.fn(), onQrCode: vi.fn(), onTogglePublic: vi.fn(),
+      onTransferToLibrary: vi.fn(), onDelete: vi.fn(),
+    };
+    const { hover, menu, touchActions } = buildCardActionLayers(args);
+    expect(menu[0].label).toBe(label);
+    expect(touchActions).toBe(hover.length + 1);
+    const anchor = {} as HTMLElement;
+    menu[0].onClick(anchor);
+    expect(onShare).toHaveBeenCalledTimes(1);
+    expect(onShare).toHaveBeenCalledWith(anchor);
+    const denied = buildCardActionLayers({ ...args, caps: { ...ownerCaps, canShare: false } });
+    expect(denied.menu.some(action => /分享/.test(action.label))).toBe(false);
+    expect(denied.touchActions).toBe(denied.hover.length);
   });
 
   it('破坏性操作只在菜单里，不进 hover 层', () => {
     const { hover, menu } = buildCardActionLayers({
       site: baseSite,
       caps: ownerCaps,
+      onShare: vi.fn(),
       onEdit: vi.fn(),
       onQrCode: vi.fn(),
       onTogglePublic: vi.fn(),
