@@ -87,7 +87,7 @@ public class ProductVersionImportUpsertTests
             return f;
         }
         public async Task<JsonElement> Import(string kind, params ImportVersionWorkflowRow[] rows) {
-            var controller = new ProductAgentController(Db, NullLogger<ProductAgentController>.Instance, null!, null!, null!, null!, null!, null!, null!) { ControllerContext = new() { HttpContext = new DefaultHttpContext { User = new(new ClaimsIdentity(new[] { new Claim("sub", "admin"), new Claim("permissions", AdminPermissionCatalog.ProductAgentUse), new Claim("permissions", AdminPermissionCatalog.ProductAgentAdmin) }, "test")) } } };
+            var controller = new ProductAgentController(Db, NullLogger<ProductAgentController>.Instance, null!, null!, null!, null!, null!, null!) { ControllerContext = new() { HttpContext = new DefaultHttpContext { User = new(new ClaimsIdentity(new[] { new Claim("sub", "admin"), new Claim("permissions", AdminPermissionCatalog.ProductAgentUse), new Claim("permissions", AdminPermissionCatalog.ProductAgentAdmin) }, "test")) } } };
             var result = Assert.IsType<OkObjectResult>(await controller.OverviewImportVersionWorkflow(new() { Kind = kind, Rows = rows.ToList() }));
             return JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(result.Value).Data);
         }
