@@ -885,7 +885,7 @@ public class ProductAgentController : ControllerBase
             filter &= Builders<ProductInitiation>.Filter.Eq(x => x.CreatedBy, userId);
         var items = await _db.ProductInitiations.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
-        await ProductInitiationDeletion.AnnotateAsync(_db, items);
+        await ProductInitiationDeletion.AnnotateAsync(_db, items, userId);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -895,7 +895,7 @@ public class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
-        await ProductInitiationDeletion.AnnotateAsync(_db, new[] { item });
+        await ProductInitiationDeletion.AnnotateAsync(_db, new[] { item }, GetUserId());
         return Ok(ApiResponse<object>.Ok(item));
     }
 
@@ -992,7 +992,7 @@ public class ProductAgentController : ControllerBase
             Status = passedSource == null ? "review_pending" : "decision_pending",
             CreatedBy = userId,
         };
-        if (passedSource != null && !await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+        if (passedSource != null && !await ProductVersionClaimGuard.TryReserveSourceAsync(_db,
                 ProductVersionClaimPolicy.ReviewKey(passedSource.Id), "initiation:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "该评审方案已被申领或正在申领 T 号，请刷新后查看现有记录，不要重复提交"));
         await _db.ProductInitiations.InsertOneAsync(item, cancellationToken: CancellationToken.None);
@@ -1012,10 +1012,9 @@ public class ProductAgentController : ControllerBase
         if (!issued && item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许修改基础信息"));
         if (issued && (request.LinkedProductId?.Trim() != (item.LinkedProductId ?? item.ProductId)
-            || NormalizeVersionType(request.VersionType) != item.VersionType
             || (request.ReviewMeetingRequired ?? false) != (item.ReviewMeetingRequired ?? false)
             || (request.ReviewMeetingRequired == false && (request.PrimaryOwnerId?.Trim() ?? "") != (item.PrimaryOwnerId ?? ""))))
-            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已发号记录可修改基础资料，不能变更所属应用、版本级别或原审批方式。"));
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已发号记录不能变更所属应用或原会议安排。"));
 
         if (string.IsNullOrWhiteSpace(request.PlanName))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "方案名称不能为空"));
@@ -1048,6 +1047,28 @@ public class ProductAgentController : ControllerBase
             ? await ResolveDefaultInitiationDepartmentAsync(item.CreatedBy)
             : item.DepartmentName;
 
+        var versionType = NormalizeVersionType(request.VersionType);
+        var revisedCode = item.TCode;
+        var revisedAt = item.IssuedAt;
+        if (issued && versionType != item.VersionType)
+        {
+            if (await ProductInitiationDeletion.LatestIdAsync(_db) != id)
+                return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "只有全局最后一条已发号记录可以修改版本级别，历史编号不能改动。"));
+            var applicationName = item.AppName ?? linkedProduct.Name;
+            if (await ProductInitiationDeletion.HasDownstreamAsync(_db, item, applicationName))
+                return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该立项已有下游关联，不能修改版本级别或重新发号。"));
+            // 删除、正式申领和不同类别重发共用旧T来源键，不能互相覆盖。
+            var operation = "reissue-initiation:" + id + ":" + item.TCode + ":" + versionType;
+            if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+                    ProductVersionClaimPolicy.ReleaseKey(applicationName, item.TCode!), operation))
+                return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "该记录正在删除、申领正式版本或按另一类别重发，请刷新后核对。"));
+            if (await ProductInitiationDeletion.LatestIdAsync(_db) != id)
+                return Conflict(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "已有更新的申领记录，本次未修改历史编号，请刷新。"));
+            revisedCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "T", versionType,
+                "initiation:" + id + ":revision:" + item.TCode + ":" + versionType, item.LinkedProductId ?? item.ProductId);
+            revisedAt = DateTime.UtcNow;
+        }
+
         var saved = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status == item.Status
                 && x.TCode == item.TCode && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductInitiation>.Update
@@ -1064,7 +1085,9 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.OwnerName, ownerName)
                 .Set(x => x.ProjectMemberNames, NormalizeVersionMemberNames(request.ProjectMemberNames))
                 .Set(x => x.PlanUrl, string.IsNullOrWhiteSpace(request.PlanUrl) ? null : request.PlanUrl.Trim())
-                .Set(x => x.VersionType, NormalizeVersionType(request.VersionType))
+                .Set(x => x.VersionType, versionType)
+                .Set(x => x.TCode, revisedCode)
+                .Set(x => x.IssuedAt, revisedAt)
                 .Set(x => x.RequirementIds, issued ? item.RequirementIds : request.RequirementIds?.Distinct().ToList() ?? new())
                 .Set(x => x.PlannedProjectAt, request.PlannedProjectAt)
                 .Set(x => x.ReviewMeetingRequired, issued ? item.ReviewMeetingRequired : request.ReviewMeetingRequired ?? item.ReviewMeetingRequired)
@@ -1083,6 +1106,7 @@ public class ProductAgentController : ControllerBase
         if (saved.MatchedCount == 0)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项状态已变化，请刷新后从原记录继续，不要重复新建"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
+        if (updated != null) await ProductInitiationDeletion.AnnotateAsync(_db, new[] { updated }, userId);
         return Ok(ApiResponse<object>.Ok(updated));
     }
 
@@ -1093,8 +1117,8 @@ public class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
-        if (item.CreatedBy != userId && !await CanManageAsync(userId))
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人或管理员可删除该立项记录"));
+        if (item.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
         if (string.IsNullOrWhiteSpace(item.TCode) || !Version.TryParse(item.TCode.TrimStart('T', 't'), out _))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新内部版本记录。"));
 
@@ -1114,11 +1138,12 @@ public class ProductAgentController : ControllerBase
         var target = "deleted-initiation:" + id;
         if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database, key, target))
             return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该 T 号已申领或正在申领正式版本，不能删除。请查看关联记录。"));
-        var deleted = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.TCode == item.TCode,
-            Builders<ProductInitiation>.Update.Set(x => x.IsDeleted, true).Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
-        if (deleted.MatchedCount == 0)
+        await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "initiation:" + id);
+        var deleted = await _db.ProductInitiations.DeleteOneAsync(x => x.Id == id && !x.IsDeleted
+            && x.TCode == item.TCode && x.UpdatedAt == item.UpdatedAt, CancellationToken.None);
+        if (deleted.DeletedCount == 0)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后重新核对，未重复删除。"));
+        await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "initiation:" + id);
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
@@ -1169,10 +1194,10 @@ public class ProductAgentController : ControllerBase
         };
         if (existingAttemptIndex >= 0) attempts[existingAttemptIndex] = attempt;
         else attempts.Add(attempt);
-        if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+        if (!await ProductVersionClaimGuard.TryReserveSourceAsync(_db,
                 ProductVersionClaimPolicy.ReviewKey(submission.Id), "initiation:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("REVIEW_ALREADY_REGISTERED", "该评审方案已被申领或正在申领 T 号，请刷新后查看现有记录，不要重复提交"));
-        var synced = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id
+        var synced = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted
                 && (x.Status == "review_pending" || x.Status == "review_failed" || x.Status == "draft" || x.Status == "decision_pending")
                 && (x.TCode == null || x.TCode == ""),
             Builders<ProductInitiation>.Update
@@ -1409,7 +1434,7 @@ public class ProductAgentController : ControllerBase
             claimApplicationName = initiation?.AppName ?? claimApplicationName;
             if (string.IsNullOrWhiteSpace(usedTCode))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选立项尚未取得 T 号"));
-            var existing = await _db.ProductReleases.Find(x => (x.ProductId == productId || x.AppName == claimApplicationName) && x.TCode == usedTCode).FirstOrDefaultAsync();
+            var existing = await _db.ProductReleases.Find(x => !x.IsDeleted && (x.ProductId == productId || x.AppName == claimApplicationName) && x.TCode == usedTCode).FirstOrDefaultAsync();
             if (existing != null)
                 return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", $"该 T 号已申领上线号 {existing.VCode}"));
             var registered = string.IsNullOrWhiteSpace(claimApplicationName) ? null
@@ -1481,7 +1506,7 @@ public class ProductAgentController : ControllerBase
             Status = "announcement_pending",
             CreatedBy = userId,
         };
-        if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveAsync(_db.Database,
+        if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveSourceAsync(_db,
                 ProductVersionClaimPolicy.ReleaseKey(claimApplicationName, item.TCode!), "release:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
         item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id,

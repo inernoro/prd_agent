@@ -42,7 +42,7 @@ public static class ProductVersionHistoryLinks
             .Select(x => x.TCode).Concat(oldT.Where(x => ProductVersionPlanMatching.HistoricalTitlesEqual(currentTitle, x.PlanName)).Select(x => (string?)x.Code))
             .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!.Trim().ToUpperInvariant()).Distinct().ToList();
 
-        var releases = await db.ProductReleases.Find(x => !x.IsTemporaryOptimization && (x.ProductId == productId || x.AppName == applicationName)).ToListAsync();
+        var releases = await db.ProductReleases.Find(x => !x.IsDeleted && !x.IsTemporaryOptimization && (x.ProductId == productId || x.AppName == applicationName)).ToListAsync();
         // 旧登记导入已把 V 表关联号保存到 TCode；只有产品历史记录保存 LegacyData。
         var legacy = await db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal
             && x.ApplicationName == applicationName).ToListAsync();

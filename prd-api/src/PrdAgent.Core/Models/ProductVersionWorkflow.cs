@@ -8,9 +8,13 @@ public class ProductInitiation
     public string? LinkedProductId { get; set; }
     /// <summary>立项编号 T{a}.{b}.{c}，从全域记录筛选对应应用后，按版本级别递增。</summary>
     public string? TCode { get; set; }
-    /// <summary>只读删除资格，由服务端按全局 T 序列及下游关联计算，不落库。</summary>
+    /// <summary>实际发号完成时间；普通资料编辑不会改变此时间。</summary>
+    public DateTime? IssuedAt { get; set; }
+    /// <summary>只读删除资格：全局最后成功发号、无下游且为申请人本人，不落库。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
     public bool CanDelete { get; set; }
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool CanChangeVersionType { get; set; }
     public string? SystemName { get; set; }
     public string? AppName { get; set; }
     public string ProjectType { get; set; } = "standard";

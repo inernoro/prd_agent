@@ -94,6 +94,7 @@ describe('内部立项单页来源与失败恢复', () => {
     api.createInitiation.mockResolvedValue({ success: true, data: seed({ ownerId: 'owner', ownerName: '其他负责人', reviewPassed: true, status: 'decision_pending' }) });
     await mount();
     expect(field<HTMLSelectElement>('产品负责人 *').value).toBe('me');
+    expect(field<HTMLSelectElement>('是否需要开评审会').value).toBe('yes');
     await change(field('产品负责人 *'), 'owner');
     await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
     await change(field('需求来源 *'), '客户');
@@ -142,6 +143,7 @@ describe('内部立项单页来源与失败恢复', () => {
     await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
     await change(field('需求来源 *'), '客户');
     await change(field('计划立项时间 *'), '2026-10-21');
+    await change(field('是否需要开评审会'), 'no');
     expect(host.querySelector('[aria-label="搜索并选择产品主负责人"]')).toBeNull();
     await confirm();
     expect(api.decideInitiation).toHaveBeenCalledWith('initiation', expect.objectContaining({ reviewMeetingRequired: false }));
@@ -153,6 +155,7 @@ describe('内部立项单页来源与失败恢复', () => {
     const issued = seed({ tCode: 'T1.2.3', status: 'approved', reviewPassed: true });
     api.updateInitiation.mockResolvedValue({ success: true, data: issued });
     await mount(issued);
+    expect(field<HTMLSelectElement>('版本级别').disabled).toBe(true);
     await change(field('备注（选填）'), '修改备注');
     await confirm();
     expect(api.updateInitiation).toHaveBeenCalledWith('initiation', expect.objectContaining({ remark: '修改备注' }));
@@ -161,6 +164,18 @@ describe('内部立项单页来源与失败恢复', () => {
     expect(api.upload).not.toHaveBeenCalled();
     expect(api.submit).not.toHaveBeenCalled();
     expect(host.textContent).toContain('原 T 号、评审及下游关联保持不变');
+  });
+  it('仅最新记录可改类别并立即展示重新生成的编号', async () => {
+    const issued = seed({ tCode: 'T1.2.3', status: 'approved', reviewPassed: true, canChangeVersionType: true });
+    api.updateInitiation.mockResolvedValue({ success: true, data: { ...issued, versionType: 'medium', tCode: 'T1.3.0' } });
+    await mount(issued);
+    expect(field<HTMLSelectElement>('版本级别').disabled).toBe(false);
+    await change(field('版本级别'), 'medium');
+    await confirm();
+    expect(api.updateInitiation).toHaveBeenCalledWith('initiation', expect.objectContaining({ versionType: 'medium' }));
+    expect(host.textContent).toContain('T1.3.0');
+    expect(api.createInitiation).not.toHaveBeenCalled();
+    expect(api.decideInitiation).not.toHaveBeenCalled();
   });
   it('两种来源显式分开，切换上传立即出现文件控件，不出现下一步', async () => {
     await mount();

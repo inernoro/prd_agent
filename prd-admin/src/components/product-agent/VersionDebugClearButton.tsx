@@ -57,7 +57,7 @@ function VersionDebugClearDialog({ kind, onClose, onChanged }: {
       {loading && <p className="flex items-center gap-2"><MapSpinner size={14} />正在核对清理范围…</p>}
       {preview && <>
         <p>将清理：{preview.kindLabel} {preview.recordCount} 条。旧独立登记保留，可能仍显示在列表。</p>
-        <p>执行前自动保存备份；原始记录归档保留，不物理删除关联数据。</p>
+        <p>执行前保存独立备份；全局版本记录及对应申领关联会物理删除，正常查询不读取备份，编号不回收。</p>
         {!result && <label className="block"><span className="mb-2 block">输入“{preview.confirmPhrase}”以确认</span>
           <input aria-label="清理确认语" value={phrase} disabled={busy} onChange={(event) => setPhrase(event.target.value)}
             className="w-full rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-token-primary" autoComplete="off" /></label>}

@@ -199,6 +199,7 @@ export interface ProductInitiation {
   tCode?: string | null;
   /** 服务端按全局 T 序列和下游关联计算的只读删除资格。 */
   canDelete?: boolean;
+  canChangeVersionType?: boolean;
   systemName?: string | null;
   appName?: string | null;
   projectType: 'standard' | 'custom';

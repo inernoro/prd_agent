@@ -9,8 +9,8 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 依靠 MongoDB 原生 _id 唯一性永久占用申领来源，跨实例和新旧入口共用。
-/// 不使用可过期锁：写入结果不明确时保持占用，避免超时后的第二次发号。
+/// 依靠 MongoDB 原生 _id 唯一性占用来源及编号，跨实例和新旧入口共用。
+/// 编号永久保留；业务来源只在目标已确认移除时释放，未知结果与在途请求不能重占。
 /// </summary>
 public static class ProductVersionClaimGuard
 {
@@ -46,15 +46,15 @@ public static class ProductVersionClaimGuard
             .Where(x => VersionRegistryCatalog.NormalizeName(x.ApplicationName) == normalizedName).Select(x => x.Code).ToList() : new List<string>();
         for (var attempt = 0; attempt < 64; attempt++)
         {
-            // ProductId是导入映射；新立项优先使用明确选择的LinkedProductId。已删除同应用编号仍不可回收。
-            var candidates = await db.ProductInitiations.Find(x => x.LinkedProductId == applicationProductId
-                || x.ProductId == applicationProductId).ToListAsync();
+            // 只读当前全局业务表；原数字编号的独立占号记录防止回收。
+            var candidates = await db.ProductInitiations.Find(x => !x.IsDeleted && (x.LinkedProductId == applicationProductId
+                || x.ProductId == applicationProductId)).ToListAsync();
             var initiations = candidates.Where(x => (string.IsNullOrWhiteSpace(x.LinkedProductId) ? x.ProductId : x.LinkedProductId) == applicationProductId).ToList();
             var initiationIds = initiations.Select(x => x.Id).ToList();
             var foreignInitiationIds = candidates.Where(x => !initiationIds.Contains(x.Id)).Select(x => x.Id).ToList();
-            var releases = prefix == "V" ? await db.ProductReleases.Find(x => x.ProductId == applicationProductId
+            var releases = prefix == "V" ? await db.ProductReleases.Find(x => !x.IsDeleted && (x.ProductId == applicationProductId
                 && (x.InitiationId == null || !foreignInitiationIds.Contains(x.InitiationId))
-                || (x.InitiationId != null && initiationIds.Contains(x.InitiationId))).ToListAsync() : new List<ProductRelease>();
+                || (x.InitiationId != null && initiationIds.Contains(x.InitiationId)))).ToListAsync() : new List<ProductRelease>();
             var existing = prefix == "T"
                 ? initiations.Where(x => x.TCode != null).Select(x => x.TCode!).ToList()
                 : releases.Select(x => x.VCode).ToList();
@@ -92,24 +92,94 @@ public static class ProductVersionClaimGuard
         }
     }
 
+    public static async Task<bool> TryReserveSourceAsync(MongoDbContext db, string key, string targetId)
+    {
+        if (!key.StartsWith("review:", StringComparison.Ordinal) && !key.StartsWith("release:", StringComparison.Ordinal))
+            throw new ArgumentException("这里只能预留业务来源，不能释放编号占用", nameof(key));
+        var claims = db.Database.GetCollection<BsonDocument>(CollectionName);
+        if (await IsDeletedTargetAsync(db, targetId)) return false;
+        var claim = await claims.Find(Builders<BsonDocument>.Filter.Eq("_id", key)).FirstOrDefaultAsync();
+        if (claim != null && await IsDeletedTargetAsync(db, claim.GetValue("targetId", "").AsString))
+        {
+            await ReleaseDeletedSourceClaimsAsync(db, claim.GetValue("targetId", "").AsString);
+            await claims.DeleteOneAsync(Builders<BsonDocument>.Filter.Eq("_id", key)
+                & Builders<BsonDocument>.Filter.Eq("targetId", claim["targetId"]), CancellationToken.None);
+        }
+        return await TryReserveAsync(db.Database, key, targetId);
+    }
+
+    private static async Task<bool> IsDeletedTargetAsync(MongoDbContext db, string target)
+    {
+        bool exists;
+        if (target.StartsWith("initiation:", StringComparison.Ordinal))
+        {
+            var id = target.Substring("initiation:".Length);
+            if (await db.ProductInitiations.Find(x => x.Id == id && x.IsDeleted).AnyAsync()) return true;
+            exists = await db.ProductInitiations.Find(x => x.Id == id).AnyAsync();
+        }
+        else if (target.StartsWith("release:", StringComparison.Ordinal))
+        {
+            var id = target.Substring("release:".Length);
+            if (await db.ProductReleases.Find(x => x.Id == id && x.IsDeleted).AnyAsync()) return true;
+            exists = await db.ProductReleases.Find(x => x.Id == id).AnyAsync();
+        }
+        else return false;
+        // 只保留最小删除凭证，不保留业务记录；未知在途目标不能因尚未写入而被抢占。
+        return !exists && await db.Database.GetCollection<BsonDocument>(CollectionName)
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", "source-removed:" + target)).AnyAsync();
+    }
+
+    public static Task<bool> MarkSourceRemovalAsync(MongoDbContext db, string targetId) =>
+        TryReserveAsync(db.Database, "source-removed:" + targetId, targetId);
+
+    public static async Task ReleaseDeletedSourceClaimsAsync(MongoDbContext db, string targetId)
+    {
+        if (!await IsDeletedTargetAsync(db, targetId)) return;
+        await MarkSourceRemovalAsync(db, targetId);
+        // 兼容清除上线前已标记删除的残留，绝不把它们继续作为正常业务记录读取。
+        if (targetId.StartsWith("initiation:", StringComparison.Ordinal))
+            await db.ProductInitiations.DeleteOneAsync(x => x.Id == targetId.Substring("initiation:".Length) && x.IsDeleted, CancellationToken.None);
+        else if (targetId.StartsWith("release:", StringComparison.Ordinal))
+            await db.ProductReleases.DeleteOneAsync(x => x.Id == targetId.Substring("release:".Length) && x.IsDeleted, CancellationToken.None);
+        var prefix = targetId.StartsWith("initiation:", StringComparison.Ordinal) ? "^review:" : "^release:";
+        await db.Database.GetCollection<BsonDocument>(CollectionName).DeleteManyAsync(
+            Builders<BsonDocument>.Filter.Eq("targetId", targetId)
+            & Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression(prefix)), CancellationToken.None);
+    }
+
+    public static async Task ReleaseDeletedSourceClaimsForKindAsync(MongoDbContext db, string kind)
+    {
+        var prefix = kind == "internal" ? "^review:" : "^release:";
+        var targetPrefix = kind == "internal" ? "initiation:" : "release:";
+        var claims = await db.Database.GetCollection<BsonDocument>(CollectionName)
+            .Find(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression(prefix))
+                & Builders<BsonDocument>.Filter.Regex("targetId", new BsonRegularExpression("^" + targetPrefix))).ToListAsync();
+        foreach (var target in claims.Select(x => x["targetId"].AsString).Distinct())
+            await ReleaseDeletedSourceClaimsAsync(db, target);
+    }
+
     public static async Task<HashSet<string>> UsedReviewIdsAsync(MongoDbContext db)
     {
-        var products = await db.ProductInitiations.Find(_ => true)
+        var products = await db.ProductInitiations.Find(x => !x.IsDeleted)
             .Project(x => new { x.ReviewSubmissionId, x.ReviewAttempts }).ToListAsync();
         var legacy = await db.VersionRegistrations.Find(x => x.ReviewSubmissionId != null)
             .Project(x => x.ReviewSubmissionId!).ToListAsync();
         var claims = await db.Database.GetCollection<BsonDocument>(CollectionName)
             .Find(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^review:"))).ToListAsync();
+        var occupiedClaims = new List<string>();
+        foreach (var claim in claims)
+            if (!await IsDeletedTargetAsync(db, claim.GetValue("targetId", "").AsString))
+                occupiedClaims.Add(claim["_id"].AsString["review:".Length..]);
         return products.SelectMany(x => new[] { x.ReviewSubmissionId }
                 .Concat(x.ReviewAttempts?.Select(a => a.SubmissionId) ?? Enumerable.Empty<string?>()))
             .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!)
-            .Concat(legacy).Concat(claims.Select(x => x["_id"].AsString["review:".Length..])).ToHashSet();
+            .Concat(legacy).Concat(occupiedClaims).ToHashSet();
     }
 
     public static async Task<bool> IsReviewUsedAsync(MongoDbContext db, string submissionId, string? excludedInitiationId = null)
     {
         var f = Builders<ProductInitiation>.Filter;
-        var filter = f.Or(f.Eq(x => x.ReviewSubmissionId, submissionId),
+        var filter = f.Eq(x => x.IsDeleted, false) & f.Or(f.Eq(x => x.ReviewSubmissionId, submissionId),
             f.ElemMatch(x => x.ReviewAttempts, a => a.SubmissionId == submissionId));
         if (excludedInitiationId != null) filter &= f.Ne(x => x.Id, excludedInitiationId);
         if (await db.ProductInitiations.Find(filter).AnyAsync()
@@ -117,6 +187,7 @@ public static class ProductVersionClaimGuard
         var claim = await db.Database.GetCollection<BsonDocument>(CollectionName)
             .Find(Builders<BsonDocument>.Filter.Eq("_id", ProductVersionClaimPolicy.ReviewKey(submissionId))).FirstOrDefaultAsync();
         return claim != null && (excludedInitiationId == null
-            || claim.GetValue("targetId", "").AsString != "initiation:" + excludedInitiationId);
+            || claim.GetValue("targetId", "").AsString != "initiation:" + excludedInitiationId)
+            && !await IsDeletedTargetAsync(db, claim.GetValue("targetId", "").AsString);
     }
 }

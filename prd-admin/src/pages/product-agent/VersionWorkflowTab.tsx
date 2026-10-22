@@ -322,7 +322,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [reviewApplicationMatching, setReviewApplicationMatching] = useState(false);
   const [versionType, setVersionType] = useState<'major' | 'medium' | 'minor'>(seed?.versionType ?? 'minor');
   const [file, setFile] = useState<File | null>(null);
-  const [meeting, setMeeting] = useState(seed?.reviewMeetingRequired ?? false);
+  const [meeting, setMeeting] = useState(seed?.reviewMeetingRequired ?? !seed);
   const [meetingDraftCount, setMeetingDraftCount] = useState(seed?.meetingDraftCount ?? 1);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -650,7 +650,9 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       setItem(saved.data);
       setMeetingDraftCount(saved.data.meetingDraftCount ?? 1);
       if (editingIssued) {
-        setMessage('基础资料已保存，原 T 号、评审及下游关联保持不变。');
+        setMessage(saved.data.tCode !== item?.tCode
+          ? `版本级别已修改并重新发放 ${saved.data.tCode}，旧编号保留占用，不回收。`
+          : '基础资料已保存，原 T 号、评审及下游关联保持不变。');
         return;
       }
       const reviewed = saved.data.reviewPassed && (sourceMode === 'existing' || !file) ? saved.data : await runReview(saved.data);
@@ -706,11 +708,11 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     open
     onOpenChange={(open) => { if (!open && !submittingRef.current) onClose(); }}
     title={wizardTitle}
-    description={editingIssued ? '修改基础资料，保留原编号、评审和历史记录，不重新发号。' : '一次填写并确认，无需人工审批。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
+    description={editingIssued ? '普通资料修改不改号；只有全局最新且无下游关联的记录可修改版本级别并重新发号。' : '一次填写并确认，无需人工审批。带 * 为必填，其余为选填；评审未通过不发号，已填内容会保留。'}
     maxWidth={920}
     contentStyle={{ height: 'min(94vh, 960px)', maxHeight: '94vh' }}
     actions={<>
-      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '仅修改资料，不重新发号' : '评审通过后自动发放 T 号，无需人工审批'}</span>}
+      {!completed && <span className="mr-auto hidden text-xs text-token-muted sm:block">{editingIssued ? '版本级别变更会重新发号，普通资料不改号' : '评审通过后自动发放 T 号，无需人工审批'}</span>}
       <Button size="sm" onClick={onClose} disabled={busy}>{completed ? '完成' : '取消'}</Button>
       {!completed && <Button size="sm" variant="primary" type="submit" form={formId} disabled={busy || !linkedProductId.trim()}>
         {busy && <MapSpinner size={14} />}{busy ? (reviewRunning ? '评审中，通过后自动继续…' : '正在保存并提交…') : confirmationLabel}
@@ -762,7 +764,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
               </Field>
               <Field label="方案名称 *" full><InitiationInput value={planName} onChange={(e) => { cancelReviewApplicationLookup(); planNameDraft.setManual(e.target.value); }} /></Field>
               <Field label="项目类别"><InitiationSelect value={projectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></InitiationSelect></Field>
-              <Field label="版本级别"><InitiationSelect disabled={editingIssued} value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</InitiationSelect></Field>
+              <Field label="版本级别"><InitiationSelect disabled={editingIssued && !item?.canChangeVersionType} value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}>{Object.entries(SCALE_LABEL).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</InitiationSelect>{editingIssued && !item?.canChangeVersionType && <span className="mt-1 block text-xs text-token-muted">仅全局最新且无下游关联的记录可改版本级别。</span>}</Field>
               {projectType === 'custom' && <Field label="客户来源 *"><InitiationInput value={customerSource} onChange={(e) => setCustomerSource(e.target.value)} /></Field>}
               <Field label="需求来源 *"><InitiationInput value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
               <Field label="是否需要 UI 设计 *"><InitiationSelect value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
@@ -781,7 +783,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
                 {meeting && <Field label="计划召开稿次（自动识别）"><output className="block rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary">{draftDefaultsPending && !busy ? '正在识别，未标注时默认第一稿' : `${['', '第一稿', '第二稿', '第三稿'][meetingDraftCount] ?? '第一稿'}${meetingDraftCount > 1 ? `（计划共 ${meetingDraftCount} 稿）` : '（默认）'}`}</output><span className="mt-1 block text-xs text-token-muted">按方案名称或文件名中的明确稿次识别，不按版本号或评审次数推断。</span></Field>}
               </div>
             </div>
-            <p className="text-xs leading-5 text-token-secondary">{editingIssued ? `当前立项号：${issuedCode}。所属应用、版本级别和原会议安排保持不变，仅保存资料修改。` : <>Agent 评审通过后自动发放 T 号，无需人工审批。{meeting && '线下各稿会议结果在详情中后续回填。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</>}</p>
+            <p className="text-xs leading-5 text-token-secondary">{editingIssued ? `当前立项号：${issuedCode}。所属应用和原会议安排保持不变；可修改版本级别时将按新类别重新发号，旧号不回收。` : <>Agent 评审通过后自动发放 T 号，无需人工审批。{meeting && '线下各稿会议结果在详情中后续回填。'}评审未通过不发号，已填写内容和历次评审记录都会保留。</>}</p>
           </section>
         </fieldset>
       </form>}

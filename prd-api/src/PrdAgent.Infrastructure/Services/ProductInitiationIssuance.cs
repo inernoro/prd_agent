@@ -48,7 +48,7 @@ public static class ProductInitiationIssuance
             string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId);
 
         var update = Builders<ProductInitiation>.Update.Set(x => x.TCode, code).Set(x => x.Status, "approved")
-            .Set(x => x.RequirementSyncPending, true).Set(x => x.UpdatedAt, DateTime.UtcNow);
+            .Set(x => x.RequirementSyncPending, true).Set(x => x.IssuedAt, DateTime.UtcNow).Set(x => x.UpdatedAt, DateTime.UtcNow);
         if (decision != null) update = Builders<ProductInitiation>.Update.Combine(decision, update);
         // 发号时重新检查评审、状态和软删除；并发重试不能覆盖已有编号或原资料。
         var unchanged = eligible & Builders<ProductInitiation>.Filter.Eq(x => x.UpdatedAt, item.UpdatedAt);
