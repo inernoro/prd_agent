@@ -926,17 +926,22 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
 }
 
-export function ensurePlaywrightDependencies(commandRunner = command, dependencyExists = existsSync) {
-  const playwrightPath = resolve(repoRoot, 'e2e/node_modules/.bin/playwright');
-  if (dependencyExists(playwrightPath)) return { status: 0, installed: false };
-  const result = commandRunner('pnpm', [
+export function ensureE2eDependencies(commandRunner = command, dependencyExists = existsSync) {
+  const packagePath = resolve(repoRoot, 'e2e/node_modules/@playwright/test/package.json');
+  if (dependencyExists(packagePath)) return { status: 0, installed: false };
+  const installResult = commandRunner('pnpm', [
     '--dir', 'e2e', 'install', '--frozen-lockfile',
   ], {
     env: { ...process.env },
     stdio: 'inherit',
     encoding: undefined,
   });
-  return { status: result.status ?? 1, installed: true };
+  const status = installResult.status ?? 1;
+  const installed = status === 0 && dependencyExists(packagePath);
+  return {
+    status: installed ? 0 : status || 1,
+    installed,
+  };
 }
 
 function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', visualCapture = null, artifactStem = environment) {
@@ -946,16 +951,6 @@ function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', v
   const testResultPath = resolve(runDir, `${artifactStem}-test-results`);
   // 同一 runId 恢复执行时不得保留旧版 HTML/trace，其中可能包含未脱敏网络头。
   rmSync(htmlPath, { recursive: true, force: true });
-  const dependencyResult = ensurePlaywrightDependencies();
-  if (dependencyResult.status !== 0) {
-    return {
-      status: dependencyResult.status,
-      resultPath,
-      htmlPath,
-      testResultPath,
-      sanitization: { scanned: 0, changed: 0 },
-    };
-  }
   const env = {
     ...process.env,
     ...values,
@@ -984,7 +979,10 @@ function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', v
     '--dir', 'e2e', 'exec', 'playwright', 'test', 'specs/stable-smoke.spec.ts',
   ];
   if (grep) args.push('--grep', grep);
-  const result = command('pnpm', args, { env, stdio: 'inherit', encoding: undefined });
+  const dependency = ensureE2eDependencies();
+  const result = dependency.status === 0
+    ? command('pnpm', args, { env, stdio: 'inherit', encoding: undefined })
+    : dependency;
   const sanitization = [resultPath, testResultPath]
     .map((path) => sanitizeStableSmokeArtifactTree(path))
     .reduce((total, item) => ({

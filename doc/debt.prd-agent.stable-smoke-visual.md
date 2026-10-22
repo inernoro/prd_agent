@@ -20,6 +20,7 @@
 
 | # | 项 | 判据状态 | 为什么证不了 | 要什么才证得了 | 当前兜底 |
 |---:|---|---|---|---|---|
+| RUNNER-E2E-BOOTSTRAP | 隔离 worktree 的 Playwright 依赖自举 | 已守 | 旧运行器只在网页托管回归前恢复 `prd-admin` 依赖，没有恢复 `e2e` 独立锁文件；干净 worktree 因缺 `@playwright/test` 在真实旅程前中止 | 真实 Playwright 调用前检查 `e2e/node_modules/@playwright/test`，缺失时仅按 `e2e/pnpm-lock.yaml` 冻结安装；移除导出时回归用例必须变红，恢复后变绿 | 本轮首跑保留 0 图与归档拒收证据；修复后必须使用原 runId 重跑真实业务、视觉门禁、资源清理和在线归档，单测绿不代表业务通过 |
 | 24 | 文件进度观察器不能把旧卡缺testid当完全无反馈，也不能短路后续产物 | 弱守 | 正式1678两试截图有本轮上传卡99%，但新属性未部署；原断言失败后一直扣住测试回调，正文/刷新尚未验，不等于自然服务卡死或解析失败 | 本轮完整文件名定位新旧卡；明确同卡解析与递增秒数不减；阶段红仍fail，finally释放后观察原任务终态/正文/同entry刷新及store/entry404 | ACCEPTANCE-stable-smoke-file-phase-observer-001关联原DEF-STSMK-FILE-STATE-001和FILE-003，由active机械子项REG-stsmk-file-phase-observer-001守护；仅离线工具绿，不关闭产品解析反馈缺口，不增加65/115分母 |
 | 26 | JPEG参考图不能用API代造和另挑型号冒充真实默认旅程 | 弱守 | 旧VIS-003直接创建工作区/资产/run，并从目录找首个OpenAI，未证明真人操作或当前默认；正式JPEG尚未执行 | 首页→新建本轮项目→页面选JPEG→保持后端具体默认→输入发送；真实POST字节/SHA/MIME、引用数1、任务与网关型号、image[]主路无fallback、1024下载解码和清理全部通过 | ACCEPTANCE-stable-smoke-jpeg-ui-default-001绑定原REG-image-input-001的active机械子项，由原VIS-003消费，candidate机器行与CDS65/正式115分母不变；无真实双环境证据前不记业务已守或关闭旧问题，不换模型和额度 |
 | 9 | 巡检识别提交标签与不可变镜像摘要 | 已守 | 旧版本识别把合法 tag@digest 当作未部署，阻止任何业务取证；不属于产品必须发布 | 有效摘要组合通过；错误提交、损坏摘要、额外后缀、无提交标签均变红 | REG-stsmk-runtime-digest-001 已做旧红新绿，当前 CDS 六服务真实预检通过；业务结果仍须独立执行 |

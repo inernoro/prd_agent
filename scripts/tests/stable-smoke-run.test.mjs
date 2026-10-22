@@ -28,7 +28,7 @@ import {
   enforceExecutionVerdict,
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
-  ensurePlaywrightDependencies,
+  ensureE2eDependencies,
   isolateCdsPreparation,
   applyCdsVisualSafetyGate,
   initializeProductionSafetyGate,
@@ -83,17 +83,21 @@ test('CDS 准备未启动时不伪造 COMMON-004 清理失败阻断正式写入'
 
 test('隔离 worktree 缺少 E2E 依赖时先按锁文件恢复再启动 Playwright', () => {
   const calls = [];
-  const restored = ensurePlaywrightDependencies((name, args, options) => {
+  let dependencyChecks = 0;
+  const restored = ensureE2eDependencies((name, args, options) => {
     calls.push([name, args, options]);
     return { status: 0 };
-  }, () => false);
+  }, () => {
+    dependencyChecks += 1;
+    return dependencyChecks > 1;
+  });
   assert.equal(restored.status, 0);
   assert.equal(restored.installed, true);
   assert.deepEqual(calls[0][0], 'pnpm');
   assert.deepEqual(calls[0][1], ['--dir', 'e2e', 'install', '--frozen-lockfile']);
 
   const readyCalls = [];
-  const ready = ensurePlaywrightDependencies((...args) => {
+  const ready = ensureE2eDependencies((...args) => {
     readyCalls.push(args);
     return { status: 0 };
   }, () => true);
@@ -101,7 +105,7 @@ test('隔离 worktree 缺少 E2E 依赖时先按锁文件恢复再启动 Playwri
   assert.equal(readyCalls.length, 0);
 
   const source = readFileSync('scripts/stable-smoke-run.mjs', 'utf8');
-  assert.match(source, /function runPlaywright[\s\S]*ensurePlaywrightDependencies\(\)/);
+  assert.match(source, /function runPlaywright[\s\S]*ensureE2eDependencies\(\)/);
 });
 
 test('例行直接读取已有CDS分支身份，不依赖工具分支发布且不猜域名', () => {
