@@ -99,6 +99,18 @@ describe('视觉创作编辑器双主题接线', () => {
     expect(style.color).toBe('var(--text-primary)');
   });
 
+  it.each(['tier', 'ratio'])('尺寸弹层%s选项的真实选中/未选中样式均使用配套主题表面', (key) => {
+    const options = openings(editor).filter(node => node.tagName.getText() === 'button'
+      && attribute(node, 'key')?.getText() === `{${key}}`
+      && attribute(node, 'onClick')?.getText().includes('setComposerSizeManual'));
+    expect(options).toHaveLength(2);
+    for (const option of options) for (const isSelected of [false, true]) {
+      const className = evaluate<string>(option, 'className', { isSelected });
+      expect(className.split(/\s+/)).toContain(isSelected ? 'surface-action-accent' : 'surface-action');
+      expect(evaluate<Record<string, string>>(option, 'style', { isSelected }).color).toBe(isSelected ? 'var(--selection-text)' : 'var(--text-primary)');
+    }
+  });
+
   it('消费的底色、点阵和按钮token都有真实明暗定义，且随主题发生变化', () => {
     const css = readFileSync(resolve(__dirname, '../../../styles/tokens.css'), 'utf8');
     const block = (selector: string) => {
