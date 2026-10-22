@@ -125,7 +125,7 @@ public class ProductVersionSourceLifecycleTests
         Assert.False((await fixture.Db.ProductReleases.Find(x => x.Id == "formal").SingleAsync()).IsDeleted);
         var second = await fixture.CreateIssuedAsync();
         Assert.NotEqual(first.TCode, second.TCode);
-        Assert.Equal(1, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
         Assert.Equal(1, await fixture.Db.ReviewSubmissions.CountDocumentsAsync(x => x.Id == "source"));
     }
 

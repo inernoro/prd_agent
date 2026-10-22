@@ -54,13 +54,6 @@ public static class ProductVersionDebugClear
             await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsForKindAsync(db, kind);
             return new(kind, 0, 0, null);
         }
-        var now = DateTime.UtcNow;
-        snapshot.Name = $"调试清空{(kind == "internal" ? "T" : "V")}备份 {now:yyyy-MM-dd HH:mm:ss} UTC";
-        snapshot.CreatedBy = userId;
-        snapshot.CreatedAt = now;
-        snapshot.ImportedCount = count;
-        // 必须先成功保存整份所见记录；备份失败时不得开始任何清理。
-        await db.ProductVersionWorkflowSnapshots.InsertOneAsync(snapshot, cancellationToken: CancellationToken.None);
         long cleared = 0;
         if (kind == "internal")
         {
@@ -87,6 +80,6 @@ public static class ProductVersionDebugClear
         // 只释放已实际物理删除目标的业务来源，条件删除跳过的有效记录仍保留占用。
         await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsForKindAsync(db, kind);
         // 原评审、独立审计快照和永久数字编号占用不作为版本业务数据读取。
-        return new(kind, cleared, count - cleared, snapshot.Id);
+        return new(kind, cleared, count - cleared, null);
     }
 }

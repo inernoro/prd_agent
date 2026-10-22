@@ -37,18 +37,18 @@ export function VersionWorkflowImportDialog({
   const [message, setMessage] = useState('');
   const productNameById = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
 
-  // 保留所有原始行给服务端归档；缺编号或无法匹配的行也应写进导入快照的错误清单。
+  // 保留原始行交给服务端逐行校验并返回原因，不另存业务快照。
   const importableRows = rows;
 
   const canImportRow = useCallback((row: VersionWorkflowImportRow) => {
-    if (kind === 'release' && !row.code) return false;
+    if (!row.code) return false;
     const resolved = resolveImportProductId(products, {
       appName: row.appName,
       systemName: row.systemName,
       legacyData: row.legacyData,
     });
     return resolved.matched && (!fixedProductId || resolved.productId === fixedProductId);
-  }, [kind, products, fixedProductId]);
+  }, [products, fixedProductId]);
 
   const previewRows = useMemo(
     () => importableRows.slice(0, 30).map((row) => {
@@ -60,14 +60,14 @@ export function VersionWorkflowImportDialog({
       return {
         row,
         appLabel: row.appName ?? row.legacyData?.['产品'] ?? row.systemName ?? '-',
-        productName: (kind !== 'release' || row.code) && resolved.matched && resolved.productId
+        productName: row.code && resolved.matched && resolved.productId
           && (!fixedProductId || resolved.productId === fixedProductId)
           ? (productNameById.get(resolved.productId) ?? resolved.label ?? '-')
           : '跳过（无编号或产品不匹配）',
         matched: canImportRow(row),
       };
     }),
-    [importableRows, products, productNameById, kind, fixedProductId, canImportRow],
+    [importableRows, products, productNameById, fixedProductId, canImportRow],
   );
 
   const matchedCount = useMemo(
@@ -86,15 +86,11 @@ export function VersionWorkflowImportDialog({
         setMessage('没有识别到有效数据，请检查表头是否含方案名称或版本号列。');
         return;
       }
-      const missingCode = kind === 'release'
-        ? parsedRows.filter((row) => !row.code).length
-        : 0;
-      const importable = kind === 'release'
-        ? parsedRows.filter((row) => row.code).length
-        : parsedRows.length;
+      const missingCode = parsedRows.filter((row) => !row.code).length;
+      const importable = parsedRows.length - missingCode;
       setMessage(
         missingCode > 0
-          ? `已读取 ${parsedRows.length} 条，可尝试导入 ${importable} 条（${missingCode} 条无 V 号将跳过）。仅「应用」能匹配系统产品的行会写入。`
+          ? `已读取 ${parsedRows.length} 条，可尝试导入 ${importable} 条（${missingCode} 条无版本号将跳过）。仅「应用」能匹配系统产品的行会写入。`
           : `已读取 ${parsedRows.length} 条；仅「应用」能匹配系统产品的行会写入，其余跳过。`,
       );
     } catch (err) {
@@ -118,13 +114,14 @@ export function VersionWorkflowImportDialog({
       return;
     }
     const created = result.data.created ?? 0;
+    const updated = result.data.updated ?? 0;
     const errorCount = result.data.errors?.length ?? 0;
-    if (created === 0) {
+    if (created + updated === 0) {
       setMessage(errorCount > 0 ? `导入未写入任何记录，${errorCount} 条被跳过或校验失败。` : '导入未写入任何记录，请检查「应用」列与系统产品名称是否一致。');
       return;
     }
     setMessage(
-      `导入完成并留存快照：新增 ${created} 条${errorCount > 0 ? `，${errorCount} 条未写入（原因可在存档查看）` : ''}。`,
+      `导入完成：新增 ${created} 条，更新 ${updated} 条，跳过 ${result.data.skipped ?? errorCount} 条。${result.data.errors?.slice(0, 8).map((item) => `第 ${item.row} 行：${item.message}`).join('；') ?? ''}`,
     );
     await onImported();
   };
@@ -140,6 +137,7 @@ export function VersionWorkflowImportDialog({
             <div className="text-base font-semibold text-token-primary">导入历史{KIND_LABEL[kind]}</div>
             <div className="mt-1 text-xs text-token-muted">
               Excel「应用」列映射到系统「产品」；匹配不到的行直接跳过，不会写入任何产品。
+              同一应用与版本号更新原记录，不存在才新增；不生成导入备份。
             </div>
           </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-token-muted hover-bg-soft hover-text-primary" title="关闭">
@@ -156,7 +154,7 @@ export function VersionWorkflowImportDialog({
             <div className="mt-1 text-xs text-token-muted">
               {kind === 'release'
                 ? '需含「应用」「正式版本号 / V 号」与「产品立项方案名称」列'
-                : '需含「应用」「T 立项号 / 立项号」或「产品立项方案名称」列'}
+                : '需含「应用」「T 立项号 / 立项号」与「产品立项方案名称」列'}
             </div>
           </button>
           <input

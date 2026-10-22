@@ -1674,10 +1674,7 @@ public class ProductAgentController : ControllerBase
         var errors = new List<object>();
         var created = 0;
         var skipped = 0;
-        var seenCodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var importedInitiations = new List<ProductInitiation>();
-        var importedReleases = new List<ProductRelease>();
-        var snapshotErrors = new List<VersionRegistrationImportError>();
+        var updated = 0;
         var routed = new Dictionary<string, int>();
         var unmatched = new List<object>();
         for (var index = 0; index < request.Rows.Count; index++)
@@ -1686,7 +1683,6 @@ public class ProductAgentController : ControllerBase
             if (string.IsNullOrWhiteSpace(row.PlanName))
             {
                 errors.Add(new { row = index + 2, message = "方案名称不能为空" });
-                snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "方案名称不能为空" });
                 continue;
             }
             var label = ProductImportProductRouting.ResolveProductLabelFromVersionRow(row.AppName, row.SystemName, row.LegacyData);
@@ -1698,7 +1694,6 @@ public class ProductAgentController : ControllerBase
                     ? "缺少「应用」列，已跳过"
                     : $"产品「{label}」未匹配或匹配不唯一，已跳过";
                 errors.Add(new { row = index + 2, message = msg });
-                snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = msg });
                 if (!string.IsNullOrWhiteSpace(label))
                     unmatched.Add(new { row = index + 2, label, planName = row.PlanName });
                 continue;
@@ -1709,7 +1704,6 @@ public class ProductAgentController : ControllerBase
                 if (request.Kind == "release" && row.PlannedTrainingMinutes < 0)
                 {
                     errors.Add(new { row = index + 2, message = "预计培训时长必须是非负整数分钟" });
-                    snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "预计培训时长必须是非负整数分钟" });
                     continue;
                 }
                 if (request.Kind == "release")
@@ -1717,33 +1711,27 @@ public class ProductAgentController : ControllerBase
                     if (string.IsNullOrWhiteSpace(row.Code))
                     {
                         errors.Add(new { row = index + 2, message = "上线历史数据必须有 V 号" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "上线历史数据必须有 V 号" });
                         continue;
                     }
                     var code = row.Code.Trim().ToUpperInvariant();
                     if (!IsWorkflowVersionCode(code, "V"))
                     {
                         errors.Add(new { row = index + 2, message = "正式版本号格式应为 V主版本.中版本.小版本" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "正式版本号格式应为 V主版本.中版本.小版本" });
                         continue;
                     }
-                    if (!seenCodes.Add($"{targetProductId}:{code}")
-                        || await _db.ProductReleases.Find(x => x.ProductId == targetProductId && x.VCode == code && !x.IsDeleted).AnyAsync()
-                        || (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Code == code && x.ApplicationName == row.AppName).AnyAsync()))
+                    if (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Code == code && x.ApplicationName == row.AppName).AnyAsync())
                     {
                         skipped++;
                         errors.Add(new { row = index + 2, message = $"正式版本号 {code} 已存在，未重复导入" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = $"正式版本号 {code} 已存在，未重复导入" });
                         continue;
                     }
                     var sourceTCode = row.TCode?.Trim().ToUpperInvariant();
                     if (!string.IsNullOrWhiteSpace(sourceTCode)
-                        && (await _db.ProductReleases.Find(x => x.ProductId == targetProductId && x.TCode == sourceTCode && !x.IsDeleted).AnyAsync()
+                        && (await _db.ProductReleases.Find(x => x.ProductId == targetProductId && x.TCode == sourceTCode && x.VCode != code && !x.IsDeleted).AnyAsync()
                             || (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal && x.TCode == sourceTCode && x.ApplicationName == row.AppName).AnyAsync())))
                     {
                         skipped++;
                         errors.Add(new { row = index + 2, message = $"内部版本号 {sourceTCode} 已有关联的上线记录，未重复导入" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = $"内部版本号 {sourceTCode} 已有关联的上线记录，未重复导入" });
                         continue;
                     }
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
@@ -1770,38 +1758,26 @@ public class ProductAgentController : ControllerBase
                         ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
                         LegacyData = legacyData,
                     };
-                    await _db.ProductReleases.InsertOneAsync(release);
-                    importedReleases.Add(release);
+                    if (await ProductVersionImportWriter.SaveReleaseAsync(_db, release)) created++; else updated++;
                 }
                 else
                 {
                     var code = row.Code?.Trim().ToUpperInvariant();
+                    if (string.IsNullOrWhiteSpace(code))
+                    {
+                        errors.Add(new { row = index + 2, message = "缺少内部版本号，无法按应用和版本号覆盖，已跳过" });
+                        continue;
+                    }
                     if (!string.IsNullOrWhiteSpace(code) && !IsWorkflowVersionCode(code, "T"))
                     {
                         errors.Add(new { row = index + 2, message = "内部版本号格式应为 T主版本.中版本.小版本" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "内部版本号格式应为 T主版本.中版本.小版本" });
                         continue;
                     }
                     if (!string.IsNullOrWhiteSpace(code)
-                        && (!seenCodes.Add($"{targetProductId}:{code}")
-                            || await _db.ProductInitiations.Find(x => x.ProductId == targetProductId && x.TCode == code && !x.IsDeleted).AnyAsync()
-                            || (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Code == code && x.ApplicationName == row.AppName).AnyAsync())))
+                        && (!string.IsNullOrWhiteSpace(row.AppName) && await _db.VersionRegistrations.Find(x => x.Code == code && x.ApplicationName == row.AppName).AnyAsync()))
                     {
                         skipped++;
                         errors.Add(new { row = index + 2, message = $"内部版本号 {code} 已存在，未重复导入" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = $"内部版本号 {code} 已存在，未重复导入" });
-                        continue;
-                    }
-                    var importFingerprint = string.IsNullOrWhiteSpace(code)
-                        ? ProductVersionImportFingerprint.Compute(targetProductId, row)
-                        : null;
-                    if (importFingerprint != null
-                        && (!seenCodes.Add($"fingerprint:{importFingerprint}")
-                            || await _db.ProductInitiations.Find(x => x.ImportFingerprint == importFingerprint && !x.IsDeleted).AnyAsync()))
-                    {
-                        skipped++;
-                        errors.Add(new { row = index + 2, message = "相同的无编号内部版本记录已导入，未重复写入" });
-                        snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "相同的无编号内部版本记录已导入，未重复写入" });
                         continue;
                     }
                     var legacyData = row.LegacyData ?? new Dictionary<string, string>();
@@ -1827,34 +1803,24 @@ public class ProductAgentController : ControllerBase
                         DevelopmentStatus = string.IsNullOrWhiteSpace(row.DevelopmentStatus) ? "待开发" : row.DevelopmentStatus,
                         Remark = row.Remark,
                         Status = string.IsNullOrWhiteSpace(row.Code) ? "draft" : "approved", CreatedBy = userId,
-                        SourceType = "import", ImportFingerprint = importFingerprint, LegacyData = legacyData,
+                        SourceType = "import", LegacyData = legacyData,
                     };
-                    await _db.ProductInitiations.InsertOneAsync(initiation);
-                    importedInitiations.Add(initiation);
+                    if (await ProductVersionImportWriter.SaveInitiationAsync(_db, initiation)) created++; else updated++;
                 }
-                created++;
                 routed[targetProductId] = routed.GetValueOrDefault(targetProductId) + 1;
+            }
+            catch (ProductVersionImportConflictException ex)
+            {
+                errors.Add(new { row = index + 2, message = ex.Message });
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "版本工作流导入第 {Row} 行失败", index + 2);
                 errors.Add(new { row = index + 2, message = "写入失败，请检查这一行的数据或联系管理员" });
-                snapshotErrors.Add(new VersionRegistrationImportError { Row = index + 2, Message = "写入失败，请检查这一行的数据或联系管理员" });
             }
         }
-        var snapshot = new ProductVersionWorkflowSnapshot
-        {
-            Name = $"{(request.Kind == "release" ? "正式版本" : "内部版本")}历史导入 {DateTime.UtcNow:yyyy-MM-dd HH:mm}",
-            SourceFileName = request.SourceFileName?.Trim(),
-            ImportedCount = created,
-            SkippedCount = snapshotErrors.Count,
-            Initiations = importedInitiations,
-            Releases = importedReleases,
-            Errors = snapshotErrors,
-            CreatedBy = userId,
-        };
-        await _db.ProductVersionWorkflowSnapshots.InsertOneAsync(snapshot);
-        return Ok(ApiResponse<object>.Ok(new { created, skipped, errors, routed, unmatched, snapshotId = snapshot.Id }));
+        skipped = errors.Count;
+        return Ok(ApiResponse<object>.Ok(new { created, updated, skipped, errors, routed, unmatched }));
     }
 
     // ════════════════════════ 需求 Requirement ════════════════════════

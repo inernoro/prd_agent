@@ -29,7 +29,7 @@ beforeEach(() => {
     kind, kindLabel: kind === 'internal' ? '内部版本（T）' : '正式版本（V）', recordCount: 3, preservedLegacyCount: 2,
     confirmPhrase: kind === 'internal' ? '清空T记录' : '清空V记录', token: `token-${kind}`,
   } }));
-  api.clearVersionDebugRecords.mockResolvedValue({ success: true, data: { kind: 'internal', clearedCount: 3, skippedCount: 0, backupId: 'backup' } });
+  api.clearVersionDebugRecords.mockResolvedValue({ success: true, data: { kind: 'internal', clearedCount: 3, skippedCount: 0, backupId: null } });
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
 
@@ -46,7 +46,7 @@ describe('版本页临时调试清空', () => {
     expect(api.clearVersionDebugRecords).not.toHaveBeenCalled();
     expect(host.querySelector('[role=dialog]')).toBeNull();
   });
-  it.each(['internal', 'formal'] as const)('只发送当前%s类型和已预览token，成功后展示备份并刷新', async (kind) => {
+  it.each(['internal', 'formal'] as const)('只发送当前%s类型和已预览token，成功后不备份并刷新', async (kind) => {
     await mount(kind);
     const code = kind === 'internal' ? 'T' : 'V';
     await click(`调试清空${code}记录`);
@@ -56,7 +56,8 @@ describe('版本页临时调试清空', () => {
     expect(api.clearVersionDebugRecords).toHaveBeenCalledTimes(1);
     expect(api.clearVersionDebugRecords).toHaveBeenCalledWith({ kind, confirmPhrase: `清空${code}记录`, token: `token-${kind}` });
     expect(changed).toHaveBeenCalledTimes(1);
-    expect(host.textContent).toContain('备份编号：backup');
+    expect(host.textContent).toContain('调试模式不生成备份');
+    expect(host.textContent).not.toContain('备份编号：');
     expect(host.textContent).toContain('已清理 3 条');
   });
   it('过期预览的拒绝留在弹窗，不误报成功或刷新', async () => {
