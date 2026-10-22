@@ -3125,6 +3125,7 @@ public class HostedSiteService : IHostedSiteService
                 EntrySize = s.Files.FirstOrDefault(f =>
                     string.Equals(f.Path, s.EntryFile, StringComparison.OrdinalIgnoreCase))?.Size ?? 0,
                 FileCount = s.Files.Count,
+                PdfFilePaths = HostedSitePdfFiles.Paths(s),
                 CoverImageUrl = s.CoverImageUrl,
                 PdfAssetUrl = TryBuildPdfAssetUrl(s),
                 // 前端据此跳过「取正文」——包装站没有可读的 HTML 正文，问了必被拒
@@ -3213,6 +3214,7 @@ public class HostedSiteService : IHostedSiteService
     {
         if (site is null) return null;
         site.PdfAssetUrl = TryBuildPdfAssetUrl(site);
+        site.PdfFilePaths = HostedSitePdfFiles.Paths(site);
         site.ContentShape = HostedSiteContentShapeRules.Resolve(site);
         var version = EffectiveContentVersion(site);
         foreach (var file in site.Files ?? new List<HostedSiteFile>())

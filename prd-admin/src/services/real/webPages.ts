@@ -39,6 +39,8 @@ export interface HostedSite {
    * resolveSitePreviewSource 的调用点会直接编译不过（predicate-and-wiring-discipline 形状 2）。
    */
   pdfAssetUrl: string | undefined;
+  /** 后端依据当前文件清单派生的 PDF 下载白名单。 */
+  pdfFilePaths?: string[];
   files: HostedSiteFile[];
   /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
   contentShape?: 'self-contained-html' | 'multi-file';
@@ -1289,6 +1291,8 @@ export interface SharedSiteInfo {
   totalSize: number;
   /** 入口文件自己的字节数（不是 totalSize 那个所有文件之和）。后端取不到时为 0 */
   entrySize: number;
+  /** 服务端登记的可下载 PDF 路径；不包含对象存储物理键。 */
+  pdfFilePaths?: string[];
   fileCount: number;
   coverImageUrl?: string;
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，
@@ -1501,6 +1505,18 @@ export function downloadShareOfflineHtml(
   if (password) params.set('password', password);
   const query = params.toString() ? `?${params.toString()}` : '';
   return apiDownload(api.webPages.shareOfflineHtml(token, query), fallbackFileName);
+}
+
+/** PDF 附件仅从站点清单读取；分享访客沿用原分享门禁。 */
+export function downloadHostedPdf(siteId: string, filePath: string,
+  share?: { token: string; password?: string }): Promise<ApiDownloadedFile> {
+  const query = new URLSearchParams({ filePath });
+  if (share) {
+    query.set('siteId', siteId);
+    if (share.password) query.set('password', share.password);
+  }
+  const path = share ? api.webPages.sharePdf(share.token) : api.webPages.pdf(siteId);
+  return apiDownload(`${path}?${query}`, filePath.split('/').pop() || 'document.pdf', false, !!share);
 }
 
 /** 经分享链接发表评论（需登录） */

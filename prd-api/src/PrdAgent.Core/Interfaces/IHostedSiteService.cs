@@ -757,6 +757,9 @@ public class SharedSiteInfo
     /// </summary>
     public long EntrySize { get; set; }
 
+    /// <summary>仅可经本站点受控附件端点下载的 PDF 相对路径，不包含存储键。</summary>
+    public List<string> PdfFilePaths { get; set; } = new();
+
     public int FileCount { get; set; }
     public string? CoverImageUrl { get; set; }
 
