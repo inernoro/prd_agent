@@ -186,6 +186,9 @@ describe('resource external TCP access', () => {
     expect(res.body.policy.host).toBe('192.0.2.20');
     expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('-p 192.0.2.20:43000:15432');
     expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain('EXPIRES_AT=');
+    for (const flag of ['--log-driver json-file', '--log-opt max-size=50m', '--log-opt max-file=3']) {
+      expect(shell.commands.find((cmd) => cmd.startsWith('docker run -d'))).toContain(flag);
+    }
     const expiredPolicy = stateService.upsertResourceExternalAccess({ ...res.body.policy, expiresAt: new Date(Date.now() - 1000).toISOString() });
     const expired = await request(server!, 'GET', '/api/branches/main-branch/resources/infra%3Amysql-main/connection-string?scope=external', undefined, { 'x-test-cookie-auth': '1' });
     expect(expired.status).toBe(409);
