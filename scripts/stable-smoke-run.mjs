@@ -926,6 +926,24 @@ async function waitForCdsDeployment(expectedCommit, timeoutMs = 15 * 60 * 1000) 
   throw new Error(`CDS 版本冻结等待超时：${readiness.reasons.join('；')}`);
 }
 
+export function ensureE2eDependencies(commandRunner = command, dependencyExists = existsSync) {
+  const packagePath = resolve(repoRoot, 'e2e/node_modules/@playwright/test/package.json');
+  if (dependencyExists(packagePath)) return { status: 0, installed: false };
+  const installResult = commandRunner('pnpm', [
+    '--dir', 'e2e', 'install', '--frozen-lockfile',
+  ], {
+    env: { ...process.env },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  const status = installResult.status ?? 1;
+  const installed = status === 0 && dependencyExists(packagePath);
+  return {
+    status: installed ? 0 : status || 1,
+    installed,
+  };
+}
+
 function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', visualCapture = null, artifactStem = environment) {
   const prefix = environment === 'cds' ? 'STABLE_SMOKE_CDS' : 'STABLE_SMOKE_PROD';
   const resultPath = resolve(runDir, `${artifactStem}-results.json`);
@@ -961,7 +979,10 @@ function runPlaywright(environment, values, runDir, allowedCaseIds, grep = '', v
     '--dir', 'e2e', 'exec', 'playwright', 'test', 'specs/stable-smoke.spec.ts',
   ];
   if (grep) args.push('--grep', grep);
-  const result = command('pnpm', args, { env, stdio: 'inherit', encoding: undefined });
+  const dependency = ensureE2eDependencies();
+  const result = dependency.status === 0
+    ? command('pnpm', args, { env, stdio: 'inherit', encoding: undefined })
+    : dependency;
   const sanitization = [resultPath, testResultPath]
     .map((path) => sanitizeStableSmokeArtifactTree(path))
     .reduce((total, item) => ({

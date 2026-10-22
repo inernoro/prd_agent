@@ -187,9 +187,9 @@ test('REG-rec-transcript-body-001 runner覆盖继承清单且两个真实spawn�
   const run = source.slice(source.indexOf('function runPlaywright('), source.indexOf('\nconst folderRegressionCaseIds'));
   const captured = [];
   const env = { STABLE_SMOKE_ALLOWED_CASE_IDS_JSON: JSON.stringify({ environment: 'production', allowedCaseIds: ['REC-011'] }) };
-  const execute = new Function('process', 'resolve', 'rmSync', 'command', 'sanitizeStableSmokeArtifactTree', 'freezeRecordingCasePlanEnvironment',
+  const execute = new Function('process', 'resolve', 'rmSync', 'command', 'sanitizeStableSmokeArtifactTree', 'freezeRecordingCasePlanEnvironment', 'ensureE2eDependencies',
     `${run}; return runPlaywright;`)({ env }, (...parts) => parts.join('/'), () => {}, (...args) => { captured.push(args); return { status: 0 }; },
-    () => ({ scanned: 0, changed: 0 }), recording.freezeRecordingCasePlanEnvironment);
+    () => ({ scanned: 0, changed: 0 }), recording.freezeRecordingCasePlanEnvironment, () => ({ status: 0 }));
   execute('production', {}, '/temporary', ['REC-003', 'REC-007', 'REC-012']);
   const actual = captured[0][2].env;
   assert.deepEqual(JSON.parse(actual.STABLE_SMOKE_ALLOWED_CASE_IDS_JSON), { environment: 'production', allowedCaseIds: ['REC-003', 'REC-007', 'REC-012'] });

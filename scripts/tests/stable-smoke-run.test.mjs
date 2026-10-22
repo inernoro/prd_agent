@@ -28,6 +28,7 @@ import {
   enforceExecutionVerdict,
   evaluateCdsReadiness,
   evaluateProductionSafetyGate,
+  ensureE2eDependencies,
   isolateCdsPreparation,
   applyCdsVisualSafetyGate,
   initializeProductionSafetyGate,
@@ -1330,6 +1331,22 @@ test('隔离 worktree 缺少前端依赖时先按锁文件恢复再执行回归'
     'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj', '--no-restore',
   ]);
   assert.equal(result.execution.status, 'passed');
+});
+
+test('隔离 worktree 缺少 Playwright 依赖时先按 e2e 锁文件恢复', () => {
+  const calls = [];
+  let dependencyChecks = 0;
+  const result = ensureE2eDependencies((name, args) => {
+    calls.push([name, args]);
+    return { status: 0 };
+  }, () => {
+    dependencyChecks += 1;
+    return dependencyChecks > 1;
+  });
+  assert.deepEqual(calls, [[
+    'pnpm', ['--dir', 'e2e', 'install', '--frozen-lockfile'],
+  ]]);
+  assert.deepEqual(result, { status: 0, installed: true });
 });
 
 test('隔离 worktree 已有前端依赖但缺少 NuGet 资产时只恢复服务端依赖', () => {
