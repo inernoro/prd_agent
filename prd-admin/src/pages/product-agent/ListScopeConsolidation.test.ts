@@ -37,7 +37,7 @@ describe('shared requirement and version lists', () => {
     expect(versions.match(/item.versionType === versionTypeFilter/g)).toHaveLength(2);
     expect(versions).toContain('item.createdBy === initiationApplicantId');
     expect(versions).toContain('item.ownerId === releaseOwnerId');
-    expect(versions).toContain("ownerPlaceholder={tab === 'release' ? '全部负责人' : '全部申请人'}");
+    expect(versions).toContain('placeholder="全部负责人" showAllOption allOptionLabel="全部负责人"');
     expect(versions).not.toContain('我的申请');
     expect(versions).not.toContain('全部申请</option>');
     expect(versions).toContain('visibleReleases.map(formalExport.mapRow)');

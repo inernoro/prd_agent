@@ -213,7 +213,6 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
         <RecordToolbar query={query} onQueryChange={setQuery}
           ownerId={tab === 'release' ? releaseOwnerId : initiationApplicantId}
           onOwnerChange={tab === 'release' ? setReleaseOwnerId : setInitiationApplicantId}
-          ownerPlaceholder={tab === 'release' ? '全部负责人' : '全部申请人'}
           versionType={versionTypeFilter} onVersionTypeChange={setVersionTypeFilter}
           status={statusFilter} onStatusChange={setStatusFilter} statuses={statuses}
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
@@ -912,12 +911,11 @@ function matchesRecord(
   });
 }
 
-function RecordToolbar({ query, onQueryChange, ownerId, onOwnerChange, ownerPlaceholder, versionType, onVersionTypeChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
+function RecordToolbar({ query, onQueryChange, ownerId, onOwnerChange, versionType, onVersionTypeChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {
   query: string;
   onQueryChange: (value: string) => void;
   ownerId: string;
   onOwnerChange: (value: string) => void;
-  ownerPlaceholder: string;
   versionType: string;
   onVersionTypeChange: (value: string) => void;
   status: string;
@@ -941,8 +939,8 @@ function RecordToolbar({ query, onQueryChange, ownerId, onOwnerChange, ownerPlac
       <ItemSearchSelect value={versionType} onChange={onVersionTypeChange} options={SCALE_OPTIONS}
         placeholder="搜索版本类型" clearOptionLabel="全部版本类型" uiSize="sm" />
     </div>
-    <div role="group" aria-label={ownerPlaceholder} className="h-8 w-52">
-      <UserSearchSelect value={ownerId} onChange={onOwnerChange} placeholder={ownerPlaceholder} showAllOption allOptionLabel={ownerPlaceholder} uiSize="sm" />
+    <div role="group" aria-label="按负责人筛选" className="h-8 w-52">
+      <UserSearchSelect value={ownerId} onChange={onOwnerChange} placeholder="全部负责人" showAllOption allOptionLabel="全部负责人" uiSize="sm" />
     </div>
     <select
       aria-label="状态"
