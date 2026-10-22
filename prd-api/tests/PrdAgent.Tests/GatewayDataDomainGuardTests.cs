@@ -3009,7 +3009,7 @@ public class GatewayDataDomainGuardTests
 
         static bool ReturnsHostedSite(string line)
             => System.Text.RegularExpressions.Regex.IsMatch(
-                line, @"public async Task<(HostedSite\??>|List<HostedSite>>|\(List<HostedSite>\s)");
+                line, @"public (?:async )?Task<(HostedSite\??>|List<HostedSite>>|\(List<HostedSite>\s)");
 
         var memberStarts = new List<int>();
         for (var i = 0; i < lines.Length; i++)
@@ -3027,7 +3027,9 @@ public class GatewayDataDomainGuardTests
             // 只看**这一个方法自己的**方法体：到下一个成员声明为止
             var to = k + 1 < memberStarts.Count ? memberStarts[k + 1] : lines.Length;
             var body = string.Join("\n", lines[from..to]);
-            if (!body.Contains("AttachDerivedFields(", StringComparison.Ordinal))
+            // 包装必须原样透传到实现；派生字段仍在该实现的独立方法体里断言。
+            var implementation = SourceSlice.HostedSiteImplementation(src, body);
+            if (!implementation.Contains("AttachDerivedFields(", StringComparison.Ordinal))
             {
                 var name = System.Text.RegularExpressions.Regex.Match(lines[from], @"Task<[^>]*>+\s*(\w+)");
                 missing.Add(name.Success ? name.Groups[1].Value : lines[from].Trim());

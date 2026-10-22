@@ -43,9 +43,17 @@ public class UploadProgressWiringTests
         Assert.Contains("_uploadProgress.CompleteAsync(uploadId)", body);
 
         // 服务层：这个参数真的往下走到解包，不是收了就丢
-        var reupload = SourceSlice.Member(svc, "public async Task<HostedSite> ReuploadAsync(");
-        // 不可变版本增加了存储目录参数，但第三个进度参数仍必须逐层传递。
-        Assert.Matches(@"ExtractAndUploadZip\(\s*siteId,\s*fileBytes,\s*uploadId\s*[,)]", reupload);
+        foreach (var signature in new[]
+        {
+            "public async Task<HostedSite> ReuploadAsync(",
+            "public Task<HostedSite> ReuploadAsync(",
+        })
+        {
+            var wrapper = SourceSlice.Member(svc, signature);
+            var reupload = SourceSlice.HostedSiteImplementation(svc, wrapper);
+            // 两种公开入口都必须原样透传进度键，共同实现再传到解包层。
+            Assert.Matches(@"ExtractAndUploadZip\(\s*siteId,\s*zipStream,\s*uploadId\s*[,)]", reupload);
+        }
         var extract = SourceSlice.Member(svc, "private async Task<ZipExtractResult> ExtractAndUploadZip(");
         Assert.Contains("string? uploadId = null", extract);
         Assert.Matches(@"_uploadProgress\.ReportAsync\(\s*uploadId,", extract);
