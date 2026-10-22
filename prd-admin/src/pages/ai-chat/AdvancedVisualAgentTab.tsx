@@ -6606,8 +6606,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             aria-busy={booting}
             className="absolute inset-0 overflow-hidden outline-none focus:outline-none focus-visible:outline-none! focus-visible:shadow-none!"
             style={{
-              backgroundColor: '#1e1e1e',
-              backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.12) 1px, transparent 1px)',
+              backgroundColor: 'var(--bg-base)',
+              backgroundImage: 'radial-gradient(circle, var(--border-subtle) 1px, transparent 1px)',
               backgroundSize: '48px 48px',
               backgroundPosition: '0px 0px',
               cursor: panning ? 'grabbing' : effectiveTool === 'hand' ? 'grab' : 'default',
@@ -8356,12 +8356,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={tier}
                                     type="button"
-                                    className="flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
-                                    style={{
-                                      background: isSelected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                    }}
+                                    className={`flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                    style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                     onClick={() => {
                                       const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
                                       const targetOpt = ratiosByResolution[tier].get(currentAspect);
@@ -8408,12 +8404,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={ratio}
                                     type="button"
-                                    className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
-                                    style={{
-                                      background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                      border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                      color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                    }}
+                                    className={`flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                    style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                     onClick={() => {
                                       setComposerSizeManual(opt.size);
                                       setQuickSizeOpen(false);
@@ -9111,7 +9103,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           {/* 右侧：浮动对话面板（液态大玻璃效果）— 移动端全屏覆盖 / 桌面端浮动 */}
           <div
             ref={chatPanelRef}
-            className={`${isMobile ? 'absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
+            className={`${isMobile ? 'surface-tone-dark absolute inset-0' : 'absolute top-3'} z-30 flex flex-col`}
             style={{
               // right / width 走同一组常量：图层面板要按它们算让位量，抄成两份必漂。
               right: isMobile ? undefined : CHAT_PANEL_INSET,
@@ -9529,12 +9521,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     <button
                                       key={tier}
                                       type="button"
-                                      className="h-7 flex-1 rounded-[8px] text-[12px] font-semibold transition-colors"
-                                      style={{
-                                        background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                        border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                        color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                      }}
+                                      className={`h-7 flex-1 rounded-[8px] text-[12px] font-semibold transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                      style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                       onClick={() => {
                                         // 优先使用后端返回的 aspectRatio
                                         const currentAspect = sizeToAspectMap.get(currentSize.toLowerCase()) || detectAspectFromSize(currentSize);
@@ -9579,12 +9567,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                 <button
                                   key={ratio}
                                   type="button"
-                                  className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
-                                  style={{
-                                    background: isSelected ? 'rgba(99, 102, 241, 0.22)' : 'rgba(255,255,255,0.08)',
-                                    border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                                    color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
-                                  }}
+                                  className={`flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors ${isSelected ? 'surface-action-accent border' : 'surface-action'}`}
+                                  style={{ color: isSelected ? 'var(--selection-text)' : 'var(--text-primary)' }}
                                   onClick={() => {
                                     setComposerSizeManual(opt.size);
                                     setSizeSelectorOpen(false);
