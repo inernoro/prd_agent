@@ -989,7 +989,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     presetIds: string[],
     configMap?: Record<string, { dbName?: string; initSql?: string }>,
     extraInstances?: Array<{ presetId: string; dbName?: string; initSql?: string }>,
-    provision?: {assertCurrent:()=>void;allocated:string[]},
+    provision?: {assertCurrent:()=>void;allocated:string[];strictFresh?:boolean},
   ): Promise<string[]> {
     // 实例请求清单:每个被选预设的第 1 个实例(presetIds) + 额外同类型实例(extraInstances,第 2+ 个)。
     const requests: Array<{ presetId: string; dbName?: string; initSql?: string }> = [];
@@ -1005,25 +1005,34 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
     if (requests.length === 0) return [];
-    if (provision) {
-      provision.assertCurrent();
-      if (!config?.storageInstanceId || !config.repoRoot || requests.some(r => !recommendedVolumePathsForImage(getInfraCatalogEntry(r.presetId)!.dockerImage)?.length)) throw new Error('storage_provision_unconfirmed');
-    }
-
     const existing = stateService.getInfraServicesForProject(project.id);
     const existingIds = new Set(existing.map((service) => service.id));
     if (provision) {
-      // Fresh groups have deterministic IDs. A retry must not auto-increment past
-      // an original published/held birth and silently allocate a second database.
+      provision.assertCurrent();
       const plannedCounts=new Map<string,number>();
+      // Explicit new-only is retry-safe and never increments past an existing birth.
+      // Ordinary UI keeps its additional-DB/singleton-noop contract; NEW IDs still
+      // receive the identical first-allocation protocol, never an R allocator.
+      if (!provision.strictFresh) for (const service of existing) {
+        const base=service.basePresetId||service.id;
+        plannedCounts.set(base,(plannedCounts.get(base)||0)+1);
+      }
+      const plannedNew: typeof requests = [];
       for(const request of requests){
+        if(provision.strictFresh && existing.some(row=>(row.basePresetId||row.id)===request.presetId))
+          throw new Error('storage_provision_unconfirmed');
         const index=plannedCounts.get(request.presetId)||0;
         if(index>0&&!getInfraCatalogEntry(request.presetId)?.supportsDbName)continue;
         plannedCounts.set(request.presetId,index+1);
         const id=index?`${request.presetId}-${index+1}`:request.presetId;
-        if(existing.some(row=>(row.basePresetId||row.id)===request.presetId)||existingIds.has(id)
-          ||stateService.getStorageBirthsForService(project.id,id).length)throw new Error('storage_provision_unconfirmed');
+        // A held/unpublished original ID is NOT counted as an existing instance.
+        // Its birth blocks this exact request; do not skip it or choose a new ID.
+        if(existingIds.has(id)||stateService.getStorageBirthsForService(project.id,id).length)
+          throw new Error('storage_provision_unconfirmed');
+        plannedNew.push(request);
       }
+      const needsStorage=plannedNew.some(r=>recommendedVolumePathsForImage(getInfraCatalogEntry(r.presetId)!.dockerImage)?.length);
+      if(needsStorage&&(!config?.storageInstanceId||!config.repoRoot))throw new Error('storage_provision_unconfirmed');
       provision.assertCurrent();
     }
     const countByPreset = new Map<string, number>();
@@ -1074,7 +1083,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         ...(preset.entrypoint ? { entrypoint: preset.entrypoint } : {}),
         createdAt: new Date().toISOString(),
       };
-      if (provision) {
+      if (provision && service.volumes?.length) {
         provision.assertCurrent();service.scope='project';
         service.volumes=(service.volumes||[]).map((volume,index)=>{
           if(volume.type!=='volume')throw new Error('storage_provision_unconfirmed');
@@ -2383,18 +2392,20 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       res.status(400).json({ error: `未知基建预设: ${unknown.join(', ')}（见 GET /api/infra/catalog）` });
       return;
     }
-    const newOnly=body.initializeStorage==='new-only',allocated:string[]=[];
+    // The catalog UI already authorizes creation of fresh preset resources.
+    // Absence of the optional flag must not publish unallocated stable storage.
+    const allocated:string[]=[];
     const instance=config?.storageInstanceId,repoRoot=config?.repoRoot,identity=JSON.stringify([project.id,project.slug,project.legacyFlag]);
     const assertCurrent=()=>{
       if(req.aborted||res.destroyed||assertProjectAccess(req as any,project.id)||stateService.getProject(project.id)!==project||project.paused
-        ||JSON.stringify([project.id,project.slug,project.legacyFlag])!==identity||!instance||config?.storageInstanceId!==instance||config?.repoRoot!==repoRoot)throw new Error('storage_provision_unconfirmed');
+        ||JSON.stringify([project.id,project.slug,project.legacyFlag])!==identity||config?.storageInstanceId!==instance||config?.repoRoot!==repoRoot)throw new Error('storage_provision_unconfirmed');
     };
     try {
-      const applied = await applyInfraPresets(project,presetIds,parseInfraConfigs(body.infraConfigs),parseInfraExtra(body.infraExtra),newOnly?{assertCurrent,allocated}:undefined);
+      const applied = await applyInfraPresets(project,presetIds,parseInfraConfigs(body.infraConfigs),parseInfraExtra(body.infraExtra),{assertCurrent,allocated,strictFresh:body.initializeStorage==='new-only'});
       const services = stateService.getInfraServicesForProject(project.id).filter((s) => applied.includes(s.id));
-      res.json({applied,services,...(newOnly?{storageMode:'allocated'}:{})});
+      res.json({applied,services,storageMode:allocated.length?'allocated':'not-required'});
     } catch {
-      res.status(newOnly?409:500).json(newOnly?{error:'storage_provision_unconfirmed',allocated,recoveryRequired:true}:{error:'infra_presets_failed'});
+      res.status(409).json({error:'storage_provision_unconfirmed',allocated,recoveryRequired:true});
     }
   });
 
@@ -3232,7 +3243,28 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         userEnvEntries.push([key, value]);
       }
     }
-    const appliedInfraPresets = await applyInfraPresets(newProject, infraPresets, parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra));
+    const allocatedPresetStorage: string[] = [];
+    const presetInstance = config?.storageInstanceId, presetRepoRoot = config?.repoRoot;
+    const presetIdentity = JSON.stringify([newProject.id,newProject.slug,newProject.legacyFlag]);
+    const assertFreshPresetsCurrent = () => {
+      if (req.aborted || res.destroyed || stateService.getProject(newProject.id) !== newProject || newProject.paused
+        || assertProjectAccess(req as any,newProject.id)
+        || JSON.stringify([newProject.id,newProject.slug,newProject.legacyFlag]) !== presetIdentity
+        || config?.storageInstanceId !== presetInstance || config?.repoRoot !== presetRepoRoot)
+        throw new Error('storage_provision_unconfirmed');
+    };
+    let appliedInfraPresets: string[];
+    try {
+      appliedInfraPresets = await applyInfraPresets(newProject, infraPresets,
+        parseInfraConfigs(body.infraConfigs), parseInfraExtra(body.infraExtra),
+        {assertCurrent:assertFreshPresetsCurrent,allocated:allocatedPresetStorage,strictFresh:true});
+    } catch {
+      // Keep the new project/network and every original birth, including uncertain P.
+      // Never roll back allocated volumes or silently allocate a new project on retry.
+      res.status(409).json({error:'storage_provision_unconfirmed',project:newProject,
+        allocated:allocatedPresetStorage,recoveryRequired:true});
+      return;
+    }
     // applyInfraPresets 也会写 DATABASE_URL/REDIS_URL 等连接串,会覆盖用户同名粘贴值
     // (基建预设的连接串指向刚创建的容器,优先生效)。但不能"静默"覆盖——收集被覆盖的 key
     // 回传前端 + console.warn,让用户知道粘贴的外部连接串被基建生成值取代了(PR #711 review)。
@@ -4221,6 +4253,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
       return;
     }
+
+    // Before tombstones, state cascade or native teardown: preserve retained storage ownership.
+    try { stateService.assertProjectStorageRemovalAllowed(project.id); }
+    catch (error) { res.status(409).json({error:'storage_retained_service_delete_refused',message:(error as Error).message}); return; }
 
     // 2026-07-15（用户实锤修复）：删项目必须连带容器。此前"容器故意不清理"
     // 导致已删项目的 infra / app 容器永远留在宿主上吃 CPU（单日取证 68 个

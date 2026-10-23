@@ -115,8 +115,26 @@ describe('explicit existing-project presets storage P',()=>{
   const r=await post({presetIds:['mysql','postgres'],initializeStorage:'new-only'},'p','/api/projects/p/infra-presets');expect(r.status).toBe(409);expect(r.body.allocated).toEqual(['mysql']);expect(state.getCustomEnv('p').DATABASE_URL).toBeTruthy();await state.flush();
   const reopened=new MongoSplitStateBackingStore(handle);await reopened.init();const loaded=new StateService(path.join(root,'mongo-reopened.json'),root,reopened);loaded.load();expect(loaded.getStorageBirth(name)?.stage).toBe('published');expect(loaded.getCustomEnv('p').DATABASE_URL).toBeTruthy();expect(loaded.getEnvMeta('p').DATABASE_URL?.kind).toBe('infra-derived');await loaded.flush();
  });
- it('metadata-only existing request never issues physical volume creation',async()=>{
-  const r=await post({presetIds:['mysql']},'p','/api/projects/p/infra-presets');expect(r.status).toBe(200);expect(r.body.applied).toEqual(['mysql']);expect(commands.some(c=>c.startsWith('docker volume create'))).toBe(false);expect(state.getStorageBirth(name)).toBeUndefined();
+ it('existing UI without allocation flag publishes actual stable storage before success',async()=>{
+  const r=await post({presetIds:['mysql']},'p','/api/projects/p/infra-presets');expect(r.status).toBe(200);expect(r.body.storageMode).toBe('allocated');expect(r.body.applied).toEqual(['mysql']);expect(state.getStorageBirth(name)?.stage).toBe('published');expect(commands.filter(c=>c.startsWith('docker volume create'))).toHaveLength(1);
+ });
+ it('stateless preset without a flag remains metadata only with no storage instance configured',async()=>{
+  delete config.storageInstanceId;
+  const r=await post({presetIds:['memcached']},'p','/api/projects/p/infra-presets');expect(r.status).toBe(200);expect(r.body.storageMode).toBe('not-required');expect(r.body.applied).toEqual(['memcached']);expect(commands).toHaveLength(0);expect(state.getInfraServiceForProjectAndId('p','memcached')?.volumes||[]).toEqual([]);
+ });
+ it('new project preset creation uses actual P without needing an optional UI flag',async()=>{
+  const native=new Map<string,any>();vi.mocked(shell.exec).mockImplementation(async(c)=>{
+   commands.push(c);if(c.startsWith('docker info'))return {exitCode:0,stderr:'',stdout:'own-daemon'};
+   const n=c.split(' ').at(-1)!.replace(/^'|'$/g,'');
+   if(c.startsWith('docker volume inspect'))return native.has(n)?{exitCode:0,stderr:'',stdout:JSON.stringify([native.get(n)])}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};
+   if(c.startsWith('docker volume create')){const row=state.getStorageBirth(n)!;native.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return {exitCode:0,stderr:'',stdout:n}}
+   return {exitCode:0,stderr:'',stdout:''};
+  });
+  const r=await post({name:'Fresh preset test',infraPresets:['mysql']},'', '/api/projects');expect(r.status).toBe(201);
+  const projectId=r.body.project.id;expect(state.getStorageBirthsForService(projectId,'mysql')).toHaveLength(1);expect(state.getStorageBirthsForService(projectId,'mysql')[0].stage).toBe('published');expect(state.getInfraServiceForProjectAndId(projectId,'mysql')).toBeDefined();expect(native.size).toBe(1);
+ });
+ it('new project P failure retains original project/network and held birth instead of rollback',async()=>{
+  failInspect=true;const r=await post({name:'Failed fresh P',infraPresets:['mysql']},'', '/api/projects');expect(r.status).toBe(409);expect(r.body.recoveryRequired).toBe(true);expect(state.getProject(r.body.project.id)).toBeDefined();expect(commands.some(c=>c.startsWith('docker network rm'))).toBe(false);expect(commands.some(c=>c.includes('volume rm'))).toBe(false);
  });
  it('rejects unsupported allocation option instead of silently returning metadata success',async()=>{
   const r=await post({presetIds:['mysql'],initializeStorage:'guess'},'p','/api/projects/p/infra-presets');expect(r.status).toBe(400);expect(state.getInfraServiceForProjectAndId('p','mysql')).toBeUndefined();expect(commands).toHaveLength(0);
@@ -166,5 +184,48 @@ describe('quickstart explicit new-only durable storage allocation',()=>{
  });
  it('pause during observation prevents native allocation and startup',async()=>{
   const exec=vi.mocked(shell.exec).getMockImplementation()!;vi.mocked(shell.exec).mockImplementation(async(c,options)=>{if(c.startsWith('docker info'))state.getProject('p')!.paused=true;return exec(c,options)});vi.spyOn(container,'startInfraService').mockResolvedValue(undefined);const r=await post({projectId:'p',compose,initializeStorage:'new-only'},'p',route);expect(r.status).toBe(409);expect(commands.some(c=>c.startsWith('docker volume create'))).toBe(false);expect(container.startInfraService).not.toHaveBeenCalled();
+ });
+});
+
+async function removeOwned(route:string){return new Promise<{status:number;body:any}>((resolve,reject)=>{const q=http.request({hostname:'127.0.0.1',port:(server.address() as any).port,path:route,method:'DELETE',headers:{'x-owned-project':'p',Connection:'close'}},r=>{let s='';r.on('data',c=>s+=c);r.on('end',()=>resolve({status:r.statusCode!,body:JSON.parse(s)}))});q.on('error',reject);q.end()});}
+describe('HTTP retained storage is rejected before lifecycle or metadata changes',()=>{
+ it('published infra DELETE is 409 before stop and retains its full metadata',async()=>{
+  expect((await post(input())).status).toBe(201);const before=structuredClone(state.getInfraServiceForProjectAndId('p','mysql'));const count=commands.length;const stop=vi.spyOn(container,'stopInfraService').mockResolvedValue(undefined);
+  const r=await removeOwned('/api/infra/mysql?project=p');expect(r.status).toBe(409);expect(r.body.error).toBe('storage_retained_service_delete_refused');expect(stop).not.toHaveBeenCalled();expect(commands).toHaveLength(count);expect(state.getInfraServiceForProjectAndId('p','mysql')).toEqual(before);
+ });
+ it('project DELETE is 409 before teardown tombstone, cascade or native work',async()=>{
+  expect((await post(input())).status).toBe(201);const count=commands.length;const mark=vi.spyOn(state,'addContainerTeardownTombstones');const project=state.getProject('p');
+  const r=await removeOwned('/api/projects/p');expect(r.status).toBe(409);expect(mark).not.toHaveBeenCalled();expect(commands).toHaveLength(count);expect(state.getProject('p')).toBe(project);expect(state.getInfraServiceForProjectAndId('p','mysql')).toBeDefined();
+ });
+ it('ordinary no-birth infra deletion keeps existing behavior',async()=>{
+  state.addInfraService({id:'plain',projectId:'p',name:'plain',dockerImage:'alpine:3',containerPort:8080,hostPort:18080,containerName:'plain',status:'stopped',env:{},volumes:[],createdAt:'2026-10-23'});const stop=vi.spyOn(container,'stopInfraService').mockResolvedValue(undefined);
+  const r=await removeOwned('/api/infra/plain?project=p');expect(r.status).toBe(200);expect(stop).toHaveBeenCalledTimes(1);expect(state.getInfraServiceForProjectAndId('p','plain')).toBeUndefined();
+ });
+});
+
+describe('ordinary preset UI compatibility still allocates every new persistent ID',()=>{
+ function nativeFixture(){const native=new Map<string,any>();vi.mocked(shell.exec).mockImplementation(async(c)=>{
+  commands.push(c);if(c.startsWith('docker info'))return {exitCode:0,stderr:'',stdout:'own-daemon'};
+  const n=c.split(' ').at(-1)!.replace(/^'|'$/g,'');
+  if(c.startsWith('docker volume inspect'))return native.has(n)?{exitCode:0,stderr:'',stdout:JSON.stringify([native.get(n)])}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};
+  if(c.startsWith('docker volume create')){const row=state.getStorageBirth(n)!;native.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return {exitCode:0,stderr:'',stdout:n}}
+  throw Error('unexpected native fixture command');
+ });return native;}
+ const route='/api/projects/p/infra-presets';
+ it('no-flag repeated DB request creates mysql-2 with its own actual published birth',async()=>{
+  const native=nativeFixture();expect((await post({presetIds:['mysql']},'p',route)).status).toBe(200);
+  const r=await post({presetIds:['mysql']},'p',route);expect(r.status).toBe(200);expect(r.body.applied).toEqual(['mysql-2']);expect(native.size).toBe(2);expect(state.getStorageBirthsForService('p','mysql-2')[0].stage).toBe('published');
+ });
+ it('no-flag singleton repeat is 200/no-op with no further native operations',async()=>{
+  nativeFixture();expect((await post({presetIds:['kafka']},'p',route)).status).toBe(200);const count=commands.length;
+  const r=await post({presetIds:['kafka']},'p',route);expect(r.status).toBe(200);expect(r.body.applied).toEqual([]);expect(commands).toHaveLength(count);expect(state.getInfraServiceForProjectAndId('p','kafka-2')).toBeUndefined();
+ });
+ it('no-flag held original ID without a published service blocks instead of advancing',async()=>{
+  failInspect=true;expect((await post({presetIds:['mysql']},'p',route)).status).toBe(409);const original=structuredClone(state.getStorageBirth(name));expect(original?.stage).toBe('held');expect(state.getInfraServiceForProjectAndId('p','mysql')).toBeUndefined();failInspect=false;const count=commands.length;
+  const r=await post({presetIds:['mysql']},'p',route);expect(r.status).toBe(409);expect(commands).toHaveLength(count);expect(state.getStorageBirth(name)).toEqual(original);expect(state.getStorageBirthsForService('p','mysql-2')).toEqual([]);
+ });
+ it('explicit new-only remains strict after a successful UI allocation',async()=>{
+  nativeFixture();expect((await post({presetIds:['mysql']},'p',route)).status).toBe(200);const count=commands.length;
+  const r=await post({presetIds:['mysql'],initializeStorage:'new-only'},'p',route);expect(r.status).toBe(409);expect(commands).toHaveLength(count);expect(state.getStorageBirthsForService('p','mysql-2')).toEqual([]);
  });
 });

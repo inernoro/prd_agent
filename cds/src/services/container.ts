@@ -1,3 +1,4 @@
+import {withWritableSourceLayer, sourceWorkspaceCommand} from './source-workspace.js';
 import { nativeBindMountInspector, guardBindMountShell, type BindMountInspector } from './deployment-bind-mount-proof.js';
 import { acquireBuildSlot } from './build-gate.js';
 import fs from 'node:fs';
@@ -1163,7 +1164,7 @@ export class ContainerService {
       }
     }
 
-    const runtimeStoragePlan = plan.mounts.some(m => m.kind === 'tmpfs') ? plan : withRuntimeTmpfs(plan);
+    const runtimeStoragePlan = withWritableSourceLayer(plan.mounts.some(m => m.kind === 'tmpfs') ? plan : withRuntimeTmpfs(plan));
     return { containerWorkDir, volumeFlags: renderStoragePlan(runtimeStoragePlan), isNodeContainer, skipSrcMount, runtimeStoragePlan };
   }
 
@@ -1381,7 +1382,7 @@ export class ContainerService {
       const copy = this.networkResolver?.resolveProfileStorage?.(entry,initial) || initial;
       if (prior) this.admittedProfileStorage.set(copy, prior);
       assertProfileStorageBoundary(copy, entry.worktreePath);
-      this.bindMountInspector(withRuntimeTmpfs(profileStoragePlan(entry, copy, this.config)))();
+      this.bindMountInspector(withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, copy, this.config))))();
       return copy;
     });
     const accepted: BuildProfile[] = [];
@@ -1431,7 +1432,7 @@ export class ContainerService {
     if (profile.managedBuild) throw new UnsafeDeploymentStorageError(profile.id, 'storage-runtime-artifact-required');
     // Artifact selection is owned by the existing admission path, never by storage preflight.
     if (profile.prebuiltImage && !profile.localArtifact) throw new UnsafeDeploymentStorageError(profile.id, 'storage-image-not-admitted');
-    const plan = withRuntimeTmpfs(profileStoragePlan(acceptedEntry, profile, this.config));
+    const plan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(acceptedEntry, profile, this.config)));
     prior?.checkBindMounts();
     const checkBindMounts = this.bindMountInspector(plan);
     await this.inspectAcceptedStorage(shell, plan);
@@ -1541,7 +1542,7 @@ export class ContainerService {
       if (!profile.prebuiltImage) entry = { ...entry, githubCommitSha: sourceCheckout.commitSha, ciTargetSha: undefined };
     }
     assertProfileStorageBoundary(profile, entry.worktreePath);
-    const acceptedStoragePlan = withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config));
+    const acceptedStoragePlan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config)));
     const checkBindMounts = this.bindMountInspector(acceptedStoragePlan);
     const originalAssertCurrent = context.assertCurrent;
     context = {...context, assertCurrent: step => { originalAssertCurrent?.(step); checkBindMounts(); }};
@@ -1999,7 +2000,7 @@ export class ContainerService {
 
       // 给源码 build/install 动词降调度优先级(nice)，让编译不饿死同机预览/代理。
       // 仅作用于 sh -c "command" 源码路径；极速版预构建镜像(usePrebuiltEntrypoint)不经过。
-      if (!usePrebuiltEntrypoint) command = niceBuildCommands(command);
+      if (!usePrebuiltEntrypoint) command = sourceWorkspaceCommand(runtimeStoragePlan, niceBuildCommands(command));
 
       // 防御性兜底（根治 `Unable to find image 'sh:latest'`）：到这一步 dockerImage 绝不能为空。
       // 空镜像会让 `docker run ... <labels>  sh -c "..."` 把命令 token `sh` 当成镜像名去拉，报
@@ -2240,7 +2241,7 @@ export class ContainerService {
     if (customEnv) customEnv = {...customEnv};
     let shell = this.qualifiedShell(context.assertCurrent);
     assertProfileStorageBoundary(profile, entry.worktreePath);
-    const acceptedStoragePlan = withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config));
+    const acceptedStoragePlan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config)));
     const checkBindMounts = this.bindMountInspector(acceptedStoragePlan);
     const originalAssertCurrent = context.assertCurrent;
     context = {...context, assertCurrent: step => { originalAssertCurrent?.(step); checkBindMounts(); }};
@@ -2302,7 +2303,7 @@ export class ContainerService {
         `--label cds.branch.id=${entry.id}`,
         `--label cds.profile.id=${profile.id}`,
       ];
-      const jobTail = [this.shellQuote(jobImage), `sh -c ${this.shellQuote(command)}`];
+      const jobTail = [this.shellQuote(jobImage), `sh -c ${this.shellQuote(sourceWorkspaceCommand(runtimeStoragePlan, command))}`];
       const timeoutMs = context.timeoutMs ?? profile.buildTimeout ?? 600_000;
 
       context.assertCurrent?.(`runProfileCommand before docker-run ${profile.id}`);

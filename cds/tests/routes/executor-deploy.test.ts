@@ -429,7 +429,7 @@ describe('Executor /exec/deploy', () => {
         return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
       }
       if (/^docker (run|create) /.test(command)) {
-        const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/app,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
+        const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/.__cds_source_ro,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
         if (mount) mounts.push({ path: mount[1], version: fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8') });
       }
       return original(command, options);

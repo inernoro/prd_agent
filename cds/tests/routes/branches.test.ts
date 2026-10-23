@@ -486,18 +486,103 @@ describe('Branch Routes', () => {
           return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
         }
         if (command.startsWith('docker run --rm') && command.includes('prisma')) {
-          const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/app,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
+          const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/.__cds_source_ro,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
           if (mount) migrationMounts.push(fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8'));
           return { stdout: '', stderr: '', exitCode: 0 };
         }
         if (isAppLaunchCommand(command)) {
-          const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/app,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
+          const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/.__cds_source_ro,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
           if (mount) mounts.push({ path: mount[1], version: fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8') });
         }
         return original(command, options);
       };
       return { git, current, entry, shaA, shaB, mounts, migrationMounts };
     }
+    it('manual migration freezes local B through the official canonical link and mounts only a detached B source', async () => {
+      // macOS /var is itself a symlink. Use the real owned parent so only the
+      // intentionally constructed official leaf link is under examination.
+      tmpDir = fs.realpathSync(tmpDir);
+      config.repoRoot = tmpDir; config.worktreeBase = path.join(tmpDir, 'worktrees');
+      const f = await sourceFixture(true);
+      const canonical = path.join(config.worktreeBase, 'default', f.entry.id);
+      fs.mkdirSync(path.dirname(canonical), { recursive: true });
+      fs.symlinkSync(f.current, canonical, 'dir'); f.entry.worktreePath = canonical;
+      const { nativeBindMountInspector } = await import('../../src/services/deployment-bind-mount-proof.js');
+      const { worktreePathActivity } = await import('../../src/services/worktree-path-activity.js');
+      const native = vi.spyOn(containerService as any, 'bindMountInspector').mockImplementation(nativeBindMountInspector as any);
+      const prepared = vi.spyOn(WorktreeService.prototype, 'prepareDeploymentSource');
+      const shell = new ShellExecutor(), original = mock.exec.bind(mock);
+      let moved = false, observedClaim = false;
+      mock.exec = async (command, options) => {
+        if (command.startsWith('git ') && (options?.cwd === canonical || options?.cwd === f.current || options?.cwd?.includes('.deployment-sources'))) {
+          if (!moved && options?.cwd === canonical && /\bfetch\b/.test(command)) {
+            // The accepted HEAD was B. Advance the mutable worktree to A exactly
+            // before source preparation fetch; the explicit snapshot must stay B.
+            f.git(['reset', '--hard', f.shaA], f.current); moved = true;
+          }
+          return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
+        }
+        if (command.startsWith('docker run --rm') && command.includes('prisma')) {
+          const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/.__cds_source_ro,readonly'/);
+          expect(mount).not.toBeNull();
+          const competing = worktreePathActivity.tryAcquire([mount![1]]);
+          competing?.release(); expect(competing).toBeNull(); observedClaim = true;
+        }
+        return original(command, options);
+      };
+      try {
+        // Do not weaken the runtime guard to accept arbitrary/direct symlinks.
+        await expect(containerService.preflightProfileStorage(f.entry, stateService.getBuildProfile('api')!)).rejects.toThrow('storage-bind-identity-unconfirmed');
+        const result = await request(server, 'POST', `/api/branches/${f.entry.id}/database-init/run`, { profileId: 'api', command: 'pnpm exec prisma migrate deploy' });
+        expect(result.status).toBe(200); expect(result.body).toMatchObject({ ok: true, exitCode: 0 });
+        expect(prepared).toHaveBeenCalledWith('main', canonical, f.shaB);
+        expect(moved).toBe(true); expect(observedClaim).toBe(true); expect(f.migrationMounts).toEqual(['B']);
+        const snapshot = prepared.mock.results[0]; expect(snapshot.type).toBe('return');
+        const source = await snapshot.value;
+        expect(source.afterFull).toBe(f.shaB); expect(fs.realpathSync(source.sourcePath)).toBe(source.sourcePath);
+        expect(f.git(['rev-parse', 'HEAD'], source.sourcePath)).toBe(f.shaB);
+        expect(fs.readFileSync(path.join(source.sourcePath, 'version.txt'), 'utf8')).toBe('B');
+        expect(f.git(['rev-parse', 'HEAD'], canonical)).toBe(f.shaA);
+        expect(fs.lstatSync(canonical).isSymbolicLink()).toBe(true);
+        expect(fs.readFileSync(path.join(canonical, 'version.txt'), 'utf8')).toBe('A');
+      } finally { mock.exec = original; prepared.mockRestore(); native.mockRestore(); }
+    });
+    it('受理的 managed 制品同时用于数据库迁移，不能被模式再次覆盖为基础镜像', async () => {
+      const f = await sourceFixture(true);
+      stateService.removeBuildProfile('web');
+      const managed = { stack: 'node' as const, installCommand: 'pnpm install', buildCommand: 'pnpm build', startCommand: 'node server.js', artifactImage: 'fixture:built' };
+      stateService.updateBuildProfile('api', { managedBuild: managed, deployModes: { source: { dockerImage: 'node:20', prebuilt: false, command: 'pnpm build && node server.js' } } });
+      f.entry.profileOverrides = { api: { activeDeployMode: 'source' } };
+      const image = 'sha256:' + 'd'.repeat(64);
+      const admitted = { ...resolveEffectiveProfile(stateService.getBuildProfile('api')!, f.entry), dockerImage: image, managedBuild: undefined, prebuiltImage: true, localArtifact: true, command: 'node server.js' };
+      const preflight = vi.spyOn(containerService, 'preflightDeploymentStorage').mockResolvedValue([admitted]);
+      const job = vi.spyOn(containerService, 'runProfileCommand').mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 });
+      const runtime = vi.spyOn(containerService, 'runService').mockResolvedValue(undefined);
+      try {
+        const response = await request(server, 'POST', `/api/branches/${f.entry.id}/deploy`, { commitSha: f.shaA });
+        expect(String(response.body)).not.toContain('event: error');
+        expect(preflight).toHaveBeenCalled(); expect(job).toHaveBeenCalled();
+        for (const call of job.mock.calls) expect(call[1]).toMatchObject({ dockerImage: image, localArtifact: true, prebuiltImage: true, managedBuild: undefined });
+        expect(runtime).toHaveBeenCalled();
+      } finally { preflight.mockRestore(); job.mockRestore(); runtime.mockRestore(); }
+    });
+    it('组件制品的仓库根迁移仍使用固定镜像和本次根源码副本', async () => {
+      const f = await sourceFixture(true); stateService.removeBuildProfile('web');
+      fs.mkdirSync(path.join(f.current, 'component')); fs.writeFileSync(path.join(f.current, 'component/package.json'), JSON.stringify({name:'component',scripts:{start:'node server.js'}}));
+      f.git(['add','.'],f.current); f.git(['commit','-m','组件源'],f.current); const target=f.git(['rev-parse','HEAD'],f.current);
+      const image='sha256:'+'e'.repeat(64);
+      stateService.updateBuildProfile('api',{workDir:'component',managedBuild:{stack:'node',installCommand:'pnpm install',buildCommand:'pnpm build',startCommand:'node server.js',artifactImage:'fixture:component'}});
+      const admitted={...stateService.getBuildProfile('api')!,dockerImage:image,managedBuild:undefined,prebuiltImage:true,localArtifact:true};
+      const preflight=vi.spyOn(containerService,'preflightDeploymentStorage').mockResolvedValue([admitted]);
+      const job=vi.spyOn(containerService,'runProfileCommand').mockResolvedValue({stdout:'',stderr:'',exitCode:0});
+      const runtime=vi.spyOn(containerService,'runService').mockResolvedValue(undefined);
+      try {
+        const response=await request(server,'POST',`/api/branches/${f.entry.id}/deploy`,{commitSha:target});
+        expect(String(response.body)).not.toContain('event: error'); expect(job).toHaveBeenCalledOnce();
+        expect(job.mock.calls[0][1]).toMatchObject({dockerImage:image,workDir:'.',prebuiltImage:false,managedBuild:undefined});
+        expect(job.mock.calls[0][0].worktreePath).not.toBe(f.current); expect(f.git(['rev-parse','HEAD'],job.mock.calls[0][0].worktreePath)).toBe(target);
+      }finally{preflight.mockRestore();job.mockRestore();runtime.mockRestore();}
+    });
     it('整分支迁移任务和应用均从请求A的源码读取', async () => {
       const f = await sourceFixture(true);
       const result = await request(server, 'POST', `/api/branches/${f.entry.id}/deploy`, { commitSha: f.shaA });

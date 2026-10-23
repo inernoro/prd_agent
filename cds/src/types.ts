@@ -82,6 +82,8 @@ export interface BuildProfile {
   env?: Record<string, string>;
   /** Volume mounts for shared caches (e.g., node_modules, nuget) */
   cacheMounts?: CacheMount[];
+  /** Original retired CDS compiler-cache declarations; metadata only, physical bytes untouched. */
+  retiredCatalogCacheMounts?: CacheMount[];
   /** Timeout for build in ms (default: 600000) */
   buildTimeout?: number;
   /**

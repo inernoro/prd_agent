@@ -11,7 +11,7 @@ export class UnsafeDeploymentStorageError extends Error {
 }
 
 export type PlannedMount = Readonly<{ kind: 'bind' | 'volume' | 'tmpfs'; source: string; target: string; readOnly: boolean;
-  purpose: 'source' | 'config' | 'cache' | 'persistent' | 'ephemeral'; storage?: Readonly<StorageBinding>; sourceRoot?: string; serverTool?: true }>;
+  purpose: 'source' | 'config' | 'cache' | 'persistent' | 'ephemeral'; storage?: Readonly<StorageBinding>; sourceRoot?: string; workspaceTarget?: string; serverTool?: true }>;
 export type DeploymentStoragePlan = Readonly<{ version: 1; mounts: readonly PlannedMount[]; digest: string }>;
 const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
 function fail(reason: string): never { throw new UnsafeDeploymentStorageError('plan', reason); }

@@ -1,11 +1,17 @@
 import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import ts from 'typescript';
 import { clearContainerLifecycleIntentsForTest, findRecentContainerLifecycleIntent } from '../../src/services/container-diagnostics.js';
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
+
+// Parse generated argv through the actual host shell without invoking Docker or a workload.
+function dockerArgv(command: string): string[] {
+  return execFileSync('/bin/sh', ['-c', `docker() { printf '%s\\0' "$@"; }; ${command}`], {encoding: 'utf8'}).split('\0').filter(Boolean);
+}
 
 const makeConfig = (): CdsConfig => ({
   repoRoot: '/repo',
@@ -116,7 +122,7 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--name cds-feature-a-api');
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain('-p 127.0.0.1:10001:8080');
-      expect(runCmd).toContain("--mount 'type=bind,src=/wt/feature-a/prd-api,dst=/app,readonly'");
+      expect(runCmd).toContain("--mount 'type=bind,src=/wt/feature-a/prd-api,dst=/.__cds_source_ro,readonly'");
       expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet restore && dotnet watch run');
 
@@ -560,7 +566,7 @@ describe('ContainerService', () => {
       expect(dockerRuns[0]).toContain('docker run -d');
       // host-shell 安全（Codex P1）：command 经 shellQuote 单引号转义传给宿主机，宿主机原样交给 docker，
       // 由**容器内** sh -c 解释 $()/$NICE（这才是 NICE 探测的本意——nice 在容器里）。
-      expect(dockerRuns[0]).toContain("sh -c 'NICE=$(command -v nice >/dev/null 2>&1 && echo ");
+      expect(dockerArgv(dockerRuns[0]).at(-1)).toContain("NICE=$(command -v nice >/dev/null 2>&1 && echo ");
       // build/install 动词被 $NICE 降优先级（默认 10），serve(pnpm start) 保持正常优先级；
       // NICE 前导仅在镜像有 nice 时生效，缺则降级为空(不因缺 nice 让构建失败)。
       expect(dockerRuns[0]).toContain('nice -n 10');
@@ -575,7 +581,7 @@ describe('ContainerService', () => {
 
       const profile = makeProfile({
         dockerImage: 'evil:latest; touch /tmp/pwned',
-        command: 'node app.js; touch /tmp/pwned2',
+        command: 'node app.js; printf CDS_COMMAND_INJECTION',
       });
       await service.runService(makeEntry(), profile, makeService());
       const runCmd = mock.commands.find(c => c.includes('docker run'))!;
@@ -585,7 +591,9 @@ describe('ContainerService', () => {
       // args to docker (the `; touch ...` suffix lives inside the quotes, never a separate host command).
       expect(mock.commands.find(c => /docker image inspect.*json .Id/.test(c))).toContain("'evil:latest; touch /tmp/pwned'");
       expect(runCmd).toContain("'sha256:"+'a'.repeat(64)+"'");
-      expect(runCmd).toContain("sh -c 'node app.js; touch /tmp/pwned2'");
+      const args = dockerArgv(runCmd);
+      expect(args.slice(-3,-1)).toEqual(['sh','-c']);
+      expect(args.at(-1)).toContain("exec sh -c 'node app.js; printf CDS_COMMAND_INJECTION'");
     });
 
     it('host-shell-quotes the workDir-derived volume mount and -w so a malicious workDir cannot inject (Codex P1)', async () => {
@@ -600,7 +608,7 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), profile, makeService());
       const runCmd = mock.commands.find(c => c.includes('docker run'))!;
       // 整段挂载源被单引号包住，注入片段留在引号内，宿主机不会把 `;id;` 当独立命令执行。
-      expect(runCmd).toContain(`--mount 'type=bind,src=/wt/feature-a/svc";id;",dst=/app,readonly'`);
+      expect(runCmd).toContain(`--mount 'type=bind,src=/wt/feature-a/svc";id;",dst=/.__cds_source_ro,readonly'`);
       // 旧的双引号写法（会让 ";id;" 逃出）绝不能再出现。
       expect(runCmd).not.toContain('-v "/wt/feature-a/svc";id;""');
     });
@@ -815,12 +823,12 @@ describe('ContainerService', () => {
       expect(runCmd).not.toContain('docker run -d');
       expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
       expect(runCmd).toContain('--network cds-network');
-      expect(runCmd).toContain("--mount 'type=bind,src=/wt/feature-a/prd-api,dst=/app,readonly'");
+      expect(runCmd).toContain("--mount 'type=bind,src=/wt/feature-a/prd-api,dst=/.__cds_source_ro,readonly'");
       expect(runCmd).not.toContain('node_modules');
       expect(runCmd).not.toContain(' -v ');
       expect(runCmd).toContain('--label cds.type=job');
       expect(runCmd).toContain("'sha256:"+'a'.repeat(64)+"'");
-      expect(runCmd).toContain(`sh -c 'pnpm exec prisma migrate deploy'`);
+      expect(dockerArgv(runCmd).at(-1)).toContain("exec sh -c 'pnpm exec prisma migrate deploy'");
 
       const envFileContent = writeSpy.mock.calls[0][1] as string;
       expect(envFileContent).toContain('DATABASE_URL=postgres://user:pass@postgres:5432/app');
