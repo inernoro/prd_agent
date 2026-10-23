@@ -98,6 +98,9 @@ export interface SiteCardProps {
 export function buildCardActionLayers(args: {
   site: Pick<HostedSite, 'id' | 'visibility'>;
   caps: SiteCaps;
+  shared?: boolean;
+  linkCount?: number;
+  onShare: (anchor: HTMLElement) => void;
   onEdit: () => void;
   onQrCode: () => void;
   onTogglePublic: () => void;
@@ -108,7 +111,7 @@ export function buildCardActionLayers(args: {
   onComments?: () => void;
   onAskConfig?: () => void;
   onAiEdit?: () => void;
-}): { hover: CardMoreAction[]; menu: CardMoreAction[] } {
+}): { hover: CardMoreAction[]; menu: CardMoreAction[]; touchActions: number } {
   const { site, caps: c } = args;
   const isPublic = site.visibility === 'public';
 
@@ -139,8 +142,13 @@ export function buildCardActionLayers(args: {
     c.canDelete ? { label: '删除', icon: <Trash2 size={13} />, onClick: args.onDelete, danger: true } : null,
   ].filter(Boolean) as CardMoreAction[];
 
-  // 菜单 = hover 层等价项置顶 + 低频配置。顺序即分组，CardMoreButton 按 hover 条数画分隔线。
-  return { hover, menu: [...hover, ...lowFrequency] };
+  // 分享必须在所有尺寸与触屏的菜单中可达；菜单关闭后仍用常驻的更多按钮锚定分享面板。
+  const share: CardMoreAction[] = c.canShare ? [{
+    label: args.shared ? `管理分享${args.linkCount ? ` · ${args.linkCount}` : ''}` : '分享',
+    icon: args.shared ? <Link2 size={13} /> : <Share2 size={13} />,
+    onClick: args.onShare,
+  }] : [];
+  return { hover, menu: [...share, ...hover, ...lowFrequency], touchActions: share.length + hover.length };
 }
 
 /**
@@ -227,9 +235,12 @@ export function SiteCard({
     if (f) onReplaceFile(f);
   };
 
-  const { hover: hoverActions, menu: menuActions } = buildCardActionLayers({
+  const { hover: hoverActions, menu: menuActions, touchActions } = buildCardActionLayers({
     site,
     caps: c,
+    shared,
+    linkCount,
+    onShare,
     onEdit,
     onQrCode,
     onTogglePublic,
@@ -380,7 +391,7 @@ export function SiteCard({
               className="absolute right-[7px] top-[7px] z-20 hidden [@media(hover:none)]:block"
               onClick={(e) => e.stopPropagation()}
             >
-              <CardMoreButton actions={menuActions} touchActions={hoverActions.length} onScrim />
+              <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
             </div>
           )}
 
@@ -395,7 +406,7 @@ export function SiteCard({
               className="absolute right-[7px] top-[7px] z-20 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
               onClick={(e) => e.stopPropagation()}
             >
-              <CardMoreButton actions={menuActions} touchActions={hoverActions.length} onScrim />
+              <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
             </div>
           )}
 
@@ -463,7 +474,7 @@ export function SiteCard({
                 {hoverActions.map((a) => (
                   <CardIconAction key={a.label} label={a.label} icon={a.icon} onClick={a.onClick} compact onScrim />
                 ))}
-                <CardMoreButton actions={menuActions} touchActions={hoverActions.length} onScrim />
+                <CardMoreButton actions={menuActions} touchActions={touchActions} onScrim />
               </div>
             </div>
           )}
