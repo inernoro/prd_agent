@@ -4558,6 +4558,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function runDatabaseInitializationForDeploy(params: {
     entry: BranchEntry;
+    /** Effective profiles already admitted to fixed runtime artifacts by storage preflight. */
     profiles: BuildProfile[];
     requestId?: string;
     operationId?: string;
@@ -4571,9 +4572,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (profiles.length === 0) return;
     const projectId = entry.projectId || 'default';
     const customEnv = params.customEnv || getMergedEnv(projectId, entry.id);
-    const firstEffective = resolveEffectiveProfile(profiles[0], entry);
+    const firstEffective = profiles[0];
     const scanTargets: Array<{ profile: BuildProfile; scanDir: string; label: string; root: boolean }> = profiles.map((profile) => {
-      const effective = resolveEffectiveProfile(profile, entry);
+      const effective = profile;
       return {
         profile: effective,
         scanDir: path.resolve(entry.worktreePath, effective.workDir || '.'),
@@ -4584,7 +4585,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const rootDir = path.resolve(entry.worktreePath);
     if (!scanTargets.some((target) => target.scanDir === rootDir)) {
       scanTargets.push({
-        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app' },
+        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app',
+          // A component artifact contains only its component checkout. Root-level
+          // migrations keep the admitted image identity but read a separate root
+          // source copy; never retag or rebuild the already admitted app artifact.
+          ...(firstEffective.localArtifact ? { prebuiltImage: false, localArtifact: undefined, managedBuild: undefined } : {}),
+        },
         scanDir: rootDir,
         label: '仓库根目录',
         root: true,
@@ -12924,21 +12930,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     try {
-      const profile = resolveEffectiveProfile(baseProfile, entry);
-      const result = await containerService.runProfileCommand(
-        entry,
-        profile,
-        rawCommand,
-        undefined,
-        getMergedEnv(entry.projectId || 'default', entry.id),
-        {
-          requestId,
-          operationId: branchOperationLease?.operationId || undefined,
-          actor: resolveActorFromRequest(req),
-          trigger: triggerFromRequest(req),
-          timeoutMs: profile.buildTimeout ?? 600_000,
-        },
-      );
+      const profile = structuredClone(resolveEffectiveProfile(baseProfile, entry));
+      const customEnv = {...getMergedEnv(entry.projectId || 'default', entry.id)};
+      const originalProject = stateService.getProject(entry.projectId || 'default');
+      const manualFacts = () => JSON.stringify({
+        branch: [entry.id, entry.projectId, entry.branch, entry.worktreePath, entry.executorId],
+        config: [config.repoRoot, config.storageInstanceId],
+        profile: stateService.getEffectiveProfilesForBranch(entry).find(row => row.id === profile.id),
+        env: getMergedEnv(entry.projectId || 'default', entry.id),
+      });
+      const acceptedFacts = manualFacts();
+      const assertCurrent = (step: string) => {
+        assertBranchOperationCurrent(branchOperationLease, step);
+        if (req.aborted || res.destroyed || originalProject?.paused || stateService.getBranch(id) !== entry
+          || stateService.getProject(entry.projectId || 'default') !== originalProject
+          || manualFacts() !== acceptedFacts) throw new Error('手动迁移受理的分支或配置已变化，已拒绝继续');
+      };
+      const run = async (runEntry: BranchEntry, runProfile: BuildProfile) => {
+        assertCurrent('manual migration before run');
+        const result = await containerService.runProfileCommand(runEntry, runProfile, rawCommand, undefined, customEnv, {
+          requestId, operationId: branchOperationLease?.operationId || undefined,
+          actor: resolveActorFromRequest(req), trigger: triggerFromRequest(req),
+          timeoutMs: runProfile.buildTimeout ?? 600_000, assertCurrent,
+        });
+        assertCurrent('manual migration after run');
+        return result;
+      };
+      const result = deploymentNeedsSourceCheckout([profile])
+        ? await worktreePathActivity.withClaim([entry.worktreePath, WorktreeService.deploymentSourceRootFor(entry.worktreePath)], async () => {
+          assertCurrent('manual migration before local HEAD');
+          // Explicit manual migration means this accepted checkout HEAD, never remote latest.
+          const head = await shell.exec("git rev-parse --verify 'HEAD^{commit}'", {
+            cwd: entry.worktreePath, timeout: 3000,
+            beforeStart: () => assertCurrent('manual migration HEAD slot'),
+          });
+          assertCurrent('manual migration after local HEAD');
+          const acceptedHead = head.stdout.trim().toLowerCase();
+          if (head.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(acceptedHead)) throw new Error('当前分支提交无法确认，已拒绝手动迁移');
+          const source = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, acceptedHead);
+          assertCurrent('manual migration source prepared');
+          if (source.afterFull !== acceptedHead) throw new Error('手动迁移源码未匹配受理提交');
+          const sourceEntry = {...entry, worktreePath: source.sourcePath, githubCommitSha: acceptedHead, ciTargetSha: undefined};
+          const [acceptedProfile] = await containerService.preflightDeploymentStorage(sourceEntry, [profile], {
+            sourceCommitSha: acceptedHead, customEnv, operationId: branchOperationLease?.operationId || undefined, assertCurrent,
+          });
+          assertCurrent('manual migration storage accepted');
+          return run(sourceEntry, acceptedProfile);
+        }) : await run({...entry}, profile);
       const output = maskSecretsText(combinedOutput(result), { mask: true });
       completeBranchOperation(branchOperationLease, result.exitCode === 0 ? 'completed' : 'failed');
       res.status(result.exitCode === 0 ? 200 : 500).json({
@@ -14063,7 +14101,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } else {
         await runDatabaseInitializationForDeploy({
           entry: deploymentSourceEntry,
-          profiles,
+          profiles: storageAccepted,
           customEnv: getDeploymentEnv(deploymentInput, entry.projectId),
           requestId,
           operationId: branchOperationLease?.operationId || undefined,
@@ -19689,19 +19727,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           installPrefix: 'corepack enable && pnpm install --frozen-lockfile && ',
           runPrefix: 'corepack enable && pnpm exec ',
-          cacheMounts: [{ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' }],
+          cacheMounts: [],
         };
       case 'yarn':
         return {
           installPrefix: 'corepack enable && yarn install --frozen-lockfile && ',
           runPrefix: 'corepack enable && yarn exec ',
-          cacheMounts: [{ hostPath: `${cacheBase}/yarn`, containerPath: '/usr/local/share/.cache/yarn' }],
+          cacheMounts: [],
         };
       default:
         return {
           installPrefix: 'npm install && ',
           runPrefix: 'npx ',
-          cacheMounts: [{ hostPath: `${cacheBase}/npm`, containerPath: '/root/.npm' }],
+          cacheMounts: [],
         };
     }
   }
@@ -19865,9 +19903,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         workDir: 'prd-api',
         command: 'dotnet restore && dotnet build --no-restore && dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
         containerPort: 8080,
-        cacheMounts: [
-          { hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' },
-        ],
+        cacheMounts: [],
       },
       {
         id: 'admin',
@@ -21635,12 +21671,14 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
+      stateService.assertInfraRemovalAllowed(id, resolved.projectId);
       // 删除路径：容器与登记一起删，下一步是「重新添加」而不是「重新启动」。
       try { await containerService.stopInfraService(service.containerName, 'cds-infra-remove'); } catch { /* ok */ }
       stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
     } catch (err) {
+      if ((err as Error).message.startsWith('storage_retained_service_delete_refused:')) { res.status(409).json({ error: 'storage_retained_service_delete_refused', message: (err as Error).message }); return; }
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -22171,6 +22209,11 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         return;
       }
 
+      // Whole replacement must be rejected before profiles/env/snapshot changes.
+      if (cleanMode === 'replace-all') {
+        try { for (const project of stateService.getProjects()) stateService.assertProjectStorageRemovalAllowed(project.id); }
+        catch (error) { res.status(409).json({ error: 'storage_retained_service_delete_refused', message: (error as Error).message }); return; }
+      }
       // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
       const snapshotLabel = cleanMode === 'replace-all'
         ? `导入前（replace-all）· ${new Date().toLocaleString('zh-CN')}`

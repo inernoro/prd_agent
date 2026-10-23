@@ -32,6 +32,7 @@ function nativeFacts(plan: DeploymentStoragePlan): string {
         facts.push([current, String(stat.dev), String(stat.ino), String(stat.mode)]);
       }
       const terminal = fs.lstatSync(source);
+      if (mount.workspaceTarget && !terminal.isDirectory()) fail();
       if (mount.serverTool && !terminal.isFile()) fail();
       if (fs.realpathSync(source) !== source) fail();
     }

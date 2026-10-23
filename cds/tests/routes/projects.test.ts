@@ -21,6 +21,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { createProjectsRouter, LEGACY_PROJECT_ID } from '../../src/routes/projects.js';
 import { StateService } from '../../src/services/state.js';
+import {storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 import type { Project, BranchEntry, BuildProfile, CdsConfig } from '../../src/types.js';
@@ -1631,6 +1632,23 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
   let server: http.Server;
   const REPOS_BASE = '/test-repos';
 
+  let config: any;
+  function enableCatalogStorageFixture() {
+    config.storageInstanceId='owned-test'; config.repoRoot=tmpDir;
+    const volumes=new Map<string,unknown>();
+    shell.addResponsePatternFirst(/^docker info /,()=>({stdout:'owned-test-daemon',stderr:'',exitCode:0}));
+    shell.addResponsePatternFirst(/^docker volume inspect (.*)$/,m=>{
+      const name=m[1].replace(/^'|'$/g,'');return volumes.has(name)?{stdout:JSON.stringify([volumes.get(name)]),stderr:'',exitCode:0}:{stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume',exitCode:1};
+    });
+    shell.addResponsePatternFirst(/^docker volume create (.*)$/,m=>{
+      const name=m[1].split(' ').at(-1)!.replace(/^'|'$/g,''),birth=stateService.getStorageBirth(name)!;
+      expect(birth.stage).toBe('issued');
+      volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(birth.binding),'cds.storage.birth':birth.birthNonce}});
+      return{stdout:name,stderr:'',exitCode:0};
+    });
+    return volumes;
+  }
+
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-projects-clone-test-'));
     const stateFile = path.join(tmpDir, 'state.json');
@@ -1642,7 +1660,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
 
     // Build a minimal config with just reposBase — the rest of
     // CdsConfig is unused by the projects router.
-    const config = { reposBase: REPOS_BASE } as any;
+    config = { reposBase: REPOS_BASE };
 
     const app = express();
     app.use(express.json());
@@ -1698,6 +1716,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('creates selected infra presets and project env vars during onboarding', async () => {
+      enableCatalogStorageFixture();
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Railway Style',
         gitRepoUrl: 'https://github.com/example/railway-style.git',
@@ -1732,6 +1751,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('surfaces (not silently swallows) user customEnv overwritten by infra connection strings', async () => {
+      enableCatalogStorageFixture();
       const res = await request(server, 'POST', '/api/projects', {
         name: 'Env Collision',
         gitRepoUrl: 'https://github.com/example/env-collision.git',
@@ -1754,6 +1774,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('applies infra presets (real secrets + env) to an existing project via /infra-presets', async () => {
+      enableCatalogStorageFixture();
       const created = await request(server, 'POST', '/api/projects', { name: 'Topo Preset' });
       expect(created.status).toBe(201);
       const pid = created.body.project.id;
@@ -1783,6 +1804,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('singleton guard: a 2nd same-type non-DB preset (kafka) is never created across repeated calls', async () => {
+      enableCatalogStorageFixture();
       // Kafka self-advertises as kafka:9092 in its container env; a 2nd instance would
       // collide with the 1st. Only DBs (supportsDbName) may multi-instance. The guard
       // must hold even when the 2nd request comes from a separate infra-presets call
@@ -1803,6 +1825,7 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     });
 
     it('DB presets still multi-instance: a 2nd postgres call yields postgres-2 with its own connection string', async () => {
+      enableCatalogStorageFixture();
       const created = await request(server, 'POST', '/api/projects', { name: 'Multi PG' });
       const pid = created.body.project.id;
 

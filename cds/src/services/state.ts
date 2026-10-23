@@ -72,7 +72,7 @@ import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-d
 import { sanitizeProfileOverride, resolveEffectiveProfile } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
 import { createReportObjectStore, type ReportObjectStore } from './report-object-store.js';
-import { buildCacheMounts } from './cache-catalog.js';
+import { retireGeneratedCatalogCaches, mergeRetiredCatalogCaches } from './cache-catalog.js';
 import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
 import { isGenericPreviewProjectSlug, repoNameFromGitRef, projectHistoricalSlugs, projectReservedIdentifiers } from './preview-slug.js';
@@ -660,47 +660,16 @@ export class StateService {
     return hasDefaultBranch || hasBranches || hasProfiles || hasInfra || hasRules || hasDefaultEnv;
   }
 
-  /**
-   * Backfill cacheMounts for profiles that were created before cache support.
-   * Uses dockerImage to detect the correct cache type.
-   *
-   * 2026-04-22: 改为「合并语义」——即使 profile 已有部分 cacheMounts，
-   * 也会按 dockerImage 对比标准模板，缺失哪类（nuget/pnpm）就补哪类。
-   * 原先 `if (profile.cacheMounts.length > 0) continue` 会导致：
-   * 混合镜像 profile（含 pnpm 但 dotnet SDK）永远拿不到 nuget 挂载 →
-   * 每次 dotnet restore 都从 nuget.org 冷下载。
-   */
+  /** Retire proven legacy compiler-cache declarations as metadata only.
+   * Do not regenerate host bindings or move/delete the original cache bytes. */
   private migrateCacheMounts(): void {
-    const CACHE_BASE = this.getCacheBase();
-
     let changed = false;
     for (const profile of this.state.buildProfiles) {
-      if (!profile.cacheMounts) profile.cacheMounts = [];
-
-      for (const cm of profile.cacheMounts) {
-        if (cm.kind === 'volume') continue;
-        const updated = this.normalizeCacheHostPath(cm.hostPath);
-        if (updated !== cm.hostPath) {
-          cm.hostPath = updated;
-          changed = true;
-        }
-        if (cm.containerPath === '/root/.local/share/pnpm/store') {
-          cm.containerPath = '/pnpm/store';
-          changed = true;
-        }
-      }
-
-      // SSOT: services/cache-catalog.ts。按 dockerImage 推断应挂载的依赖缓存目录，
-      // 缺哪类补哪类（合并语义，不覆盖用户自定义挂载）。2026-06-20 起覆盖
-      // java(.m2+.gradle)/go/rust/python——固化 Java 依赖缓存避免重复冷下载（任务 3）。
-      const image = profile.dockerImage || '';
-      for (const mount of buildCacheMounts(image, CACHE_BASE)) {
-        const alreadyMounted = profile.cacheMounts.some(cm => cm.containerPath === mount.containerPath);
-        if (!alreadyMounted) {
-          profile.cacheMounts.push({ ...mount });
-          changed = true;
-        }
-      }
+      const result = retireGeneratedCatalogCaches(profile.dockerImage, this.getCacheBase(), profile.cacheMounts || []);
+      if (!result.retired.length) continue;
+      profile.cacheMounts = result.kept;
+      profile.retiredCatalogCacheMounts = mergeRetiredCatalogCaches(profile.retiredCatalogCacheMounts || [], result.retired);
+      changed = true;
     }
     if (changed) this.save();
   }
@@ -2492,6 +2461,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   }
 
   removeProject(id: string): ProjectRemovalSummary {
+    this.assertProjectStorageRemovalAllowed(id);
     if (!this.state.projects) {
       return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
@@ -4461,7 +4431,36 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     Object.assign(this.state.infraServices[idx], updates);
   }
 
+  /** Retain all original service metadata when first allocation exists or is uncertain.
+   * Stop is still available. Deletion is not a recovery/reallocation operation.
+   */
+  assertInfraRemovalAllowed(id: string, projectId?: string): void {
+    const retained = (pid: string) => {
+      const key = JSON.stringify([pid, id]);
+      return this.storageProvisionDrafts.has(key) || Boolean(this.state.storageProvisionPublications?.[key])
+        || this.getStorageBirthsForService(pid, id).length > 0;
+    };
+    const projects = projectId ? [projectId] : [...new Set([
+      ...this.state.infraServices.filter(s => s.id === id).map(s => s.projectId || 'default'),
+      ...Object.values(this.state.storageBirths || {}).filter(r => r.binding.scope === 'project-shared' && r.binding.serviceId === id).map(r => r.binding.projectId),
+      ...[...this.storageProvisionDrafts.values(), ...Object.values(this.state.storageProvisionPublications || {})]
+        .filter(r => r.service.id === id).map(r => r.service.projectId || 'default'),
+    ])];
+    if (projects.some(retained)) throw new Error('storage_retained_service_delete_refused: 已分配或待确认的存储保留完整配置，请改用停止');
+  }
+
+  assertProjectStorageRemovalAllowed(projectId: string): void {
+    const retained = Object.values(this.state.storageBirths || {}).some(r => r.binding.projectId === projectId)
+      || [...this.storageProvisionDrafts.values(), ...Object.values(this.state.storageProvisionPublications || {})]
+        .some(r => (r.service.projectId || 'default') === projectId)
+      || [...this.profileStorageDrafts.values()].some(r => r.target.projectId === projectId)
+      || Object.values(this.state.profileStoragePublications || {}).some(r => r.binding.target.projectId === projectId)
+      || Object.values(this.state.profileStorageBindings || {}).some(r => r.target.projectId === projectId);
+    if (retained) throw new Error('storage_retained_service_delete_refused: 项目含已分配或待确认的存储，请改用停止');
+  }
+
   removeInfraService(id: string, projectId?: string): void {
+    this.assertInfraRemovalAllowed(id, projectId);
     if (projectId) {
       this.state.infraServices = this.state.infraServices.filter(
         s => !(s.id === id && (s.projectId || 'default') === projectId),
@@ -5776,9 +5775,57 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * 回滚：从快照恢复四件套。不会触碰 branches / logs / projects / runtime 字段。
    * 回滚前先自拍一份当前状态（trigger='pre-destructive'），以防回滚本身也是误操作。
    */
+  /** A config rollback cannot erase ownership metadata established by P.
+   * This is a pure preflight before even the pre-rollback backup snapshot.
+   */
+  private assertStorageSnapshotRollbackAllowed(target: ConfigSnapshot): void {
+    const refuse = () => { throw new Error('storage_retained_service_delete_refused: 回滚会覆盖已分配或待确认存储的完整配置，请保留原配置并使用停止'); };
+    const same = (left: unknown, right: unknown) => storageProvisionDigest(left) === storageProvisionDigest(right);
+    const infraTargets = new Map<string, {projectId: string; id: string}>();
+    const addInfra = (projectId: string, id: string) => infraTargets.set(JSON.stringify([projectId,id]), {projectId,id});
+    for (const row of Object.values(this.state.storageBirths || {}))
+      if (row.binding.scope === 'project-shared') addInfra(row.binding.projectId,row.binding.serviceId);
+    for (const row of [...this.storageProvisionDrafts.values(),...Object.values(this.state.storageProvisionPublications || {})])
+      addInfra(row.service.projectId || 'default',row.service.id);
+    for (const {projectId,id} of infraTargets.values()) {
+      const select = (rows: InfraService[]) => rows.filter(row => (row.projectId || 'default') === projectId && row.id === id);
+      // A private held service remains private: an old snapshot cannot publish it.
+      if (!same(select(this.state.infraServices),select(target.payload.infraServices))) refuse();
+      if (!same(this.state.customEnv?.[projectId],target.payload.customEnv?.[projectId])
+        || !same(this.state.customEnv?.[GLOBAL_ENV_SCOPE],target.payload.customEnv?.[GLOBAL_ENV_SCOPE])) refuse();
+    }
+    const profileProjects = new Set<string>([
+      ...Object.values(this.state.storageBirths || {}).filter(row=>row.binding.scope==='branch-private').map(row=>row.binding.projectId),
+      ...this.profileStorageDrafts.values(),
+      ...Object.values(this.state.profileStoragePublications || {}).map(row=>row.binding),
+      ...Object.values(this.state.profileStorageBindings || {}),
+    ].map(row=>typeof row==='string'?row:row.target.projectId));
+    const projectRows = <T extends {projectId?: string}>(rows: T[], projectId: string) => rows.filter(row=>(row.projectId || 'default')===projectId);
+    for (const projectId of profileProjects) {
+      // Preserve this project's declarations and dependency/env configuration;
+      // another project's unrelated rollback remains available.
+      if (!same(projectRows(this.state.buildProfiles,projectId),projectRows(target.payload.buildProfiles,projectId))
+        || !same(projectRows(this.state.infraServices,projectId),projectRows(target.payload.infraServices,projectId))
+        || !same(projectRows(this.state.routingRules,projectId),projectRows(target.payload.routingRules,projectId))
+        || !same(this.state.customEnv?.[projectId],target.payload.customEnv?.[projectId])
+        || !same(this.state.customEnv?.[GLOBAL_ENV_SCOPE],target.payload.customEnv?.[GLOBAL_ENV_SCOPE])) refuse();
+      if (target.payload.branchConfigs && (!target.projectId || target.projectId === projectId)) {
+        for (const branch of Object.values(this.state.branches).filter(row=>(row.projectId || 'default')===projectId)) {
+          const pick = (row: typeof branch | NonNullable<ConfigSnapshot['payload']['branchConfigs']>[string]) => ({
+            profileOverrides: row.profileOverrides && Object.keys(row.profileOverrides).length ? row.profileOverrides : undefined,
+            extraProfiles: row.extraProfiles?.length ? row.extraProfiles : undefined,
+            ...(row.derivedFromBranchId ? {derivedFromBranchId:row.derivedFromBranchId,derivedFromBranchName:row.derivedFromBranchName,derivedAt:row.derivedAt} : {}),
+          });
+          if (!same(pick(branch),pick(target.payload.branchConfigs[branch.id] || {}))) refuse();
+        }
+      }
+    }
+  }
+
   rollbackToConfigSnapshot(id: string, triggeredBy?: string): ConfigSnapshot {
     const target = this.getConfigSnapshot(id);
     if (!target) throw new Error(`ConfigSnapshot not found: ${id}`);
+    this.assertStorageSnapshotRollbackAllowed(target);
 
     this.createConfigSnapshot({
       trigger: 'pre-destructive',

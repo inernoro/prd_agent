@@ -296,6 +296,8 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     };
     try {
       fence();
+      // ALL removals are checked before any new allocation, update or runtime action.
+      for (const change of diff.removes) stateService.assertInfraRemovalAllowed(change.id, projectId);
       const parsed=parseCdsCompose(composeYaml)!;
       const definitions=new Map(parsed.infraServices.map(s=>[s.id,s]));
       const raw=(loadYaml(composeYaml) as any)?.services || {};
@@ -386,7 +388,8 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
         message:`项目 ${projectId} 基础设施同步完成`,projectId,details:{applied,errors}});
       try{cdsEventsBus.publish('pending-import.count',{pendingCount:stateService.getPendingImports().filter(i=>i.status==='pending').length});}catch{/* observer only */}
       res.json({applied,errors,volumeRemovals,allocated});
-    } catch {
+    } catch (error) {
+      if ((error as Error).message.startsWith('storage_retained_service_delete_refused:')) { res.status(409).json({error:'storage_retained_service_delete_refused',message:(error as Error).message,applied,allocated}); return; }
       // No retry/reallocation/rollback guesses. A confirmed or uncertain P remains held for reconciliation.
       res.status(409).json({error:'storage_resync_unconfirmed',applied,allocated,recoveryRequired:true});
     }
