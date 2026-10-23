@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.MdToPpt;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
@@ -396,6 +397,47 @@ public class MdToPptSourcePlanTests
         Assert.Contains("PresentationInput = ClonePresentationInput(source.PresentationInput)", designArtifactsController);
         Assert.Contains("RepairCandidateHtml = source.RepairCandidateHtml", designArtifactsController);
         Assert.Contains("RepairCandidateHtmlHash = source.RepairCandidateHtmlHash", designArtifactsController);
+    }
+
+    [Fact]
+    public void ManualEditProposal_NormalizesOnlyTrustedHostingEnvelopeBeforeHashing()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null && !File.Exists(Path.Combine(
+                   directory.FullName,
+                   "prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptOpenDesignRunService.cs")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        var service = File.ReadAllText(Path.Combine(
+            directory!.FullName,
+            "prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptOpenDesignRunService.cs"));
+        var normalization = service.IndexOf(
+            "DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(input.ManualEditHtml)",
+            StringComparison.Ordinal);
+        var hashing = service.IndexOf("Sha256(manualEditHtml)", StringComparison.Ordinal);
+        Assert.True(normalization >= 0, "手动提案必须在进入 DesignArtifactRun 前复用可信托管包装归一化");
+        Assert.True(hashing > normalization, "手动提案必须先归一化再计算持久化哈希");
+
+        var trusted = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.VerifiedPackageArtifactCsp}\"><link rel=\"stylesheet\" href=\"assets/site.css\"></head><body><h1>从代码到生产：修订版</h1><p>协作契约（用户修订）</p><script src=\"assets/app.js\"></script></body></html>";
+        var expected = "<!doctype html><html><head><link rel=\"stylesheet\" href=\"assets/site.css\"></head><body><h1>从代码到生产：修订版</h1><p>协作契约（用户修订）</p><script src=\"assets/app.js\"></script></body></html>";
+        var normalized = DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(trusted);
+
+        Assert.Equal(expected, normalized);
+        Assert.Equal(normalized, DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(normalized));
+
+        var exact = $"<head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.VerifiedPackageArtifactCsp}\"></head>";
+        var unsafeVariants = new[]
+        {
+            $"<!doctype html><html><head><title>moved</title><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.VerifiedPackageArtifactCsp}\"></head><body></body></html>",
+            $"<!doctype html><html>{exact}{exact}<body></body></html>",
+            "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"></head><body></body></html>",
+            "<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\"></head><body></body></html>",
+        };
+        foreach (var candidate in unsafeVariants)
+        {
+            var boundaryResult = DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(candidate);
+            Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(boundaryResult));
+        }
     }
 
     [Theory]

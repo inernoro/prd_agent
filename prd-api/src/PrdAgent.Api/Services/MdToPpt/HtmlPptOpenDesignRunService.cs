@@ -88,7 +88,7 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
         var outlineHash = Sha256(input.OutlineJson);
         var manualEditHtml = string.IsNullOrWhiteSpace(input.ManualEditHtml)
             ? null
-            : input.ManualEditHtml;
+            : DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(input.ManualEditHtml);
         var manualEditHtmlHash = manualEditHtml == null ? null : Sha256(manualEditHtml);
         var run = new DesignArtifactRun
         {
