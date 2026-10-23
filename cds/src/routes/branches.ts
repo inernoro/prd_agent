@@ -12858,6 +12858,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
+  // 纯镜像新分支只有元数据；Git 页面操作在同项目仓库读取，不能 checkout/reset 共享仓库。
+  function metadataOnlyGitRepository(entry: BranchEntry): string | undefined {
+    if (deploymentNeedsSourceCheckout(stateService.getEffectiveProfilesForBranch(entry).map(profile => resolveEffectiveProfile(profile, entry)))) return undefined;
+    try { fs.lstatSync(entry.worktreePath); return undefined; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    return stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+  }
+
   // ── Pull latest code ──
 
   router.post('/branches/:id/pull', async (req, res) => {
@@ -12869,8 +12877,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     try {
       const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      const metadataRepo = metadataOnlyGitRepository(entry);
       const result = isSyntheticCdsManagedRuntimeBranch(entry, project)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
+        : metadataRepo
+        ? await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, undefined, metadataRepo)
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       // PR_C.3: 计数 + activity log
       stateService.incrementBranchStat(id, 'pullCount');
@@ -18699,12 +18710,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
     const count = Math.min(parseInt(req.query.count as string) || 20, 50);
     try {
+      const metadataRepo = metadataOnlyGitRepository(entry);
+      const target = metadataRepo
+        ? await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, entry.pinnedCommit, metadataRepo) : undefined;
       const SEP = '<SEP>';
       const format = ['%h', '%s', '%an', '%ar'].join(SEP);
       const result = await shell.exec(
-        `git log -${count} --format="${format}"`,
-        { cwd: entry.worktreePath, timeout: 10_000 },
+        `git log -${count} --format="${format}"${target ? ` ${shellQuote(target.afterFull)}` : ''}`,
+        { cwd: metadataRepo || entry.worktreePath, timeout: 10_000 },
       );
+      if (metadataRepo && result.exitCode !== 0) throw new Error('提交历史读取失败');
       const commits = result.stdout
         .trim()
         .split('\n')
@@ -18738,6 +18753,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
+      const metadataRepo = metadataOnlyGitRepository(entry);
+      if (metadataRepo) {
+        const exact = await shell.exec(`git rev-parse --verify ${shellQuote(`${hash}^{commit}`)}`, { cwd: metadataRepo, timeout: 5_000 });
+        const sha = exact.stdout.trim().toLowerCase();
+        if (exact.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(sha)) {
+          res.status(400).json({error: `无效的提交: ${hash}`}); return;
+        }
+        const subject = await shell.exec(`git log --format=%s -1 ${shellQuote(sha)}`, {cwd:metadataRepo,timeout:5_000});
+        if (subject.exitCode !== 0) throw new Error('提交信息读取失败');
+        entry.pinnedCommit = sha;
+        stateService.save();
+        res.json({message:`已切换到提交 ${sha.slice(0,7)}`,pinnedCommit:sha,subject:subject.stdout.trim()});
+        return;
+      }
       // Validate the commit hash exists
       const verify = await shell.exec(
         `git cat-file -t ${shellQuote(hash)}`,
@@ -18789,6 +18818,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
+      const metadataRepo = metadataOnlyGitRepository(entry);
+      if (metadataRepo) {
+        await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, undefined, metadataRepo);
+        entry.pinnedCommit = undefined;
+        stateService.save();
+        res.json({message:'已恢复到分支最新提交'});
+        return;
+      }
       const result = await shell.exec(
         `git checkout ${entry.branch}`,
         { cwd: entry.worktreePath, timeout: 10_000 },
