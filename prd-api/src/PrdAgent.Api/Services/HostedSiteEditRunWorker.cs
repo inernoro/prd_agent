@@ -159,6 +159,39 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         .FirstOrDefaultAsync(CancellationToken.None)
                         ?? throw new InvalidOperationException("演示稿来源版本不存在或无权访问");
                     presentationHtml = presentationParent.Html;
+                    var parentDesign = await db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                            && item.Id == parentRunId
+                            && item.UserId == run.UserId
+                            && item.ArtifactType == DesignArtifactTypes.HtmlPpt
+                            && item.Status == RunStatuses.Done)
+                        .FirstOrDefaultAsync(CancellationToken.None)
+                        ?? throw new InvalidOperationException("演示稿来源产物不存在或无权访问");
+                    if (string.IsNullOrWhiteSpace(run.TargetSiteId)
+                        || !string.Equals(run.TargetSiteId, parentDesign.ArtifactSiteId, StringComparison.Ordinal)
+                        || string.IsNullOrWhiteSpace(parentDesign.ArtifactRevisionId)
+                        || !string.Equals(parentDesign.ArtifactSiteId, parentDesign.ProducedArtifactSiteId, StringComparison.Ordinal)
+                        || !string.Equals(parentDesign.ArtifactRevisionId, parentDesign.ProducedArtifactRevisionId, StringComparison.Ordinal)
+                        || !string.Equals(
+                            run.PresentationInput?.ParentPackageHash,
+                            parentDesign.WorkspaceResultSha256,
+                            StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("演示稿来源产物与冻结版本不一致");
+
+                    editable = await sites.GetEditableEntryHtmlAsync(
+                        run.TargetSiteId,
+                        run.UserId,
+                        CancellationToken.None);
+                    parent = await revisions.GetAsync(
+                        run.TargetSiteId,
+                        parentDesign.ArtifactRevisionId,
+                        run.UserId,
+                        CancellationToken.None);
+                    if (parent == null
+                        || parent.Status != HostedSiteRevisionStatuses.Published
+                        || !string.Equals(parent.SourceRunId, parentRunId, StringComparison.Ordinal)
+                        || !string.Equals(editable.Site.PublishedRevisionId, parent.Id, StringComparison.Ordinal)
+                        || parent.PublishedContentVersion != editable.ContentVersion)
+                        throw new InvalidOperationException("演示稿来源站点已发生变化，请恢复当前版本后重试");
                 }
                 else
                 {
@@ -363,16 +396,15 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     run,
                     leaseOwner,
                     html,
-                    parent: null,
-                    editable: null,
+                    parent,
+                    editable,
                     sites,
                     revisions,
                     DateTime.UtcNow,
                     LeaseDuration,
                     executionCts.Token,
                     verifiedFiles,
-                    _logger,
-                    persistEditAsNewSite: true);
+                    _logger);
                 run.ArtifactSiteId = presentationArtifact.SiteId;
                 run.ArtifactRevisionId = presentationArtifact.RevisionId;
                 if (!await RecordProducedArtifactAsync(
@@ -638,11 +670,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 run.Id,
                 new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
                 ct);
-            await publicLifecycle.BindPublishedAsync(
-                run.Id,
-                artifact.SiteId,
-                artifact.RevisionId,
-                ct);
+            if (artifact.RevisionStatus == HostedSiteRevisionStatuses.Published)
+            {
+                await publicLifecycle.BindPublishedAsync(
+                    run.Id,
+                    artifact.SiteId,
+                    artifact.RevisionId,
+                    ct);
+            }
         }
         catch (Exception ex)
         {

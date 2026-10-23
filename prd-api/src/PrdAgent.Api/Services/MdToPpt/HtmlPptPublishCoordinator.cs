@@ -60,19 +60,22 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
     private readonly IHostedSiteRevisionService _revisions;
     private readonly IHtmlPptDesignArtifactAdapter _artifacts;
     private readonly ILogger<HtmlPptPublishCoordinator> _logger;
+    private readonly IWebPageDesignArtifactLifecycleAdapter? _openDesignArtifacts;
 
     public HtmlPptPublishCoordinator(
         MongoDbContext db,
         IHostedSiteService sites,
         IHostedSiteRevisionService revisions,
         IHtmlPptDesignArtifactAdapter artifacts,
-        ILogger<HtmlPptPublishCoordinator> logger)
+        ILogger<HtmlPptPublishCoordinator> logger,
+        IWebPageDesignArtifactLifecycleAdapter? openDesignArtifacts = null)
     {
         _db = db;
         _sites = sites;
         _revisions = revisions;
         _artifacts = artifacts;
         _logger = logger;
+        _openDesignArtifacts = openDesignArtifacts;
     }
 
     public async Task<HtmlPptPublishResult> PublishAsync(
@@ -228,7 +231,8 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
 
         try
         {
-            var htmlBytes = Encoding.UTF8.GetBytes(claimed.Html ?? string.Empty);
+            var claimedHtml = claimed.Html ?? string.Empty;
+            var htmlBytes = Encoding.UTF8.GetBytes(claimedHtml);
             var sourceHash = Hash(htmlBytes);
             if (claimed.Status != "done"
                 || claimed.Op == "outline"
@@ -274,6 +278,31 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                     ?? throw new InvalidOperationException("发布站点团队归属失败");
             }
 
+            HostedSiteRevision revision;
+            if (openDesignRun?.Operation == DesignArtifactOperations.Edit)
+            {
+                var draft = await LoadOpenDesignRevisionAsync(
+                    openDesignRun,
+                    claimed.UserId,
+                    site.Id,
+                    claimedHtml,
+                    requirePublished: false);
+                var publication = await _revisions.PublishAsync(
+                    site.Id,
+                    draft.Id,
+                    claimed.UserId,
+                    CancellationToken.None);
+                site = publication.Site;
+                revision = publication.Revision;
+                if (_openDesignArtifacts == null)
+                    throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿版本绑定服务暂不可用");
+                await _openDesignArtifacts.BindPublishedAsync(
+                    openDesignRun.Id,
+                    site.Id,
+                    revision.Id,
+                    CancellationToken.None);
+            }
+
             var entry = await _sites.GetRevisionEntryHtmlAsync(site.Id, claimed.UserId, CancellationToken.None);
             var actualHash = Hash(Encoding.UTF8.GetBytes(entry.Html));
             if (openDesignRun == null
@@ -281,7 +310,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                     || !FixedHashEquals(actualHash, claimed.HtmlHash)))
                 throw new HtmlPptPublishPendingException(BytesMismatchCode, "最终托管字节与发布意图不一致");
 
-            var revision = openDesignRun == null
+            revision = openDesignRun == null
                 ? await _revisions.EnsureGeneratedSnapshotAsync(
                     site.Id,
                     claimed.UserId,
@@ -290,7 +319,12 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                     claimed.Id,
                     claimed.KnowledgeReferences.Select(item => item.EntryId).ToArray(),
                     CancellationToken.None)
-                : await LoadOpenDesignRevisionAsync(openDesignRun, claimed.UserId, site.Id, entry.Html);
+                : await LoadOpenDesignRevisionAsync(
+                    openDesignRun,
+                    claimed.UserId,
+                    site.Id,
+                    entry.Html,
+                    requirePublished: true);
             var receiptHash = openDesignRun == null ? actualHash : sourceHash;
             var pointerWrite = await _db.HostedSites.UpdateOneAsync(
                 item => item.Id == site.Id
@@ -353,20 +387,53 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
 
     private async Task<HostedSite> LoadOpenDesignSiteAsync(DesignArtifactRun run, string userId)
     {
-        if (string.IsNullOrWhiteSpace(run.ArtifactSiteId)
-            || string.IsNullOrWhiteSpace(run.ArtifactRevisionId)
+        var siteId = run.Operation == DesignArtifactOperations.Edit
+            ? run.ProducedArtifactSiteId
+            : run.ArtifactSiteId;
+        var revisionId = run.Operation == DesignArtifactOperations.Edit
+            ? run.ProducedArtifactRevisionId
+            : run.ArtifactRevisionId;
+        if (string.IsNullOrWhiteSpace(siteId)
+            || string.IsNullOrWhiteSpace(revisionId)
             || string.IsNullOrWhiteSpace(run.WorkspaceResultSha256)
-            || !string.Equals(run.ArtifactSiteId, run.ProducedArtifactSiteId, StringComparison.Ordinal)
-            || !string.Equals(run.ArtifactRevisionId, run.ProducedArtifactRevisionId, StringComparison.Ordinal))
+            || (run.Operation != DesignArtifactOperations.Edit
+                && (!string.Equals(run.ArtifactSiteId, run.ProducedArtifactSiteId, StringComparison.Ordinal)
+                    || !string.Equals(run.ArtifactRevisionId, run.ProducedArtifactRevisionId, StringComparison.Ordinal))))
             throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿的完整产物仍在恢复");
 
-        var site = await _db.HostedSites.Find(item => item.Id == run.ArtifactSiteId
+        var site = await _db.HostedSites.Find(item => item.Id == siteId
                                                        && item.OwnerUserId == userId
-                                                       && item.SourceType == "design-agent"
-                                                       && item.SourceRef == run.Id)
+                                                       && item.SourceType == "design-agent")
             .FirstOrDefaultAsync(CancellationToken.None);
         if (site == null || site.Files.Count <= 1)
             throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿的完整产物仍在恢复");
+        if (run.Operation == DesignArtifactOperations.Edit)
+        {
+            var parentRunId = run.PresentationInput?.ParentRunId;
+            var parent = string.IsNullOrWhiteSpace(parentRunId)
+                ? null
+                : await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                        && item.Id == parentRunId
+                        && item.UserId == userId
+                        && item.ArtifactType == DesignArtifactTypes.HtmlPpt
+                        && item.Status == RunStatuses.Done
+                        && item.ArtifactSiteId == site.Id)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            if (parent == null
+                || !string.Equals(run.TargetSiteId, site.Id, StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(run.PresentationInput?.ParentPackageHash)
+                || !string.Equals(
+                    run.PresentationInput.ParentPackageHash,
+                    parent.WorkspaceResultSha256,
+                    StringComparison.OrdinalIgnoreCase)
+                || (!string.Equals(parent.ArtifactRevisionId, site.PublishedRevisionId, StringComparison.Ordinal)
+                    && !string.Equals(run.ProducedArtifactRevisionId, site.PublishedRevisionId, StringComparison.Ordinal)))
+                throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿来源版本已发生变化");
+        }
+        else if (!string.Equals(site.SourceRef, run.Id, StringComparison.Ordinal))
+        {
+            throw new HtmlPptPublishPendingException(PendingCode, "OpenDesign 演示稿的完整产物仍在恢复");
+        }
         return site;
     }
 
@@ -374,17 +441,25 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         DesignArtifactRun run,
         string userId,
         string siteId,
-        string hostedEntryHtml)
+        string hostedEntryHtml,
+        bool requirePublished)
     {
+        var revisionId = run.Operation == DesignArtifactOperations.Edit
+            ? run.ProducedArtifactRevisionId
+            : run.ArtifactRevisionId;
         var revision = await _db.HostedSiteRevisions.Find(item =>
-                    item.Id == run.ArtifactRevisionId
+                    item.Id == revisionId
                     && item.SiteId == siteId
                     && item.CreatedByUserId == userId
                     && item.SourceRunId == run.Id
-                    && item.Runtime == DesignArtifactRuntimes.OpenDesign
-                    && item.Status == HostedSiteRevisionStatuses.Published)
+                    && item.Runtime == DesignArtifactRuntimes.OpenDesign)
                 .FirstOrDefaultAsync(CancellationToken.None);
         if (revision == null
+            || (requirePublished
+                ? revision.Status != HostedSiteRevisionStatuses.Published
+                : revision.Status is not (HostedSiteRevisionStatuses.Draft
+                    or HostedSiteRevisionStatuses.Publishing
+                    or HostedSiteRevisionStatuses.Published))
             || revision.VerifiedFiles.Count <= 1
             || !string.Equals(revision.Html, hostedEntryHtml, StringComparison.Ordinal)
             || !VerifiedEntryMatches(revision))
@@ -416,10 +491,22 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
                                                                   && item.CreatedByUserId == run.UserId
                                                                   && item.Status == HostedSiteRevisionStatuses.Published)
             .FirstOrDefaultAsync(ct);
+        var openDesignRun = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current
+                && item.Id == run.Id
+                && item.UserId == run.UserId
+                && item.ArtifactType == DesignArtifactTypes.HtmlPpt
+                && item.Runtime == DesignArtifactRuntimes.OpenDesign
+                && item.Status == RunStatuses.Done)
+            .FirstOrDefaultAsync(ct);
         var openDesignReceipt = site != null
                                 && revision != null
+                                && openDesignRun != null
                                 && string.Equals(site.SourceType, "design-agent", StringComparison.Ordinal)
-                                && string.Equals(site.SourceRef, run.Id, StringComparison.Ordinal)
+                                && (openDesignRun.Operation == DesignArtifactOperations.Edit
+                                    ? string.Equals(openDesignRun.TargetSiteId, site.Id, StringComparison.Ordinal)
+                                    : string.Equals(site.SourceRef, run.Id, StringComparison.Ordinal))
+                                && string.Equals(openDesignRun.ArtifactSiteId, site.Id, StringComparison.Ordinal)
+                                && string.Equals(openDesignRun.ArtifactRevisionId, revision.Id, StringComparison.Ordinal)
                                 && string.Equals(revision.SourceRunId, run.Id, StringComparison.Ordinal)
                                 && string.Equals(revision.Runtime, DesignArtifactRuntimes.OpenDesign, StringComparison.Ordinal)
                                 && site.Files.Count > 1

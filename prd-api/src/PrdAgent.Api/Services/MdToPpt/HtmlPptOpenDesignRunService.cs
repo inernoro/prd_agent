@@ -165,6 +165,32 @@ public sealed class HtmlPptOpenDesignRunService : IHtmlPptOpenDesignRunService
                     && item.Status == RunStatuses.Done)
                 .FirstOrDefaultAsync(ct)
                 ?? throw new InvalidOperationException("演示稿来源版本不存在或无权访问，请恢复自己的完成版本后重试");
+            if (string.IsNullOrWhiteSpace(input.ParentPackageHash)
+                || !string.Equals(
+                    input.ParentPackageHash,
+                    parent.WorkspaceResultSha256,
+                    StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(parent.ArtifactSiteId)
+                || string.IsNullOrWhiteSpace(parent.ArtifactRevisionId)
+                || !string.Equals(parent.ArtifactSiteId, parent.ProducedArtifactSiteId, StringComparison.Ordinal)
+                || !string.Equals(parent.ArtifactRevisionId, parent.ProducedArtifactRevisionId, StringComparison.Ordinal))
+                throw new InvalidOperationException("演示稿来源版本缺少受信产物，请恢复完整版本后重试");
+
+            var parentSite = await _db.HostedSites.Find(item => item.Id == parent.ArtifactSiteId
+                    && item.OwnerUserId == compatibilityRun.UserId
+                    && item.SourceType == "design-agent"
+                    && item.PublishedRevisionId == parent.ArtifactRevisionId)
+                .FirstOrDefaultAsync(ct);
+            var parentRevision = await _db.HostedSiteRevisions.Find(item => item.Id == parent.ArtifactRevisionId
+                    && item.SiteId == parent.ArtifactSiteId
+                    && item.CreatedByUserId == compatibilityRun.UserId
+                    && item.SourceRunId == parent.Id
+                    && item.Status == HostedSiteRevisionStatuses.Published)
+                .FirstOrDefaultAsync(ct);
+            if (parentSite == null || parentRevision == null)
+                throw new InvalidOperationException("演示稿来源版本已发生变化，请恢复当前版本后重试");
+
+            run.TargetSiteId = parent.ArtifactSiteId;
             DesignArtifactBriefFactory.TryInheritFrozenContext(
                 run,
                 parent,

@@ -776,6 +776,23 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Assert.Equal(generationPackage.RunId, parentRevision.SourceRunId);
             Assert.Equal(completedGeneration.ArtifactRevisionId, parentRevision.Id);
             Assert.Equal(hostedGenerationHtml, parentRevision.Html);
+            var coordinator = new HtmlPptPublishCoordinator(
+                fixture.Db,
+                sites,
+                revisions,
+                Adapter(fixture, new InMemoryRunEventStore()),
+                NullLogger<HtmlPptPublishCoordinator>.Instance,
+                publicLifecycle);
+            var publishedGeneration = await coordinator.PublishAsync(
+                parentCompatibility,
+                parentCompatibility.Title,
+                null,
+                [],
+                []);
+            Assert.Equal(parentSite.Id, publishedGeneration.Site.Id);
+            Assert.Equal(parentRevision.Id, publishedGeneration.Revision.Id);
+            parentSite = publishedGeneration.Site;
+            parentRevision = publishedGeneration.Revision;
 
             var compatibility = Run(
                 manualPackage.RunId,
@@ -836,6 +853,12 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Assert.Equal(
                 completedGeneration.WorkspaceResultSha256,
                 designRun.PresentationInput.ParentPackageHash);
+            Assert.Equal(parentSite.Id, completedGeneration.ArtifactSiteId);
+            Assert.Equal(parentSite.Id, completedGeneration.ProducedArtifactSiteId);
+            Assert.Equal(parentRevision.Id, completedGeneration.ArtifactRevisionId);
+            Assert.Equal(parentRevision.Id, completedGeneration.ProducedArtifactRevisionId);
+            Assert.Equal(parentRevision.Id, parentSite.PublishedRevisionId);
+            Assert.Equal(parentSite.ContentVersion, parentRevision.PublishedContentVersion);
 
             var hostedManualFiles = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(
                 sites,
@@ -875,9 +898,11 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Assert.Equal(
                 parsedManual.Files.Single(file => file.Path == "manifest.json").Sha256,
                 completedDesign.WorkspaceManifestSha256);
-            Assert.Equal(completedDesign.ArtifactSiteId, completedDesign.ProducedArtifactSiteId);
-            Assert.Equal(completedDesign.ArtifactRevisionId, completedDesign.ProducedArtifactRevisionId);
-            Assert.NotEqual(parentSite.Id, completedDesign.ArtifactSiteId);
+            Assert.Null(completedDesign.ArtifactSiteId);
+            Assert.Null(completedDesign.ArtifactRevisionId);
+            Assert.Equal(parentSite.Id, completedDesign.ProducedArtifactSiteId);
+            Assert.NotNull(completedDesign.ProducedArtifactRevisionId);
+            Assert.NotEqual(parentRevision.Id, completedDesign.ProducedArtifactRevisionId);
             var manifestHashes = DesignArtifactLifecycleService.ComputeManifestHashes(completedDesign.Manifest!);
             Assert.Equal(manifestHashes.PackageHash, completedDesign.VersionBoundary?.PackageHash);
             Assert.Equal(manifestHashes.CanonicalManifestHash, completedDesign.VersionBoundary?.CanonicalManifestHash);
@@ -907,8 +932,16 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Assert.Equal(hostedManualHtmlHash, completedCompatibility.HtmlHash);
             Assert.Contains("完成链用户修订稿", completedCompatibility.Html, StringComparison.Ordinal);
             Assert.Contains("（用户确认的等义表述）", completedCompatibility.Html, StringComparison.Ordinal);
-            Assert.Equal(completedDesign.ArtifactSiteId, completedCompatibility.PublishedSiteId);
-            Assert.Equal(completedDesign.ArtifactRevisionId, completedCompatibility.PublishedVersionId);
+            Assert.Equal(parentSite.Id, completedCompatibility.PublishedSiteId);
+            Assert.Equal(completedDesign.ProducedArtifactRevisionId, completedCompatibility.PublishedVersionId);
+
+            var manualDraft = await fixture.Db.HostedSiteRevisions
+                .Find(item => item.Id == completedDesign.ProducedArtifactRevisionId)
+                .SingleAsync();
+            Assert.Equal(parentSite.Id, manualDraft.SiteId);
+            Assert.Equal(parentRevision.Id, manualDraft.ParentRevisionId);
+            Assert.Equal(completedDesign.Id, manualDraft.SourceRunId);
+            Assert.Equal(HostedSiteRevisionStatuses.Draft, manualDraft.Status);
 
             var parentAfterWorker = await fixture.Db.HostedSites.Find(item => item.Id == parentSite.Id).SingleAsync();
             Assert.Equal(parentSite.PublishedRevisionId, parentAfterWorker.PublishedRevisionId);
@@ -917,12 +950,6 @@ public sealed class HtmlPptDesignArtifactAdapterTests
                 parentSite.Files.OrderBy(file => file.Path).Select(file => (file.Path, file.CosKey, file.Size)),
                 parentAfterWorker.Files.OrderBy(file => file.Path).Select(file => (file.Path, file.CosKey, file.Size)));
 
-            var coordinator = new HtmlPptPublishCoordinator(
-                fixture.Db,
-                sites,
-                revisions,
-                Adapter(fixture, new InMemoryRunEventStore()),
-                NullLogger<HtmlPptPublishCoordinator>.Instance);
             var published = await coordinator.PublishAsync(
                 completedCompatibility,
                 completedCompatibility.Title,
@@ -930,8 +957,9 @@ public sealed class HtmlPptDesignArtifactAdapterTests
                 [],
                 []);
 
-            Assert.Equal(completedDesign.ArtifactSiteId, published.Site.Id);
-            Assert.Equal(completedDesign.ArtifactRevisionId, published.Revision.Id);
+            Assert.Equal(parentSite.Id, published.Site.Id);
+            Assert.Equal(completedDesign.ProducedArtifactRevisionId, published.Revision.Id);
+            Assert.Equal(HostedSiteRevisionStatuses.Published, published.Revision.Status);
             Assert.Equal(hostedManualHtmlHash, published.ContentHash);
             Assert.Equal(hostedManualFiles.Count, published.Revision.VerifiedFiles.Count);
             foreach (var expected in hostedManualFiles)
@@ -942,8 +970,21 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             }
             var publishedRun = await fixture.Db.MdToPptRuns.Find(item => item.Id == compatibility.Id).SingleAsync();
             Assert.Equal("completed", publishedRun.PublishIntentStatus);
-            Assert.Equal(completedDesign.ArtifactRevisionId, publishedRun.PublishedVersionId);
+            Assert.Equal(completedDesign.ProducedArtifactRevisionId, publishedRun.PublishedVersionId);
             Assert.Equal(hostedManualHtmlHash, publishedRun.PublishedHtmlHash);
+            var boundDesign = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == designRun.Id).SingleAsync();
+            Assert.Equal(parentSite.Id, boundDesign.ArtifactSiteId);
+            Assert.Equal(completedDesign.ProducedArtifactRevisionId, boundDesign.ArtifactRevisionId);
+
+            var rollback = await revisions.RollbackAsync(
+                parentSite.Id,
+                parentRevision.Id,
+                compatibility.UserId,
+                "ppt-completion-rollback-0001");
+            Assert.Equal(parentRevision.Id, rollback.Revision.RollbackTargetRevisionId);
+            Assert.Equal(parentSite.Id, rollback.Site.Id);
+            Assert.Equal(parentRevision.Html, rollback.Revision.Html);
+            Assert.NotEqual(published.Revision.Id, rollback.Revision.Id);
 
             Directory.CreateDirectory(publicationOutputDir);
             var publishedEntry = Assert.Single(published.Revision.VerifiedFiles, file => file.Path == "index.html");
@@ -978,7 +1019,9 @@ public sealed class HtmlPptDesignArtifactAdapterTests
                 compatibilityStatus = completedCompatibility.Status,
                 manualWorkerProjection = true,
                 targetParentSiteId = completedDesign.TargetSiteId,
-                parentSiteUnchanged = true,
+                sameSiteDraftPublished = true,
+                rollbackRevisionId = rollback.Revision.Id,
+                rollbackTargetRevisionId = rollback.Revision.RollbackTargetRevisionId,
                 entryPath = publishedEntryPath,
             }, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllBytesAsync(
