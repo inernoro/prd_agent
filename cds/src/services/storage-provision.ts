@@ -45,32 +45,42 @@ const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
 export class StorageProvisionService {
     constructor(private readonly store: StorageProvisionStore, private readonly shell: IShellExecutor, private readonly config: Pick<CdsConfig, 'repoRoot' | 'storageInstanceId'>) { }
     /** Fixed catalog policy during explicit fresh P, never an existing-volume repair. */
-    private async initializeFreshCatalogStorage(service: InfraService, plan: DeploymentStoragePlan, names: string[], operationId: string, deadline: number, assertCurrent: () => void): Promise<void> {
-        if (service.dockerImage !== 'docker.elastic.co/elasticsearch/elasticsearch:8.11.0') return;
-        const target = '/usr/share/elasticsearch/data';
-        if (names.length !== 1 || plan.mounts.length !== 1 || plan.mounts[0].target !== target) throw reject();
-        const row = this.store.getStorageBirth(names[0]);
-        if (!row || row.stage !== 'confirmed' || row.operationId !== operationId || !row.observation) throw reject();
-        const original = structuredClone(row), originalDigest = digest(original);
-        const fence = () => { assertCurrent(); if (Date.now() >= deadline || digest(this.store.getStorageBirth(original.name)) !== originalDigest) throw reject(); };
+    private async initializeFreshCatalogStorage(service: InfraService, plan: DeploymentStoragePlan, names: string[], operationId: string, deadline: number, assertCurrent: () => void, preparedImage: string): Promise<void> {
+        // Finite built-in catalog policy; caller configuration cannot authorize
+        // filesystem ownership changes on an existing resource.
+        const policy = ({
+            'docker.elastic.co/elasticsearch/elasticsearch:8.11.0': {user:'1000:0',alias:'',identity:'1000:0',group:'0',paths:['/usr/share/elasticsearch/data']},
+            'mcr.microsoft.com/mssql/server:2022-latest': {user:'mssql',alias:'mssql',identity:'10001:10001',group:'10001',paths:['/var/opt/mssql']},
+            'apache/kafka:3.7.0': {user:'appuser',alias:'appuser',identity:'1000:1000',group:'1000',paths:['/etc/kafka/secrets','/var/lib/kafka/data','/mnt/shared/config']},
+        } as Record<string,{user:string;alias:string;identity:string;group:string;paths:string[]}>)[service.dockerImage];
+        if (!policy) return;
+        if (names.length !== policy.paths.length || plan.mounts.length !== names.length || policy.paths.some(target=>!plan.mounts.some(m=>m.target===target))) throw reject();
+        const originals = names.map(name=>this.store.getStorageBirth(name));
+        if (originals.some(row=>!row || row.stage!=='confirmed' || row.operationId!==operationId || !row.observation)) throw reject();
+        const frozen = originals.map(row=>structuredClone(row!));
+        const fence = () => { assertCurrent(); if (Date.now() >= deadline || frozen.some(row=>digest(this.store.getStorageBirth(row.name))!==digest(row))) throw reject(); };
         const exec = async (command: string, write = false) => {
             fence(); const result = await this.shell.exec(command, { timeout: Math.min(30000, deadline - Date.now()), executionLane: write ? 'operation' : 'observation', beforeStart: fence }); fence(); return result;
         };
-        const proof = { [original.name]: { birthNonce: original.birthNonce, daemonId: original.daemonId, mountpoint: original.observation!.mountpoint, createdAt: original.observation!.createdAt } };
+        const proof = Object.fromEntries(frozen.map(row=>[row.name,{birthNonce:row.birthNonce,daemonId:row.daemonId,mountpoint:row.observation!.mountpoint,createdAt:row.observation!.createdAt}]));
         const checkedShell = { exec: (command, options) => exec(command, options?.executionLane !== 'observation') } as IShellExecutor;
         await inspectStoragePlan(checkedShell, plan, false, proof);
-        const image = await resolveStorageImage(checkedShell, service.dockerImage, plan, true);
+        const image = await resolveStorageImage(checkedShell, preparedImage, plan);
         const user = await exec(`docker image inspect ${quote(image)} --format '{{json .Config.User}}'`);
-        if (user.exitCode !== 0 || user.stdout.trim() !== JSON.stringify('1000:0')) throw reject();
+        if (user.exitCode !== 0 || user.stdout.trim() !== JSON.stringify(policy.user)) throw reject();
+        const original=frozen[0];
         const name = 'cds-storage-init-' + original.birthNonce;
-        // ES uses GID 0. Grant group write on this empty root only; no chown,
-        // recursive chmod, image copy-up, business entrypoint or capabilities.
-        const program = `set -eu; test -d ${quote(target)}; test ! -L ${quote(target)}; entries=$(find ${quote(target)} -mindepth 1 -maxdepth 1 -print -quit); test -z "$entries"; initial=$(stat -c '%u:%g:%a' ${quote(target)}); test "$initial" = '0:0:755'; chmod 0770 ${quote(target)}; stat -c '%u:%g:%a' ${quote(target)}`;
+        // Only this confirmed empty root may receive the catalog's group.
+        // No recursive metadata change, image copy-up or business entrypoint.
+        const identityCheck=policy.alias ? `test \"$(id -u ${quote(policy.alias)}):$(id -g ${quote(policy.alias)})\" = ${quote(policy.identity)}; ` : '';
+        const checks=policy.paths.map(target=>`test -d ${quote(target)}; test ! -L ${quote(target)}; entries=$(find ${quote(target)} -mindepth 1 -maxdepth 1 -print -quit); test -z "$entries"; initial=$(stat -c '%u:%g:%a' ${quote(target)}); test "$initial" = '0:0:755'; `).join('');
+        const changes=policy.paths.map(target=>`${policy.group==='0'?'':`chgrp ${policy.group} ${quote(target)}; `}chmod 0770 ${quote(target)}; stat -c '%u:%g:%a' ${quote(target)}`).join('; ');
+        const program = `set -eu; ${identityCheck}${checks}${changes}`;
         const labels = { 'cds.storage.init.birth': original.birthNonce, 'cds.storage.init.operation': operationId };
         const made = await exec(['docker create', `--name ${quote(name)}`, ...Object.entries(labels).map(([k, v]) => '--label ' + quote(k + '=' + v)),
-            '--network none --read-only --user 0:0 --cap-drop ALL --security-opt no-new-privileges',
+            '--network none --read-only --user 0:0 --cap-drop ALL', policy.group==='0'?'':'--cap-add CHOWN', '--security-opt no-new-privileges',
             '--memory 64m --memory-swap 64m --pids-limit 16 --restart no --log-driver json-file --log-opt max-size=1m --log-opt max-file=1',
-            '--entrypoint /bin/sh', '--mount ' + quote(`type=volume,source=${original.name},dst=${target},volume-nocopy`), quote(image), '-ceu', quote(program)].join(' '), true);
+            '--entrypoint /bin/sh', ...plan.mounts.map(m=>'--mount '+quote(`type=volume,source=${m.source},dst=${m.target},volume-nocopy`)), quote(image), '-ceu', quote(program)].join(' '), true);
         const cid = made.stdout.trim(); if (made.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(cid)) throw reject();
         // Cleanup may outlive the request fence, but can only stop/remove this
         // invocation's exact native helper identity. It never removes a volume.
@@ -101,13 +111,13 @@ export class StorageProvisionService {
                 || Object.entries(labels).some(([k, v]) => c.Config?.Labels?.[k] !== v)
                 || !st || st.Status !== status || st.Running !== false || st.Pid !== 0 || (status === 'exited' && st.ExitCode !== 0)
                 || !h || h.Privileged !== false || h.NetworkMode !== 'none' || h.ReadonlyRootfs !== true || h.Memory !== 67108864 || h.MemorySwap !== 67108864 || h.PidsLimit !== 16 || h.RestartPolicy?.Name !== 'no'
-                || JSON.stringify(h.CapDrop) !== JSON.stringify(['ALL']) || (h.CapAdd?.length || 0) !== 0 || JSON.stringify(h.SecurityOpt) !== JSON.stringify(['no-new-privileges'])
+                || JSON.stringify(h.CapDrop) !== JSON.stringify(['ALL']) || (policy.group==='0' ? JSON.stringify(h.CapAdd || []) !== '[]' : !['["CHOWN"]','["CAP_CHOWN"]'].includes(JSON.stringify(h.CapAdd))) || JSON.stringify(h.SecurityOpt) !== JSON.stringify(['no-new-privileges'])
                 || h.LogConfig?.Type !== 'json-file' || h.LogConfig.Config?.['max-size'] !== '1m' || h.LogConfig.Config?.['max-file'] !== '1'
-                || !Array.isArray(m) || m.length !== 1 || m[0].Type !== 'volume' || m[0].Name !== original.name || m[0].Source !== original.observation!.mountpoint || m[0].Destination !== target || m[0].RW !== true) throw reject();
+                || !Array.isArray(m) || m.length !== frozen.length || frozen.some(row=>!m.some((mount:any)=>mount.Type==='volume'&&mount.Name===row.name&&mount.Source===row.observation!.mountpoint&&mount.Destination===plan.mounts.find(x=>x.source===row.name)!.target&&mount.RW===true))) throw reject();
         };
         await inspect('created'); await inspectStoragePlan(checkedShell, plan, false, proof);
         const started = await exec('docker start -a ' + cid, true);
-        if (started.exitCode !== 0 || started.stdout.trim() !== '0:0:770') throw reject();
+        if (started.exitCode !== 0 || started.stdout.trim() !== policy.paths.map(()=>'0:'+policy.group+':770').join('\n')) throw reject();
         await inspect('exited'); await inspectStoragePlan(checkedShell, plan, false, proof);
         } finally { await cleanup(); }
         await inspectStoragePlan(checkedShell, plan, false, proof); fence();
@@ -133,8 +143,15 @@ export class StorageProvisionService {
                 throw reject();
             if (this.store.getStorageBirthsForService(service.projectId, service.id).length || targets.some(m => this.store.getStorageBirth(m.source)) || infraStoragePlan(service, this.config).digest !== plan.digest)
                 throw reject();
+            // Establish the complete immutable image/mount plan before any
+            // birth intent. Download/unknown-image failures can then retry
+            // without stranding an allocation or advertising unusable storage.
+            const preparedShell = {exec: async (command, options) => {
+                fence(); const result=await this.shell.exec(command,{...options,timeout:Math.min(30000,deadline-Date.now()),beforeStart:fence});fence();return result;
+            }} as IShellExecutor;
+            const preparedImage=await resolveStorageImage(preparedShell,service.dockerImage,plan,true);
             await allocateStorageBirths({ store: this.store, shell: this.shell, plan, newNames: targets.map(m => m.source), target, serviceDigest: originalDigest, operationId, deadline, assertCurrent: fence, publish: async names => {
-                await this.initializeFreshCatalogStorage(service, plan, names, operationId, deadline, fence); fence();
+                await this.initializeFreshCatalogStorage(service, plan, names, operationId, deadline, fence, preparedImage); fence();
                 return this.store.publishProvisionedInfraDurably(service, names, operationId, () => { assertCurrent(); if (Date.now() >= deadline) throw reject(); });
             } });
         }
