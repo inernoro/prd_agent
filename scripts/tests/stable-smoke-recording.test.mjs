@@ -90,10 +90,10 @@ test('REG-rec-transcript-body-001 原REC四项旅程真实消费独立参考、�
     assert.ok(journey.indexOf(assignment) >= 0 && journey.indexOf(assignment) < journey.indexOf(assertion), '断言失败前必须先登记本轮资源');
   }
   const cleanup = journey.split('} finally {')[1];
-  for (const resource of ['stores/${storeId}', 'entries/${entryId}', 'agent-runs/${runId}', 'agent-runs/${restyleRunId}']) {
+  for (const resource of ['stores/${storeId}', 'entries/${entryId}', '[runId, restyleRunId]', 'agent-runs/${id}']) {
     assert.ok(cleanup.includes(resource), `清理必须回读：${resource}`);
   }
-  assert.equal((cleanup.match(/\.toBe\(404\)/g) || []).length, 4, '空间、条目和两个任务均须404回读');
+  assert.match(cleanup, /cleanupTrackedFixture\(/, '空间、条目和两个任务必须消费同一逐资源404行为判据');
   const workflow = readFileSync(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8');
   assert.ok(workflow.includes("- 'e2e/specs/stable-smoke.spec.ts'"), '只改原旅程也须触发机械守卫');
 });

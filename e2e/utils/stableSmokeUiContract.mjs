@@ -116,6 +116,11 @@ export function assertScopedSyntheticUsername(username, runId) {
 export function blockUnsafeProductionFixture(test, environment, caseId) {
   const reasons = {
     'LIT-004': '验收债务：正式改写须走真实页面；旧夹具签发临时 Agent API Key 并直接替换正文，不能证明真实改写。未执行，不增加凭据权限。',
+    'LIT-007': '验收债务：正式只观察自然模型失败；旧用例伪造SSE失败，不能证明正式模型不可用时的恢复。没有本轮自然样本，零创建未执行。',
+    'REC-009': '验收债务：正式只观察自然转录失败；旧用例把转录响应替换为503，不是正式业务结果。没有本轮自然样本，零创建未执行。',
+    'REC-004': '验收债务：旧恢复用例直接写浏览器保险箱并通过API创建会话，不是实际开录/后台路径；正式须用真人路径和完整session/entry/run清理合同，零创建未执行。',
+    'VIDEO-006': '验收债务：正式只观察自然单镜失败；旧用例伪造整条run及成功镜头，不能证明真实成片和恢复。没有本轮自然样本，零创建未执行。',
+    'CORE-008': '验收债务：历史LearnedTips空状态需独立预置身份；旧用例调用testing端点重置长期账号进度，不属于本轮前缀资源，正式零修改未执行。',
     'MVIS-010': '验收债务：正式只观察自然失败；禁止构造不存在的参考图创建失败任务。未发现本轮自然失败证据，本项未执行。',
   };
   contract(Object.hasOwn(reasons, caseId), '正式危险夹具须绑定已登记的原用例');

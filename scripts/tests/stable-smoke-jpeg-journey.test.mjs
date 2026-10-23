@@ -137,7 +137,7 @@ test('REG-image-input-001 原JPEG旅程接真人入口且不另选模型，下�
   assert.match(body, /width: 1024, height: 1024/); assert.match(body, /field: 'image\[\]'/);
   assert.match(body, /log\.isFallback/); assert.match(body, /expectDeleteSucceeded/);
   assert.match(body, /onMissingReferenceDeclaration:[\s\S]*?expect\.soft\(proof\.request\.expectedImageRefCount,[\s\S]*?\)\.toBe\(1\)/);
-  assert.match(body, /\}\)\)\.status\(\)\)\.toBe\(404\)/);
+  assert.match(body, /cleanupTrackedFixture\(page, token/);
   const helper = readFileSync(new URL('../../e2e/utils/stableSmokeJpegJourney.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(helper, /request\.(?:post|put)|\.goto\(|\.route\(|\.fulfill\(/);
 });
@@ -151,8 +151,9 @@ test('REG-image-input-001 JPEG硬失败须先留脱敏原因，清理独立回�
   assert.match(catchBody, /redactStableSmokeDiagnosticText\(/);
   assert.match(catchBody, /throw error/);
   const cleanup = body.split('} finally {')[1];
-  assert.match(cleanup, /get\(`\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}\/detail`/);
-  assert.match(cleanup, /\.status\(\)\)\.toBe\(404\)/);
+  assert.match(cleanup, /kind: 'workspace', id: workspace\.id, path: `\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}\/detail`/);
+  assert.match(cleanup, /kind: 'run', id: runId, path: `\/api\/visual-agent\/image-gen\/runs\/\$\{runId\}`/);
+  assert.match(cleanup, /cleanupTrackedFixture\(page, token/);
   assert.doesNotMatch(cleanup, /get\(`\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}`/);
   assert.match(body, /expect\.soft\(completed\.detail\.run\.expectedImageRefCount,[\s\S]*?\)\.toBe\(1\)/);
   assert.match(body, /expect\(completed\.detail\.run\.imageRefs\)\.toHaveLength\(1\)/);

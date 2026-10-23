@@ -5,9 +5,84 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { createStableSmokeVisualEvidence } from '../../e2e/utils/stableSmokeVisualEvidence.mjs';
 import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
+import { cleanupAndReadBackResources, validCleanupReceipt } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
 
 const runId = 'stsmk-visual-evidence-test';
 const commit = 'a'.repeat(40);
+
+test('REG-stsmk-account-scope-001 MVIS003/004首页UI新建与独立404清理接线不借位生图顺序', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[MVIS-003][MVIS-004]")[1].split("test('[MVIS-005]")[0];
+  assert.match(body, /loginAndReadToken\(page, request, '\/'\)/);
+  assert.match(body, /enterVisualFromHome\(page\)/);
+  assert.match(body, /createDefaultWorkspaceThroughUi\(page,[\s\S]*?onCreated: created => \{[\s\S]*?workspace = created;/);
+  assert.match(body, /workspaceCreationEvidence = testInfo\.attach\('visual-workspace-created'/);
+  assert.doesNotMatch(body, /createVisualWorkspace\(|page\.goto\(|image-gen\/runs|submitDefaultPeachThroughUi\(|page\.request\.post\(|name: '发送'|name: '生成'/);
+  const cleanup = body.slice(body.indexOf('    } finally {') + '    } finally {'.length);
+  assert.match(cleanup, /if \(workspace\.id\)/);
+  assert.match(cleanup, /cleanupTrackedFixture\(page, token, \[\{ kind: 'workspace', id: workspace\.id, path: `\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}\/detail`/);
+  assert.match(cleanup, /page\.request\.delete\(/);
+  assert.match(cleanup, /timeout: stableSmokeCleanupTimeoutMs/);
+  for (const original of [
+    "expect(chipLabels).toEqual(['b.png', 'a.png'])",
+    "expect(deletedAssets).toHaveLength(2)",
+    "toBe(2)",
+    "expect(savedPayload).not.toContain(asset.id)",
+    "expect(savedPayload).not.toContain(asset.sha256)",
+    "expect(savedPayload).not.toContain(asset.url)",
+    "await page.reload(",
+    "expect(reloadedAssetShas).toContain(cSha256)",
+    "expect(reloadedAssetShas).not.toContain(aSha256)",
+    "expect(reloadedAssetShas).not.toContain(bSha256)",
+    "await expect(verificationChips.first()).toContainText('c.png')",
+    '真实生图和线路顺序由 MVIS-001/002/008/009/011 旅程单独验收',
+  ]) assert.ok(body.includes(original), `原引用/删除断言不得丢失：${original}`);
+});
+
+test('REG-stsmk-account-scope-001 MVIS003/004创建后导航失败仍按原finally删除并留canonical回执', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[MVIS-003][MVIS-004]")[1].split("test('[MVIS-005]")[0];
+  const declarations = body.slice(body.indexOf('const token ='), body.indexOf('    const file ='));
+  const creation = body.split('    try {')[1].split('      await dismissBlockingTutorial(page);')[0];
+  const cleanup = body.slice(body.indexOf('    } finally {') + '    } finally {'.length).split('\n    }\n  });')[0];
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const execute = new AsyncFunction('page', 'request', 'testInfo', 'loginAndReadToken', 'enterVisualFromHome',
+    'createDefaultWorkspaceThroughUi', 'cleanupTrackedFixture', 'requiredEnv', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'expectDeleteSucceeded',
+    `${declarations}\ntry {\n${creation}\nthrow Error('after-create');\n} finally {\n${cleanup}\n}`);
+  const rawCleanupHelper = source.split('async function cleanupTrackedFixture(')[1].split('\nasync function cleanupRecordingIdempotencyFixture(')[0];
+  const cleanupHelperBody = rawCleanupHelper.slice(rawCleanupHelper.indexOf(') {') + 3).trim().slice(0, -1);
+  const executeCleanupHelper = new AsyncFunction('page', 'token', 'resources', 'remove', 'testInfo',
+    'cleanupAndReadBackResources', 'requiredEnv', 'authHeaders', 'stableSmokeCleanupTimeoutMs', cleanupHelperBody);
+  const id = 'a'.repeat(32);
+  for (const scenario of ['before-created', 'navigation-failed', 'readback-remains', 'delete-failed', 'evidence-failed']) {
+    const calls = [], attachments = [];
+    const testInfo = { testId: 'original-mvis-003-004', retry: 0, attach: async (name, item) => {
+      attachments.push({ name, body: JSON.parse(item.body) });
+      if (name === 'visual-workspace-created' && scenario === 'evidence-failed') throw Error('evidence-failed');
+    } };
+    const requiredEnv = key => ({ STABLE_SMOKE_RUN_ID: runId, STABLE_SMOKE_ENVIRONMENT: 'production' })[key];
+    const page = { request: {
+      delete: async path => { calls.push(['DELETE', path]); if (scenario === 'delete-failed') throw Error('offline delete failed'); return { ok: () => true }; },
+      get: async path => { calls.push(['GET', path]); return { status: () => scenario === 'readback-remains' ? 200 : 404 }; },
+    } };
+    const cleanupTrackedFixture = async (page, token, resources, remove, info) => executeCleanupHelper(
+      page, token, resources, remove, info, cleanupAndReadBackResources, requiredEnv, () => ({}), 1234);
+    const action = () => execute(page, {}, testInfo, async (_page, _request, path) => { assert.equal(path, '/'); return 'offline-token'; },
+      async () => calls.push(['UI', 'home-entry']), async (_page, options) => {
+        if (scenario === 'before-created') throw Error('before-create');
+        options.onCreated({ id, title: runId });
+        throw Error('navigation-failed');
+      }, cleanupTrackedFixture, requiredEnv, () => ({}), 1234, async response => assert.equal(response.ok(), true));
+    await assert.rejects(action, scenario === 'readback-remains' || scenario === 'delete-failed' ? /独立清理回读未闭环/ : /before-create|navigation-failed|evidence-failed/);
+    const receipts = attachments.filter(item => item.name === 'stable-smoke-cleanup-receipt');
+    if (scenario === 'before-created') { assert.deepEqual(calls, [['UI', 'home-entry']]); assert.equal(receipts.length, 0); continue; }
+    assert.deepEqual(calls, [['UI', 'home-entry'], ['DELETE', `/api/visual-agent/image-master/workspaces/${id}`], ['GET', `/api/visual-agent/image-master/workspaces/${id}/detail`]]);
+    assert.equal(attachments[0].name, 'visual-workspace-created');
+    assert.equal(attachments[0].body.workspaceId, id);
+    assert.equal(receipts.length, 1);
+    assert.equal(validCleanupReceipt(receipts[0].body, { inspectionRunId: runId, environment: 'production', testId: testInfo.testId, retry: 0 }), scenario === 'navigation-failed' || scenario === 'evidence-failed');
+  }
+});
 
 test('REG-stsmk-account-scope-001 MVIS012走首页真实新建且仅清理本轮空间并回读detail404', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
@@ -18,8 +93,8 @@ test('REG-stsmk-account-scope-001 MVIS012走首页真实新建且仅清理本轮
   assert.doesNotMatch(body, /createVisualWorkspace\(|page\.goto\(|selectOption\(/);
   const cleanup = body.split('} finally {')[1];
   assert.match(cleanup, /if \(workspace\.id\)/);
-  assert.match(cleanup, /get\(`\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}\/detail`/);
-  assert.match(cleanup, /\.status\(\)\)\.toBe\(404\)/);
+  assert.match(cleanup, /cleanupTrackedFixture\(page, token, \[\{ kind: 'workspace', id: workspace\.id, path: `\/api\/visual-agent\/image-master\/workspaces\/\$\{workspace\.id\}\/detail`/);
+  assert.match(source, /read: async row => \(await page\.request\.get\(row\.path/);
   assert.match(body, /finally \{[\s\S]*?await context\.close\(\)/);
   for (const original of ['mobile-reference.png', '移除参考图', 'canvasFileInput.setInputFiles(file)', 'toHaveCount(index + 1', "toContainText('@img3')", 'toBeLessThanOrEqual(1)']) assert.ok(body.includes(original), `原界面判据不得丢失：${original}`);
 });
@@ -496,8 +571,14 @@ test('局部作用域皮肤可指定唯一主题测量区域并传给取证器',
   }
 });
 
-test('真实登录头像、单图、多图、录音、文件、短视频、文学与视频创作旅程接入计划槽位而不是普通附件截图', () => {
+function assertMultiImageFullDebt(source) {
+  assert.match(source, /annotations\.push\(\{ type: 'acceptance-debt', description: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18：未执行；两图、三图各一次方图不核销双比例双任务布局；full视觉gate缺18仍失败，routine37不减。' \}\)/);
+}
+
+test('计划必测位有真实接线或明确欠证；多图18仍未执行，不宣称全148完成', () => {
   const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  assertMultiImageFullDebt(source);
+  assert.throws(() => assertMultiImageFullDebt(source.replace(/testInfo\.annotations\.push\(\{ type: 'acceptance-debt', description: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18[^\n]+\n/, '')), /AssertionError/);
   for (const slotId of [
     'CDS-VISUAL-IDENTITY-PROFILE-01',
     'CDS-VISUAL-IDENTITY-PROFILE-02',
@@ -548,7 +629,6 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
     'CDS-VISUAL-MULTI-IMAGE-CREATION-15',
     'CDS-VISUAL-MULTI-IMAGE-CREATION-16',
     'CDS-VISUAL-MULTI-IMAGE-CREATION-17',
-    'CDS-VISUAL-MULTI-IMAGE-CREATION-18',
     'CDS-VISUAL-RECORDING-AUDIO-01',
     'CDS-VISUAL-RECORDING-AUDIO-02',
     'CDS-VISUAL-RECORDING-AUDIO-03',
@@ -680,7 +760,7 @@ test('真实登录头像、单图、多图、录音、文件、短视频、文�
   );
   assert.match(
     source,
-    /CDS-VISUAL-MULTI-IMAGE-CREATION-08[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-18[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-09[\s\S]*?waitForTimeout\(1_100\)[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-10/,
+    /CDS-VISUAL-MULTI-IMAGE-CREATION-08[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-09[\s\S]*?getAnimations[\s\S]*?setTimeout\(done, 1_100\)[\s\S]*?CDS-VISUAL-MULTI-IMAGE-CREATION-10/,
   );
   assert.match(
     source,

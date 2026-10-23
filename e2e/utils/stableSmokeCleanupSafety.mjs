@@ -122,7 +122,68 @@ export function isCleanupReadOnlyJourney(title) {
   return ids.length > 0 && ids.length === allTags.length && ids.every(id => readOnlyIds.has(id));
 }
 
-export function cleanupFailureFromAttachments(attachments, inspectionRunId) {
+function attachmentJson(item) {
+  const raw = Buffer.isBuffer(item.body) ? item.body.toString('utf8') : String(item.body || '');
+  return JSON.parse(raw.startsWith('{') ? raw : Buffer.from(raw, 'base64').toString('utf8'));
+}
+
+// 只消费已登记的创建响应，不从日志自由文本或任意runId猜资源归属。
+export function knownCreatedResources(attachments, inspectionRunId) {
+  const resources = new Map();
+  const simple = {
+    'video-idle-project-created': [['projectId', '/api/video-agent/projects/']],
+    'video-idle-run-created': [['projectId', '/api/video-agent/projects/'], ['runId', '/api/video-agent/runs/']],
+    'empty-file-store-created': [['storeId', '/api/document-store/stores/']],
+    'empty-file-entry-created': [['storeId', '/api/document-store/stores/'], ['entryId', '/api/document-store/entries/']],
+    'short-video-invalid-store-created': [['storeId', '/api/document-store/stores/']],
+    'short-video-invalid-seed-created': [['storeId', '/api/document-store/stores/'], ['seedEntryId', '/api/document-store/entries/']],
+    'recording-store-created': [['storeId', '/api/document-store/stores/']],
+    'visual-workspace-created': [['workspaceId', '/api/visual-agent/image-master/workspaces/', '/detail']],
+    'literary-workspace-created': [['workspaceId', '/api/literary-agent/workspaces/', '/detail']],
+    'literary-image-run-created': [['runId', '/api/literary-agent/image-gen/runs/']],
+    'literary-image-asset-created': [['assetId', '/api/visual-agent/image-master/assets/']],
+    'recording-idempotency-store-created': [['storeId', '/api/document-store/stores/']],
+    'recording-idempotency-session-created': [['storeId', '/api/document-store/stores/'], ['sessionId', '/api/document-store/recording-uploads/']],
+    'recording-idempotency-entry-created': [['storeId', '/api/document-store/stores/'], ['sessionId', '/api/document-store/recording-uploads/'], ['entryId', '/api/document-store/entries/'], ['deferredTranscriptionRunId', '/api/document-store/agent-runs/', '', true]],
+    'recording-idempotency-second-complete': [['storeId', '/api/document-store/stores/'], ['sessionId', '/api/document-store/recording-uploads/'], ['entryId', '/api/document-store/entries/'], ['deferredTranscriptionRunId', '/api/document-store/agent-runs/', '', true]],
+    'default-white-peach-actual-request': [['runId', '/api/visual-agent/image-gen/runs/']],
+    'jpeg-actual-ui-request': [['runId', '/api/visual-agent/image-gen/runs/']],
+    'vis004-run-created': [['runId', '/api/visual-agent/image-gen/runs/']],
+    'mobile-visual-run-created': [['runId', '/api/visual-agent/image-gen/runs/']],
+    'multi-image-run-created': [['runId', '/api/visual-agent/image-gen/runs/']],
+  };
+  for (const item of attachments || []) {
+    const fields = Object.hasOwn(simple, item.name) ? simple[item.name] : undefined;
+    if (!fields) continue;
+    const body = attachmentJson(item);
+    if (body.inspectionRunId && body.inspectionRunId !== inspectionRunId) throw Error('创建回执归属不符');
+    for (const [field, prefix, suffix = '', optional = false] of fields) {
+      const id = body[field];
+      if (optional && !id) continue;
+      const recordingEntry = field === 'entryId' && id === `recording-completed-${body.sessionId}`;
+      const recordingRun = field === 'deferredTranscriptionRunId' && id === `recording-archive-transcribe-${body.sessionId}`;
+      if (!/^[a-f0-9]{32}$/.test(id || '') && !((recordingEntry || recordingRun) && /^[a-f0-9]{32}$/.test(body.sessionId || ''))) throw Error('创建回执资源标识无效');
+      resources.set(prefix + id + suffix, { id, path: prefix + id + suffix });
+    }
+  }
+  return [...resources.values()];
+}
+
+export function cleanupFailureFromAttachments(attachments, inspectionRunId, scope = {}) {
+  let known;
+  try { known = knownCreatedResources(attachments, inspectionRunId); } catch {
+    return { resourceIds: [], reason: '创建回执无法可靠核验；清理未知，停止后续新业务写入' };
+  }
+  const canonical = (attachments || []).filter(item => item.name === 'stable-smoke-cleanup-receipt');
+  if (known.length && canonical.length !== 1) return { resourceIds: known.map(row => row.id), reason: '已创建资源缺少唯一独立清理回执；停止自动重试及后续新业务写入' };
+  for (const item of canonical) {
+    try {
+      const body = attachmentJson(item);
+      if (!validCleanupReceipt(body, { ...scope, inspectionRunId, knownResources: known })) return { resourceIds: [...new Set([...known.map(row => row.id), ...(body.resources || []).map(row => row.id).filter(id => /^[a-f0-9]{32}$/.test(id))])], reason: '本轮独立清理回执漏核已知资源、未全部404或归属不符；停止后续新业务写入，先恢复原资源清理' };
+    } catch {
+      return { resourceIds: [], reason: '本轮独立清理回执无法读取；清理未知，停止后续新业务写入' };
+    }
+  }
   const items = (attachments || []).filter(item => item.name === 'short-video-cleanup-receipt');
   for (const item of items) {
     try {
@@ -140,6 +201,39 @@ export function cleanupFailureFromAttachments(attachments, inspectionRunId) {
     }
   }
   return undefined;
+}
+
+// 只有原attempt自己保存的逐资源404可消除该attempt的清理未知；不改变业务红项。
+export function validCleanupReceipt(body, { inspectionRunId, environment, testId, retry, knownResources = [] } = {}) {
+  return body?.schemaVersion === 1
+    && typeof inspectionRunId === 'string' && inspectionRunId.startsWith('stsmk-')
+    && body.inspectionRunId === inspectionRunId
+    && (!environment || body.environment === environment)
+    && (!testId || body.testId === testId)
+    && (retry === undefined || body.retry === retry)
+    && Array.isArray(body.errors) && body.errors.length === 0
+    && Array.isArray(body.resources) && body.resources.length > 0
+    && body.resources.every(row => typeof row.kind === 'string' && row.readbackStatus === 404 && (
+      /^[a-f0-9]{32}$/.test(row.id)
+      || (row.kind === 'entry' && /^recording-completed-[a-f0-9]{32}$/.test(row.id) && row.path === `/api/document-store/entries/${row.id}`)
+      || (row.kind === `run:${row.id}` && /^recording-archive-transcribe-[a-f0-9]{32}$/.test(row.id) && row.path === `/api/document-store/agent-runs/${row.id}`)
+    ))
+    && new Set(body.resources.map(row => `${row.kind}:${row.id}`)).size === body.resources.length
+    && knownResources.every(known => body.resources.some(row => row.id === known.id && row.path === known.path));
+}
+
+export async function cleanupAndReadBackResources({ resources, remove, read, attach, inspectionRunId, environment, testId, retry }) {
+  const receipt = { schemaVersion: 1, inspectionRunId, environment, testId, retry,
+    resources: resources.map(row => ({ ...row, readbackStatus: null })), errors: [] };
+  // 删除出错也继续全部精确回读，先保存回执，再抛清理异常。
+  try { await remove(); } catch { receipt.errors.push('资源删除请求未完成'); }
+  for (const row of receipt.resources) {
+    try { row.readbackStatus = await read(row); } catch { receipt.errors.push(`${row.kind}回读失败`); }
+    if (row.readbackStatus !== 404) receipt.errors.push(`${row.kind}未回读404`);
+  }
+  await attach(receipt);
+  if (!validCleanupReceipt(receipt, { inspectionRunId, environment, testId, retry })) throw Error('本轮独立清理回读未闭环');
+  return receipt;
 }
 
 function writeCircuit(path, value) {

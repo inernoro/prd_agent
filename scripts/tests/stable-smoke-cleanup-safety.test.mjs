@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import { readCleanupBlocker, writeCleanupBlocker, cleanupFailureFromAttachments, isCleanupReadOnlyJourney, readShortVideoCleanupCapability } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
 import { collectPlaywrightCases } from '../stable-smoke-results.mjs';
 import { runReportRiskRegression } from '../stable-smoke-run.mjs';
@@ -163,8 +164,17 @@ test('REG-stsmk-cleanup-circuit-001 仅显式只读旅程可继续，融合写�
 });
 
 const spec = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+test('REG-stsmk-cleanup-circuit-001 原非法输入子判据每轮被真实消费且失败不被忽略', () => {
+  const childEnvironment = { ...process.env };
+  delete childEnvironment.NODE_TEST_CONTEXT;
+  const child = spawnSync(process.execPath, ['--test', new URL('./stable-smoke-short-video-invalid.test.mjs', import.meta.url).pathname], {
+    encoding: 'utf8', timeout: 30_000, env: childEnvironment,
+  });
+  assert.equal(child.status, 0, `${child.stdout || ''}\n${child.stderr || ''}`);
+  assert.match(child.stdout || '', /^# tests [1-9]\d*$/m, '必须看到子判据真实执行数量，空跑exit0不能通过');
+});
 test('REG-stsmk-cleanup-circuit-001 原三条短视频旅程创建和登录前必须消费同一能力预检', async () => {
-  const titles = ['[PARSE-001][PARSE-002][PARSE-005][PARSE-007][PARSE-008]', '[PARSE-001][PARSE-006][PARSE-007]', '[PARSE-003][PARSE-004][REG-short-video-input-001]'];
+  const titles = ['[PARSE-001][PARSE-002][PARSE-005][PARSE-007][PARSE-008]', '[PARSE-001][PARSE-006][PARSE-007]', 'CDS 短视频非法API400与受控长文案机械子项（不计业务验收）'];
   for (const title of titles) {
     const start = spec.indexOf(`  test('${title}`);assert.ok(start >= 0);
     const body = spec.slice(start, spec.indexOf('\n  test(', start + 1));
@@ -278,7 +288,7 @@ test('REG-stsmk-cleanup-circuit-001 例行父项必须实际消费本子判据�
     calls.push({ name, args });
     return { status: args.includes('REG-stsmk-cleanup-circuit-001') ? 1 : 0, stdout: '有限机械回归', stderr: '' };
   });
-  assert.equal(calls.length, 4);
+  assert.equal(calls.length, 5);
   assert.ok(calls.some(call => call.name === 'node' && call.args.includes('REG-stsmk-cleanup-circuit-001') && call.args.includes('scripts/tests/stable-smoke-cleanup-safety.test.mjs')));
   assert.equal(result.rows[0].status, 'fail');
 });

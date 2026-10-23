@@ -60,8 +60,8 @@ try {
 }
 
 const evidenceRows = [
-  ...collectPlaywrightCases(cdsReport, 'cds'),
-  ...collectPlaywrightCases(productionReport, 'production'),
+  ...collectPlaywrightCases(cdsReport, 'cds', { inspectionRunId: runId }),
+  ...collectPlaywrightCases(productionReport, 'production', { inspectionRunId: runId }),
   ...(Array.isArray(executionSummary?.supplementalEvidenceRows)
     ? executionSummary.supplementalEvidenceRows
     : []),

@@ -1,5 +1,18 @@
 import type { Page, Locator } from '@playwright/test';
 type DefaultPool={isDefault?:boolean;code:string;name:string};
+type MultiReference={name:string;sha256:string;url:string;refId:number;mime:string;bytes:number;canvasKey?:string};
+type MultiProof={runId:string;targetKey:string;selectedLabel:string;chipLabels:string[];request:{expectedImageRefCount?:number;size?:string;imageRefs?:Array<{refId:number;assetSha256:string;url:string;label:string}>}};
+type MultiLayoutRect={x:number;y:number;width:number;height:number};
+type MultiResultLayout={targetKey:string;viewport:MultiLayoutRect;canvas:MultiLayoutRect;frame:MultiLayoutRect;image:MultiLayoutRect;input:MultiLayoutRect;chatPanel:MultiLayoutRect;sampledPoints:number};
+export function readMultiImageResultLayoutThroughUi(page:Page,options:{targetKey:string}):Promise<MultiResultLayout>;
+export function fitMultiImageResultThroughUi(page:Page,options:{targetKey:string}):Promise<MultiResultLayout&{action:string}>;
+type MultiUploadedReference={assetId:string;sha256:string};
+type MultiPersistedDetail={assets:Array<{id:string;sha256:string;url:string}>;canvas:{payloadJson:string}|null};
+export function readPersistedMultiImageReferences<T extends MultiUploadedReference>(detail:MultiPersistedDetail,references:T[]):Array<T&{url:string;canvasKey:string;refId:number}>;
+export function waitForPersistedMultiImageReferences<T extends MultiUploadedReference>(options:{readDetail:()=>Promise<MultiPersistedDetail>;references:T[];timeoutMs?:number;intervalMs?:number}):Promise<Array<T&{url:string;canvasKey:string;refId:number}>>;
+export function assertDefaultMultiImageRequest(input:{pool:DefaultPool;selectedLabel:string;request:Record<string,unknown>;references:MultiReference[];prompt:string;size:string}):void;
+export function assertMultiImageWireReferences(input:{log:{requestId:string;logicalModelPublicId?:string|null;appCallerCode?:string|null;protocol?:string|null;requestBodyRedacted?:string|null;answerText?:string|null;imageSuccessCount?:number|null};requestId:string;modelId:string;references:MultiReference[]}):{requestId:string;modelId:string;protocol:string;referenceCount:number};
+export function submitDefaultMultiImageThroughUi(page:Page,options:{workspaceId:string;pool:DefaultPool;references:MultiReference[];prompt:string;size:string;onCreated:(id:string)=>void;beforeSubmit?:()=>Promise<void>;onSubmitted?:(proof:MultiProof)=>Promise<void>;onMissingReferenceDeclaration?:(proof:MultiProof)=>Promise<void>}):Promise<MultiProof>;
 export function assertDefaultPeachRequest(proof:{pool:DefaultPool;selectedLabel:string;request:Record<string,unknown>}):void;
 export function createDefaultWorkspaceThroughUi(page:Page,options:{runId:string;onCreated:(workspace:{id:string;title:string})=>void}):Promise<{id:string;title:string}>;
 type SubmittedProof={runId:string;targetKey:string;selectedLabel:string;placement:{x:number;y:number;w:number;h:number};request:Record<string,unknown>};
@@ -7,3 +20,7 @@ export function secondaryImagePlacement(primary:SubmittedProof['placement']):{x:
 export function readCanvasPlacementThroughUi(page:Page,targetKey:string):Promise<SubmittedProof['placement']>;
 export function submitDefaultPeachThroughUi(page:Page,options:{workspaceId:string;pool:DefaultPool;onCreated:(runId:string)=>void;beforeSubmit?:(input:Locator,model:Locator)=>Promise<void>;onSubmitted?:(proof:SubmittedProof)=>Promise<void>;onMissingReferenceDeclaration?:(proof:SubmittedProof)=>Promise<void>}):Promise<SubmittedProof>;
 export function selectSupportedDefaultSizes(info:{matched?:boolean;modelId?:string;sizesNotApplicable?:boolean;sizesByResolution?:Record<string,Array<{size:string}>>},modelId:string):{square:{size:string;width:number;height:number};landscape:{size:string;width:number;height:number};portrait:{size:string;width:number;height:number}};
+type AspectCase={size:string;aspectRatio:string;tier:string;width:number;height:number;orientation:'square'|'landscape'|'portrait';prompt:string};
+export function planDefaultAspectJourney(info:{matched?:boolean;modelId?:string;sizesNotApplicable?:boolean;sizesByResolution?:Record<string,Array<{size:string;aspectRatio:string}>>},modelId:string,scope:{environment:string;commit:string}):{available:AspectCase[];requested:AspectCase[];unsupportedOrientations:AspectCase['orientation'][]};
+export function submitDefaultAspectThroughUi(page:Page,options:{workspaceId:string;pool:DefaultPool;requested:AspectCase;onCreated:(runId:string)=>void;onSubmitted?:(proof:{runId:string;targetKey:string;selectedLabel:string;request:Record<string,unknown>})=>Promise<void>}):Promise<{runId:string;targetKey:string;selectedLabel:string;request:Record<string,unknown>}>;
+export function assertDefaultAspectArtifact(info:{isAdaptive?:boolean;sizeParamFormat?:string;sizeConstraint?:{type?:string};limitations?:Record<string,number|null>},requested:{width:number;height:number},dimensions:{width:number;height:number}):{dimensionContract:string;dimensions:{width:number;height:number}};

@@ -1,6 +1,8 @@
 const CASE_ID_PATTERN = /\[((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB|REG-[a-z0-9-]+)-\d+)\]/gi;
 
-export function collectPlaywrightCases(report, environment) {
+import { validCleanupReceipt, knownCreatedResources } from '../e2e/utils/stableSmokeCleanupSafety.mjs';
+
+export function collectPlaywrightCases(report, environment, { inspectionRunId } = {}) {
   const rows = [];
 
   function outputText(output) {
@@ -41,6 +43,19 @@ export function collectPlaywrightCases(report, environment) {
         const skipReason = status === 'not-run' ? [...new Set((finalResult?.annotations || [])
           .filter(annotation => annotation?.type === 'skip' && typeof annotation.description === 'string')
           .map(annotation => annotation.description.trim()).filter(Boolean))].join('；') : '';
+        const cleanupProof = results.length > 0 && results.every(result => {
+          const receipts = (result.attachments || []).filter(item => item.name === 'stable-smoke-cleanup-receipt');
+          return receipts.length === 1 && receipts.every(item => {
+            try {
+              // Playwright JSON reporter把内存附件编码为base64；只解这一层生产者格式。
+              const text = String(item.body || '');
+              const body = JSON.parse(text.startsWith('{') ? text : Buffer.from(text, 'base64').toString('utf8'));
+              if (!spec.id) return false;
+              const knownResources = knownCreatedResources(result.attachments, inspectionRunId);
+              return validCleanupReceipt(body, { inspectionRunId, environment, testId: spec.id, retry: result.retry ?? 0, knownResources });
+            } catch { return false; }
+          });
+        });
         for (const match of matches) {
           rows.push({
             caseId: match[1].toUpperCase(),
@@ -55,6 +70,7 @@ export function collectPlaywrightCases(report, environment) {
             hadFailedAttempt: priorResults.some((item) => !['passed', 'skipped'].includes(item?.status)),
             attemptErrors,
             attemptDiagnostics,
+            ...(cleanupProof ? { cleanupStatus: 'passed' } : {}),
           });
         }
       }

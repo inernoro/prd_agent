@@ -1038,10 +1038,15 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
   const accountScope = commandRunner('node', ['--test', '--test-name-pattern', 'REG-stsmk-account-scope-001',
     'scripts/tests/stable-smoke-ui-contract.test.mjs']);
   const cleanupCircuit = commandRunner('node', ['--test', '--test-name-pattern', 'REG-stsmk-cleanup-circuit-001',
-    'scripts/tests/stable-smoke-cleanup-safety.test.mjs']);
-  const passed = result.status === 0 && facts.status === 0 && accountScope.status === 0 && cleanupCircuit.status === 0;
+    'scripts/tests/stable-smoke-cleanup-safety.test.mjs', 'scripts/tests/stable-smoke-cleanup-receipts.test.mjs']);
+  const journeyContracts = commandRunner('node', ['--test',
+    'scripts/tests/stable-smoke-default-journey.test.mjs',
+    'scripts/tests/stable-smoke-jpeg-journey.test.mjs',
+    'scripts/tests/stable-smoke-literary-mobile.test.mjs',
+    'scripts/tests/stable-smoke-video-idle-targeted.test.mjs']);
+  const passed = result.status === 0 && facts.status === 0 && accountScope.status === 0 && cleanupCircuit.status === 0 && journeyContracts.status === 0;
   const artifactPath = resolve(runDir, 'report-risk-regression.log');
-  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}\n${facts.stdout || ''}\n${facts.stderr || ''}\n${accountScope.stdout || ''}\n${accountScope.stderr || ''}\n${cleanupCircuit.stdout || ''}\n${cleanupCircuit.stderr || ''}`, 'utf8');
+  writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}\n${facts.stdout || ''}\n${facts.stderr || ''}\n${accountScope.stdout || ''}\n${accountScope.stderr || ''}\n${cleanupCircuit.stdout || ''}\n${cleanupCircuit.stderr || ''}\n${journeyContracts.stdout || ''}\n${journeyContracts.stderr || ''}`, 'utf8');
   return {
     execution: { environment: 'cds-report-risk-regression', status: passed ? 'passed' : 'failed', resultPath: null, artifactPath, policy: 'deterministic-integration', gateReasons: [] },
     rows: [{ caseId: 'REG-stsmk-report-risk-001', environment: 'cds', title: '报告首屏结论与风险分类不得误导', tags: [], status: passed ? 'pass' : 'fail', durationMs: 0, error: passed ? '' : '报告风险呈现回归失败', retryCount: 0, hadFailedAttempt: !passed, attemptErrors: passed ? [] : ['报告风险呈现回归失败'] }],
@@ -1059,7 +1064,7 @@ export function buildCommonClosureEvidenceRow(rows) {
   const missingRegressions = requiredRegressions.filter((caseId) => !rows.some(
     (row) => row.caseId === caseId && row.status === 'pass',
   ));
-  const failedCleanup = cleanupRows.filter((row) => row.status !== 'pass' || row.hadFailedAttempt);
+  const failedCleanup = cleanupRows.filter((row) => row.cleanupStatus !== 'passed' && (row.status !== 'pass' || row.hadFailedAttempt));
   const retriedPass = failedCleanup.filter(row => row.status === 'pass' && row.hadFailedAttempt);
   const unsuccessful = failedCleanup.filter(row => row.status !== 'pass');
   const passed = cleanupRows.length > 0 && failedCleanup.length === 0 && missingRegressions.length === 0;
@@ -2272,7 +2277,7 @@ async function main() {
       if (environment === 'production' && selected.includes('cds')) {
         const cdsExecution = executions.find((execution) => execution.environment === 'cds');
         const cdsRows = cdsExecution?.resultPath
-          ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
+          ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds', { inspectionRunId: runId })
           : [];
         if (cdsExecution) cdsExecution.resultObserved = cdsRows.length > 0;
         cdsRows.push(...supplementalRows);
@@ -2416,7 +2421,7 @@ async function main() {
 
     const environmentRows = executions.flatMap((execution) => {
       if (!execution.resultPath) return [];
-      return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
+      return collectPlaywrightCases(readJson(execution.resultPath), execution.environment, { inspectionRunId: runId });
     });
     environmentRows.push(...supplementalRows);
     environmentRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));

@@ -1,3 +1,4 @@
+import { videoIdleRevision, assertVideoIdleDeployment, installVideoIdleScope, makeVideoIdleAttachment, runVideoIdleUi, removeVideoIdleResources } from '../utils/stableSmokeVideoIdle.mjs';
 import { devices, expect, test, type APIRequestContext, type APIResponse, type BrowserContext, type Locator, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -6,15 +7,17 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import { buildStableSmokeAuthHeaders } from '../utils/stableSmokeSignature';
 import { readSseTypingText } from '../utils/stableSmokeSse.mjs';
-import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability, readImageReferenceRejectionCapability } from '../utils/stableSmokeCleanupSafety.mjs';
+import { readCleanupBlocker, isCleanupReadOnlyJourney, cleanupFailureFromAttachments, writeCleanupBlocker, readShortVideoCleanupCapability, readImageReferenceRejectionCapability, cleanupAndReadBackResources } from '../utils/stableSmokeCleanupSafety.mjs';
 import { loadStableSmokeSpeechReference, assertSpeechMatchesReference, readRecordingTranscriptRows, assertRecordingTranscriptEquals, readRecordingJourneyPlan, assertRecordingIdempotencyRuns, waitForRecordingIdempotencySettlement, type RecordingSettlementSession, type RecordingSettlementRun } from '../utils/stableSmokeRecording.mjs';
 import { blockStableSmokeServiceWorkerRegistration } from '../utils/stableSmokeBrowser.mjs';
 import { captureStableSmokeVisualEvidence } from '../utils/stableSmokeVisualEvidence.mjs';
 import { enterVisualFromHome, openOwnVisualWorkspace } from '../utils/stableSmokeNavigation.mjs';
-import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement } from '../utils/stableSmokeDefaultJourney.mjs';
+import { createDefaultWorkspaceThroughUi, submitDefaultPeachThroughUi, selectSupportedDefaultSizes, secondaryImagePlacement, planDefaultAspectJourney, submitDefaultAspectThroughUi, assertDefaultAspectArtifact } from '../utils/stableSmokeDefaultJourney.mjs';
 import { assertDefaultJpegPrimary, submitDefaultJpegThroughUi } from '../utils/stableSmokeJpegJourney.mjs';
 import { findDocumentUploadCard, readDocumentUploadView, observeDocumentUploadPhases, releaseDocumentUploadResponse } from '../utils/stableSmokeDocumentUpload.mjs';
-import { assertRealLiteraryMarkerStream, assertLiteraryWorkspacePersisted, deleteAndVerifyLiteraryWorkspace } from '../utils/stableSmokeLiterary.mjs';
+import * as multiImageJourney from '../utils/stableSmokeDefaultJourney.mjs';
+import { assertRealLiteraryMarkerStream, assertLiteraryWorkspacePersisted, deleteAndVerifyLiteraryWorkspace, createLiterarySingleImagePolicy, readLiterarySingleImagePrompt, assertLiteraryImageInsertion, readLiteraryImagePlacement } from '../utils/stableSmokeLiterary.mjs';
+import { installInvalidShortVideoRunGuard, observeInvalidShortVideoInput } from '../utils/stableSmokeInvalidShortVideo.mjs';
 import { getMapLoginTarget, selectGatewayImageLogicalModel, openGatewayLogicalModelDetails, assertScopedSyntheticUsername, getQuickEditInput, blockUnsafeProductionFixture, validateReadOnlyAvatarAsset, readGatewayNoCallLogProbe, blockUnscopedObservationFixture, blockUnscopedBackgroundReads, blockRetiredAsrPoolAudit, installGatewayLogReadScope, resolveGatewayUiBaseUrl, gatewayApiPolicyPath } from '../utils/stableSmokeUiContract.mjs';
 import {
   clearStableSmokeInfrastructureCircuit,
@@ -338,7 +341,7 @@ function authHeaders(token: string) {
   return { Authorization: `Bearer ${token}` };
 }
 
-async function readEnvelope<T>(response: Awaited<ReturnType<APIRequestContext['get']>>) {
+async function readEnvelope<T>(response: APIResponse | Response) {
   const body = await response.json() as ApiEnvelope<T>;
   expect(response.ok(), body.error?.message || '业务接口调用失败').toBe(true);
   expect(body.success, body.error?.message || '业务接口调用失败').toBe(true);
@@ -607,6 +610,15 @@ type ShortVideoVisualRun = {
   [key: string]: unknown;
 };
 
+async function cleanupTrackedFixture(page: Page, token: string, resources: Array<{ kind: string; id: string; path: string }>, remove: () => Promise<unknown>, testInfo: TestInfo) {
+  if (!resources.length) return;
+  return cleanupAndReadBackResources({ resources, remove,
+    read: async row => (await page.request.get(row.path, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs })).status(),
+    attach: async receipt => testInfo.attach('stable-smoke-cleanup-receipt', { body: JSON.stringify(receipt), contentType: 'application/json' }),
+    inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry,
+  });
+}
+
 async function cleanupRecordingIdempotencyFixture(
   page: Page,
   token: string,
@@ -710,6 +722,15 @@ async function cleanupRecordingIdempotencyFixture(
   receipt.errors = safeErrors;
   await testInfo.attach('recording-idempotency-cleanup-receipt', {
     body: JSON.stringify(receipt), contentType: 'application/json',
+  });
+  const resources = [
+    ['store', storeId, `/api/document-store/stores/${storeId}`],
+    ['session', sessionId, `/api/document-store/recording-uploads/${sessionId}`],
+    ['entry', cleanupEntryId, `/api/document-store/entries/${cleanupEntryId}`],
+    ...[...new Set(deferredRunIds)].map(id => [`run:${id}`, id, `/api/document-store/agent-runs/${id}`]),
+  ].filter(([, id]) => id).map(([kind, id, path]) => ({ kind, id, path, readbackStatus: receipt[`${kind}ReadbackStatus`] }));
+  if (resources.length) await testInfo.attach('stable-smoke-cleanup-receipt', {
+    body: JSON.stringify({ schemaVersion: 1, inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry, resources, errors: safeErrors }), contentType: 'application/json',
   });
   if (errors.length) throw Error(`录音幂等测试清理未闭环：${safeErrors.join('；')}`);
 }
@@ -1311,7 +1332,9 @@ async function createVisualWorkspace(page: Page, token: string, suffix: string) 
     data: { title: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-${attemptId}`, scenarioType: 'image-gen' },
     timeout: stableSmokeApiTimeoutMs,
   }));
-  return readEnvelope<{ workspace: { id: string } }>(response);
+  const created = await readEnvelope<{ workspace: { id: string } }>(response);
+  await test.info().attach('visual-workspace-created', { body: JSON.stringify({ inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), workspaceId: created.workspace.id, suffix }), contentType: 'application/json' });
+  return created;
 }
 
 async function waitForImageRun(page: Page, token: string, runId: string, timeoutMs = 180_000) {
@@ -1986,7 +2009,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const infrastructureTimeout = testInfo.errors.some(stableSmokeDiagnosticIndicatesInfrastructureTimeout);
     try {
       if (process.env.STABLE_SMOKE_RUN) {
-        const failure = cleanupFailureFromAttachments(testInfo.attachments, requiredEnv('STABLE_SMOKE_RUN_ID'));
+        const failure = cleanupFailureFromAttachments(testInfo.attachments, requiredEnv('STABLE_SMOKE_RUN_ID'), {
+          environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), testId: testInfo.testId, retry: testInfo.retry,
+        });
         if (failure) writeCleanupBlocker(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), {
           environment: requiredEnv('STABLE_SMOKE_ENVIRONMENT'), inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), ...failure,
         });
@@ -2113,6 +2138,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[CORE-008][REG-tutorial-progress-001] 历史空进度用户可完成教程且重复提交幂等', { tag: '@cleanup' }, async ({ page, request }) => {
+    blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'CORE-008');
     const token = await loginAndReadToken(page, request, '/document-store');
     const sourceId = 'document-store-page-guide';
     const resetProgress = async () => {
@@ -3257,28 +3283,74 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[FILE-005][REG-file-001] 空文件在解析前被拒绝且不留条目', { tag: '@cleanup' }, async ({ page, request }) => {
-    const token = await loginAndReadToken(page, request, '/transcript-agent');
+  test('[FILE-005][REG-file-001] 空文件在上传前被拒绝且不留条目', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(120_000);
+    const token = await loginAndReadToken(page, request, '/');
+    await page.getByRole('button', { name: '知识库', exact: true }).click();
     const runKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-empty-r${test.info().retry}`;
     let storeId = '';
+    let entryId = '';
     try {
       const store = await readEnvelope<{ id: string }>(await page.request.post('/api/document-store/stores', {
         headers: authHeaders(token),
         data: { name: runKey, description: '空文件前置拒绝测试', isPublic: false },
       }));
       storeId = store.id;
-      const empty = await page.request.post(`/api/document-store/stores/${storeId}/upload`, {
-        headers: authHeaders(token),
-        multipart: { file: { name: `${runKey}.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(0) } },
+      await testInfo.attach('empty-file-store-created', { body: JSON.stringify({ inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), storeId }), contentType: 'application/json' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await page.getByText(runKey, { exact: true }).click();
+      await dismissBlockingTutorial(page);
+      const action = await openDocumentStoreAction(page, '上传文件');
+      let uploadAttempts = 0;
+      await page.route(`**/api/document-store/stores/${storeId}/upload`, async route => {
+        uploadAttempts++;
+        await route.abort('blockedbyclient');
       });
-      const emptyBody = await empty.json() as ApiEnvelope<never>;
-      expect(empty.status()).toBe(400);
-      expectUserReadable(emptyBody.error?.message || '');
+      const chooser = page.waitForEvent('filechooser');
+      await action.click();
+      await (await chooser).setFiles({ name: `${runKey}.txt`, mimeType: 'text/plain', buffer: Buffer.alloc(0) });
+      const message = page.getByText(/文件.*(?:为空|空文件|没有内容)|(?:空文件|零字节).*(?:上传|选择)/).first();
+      try {
+        await expect(message, '零字节必须在发送上传请求前提示重新选择非空文件').toBeVisible();
+        // 标题与恢复动作是同一toast内的两个字段，不能只读标题误报缺少恢复动作。
+        expectUserReadable(await message.locator('..').innerText());
+      } finally {
+        await testInfo.attach('empty-file-upload-boundary', { body: JSON.stringify({ storeId, uploadAttempts, interceptedBeforeNetwork: true }), contentType: 'application/json' });
+        await testInfo.attach('empty-file-ui', { body: await page.screenshot(), contentType: 'image/png' });
+      }
+      expect(uploadAttempts, '不能把后台400当作正式上传前校验；异常上传在网络前已阻断').toBe(0);
+      const entries = await readEnvelope<{ total: number }>(await page.request.get(`/api/document-store/stores/${storeId}/entries?pageSize=1`, { headers: authHeaders(token) }));
+      expect(entries.total).toBe(0);
+      // 同一原判据的正常对照：不能靠禁用全部上传修好零字节拦截。
+      await page.unroute(`**/api/document-store/stores/${storeId}/upload`);
+      const marker = `非空文件正常上传对照 ${runKey}`;
+      const uploadResponse = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/document-store/stores/${storeId}/upload`);
+      const normalChooser = page.waitForEvent('filechooser');
+      await (await openDocumentStoreAction(page, '上传文件')).click();
+      await (await normalChooser).setFiles({ name: `${runKey}-正常.txt`, mimeType: 'text/plain', buffer: Buffer.from(marker, 'utf8') });
+      const uploaded = await readEnvelope<{ entry: { id: string } }>(await uploadResponse);
+      entryId = uploaded.entry.id;
+      await testInfo.attach('empty-file-entry-created', { body: JSON.stringify({ inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), storeId, entryId }), contentType: 'application/json' });
+      const result = page.locator('.prose-invert').getByText(marker, { exact: true });
+      await expect(result).toBeVisible({ timeout: 30_000 });
+      const content = await readEnvelope<{entryId:string;content:string;hasContent:boolean}>(await page.request.get(`/api/document-store/entries/${entryId}/content`, {headers:authHeaders(token)}));
+      expect(content.entryId).toBe(entryId);
+      expect(content.hasContent).toBe(true);
+      expect(content.content).toBe(marker);
+      await captureStableSmokeVisualEvidence(page, testInfo, { slotId: 'CDS-VISUAL-FILE-PARSING-07', target: result, caption: '零字节已前置拒绝后，正常中文TXT仍可上传、解析并显示原正文；没有把所有上传一起禁用。' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.locator('.prose-invert').getByText(marker, { exact: true })).toBeVisible({ timeout: 30_000 });
+      const persisted = await readEnvelope<{ items: Array<{id:string}>; total: number }>(await page.request.get(`/api/document-store/stores/${storeId}/entries?all=true&pageSize=10`, { headers: authHeaders(token) }));
+      expect(persisted.total).toBe(1);
+      expect(persisted.items.map(item => item.id)).toEqual([entryId]);
+      await captureStableSmokeVisualEvidence(page, testInfo, { slotId: 'CDS-VISUAL-FILE-PARSING-11', target: page.locator('.prose-invert').getByText(marker, {exact:true}), caption: '正常TXT刷新后仍属于同一条目，零字节没有产生幽灵文档，页面与服务端回读一致。' });
     } finally {
       if (storeId) {
-        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
-        expect([200, 204]).toContain(deleted.status());
-        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
+        await cleanupTrackedFixture(page, token, [{ kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` }, ...(entryId ? [{kind:'entry',id:entryId,path:`/api/document-store/entries/${entryId}`}] : [])], async () => {
+          const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+          expect([200, 204]).toContain(deleted.status());
+        }, testInfo);
       }
     }
   });
@@ -3476,6 +3548,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect.soft(false, '测试控速回调释放失败，保持执行链失败并继续精确清理').toBe(true);
       });
       if (storeId) {
+        await cleanupTrackedFixture(page, token, [
+          { kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` },
+          ...(entryId ? [{ kind: 'entry', id: entryId, path: `/api/document-store/entries/${entryId}` }] : []),
+        ], async () => {
         const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
         expect([200, 204]).toContain(deleted.status());
         const storeReadback = await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) });
@@ -3483,6 +3559,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await testInfo.attach('file-upload-cleanup', { body: JSON.stringify({ storeId, entryId: entryId || null, deletionStatus: deleted.status(), storeReadbackStatus: storeReadback.status(), entryReadbackStatus: entryReadback?.status() ?? null, boundary: '清理通过不关闭原阶段失败' }), contentType: 'application/json' });
         expect(storeReadback.status()).toBe(404);
         if (entryReadback) expect(entryReadback.status()).toBe(404);
+        }, testInfo);
       }
     }
   });
@@ -3946,14 +4023,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
   });
 
-  test('[LIT-001][LIT-002][LIT-005][LIT-006][LIT-010] 文学作品从真实入口新建、流式生成、保存回读并清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test.describe('桌面文学真实标记不自动重试', () => {
+  test.describe.configure({ retries: 0 });
+  test('[LIT-001][LIT-002][LIT-005][LIT-010] 文学作品从真实入口新建、流式生成标记、保存回读并清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(360_000);
-    const token = await loginAndReadToken(page, request, '/literary-agent');
-    const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学流式创作-r${testInfo.retry}`;
+    const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+    const token = await loginAndReadToken(page, request, '/');
+    const title = inspectionRunId;
     const article = '# 城市晨光\n\n清晨，城市公园里的蓝色长椅刚被阳光照亮。\n\n## 阅读时刻\n\n一位读者翻开书本，远处的树叶在微风中轻轻摇动。';
-    const listRoute = '**/api/literary-agent/workspaces?limit=100';
     let workspaceId = '';
+    let pendingCreation: Promise<{ response: Response; body: ApiEnvelope<{ workspace: { id: string; title: string } }> }> | undefined;
     try {
+      expect(title.startsWith('stsmk-') && title.length <= 40, '完整本轮身份必须符合标题合同，不能创建后截断').toBe(true);
+      // 正式桌面首页真实能力卡；手机首页才是短名称按钮，不能把手机标签套到桌面。
+      const entry = page.getByRole('button', { name: /^文学创作智能体 任务：撰写完整文章/ }).and(page.locator(':visible'));
+      await expect(entry).toHaveCount(1);
+      await entry.click();
+      await page.waitForURL(url => url.pathname === '/literary-agent', { timeout: 30_000 });
+      await dismissBlockingTutorial(page);
+      await dismissCdsPreviewWidget(page);
       const root = page.locator('[data-tour-id="literary-root"]');
       await expect(root).toBeVisible({ timeout: 30_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -3963,25 +4051,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '从真实导航进入文学创作，标题、文章区域和新建操作完整可达。',
       });
 
-      await page.route(listRoute, async (route) => {
-        if (route.request().method() !== 'GET') return route.continue();
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ success: true, data: { items: [] } }),
-        });
-      });
-      await page.reload({ waitUntil: 'domcontentloaded' });
       const empty = page.locator('[data-tour-id="literary-empty"]');
-      await expect(empty).toBeVisible();
-      await captureStableSmokeVisualEvidence(page, testInfo, {
+      if (await empty.isVisible()) await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-LITERARY-CREATION-02',
         target: empty,
-        caption: '受控零作品响应下，页面明确说明暂无文章，并保留创建文件夹和文章的恢复入口。',
+        caption: '仅当专用身份真实列表自然为空时记录空态；没有伪造零作品响应。',
       });
-      await page.unroute(listRoute);
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await expect(root).toBeVisible();
 
       await page.locator('[data-tour-id="literary-create"]').click();
       const createDialog = page.getByRole('dialog').filter({ hasText: '新建文章' });
@@ -3994,17 +4069,25 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '新建文章对话框说明标题用途，输入、取消和创建动作完整可见。',
       });
       await titleInput.fill(title);
-      const createResponsePromise = page.waitForResponse((response) => (
+      pendingCreation = page.waitForResponse((response) => (
         response.request().method() === 'POST'
         && new URL(response.url()).pathname === '/api/literary-agent/workspaces'
-      ));
+      )).then(async response => {
+        const body = await response.json() as ApiEnvelope<{ workspace: { id: string; title: string } }>;
+        if (body.data?.workspace?.title === title && /^[a-f0-9]{32}$/.test(body.data.workspace.id || '')) {
+          workspaceId = body.data.workspace.id;
+          await testInfo.attach('literary-workspace-created', { body: JSON.stringify({ inspectionRunId, workspaceId }), contentType: 'application/json' });
+        }
+        return { response, body };
+      });
       await createDialog.getByRole('button', { name: '创建', exact: true }).click();
-      const createResponse = await createResponsePromise;
-      const createBody = await createResponse.json() as ApiEnvelope<{ workspace: { id: string } }>;
+      const { response: createResponse, body: createBody } = await pendingCreation;
       expect(createResponse.ok(), createBody.error?.message || '创建文学作品失败').toBe(true);
       expect(createBody.success, createBody.error?.message || '创建文学作品失败').toBe(true);
-      workspaceId = createBody.data.workspace.id;
+      expect(createBody.data.workspace.title).toBe(title);
+      expect(workspaceId, '先登记本轮精确身份，后执行页面与业务断言').not.toBe('');
       await page.waitForURL(new RegExp(`/literary-agent/${workspaceId}(?:[/?#]|$)`), { timeout: 30_000 });
+      await dismissBlockingTutorial(page);
 
       const editorRoot = page.locator('[data-tour-id="literary-editor-root"]');
       const editorContent = page.locator('[data-tour-id="literary-editor-content"]');
@@ -4021,6 +4104,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const uploadResponse = await uploadResponsePromise;
       expect(uploadResponse.ok(), await uploadResponse.text()).toBe(true);
       await expect(editorContent).toContainText('城市晨光');
+      const chatPools = await readEnvelope<Array<{ code: string; isDefault?: boolean; models: Array<{ modelId: string; actualModelId?: string }> }>>(
+        await page.request.get('/api/literary-agent/config/models/chat', { headers: authHeaders(token) }),
+      );
+      const defaults = chatPools.filter(pool => pool.isDefault);
+      expect(defaults, '只使用后端唯一默认，不手选其它型号').toHaveLength(1);
+      const defaultChat = defaults[0];
+      expect(defaultChat.code).not.toBe('');
+      const selectedModel = editorRoot.locator('button[title$=" - 点击切换提示词模型"]');
+      await expect(selectedModel).toHaveCount(1);
+      await expect(selectedModel).toBeVisible();
+      const selectedLabel = (await selectedModel.innerText()).trim();
+      expect(selectedLabel).not.toBe('');
+      expect(selectedLabel, '点击前界面型号必须对应后端默认，不改用户偏好凑通过').toBe(defaultChat.models[0]?.actualModelId || defaultChat.models[0]?.modelId);
       await expect(page.getByRole('button', { name: '生成配图标记', exact: true })).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-LITERARY-CREATION-04',
@@ -4029,25 +4125,65 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '真实 Markdown 文件已上传并保存，正文预览、模型和生成配图标记操作均可用。',
       });
 
-      await installLiteraryMarkerStream(page, workspaceId, 'proxy', article);
+      // 只读观察原生DOM，不代理、改写、补写或延迟真实SSE。
+      await page.evaluate(() => {
+        const samples: number[] = [];
+        const observer = new MutationObserver(() => {
+          const output = document.querySelector('[data-testid="literary-ai-output"] > div:last-child');
+          const length = output?.textContent?.length || 0;
+          if (length > 0 && samples.at(-1) !== length) samples.push(length);
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+        (window as Window & { __stableSmokeLiteraryDesktop?: { samples: number[]; stop(): void } }).__stableSmokeLiteraryDesktop = { samples, stop: () => observer.disconnect() };
+      });
+      let markerRequestCount = 0;
+      page.on('request', request => {
+        if (request.method() === 'POST' && new URL(request.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspaceId}/article/generate-markers`) markerRequestCount++;
+      });
+      const markerResponsePromise = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspaceId}/article/generate-markers`, { timeout: 30_000 });
       const startedAt = Date.now();
       await page.getByRole('button', { name: '生成配图标记', exact: true }).click();
       const busyButton = page.getByTestId('literary-busy-button');
       await expect(busyButton).toBeVisible({ timeout: 2_000 });
       expect(Date.now() - startedAt, '文学创作必须在两秒内出现用户可见进度').toBeLessThan(2_000);
+      await expect(busyButton.locator('span[aria-hidden="true"]')).not.toHaveCSS('animation-name', 'none');
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-LITERARY-CREATION-05',
         target: busyButton,
         caption: '点击生成后两秒内出现持续变化的流式进度按钮，没有静止等待。',
       });
       const streamOutput = page.getByTestId('literary-ai-output');
-      await expect(streamOutput).toBeVisible({ timeout: 30_000 });
-      await captureStableSmokeVisualEvidence(page, testInfo, {
+      // 已完成的原生流会移除瞬态输出。截图较慢不能把已完成业务误判为服务失败；
+      // 真实流/DOM变化仍由提交前启用的只读观察器与原始SSE严格核对，缺图单列。
+      if (await streamOutput.isVisible()) await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-LITERARY-CREATION-06',
         target: streamOutput,
-        caption: '真实服务端 SSE 被节流展示后，AI 输出持续增长并显示已识别位置，属于同一生成任务。',
+        caption: '真实服务端原生SSE对应页面AI输出与识别位置；没有人为节流，不证明实际插图生成。',
       });
-      await resumeLiteraryMarkerStream(page);
+      else await testInfo.attach('literary-desktop-transient-visual-gap', {
+        body: JSON.stringify({ slotId:'CDS-VISUAL-LITERARY-CREATION-06', captured:false,
+          reason:'瞬态输出在上一张截图期间已结束；不延迟真实SSE造图，不核销该视觉状态' }), contentType:'application/json',
+      });
+      const markerResponse = await markerResponsePromise;
+      expect(markerResponse.ok(), '真实默认标记生成请求失败').toBe(true);
+      expect(markerResponse.headers()['content-type']).toContain('text/event-stream');
+      const submitted = markerResponse.request().postDataJSON() as { articleContent: string; insertionMode: string; modelId?: string };
+      expect(submitted.articleContent).toBe(article);
+      expect(submitted.insertionMode).toBe('anchor');
+      expect(submitted.modelId, '页面不得静默换成非默认模型').toBe(defaultChat.code);
+      const markerProof = assertRealLiteraryMarkerStream(await markerResponse.text(), article);
+      expect(markerRequestCount, '一次页面生成只能发送一条标记请求').toBe(1);
+      const progressLengths = await page.evaluate(() => {
+        const progress = (window as Window & { __stableSmokeLiteraryDesktop?: { samples: number[]; stop(): void } }).__stableSmokeLiteraryDesktop;
+        progress?.stop();
+        return progress?.samples || [];
+      });
+      expect(progressLengths.some((length, index) => index > 0 && length > progressLengths[index - 1]), '原生流必须真实更新正文输出，不能靠代理分段制造变化').toBe(true);
+      await testInfo.attach('literary-desktop-real-markers', {
+        body: JSON.stringify({ workspaceId, selectedLabel, modelId: submitted.modelId, requestId: markerResponse.headers()['x-request-id'] || null,
+          ...markerProof, markerRequestCount, progressLengths, imageGenerationPerformed: false }), contentType: 'application/json',
+      });
       await expect(busyButton).toHaveCount(0, { timeout: 240_000 });
       await expect(page.getByRole('button', { name: '一键生图', exact: true })).toBeVisible();
       await expect(editorContent).toContainText('[插图]');
@@ -4057,11 +4193,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '流式任务完成后，正文与新增配图标记完整呈现，工作流进入可继续生图的完成态。',
       });
 
-      const detail = await readEnvelope<{
-        workspace: { articleContent?: string; articleContentWithMarkers?: string };
-      }>(await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
-      expect(detail.workspace.articleContent).toBe(article);
-      expect(detail.workspace.articleContentWithMarkers).toContain('[插图]');
+      const expected = { workspaceId, title, article, fullText: markerProof.fullText };
+      const detail = await readEnvelope<unknown>(await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      assertLiteraryWorkspacePersisted(detail, expected);
       const parsedStatus = page.getByText('已解析', { exact: true }).first();
       await expect(parsedStatus).toBeVisible();
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -4071,9 +4205,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
 
       await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
       await dismissCdsPreviewWidget(page);
+      expect(new URL(page.url()).pathname).toBe(`/literary-agent/${workspaceId}`);
       await expect(editorContent).toContainText('城市晨光', { timeout: 30_000 });
       await expect(editorContent).toContainText('[插图]');
+      const refreshed = await readEnvelope<unknown>(await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      assertLiteraryWorkspacePersisted(refreshed, expected);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-LITERARY-CREATION-09',
         target: editorContent,
@@ -4086,20 +4224,234 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         overviewJustification: '需要同时证明暗色桌面完成态的正文、标记结果、模型与操作区没有局部变浅或裁切。',
         caption: '暗色桌面完成态下，正文、配图标记、工作流和继续操作完整可见。',
       });
+    } catch (error) {
+      await testInfo.attach('literary-desktop-original-hard-failure', {
+        body: redactStableSmokeDiagnosticText(JSON.stringify({ workspaceId, message: String(error) })), contentType: 'application/json',
+      });
+      throw error;
     } finally {
-      await page.unroute(listRoute).catch(() => undefined);
-      if (workspaceId) {
-        const deleted = await retryTransientTransport('清理文学创作工作区', () => page.request.delete(
-          `/api/literary-agent/workspaces/${workspaceId}`,
-          { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs },
-        ));
-        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
-        expect((await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
+      try {
+        await page.evaluate(() => (window as Window & { __stableSmokeLiteraryDesktop?: { stop(): void } }).__stableSmokeLiteraryDesktop?.stop()).catch(() => undefined);
+        if (pendingCreation) await pendingCreation.catch(async error => {
+          await testInfo.attach('literary-desktop-create-observation-failure', { body: redactStableSmokeDiagnosticText(String(error)), contentType: 'text/plain' });
+        });
+      } finally {
+        if (workspaceId) {
+          await cleanupTrackedFixture(page, token, [{ kind: 'workspace', id: workspaceId, path: `/api/literary-agent/workspaces/${workspaceId}/detail` }], async () => {
+            const cleanup = await deleteAndVerifyLiteraryWorkspace(page.request, { workspaceId, headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+            await testInfo.attach('literary-desktop-cleanup', { body: JSON.stringify(cleanup), contentType: 'application/json' });
+          }, testInfo);
+        }
       }
     }
   });
+  });
+
+  test.describe('文学单卡真实配图不自动重试', () => {
+  test.describe.configure({ retries: 0 });
+  test('[LIT-006] 真实单卡配图插入原文且同作品刷新保留', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(480_000);
+    const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+    const policy = createLiterarySingleImagePolicy(inspectionRunId);
+    await page.route('**/api/**', async route => {
+      const call = route.request();
+      let body: unknown;
+      try { body = call.postDataJSON(); } catch { /* GET或无JSON正文 */ }
+      if (!policy.inspect(call.method(), new URL(call.url()).pathname, body)) await route.abort('blockedbyclient');
+      else await route.fallback();
+    });
+    const token = await loginAndReadToken(page, request, '/');
+    const title = `${inspectionRunId}-配图-r0`;
+    // 复用本轮LIT009的自有合成原文；不能读取已删除旧作品或把旧AI输出注入新workflow。
+    const article = '# 移动文章\n\n清晨，白桃放在公园的蓝色长椅上。\n\n一位读者翻开书本，树叶在微风中轻轻摇动。';
+    let workspaceId = '';
+    let imageRunId = '';
+    let persistedTitle = '';
+    let pendingCreation: Promise<Response> | undefined;
+    let pendingImage: Promise<Response> | undefined;
+    const knownImageRunIds = new Set<string>();
+    const assetIds = new Set<string>();
+    const registerAssets = async (detail: { assets?: Array<{ id: string; workspaceId?: string }>; workspace?: { articleWorkflow?: { markers?: Array<{ runId?: string }> } } }) => {
+      for (const marker of detail.workspace?.articleWorkflow?.markers || []) if (marker.runId && !knownImageRunIds.has(marker.runId)) {
+        expect(marker.runId).toMatch(/^[a-f0-9]{32}$/);
+        knownImageRunIds.add(marker.runId);
+        await testInfo.attach('literary-image-run-created', { body: JSON.stringify({ inspectionRunId, workspaceId, runId: marker.runId, recoveredFrom: 'own-workspace-workflow' }), contentType: 'application/json' });
+      }
+      expect(Array.isArray(detail.assets), '必须能读取本轮作品的资产列表').toBe(true);
+      for (const asset of detail.assets || []) if (!assetIds.has(asset.id)) {
+        expect(asset.workspaceId).toBe(workspaceId);
+        expect(asset.id).toMatch(/^[a-f0-9]{32}$/);
+        assetIds.add(asset.id);
+        await testInfo.attach('literary-image-asset-created', { body: JSON.stringify({ inspectionRunId, workspaceId, assetId: asset.id }), contentType: 'application/json' });
+      }
+    };
+    try {
+      expect(title.startsWith('stsmk-') && title.length <= 40).toBe(true);
+      const entry = page.getByRole('button', { name: /^文学创作智能体 任务：撰写完整文章/ }).and(page.locator(':visible'));
+      await expect(entry).toHaveCount(1);
+      await entry.click();
+      await page.waitForURL(url => url.pathname === '/literary-agent');
+      await dismissBlockingTutorial(page);
+      await dismissCdsPreviewWidget(page);
+      await page.locator('[data-tour-id="literary-create"]').click();
+      const dialog = page.getByRole('dialog').filter({ hasText: '新建文章' });
+      await dialog.getByPlaceholder('未命名').fill(title);
+      pendingCreation = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/literary-agent/workspaces').then(async response => {
+        const body = await response.json() as ApiEnvelope<{ workspace: { id: string; title: string } }>;
+        workspaceId = body.data?.workspace?.id || '';
+        if (workspaceId) await testInfo.attach('literary-workspace-created', { body: JSON.stringify({ inspectionRunId, workspaceId }), contentType: 'application/json' });
+        return response;
+      });
+      await dialog.getByRole('button', { name: '创建', exact: true }).click();
+      expect((await pendingCreation).ok()).toBe(true);
+      expect(workspaceId).toMatch(/^[a-f0-9]{32}$/);
+      await page.waitForURL(new RegExp(`/literary-agent/${workspaceId}(?:[/?#]|$)`));
+      await dismissBlockingTutorial(page);
+      const editor = page.locator('[data-tour-id="literary-editor-root"]');
+      const content = page.locator('[data-tour-id="literary-editor-content"]');
+      const publication = editor.locator('button[title^="自动投稿已"], button[title^="私有工作区不自动投稿"]');
+      await expect(publication).toHaveCount(1);
+      // 新作品加载前的临时“私有”不能当已关闭；等真实workspace状态加载后再点击。
+      await expect(publication).toBeEnabled({ timeout: 30_000 });
+      if ((await publication.getAttribute('title'))?.startsWith('自动投稿已开启')) await publication.click();
+      await expect(publication).toHaveAttribute('title', /^(?:自动投稿已关闭|私有工作区不自动投稿)/);
+      const uploadPromise = page.waitForResponse(response => response.request().method() === 'PUT' && new URL(response.url()).pathname === `/api/literary-agent/workspaces/${workspaceId}`);
+      await editor.locator('input[type="file"][accept*=".md"]').setInputFiles({ name: `${title}.md`, mimeType: 'text/markdown', buffer: Buffer.from(article) });
+      const upload = await uploadPromise;
+      const uploaded = await readEnvelope<{ workspace: { id: string; title: string; articleContent: string } }>(upload);
+      expect(uploaded.workspace.id).toBe(workspaceId);
+      expect(uploaded.workspace.articleContent).toBe(article);
+      persistedTitle = uploaded.workspace.title;
+      expect(persistedTitle.startsWith(inspectionRunId), '采用上传响应中的真实标题，仍必须属于本轮前缀').toBe(true);
+      type LiteraryPool = { code: string; isDefault?: boolean; models: Array<{ modelId: string; actualModelId?: string; platformId: string }> };
+      const [chatPools, imagePools] = await Promise.all([
+        readEnvelope<LiteraryPool[]>(await page.request.get('/api/literary-agent/config/models/chat', { headers: authHeaders(token) })),
+        readEnvelope<LiteraryPool[]>(await page.request.get('/api/literary-agent/config/models', { headers: authHeaders(token) })),
+      ]);
+      expect(chatPools.filter(item => item.isDefault)).toHaveLength(1);
+      expect(imagePools.filter(item => item.isDefault)).toHaveLength(1);
+      const chat = chatPools.find(item => item.isDefault)!;
+      const image = imagePools.find(item => item.isDefault)!;
+      const chatLabel = chat.models[0]?.actualModelId || chat.models[0]?.modelId;
+      const imageLabel = image.models[0]?.actualModelId || image.models[0]?.modelId;
+      await expect(editor.locator('button[title$=" - 点击切换提示词模型"]')).toHaveText(chatLabel);
+      await expect(editor.locator('button[title$=" - 点击切换生图模型"]')).toHaveText(imageLabel);
+      const capability = await readEnvelope<{ matched: boolean; sizesByResolution?: Record<string, Array<{ size: string }>>; isAdaptive?: boolean; sizeParamFormat?: string }>(await page.request.get(`/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(image.code)}`, { headers: authHeaders(token) }));
+      expect(capability.matched).toBe(true);
+      const minimumSizes = ['1k','2k','4k'].map(tier => capability.sizesByResolution?.[tier] || []).find(sizes => sizes.length)?.map(item => item.size) || [];
+      expect(minimumSizes.length, '文学专属当前默认必须公布可验证的最小图片档').toBeGreaterThan(0);
+      policy.configure({ workspaceId, article, chatModelId: chat.code, imageModelId: image.code, platformId: image.models[0]?.platformId, minimumSizes, publicationDisabled: true });
+      const streamPromise = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspaceId}/article/generate-markers`);
+      await page.getByRole('button', { name: '生成配图标记', exact: true }).click();
+      const stream = await streamPromise;
+      expect(stream.ok()).toBe(true);
+      const markerProof = assertRealLiteraryMarkerStream(await stream.text(), article);
+      await expect(page.getByTestId('literary-busy-button')).toHaveCount(0, { timeout: 180_000 });
+      const card = editor.locator('.surface-inset:has(> .marker-card-wrap)').filter({ has: page.locator('.marker-status--parsed') }).first();
+      await expect(card).toBeVisible();
+      const markerIndex = Number((await card.locator('.marker-card-title').innerText()).match(/配图\s*(\d+)/)?.[1]) - 1;
+      const before = await readEnvelope<unknown>(await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+      await testInfo.attach('literary-marker-before-image', { body: JSON.stringify({ workspaceId, markerIndex, detail: before }), contentType: 'application/json' });
+      const promptProof = readLiterarySingleImagePrompt(before, { workspaceId, title: persistedTitle, article, fullText: markerProof.fullText, markerIndex });
+      await testInfo.attach('literary-single-image-prompt-source', { body: JSON.stringify(promptProof), contentType: 'application/json' });
+      policy.configure({ markerIndex, prompt: promptProof.prompt });
+      pendingImage = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/literary-agent/image-gen/runs').then(async response => {
+        const body = await response.json() as ApiEnvelope<{ runId: string }>;
+        imageRunId = body.data?.runId || '';
+        if (imageRunId) {
+          knownImageRunIds.add(imageRunId);
+          await testInfo.attach('literary-image-run-created', { body: JSON.stringify({ inspectionRunId, workspaceId, runId: imageRunId, markerIndex, submitted: response.request().postDataJSON() }), contentType: 'application/json' });
+        }
+        return response;
+      });
+      await card.getByRole('button', { name: '生成图片', exact: true }).click();
+      expect((await pendingImage).ok()).toBe(true);
+      expect(imageRunId).toMatch(/^[a-f0-9]{32}$/);
+      const generated = await waitForImageRun(page, token, imageRunId, 240_000);
+      await testInfo.attach('literary-image-terminal-state', { body: JSON.stringify({ inspectionRunId, imageRunId, statuses: generated.statuses, detail: generated.detail }), contentType: 'application/json' });
+      await assertImageArtifact(page, generated.detail);
+      const ownRun = await readEnvelope<{ appKey: string; workspaceId: string; articleMarkerIndex: number; modelId: string; total: number; appCallerCode: string }>(await page.request.get(`/api/literary-agent/image-gen/runs/${imageRunId}`, { headers: authHeaders(token) }));
+      expect(ownRun.appKey).toBe('literary-agent');
+      expect(ownRun.workspaceId).toBe(workspaceId);
+      expect(ownRun.articleMarkerIndex).toBe(markerIndex);
+      expect(ownRun.modelId).toBe(image.code);
+      expect(ownRun.total).toBe(1);
+      expect(ownRun.appCallerCode).toMatch(/^literary-agent\.illustration\.(?:text2img|img2img)::generation$/);
+      const downloaded = await readGeneratedImageBytes(page, generated.detail);
+      const dimensions = await decodeDownloadedImageDimensions(page, downloaded.bytes, downloaded.mime);
+      expect(dimensions.width).toBeGreaterThan(0);
+      expect(dimensions.height).toBeGreaterThan(0);
+      const submittedImage = (await pendingImage).request().postDataJSON() as { size: string };
+      const [width, height] = submittedImage.size.split('x').map(Number);
+      const dimensionProof = assertDefaultAspectArtifact(capability, { width, height }, dimensions);
+      const gateway = await waitForGatewayLog(request, `${imageRunId}-0-0`);
+      expect(gateway.model).toBe(imageLabel);
+      expect(gateway.logicalModelPublicId).toBe(image.code);
+      expect(gateway.appCallerCode).toBe(ownRun.appCallerCode);
+      await testInfo.attach('literary-image-real-route', { body: JSON.stringify({ workspaceId, runId: imageRunId, selectedLabel: imageLabel, ownRun, capability, dimensions, dimensionProof, imageSha256: createHash('sha256').update(downloaded.bytes).digest('hex'), gateway }), contentType: 'application/json' });
+      await expect(card.locator('.marker-status')).toHaveText('完成', { timeout: 30_000 });
+      const expected = { workspaceId, title: persistedTitle, article, fullText: markerProof.fullText, markerIndex, runId: imageRunId };
+      const verifyInsertion = async () => {
+        const detail = await readEnvelope<{ assets: Array<{ id: string; workspaceId?: string }> }>(await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }));
+        await registerAssets(detail);
+        const inline = content.locator(`img[data-marker-idx="${markerIndex}"]`);
+        await expect(inline).toHaveCount(1);
+        await expect.poll(() => inline.evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+        const placement = await readLiteraryImagePlacement(content, markerIndex);
+        const proof = assertLiteraryImageInsertion(detail, expected, placement);
+        await testInfo.attach('literary-image-insertion-proof', { body: JSON.stringify({ ...proof, placement, policy: policy.snapshot() }), contentType: 'application/json' });
+        return inline;
+      };
+      const inserted = await verifyInsertion();
+      await testInfo.attach('literary-single-image-result', { body: await page.screenshot(), contentType: 'image/png' });
+      await captureStableSmokeVisualEvidence(page, testInfo, { slotId: 'CDS-VISUAL-LITERARY-CREATION-10', target: inserted, caption: '真实文学单卡配图已解码并替换对应正文标记，原文段落完整；没有一键生图或投稿。' });
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await dismissBlockingTutorial(page);
+      expect(new URL(page.url()).pathname).toBe(`/literary-agent/${workspaceId}`);
+      await expect(publication).toBeEnabled({ timeout: 30_000 });
+      if ((await publication.getAttribute('title'))?.startsWith('自动投稿已开启')) await publication.click();
+      await expect(publication).toHaveAttribute('title', /^自动投稿已关闭/);
+      const restored = await verifyInsertion();
+      await testInfo.attach('literary-single-image-restored', { body: await page.screenshot(), contentType: 'image/png' });
+      await captureStableSmokeVisualEvidence(page, testInfo, { slotId: 'CDS-VISUAL-LITERARY-CREATION-11', target: restored, caption: '刷新同一作品后，图片资产、原文和对应标记位置仍一致，没有重新生成或投稿。' });
+      expect(policy.snapshot().markerRequests).toBe(1);
+      expect(policy.snapshot().imageRequests).toBe(1);
+      policy.assertNoViolations();
+    } catch (error) {
+      await testInfo.attach('literary-image-original-hard-failure', { body: redactStableSmokeDiagnosticText(JSON.stringify({ workspaceId, imageRunId, assets: [...assetIds], policy: policy.snapshot(), message: String(error) })), contentType: 'application/json' });
+      await testInfo.attach('literary-image-failure-before-cleanup', { body: await page.screenshot(), contentType: 'image/png' });
+      throw error;
+    } finally {
+      try { if (pendingCreation) await pendingCreation.catch(() => undefined); if (pendingImage) await pendingImage.catch(() => undefined); }
+      finally { if (workspaceId) {
+        let discoveryError: unknown;
+        try { const response = await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }); if (response.ok()) await registerAssets(await readEnvelope(response)); else expect(response.status()).toBe(404); } catch (error) { discoveryError = error; }
+        await cleanupTrackedFixture(page, token, [
+          { kind: 'workspace', id: workspaceId, path: `/api/literary-agent/workspaces/${workspaceId}/detail` },
+          ...[...knownImageRunIds].map(id => ({ kind: 'run', id, path: `/api/literary-agent/image-gen/runs/${id}` })),
+          ...[...assetIds].map(id => ({ kind: 'asset', id, path: `/api/visual-agent/image-master/assets/${id}` })),
+        ], async () => {
+          for (const id of knownImageRunIds) {
+            const current = await page.request.get(`/api/literary-agent/image-gen/runs/${id}`, { headers: authHeaders(token) });
+            if (current.ok()) {
+              const run = await readEnvelope<{ status: string }>(current);
+              if (!/Completed|Failed|Cancelled/i.test(run.status)) {
+                expect((await page.request.post(`/api/literary-agent/image-gen/runs/${id}/cancel`, { headers: authHeaders(token) })).ok()).toBe(true);
+                await waitForImageRun(page, token, id, 60_000);
+              }
+            } else expect(current.status()).toBe(404);
+          }
+          await deleteAndVerifyLiteraryWorkspace(page.request, { workspaceId, headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+          if (discoveryError) throw discoveryError;
+        }, testInfo);
+      } }
+      policy.assertNoViolations();
+    }
+  });
+  });
 
   test('[LIT-007] 文学流式失败保留正文并给出可恢复说明', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'LIT-007');
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-文学失败恢复-r${testInfo.retry}`;
     const article = '# 可恢复文章\n\n这段正文必须在流式失败后继续保留。';
@@ -4240,6 +4592,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(createBody.success, createBody.error?.message || '移动端创建文学作品失败').toBe(true);
       expect(createBody.data.workspace.title, '只登记本轮标题一致的自有资源用于清理').toBe(title);
       workspaceId = createBody.data.workspace.id;
+      await testInfo.attach('literary-workspace-created', { body: JSON.stringify({ inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), workspaceId }), contentType: 'application/json' });
       await page.waitForURL(url => url.pathname === `/literary-agent/${workspaceId}`, { timeout: 30_000 });
       expect(workspaceId).toBeTruthy();
       await dismissBlockingTutorial(page);
@@ -4327,8 +4680,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       try {
         if (workspaceId) {
-          const cleanup = await deleteAndVerifyLiteraryWorkspace(page.request, { workspaceId, headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
-          await testInfo.attach('literary-mobile-cleanup', { body: Buffer.from(JSON.stringify(cleanup)), contentType: 'application/json' });
+          await cleanupTrackedFixture(page, token, [{ kind: 'workspace', id: workspaceId, path: `/api/literary-agent/workspaces/${workspaceId}/detail` }], async () => {
+            const cleanup = await deleteAndVerifyLiteraryWorkspace(page.request, { workspaceId, headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+            await testInfo.attach('literary-mobile-cleanup', { body: Buffer.from(JSON.stringify(cleanup)), contentType: 'application/json' });
+          }, testInfo);
         }
       } finally {
         await mobileContext.close();
@@ -4567,7 +4922,112 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[PARSE-003][PARSE-004][REG-short-video-input-001] 非法与失效链接说明恢复动作且长文案不溢出', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[PARSE-003][REG-short-video-input-001] 非法短视频文本在真实页面前置拒绝且不创建任务', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.setTimeout(120_000);
+    const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+    const scope = await installInvalidShortVideoRunGuard(page, inspectionRunId);
+    const token = await loginAndReadToken(page, request, '/');
+    const runKey = `${inspectionRunId}-short-video-invalid-r${testInfo.retry}`;
+    let storeId = '';
+    let seedEntryId = '';
+    let pendingCreation: Promise<{ response: Response; body: ApiEnvelope<{ id: string; name: string; isPublic: boolean }> }> | undefined;
+    try {
+      await page.getByRole('button', { name: '知识库', exact: true }).click();
+      await expect(page).toHaveURL(/\/document-store(?:[/?#]|$)/);
+      await dismissBlockingTutorial(page);
+      await dismissCdsPreviewWidget(page);
+      await page.getByRole('button', { name: '我的空间', exact: true }).click();
+      await page.getByRole('button', { name: '新建知识库', exact: true }).click();
+      await page.getByPlaceholder('如：产品文档库', { exact: true }).fill(runKey);
+      pendingCreation = page.waitForResponse(response => new URL(response.url()).pathname === '/api/document-store/stores'
+        && response.request().method() === 'POST').then(async response => {
+        const body = await response.json() as ApiEnvelope<{ id: string; name: string; isPublic: boolean }>;
+        storeId = body.data?.id || '';
+        if (storeId) await testInfo.attach('short-video-invalid-store-created', {
+          body: JSON.stringify({ inspectionRunId, storeId, requestedName: runKey, actualName: body.data.name }), contentType: 'application/json',
+        });
+        return { response, body };
+      });
+      await page.getByRole('button', { name: '创建', exact: true }).click();
+      const { response: created, body: createdBody } = await pendingCreation;
+      expect(created.ok(), createdBody.error?.message || '真实页面创建巡检库失败').toBe(true);
+      expect(createdBody.success).toBe(true);
+      expect(storeId).not.toBe('');
+      expect(createdBody.data.name).toBe(runKey);
+      expect(createdBody.data.isPublic).toBe(false);
+      await expect(page.getByText(runKey, { exact: true }).first()).toBeVisible();
+      // 当前正式空库只提供上传入口；以一份本轮文本作前置，不改产品或深链绕行。
+      if (!(await visibleButton(page, '解析短视频')) && !(await page.locator('[data-tour-id="doc-create-fab"]').isVisible())) {
+        const chooser = page.waitForEvent('filechooser');
+        await (await openDocumentStoreAction(page, '上传文件')).click();
+        const pendingUpload = page.waitForResponse(response => response.request().method() === 'POST'
+          && new URL(response.url()).pathname === `/api/document-store/stores/${storeId}/upload`);
+        await (await chooser).setFiles({ name: `${runKey}-precondition.txt`, mimeType: 'text/plain', buffer: Buffer.from('巡检非法输入前置文档，不含用户资料。') });
+        const uploaded = await (await pendingUpload).json() as ApiEnvelope<{ entry: { id: string } }>;
+        seedEntryId = uploaded.data?.entry?.id || '';
+        await testInfo.attach('short-video-invalid-seed-created', { body: JSON.stringify({ storeId, seedEntryId, boundary: '空库入口差异保留，不以有文档的路径关闭空库缺口' }), contentType: 'application/json' });
+        expect(uploaded.success).toBe(true);
+        expect(seedEntryId).not.toBe('');
+      }
+      await (await openDocumentStoreAction(page, '解析短视频')).click();
+      const drawer = page.locator('[data-drawer="reprocess-chat"]');
+      const input = drawer.getByPlaceholder('粘贴抖音、TikTok、快手或 B 站短视频链接');
+      const invalidToast = page.getByText('没有识别到短视频链接', { exact: true });
+      const proof = await observeInvalidShortVideoInput({
+        input, submit: drawer.getByRole('button', { name: '解析', exact: true }),
+        errorTitle: invalidToast,
+        errorDetail: page.getByText('请粘贴抖音、TikTok、快手或 B 站等短视频链接', { exact: true }),
+        scope,
+      });
+      expectUserReadable(`${proof.title} ${proof.detail}`);
+      await testInfo.attach('short-video-invalid-front-end-proof', { body: JSON.stringify(proof), contentType: 'application/json' });
+      await captureStableSmokeVisualEvidence(page, testInfo, {
+        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-07', target: invalidToast,
+        caption: '从首页知识库真实新建本轮私有库；普通文字被页面立即拒绝、原输入保留并说明重贴支持链接，未向后台创建任务；不证明后端400或失效链接恢复。',
+      });
+      scope.assertNoRunRequests();
+      const entries = await readEnvelope<{ items: Array<{ id: string }> }>(await page.request.get(
+        `/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) },
+      ));
+      expect(entries.items.map(item => item.id).sort(), '非法输入不能新增或替换前置文档').toEqual(seedEntryId ? [seedEntryId] : []);
+      await testInfo.attach('short-video-invalid-no-entry', {
+        body: JSON.stringify({ storeId, entryCount: entries.items.length, ...scope.snapshot() }), contentType: 'application/json',
+      });
+    } catch (error) {
+      await testInfo.attach('short-video-invalid-original-failure', {
+        body: redactStableSmokeDiagnosticText(JSON.stringify({ storeId, message: String(error), ...scope.snapshot() })), contentType: 'application/json',
+      });
+      throw error;
+    } finally {
+      try {
+        // 按钮等待本身失败也先收齐已开始的创建响应，不能丢失已创建ID。
+        if (pendingCreation) await pendingCreation.catch(async error => {
+          await testInfo.attach('short-video-invalid-create-observation-failure', {
+            body: redactStableSmokeDiagnosticText(String(error)), contentType: 'text/plain',
+          });
+        });
+        if (storeId) {
+          await cleanupTrackedFixture(page, token, [
+            { kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` },
+            ...(seedEntryId ? [{ kind: 'entry', id: seedEntryId, path: `/api/document-store/entries/${seedEntryId}` }] : []),
+          ], async () => {
+            const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+            expect([200, 204]).toContain(deleted.status());
+          }, testInfo);
+        }
+        scope.assertNoRunRequests();
+      } finally {
+        await scope.dispose();
+      }
+    }
+  });
+
+  test('[PARSE-004] 失效链接真实恢复需本轮自然样本', () => {
+    test.skip(true, '两环境均缺已接入的本轮自有自然失效链接样本；真实恢复未执行，CDS机械文案或非法API400不能替代');
+  });
+
+  test('CDS 短视频非法API400与受控长文案机械子项（不计业务验收）', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式失效链接仅验本轮自然样本；此项是CDS受控夹具，未执行不等于自然失败恢复已通过');
     test.setTimeout(180_000);
     await requireShortVideoCleanupCapability(request, testInfo);
     const token = await loginAndReadToken(page, request, '/document-store');
@@ -4599,13 +5059,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       await input.fill('这不是链接');
       await drawer.getByRole('button', { name: '解析', exact: true }).click();
-      const invalidToast = page.getByText('没有识别到短视频链接', { exact: true });
-      await expect(invalidToast).toBeVisible();
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-SHORT-VIDEO-PARSING-07',
-        target: invalidToast,
-        caption: '普通文字在前端立即被拒绝，提示支持的链接范围和重新粘贴动作，输入仍保留可继续修改。',
-      });
+      await expect(page.getByText('没有识别到短视频链接', { exact: true })).toBeVisible();
 
     const response = await page.request.post('/api/short-video-materials/runs', {
       headers: authHeaders(token),
@@ -5235,6 +5689,73 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  // Integrate imports into root shared spec; this fragment is a new targeted child, not a replacement for the mobile parent.
+  // import { videoIdleRevision, assertVideoIdleDeployment, installVideoIdleScope, makeVideoIdleAttachment,
+  //   runVideoIdleUi, removeVideoIdleResources } from '../utils/stableSmokeVideoIdle.mjs';
+  test.describe('CDS视频闲置取消修复定向子证据', () => {
+    test.describe.configure({ retries: 0 });
+    test('[REG-video-idle-cancel-cleanup-001][VIDEO-002][VIDEO-009] CDS已部署修复定向拆镜刷新与API取消清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+      test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') !== 'cds', '此项仅CDS修复定向，正式在认证和创建前未执行；不借此核销原45矩阵。');
+      test.setTimeout(300_000);
+      await assertVideoIdleDeployment(() => request.get('/api/version'));
+      const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+      const scope = await installVideoIdleScope(page, {
+        origin: new URL(String(testInfo.project.use.baseURL)).origin,
+        inspectionRunId, title: `${inspectionRunId}-video-idle`,
+      });
+      const attach = makeVideoIdleAttachment(testInfo);
+      let token = '', proof, cancellation;
+      try {
+        token = await loginAndReadToken(page, request, '/');
+        scope.setOwner(await page.evaluate(() => {
+          const raw = localStorage.getItem('prd-admin-auth');
+          return raw ? JSON.parse(raw)?.state?.user?.userId || '' : '';
+        }));
+        proof = await runVideoIdleUi({
+          page, scope, headers: authHeaders(token), attach,
+          getVersion: () => request.get('/api/version'), dismissTutorial: () => dismissBlockingTutorial(page),
+          capture: async ({ name, target, caption }) => {
+            const harness = await import(webEvidenceHarnessUrl);
+            const out = resolve(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), 'video-idle-targeted-evidence');
+            await harness.box(page, target, '1');
+            try {
+              const row = await harness.shot(page, out, name, caption, {
+                skipReady: true, module: 'video-creation', primaryState: name, testType: '回归',
+                breadcrumb: '首页 → 视频创作智能体 → 新项目 → 保存草稿 → 生成故事分镜 → 同任务刷新',
+                environment: 'cds', runId: inspectionRunId, commit: requiredEnv('STABLE_SMOKE_COMMIT'), deploymentCommit: videoIdleRevision,
+                methodAnchor: 'method-video-idle-targeted',
+              });
+              harness.writeManifest(out, { runId: inspectionRunId, commit: requiredEnv('STABLE_SMOKE_COMMIT'), deploymentCommit: videoIdleRevision });
+              await testInfo.attach(name, { path: row.path, contentType: 'image/png' });
+              expect(row.automatedStatus, '截图自动检查未通过必须单列，不能拿业务成功掩盖').toBe('通过');
+            } finally { await harness.clearBoxes(page); }
+          },
+        });
+        await attach('video-idle-ui-proof', proof);
+      } finally {
+        try {
+          if (token) cancellation = await removeVideoIdleResources({
+            scope, request: page.request, headers: authHeaders(token), attach,
+            assertCanonicalCleanup: (resources, remove) => cleanupTrackedFixture(page, token, resources, remove, testInfo),
+          });
+        } catch (error) {
+          // Unknown created IDs or one remaining resource must trip the same shared fuse; do not auto-retry a paid journey.
+          writeCleanupBlocker(requiredEnv('STABLE_SMOKE_TEST_OUTPUT'), { environment: 'cds', inspectionRunId,
+            resourceIds: scope.resources().map(row => row.id), reason: '视频修复定向清理未闭环，禁止后续新业务和自动重试' });
+          throw error;
+        } finally {
+          await attach('video-idle-write-scope', scope.snapshot());
+          await scope.dispose();
+        }
+      }
+      // This is explicitly API-only: Editing has no cancel/delete buttons in 9b.
+      expect(proof?.restoredSameRun).toBe(true);
+      expect(cancellation?.status).toBe('Cancelled');
+      expect(cancellation?.cancelRequested).toBe(true);
+      expect(cancellation?.endedAt).toBeTruthy();
+      await assertVideoIdleDeployment(() => request.get('/api/version'));
+    });
+  });
   test('[VIDEO-002][VIDEO-009] 移动端拆镜刷新后恢复同一任务与进度', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动创建视频分镜任务');
     test.setTimeout(300_000);
@@ -5372,6 +5893,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[VIDEO-003][VIDEO-006] 单镜失败保留成功镜头并提供本镜重试', async ({ browser, request }, testInfo) => {
+    blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'VIDEO-006');
     const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, serviceWorkers: 'block' });
     const page = await context.newPage();
     await loginAndReadToken(page, request, '/video-agent');
@@ -5477,6 +5999,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       const storeBody = await storeResponse.json() as ApiEnvelope<{ id: string }>;
       storeId = storeBody.data?.id || '';
+      await testInfo.attach('recording-store-created', { body: JSON.stringify({ inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), storeId }), contentType: 'application/json' });
       expect(storeResponse.ok(), storeBody.error?.message || '录音空间创建失败').toBe(true);
       expect(storeBody.success, storeBody.error?.message || '录音空间创建失败').toBe(true);
       expect(storeId).not.toBe('');
@@ -5687,25 +6210,20 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
     } finally {
       if (storeId) {
-        const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, {
-          headers: authHeaders(token),
-        });
-        expect([200, 204]).toContain(deleted.status());
-        expect((await page.request.get(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        if (entryId) {
-          expect((await page.request.get(`/api/document-store/entries/${entryId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
-        if (runId) {
-          expect((await page.request.get(`/api/document-store/agent-runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
-        if (restyleRunId) {
-          expect((await page.request.get(`/api/document-store/agent-runs/${restyleRunId}`, { headers: authHeaders(token) })).status()).toBe(404);
-        }
+        await cleanupTrackedFixture(page, token, [
+          { kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` },
+          ...(entryId ? [{ kind: 'entry', id: entryId, path: `/api/document-store/entries/${entryId}` }] : []),
+          ...[...new Set([runId, restyleRunId].filter(Boolean))].map(id => ({ kind: 'run', id, path: `/api/document-store/agent-runs/${id}` })),
+        ], async () => {
+          const deleted = await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+          expect([200, 204]).toContain(deleted.status());
+        }, testInfo);
       }
     }
   });
 
   test('[REC-004][REC-005] 路由离开后从保险箱恢复同一后台录音', { tag: '@cleanup' }, async ({ page, request }) => {
+    blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'REC-004');
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/');
     let storeId = '';
@@ -5944,7 +6462,167 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
   });
 
-  test('[REC-001][REC-002] 现场录音自动开始且暂停继续保留前后音频', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+  test('[REC-001] 原生浏览器虚拟设备开录后放弃且会话清理', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.setTimeout(120_000);
+    const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
+    await mobileContext.addInitScript(blockStableSmokeServiceWorkerRegistration);
+    await mobileContext.grantPermissions(['microphone']);
+    const page = await mobileContext.newPage();
+    const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+    let token = '', storeId = '', sessionId = '', sessionStartRequests = 0, chunkBytes = 0;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let deadlineExceeded = false;
+    const forbiddenRequests: string[] = [];
+    const liveSockets: Array<{ sessionId: string; isClosed: () => boolean }> = [];
+    let pendingStore: Promise<void> | undefined, pendingSession: Promise<void> | undefined;
+    const armRecordingDeadline = () => {
+      deadline = setTimeout(() => {
+        deadlineExceeded = true;
+        void page.close({ runBeforeUnload: false }).catch(() => undefined);
+      }, 8_000);
+    };
+    await page.route('**/api/document-store/**', async route => {
+      const path = new URL(route.request().url()).pathname;
+      const post = route.request().method() === 'POST';
+      if (post && (/\/recording-uploads\/[^/]+\/complete$/.test(path) || /\/entries\/[^/]+\/transcribe$/.test(path))) {
+        forbiddenRequests.push(path); await route.abort('blockedbyclient'); return;
+      }
+      if (post && /\/stores\/[^/]+\/recording-uploads$/.test(path)) {
+        sessionStartRequests += 1;
+        if (path !== `/api/document-store/stores/${storeId}/recording-uploads` || sessionStartRequests !== 1) {
+          forbiddenRequests.push(path); await route.abort('blockedbyclient'); return;
+        }
+        armRecordingDeadline();
+      }
+      await route.continue();
+    });
+    page.on('request', current => {
+      if (current.method() === 'POST' && /\/recording-uploads\/[^/]+\/chunks\/\d+$/.test(new URL(current.url()).pathname)) {
+        chunkBytes += current.postDataBuffer()?.byteLength || 0;
+      }
+    });
+    page.on('websocket', socket => {
+      const match = new URL(socket.url()).pathname.match(/^\/api\/document-store\/recording-uploads\/([^/]+)\/live-transcription$/);
+      if (match) liveSockets.push({ sessionId: match[1], isClosed: () => socket.isClosed() });
+    });
+    try {
+      token = await loginAndReadToken(page, request, '/');
+      const native = await page.evaluate(() => ({
+        recorder: Function.prototype.toString.call(MediaRecorder).includes('[native code]'),
+        analyser: Function.prototype.toString.call(AnalyserNode.prototype.getByteTimeDomainData).includes('[native code]'),
+      }));
+      expect(native, '原生录音不得用替换媒体类或假波形冒充').toEqual({ recorder: true, analyser: true });
+      await page.getByRole('navigation').getByRole('button', { name: '知识库', exact: true }).click();
+      await dismissBlockingTutorial(page);
+      await dismissCdsPreviewWidget(page);
+      await page.getByRole('button', { name: '我的空间', exact: true }).click();
+      await page.locator('[data-tour-id="doc-create-fab"]').tap();
+      await page.getByRole('button', { name: '新建知识库', exact: true }).tap();
+      const title = `${inspectionRunId}-native-record`;
+      await page.getByPlaceholder('如：产品文档库', { exact: true }).fill(title);
+      pendingStore = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === '/api/document-store/stores').then(async response => {
+        const body = await response.json() as ApiEnvelope<{ id: string; name: string; isPublic: boolean }>;
+        storeId = body.data?.id || '';
+        if (storeId) await testInfo.attach('recording-store-created', { body: JSON.stringify({ inspectionRunId, storeId }), contentType: 'application/json' });
+        expect(response.ok() && body.success).toBe(true);
+        expect(body.data.name).toBe(title);
+        expect(body.data.isPublic).toBe(false);
+      });
+      await page.getByRole('button', { name: '创建', exact: true }).click();
+      await pendingStore;
+      // 正式空库没有库内新增录音入口；真实返回列表，再从外层录音动作选择本轮库。
+      const backToList = page.getByText(title, { exact: true }).locator('..').getByRole('button');
+      await expect(backToList).toHaveCount(1);
+      await backToList.tap();
+      await expect(page.getByRole('button', { name: '我的空间', exact: true })).toBeVisible();
+      await page.locator('[data-tour-id="doc-create-fab"]').tap();
+      await page.getByRole('button', { name: '录音转笔记', exact: true }).tap();
+      const pickerTitle = page.getByText('录音转笔记：放进哪个知识库？', { exact: true });
+      await expect(pickerTitle).toBeVisible();
+      const storePicker = pickerTitle.locator('..').locator('..').locator('..');
+      pendingSession = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname === `/api/document-store/stores/${storeId}/recording-uploads`).then(async response => {
+        const body = await response.json() as ApiEnvelope<{ sessionId: string }>;
+        sessionId = body.data?.sessionId || '';
+        if (sessionId) await testInfo.attach('recording-idempotency-session-created', { body: JSON.stringify({ inspectionRunId, storeId, sessionId }), contentType: 'application/json' });
+        expect(response.ok() && body.success).toBe(true);
+        expect(sessionId).not.toBe('');
+      });
+      await storePicker.getByRole('button', { name: title, exact: false }).tap();
+      const state = page.getByTestId('recording-state');
+      const timer = page.getByTestId('recording-elapsed');
+      const wave = page.locator('[data-testid="recording-waveform"] canvas');
+      await expect(state).toHaveAttribute('data-state', 'recording', { timeout: 5_000 });
+      await pendingSession;
+      await expect(timer).toHaveText(/^\d{2}:\d{2}$/);
+      await expect.poll(() => timer.textContent(), { timeout: 3_000 }).not.toBe('00:00');
+      const firstTimer = await timer.innerText();
+      const firstWave = await wave.evaluate(canvas => (canvas as HTMLCanvasElement).toDataURL());
+      await expect.poll(async () => {
+        const [minutes, seconds] = (await timer.innerText()).split(':').map(Number);
+        return minutes * 60 + seconds;
+      }, { timeout: 3_000 }).toBeGreaterThanOrEqual(2);
+      const lastTimer = await timer.innerText();
+      const [recordedMinutes, recordedSeconds] = lastTimer.split(':').map(Number);
+      expect(recordedMinutes * 60 + recordedSeconds, '只观察2–4秒，不延长录音等待ASR结果').toBeLessThanOrEqual(4);
+      const lastWave = await wave.evaluate(canvas => (canvas as HTMLCanvasElement).toDataURL());
+      expect(lastTimer).not.toBe(firstTimer);
+      expect(lastWave, '波形两帧应变化，但不以占位图证明音频内容').not.toBe(firstWave);
+      expect(chunkBytes).toBeGreaterThan(0);
+      await testInfo.attach('recording-native-live', { body: await page.screenshot({ timeout: 1_500 }), contentType: 'image/png' });
+      await page.getByRole('button', { name: '更多操作', exact: true }).click({ timeout: 1_000 });
+      const discarded = page.waitForResponse(response => response.request().method() === 'DELETE'
+        && new URL(response.url()).pathname === `/api/document-store/recording-uploads/${sessionId}`, { timeout: 3_000 });
+      await page.getByRole('button', { name: '放弃本次录音', exact: true }).click({ timeout: 1_000 });
+      expect((await discarded).ok(), 'UI放弃必须取消本人会话').toBe(true);
+      await expect(state).toBeHidden({ timeout: 1_000 });
+      await expect.poll(() => liveSockets.every(socket => socket.isClosed()), { timeout: 1_000 }).toBe(true);
+      if (deadline) clearTimeout(deadline);
+      expect(deadlineExceeded, '原生开录必须在8秒浏览器活跃窗口内放弃').toBe(false);
+      expect(forbiddenRequests, '不得发complete、额外转写或第二个会话').toEqual([]);
+      expect(sessionStartRequests).toBe(1);
+      expect([...new Set(liveSockets.map(socket => socket.sessionId))]).toEqual([sessionId]);
+      const status = await readEnvelope<{ items: unknown[] }>(await page.request.get(`/api/document-store/stores/${storeId}/entries`, { headers: authHeaders(token) }));
+      expect(status.items).toEqual([]);
+      await testInfo.attach('recording-native-proof', { body: JSON.stringify({
+        inspectionRunId, storeId, sessionId, kind: 'native-browser+virtual-device', native, firstTimer, lastTimer,
+        waveformChanged: firstWave !== lastWave, chunkBytes, sessionStartRequests, browserSocketsClosed: true,
+        boundary: '只证明原生开录与放弃；不是物理真人麦克风或ASR准确性。默认实时ASR可自然连接，上游连接超时8秒不等于独立计费结束回执。',
+      }), contentType: 'application/json' });
+    } finally {
+      // 无论UI在哪一步失败，先关闭录音页停止媒体和WS；context保留到API清理回读完成。
+      await page.close({ runBeforeUnload: false }).catch(() => undefined);
+      if (deadline) clearTimeout(deadline);
+      try {
+        await pendingStore?.catch(() => undefined);
+        await pendingSession?.catch(() => undefined);
+        if (storeId) await cleanupTrackedFixture(page, token, [
+          { kind: 'store', id: storeId, path: `/api/document-store/stores/${storeId}` },
+          ...(sessionId ? [{ kind: 'recording-session', id: sessionId, path: `/api/document-store/recording-uploads/${sessionId}` }] : []),
+        ], async () => {
+          const cleanupErrors: string[] = [];
+          try {
+            if (sessionId) {
+              const cancelled = await page.request.delete(`/api/document-store/recording-uploads/${sessionId}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs });
+              // UI已放弃会话时再次DELETE可返回404，随后仍需独立GET404，不用删除应答替代回读。
+              if (cancelled.status() !== 404) await expectDeleteSucceeded(cancelled, '原生录音会话清理失败');
+            }
+          } catch { cleanupErrors.push('会话删除未确认'); }
+          try {
+            await expectDeleteSucceeded(await page.request.delete(`/api/document-store/stores/${storeId}`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs }), '原生录音库清理失败');
+          } catch { cleanupErrors.push('知识库删除未确认'); }
+          if (sessionStartRequests > 0 && !sessionId) cleanupErrors.push('会话创建响应未知');
+          if (cleanupErrors.length) throw Error(cleanupErrors.join('；'));
+        }, testInfo);
+      } finally {
+        await mobileContext.close();
+      }
+    }
+  });
+
+  test('[REC-002] 现场录音自动开始且暂停继续保留前后音频', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '旧暂停继续夹具替换浏览器媒体类，不能冒充正式原生音频或ASR准确性；原REC002前后音频断言保留，等待真实安全变体验证');
     test.setTimeout(120_000);
     const mobileContext = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
     await mobileContext.grantPermissions(['microphone']);
@@ -6236,6 +6914,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
   });
 
   test('[REC-009] 转录启动失败保留原音频并允许再次转录', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    blockUnsafeProductionFixture(test, requiredEnv('STABLE_SMOKE_ENVIRONMENT'), 'REC-009');
     test.setTimeout(120_000);
     const token = await loginAndReadToken(page, request, '/document-store');
     const title = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-transcribe-retry`;
@@ -7222,8 +7901,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-005][VIS-008][REG-visual-error-001] 无效生图请求返回用户可读错误', async ({ page, request }) => {
-    const token = await loginAndReadToken(page, request, '/visual-agent');
+  test('[CORE-005] 安全输入边界返回用户可读错误', async ({ page, request }, testInfo) => {
+    const token = await loginAndReadToken(page, request, '/');
+    await enterVisualFromHome(page);
     const response = await page.request.post('/api/visual-agent/image-gen/runs', {
       headers: authHeaders(token),
       data: { platformId: 'logical-model', modelId: 'invalid', items: [] },
@@ -7232,6 +7912,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     expect(response.status()).toBe(400);
     expect(body.success).toBe(false);
     expectUserReadable(body.error?.message || '');
+    await testInfo.attach('core-user-error-api-boundary', {body:JSON.stringify({
+      status:response.status(),error:body.error,requestId:response.headers()['x-request-id'] || null,
+      proofBoundary:'真实输入边界拒绝；不证明自然模型失败或前端错误恢复，不能核销VIS008/REGvisualerror',
+    }),contentType:'application/json'});
   });
 
   for (const module of modules) {
@@ -7344,10 +8028,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         caption: '上传后的参考图在画板中完成解码并可继续作为生成输入。',
       });
     } finally {
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-input-delete` },
-      });
-      await expectDeleteSucceeded(deleted, `删除单图输入取证工作区 ${workspace.id} 失败`);
+      await cleanupTrackedFixture(page, token, [{ kind: 'workspace', id: workspace.id, path: `/api/visual-agent/image-master/workspaces/${workspace.id}/detail` }], async () => {
+        const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-input-delete` }, timeout: stableSmokeCleanupTimeoutMs,
+        });
+        await expectDeleteSucceeded(deleted, `删除单图输入取证工作区 ${workspace.id} 失败`);
+      }, testInfo);
     }
   });
 
@@ -7370,15 +8056,26 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally { await context.close(); }
   });
 
+  test.describe('手机默认生图不自动重试', () => {
+  test.describe.configure({ retries: 0 });
   test('[VIS-009][REG-visual-policy-001] 真实触控手机从首页生图进入并使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
     test.setTimeout(720_000);
     const context = await browser.newContext({ ...devices['iPhone 13'], baseURL: testInfo.project.use.baseURL });
     const page = await context.newPage();
     const token = await loginAndReadToken(page, request, '/');
     await enterVisualFromHome(page, { touch: true });
-    const { workspace } = await createVisualWorkspace(page, token, 'mobile-business-policy');
+    let workspace = {id:''};
     let runId = '';
+    const creationEvidence:Promise<void>[]=[];
+    const forbiddenPublication:string[]=[];
+    await page.route('**/api/submissions**',async route=>{
+      if(route.request().method()==='POST') {forbiddenPublication.push(new URL(route.request().url()).pathname);await route.abort('blockedbyclient');}
+      else await route.continue();
+    });
     try {
+      await createDefaultWorkspaceThroughUi(page,{runId:requiredEnv('STABLE_SMOKE_RUN_ID'),onCreated:created=>{
+        workspace=created;creationEvidence.push(testInfo.attach('visual-workspace-created',{body:JSON.stringify({inspectionRunId:requiredEnv('STABLE_SMOKE_RUN_ID'),workspaceId:workspace.id}),contentType:'application/json'}));
+      }});
       const models = await readEnvelope<ImageModelPool[]>(await page.request.get('/api/visual-agent/image-gen/models', { headers: authHeaders(token) }));
       const defaults = models.filter(model => model.isDefault);
       expect(defaults).toHaveLength(1);
@@ -7386,8 +8083,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const capability = await readEnvelope<{ matched: boolean; sizesByResolution?: Record<string, Array<{size:string;aspectRatio:string}>> }>(
         await page.request.get(`/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(model.code)}`, { headers: authHeaders(token) }));
       expect(capability.matched).toBe(true);
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await openOwnVisualWorkspace(page, workspace.id, { touch: true });
       await dismissBlockingTutorial(page);
       expect(await page.evaluate(() => navigator.maxTouchPoints)).toBeGreaterThan(0);
       await expect(page.getByText(model.name, { exact: true }).first()).toBeVisible();
@@ -7399,7 +8094,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-SINGLE-IMAGE-CREATION-14',
-        target: page.locator('[data-tour-id="visual-editor-root"]'),
+        target: promptInput,
         caption: 'iPhone 13 真实触控上下文中，模型、尺寸、描述和生成操作均可触达且无横向裁切。',
       });
 
@@ -7407,13 +8102,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         response.request().method() === 'POST'
         && new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`
       ));
-      await promptInput.fill('移动端蓝色陶瓷杯，纯白背景，产品摄影，不要文字');
+      await promptInput.fill('白桃');
       await page.getByRole('button', { name: '生成', exact: true }).click();
       const createResponse = await createResponsePromise;
       const createBody = await createResponse.json() as ApiEnvelope<{ runId: string }>;
       expect(createResponse.ok(), createBody.error?.message || '移动端创建生图任务失败').toBe(true);
       expect(createBody.success, createBody.error?.message || '移动端创建生图任务失败').toBe(true);
       runId = createBody.data.runId;
+      await testInfo.attach('mobile-visual-run-created',{body:JSON.stringify({inspectionRunId:requiredEnv('STABLE_SMOKE_RUN_ID'),runId}),contentType:'application/json'});
+      const actualRequest=createResponse.request().postDataJSON() as Record<string,unknown>;
+      await testInfo.attach('mobile-default-actual-request',{body:JSON.stringify({runId,request:actualRequest,proofBoundary:'手机默认白桃；严格1024主例及引用声明另行分账，不以手机入口替代'}),contentType:'application/json'});
+      expect(actualRequest.modelId).toBe(model.code);
+      expect(actualRequest.platformId).toBe('logical-model');
+      expect.soft(actualRequest.expectedImageRefCount,'手机入口缺显式零引用声明仍保持合同失败，继续观察已提交产物').toBe(0);
       const mobileProgress = page.getByText(/正在生成 · 已等待 \d+s/).first();
       await expect(mobileProgress).toBeVisible({ timeout: 30_000 });
       await captureStableSmokeVisualEvidence(page, testInfo, {
@@ -7423,6 +8124,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       });
       const completed = await waitForImageRun(page, token, runId, 600_000);
       await assertImageArtifact(page, completed.detail);
+      expect(completed.detail.run.logicalModelPublicId || completed.detail.run.modelId).toBe(model.code);
+      const downloaded=await readGeneratedImageBytes(page,completed.detail);
+      const dimensions=await decodeDownloadedImageDimensions(page,downloaded.bytes,downloaded.mime);
+      await testInfo.attach('mobile-default-artifact',{body:JSON.stringify({runId,dimensions,bytes:downloaded.bytes.byteLength}),contentType:'application/json'});
+      expect(forbiddenPublication).toEqual([]);
       await testInfo.attach('mobile-business-model-policy', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
       if (runId) {
@@ -7439,12 +8145,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           }
         }
       }
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
-      });
-      await expectDeleteSucceeded(deleted, `删除移动端工作区 ${workspace.id} 失败`);
-      await context.close();
+      try {
+        await Promise.all(creationEvidence);
+        if(workspace.id) await cleanupTrackedFixture(page,token,[
+          {kind:'workspace',id:workspace.id,path:`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`},
+          ...(runId?[{kind:'run',id:runId,path:`/api/visual-agent/image-gen/runs/${runId}`}]:[]),
+        ],async()=>{
+          const deleted=await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`,{headers:{...authHeaders(token),'Idempotency-Key':`${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete`},timeout:stableSmokeCleanupTimeoutMs});
+          await expectDeleteSucceeded(deleted,`删除移动端工作区 ${workspace.id} 失败`);
+        },testInfo);
+      } finally {await context.close();}
     }
+  });
   });
 
   test('[MVIS-012] 移动端参考图、尺寸、输入和移除操作均可触达', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
@@ -7489,7 +8201,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         { name: 'mobile-b.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(235, 190, 55, 96).split(',')[1], 'base64') },
         { name: 'mobile-c.png', mimeType: 'image/png', buffer: Buffer.from(solidPngDataUrl(210, 55, 75, 96).split(',')[1], 'base64') },
       ];
-      const canvasFileInput = page.getByTestId('visual-canvas-file-input');
+      // 实际正式旧版没有新testid；画布根内唯一image输入仍是同一真实上传入口。
+      const canvasFileInput = page.locator('[data-tour-id="visual-editor-root"] input[type="file"][accept="image/*"]');
       await expect(canvasFileInput).toHaveCount(1);
       for (const [index, file] of threeFiles.entries()) {
         await canvasFileInput.setInputFiles(file);
@@ -7512,14 +8225,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       try {
         if (workspace.id) {
-          const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-            headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
-            timeout: stableSmokeCleanupTimeoutMs,
-          });
-          await expectDeleteSucceeded(deleted, `删除移动端参考图工作区 ${workspace.id} 失败`);
-          expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, {
-            headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
-          })).status()).toBe(404);
+          await cleanupTrackedFixture(page, token, [{ kind: 'workspace', id: workspace.id, path: `/api/visual-agent/image-master/workspaces/${workspace.id}/detail` }], async () => {
+            const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+              headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` }, timeout: stableSmokeCleanupTimeoutMs,
+            });
+            await expectDeleteSucceeded(deleted, `删除移动端参考图工作区 ${workspace.id} 失败`);
+          }, testInfo);
         }
       } finally {
         await context.close();
@@ -7930,6 +8641,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
       }
       if (workspace.id) {
+      await cleanupTrackedFixture(page, token, [
+        { kind: 'workspace', id: workspace.id, path: `/api/visual-agent/image-master/workspaces/${workspace.id}/detail` },
+        ...[...new Set([runId, boundaryRunId, retryRunId].filter(Boolean))].map(id => ({ kind: 'run', id, path: `/api/visual-agent/image-gen/runs/${id}` })),
+      ], async () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-delete` },
         timeout: stableSmokeCleanupTimeoutMs,
@@ -7964,11 +8679,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           intervals: [500, 1_000, 2_000],
         }).not.toBe(200);
       }
+      }, testInfo);
       }
     }
   });
 
-  test('[VIS-008] 单图引用失败保留描述并允许恢复编辑', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test('[VIS-008][REG-visual-error-001] 单图引用失败保留描述并允许恢复编辑', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境策略禁止主动运行损坏图片引用');
     test.setTimeout(180_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
@@ -8042,81 +8758,99 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[VIS-004] 方形、横版与竖版三画幅均生成真实比例产物', { tag: '@cleanup' }, async ({ page, request }) => {
-    test.setTimeout(300_000);
-    const token = await loginAndReadToken(page, request, '/visual-agent');
-    const { workspace } = await createVisualWorkspace(page, token, 'single-image-ratio-matrix');
-    let runId = '';
+  test.describe('VIS004尺寸轮换不自动重试', () => {
+  test.describe.configure({ retries: 0 });
+  test('[VIS-004] 具体默认支持画幅通过真人页面生成并轮换验证真实比例', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+    const environment = requiredEnv('STABLE_SMOKE_ENVIRONMENT');
+    test.setTimeout(environment === 'production' ? 360_000 : 900_000);
+    const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+    const token = await loginAndReadToken(page, request, '/');
+    let workspace = { id: '' };
+    const knownRunIds: string[] = [];
+    const creationEvidence: Promise<void>[] = [];
     try {
+      await enterVisualFromHome(page);
       const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) });
       const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
-      const pool = pools.find((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')));
-      expect(pool, '没有可用的文生图逻辑模型').toBeTruthy();
-      const allRequested = [
-        { size: '1024x1024', orientation: 'square', prompt: '方形产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
-        { size: '1536x1024', orientation: 'landscape', prompt: '横版产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
-        { size: '1024x1536', orientation: 'portrait', prompt: '竖版产品照，一枚蓝色陶瓷杯，纯白背景，不要文字' },
-      ] as const;
-      const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
-      const rotationSeed = requiredEnv('STABLE_SMOKE_COMMIT');
-      const rotationIndex = [...rotationSeed]
-        .reduce((sum, character) => sum + character.charCodeAt(0), 0) % allRequested.length;
-      const requested = production ? [allRequested[rotationIndex]] : allRequested;
-      const create = await page.request.post('/api/visual-agent/image-gen/runs', {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-ratio-matrix` },
-        data: {
-          platformId: 'logical-model',
-          modelId: pool!.code,
-          responseFormat: 'url',
-          maxConcurrency: 1,
-          workspaceId: workspace.id,
-          appKey: 'visual-agent',
-          items: requested.map((item) => ({ prompt: item.prompt, count: 1, size: item.size })),
+      const defaults = pools.filter(item => item.isDefault);
+      expect(defaults, '文生图必须有唯一后端具体默认，不能挑首个健康型号').toHaveLength(1);
+      const pool = defaults[0];
+      expect(pool.name, '默认必须是具体型号而不是抽象池').not.toMatch(/默认池|default\s*pool/i);
+      const capability = await readEnvelope<Parameters<typeof planDefaultAspectJourney>[0] & Parameters<typeof assertDefaultAspectArtifact>[0]>(await page.request.get(
+        `/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(pool.code)}`, { headers: authHeaders(token) },
+      ));
+      const plan = planDefaultAspectJourney(capability, pool.code, { environment, commit: requiredEnv('STABLE_SMOKE_COMMIT') });
+      if (environment === 'production') expect(plan.requested, '正式本轮只允许一张轮换图').toHaveLength(1);
+      await testInfo.attach('vis004-supported-size-plan', {
+        body: JSON.stringify({ inspectionRunId, environment, modelId: pool.code, ...plan,
+          proofBoundary: '仅验证本轮实际请求的支持画幅；型号未公布的方向不强送，不代表未执行方向已通过' }), contentType: 'application/json',
+      });
+      await createDefaultWorkspaceThroughUi(page, {
+        runId: inspectionRunId, onCreated: created => {
+          workspace = created;
+          creationEvidence.push(testInfo.attach('visual-workspace-created', {
+            body: JSON.stringify({ inspectionRunId, workspaceId: workspace.id, suffix: 'vis004-size-rotation' }), contentType: 'application/json',
+          }));
         },
       });
-      runId = (await readEnvelope<{ runId: string }>(create)).runId;
-      const completed = await waitForImageRun(page, token, runId, 240_000);
-      expect(completed.detail.run.status).toBe('Completed');
-      expect(completed.detail.run.total).toBe(requested.length);
-      expect(completed.detail.run.done).toBe(requested.length);
-      expect(completed.detail.run.failed).toBe(0);
-      expect(completed.detail.items).toHaveLength(requested.length);
-      for (const [index, item] of completed.detail.items.entries()) {
-        expect(item.requestedSize, `第 ${index + 1} 张必须保留请求尺寸`).toBe(requested[index].size);
-        const dimensions = await decodeGeneratedImageDimensions(page, item);
-        expect(dimensions.width).toBeGreaterThan(0);
-        expect(dimensions.height).toBeGreaterThan(0);
+      await dismissBlockingTutorial(page);
+      for (const requested of plan.requested) {
+        const submittedAt = new Date().toISOString();
+        const submitted = await submitDefaultAspectThroughUi(page, {
+          workspaceId: workspace.id, pool, requested, onCreated: id => {
+            knownRunIds.push(id);
+            creationEvidence.push(testInfo.attach('vis004-run-created', {
+              body: JSON.stringify({ inspectionRunId, runId: id }), contentType: 'application/json',
+            }));
+          },
+          onSubmitted: async proof => {
+            await testInfo.attach('vis004-actual-ui-request', { body: JSON.stringify({ ...proof, submittedAt }), contentType: 'application/json' });
+            // 保留所有入口显式声明零参考图的原合同；先观察已付费任务，不借清理取消归因模型。
+            expect.soft(proof.request.expectedImageRefCount, '页面必须显式声明零参考图；尺寸或产物通过不核销此合同缺口').toBe(0);
+          },
+        });
+        const completed = await waitForImageRun(page, token, submitted.runId, 240_000);
+        await assertImageArtifact(page, completed.detail);
+        expect(completed.detail.run.id).toBe(submitted.runId);
+        expect(completed.detail.run.logicalModelPublicId || completed.detail.run.modelId).toBe(pool.code);
+        expect(completed.detail.run.total).toBe(1);
+        expect(completed.detail.items).toHaveLength(1);
+        expect(completed.detail.items[0].requestedSize).toBe(requested.size);
+        const downloaded = await readGeneratedImageBytes(page, completed.detail);
+        const dimensions = await decodeDownloadedImageDimensions(page, downloaded.bytes, downloaded.mime);
+        const dimensionProof = assertDefaultAspectArtifact(capability, requested, dimensions);
         const ratio = dimensions.width / dimensions.height;
-        if (requested[index].orientation === 'square') expect(Math.abs(ratio - 1)).toBeLessThan(0.08);
-        if (requested[index].orientation === 'landscape') expect(ratio).toBeGreaterThan(1.2);
-        if (requested[index].orientation === 'portrait') expect(ratio).toBeLessThan(0.8);
+        if (requested.orientation === 'square') expect(ratio).toBe(1);
+        if (requested.orientation === 'landscape') expect(ratio).toBeGreaterThan(1);
+        if (requested.orientation === 'portrait') expect(ratio).toBeLessThan(1);
+        const generated = page.locator(`[data-canvas-key="${submitted.targetKey}"]`).getByTestId('canvas-image');
+        await expect(generated, '同一真人画框必须呈现可解码的完成图片').toBeVisible({ timeout: 30_000 });
+        await expect.poll(() => generated.evaluate(element => (element as HTMLImageElement).naturalWidth)).toBe(dimensions.width);
+        const log = await waitForGatewayLog(request, `${submitted.runId}-0-0`);
+        expect(log.logicalModelPublicId).toBe(pool.code);
+        await testInfo.attach('vis004-real-artifact-and-route', {
+          body: JSON.stringify({ inspectionRunId, submittedAt, runId: submitted.runId, requestId: log.requestId, modelId: pool.code,
+            requestedSize: requested.size, ...dimensionProof, orientation: requested.orientation, bytes: downloaded.bytes.byteLength,
+            provider: log.provider, model: log.model, offeringId: log.offeringId, isFallback: log.isFallback }), contentType: 'application/json',
+        });
+        await testInfo.attach(`vis004-result-${requested.orientation}`, { body: await page.screenshot(), contentType: 'image/png' });
       }
     } finally {
-      if (runId) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
-        });
-        if (current.ok()) {
-          const state = await current.json() as ApiEnvelope<ImageRunDetail>;
-          if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
-              headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
-            });
-            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
-          }
-        }
-      }
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-ratio-delete` },
-        timeout: stableSmokeCleanupTimeoutMs,
-      });
-      await expectDeleteSucceeded(deleted, `删除画幅矩阵工作区 ${workspace.id} 失败`);
-      if (runId) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
-        })).status()).toBe(404);
+      try {
+        await Promise.all(creationEvidence);
+      } finally {
+        if (workspace.id) await cleanupTrackedFixture(page, token, [
+          { kind: 'workspace', id: workspace.id, path: `/api/visual-agent/image-master/workspaces/${workspace.id}/detail` },
+          ...[...new Set(knownRunIds)].map(id => ({ kind: 'run', id, path: `/api/visual-agent/image-gen/runs/${id}` })),
+        ], async () => {
+          const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+            headers: { ...authHeaders(token), 'Idempotency-Key': `${inspectionRunId}-${workspace.id}-ratio-delete` }, timeout: stableSmokeCleanupTimeoutMs,
+          });
+          await expectDeleteSucceeded(deleted, `删除画幅矩阵工作区 ${workspace.id} 失败`);
+        }, testInfo);
       }
     }
+  });
   });
 
   test('[VIS-003][REG-image-input-001] JPEG 参考图真实生成及字节、MIME、扩展名一致性', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
@@ -8214,368 +8948,309 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           }
         }
       }
-      if (workspace.id) {
+      if (workspace.id) await cleanupTrackedFixture(page, token, [
+        { kind: 'workspace', id: workspace.id, path: `/api/visual-agent/image-master/workspaces/${workspace.id}/detail` },
+        ...(runId ? [{ kind: 'run', id: runId, path: `/api/visual-agent/image-gen/runs/${runId}` }] : []),
+      ], async () => {
         const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-delete` },
-          timeout: stableSmokeCleanupTimeoutMs,
+          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-delete` }, timeout: stableSmokeCleanupTimeoutMs,
         });
         await expectDeleteSucceeded(deleted, `删除参考图工作区 ${workspace.id} 失败`);
-        expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs })).status()).toBe(404);
-      }
-      if (runId) expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-        headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
-      })).status()).toBe(404);
+      }, testInfo);
     }
   });
 
-  test('[MVIS-001][MVIS-002][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] 多图逻辑模型真实生成、语义保真、恢复与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
-    test.setTimeout(240_000);
-    const token = await loginAndReadToken(page, request, '/visual-agent');
-    const { workspace } = await createVisualWorkspace(page, token, 'multi-image');
-    const runIds: string[] = [];
-    try {
-      const uploadAsset = async (data: string, suffix: string) => {
-        const response = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/assets`, {
-          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}` },
-          data: { data, width: 256, height: 256, prompt: suffix },
-        });
-        return readEnvelope<{ asset: { sha256: string; url: string } }>(response);
-      };
-      const blueReferenceData = solidPngDataUrl(35, 90, 190);
-      const yellowReferenceData = solidPngDataUrl(235, 190, 55);
-      const redReferenceData = solidPngDataUrl(210, 55, 75);
-      const first = await uploadAsset(blueReferenceData, 'blue-reference');
-      const second = await uploadAsset(yellowReferenceData, 'yellow-reference');
-      const third = await uploadAsset(redReferenceData, 'red-reference');
+  test.describe('多图正常路径每组合最多一次，不自动重付', () => {
+    test.describe.configure({ retries: 0 });
+    test('[MVIS-001][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] 两张真实UI参考图由当前默认生成并恢复', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+      await runDefaultMultiImageJourney(page, request, testInfo, 2);
+    });
+    test('[MVIS-002][MVIS-003][MVIS-008][MVIS-009][MVIS-011][REG-multi-image-001][REG-multi-image-002] 三张真实UI参考图重排后由当前默认生成并恢复', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+      await runDefaultMultiImageJourney(page, request, testInfo, 3);
+    });
 
-      const poolResponse = await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) });
-      const pools = await readEnvelope<ImageModelPool[]>(poolResponse);
-      const healthyPoolCodes = new Set(pools
-        .filter((item) => item.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')))
-        .map((item) => item.code));
-      const gateway = await loginGateway(request);
-      const logicalModels = await readEnvelope<{ items: GatewayLogicalModel[] }>(
-        await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers }),
-      );
-      const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
-      // 主路协议：Offering 没显式声明时继承上游模型的协议。
-      const primaryProtocol = (item: GatewayLogicalModel) => {
-        const primary = item.offerings
-          .filter((offering) => offering.enabled)
-          .sort((left, right) => left.priority - right.priority)[0];
-        if (!primary) return '';
-        return resolveGatewayOfferingProtocol(primary, upstreamIndex);
+    async function runDefaultMultiImageJourney(page: Page, request: APIRequestContext, testInfo: TestInfo, referenceCount: 2 | 3) {
+      test.setTimeout(420_000);
+      const inspectionRunId = requiredEnv('STABLE_SMOKE_RUN_ID');
+      const token = await loginAndReadToken(page, request, '/');
+      let workspace = { id: '' };
+      let runId = '';
+      const creationEvidence: Promise<void>[] = [];
+      const createRequests: Array<{ workspacePath: string }> = [];
+      testInfo.annotations.push({ type: 'acceptance-debt', description: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18：未执行；两图、三图各一次方图不核销双比例双任务布局；full视觉gate缺18仍失败，routine37不减。' });
+      const recordCreate = (item: import('@playwright/test').Request) => {
+        if (item.method() === 'POST' && /\/api\/visual-agent\/image-master\/workspaces\/[^/]+\/image-gen\/runs$/.test(new URL(item.url()).pathname)) {
+          createRequests.push({ workspacePath: new URL(item.url()).pathname });
+        }
       };
-      // 业务默认池排最前；多图旅程验的是「当前业务默认模型带着参考图真实生成」，
-      // 不按具体产品型号或单一 Provider 写死；
-      // 协议只要能把 input_references 或 image[] 原样送到上游即可，具体线上契约在 assertWireReferences 里逐条核。
-      const businessCandidates = logicalModels.items
-        .filter((item) => item.enabled && healthyPoolCodes.has(item.publicId))
-        .sort((left, right) => (
-          Number(Boolean(pools.find((pool) => pool.code === right.publicId)?.isDefault))
-          - Number(Boolean(pools.find((pool) => pool.code === left.publicId)?.isDefault))
-        ));
-      const dedicatedLogical = businessCandidates.find((item) => referencePreservingImageProtocols.includes(primaryProtocol(item)));
-      expect(
-        dedicatedLogical,
-        `业务开放的多图逻辑模型里没有一个主路走图片协议（${referencePreservingImageProtocols.join(' / ')}）。`
-        + `候选：${businessCandidates.map((item) => `${item.publicId}=${primaryProtocol(item) || '未知协议'}`).join('、') || '无'}`,
-      ).toBeTruthy();
-      const pool = pools.find((item) => item.code === dedicatedLogical!.publicId);
-      expect(pool, 'OpenRouter 多图逻辑模型未进入业务模型目录').toBeTruthy();
-
-      const createMultiRun = async (
-        suffix: string,
-        prompt: string,
-        userMessageContent: string,
-        imageRefs: Array<{ refId: number; assetSha256: string; url: string; label: string; role: string }>,
-        size = '1024x1024',
-      ) => {
-        const [requestedWidth, requestedHeight] = size.split('x').map(Number);
-        const frameHeight = 1001;
-        const frameWidth = Math.max(1, Math.round(frameHeight * requestedWidth / requestedHeight));
-        const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
-          headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}` },
-          data: {
-            prompt,
-            userMessageContent,
-            targetKey: `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${suffix}-target`,
-            platformId: 'logical-model',
-            modelId: pool!.code,
-            size,
-            responseFormat: 'url',
-            expectedImageRefCount: imageRefs.length,
-            imageRefs,
-            x: 0,
-            y: runIds.length * 1040,
-            w: frameWidth,
-            h: frameHeight,
+      page.on('request', recordCreate);
+      try {
+        await enterVisualFromHome(page);
+        // 业务当前多图目录仅用于唯一默认及能力，不登录网关读取任何全局目录或历史量。
+        const pools = await readEnvelope<ImageModelPool[]>(await page.request.get('/api/visual-agent/image-gen/models/vision', { headers: authHeaders(token) }));
+        const defaults = pools.filter(item => item.isDefault);
+        expect(defaults, '本环境多图必须有唯一后端默认，不能挑首个Healthy型号').toHaveLength(1);
+        const pool = defaults[0];
+        expect(pool.name, '默认不得是抽象池').not.toMatch(/默认池|default\s*pool/i);
+        const capability = await readEnvelope<Parameters<typeof multiImageJourney.assertDefaultAspectArtifact>[0] & {
+          matched?: boolean; modelId?: string; supportsImageToImage?: boolean;
+          sizesByResolution?: Record<string, Array<{size:string;aspectRatio:string}>>;
+        }>(await page.request.get(`/api/visual-agent/image-gen/adapter-info?modelId=${encodeURIComponent(pool.code)}`, { headers: authHeaders(token) }));
+        expect(capability.matched).toBe(true);
+        expect(capability.modelId).toBe(pool.code);
+        expect(capability.supportsImageToImage, '当前默认不支持参考图时不得换型号凑通过').toBe(true);
+        const square = capability.sizesByResolution?.['1k']?.find(item => item.aspectRatio === '1:1');
+        expect(square?.size, '仅消费当前默认已公布的最低1K方图选择').toMatch(/^\d+x\d+$/);
+        const [width, height] = square!.size.split('x').map(Number);
+        await createDefaultWorkspaceThroughUi(page, {
+          runId: inspectionRunId, onCreated: created => {
+            workspace = created;
+            creationEvidence.push(testInfo.attach('visual-workspace-created', {
+              body: JSON.stringify({ inspectionRunId, workspaceId: workspace.id, suffix: `multi-${referenceCount}` }), contentType: 'application/json',
+            }));
           },
         });
-        const createdRunId = (await readEnvelope<{ runId: string }>(create)).runId;
-        runIds.push(createdRunId);
-        return createdRunId;
-      };
-
-      const assertWireReferences = async (runId: string, expectedDataUrls: string[]) => {
-        const log = await waitForGatewayLog(request, `${runId}-0-0`);
-        expect(log.logicalModelPublicId).toBe(dedicatedLogical!.publicId);
-        expect(log.appCallerCode).toBe('visual-agent.image.vision::generation');
-        expect(
-          ['openrouter-image', 'openai', 'openai-compatible'],
-          '多图逻辑模型只能走保留参考图语义的图片协议',
-        ).toContain(log.protocol);
-        const requestBody = JSON.parse(log.requestBodyRedacted || '{}') as {
-          input_references?: Array<{ type?: string; image_url?: { url?: string } }>;
-          content_type?: string;
-          endpoint_path?: string;
-          file_count?: number;
-          files?: Array<{ field?: string; mime_type?: string; size_bytes?: number; sha256?: string }>;
-        };
-        const expectedReferences = expectedDataUrls.map((dataUrl) => {
-          const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
-          expect(match, '测试参考图必须是合法的 Base64 data URL').toBeTruthy();
-          const digest = createHash('sha256').update(Buffer.from(match![2], 'base64')).digest('hex');
-          return { digest, mimeType: match![1], redactedUrl: `[BASE64_IMAGE:${digest}:${match![1]}]` };
-        });
-        if (log.protocol === 'openrouter-image') {
-          const wireReferences = requestBody.input_references || [];
-          expect(wireReferences, 'OpenRouter 请求必须保留全部多图引用').toHaveLength(expectedDataUrls.length);
-          expect(wireReferences.map((item) => item.type)).toEqual(expectedDataUrls.map(() => 'image_url'));
-          expect(wireReferences.map((item) => item.image_url?.url)).toEqual(
-            expectedReferences.map((item) => item.redactedUrl),
-          );
-        } else {
-          expect(requestBody.content_type).toBe('multipart/form-data');
-          expect(requestBody.endpoint_path).toMatch(/\/images\/edits$/);
-          expect(requestBody.file_count, 'OpenAI 备用路由必须发送全部参考图文件').toBe(expectedDataUrls.length);
-          expect(requestBody.files?.map((item) => item.field)).toEqual(expectedDataUrls.map(() => 'image[]'));
-          expect(requestBody.files?.map((item) => item.mime_type)).toEqual(
-            expectedReferences.map((item) => item.mimeType),
-          );
-          expect(requestBody.files?.map((item) => item.sha256)).toEqual(
-            expectedReferences.map((item) => item.digest),
-          );
+        await dismissBlockingTutorial(page);
+        const files = [
+          { name: 'a.png', data: solidPngDataUrl(35, 90, 190), color: 'blue' },
+          { name: 'b.png', data: solidPngDataUrl(235, 190, 55), color: 'yellow' },
+          { name: 'c.png', data: solidPngDataUrl(210, 55, 75), color: 'red' },
+        ].slice(0, referenceCount).map(file => ({ ...file, buffer: Buffer.from(file.data.split(',')[1]!, 'base64') }));
+        const uploadedAssets: Array<{name:string;id:string;sha256:string}> = [];
+        const picker = page.locator('[data-tour-id="visual-editor-root"] input[type="file"][accept="image/*"]');
+        const uploadEvidence = [
+          { slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-02' },
+          { slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-03' },
+          { slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-04' },
+        ];
+        await expect(picker).toBeEnabled({ timeout: 30_000 });
+        for (const [index, file] of files.entries()) {
+          const pendingUpload = page.waitForResponse(response => response.request().method() === 'POST'
+            && new URL(response.url()).pathname === `/api/visual-agent/image-master/workspaces/${workspace.id}/assets`);
+          await picker.setInputFiles({ name: file.name, mimeType: 'image/png', buffer: file.buffer });
+          const uploaded = await pendingUpload;
+          const uploadBody = await uploaded.json() as ApiEnvelope<{ asset: { id:string;sha256:string } }>;
+          expect(uploaded.ok(), uploadBody.error?.message || '真人参考图上传失败').toBe(true);
+          expect(uploadBody.success).toBe(true);
+          const asset = uploadBody.data.asset;
+          expect(asset.id, '真实上传必须返回资产身份').toBeTruthy();
+          uploadedAssets.push({ name: file.name, id: asset.id, sha256: asset.sha256 });
+          await testInfo.attach('multi-image-reference-uploaded', {
+            body: JSON.stringify({ inspectionRunId, workspaceId: workspace.id, assetId: asset.id, fileName: file.name, sha256: asset.sha256 }),
+            contentType: 'application/json',
+          });
+          const sent = uploaded.request().postDataJSON() as { data: string };
+          expect(sent.data).toMatch(/^data:image\/png;base64,/);
+          expect(Buffer.from(sent.data.split(',')[1]!, 'base64').equals(file.buffer), '页面必须上传原始合法PNG字节').toBe(true);
+          expect(asset.sha256).toBe(createHash('sha256').update(file.buffer).digest('hex'));
+          await expect(page.getByTestId('canvas-image')).toHaveCount(index + 1, { timeout: 30_000 });
+          await expect(page.getByText('同步中', { exact: true })).toHaveCount(0, { timeout: 120_000 });
+          if (referenceCount === 3) await captureStableSmokeVisualEvidence(page, testInfo, {
+            ...uploadEvidence[index],
+            target: page.locator(`[data-testid="canvas-image"][alt="${file.name}"]`),
+            caption: `第${index+1}张本轮参考图经真实文件输入进入画板并完成同步；仅证明该上传状态。`,
+          });
         }
-        expect(log.imageSuccessCount || 0).toBeGreaterThan(0);
-        expect(log.answerText || '').toMatch(/"data"\s*:\s*\[/);
-        expect(log.answerText || '').not.toMatch(/input must have at least|chat\/completions|modalities/i);
-        return log;
-      };
-
-      const twoRunId = await createMultiRun(
-        'two-reference-run',
-        '只从 @img1 和 @img2 读取各自主色，不要自行改色；将两种参考主色分别用于极简包装盒的左右面板，纯白背景，不要文字',
-        '按顺序参考 @img1 和 @img2 的原始主色生成双色包装盒',
-        [
-          { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
-          { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
-        ],
-      );
-      const twoCompleted = await waitForImageRun(page, token, twoRunId);
-      await assertImageArtifact(page, twoCompleted.detail);
-      const twoColorCoverage = await measureReferenceColorCoverage(page, twoCompleted.detail);
-      expect(twoColorCoverage.blue, '@img1 未对两图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
-      expect(twoColorCoverage.yellow, '@img2 未对两图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
-      await assertWireReferences(twoRunId, [blueReferenceData, yellowReferenceData]);
-      const restoredTwo = (await readEnvelope<ImageRunDetail>(
-        await page.request.get(`/api/visual-agent/image-gen/runs/${twoRunId}?includeItems=true`, { headers: authHeaders(token) }),
-      )).run;
-      expect(restoredTwo.expectedImageRefCount).toBe(2);
-      expect(restoredTwo.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
-        { refId: 1, label: '蓝色参考', role: 'target' },
-        { refId: 2, label: '黄色参考', role: 'style' },
-      ]);
-
-      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
-      await dismissBlockingTutorial(page);
-
-      const threeRunId = await createMultiRun(
-        'three-reference-run',
-        '只从 @img1、@img2 和 @img3 读取各自主色，不要自行改色；将三种参考主色分别用于极简包装盒的三个清晰分区，纯白背景，不要文字',
-        '按顺序参考 @img1、@img2 和 @img3 的原始主色生成三分区包装盒',
-        [
-          { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
-          { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
-          { refId: 3, assetSha256: third.asset.sha256, url: third.asset.url, label: '红色参考', role: 'reference' },
-        ],
-      );
-      const wideThreeRunId = await createMultiRun(
-        'three-reference-wide-run',
-        '只从 @img1、@img2 和 @img3 读取各自主色；生成横版三分区包装设计，纯白背景，不要文字',
-        '按顺序参考 @img1、@img2 和 @img3 生成横版三分区包装设计',
-        [
-          { refId: 1, assetSha256: first.asset.sha256, url: first.asset.url, label: '蓝色参考', role: 'target' },
-          { refId: 2, assetSha256: second.asset.sha256, url: second.asset.url, label: '黄色参考', role: 'style' },
-          { refId: 3, assetSha256: third.asset.sha256, url: third.asset.url, label: '红色参考', role: 'reference' },
-        ],
-        '1536x1024',
-      );
-
-      const activeBeforeRefresh = (await readEnvelope<ImageRunDetail>(
-        await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
-      )).run;
-      expect(activeBeforeRefresh.status, '刷新动作必须发生在三图任务仍在运行时').toMatch(/Queued|Running/i);
-      expect(activeBeforeRefresh.imageRefs?.map((item) => item.assetSha256)).toEqual([
-        first.asset.sha256,
-        second.asset.sha256,
-        third.asset.sha256,
-      ]);
-
-      const createRequestsDuringRestore: string[] = [];
-      const recordCreateRequest = (requestItem: import('@playwright/test').Request) => {
-        if (requestItem.method() === 'POST'
-          && new URL(requestItem.url()).pathname.endsWith(`/workspaces/${workspace.id}/image-gen/runs`)) {
-          createRequestsDuringRestore.push(requestItem.url());
-        }
-      };
-      page.on('request', recordCreateRequest);
-      await page.reload({ waitUntil: 'domcontentloaded' });
-      await dismissBlockingTutorial(page);
-      const multiProgressItems = page.getByTestId('generation-progress');
-      const threeTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-three-reference-run-target`;
-      const wideThreeTargetKey = `${requiredEnv('STABLE_SMOKE_RUN_ID')}-three-reference-wide-run-target`;
-      await expect(page.locator(`[data-canvas-key="${threeTargetKey}"]`), '三图方图任务必须恢复到画板').toBeVisible({ timeout: 15_000 });
-      await expect(page.locator(`[data-canvas-key="${wideThreeTargetKey}"]`), '三图宽图任务必须恢复到画板').toBeVisible({ timeout: 15_000 });
-      await expect.poll(() => multiProgressItems.count(), {
-        message: '刷新发生在活跃三图任务期间，画板必须至少恢复一个真实进度容器',
-        timeout: 5_000,
-      }).toBeGreaterThanOrEqual(1);
-      const queue = page.getByLabel('生成队列');
-      await expect(queue).toBeVisible();
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-08',
-        target: queue,
-        caption: '三图组合请求已经真实提交，运行和排队数量在画板上持续可见。',
-      });
-      const firstMultiProgress = multiProgressItems.first();
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-18',
-        overviewJustification: '同一桌面画板同时显示方图与横版三参考图任务，可核对多比例进度边界。',
-        caption: '三张参考图驱动的方图和横版任务都恢复到画板，仍在运行的任务进度描边完整落在结果容器内。',
-      });
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-09',
-        target: firstMultiProgress,
-        caption: '三图任务准备阶段显示尺寸、阶段和剩余时间，没有空白等待。',
-      });
-      await page.waitForTimeout(1_100);
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-10',
-        target: firstMultiProgress,
-        caption: '真实三图生成继续推进，时间与进度描边相较准备态发生变化。',
-      });
-      await expect.poll(async () => {
-        if (await page.getByTestId('generation-progress').first().isVisible().catch(() => false)) return 'progress';
-        return (await readEnvelope<ImageRunDetail>(
-          await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
-        )).run.status;
-      }, {
-        message: '刷新后必须恢复同一任务的生成进度或已经完成的结果',
-        timeout: 30_000,
-      }).toMatch(/progress|Completed/i);
-      const restoredActive = (await readEnvelope<ImageRunDetail>(
-        await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) }),
-      )).run;
-      expect(restoredActive.status, '刷新完成后原三图任务必须仍可恢复').toMatch(/Queued|Running|Completed/i);
-      expect(restoredActive.id).toBe(threeRunId);
-      expect(restoredActive.imageRefs?.map((item) => item.assetSha256)).toEqual([
-        first.asset.sha256,
-        second.asset.sha256,
-        third.asset.sha256,
-      ]);
-      expect(createRequestsDuringRestore, '刷新恢复不得偷偷创建新的生图任务').toEqual([]);
-      page.off('request', recordCreateRequest);
-
-      if (/Completed/i.test(restoredActive.status)) {
-        await expect(page.getByTestId('canvas-image').first(), '刷新期间完成时页面必须恢复生成结果').toBeVisible({ timeout: 30_000 });
-      } else {
-        await expect(page.getByTestId('generation-progress').first(), '任务仍在运行时页面必须恢复生成进度').toBeVisible();
-      }
-
-      const completed = await waitForImageRun(page, token, threeRunId);
-      await assertImageArtifact(page, completed.detail);
-      const wideCompleted = await waitForImageRun(page, token, wideThreeRunId);
-      await assertImageArtifact(page, wideCompleted.detail);
-      await assertWireReferences(wideThreeRunId, [blueReferenceData, yellowReferenceData, redReferenceData]);
-      const threeColorCoverage = await measureReferenceColorCoverage(page, completed.detail);
-      expect(threeColorCoverage.blue, '@img1 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
-      expect(threeColorCoverage.yellow, '@img2 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
-      expect(threeColorCoverage.red, '@img3 未对三图生成结果产生可测的主色影响').toBeGreaterThan(0.002);
-      await assertWireReferences(threeRunId, [blueReferenceData, yellowReferenceData, redReferenceData]);
-      const afterRefresh = await page.request.get(`/api/visual-agent/image-gen/runs/${threeRunId}?includeItems=true`, { headers: authHeaders(token) });
-      const restoredRun = (await readEnvelope<ImageRunDetail>(afterRefresh)).run;
-      expect(restoredRun.status).toBe('Completed');
-      expect(restoredRun.expectedImageRefCount).toBe(3);
-      expect(restoredRun.imageRefs?.map(({ refId, label, role }) => ({ refId, label, role }))).toEqual([
-        { refId: 1, label: '蓝色参考', role: 'target' },
-        { refId: 2, label: '黄色参考', role: 'style' },
-        { refId: 3, label: '红色参考', role: 'reference' },
-      ]);
-
-      const messages = await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/messages`, { headers: authHeaders(token) });
-      const messageText = JSON.stringify((await messages.json() as ApiEnvelope<unknown>).data);
-      expect(messageText).toContain('@img1');
-      expect(messageText).toContain('@img2');
-      expect(messageText).toContain('@img3');
-
-      const generatedImage = page.getByTestId('canvas-image').last();
-      await expect(generatedImage, '多图生成完成后页面必须恢复真实图片').toBeVisible({ timeout: 30_000 });
-      await expect.poll(
-        () => generatedImage.evaluate((image) => (image as HTMLImageElement).naturalWidth),
-        { message: '多图结果必须完成浏览器解码', timeout: 30_000 },
-      ).toBeGreaterThan(0);
-      await generatedImage.evaluate((image) => (image as HTMLImageElement).decode());
-      await page.waitForTimeout(500);
-      await expect(page.getByText('参考', { exact: false }).last()).toBeVisible({ timeout: 15_000 });
-      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      expect(overflow, '桌面端多图引用、结果和输入区不得造成页面横向裁切').toBeLessThanOrEqual(1);
-      expect(await page.locator('textarea:visible, [contenteditable="true"]:visible').count()).toBeGreaterThan(0);
-      await captureStableSmokeVisualEvidence(page, testInfo, {
-        slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-11',
-        target: generatedImage,
-        caption: '三张参考图生成的真实结果已完成解码，引用提示和继续输入区域仍可见。',
-      });
-      await testInfo.attach('multi-image-result', { body: await page.screenshot(), contentType: 'image/png' });
-    } finally {
-      for (const runId of runIds) {
-        const current = await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        // 上传成功不等于debounce画布保存完成；只读等待真实assetId→element.id/refId落盘，不猜编号。
+        const orderedFiles = [files[1], files[0], ...files.slice(2)];
+        const references = await multiImageJourney.waitForPersistedMultiImageReferences({
+          references: orderedFiles.map(file => {
+            const upload = uploadedAssets.find(asset => asset.name === file.name);
+            expect(upload, '仅关联本轮真实上传回执中的assetId').toBeTruthy();
+            return { name: file.name, assetId: upload!.id, sha256: createHash('sha256').update(file.buffer).digest('hex'),
+              mime: 'image/png', bytes: file.buffer.length, color: file.color };
+          }),
+          readDetail: () => page.request.get('/api/visual-agent/image-master/workspaces/' + workspace.id + '/detail?assetLimit=20', {
+            headers: authHeaders(token), timeout: stableSmokeApiTimeoutMs,
+          }).then(response => readEnvelope<Parameters<typeof multiImageJourney.readPersistedMultiImageReferences>[0]>(response)),
         });
-        if (current.ok()) {
-          const state = await current.json() as ApiEnvelope<ImageRunDetail>;
-          if (!/Completed|Failed|Cancelled/i.test(state.data?.run?.status || '')) {
-            await page.request.post(`/api/visual-agent/image-gen/runs/${runId}/cancel`, {
-              headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
+        await testInfo.attach('multi-image-persisted-reference-identities', {
+          body: JSON.stringify({ inspectionRunId, workspaceId: workspace.id,
+            references: references.map(({assetId,canvasKey,refId,sha256}) => ({assetId,canvasElementId:canvasKey,refId,sha256})) }),
+          contentType: 'application/json',
+        });
+        const prompt = referenceCount === 2
+          ? '只读取已选两张参考图各自的原始主色，将两种主色分别用于极简包装盒的左右面板，纯白背景，不要文字，不要自行改色'
+          : '只读取已选三张参考图各自的原始主色，将三种主色分别用于极简包装盒的三个清晰分区，纯白背景，不要文字，不要自行改色';
+        let allowedCreates = 0;
+        // 只放行这个真人工作区的首个真实POST；不改请求、不伪造响应，任何重复仍使原case失败。
+        await page.route('**/api/visual-agent/image-master/workspaces/*/image-gen/runs', async route => {
+          const item = route.request();
+          if (item.method() !== 'POST') return route.continue();
+          allowedCreates += 1;
+          if (new URL(item.url()).pathname !== `/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs` || allowedCreates > 1) return route.abort('blockedbyclient');
+          return route.continue();
+        });
+        const submittedAt = new Date().toISOString();
+        const submitted = await multiImageJourney.submitDefaultMultiImageThroughUi(page, {
+          workspaceId: workspace.id, pool, references, prompt, size: square!.size,
+          beforeSubmit: async () => {
+            const chips = page.locator('.image-chip-node');
+            for (const chip of await chips.all()) {
+              await expect(chip, '桌面引用芯片必须真实可见').toBeVisible();
+              const bounds = await chip.boundingBox();
+              expect(bounds).toBeTruthy();
+              expect(bounds!.x).toBeGreaterThanOrEqual(0);
+              expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+              expect(bounds!.y).toBeGreaterThanOrEqual(0);
+              expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+            }
+            if (referenceCount === 3) await captureStableSmokeVisualEvidence(page, testInfo, {
+              slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-06', target: chips.first().locator('..'),
+              caption: '先上传a、b、c，再真实选择b、a、c；可读文件名芯片顺序将在实际生成请求与wire逐张核对。',
             });
-            await waitForImageRun(page, token, runId, 30_000).catch(() => undefined);
-          }
+          },
+          onCreated: id => {
+            runId = id;
+            creationEvidence.push(testInfo.attach('multi-image-run-created', {
+              body: JSON.stringify({ inspectionRunId, runId: id, referenceCount }), contentType: 'application/json',
+            }));
+          },
+          onSubmitted: async proof => {
+            await testInfo.attach('multi-image-actual-ui-request', {
+              body: JSON.stringify({ inspectionRunId, referenceCount, submittedAt, runId: proof.runId, targetKey: proof.targetKey,
+                configuredName: pool.name, selectedLabel: proof.selectedLabel, logicalModelPublicId: pool.code, chipLabels: proof.chipLabels,
+                expectedImageRefCount: proof.request.expectedImageRefCount,
+                imageRefs: proof.request.imageRefs?.map((item: {refId:number;assetSha256:string;label:string}) => ({refId:item.refId,sha256:item.assetSha256,label:item.label})),
+                size: proof.request.size }), contentType: 'application/json',
+            });
+          },
+          onMissingReferenceDeclaration: async proof => {
+            expect.soft(proof.request.expectedImageRefCount, '缺少显式参考数量仍是原业务红项，不补写实际POST，不借产物成功洗绿').toBe(referenceCount);
+          },
+        });
+        const runPath = `/api/visual-agent/image-gen/runs/${runId}?includeItems=true&includeImages=false`;
+        const initial = await readEnvelope<ImageRunDetail & {run:{maxConcurrency:number}}>(await page.request.get(runPath, { headers: authHeaders(token) }));
+        expect(initial.run.id).toBe(runId);
+        expect(initial.run.total, '每个2/3图组合都只创建一张图片').toBe(1);
+        expect(initial.run.maxConcurrency).toBe(1);
+        expect(initial.run.imageRefs?.map(item => item.assetSha256)).toEqual(references.map(item => item.sha256));
+        expect.soft(initial.run.expectedImageRefCount, 'run持久化数量声明不得因后续生成完成而消失').toBe(referenceCount);
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await dismissBlockingTutorial(page);
+        const frame = page.locator(`[data-canvas-key="${submitted.targetKey}"]`);
+        await expect(frame, '刷新恢复同一run的原画框，不从URL直接创建另一个项目').toBeVisible({ timeout: 30_000 });
+        const restored = await readEnvelope<ImageRunDetail>(await page.request.get(runPath, { headers: authHeaders(token) }));
+        expect(restored.run.id).toBe(runId);
+        expect(restored.run.status).toMatch(/Queued|Running|Completed/i);
+        expect(restored.run.imageRefs).toEqual(initial.run.imageRefs);
+        expect(createRequests).toHaveLength(1);
+        if (!/Completed/i.test(restored.run.status)) {
+          const progress = frame.getByTestId('generation-progress');
+          await expect(progress, '同run仍活跃必须恢复真实持续进度').toBeVisible({ timeout: 10_000 });
+          if (referenceCount === 3) await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-08', target: frame,
+            caption: '三张按b、a、c重排的参考图已由页面真实提交，刷新后仍是同一任务和画框；不证明另一种输入数量已通过。',
+          });
+          if (referenceCount === 3 && /准备|排队/.test(await progress.innerText())) await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-09', target: progress,
+            caption: '同一三图任务刷新后恢复本轮原生准备或排队状态；不能以生成中画面替代准备态，不注入受控状态。',
+          });
+          const movement = await progress.evaluate(async element => {
+            const before = element.textContent;
+            const animations = element.getAnimations({ subtree: true });
+            const times = animations.map(animation => animation.currentTime);
+            await new Promise(done => setTimeout(done, 1_100));
+            return { changed: element.textContent !== before,
+              animated: animations.some((animation,index) => animation.playState === 'running' && animation.currentTime !== times[index]),
+              completed: !element.isConnected };
+          });
+          expect(movement.changed || movement.animated || movement.completed, '原生进度必须持续变化，静态加载不能代替').toBe(true);
+          if (referenceCount === 3 && await progress.isVisible()
+            && /生成|绘制|处理中/.test(await progress.innerText()) && !/准备|排队/.test(await progress.innerText())) await captureStableSmokeVisualEvidence(page, testInfo, {
+            slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-10', target: progress,
+            caption: '同一真实生成任务的原生阶段、计时或动画持续推进；未注入假进度或代理节流。',
+          });
         }
-      }
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-delete` },
-        timeout: stableSmokeCleanupTimeoutMs,
-      });
-      await expectDeleteSucceeded(deleted, `删除多图工作区 ${workspace.id} 失败`);
-      for (const runId of runIds) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-          headers: authHeaders(token), timeout: stableSmokeCleanupTimeoutMs,
-        })).status()).toBe(404);
+        const completed = await waitForImageRun(page, token, runId, 240_000);
+        await assertImageArtifact(page, completed.detail);
+        expect(completed.detail.run.id).toBe(runId);
+        expect(completed.detail.run.logicalModelPublicId || completed.detail.run.modelId).toBe(pool.code);
+        expect(completed.detail.run.total).toBe(1);
+        expect(completed.detail.items).toHaveLength(1);
+        expect(completed.detail.run.imageRefs).toEqual(initial.run.imageRefs);
+        const downloaded = await readGeneratedImageBytes(page, completed.detail);
+        const dimensions = await decodeDownloadedImageDimensions(page, downloaded.bytes, downloaded.mime);
+        await testInfo.attach(`multi-image-${referenceCount}-decoded-artifact`, { body: downloaded.bytes, contentType: downloaded.mime });
+        // 复用已审阅的尺寸合同：adaptive/none只核所选比例和已公布限制，不能强求推荐像素。
+        const dimensionProof = multiImageJourney.assertDefaultAspectArtifact(capability, { width, height }, dimensions);
+        const coverage = await measureReferenceColorCoverage(page, completed.detail);
+        for (const reference of references) {
+          expect(coverage[reference.color as keyof typeof coverage], `${reference.name}未对${referenceCount}图产物产生可测主色影响`).toBeGreaterThan(0.002);
+        }
+        const log = await waitForGatewayLog(request, `${runId}-0-0`);
+        const wire = multiImageJourney.assertMultiImageWireReferences({ log, requestId: `${runId}-0-0`, modelId: pool.code, references });
+        const generated = frame.getByTestId('canvas-image');
+        await expect(generated, '同一run的真实产物必须回到页面并完成解码').toBeVisible({ timeout: 30_000 });
+        await generated.evaluate(image => (image as HTMLImageElement).decode());
+        await expect.poll(() => generated.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBe(dimensions.width);
+        await testInfo.attach('multi-image-artifact-and-route', {
+          body: JSON.stringify({ inspectionRunId, submittedAt, runId, ...wire, configuredName: pool.name,
+            selectedLabel: submitted.selectedLabel, provider: log.provider, actualModel: log.model, offeringId: log.offeringId,
+            isFallback: log.isFallback, routerTrace: log.routerTrace, ...dimensionProof, colorCoverage: coverage,
+            artifactBytes: downloaded.bytes.length, status: completed.detail.run.status,
+            proofBoundary: '颜色覆盖只证明各参考主色进入结果，不证明任意复杂语义、像素级复制或未执行组合' }), contentType: 'application/json',
+        });
+        const layout = await multiImageJourney.fitMultiImageResultThroughUi(page, { targetKey: submitted.targetKey });
+        await testInfo.attach('multi-image-result-layout', {
+          body: JSON.stringify({ inspectionRunId, runId, referenceCount, ...layout }), contentType: 'application/json',
+        });
+        await expect(page.locator('[contenteditable="true"]:visible,textarea:visible')).toBeVisible();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth), '桌面引用、结果和输入不横向裁切').toBeLessThanOrEqual(1);
+        expect(createRequests).toHaveLength(1);
+        expect(allowedCreates, '重复请求即使被零计费守卫拦截，也不得判业务通过').toBe(1);
+        await testInfo.attach(`multi-image-${referenceCount}-result`, { body: await page.screenshot(), contentType: 'image/png' });
+        if (referenceCount === 3) await captureStableSmokeVisualEvidence(page, testInfo, {
+          slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-11', target: generated,
+          caption: '本轮三图重排任务已完成：同一画框展示下载可解码的产物，三种主色逐项校验；不代表未运行两图通过。',
+        });
+      } catch (error) {
+        await testInfo.attach('multi-image-original-hard-failure', {
+          body: JSON.stringify({ inspectionRunId, workspaceId: workspace.id, runId, referenceCount,
+            message: redactStableSmokeDiagnosticText(error instanceof Error ? error.message : String(error)) }), contentType: 'application/json',
+        });
+        throw error;
+      } finally {
+        page.off('request', recordCreate);
+        try {
+          await Promise.all(creationEvidence);
+        } finally {
+          if (workspace.id) await cleanupTrackedFixture(page, token, [
+            { kind: 'workspace', id: workspace.id, path: `/api/visual-agent/image-master/workspaces/${workspace.id}/detail` },
+            ...(runId ? [{ kind: 'run', id: runId, path: `/api/visual-agent/image-gen/runs/${runId}` }] : []),
+          ], async () => {
+            const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+              headers: { ...authHeaders(token), 'Idempotency-Key': `${inspectionRunId}-${workspace.id}-multi-${referenceCount}-delete` },
+              timeout: stableSmokeCleanupTimeoutMs,
+            });
+            await expectDeleteSucceeded(deleted, `删除${referenceCount}图本轮工作区失败`);
+          }, testInfo);
+        }
       }
     }
   });
 
   test('[MVIS-003][MVIS-004] 多图重排与删除后引用顺序正确', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(300_000);
-    const token = await loginAndReadToken(page, request, '/visual-agent');
-    const { workspace } = await createVisualWorkspace(page, token, 'multi-image-boundaries');
+    const token = await loginAndReadToken(page, request, '/');
+    let workspace = { id: '' };
+    let workspaceCreationEvidence = Promise.resolve();
     const file = (name: string, red: number, green: number, blue: number) => ({
       name,
       mimeType: 'image/png',
       buffer: Buffer.from(solidPngDataUrl(red, green, blue, 32).split(',')[1]!, 'base64'),
     });
     try {
-      await page.goto(`/visual-agent/${workspace.id}`, { waitUntil: 'domcontentloaded' });
+      await enterVisualFromHome(page);
+      await createDefaultWorkspaceThroughUi(page, {
+        runId: requiredEnv('STABLE_SMOKE_RUN_ID'), onCreated: created => {
+          workspace = created;
+          workspaceCreationEvidence = testInfo.attach('visual-workspace-created', {
+            body: JSON.stringify({ inspectionRunId: requiredEnv('STABLE_SMOKE_RUN_ID'), workspaceId: workspace.id, suffix: 'multi-image-boundaries' }),
+            contentType: 'application/json',
+          });
+        },
+      });
       await dismissBlockingTutorial(page);
       await captureStableSmokeVisualEvidence(page, testInfo, {
         slotId: 'CDS-VISUAL-MULTI-IMAGE-CREATION-01',
@@ -8775,10 +9450,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       await testInfo.attach('multi-image-reorder-delete', { body: await page.screenshot(), contentType: 'image/png' });
     } finally {
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reorder-delete` },
-      });
-      await expectDeleteSucceeded(deleted, `多图验收项目 ${workspace.id} 清理失败`);
+      try {
+        await workspaceCreationEvidence;
+      } finally {
+        if (workspace.id) await cleanupTrackedFixture(page, token, [{ kind: 'workspace', id: workspace.id, path: `/api/visual-agent/image-master/workspaces/${workspace.id}/detail` }], async () => {
+          const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
+            headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reorder-delete` }, timeout: stableSmokeCleanupTimeoutMs,
+          });
+          await expectDeleteSucceeded(deleted, `多图验收项目 ${workspace.id} 清理失败`);
+        }, testInfo);
+      }
     }
   });
 

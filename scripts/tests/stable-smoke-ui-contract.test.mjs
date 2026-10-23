@@ -10,6 +10,171 @@ import { buildNotRunLedger, collectPlaywrightCases } from '../stable-smoke-resul
 import * as uiContract from '../../e2e/utils/stableSmokeUiContract.mjs';
 import { redactStableSmokeDiagnosticText } from '../../e2e/utils/stableSmokeDiagnostics.mjs';
 import * as recordingTools from '../../e2e/utils/stableSmokeRecording.mjs';
+import { cleanupAndReadBackResources, validCleanupReceipt } from '../../e2e/utils/stableSmokeCleanupSafety.mjs';
+
+test('REG-stsmk-account-scope-001 正式自然失败与历史状态用例在创建前拒绝伪造夹具', () => {
+  const spec = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const starts = ['[CORE-008][REG-tutorial-progress-001]', '[LIT-007]', '[VIDEO-003][VIDEO-006]', '[REC-004][REC-005]', '[REC-009]'];
+  const ids = ['CORE-008', 'LIT-007', 'VIDEO-006', 'REC-004', 'REC-009'];
+  const Skip = class extends Error {};
+  for (const [index, start] of starts.entries()) {
+    const body = spec.split(`test('${start}`)[1];
+    assert.ok(body, start);
+    const prefix = body.slice(body.indexOf('=> {') + 4, body.indexOf('\n', body.indexOf('=> {') + 5));
+    assert.ok(prefix.includes('blockUnsafeProductionFixture'), `${start}应在鉴权与创建前停止`);
+    const calls=[];
+    assert.throws(()=>blockUnsafeProductionFixture({skip:(condition,reason)=>{calls.push(reason);if(condition)throw new Skip();}},'production',ids[index]),Skip);
+    assert.ok(calls[0].includes('未执行'));
+    assert.doesNotThrow(()=>blockUnsafeProductionFixture({skip:condition=>assert.equal(condition,false)},'cds',ids[index]));
+  }
+});
+
+test('REG-stsmk-account-scope-001 安全输入400不能核销自然模型失败或视觉错误原REG', () => {
+  const spec=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
+  const safe=spec.split("test('[CORE-005]")[1].split('\n  for (const module')[0];
+  assert.ok(safe);
+  assert.doesNotMatch(safe,/\[VIS-008\]|\[REG-visual-error-001\]/);
+  assert.match(safe,/enterVisualFromHome\(page\)/);
+  assert.match(safe,/expectUserReadable\(body.error\?\.message/);
+  const natural=spec.split("test('[VIS-008][REG-visual-error-001]")[1];
+  assert.ok(natural);
+  assert.match(natural.split('test.setTimeout')[0],/test\.skip\(requiredEnv\('STABLE_SMOKE_ENVIRONMENT'\) === 'production'/);
+});
+
+test('REG-stsmk-account-scope-001 手机生图真人创建并登记完整清理，原生默认白桃与数量欠证分账',()=>{
+  const spec=readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts',import.meta.url),'utf8');
+  const body=spec.split("test('[VIS-009][REG-visual-policy-001]")[1].split("test('[MVIS-012]")[0];
+  assert.ok(body);
+  for(const text of ['createDefaultWorkspaceThroughUi','visual-workspace-created','mobile-visual-run-created','cleanupTrackedFixture',"await promptInput.fill('白桃')",'mobile-default-artifact','forbiddenPublication'])assert.ok(body.includes(text),text);
+  assert.doesNotMatch(body,/createVisualWorkspace\(|openOwnVisualWorkspace\(|page\.goto\(|route\.fulfill/);
+  assert.match(body,/expect\.soft\(actualRequest.expectedImageRefCount/);
+});
+
+test('REG-stsmk-account-scope-001 REC001原生虚拟设备独立开录放弃，不借旧REC002媒体替身或完成收费', () => {
+  const spec = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const start = spec.indexOf("test('[REC-001] 原生浏览器虚拟设备开录后放弃且会话清理");
+  assert.ok(start > 0, '原REC001必须有独立原生浏览器路径');
+  const body = spec.slice(start, spec.indexOf("test('[REC-002]", start));
+  assert.match(body, /loginAndReadToken\(page, request, '\/'\)/);
+  assert.match(body, /grantPermissions\(\['microphone'\]\)/);
+  assert.match(body, /mobileContext\.addInitScript\(blockStableSmokeServiceWorkerRegistration\)/);
+  assert.equal((body.match(/addInitScript\(/g) || []).length, 1, '只允许既有SW范围守卫，不得加媒体替身');
+  assert.match(body, /\[native code\]/);
+  assert.match(body, /getByRole\('navigation'\)\.getByRole\('button', \{ name: '知识库', exact: true \}\)\.click/);
+  assert.match(body, /getByRole\('button', \{ name: '我的空间', exact: true \}\)\.click/);
+  assert.match(body, /name: '录音转笔记'/);
+  assert.match(body, /name: '放弃本次录音'/);
+  assert.match(body, /recording-elapsed/);
+  assert.ok(body.includes('[data-testid="recording-waveform"] canvas'));
+  assert.match(body, /chunkBytes\)\.toBeGreaterThan\(0\)/);
+  assert.match(body, /recording-native-proof/);
+  assert.match(body, /native-browser\+virtual-device/);
+  assert.match(body, /8_000/);
+  assert.match(body, /page\.close\(\{ runBeforeUnload: false \}\)/);
+  assert.match(body, /cleanupTrackedFixture/);
+  assert.match(body, /kind: 'recording-session'/);
+  assert.match(body, /kind: 'store'/);
+  assert.match(body, /recording-idempotency-session-created/);
+  assert.match(body, /recording-store-created/);
+  assert.doesNotMatch(body, /routeWebSocket|route\.fulfill|Object\.defineProperty|DeterministicMediaRecorder|pressSequentially/);
+  const legacy = spec.slice(spec.indexOf("test('[REC-002]"), spec.indexOf("test('[REC-005]", start));
+  assert.match(legacy, /test\.skip\(requiredEnv\('STABLE_SMOKE_ENVIRONMENT'\) === 'production'/);
+  for (const original of ['DeterministicMediaRecorder', '暂停录音', '继续录音', 'inspectDeterministicPauseResumeWav', 'tones.beforePauseHz', 'tones.afterResumeHz']) {
+    assert.ok(legacy.includes(original), `旧REC002断言不得丢失：${original}`);
+  }
+});
+
+test('REG-stsmk-account-scope-001 REC001实际费用护栏只放本轮一个会话，complete与transcribe越界即abort', async () => {
+  const spec = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = spec.split("test('[REC-001] 原生浏览器虚拟设备开录后放弃且会话清理")[1];
+  assert.ok(body, '原REC001消费者缺失');
+  const routeBody = body.split("await page.route('**/api/document-store/**', async route => {")[1]?.split('\n    });')[0];
+  assert.ok(routeBody, '真实原case没有收费范围护栏');
+  const factory = new Function('armRecordingDeadline', `
+    let storeId = 'own-store', sessionStartRequests = 0;
+    const forbiddenRequests = [];
+    return { handler: async route => { ${routeBody} }, snapshot: () => ({ sessionStartRequests, forbiddenRequests }) };
+  `);
+  let armed = 0;
+  const guard = factory(() => { armed += 1; });
+  const request = async (path, method = 'POST') => {
+    const calls = [];
+    await guard.handler({
+      request: () => ({ url: () => `https://offline.invalid${path}`, method: () => method }),
+      abort: async () => calls.push('abort'), continue: async () => calls.push('continue'),
+    });
+    return calls;
+  };
+  assert.deepEqual(await request('/api/document-store/stores/own-store/recording-uploads'), ['continue']);
+  assert.equal(armed, 1);
+  assert.deepEqual(await request('/api/document-store/stores/own-store/recording-uploads'), ['abort']);
+  assert.deepEqual(await request('/api/document-store/stores/other/recording-uploads'), ['abort']);
+  assert.deepEqual(await request('/api/document-store/recording-uploads/own-session/complete'), ['abort']);
+  assert.deepEqual(await request('/api/document-store/entries/own-entry/transcribe'), ['abort']);
+  assert.deepEqual(await request('/api/document-store/recording-uploads/own-session/chunks/0'), ['continue']);
+  assert.deepEqual(await request('/api/document-store/recording-uploads/own-session', 'DELETE'), ['continue']);
+  assert.equal(guard.snapshot().forbiddenRequests.length, 4);
+});
+
+test('REG-stsmk-account-scope-001 REC001手机先触控FAB再新建，返回列表后仍走本轮选库录音', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[REC-001] 原生浏览器虚拟设备开录后放弃且会话清理")[1].split("test('[REC-002]")[0];
+  const prelude = body.slice(body.indexOf("await page.getByRole('button', { name: '我的空间', exact: true })"), body.indexOf('      const title ='));
+  const calls = [];
+  let menuOpen = false;
+  const page = {
+    locator: selector => { assert.equal(selector, '[data-tour-id="doc-create-fab"]'); return { tap: async () => { calls.push('fab-tap'); menuOpen = true; } }; },
+    getByRole: (role, { name, exact }) => {
+      assert.equal(role, 'button'); assert.equal(exact, true);
+      const act = method => async () => {
+        if (name === '新建知识库') { assert.equal(menuOpen, true, '手机必须先打开FAB，不能借桌面新建按钮'); menuOpen = false; }
+        calls.push(name + '-' + method);
+      };
+      return { click: act('click'), tap: act('tap') };
+    },
+  };
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  await new AsyncFunction('page', prelude)(page);
+  assert.deepEqual(calls, ['我的空间-click', 'fab-tap', '新建知识库-tap']);
+  assert.match(body, /const backToList = page\.getByText\(title, \{ exact: true \}\)\.locator\('\.\.'\)\.getByRole\('button'\)/);
+  assert.match(body, /await expect\(backToList\)\.toHaveCount\(1\)/);
+  assert.match(body, /await backToList\.tap\(\)/);
+  assert.equal((body.match(/page\.locator\('\[data-tour-id="doc-create-fab"\]'\)\.tap\(\)/g) || []).length, 2);
+  assert.match(body, /name: '录音转笔记', exact: true \}\)\.tap\(\)/);
+  assert.match(body, /storePicker\.getByRole\('button', \{ name: title, exact: false \}\)\.tap\(\)/);
+});
+
+test('REG-stsmk-account-scope-001 REC001原finally独立清理会话和库，缺ID或一处失败不能靠另一404洗绿', async () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const body = source.split("test('[REC-001] 原生浏览器虚拟设备开录后放弃且会话清理")[1].split("test('[REC-002]")[0];
+  const finallyBody = body.slice(body.indexOf('    } finally {') + '    } finally {'.length, body.lastIndexOf('\n    }\n  });')).replace('const cleanupErrors: string[]', 'const cleanupErrors');
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const execute = new AsyncFunction('page', 'deadline', 'pendingStore', 'pendingSession', 'storeId', 'sessionId', 'sessionStartRequests',
+    'cleanupTrackedFixture', 'token', 'testInfo', 'expectDeleteSucceeded', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'mobileContext', finallyBody);
+  for (const scenario of ['all404', 'already-deleted', 'session-delete-fails', 'session-still200', 'missing-session-id']) {
+    const calls = [], receipts = [];
+    const storeId = 'a'.repeat(32), sessionId = scenario === 'missing-session-id' ? '' : 'b'.repeat(32);
+    const page = { close: async () => calls.push('PAGE-CLOSE'), request: {
+      delete: async path => { calls.push('DELETE ' + path); if (scenario === 'session-delete-fails' && path.includes('recording-uploads')) throw Error('offline failed'); return { status: () => scenario === 'already-deleted' ? 404 : 200, ok: () => true }; },
+      get: async path => { calls.push('GET ' + path); return { status: () => scenario === 'session-still200' && path.includes('recording-uploads') ? 200 : 404 }; },
+    } };
+    const info = { testId: 'real-native-rec001', retry: 0 };
+    const cleanupTrackedFixture = async (page, _token, resources, remove) => cleanupAndReadBackResources({
+      resources, remove, read: async row => (await page.request.get(row.path)).status(), attach: async receipt => receipts.push(receipt),
+      inspectionRunId: 'stsmk-native-test', environment: 'production', testId: info.testId, retry: 0,
+    });
+    const action = () => execute(page, undefined, undefined, undefined, storeId, sessionId, 1, cleanupTrackedFixture, 'offline', info,
+      async response => assert.equal(response.ok(), true), () => ({}), 1, { close: async () => calls.push('CONTEXT-CLOSE') });
+    if (scenario === 'all404' || scenario === 'already-deleted') await action(); else await assert.rejects(action, /清理回读未闭环/);
+    assert.equal(receipts.length, 1);
+    assert.equal(validCleanupReceipt(receipts[0], { inspectionRunId: 'stsmk-native-test', environment: 'production', testId: info.testId, retry: 0 }), scenario === 'all404' || scenario === 'already-deleted');
+    assert.equal(calls[0], 'PAGE-CLOSE');
+    assert.equal(calls.at(-1), 'CONTEXT-CLOSE');
+    assert.ok(calls.includes('DELETE /api/document-store/stores/' + storeId), '会话删除失败也要尝试删库');
+    assert.ok(calls.includes('GET /api/document-store/stores/' + storeId));
+    if (sessionId) assert.ok(calls.includes('GET /api/document-store/recording-uploads/' + sessionId));
+  }
+});
 
 test('REG-stsmk-account-scope-001 REC010有界等待真实归档与同源run终态，不以首次pending或确定性ID冒充清理', async () => {
   assert.equal(typeof recordingTools.waitForRecordingIdempotencySettlement, 'function');
@@ -795,7 +960,16 @@ function recordingCleanupFixture({ residual = '', readThrows = '', archiveStatus
     return { status: () => method === 'DELETE' ? 200 : kind === residual ? 200 : 404 };
   };
   const page = { request: Object.fromEntries(['get', 'delete'].map(method => [method, async path => respond(method.toUpperCase(), path)])) };
-  const info = { attach: async (name, attachment) => { assert.equal(name, 'recording-idempotency-cleanup-receipt'); receipts.push(JSON.parse(attachment.body)); } };
+  const info = { testId: 'fixture-test', retry: 0, attach: async (name, attachment) => {
+    const body = JSON.parse(attachment.body);
+    if (name === 'stable-smoke-cleanup-receipt') {
+      assert.equal(body.resources.length, missingRun ? 3 : 4);
+      for (const row of body.resources) assert.equal(row.readbackStatus, receipts[0][`${row.kind}ReadbackStatus`]);
+      assert.deepEqual(body.errors, receipts[0].errors);
+      return;
+    }
+    assert.equal(name, 'recording-idempotency-cleanup-receipt'); receipts.push(body);
+  } };
   const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
   const execute = new AsyncFunction('page', 'token', 'storeId', 'sessionId', 'entryId', 'deferredRunIds', 'testInfo', 'retryTransientTransport', 'authHeaders', 'stableSmokeCleanupTimeoutMs', 'requiredEnv', 'redactStableSmokeDiagnosticText', 'waitForRecordingIdempotencySettlement', 'readEnvelope', body);
   const action = () => execute(page, 'offline-only', 'own-store', 'own-session', 'own-entry', missingRun ? [] : ['own-run'], info,

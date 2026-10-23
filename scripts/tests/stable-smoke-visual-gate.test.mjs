@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test, { after } from 'node:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -104,6 +104,23 @@ function evidence(overrides = {}) {
     sha256,
   };
 }
+
+test('多图full第18位缺图仍红；明确验收债务不能替代实际manifest证据', () => {
+  const actualCatalog = JSON.parse(readFileSync(new URL('../../.claude/skills/stable-smoke/reference/visual-evidence-catalog.json', import.meta.url), 'utf8'));
+  const plan = buildVisualPlan(actualCatalog, ['cds'], {
+    scope: 'full', runId: 'stsmk-current', commit: 'a'.repeat(40), captureStartedAt: '2026-08-11T14:00:00.000Z',
+    environmentOrigins: { cds: 'https://preview.example.test' }, gatewayEnvironmentOrigins: { cds: 'https://gateway.example.test' },
+  });
+  const rows = plan.slots.map(slot => evidence({ ...slot, status: '通过', name: slot.slotId, sha256: slot.slotId, pagePath: slot.entryPath }));
+  const valid = validateVisualEvidence(actualCatalog, rows, ['cds'], plan, new Date('2026-08-11T14:05:00.000Z'));
+  assert.equal(valid.verdict, '通过', JSON.stringify(valid.modules.filter(module => module.verdict !== '通过').map(module => ({ id: module.id, collected:module.collectedScreenshotCount, missingStates:module.missingStates, fieldErrors: module.fieldErrors }))));
+  const missing = validateVisualEvidence(actualCatalog, rows.filter(row => row.slotId !== 'CDS-VISUAL-MULTI-IMAGE-CREATION-18'), ['cds'], plan, new Date('2026-08-11T14:05:00.000Z'));
+  assert.equal(missing.verdict, '不通过');
+  assert.ok(missing.modules.find(module => module.id === 'multi-image-creation').missingSlots.some(slot => slot.slotId === 'CDS-VISUAL-MULTI-IMAGE-CREATION-18'));
+  const routine = buildVisualPlan(actualCatalog, ['production'], { scope: 'routine', runId: 'stsmk-current', commit: 'a'.repeat(40), captureStartedAt: '2026-08-11T14:00:00.000Z', environmentOrigins: { production: 'https://production.example.test' }, gatewayEnvironmentOrigins: { production: 'https://gateway.example.test' } });
+  assert.equal(routine.slots.length, 37);
+  assert.ok(!routine.slots.some(slot => slot.slotId.endsWith('MULTI-IMAGE-CREATION-18')));
+});
 
 test('截图数量达到下限但关键状态缺失时不能通过', () => {
   const result = validateVisualEvidence(catalog, [

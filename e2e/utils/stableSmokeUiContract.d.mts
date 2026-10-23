@@ -33,7 +33,7 @@ export function readGatewayNoCallLogProbe(request: APIRequestContext, options: {
   baseUrl: string; headers: Record<string, string>; runId: string; nonce?: string;
 }): Promise<{ requestId: string; items: never[]; total: number; pageSize: number; modelCalls: number; proofBoundary: string }>;
 export function assertScopedSyntheticUsername(username: string, runId: string): void;
-export function blockUnsafeProductionFixture(test: { skip(condition: boolean, description: string): void }, environment: string, caseId: 'LIT-004' | 'MVIS-010'): void;
+export function blockUnsafeProductionFixture(test: { skip(condition: boolean, description: string): void }, environment: string, caseId: 'LIT-004' | 'LIT-007' | 'REC-009' | 'REC-004' | 'VIDEO-006' | 'CORE-008' | 'MVIS-010'): void;
 export function validateReadOnlyAvatarAsset(snapshot: {
   pageUrl: string; source: string; complete: boolean; width: number; height: number;
   status: number; mime: string; byteLength: number;
