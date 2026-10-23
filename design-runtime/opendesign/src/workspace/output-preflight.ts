@@ -22,6 +22,13 @@ import { normalizeRelativePath } from './primitives.js';
 const MAX_WORKSPACE_FILE_COUNT = 1024;
 const MAX_WORKSPACE_NODE_COUNT = 2048;
 const MAX_WORKSPACE_DIRECTORY_DEPTH = 16;
+// OpenDesign 的原生 deck skill 可能在公开资源目录旁写一份给执行代理看的说明。
+// 它不是网页资源，也不能因为位于 assets/** 就被当成公网文件；只认这一个已证实路径。
+const WORKSPACE_ONLY_AUXILIARY_OUTPUT_PATHS = new Set(['ASSETS/README.MD']);
+
+function isWorkspaceOnlyAuxiliaryOutputPath(filePath: string): boolean {
+  return WORKSPACE_ONLY_AUXILIARY_OUTPUT_PATHS.has(filePath.toUpperCase());
+}
 
 type PreflightFailureCode =
   | 'node_count' | 'directory_depth' | 'special_file' | 'workspace_file_count' | 'file_count'
@@ -91,6 +98,7 @@ function runPreflight(input: OutputPreflightInput): void {
       if (stat.isDirectory()) { walk(absolute); continue; }
       workspaceFileCount += 1;
       if (workspaceFileCount > MAX_WORKSPACE_FILE_COUNT) throw new PreflightFailure('workspace_file_count');
+      if (isWorkspaceOnlyAuxiliaryOutputPath(relative) && !inputFiles.has(relative)) continue;
       if (allowed(relative)) {
         fileCount += 1;
         totalBytes += stat.size;
