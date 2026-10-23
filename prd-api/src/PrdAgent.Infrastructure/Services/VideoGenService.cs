@@ -89,6 +89,7 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
+        await using var projectLease = await VideoAssetMutationLease.AcquireAsync(_db, $"video-project:{projectId}", ct);
         var project = await GetProjectAsync(projectId, ownerAdminId, appKey, ct)
                       ?? throw new KeyNotFoundException("视频项目不存在");
         var updates = new List<UpdateDefinition<VideoProject>>
@@ -116,8 +117,27 @@ public class VideoGenService : IVideoGenService
                ?? throw new KeyNotFoundException("视频项目不存在");
     }
 
+    public async Task<bool> DeleteEmptyProjectAsync(
+        string projectId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
+    {
+        await using var projectLease = await VideoAssetMutationLease.AcquireAsync(_db, $"video-project:{projectId}", ct);
+        var project = await GetProjectAsync(projectId, ownerAdminId, appKey, ct);
+        if (project == null) return false;
+        var hasRun = await _db.VideoGenRuns.Find(x => x.ProjectId == projectId
+            && x.OwnerAdminId == ownerAdminId && x.AppKey == project.AppKey).AnyAsync(ct);
+        var hasExport = await _db.VideoExportTasks.Find(x => x.ProjectId == projectId
+            && x.OwnerAdminId == ownerAdminId && x.AppKey == project.AppKey).AnyAsync(ct);
+        if (hasRun || hasExport || project.Assets.Count != 0 || project.TimelineTracks.Any(track => track.Clips.Count != 0))
+            throw new InvalidOperationException("项目仍有关联任务或素材");
+        var deleted = await _db.VideoProjects.DeleteOneAsync(x => x.Id == projectId
+            && x.OwnerAdminId == ownerAdminId && x.AppKey == project.AppKey, CancellationToken.None);
+        return deleted.DeletedCount == 1;
+    }
+
     public async Task<string> CreateRunAsync(string appKey, string ownerAdminId, CreateVideoGenRunRequest request, CancellationToken ct = default)
     {
+        await using var projectLease = string.IsNullOrWhiteSpace(request?.ProjectId) ? null
+            : await VideoAssetMutationLease.AcquireAsync(_db, $"video-project:{request.ProjectId.Trim()}", ct);
         VideoProject? project = null;
         if (!string.IsNullOrWhiteSpace(request?.ProjectId))
         {
@@ -243,9 +263,10 @@ public class VideoGenService : IVideoGenService
 
     public async Task UpdateSceneAsync(string runId, string ownerAdminId, int sceneIndex, UpdateVideoSceneRequest request, string? appKey = null, CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+        if (run.CancelRequested || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可修改分镜");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
@@ -262,15 +283,16 @@ public class VideoGenService : IVideoGenService
         if (updates.Count == 0) return;
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
 
-        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
+        await _db.VideoGenRuns.UpdateOneAsync(EditableRunFilter(run),
             Builders<VideoGenRun>.Update.Combine(updates), cancellationToken: ct);
     }
 
     public async Task RegenerateSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+        if (run.CancelRequested || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可重新生成分镜");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
@@ -281,16 +303,17 @@ public class VideoGenService : IVideoGenService
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
         };
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
-        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
+        await _db.VideoGenRuns.UpdateOneAsync(EditableRunFilter(run),
             Builders<VideoGenRun>.Update.Combine(updates),
             cancellationToken: ct);
     }
 
     public async Task RenderSceneAsync(string runId, string ownerAdminId, int sceneIndex, string? appKey = null, CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+        if (run.CancelRequested || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可生成分镜视频");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
@@ -329,6 +352,8 @@ public class VideoGenService : IVideoGenService
         var fb = Builders<VideoGenRun>.Filter;
         var filter = fb.Eq(x => x.Id, runId)
                      & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                     & fb.Eq(x => x.CancelRequested, false)
+                     & fb.Eq(x => x.DeletionRequestedAt, null)
                      & fb.In(x => x.Status, [VideoGenRunStatus.Editing, VideoGenRunStatus.Completed])
                      & fb.Nin<string>($"Scenes.{sceneIndex}.Status",
                          [SceneItemStatus.Generating, SceneItemStatus.Submitting, SceneItemStatus.SubmittingClaimed, SceneItemStatus.Polling, SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering]);
@@ -347,9 +372,10 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+        if (run.CancelRequested || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可批量生成分镜视频");
 
         var requested = sceneIndexes == null || sceneIndexes.Count == 0
@@ -388,9 +414,10 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+        if (run.CancelRequested || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可调整镜头顺序");
         var expected = Enumerable.Range(0, run.Scenes.Count).ToHashSet();
         if (sceneIndexes.Count != run.Scenes.Count || !expected.SetEquals(sceneIndexes))
@@ -403,8 +430,9 @@ public class VideoGenService : IVideoGenService
             Builders<VideoGenRun>.Update.Set(x => x.Scenes, reordered),
         };
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(runUpdates);
-        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == run.Id,
+        var changed = await _db.VideoGenRuns.UpdateOneAsync(EditableRunFilter(run),
             Builders<VideoGenRun>.Update.Combine(runUpdates), cancellationToken: ct);
+        if (changed.MatchedCount != 1) throw new InvalidOperationException("任务状态已变化，请刷新后重试");
 
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
         {
@@ -447,9 +475,10 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
-        if (run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
+        if (run.CancelRequested || run.DeletionRequestedAt != null || run.Status is not (VideoGenRunStatus.Editing or VideoGenRunStatus.Completed))
             throw new InvalidOperationException("仅在编辑阶段可切换分镜版本");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
@@ -468,7 +497,7 @@ public class VideoGenService : IVideoGenService
         };
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
         await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
+            EditableRunFilter(run),
             Builders<VideoGenRun>.Update.Combine(updates),
             cancellationToken: ct);
         await PublishEventAsync(runId, "scene.version.activated", new { sceneIndex, versionId });
@@ -480,11 +509,12 @@ public class VideoGenService : IVideoGenService
         string? appKey = null,
         CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct)
                   ?? throw new KeyNotFoundException("任务不存在");
         if (run.Mode != VideoGenMode.Storyboard)
             throw new InvalidOperationException("仅分镜项目需要合成导出");
-        if (run.Status != VideoGenRunStatus.Editing)
+        if (run.CancelRequested || run.DeletionRequestedAt != null || run.Status != VideoGenRunStatus.Editing)
             throw new InvalidOperationException("当前任务不在可导出状态");
         if (run.Scenes.Count == 0 || run.Scenes.Any(scene => scene.Status != SceneItemStatus.Done || string.IsNullOrWhiteSpace(scene.VideoUrl)))
             throw new InvalidOperationException("所有分镜生成完成后才能导出完整视频");
@@ -505,8 +535,8 @@ public class VideoGenService : IVideoGenService
         };
         await _db.VideoExportTasks.InsertOneAsync(task, cancellationToken: ct);
 
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
+        var activated = await _db.VideoGenRuns.UpdateOneAsync(
+            EditableRunFilter(run),
             Builders<VideoGenRun>.Update
                 .Set(x => x.Status, VideoGenRunStatus.Rendering)
                 .Set(x => x.ExportRequested, false)
@@ -515,6 +545,12 @@ public class VideoGenService : IVideoGenService
                 .Set(x => x.CurrentPhase, "export-queued")
                 .Set(x => x.PhaseProgress, 1),
             cancellationToken: ct);
+        if (activated.MatchedCount != 1)
+        {
+            await _db.VideoExportTasks.DeleteOneAsync(x => x.Id == task.Id && x.OwnerAdminId == ownerAdminId
+                && x.AppKey == run.AppKey && x.Status == VideoExportTaskStatus.Queued, CancellationToken.None);
+            throw new InvalidOperationException("任务已取消或状态变化，请刷新后重试");
+        }
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
         {
             await _db.VideoProjects.UpdateOneAsync(
@@ -572,17 +608,61 @@ public class VideoGenService : IVideoGenService
 
     public async Task<bool> CancelRunAsync(string runId, string ownerAdminId, string? appKey = null, CancellationToken ct = default)
     {
+        await using var runLease = await VideoAssetMutationLease.AcquireAsync(_db, $"run-delete:{runId}", ct);
         var run = await GetRunAsync(runId, ownerAdminId, appKey, ct);
         if (run == null) return false;
+        if (run.Status is VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled) return true;
 
         await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
+            x => x.Id == runId && x.OwnerAdminId == ownerAdminId && x.AppKey == run.AppKey
+                && x.DeletionRequestedAt == null && x.Status != VideoGenRunStatus.Completed
+                && x.Status != VideoGenRunStatus.Failed && x.Status != VideoGenRunStatus.Cancelled,
             Builders<VideoGenRun>.Update.Set(x => x.CancelRequested, true),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
+
+        var activeExports = await _db.VideoExportTasks.Find(x => x.RunId == runId
+            && x.OwnerAdminId == ownerAdminId && x.AppKey == run.AppKey
+            && (x.Status == VideoExportTaskStatus.Queued || x.Status == VideoExportTaskStatus.Processing)).AnyAsync(ct);
+        if (!activeExports)
+        {
+            var fb = Builders<VideoGenRun>.Filter;
+            var active = Builders<VideoGenScene>.Filter.In(x => x.Status,
+                new[] { SceneItemStatus.Generating, SceneItemStatus.Submitting, SceneItemStatus.SubmittingClaimed,
+                    SceneItemStatus.Polling, SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering });
+            var cancelled = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+                fb.Eq(x => x.Id, runId) & fb.Eq(x => x.OwnerAdminId, ownerAdminId) & fb.Eq(x => x.AppKey, run.AppKey)
+                & fb.Eq(x => x.Status, VideoGenRunStatus.Editing) & fb.Eq(x => x.CancelRequested, true)
+                & fb.Eq(x => x.ExportRequested, false) & fb.Eq(x => x.DeletionRequestedAt, null)
+                & fb.Not(fb.ElemMatch(x => x.Scenes, active)),
+                Builders<VideoGenRun>.Update.Set(x => x.Status, VideoGenRunStatus.Cancelled)
+                    .Set(x => x.CurrentPhase, "cancelled").Set(x => x.EndedAt, DateTime.UtcNow),
+                new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After }, CancellationToken.None);
+            if (cancelled != null)
+            {
+                if (!string.IsNullOrWhiteSpace(cancelled.ProjectId))
+                {
+                    await using var projectLease = await VideoAssetMutationLease.AcquireAsync(_db, $"video-project:{cancelled.ProjectId}", CancellationToken.None);
+                    await _db.VideoProjects.UpdateOneAsync(x => x.Id == cancelled.ProjectId && x.OwnerAdminId == ownerAdminId
+                        && x.AppKey == run.AppKey && x.LatestRunId == runId,
+                        Builders<VideoProject>.Update.Set(x => x.Status, VideoProjectStatus.Draft).Set(x => x.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                }
+                await PublishEventAsync(runId, "run.cancelled", new { });
+                return true;
+            }
+        }
 
         await PublishEventAsync(runId, "run.cancel.requested", new { });
         return true;
     }
+
+    private static FilterDefinition<VideoGenRun> EditableRunFilter(VideoGenRun run)
+        => Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+           & Builders<VideoGenRun>.Filter.Eq(x => x.OwnerAdminId, run.OwnerAdminId)
+           & Builders<VideoGenRun>.Filter.Eq(x => x.AppKey, run.AppKey)
+           & Builders<VideoGenRun>.Filter.Eq(x => x.Status, run.Status)
+           & Builders<VideoGenRun>.Filter.Eq(x => x.CancelRequested, false)
+           & Builders<VideoGenRun>.Filter.Eq(x => x.DeletionRequestedAt, null);
 
     public async Task<DeleteVideoGenRunResult?> DeleteRunAsync(
         string runId,
@@ -614,7 +694,8 @@ public class VideoGenService : IVideoGenService
                 })
                 .ToList();
             run = await _db.VideoGenRuns.FindOneAndUpdateAsync(
-                ownedFilter & fb.Eq(x => x.DeletionRequestedAt, null),
+                ownedFilter & fb.Eq(x => x.DeletionRequestedAt, null)
+                & fb.In(x => x.Status, new[] { VideoGenRunStatus.Completed, VideoGenRunStatus.Failed, VideoGenRunStatus.Cancelled }),
                 Builders<VideoGenRun>.Update
                     .Set(x => x.DeletionRequestedAt, DateTime.UtcNow)
                     .Set(x => x.DeletionArtifacts, snapshot),
@@ -624,6 +705,8 @@ public class VideoGenService : IVideoGenService
                 },
                 ct) ?? await _db.VideoGenRuns.Find(ownedFilter).FirstOrDefaultAsync(ct);
             if (run == null) return null;
+            if (run.DeletionRequestedAt == null)
+                throw new InvalidOperationException("任务仍在生成，请先取消并等待任务结束后再删除");
         }
 
         // 删除意图已经持久化；此后不再受请求断开影响，崩溃时由 VideoGenRunWorker 继续清理。
@@ -643,6 +726,7 @@ public class VideoGenService : IVideoGenService
         var projectDeleted = false;
         if (!string.IsNullOrWhiteSpace(run.ProjectId))
         {
+            await using var projectLease = await VideoAssetMutationLease.AcquireAsync(_db, $"video-project:{run.ProjectId}", cleanupToken);
             var project = await GetProjectAsync(run.ProjectId, ownerAdminId, appKey, cleanupToken);
             var remainingRuns = await _db.VideoGenRuns.CountDocumentsAsync(
                 item => item.Id != run.Id

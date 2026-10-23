@@ -3,8 +3,10 @@ using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
+using System.Security.Cryptography;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
@@ -17,6 +19,285 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class VideoSceneConcurrencyTests
 {
+    [Fact]
+    public async Task CancelIdleEditingRun_ShouldReachTerminalAndDeleteOwnEmptyProject()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync("video-agent", test.OwnerId,
+            new CreateVideoProjectRequest { Title = "取消后回收", SourceMarkdown = "最短分镜稿" });
+        var run = NewRun("cancel-idle", test.OwnerId, SceneItemStatus.Draft, SceneItemStatus.Done);
+        run.ProjectId = project.Id;
+        await test.SaveRunAsync(run);
+
+        (await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        var cancelled = await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey);
+        cancelled!.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        cancelled.EndedAt.ShouldNotBeNull();
+        (await service.TryQueueSceneRenderAsync(run.Id, test.OwnerId, 0, run.AppKey, false)).ShouldBeFalse();
+        var deleted = await service.DeleteRunAsync(run.Id, test.OwnerId, true, run.AppKey);
+        deleted!.ProjectDeleted.ShouldBeTrue();
+        (await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeNull();
+        (await service.GetProjectAsync(project.Id, test.OwnerId, run.AppKey)).ShouldBeNull();
+        test.VideoClient.Verify(x => x.SubmitAsync(It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(SceneItemStatus.Submitting)]
+    [InlineData(SceneItemStatus.SubmittingClaimed)]
+    [InlineData(SceneItemStatus.Polling)]
+    [InlineData(SceneItemStatus.PollingClaimed)]
+    [InlineData(SceneItemStatus.Rendering)]
+    [InlineData(SceneItemStatus.Generating)]
+    public async Task CancelActiveScene_ShouldNotPretendIdleOrPermitDeletion(string sceneStatus)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-active", test.OwnerId, sceneStatus);
+        await test.SaveRunAsync(run);
+        var service = test.CreateService();
+        (await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        var current = await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey);
+        current!.Status.ShouldBe(VideoGenRunStatus.Editing);
+        current.CancelRequested.ShouldBeTrue();
+        current.Scenes[0].Status.ShouldBe(sceneStatus);
+        await Should.ThrowAsync<InvalidOperationException>(() => service.DeleteRunAsync(run.Id, test.OwnerId, appKey: run.AppKey));
+        (await service.TryQueueSceneRenderAsync(run.Id, test.OwnerId, 0, run.AppKey, false)).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CancelWithActiveExport_ShouldNotClaimTerminalOrStartAnotherExport()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-export", test.OwnerId, SceneItemStatus.Done);
+        run.Scenes[0].VideoUrl = "https://example.invalid/finished.mp4";
+        await test.SaveRunAsync(run);
+        await test.Context.VideoExportTasks.InsertOneAsync(new VideoExportTask
+        {
+            RunId = run.Id, AppKey = run.AppKey, OwnerAdminId = test.OwnerId,
+            Status = VideoExportTaskStatus.Processing,
+        });
+        var service = test.CreateService();
+        await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey);
+        (await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey))!.Status.ShouldBe(VideoGenRunStatus.Editing);
+        await Should.ThrowAsync<InvalidOperationException>(() => service.RequestExportAsync(run.Id, test.OwnerId, run.AppKey));
+        (await test.Context.VideoExportTasks.CountDocumentsAsync(x => x.RunId == run.Id)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task LateExportFailure_ShouldNotReopenCancelledRun()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("late-export", test.OwnerId, SceneItemStatus.Done);
+        run.Status = VideoGenRunStatus.Cancelled;
+        run.CancelRequested = true;
+        run.CurrentPhase = "cancelled";
+        await test.SaveRunAsync(run);
+        var stale = NewRun("late-export", test.OwnerId, SceneItemStatus.Done);
+        stale.Status = VideoGenRunStatus.Rendering;
+        await test.CreateWorker().FailExportAsync(stale, "离线迟到失败");
+        await test.CreateWorker().UpdateExportProgressAsync(run.Id, null, "export-uploading", 90);
+        var current = await test.CreateService().GetRunAsync(run.Id, test.OwnerId, run.AppKey);
+        current!.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        current.CurrentPhase.ShouldBe("cancelled");
+    }
+
+    [Fact]
+    public async Task StaleSceneWorker_AfterTerminalCancellation_ShouldNotPollOrDownload()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("late-scene", test.OwnerId, SceneItemStatus.PollingClaimed);
+        run.Status = VideoGenRunStatus.Cancelled;
+        run.CancelRequested = true;
+        run.Scenes[0].JobId = "old-job";
+        run.Scenes[0].RenderLeaseId = "old-lease";
+        run.Scenes[0].SubmissionStartedAt = DateTime.UtcNow;
+        await test.SaveRunAsync(run);
+        var stale = NewRun("late-scene", test.OwnerId, SceneItemStatus.PollingClaimed);
+        stale.Scenes = run.Scenes;
+        await test.CreateWorker().ProcessSceneRenderAsync(stale, 0, "old-lease", resumeExistingJob: true);
+        test.VideoClient.Verify(x => x.GetStatusAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        test.VideoClient.Verify(x => x.DownloadVideoBytesAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        var current = await test.CreateService().GetRunAsync(run.Id, test.OwnerId, run.AppKey);
+        current!.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        current.Scenes[0].Versions.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task SceneCompletionRacingCancelAndDelete_ShouldReleaseAssetBeforeTakingRunLease()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync("video-agent", test.OwnerId,
+            new CreateVideoProjectRequest { Title = "完成取消清理并发" });
+        var run = NewRun("complete-cancel-delete", test.OwnerId, SceneItemStatus.PollingClaimed);
+        run.ProjectId = project.Id;
+        run.CancelRequested = true;
+        run.Scenes[0].JobId = "completed-job";
+        run.Scenes[0].RenderLeaseId = "completion-lease";
+        run.Scenes[0].SubmissionStartedAt = DateTime.UtcNow;
+        await test.SaveRunAsync(run);
+        await test.Context.VideoProjects.UpdateOneAsync(x => x.Id == project.Id,
+            Builders<VideoProject>.Update.Set(x => x.LatestRunId, run.Id));
+
+        byte[] bytes = [1, 2, 3];
+        var sha = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        var stored = new StoredAsset(sha, "https://example.invalid/completed.mp4", bytes.Length, "video/mp4");
+        var savedAssets = new HashSet<string>();
+        test.VideoClient.Setup(x => x.GetStatusAsync(It.IsAny<string>(), "completed-job",
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoStatus { Status = "completed", VideoUrl = stored.Url });
+        test.VideoClient.Setup(x => x.DownloadVideoBytesAsync(It.IsAny<string>(), "completed-job", 0,
+                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new OpenRouterVideoDownload { Success = true, Bytes = bytes, ContentType = "video/mp4" });
+        test.AssetStorage.Setup(x => x.SaveAsync(It.IsAny<byte[]>(), "video/mp4", It.IsAny<CancellationToken>(),
+                AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo, null, null))
+            .Returns(() => { savedAssets.Add(sha); return Task.FromResult(stored); });
+        test.AssetStorage.Setup(x => x.DeleteByShaAsync(sha, It.IsAny<CancellationToken>(),
+                AppDomainPaths.DomainVideoAgent, AppDomainPaths.TypeVideo))
+            .Returns(() => { savedAssets.Remove(sha); return Task.CompletedTask; });
+
+        var enteringSyncCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resumeSyncCancel = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        test.WorkerVideoService.Setup(x => x.CancelRunAsync(run.Id, test.OwnerId, run.AppKey, It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                enteringSyncCancel.TrySetResult();
+                await resumeSyncCancel.Task;
+                return await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey);
+            });
+        var completion = test.CreateWorker().ProcessSceneRenderAsync(run, 0, "completion-lease", resumeExistingJob: true);
+        try
+        {
+            await enteringSyncCancel.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // 在真实 worker 完成 CAS 后、Sync 请求 run 锁前冻结。旧实现此时仍持有 asset 锁，
+            // 与 DeleteRun 的 run→asset 顺序相反；先验证租约已释放，避免让红例真挂死两分钟。
+            var leases = test.Context.Database.GetCollection<BsonDocument>("video_asset_mutation_leases");
+            (await leases.CountDocumentsAsync(new BsonDocument("_id", $"generated-video:{sha}"))).ShouldBe(0);
+            (await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey))!.Scenes[0].Status.ShouldBe(SceneItemStatus.Done);
+            await service.CancelRunAsync(run.Id, test.OwnerId, run.AppKey);
+            (await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey))!.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+            var deleted = await service.DeleteRunAsync(run.Id, test.OwnerId, true, run.AppKey).WaitAsync(TimeSpan.FromSeconds(5));
+            deleted!.Deleted.ShouldBeTrue();
+            deleted.ArtifactsDeleted.ShouldBe(1);
+            deleted.ProjectDeleted.ShouldBeTrue();
+        }
+        finally
+        {
+            resumeSyncCancel.TrySetResult();
+            await completion.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        (await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey)).ShouldBeNull();
+        (await service.GetProjectAsync(project.Id, test.OwnerId, run.AppKey)).ShouldBeNull();
+        savedAssets.ShouldBeEmpty();
+        test.RunStore.Verify(x => x.AppendEventAsync(It.IsAny<string>(), run.Id, "scene.render.done",
+            It.IsAny<object>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LateStoryboardResponse_AfterOwnerCancel_ShouldNotResurrectEditing(bool success)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var run = NewRun("cancel-scripting", test.OwnerId);
+        run.Status = VideoGenRunStatus.Scripting;
+        run.ArticleMarkdown = "车站收到来信，次日走向晨光。";
+        await test.SaveRunAsync(run);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var response = new TaskCompletionSource<GatewayRawResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        test.Gateway.Setup(x => x.ResolveModelAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayModelResolution { Success = true, ActualModel = "offline-only-chat" });
+        test.Gateway.Setup(x => x.SendRawWithResolutionAsync(It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(), It.IsAny<CancellationToken>()))
+            .Returns(() => { entered.TrySetResult(); return response.Task; });
+        var pending = test.CreateWorker().ProcessStoryboardScriptingAsync(run);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await test.CreateService().CancelRunAsync(run.Id, test.OwnerId, run.AppKey);
+        response.SetResult(success ? new GatewayRawResponse
+        {
+            Success = true,
+            Content = "{\"choices\":[{\"message\":{\"content\":\"{\\\"scenes\\\":[{\\\"topic\\\":\\\"晨光\\\",\\\"prompt\\\":\\\"Morning platform\\\",\\\"duration\\\":5}]}\"}}]}",
+        } : GatewayRawResponse.Fail("OFFLINE_FAILURE", "离线模拟失败"));
+        await pending;
+        var current = await test.CreateService().GetRunAsync(run.Id, test.OwnerId, run.AppKey);
+        current!.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        current.Scenes.ShouldBeEmpty();
+        (await test.CreateService().DeleteRunAsync(run.Id, test.OwnerId, appKey: run.AppKey))!.Deleted.ShouldBeTrue();
+        test.Gateway.Verify(x => x.SendRawWithResolutionAsync(It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task WrongOwnerOrApp_CannotCancelOrDeleteOrphanProject()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var run = NewRun("foreign-cancel", test.OwnerId, SceneItemStatus.Draft);
+        await test.SaveRunAsync(run);
+        var project = await service.CreateProjectAsync(run.AppKey, test.OwnerId,
+            new CreateVideoProjectRequest { Title = "归属边界", SourceMarkdown = "未创建任务的文稿" });
+        (await service.CancelRunAsync(run.Id, "other-owner", run.AppKey)).ShouldBeFalse();
+        (await service.CancelRunAsync(run.Id, test.OwnerId, "other-app")).ShouldBeFalse();
+        (await service.DeleteEmptyProjectAsync(project.Id, "other-owner", run.AppKey)).ShouldBeFalse();
+        (await service.DeleteEmptyProjectAsync(project.Id, test.OwnerId, "other-app")).ShouldBeFalse();
+        (await service.GetRunAsync(run.Id, test.OwnerId, run.AppKey))!.CancelRequested.ShouldBeFalse();
+        (await service.DeleteEmptyProjectAsync(project.Id, test.OwnerId, run.AppKey)).ShouldBeTrue();
+        (await service.GetProjectAsync(project.Id, test.OwnerId, run.AppKey)).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("run")]
+    [InlineData("export")]
+    [InlineData("asset")]
+    [InlineData("timeline")]
+    public async Task DeleteEmptyProject_ShouldRefuseAnyExistingDependency(string dependency)
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync("video-agent", test.OwnerId, new CreateVideoProjectRequest { Title = "依赖保护" });
+        if (dependency == "run")
+        {
+            var run = NewRun("referenced-project", test.OwnerId, SceneItemStatus.Draft);
+            run.ProjectId = project.Id; await test.SaveRunAsync(run);
+        }
+        if (dependency == "export") await test.Context.VideoExportTasks.InsertOneAsync(new VideoExportTask
+            { ProjectId = project.Id, OwnerAdminId = test.OwnerId, AppKey = project.AppKey });
+        if (dependency == "asset") project.Assets.Add(new VideoProjectAsset { Url = "https://example.invalid/reference.jpg" });
+        if (dependency == "timeline") project.TimelineTracks[0].Clips.Add(new VideoTimelineClip { AssetUrl = "https://example.invalid/clip.mp4" });
+        await test.Context.VideoProjects.ReplaceOneAsync(x => x.Id == project.Id, project);
+        await Should.ThrowAsync<InvalidOperationException>(() => service.DeleteEmptyProjectAsync(project.Id, test.OwnerId, project.AppKey));
+        (await service.GetProjectAsync(project.Id, test.OwnerId, project.AppKey)).ShouldNotBeNull();
+        test.AssetStorage.Verify(x => x.DeleteByShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<string?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DeleteOrphanRacingCreateRun_ShouldNeverLeaveRunWithoutProject()
+    {
+        await using var test = await VideoSceneTestDatabase.CreateAsync();
+        var service = test.CreateService();
+        var project = await service.CreateProjectAsync("video-agent", test.OwnerId,
+            new CreateVideoProjectRequest { Title = "创建回收竞争", SourceMarkdown = "最短文稿" });
+        string? created = null;
+        var create = Task.Run(async () =>
+        {
+            try { created = await service.CreateRunAsync(project.AppKey, test.OwnerId,
+                new CreateVideoGenRunRequest { ProjectId = project.Id, Mode = VideoGenMode.Storyboard }); }
+            catch (ArgumentException) { }
+        });
+        var delete = Task.Run(async () =>
+        {
+            try { await service.DeleteEmptyProjectAsync(project.Id, test.OwnerId, project.AppKey); }
+            catch (InvalidOperationException) { }
+        });
+        await Task.WhenAll(create, delete);
+        if (created != null) (await service.GetProjectAsync(project.Id, test.OwnerId, project.AppKey)).ShouldNotBeNull();
+        else (await test.Context.VideoGenRuns.CountDocumentsAsync(x => x.ProjectId == project.Id)).ShouldBe(0);
+    }
+
     [Fact]
     public async Task DeleteCompletedRun_ShouldRemoveOwnedArtifactRunExportAndEmptyProject()
     {
@@ -355,7 +636,9 @@ public class VideoSceneConcurrencyTests
             ServiceProvider services,
             Mock<IRunEventStore> runStore,
             Mock<IOpenRouterVideoClient> videoClient,
-            Mock<IAssetStorage> assetStorage)
+            Mock<IAssetStorage> assetStorage,
+            Mock<ILlmGateway> gateway,
+            Mock<IVideoGenService> workerVideoService)
         {
             Context = context;
             _client = client;
@@ -364,12 +647,17 @@ public class VideoSceneConcurrencyTests
             _runStore = runStore;
             VideoClient = videoClient;
             _assetStorage = assetStorage;
+            Gateway = gateway;
+            WorkerVideoService = workerVideoService;
             OwnerId = $"video-scene-concurrency-tests-{Guid.NewGuid():N}";
         }
 
         public MongoDbContext Context { get; }
         public Mock<IOpenRouterVideoClient> VideoClient { get; }
         public Mock<IAssetStorage> AssetStorage => _assetStorage;
+        public Mock<ILlmGateway> Gateway { get; }
+        public Mock<IVideoGenService> WorkerVideoService { get; }
+        public Mock<IRunEventStore> RunStore => _runStore;
         public string OwnerId { get; }
 
         public Task SaveRunAsync(VideoGenRun run) => Context.VideoGenRuns.InsertOneAsync(run);
@@ -395,8 +683,15 @@ public class VideoSceneConcurrencyTests
                 .ReturnsAsync(1);
             var videoClient = new Mock<IOpenRouterVideoClient>();
             var assetStorage = new Mock<IAssetStorage>();
+            var gateway = new Mock<ILlmGateway>();
+            var workerVideoService = new Mock<IVideoGenService>();
+            var actualVideoService = new VideoGenService(context, runStore.Object, assetStorage.Object, NullLogger<VideoGenService>.Instance);
+            workerVideoService.Setup(x => x.CancelRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                .Returns((string id, string owner, string? app, CancellationToken ct) => actualVideoService.CancelRunAsync(id, owner, app, ct));
             var services = new ServiceCollection()
                 .AddSingleton(videoClient.Object)
+                .AddSingleton(gateway.Object)
+                .AddSingleton(workerVideoService.Object)
                 .AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>()
                 .BuildServiceProvider();
             return new VideoSceneTestDatabase(
@@ -406,7 +701,9 @@ public class VideoSceneConcurrencyTests
                 services,
                 runStore,
                 videoClient,
-                assetStorage);
+                assetStorage,
+                gateway,
+                workerVideoService);
         }
 
         public VideoGenService CreateService() => new(
