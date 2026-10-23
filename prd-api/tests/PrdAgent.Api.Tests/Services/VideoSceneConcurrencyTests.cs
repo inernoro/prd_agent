@@ -1,6 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Services;
@@ -17,6 +20,217 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class VideoSceneConcurrencyTests
 {
+    [Theory]
+    [InlineData("completed", 0.43, null)]
+    [InlineData("completed", null, "recorded-offering")]
+    [InlineData("failed", null, null)]
+    [InlineData("cancelled", 0.12, "recorded-offering")]
+    [InlineData("expired", null, null)]
+    public async Task DirectCancellationMock_ShouldReconcileSameJobBeforeTerminal(
+        string terminalStatus, double? cost, string? offering)
+    {
+        using var test = new DirectCancellationFixture(offering);
+        var calls = 0;
+        test.Status = () =>
+        {
+            test.Run.Status.ShouldBe(VideoGenRunStatus.Rendering);
+            test.Run.EndedAt.ShouldBeNull();
+            return ++calls == 1
+                ? new OpenRouterVideoStatus { Status = "in_progress", Cost = 0.01 }
+                : new OpenRouterVideoStatus { Status = terminalStatus, Cost = cost, VideoUrl = "https://synthetic.invalid/never-download.mp4" };
+        };
+        await test.ProcessAsync();
+        calls.ShouldBe(2);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        test.Run.DirectVideoCost.ShouldBe(cost);
+        test.Field("DirectVideoUpstreamStatus").ShouldBe(terminalStatus);
+        test.Field("DirectVideoReconciledAt").ShouldNotBeNull();
+        test.Run.EndedAt.ShouldNotBeNull();
+        test.Run.VideoAssetUrl.ShouldBeNull();
+        test.AssertNoSubmitOrDownload();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectCancellationMock_ShouldObserveCancellationDuringStatusReadBeforeDownload(bool afterStatusRead)
+    {
+        using var test = new DirectCancellationFixture(null);
+        test.Run.CancelRequested = false;
+        test.CancelAtDownloadingPhase = afterStatusRead;
+        test.Status = () =>
+        {
+            if (!afterStatusRead) test.Run.CancelRequested = true;
+            return new OpenRouterVideoStatus { Status = "completed", Cost = null, VideoUrl = "https://synthetic.invalid/never-download.mp4" };
+        };
+        await test.ProcessAsync();
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        test.Run.DirectVideoCost.ShouldBeNull();
+        test.AssertNoSubmitOrDownload();
+    }
+
+    [Fact]
+    public async Task DirectCancellationMock_WindowExpiryShouldRequeueSameJobWithoutFakeTerminal()
+    {
+        using var test = new DirectCancellationFixture("recorded-offering");
+        await test.ProcessAsync(TimeSpan.Zero);
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.Run.CurrentPhase.ShouldBe("videogen-reconciling");
+        test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
+        test.Run.EndedAt.ShouldBeNull();
+        test.Field("DirectVideoReconciledAt").ShouldBeNull();
+        await test.ClaimAsync();
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Rendering);
+        test.Status = () => new OpenRouterVideoStatus { Status = "completed", Cost = 0.43 };
+        await test.ProcessAsync();
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
+        test.AssertNoSubmitOrDownload();
+    }
+
+    [Fact]
+    public async Task DirectCancellationMock_WithoutJobShouldCancelBeforeSubmitting()
+    {
+        using var test = new DirectCancellationFixture(null);
+        test.Run.DirectVideoJobId = null;
+        await test.ProcessAsync();
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Cancelled);
+        test.Run.EndedAt.ShouldNotBeNull();
+        test.AssertNoSubmitOrDownload();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectCancellationMock_CancellationAtFailureWriteMustNotFakeUpstreamTerminal(bool upstreamTerminal)
+    {
+        using var test = new DirectCancellationFixture(null);
+        test.Run.CancelRequested = false;
+        test.CancelAtFailureWrite = true;
+        test.Status = () => new OpenRouterVideoStatus { Status = "failed", Cost = 0.43 };
+        await test.ProcessAsync(upstreamTerminal ? null : TimeSpan.Zero);
+        test.FailureWriteCancellationObserved.ShouldBeTrue();
+        test.Run.Status.ShouldBe(upstreamTerminal ? VideoGenRunStatus.Cancelled : VideoGenRunStatus.Queued);
+        (test.Run.EndedAt != null).ShouldBe(upstreamTerminal);
+        (test.Field("DirectVideoReconciledAt") != null).ShouldBe(upstreamTerminal);
+        test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
+        test.AssertNoSubmitOrDownload();
+    }
+
+    // This fixture never constructs MongoClient or an application host. All persistence and upstream calls are strict mocks.
+    private sealed class DirectCancellationFixture : IDisposable
+    {
+        public VideoGenRun Run { get; private set; } = new()
+        {
+            Id = "synthetic-direct-cancellation", OwnerAdminId = "synthetic-owner", Mode = VideoGenMode.Direct,
+            Status = VideoGenRunStatus.Rendering, CancelRequested = true, DirectVideoJobId = "synthetic-upstream-job",
+            DirectVideoModel = "recorded-model", DirectPrompt = "synthetic prompt",
+        };
+        public Mock<IOpenRouterVideoClient> Client { get; } = new(MockBehavior.Strict);
+        public bool CancelAtDownloadingPhase { get; set; }
+        public bool CancelAtFailureWrite { get; set; }
+        public bool FailureWriteCancellationObserved { get; private set; }
+        public Func<OpenRouterVideoStatus> Status { get; set; } = () => throw new Xunit.Sdk.XunitException("Unexpected status call");
+        private readonly ServiceProvider _services;
+        private readonly VideoGenRunWorker _worker;
+
+        public DirectCancellationFixture(string? offering)
+        {
+            BsonClassMapRegistration.Register();
+            Run.DirectVideoOfferingId = offering;
+            var collection = new Mock<IMongoCollection<VideoGenRun>>(MockBehavior.Strict);
+            collection.Setup(x => x.FindAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),
+                    It.IsAny<FindOptions<VideoGenRun, VideoGenRun>>(), It.IsAny<CancellationToken>()))
+                .Returns((FilterDefinition<VideoGenRun> filter, FindOptions<VideoGenRun, VideoGenRun> _, CancellationToken _) =>
+                {
+                    var cursor = new Mock<IAsyncCursor<VideoGenRun>>(MockBehavior.Strict);
+                    cursor.SetupGet(x => x.Current).Returns(Matches(filter) ? [BsonSerializer.Deserialize<VideoGenRun>(Run.ToBsonDocument())] : []);
+                    cursor.SetupSequence(x => x.MoveNextAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true).ReturnsAsync(false);
+                    cursor.Setup(x => x.Dispose());
+                    return Task.FromResult(cursor.Object);
+                });
+            collection.Setup(x => x.UpdateOneAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),
+                    It.IsAny<UpdateDefinition<VideoGenRun>>(), It.IsAny<UpdateOptions>(), It.IsAny<CancellationToken>()))
+                .Returns((FilterDefinition<VideoGenRun> filter, UpdateDefinition<VideoGenRun> update, UpdateOptions _, CancellationToken _) =>
+                {
+                    var sets = update.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry))["$set"].AsBsonDocument;
+                    var statusName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.Status)).ElementName;
+                    if (CancelAtFailureWrite && sets.TryGetValue(statusName, out var status) && status == VideoGenRunStatus.Failed)
+                    {
+                        Run.CancelRequested = true;
+                        FailureWriteCancellationObserved = true;
+                    }
+                    if (!Matches(filter)) return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(0, 0, null));
+                    Apply(update);
+                    return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(1, 1, null));
+                });
+            collection.Setup(x => x.FindOneAndUpdateAsync(It.IsAny<FilterDefinition<VideoGenRun>>(),
+                    It.IsAny<UpdateDefinition<VideoGenRun>>(), It.IsAny<FindOneAndUpdateOptions<VideoGenRun, VideoGenRun>>(), It.IsAny<CancellationToken>()))
+                .Returns((FilterDefinition<VideoGenRun> filter, UpdateDefinition<VideoGenRun> update, FindOneAndUpdateOptions<VideoGenRun, VideoGenRun> options, CancellationToken _) =>
+                {
+                    options.ReturnDocument.ShouldBe(ReturnDocument.After);
+                    Matches(filter).ShouldBeTrue();
+                    Apply(update);
+                    return Task.FromResult(BsonSerializer.Deserialize<VideoGenRun>(Run.ToBsonDocument()));
+                });
+            var database = new Mock<IMongoDatabase>(MockBehavior.Strict);
+            database.Setup(x => x.GetCollection<VideoGenRun>("video_gen_runs", null)).Returns(collection.Object);
+            var context = (MongoDbContext)RuntimeHelpers.GetUninitializedObject(typeof(MongoDbContext));
+            typeof(MongoDbContext).GetField("_database", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(context, database.Object);
+            if (offering == null)
+                Client.Setup(x => x.GetStatusAsync(It.IsAny<string>(), "synthetic-upstream-job", "recorded-model", CancellationToken.None))
+                    .Returns(() => Task.FromResult(Status()));
+            else
+                Client.Setup(x => x.GetStatusForOfferingAsync(It.IsAny<string>(), "synthetic-upstream-job", "recorded-model", offering, CancellationToken.None))
+                    .Returns(() => Task.FromResult(Status()));
+            _services = new ServiceCollection().AddSingleton(Client.Object)
+                .AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAccessor>().BuildServiceProvider();
+            var events = new Mock<IRunEventStore>(MockBehavior.Strict);
+            events.Setup(x => x.AppendEventAsync(It.IsAny<string>(), Run.Id, It.IsAny<string>(), It.IsAny<object>(),
+                It.IsAny<TimeSpan?>(), CancellationToken.None))
+                .Callback<string, string, string, object, TimeSpan?, CancellationToken>((_, _, name, payload, _, _) =>
+                {
+                    if (CancelAtDownloadingPhase && name == "phase.changed" && payload.GetType().GetProperty("phase")?.GetValue(payload) is "downloading")
+                        Run.CancelRequested = true;
+                }).ReturnsAsync(1);
+            _worker = new VideoGenRunWorker(context, _services.GetRequiredService<IServiceScopeFactory>(), events.Object,
+                new Mock<IAssetStorage>(MockBehavior.Strict).Object, NullLogger<VideoGenRunWorker>.Instance);
+        }
+
+        private bool Matches(FilterDefinition<VideoGenRun> filter)
+        {
+            var actual = Run.ToBsonDocument();
+            var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
+            return query.All(field => field.Value is BsonDocument operation
+                ? operation.ElementCount == 1 && operation.Contains("$ne") && !actual.GetValue(field.Name, BsonNull.Value).Equals(operation["$ne"])
+                : actual.GetValue(field.Name, BsonNull.Value).Equals(field.Value));
+        }
+        private void Apply(UpdateDefinition<VideoGenRun> update)
+        {
+            var body = Run.ToBsonDocument();
+            var rendered = update.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
+            rendered.AsBsonDocument.ElementCount.ShouldBe(1);
+            foreach (var field in rendered["$set"].AsBsonDocument) body[field.Name] = field.Value;
+            Run = BsonSerializer.Deserialize<VideoGenRun>(body);
+        }
+        public Task ClaimAsync() => (Task)typeof(VideoGenRunWorker).GetMethod("ClaimQueuedRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(_worker, [CancellationToken.None])!;
+        public object? Field(string name) => typeof(VideoGenRun).GetProperty(name)!.GetValue(Run);
+        public Task ProcessAsync(TimeSpan? window = null)
+        {
+            typeof(VideoGenRunWorker).GetProperty("DirectVideoPollInterval", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_worker, TimeSpan.Zero);
+            typeof(VideoGenRunWorker).GetProperty("DirectVideoPollingWindow", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_worker, window ?? TimeSpan.FromSeconds(1));
+            return (Task)typeof(VideoGenRunWorker).GetMethod("ProcessDirectVideoGenAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(_worker, [Run])!;
+        }
+        public void AssertNoSubmitOrDownload()
+        {
+            Client.Verify(x => x.SubmitAsync(It.IsAny<OpenRouterVideoSubmitRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+            Client.Verify(x => x.DownloadVideoBytesAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+            Client.Verify(x => x.DownloadVideoBytesForOfferingAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        public void Dispose() { _worker.Dispose(); _services.Dispose(); }
+    }
+
     [Fact]
     public async Task DeleteCompletedRun_ShouldRemoveOwnedArtifactRunExportAndEmptyProject()
     {
