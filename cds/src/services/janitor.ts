@@ -144,6 +144,12 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
       return out.split('\n').filter(Boolean);
     },
     removeImage: async (image) => {
+      // ps.Image 可能是 digest、ID 或另一个 tag。删除前直接按 daemon 的
+      // image identity 查全部容器（含停止），不能等 rmi 已经取消 tag 后再检查。
+      const currentRefs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000, run).catch(() => '__ERR__ 容器引用查询未确认');
+      if (currentRefs.startsWith('__ERR__') || currentRefs.trim() !== '') {
+        return `${IMAGE_HELD_PREFIX}有容器引用或引用检查失败，未执行普通删除、未强制删除`;
+      }
       const out = await execDocker(['rmi', image], 60_000, run);
       if (!out.startsWith('__ERR__')) return null;
       const err = out.replace('__ERR__ ', '');
