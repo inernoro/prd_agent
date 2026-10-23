@@ -102,6 +102,7 @@ export interface ContainerRemoveContext {
   serviceId?: string | null;
   requestId?: string | null;
   operationId?: string | null;
+  operationGeneration?: number;
   actor?: string | null;
   trigger?: string | null;
   operation?: string | null;
@@ -1352,6 +1353,7 @@ export class ContainerService {
     onOutput?: (chunk: string) => void,
     customEnv?: Record<string, string>,
     context: Pick<ContainerRemoveContext, 'requestId' | 'operationId' | 'actor' | 'trigger'> & {
+      operationGeneration?: number;
       assertCurrent?: (step: string) => void;
       preserveContainerNames?: readonly string[];
       onRuntimeCreated?: (service: ServiceState) => Promise<void>;
@@ -1387,9 +1389,13 @@ export class ContainerService {
     } = {},
   ): Promise<void> {
     const shell = this.qualifiedShell(context.assertCurrent);
-    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
+    const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id,
+      operationId: context.operationId, operationGeneration: context.operationGeneration };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
+    let refundUnissuedReservation: (() => boolean) | undefined, runCommandIssued = false;
+    let installedPhaseOwner: { owner: DeploymentPhaseOwner; check?: () => void } | undefined;
+    phaseCheck();
     // 新部署显式指定新目录；同一源码服务重启沿用实际挂载目录，避免回到可变分支目录。
     const sourceCheckout = context.sourceCheckout || (!profile.prebuiltImage && service.sourceCheckoutPath && service.sourceCommitSha
       ? { path: service.sourceCheckoutPath, commitSha: service.sourceCommitSha } : undefined);
@@ -1401,6 +1407,7 @@ export class ContainerService {
       }
       if (!context.sourceCheckout) {
         const head = await shell.exec('git rev-parse HEAD', { cwd: sourceCheckout.path });
+        phaseCheck();
         if (head.exitCode !== 0 || head.stdout.trim().toLowerCase() !== sourceCheckout.commitSha.toLowerCase()) {
           throw new Error('原部署源码不可用或提交不一致，请重新部署服务');
         }
@@ -1420,6 +1427,7 @@ export class ContainerService {
     }
     const network = this.getNetworkForProject(entry.projectId);
     await this.ensureNetwork(network);
+    phaseCheck();
     const managedArtifactReady = !!profile.managedBuild || profile.localArtifact === true;
     let localArtifactCommitSha: string | undefined;
     if (profile.managedBuild) {
@@ -1433,11 +1441,13 @@ export class ContainerService {
         onOutput,
         context.assertCurrent,
       );
+      phaseCheck();
     } else if (profile.localArtifact) {
       const target = context.artifactCommitSha || sourceCheckout?.commitSha || entry.pinnedCommit || entry.ciTargetSha || entry.githubCommitSha;
       if (!target || !/^[0-9a-f]{40}$/i.test(target)) throw new Error('本地产物目标尚未确认，请选择完整部署版本后重试');
       const admitted = await this.inspectDeploymentArtifacts([profile], target,
         () => context.assertCurrent?.(`local artifact identity ${profile.id}`), { inspectLocalArtifacts: true });
+      phaseCheck();
       if (admitted.state !== 'ready') throw new Error('本地产物的实际提交、平台或访问无法确认，请检查执行器或重新生成该版本');
       // 已有仓库内容摘要保留其可跨执行器取回的引用；可变本地标签才收敛为本机固定ID。
       profile = { ...profile, dockerImage: admitted.artifacts[0].image };
@@ -1463,6 +1473,7 @@ export class ContainerService {
       : baseNetPlan;
     if (entry.replacementNetworks?.includes(netPlan.runNetwork)) await this.ensureReplacementNetwork(entry, netPlan.runNetwork, context.assertCurrent);
     else if (netPlan.runNetwork !== network) await this.ensureNetwork(netPlan.runNetwork);
+    phaseCheck();
     // 陈旧别名清理必须扫「别名实际注册的那张网」（Bugbot Medium）：隔离开启后 app 的 --network-alias
     // 落在分支网（cds-br-*）而非共享项目网，若仍扫共享网会**看不到** app 别名 → 失败/半成功重部署后
     // 分支网上残留同别名的僵尸端点（DNS 轮询又回来了）。故传 netPlan.runNetwork（隔离=分支网，未隔离=共享网）。
@@ -1591,12 +1602,14 @@ export class ContainerService {
             const inspect = await shell.exec(
               `docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ${this.shellQuote(cand.image)}`,
             );
+            phaseCheck();
             const proof = await proveFallbackImage({
               revision: inspect.exitCode === 0 ? inspect.stdout : null,
               targetSha,
               buildScope,
               isComponentUnchangedSince: context.isComponentUnchangedSince,
             });
+            phaseCheck();
             if (proof.accepted) {
               pulledImage = cand.image;
               const proofText = proof.reason === 'exact-target'
@@ -1695,12 +1708,14 @@ export class ContainerService {
         for (const cand of reuseCands) {
           const unchanged = await context.isComponentUnchangedSince(cand.sha, targetSha, buildScope)
             .catch(() => false);
+          phaseCheck();
           if (unchanged) { picked = cand; break; }
         }
         if (picked) {
           // 在跑的那一版镜像本机一定有；台账里的历史版本可能已被镜像回收清掉，
           // 故仍要确认本地存在或能拉到，拉不到就继续往下走源码编译。
           const localHit = await shell.exec(`docker image inspect ${this.shellQuote(picked.image)}`);
+          phaseCheck();
           let usable = localHit.exitCode === 0;
           if (!usable) {
             const rePull = await deploymentPhaseBudget.run('pull', phaseOwner,
@@ -1753,6 +1768,7 @@ export class ContainerService {
     // 全部镜像/本地产物核验结束后才清理旧别名；失败不会在拉取前拆掉可用服务。
     context.assertCurrent?.(`runService before alias cleanup ${profile.id}`);
     await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
+    phaseCheck();
 
     // 旧容器移除放在极速版拉取/回退闸**之后**（Codex P2「Queue fallback builds
     // before removing live containers」）：镜像拉取失败回退源码编译时，回退钩子
@@ -1772,6 +1788,7 @@ export class ContainerService {
       source: 'container.runService',
     });
     const preRunRemove = await shell.exec(`docker rm -f ${service.containerName}`);
+    phaseCheck();
     this.recordContainerEvent({
       severity: preRunRemove.exitCode === 0 ? 'info' : 'warn',
       source: 'cds-container-service',
@@ -1809,6 +1826,7 @@ export class ContainerService {
       await this.buildProfileVolumeFlags(entry, profile, command, onOutput);
 
     try {
+      phaseCheck();
       onOutput?.(usePrebuiltEntrypoint
         ? `── 运行: ${profile.dockerImage}（镜像默认 ENTRYPOINT）──\n`
         : `── 运行: ${command} ──\n`);
@@ -1909,12 +1927,16 @@ export class ContainerService {
       context.assertCurrent?.(`runService before docker-run ${profile.id}`);
       releaseStart = await deploymentPhaseBudget.acquire('start', phaseOwner,
         { check: phaseCheck, memoryMB: profile.resources?.memoryMB, reservationKey: service.containerName });
+      refundUnissuedReservation = deploymentPhaseBudget.captureMemoryRelease(service.containerName, phaseOwner);
       phaseCheck();
-      this.runtimePhaseOwners.set(service.containerName, { owner: phaseOwner, check: phaseCheck });
+      installedPhaseOwner = { owner: phaseOwner, check: phaseCheck };
+      this.runtimePhaseOwners.set(service.containerName, installedPhaseOwner);
       service.creationIssued = true;
       await context.onRuntimeCreated?.(service);
       phaseCheck();
+      runCommandIssued = true;
       const result = await shell.exec(runCmd);
+      phaseCheck();
       if (result.exitCode !== 0) {
         this.recordContainerEvent({
           severity: 'error',
@@ -1958,6 +1980,7 @@ export class ContainerService {
       service.sourceCheckoutPath = !profile.prebuiltImage ? sourceCheckout?.path : undefined;
       service.sourceCommitSha = !profile.prebuiltImage ? sourceCheckout?.commitSha : undefined;
       await context.onRuntimeCreated?.(service);
+      phaseCheck();
       // 分支级隔离：把 app 容器连到共享 infra 网（无别名，仅为可达共享 mysql/redis/mongo）。
       // 隔离时容器是 `docker create` 出来的（进程尚未启动），这里在 start 之前把共享网连上，
       // 保证 entrypoint 阶段就开 DB 连接的镜像在进程跑起来时两张网都已就位（Codex P1）。无别名 = 兄弟
@@ -1971,13 +1994,16 @@ export class ContainerService {
           operationId: context.operationId ?? undefined,
           assertCurrent: context.assertCurrent,
         });
+        phaseCheck();
         service.connectedNetworks.push(sharedNet);
         await context.onRuntimeCreated?.(service);
+        phaseCheck();
       }
       // 隔离路径用 create，网络就位后再启动进程；未隔离路径已由 `docker run -d` 启动，跳过。
       if (attachSharedBeforeStart) {
         context.assertCurrent?.(`runService before docker-start ${profile.id}`);
         const startRes = await shell.exec(`docker start ${service.containerName}`);
+        phaseCheck();
         if (startRes.exitCode !== 0) {
           this.recordContainerEvent({
             severity: 'error',
@@ -2036,8 +2062,11 @@ export class ContainerService {
       // Poll a few times to catch early exits (e.g., ENOSPC, missing deps, syntax errors).
       try {
         await this.waitForContainerAlive(service.containerName, onOutput);
+        phaseCheck();
       } catch (err) {
+        phaseCheck();
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 300);
+        phaseCheck();
         const state = diagnostics.inspect?.state as Record<string, unknown> | undefined;
         this.recordContainerEvent({
           severity: 'error',
@@ -2060,7 +2089,8 @@ export class ContainerService {
         throw err;
       }
     } catch (error) {
-      this.runtimePhaseOwners.delete(service.containerName);
+      if (installedPhaseOwner && this.runtimePhaseOwners.get(service.containerName) === installedPhaseOwner) this.runtimePhaseOwners.delete(service.containerName);
+      if (!runCommandIssued) refundUnissuedReservation?.();
       throw error;
     } finally {
       releaseStart?.();
@@ -2357,7 +2387,9 @@ export class ContainerService {
         () => this.waitForReadinessUnbudgeted(hostPort, probe, onAttempt, onOutput, containerName), { check: scope?.check });
       if (ready && containerName) deploymentPhaseBudget.releaseMemory(containerName);
       return ready;
-    } finally { if (containerName) this.runtimePhaseOwners.delete(containerName); }
+    } finally {
+      if (containerName && scope && this.runtimePhaseOwners.get(containerName) === scope) this.runtimePhaseOwners.delete(containerName);
+    }
   }
 
   private async waitForReadinessUnbudgeted(
@@ -2518,9 +2550,12 @@ export class ContainerService {
   async restartServiceInPlace(
     containerName: string,
     onOutput?: (chunk: string) => void,
-    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason'> = {},
+    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason' | 'assertCurrent'> = {},
   ): Promise<boolean> {
-    const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    const shell = this.qualifiedShell(context.assertCurrent);
+    context.assertCurrent?.('before restart identity');
+    const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    context.assertCurrent?.('after restart identity');
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
       this.recordContainerEvent({
@@ -2546,10 +2581,13 @@ export class ContainerService {
       return false;
     }
     onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
-    const result = await this.shell.exec(`docker restart ${containerName}`);
+    context.assertCurrent?.('before docker restart');
+    const result = await shell.exec(`docker restart ${containerName}`);
+    context.assertCurrent?.('after docker restart');
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
+      context.assertCurrent?.('after restart failure diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',
@@ -2577,7 +2615,9 @@ export class ContainerService {
     }
     try {
       await this.waitForContainerAlive(containerName, onOutput);
+      context.assertCurrent?.('after restart liveness');
       const diagnostics = await this.captureContainerDiagnostics(containerName, 80);
+      context.assertCurrent?.('after restart diagnostics');
       this.recordContainerEvent({
         severity: 'info',
         source: 'cds-container-service',
@@ -2602,8 +2642,10 @@ export class ContainerService {
       });
       return true;
     } catch (err) {
+      context.assertCurrent?.('after restart liveness failure');
       onOutput?.(`── 重启后容器未存活: ${(err as Error).message} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 300);
+      context.assertCurrent?.('after restart early-exit diagnostics');
       this.recordContainerEvent({
         severity: 'error',
         source: 'cds-container-service',
@@ -2769,7 +2811,7 @@ export class ContainerService {
   async remove(containerName: string, context: ContainerRemoveContext = {}): Promise<void> {
     const terminal = ['branch-delete', 'executor-delete-branch', 'build-profile-delete', 'cleanup-stopped'].includes(context.operation || '');
     return deploymentPhaseBudget.run(terminal ? 'terminal' : 'cleanup', { projectId: context.projectId || undefined, branchId: context.branchId || undefined,
-      profileId: context.profileId || undefined, operationId: context.operationId },
+      profileId: context.profileId || undefined, operationId: context.operationId, operationGeneration: context.operationGeneration },
       () => this.removeUnbudgeted(containerName, context), { check: () => context.assertCurrent?.('cleanup phase admission') });
   }
 
@@ -3673,7 +3715,8 @@ export class ContainerService {
       const refs = Object.values(entry.services).flatMap(service => serviceRuntimeRefs(service).map(runtime => ({ service, runtime })));
       if (refs.some(({ runtime }) => runtime.networkName === network)) continue;
       const shell = this.qualifiedShell(context.assertCurrent);
-      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id }, async () => {
+      await deploymentPhaseBudget.run('cleanup', { projectId: entry.projectId, branchId: entry.id,
+        operationId: context.operationId, operationGeneration: context.operationGeneration }, async () => {
         const networkView = await shell.exec(`docker network inspect --format ${this.shellQuote('{{json .Labels}}')} ${this.shellQuote(network)}`,
           { timeout: 5000, executionLane: 'observation' });
         context.assertCurrent?.('after unused replacement network ownership');

@@ -186,7 +186,15 @@ describe('MongoSplitStateBackingStore', () => {
     const original = handle.global.replaceOne.bind(handle.global);
     vi.spyOn(handle.global, 'replaceOne').mockImplementationOnce(async (...args) => { started(); await hold; return original(...args); });
     let accepted = false; const run = begin().then((value) => { accepted = true; return value; });
-    try { await entered; await Promise.resolve(); expect(accepted).toBe(true); }
+    try {
+      await entered;
+      // 等实际受理结果，不把外层 async 包装的微任务数量当作保存合同。
+      // global 仍被 hold 阻塞；若受理误等全局写入，原有有界 waitFor 会失败。
+      await vi.waitFor(() => expect(accepted).toBe(true));
+      const received = await run;
+      expect(handle.deploymentRuns.docs.get(received.id)?.executionIntent?.runId).toBe(received.id);
+      expect(handle.global.docs.get('global')?.state.nextPortIndex).not.toBe(123);
+    }
     finally { release(); await run; await state.flush(); }
   });
 

@@ -10,6 +10,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
+import { SelfMaintenanceRuntime } from './services/self-maintenance-runtime.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
@@ -70,6 +71,7 @@ import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
 import { createGithubWebhookRouter, getWebhookNoiseStats } from './routes/github-webhook.js';
 import { buildGateStatus } from './services/build-gate.js';
+import { deploymentPhaseBudget } from './services/deployment-phase-budget.js';
 import { getEventLoopLag } from './services/event-loop-lag.js';
 import { getWorkloadCgroupStatus } from './services/workload-cgroup.js';
 import { collectControlPlanePressure } from './services/control-plane-pressure.js';
@@ -568,6 +570,8 @@ export interface ServerDeps {
   gracefulShutdown?: GracefulShutdownController;
   /** Resources must settle before the shared execution pools close. */
   registerResourceShutdown?: (close: () => Promise<void>) => void;
+  /** 同一服务器的维护owner、执行能力与纯状态/健康投影。 */
+  selfMaintenanceRuntime?: SelfMaintenanceRuntime;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
   /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
   getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
@@ -1835,6 +1839,13 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const selfMaintenance = deps.selfMaintenanceRuntime ?? new SelfMaintenanceRuntime(deps.shell, deps.config.repoRoot, view => {
+    deps.serverEventLogStore?.record({ category: 'system', severity: 'warn', source: 'self-maintenance',
+      action: 'self-maintenance.stop-unconfirmed', message: 'CDS 维护写者正在停止或等待清理确认，后继维护请求仍被拒绝。',
+      details: { selfMaintenance: view } });
+    console.warn('[self-maintenance] CDS 维护写者正在停止或等待清理确认，请检查维护状态。');
+  });
+  deps.registerResourceShutdown?.(() => selfMaintenance.close());
   app.disable('x-powered-by');
   const credentialRotationService = new InfraCredentialRotationService(
     new StateInfraCredentialRotationStore(deps.stateService),
@@ -1854,7 +1865,12 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     ),
   );
-  const deploymentRunService = new DeploymentRunService(deps.stateService);
+  const deploymentRunService = new DeploymentRunService(deps.stateService, {
+    isExecutionWaiting: (run, now) => Boolean(run.operationId && run.operationGeneration !== undefined
+      && (deploymentPhaseBudget.waitingOperation(run.operationId, run.operationGeneration, {
+        projectId: run.projectId, branchId: run.branchId, profileId: run.profileId,
+      })?.deadlineAt || 0) > now.getTime()),
+  });
   if (deps.branchOperationCoordinator && deps.config.mode !== 'executor') {
     const restored = deploymentRunService.restoreQueued(deps.branchOperationCoordinator);
     if (restored.length) console.warn(`[deployment-run] 已恢复 ${restored.length} 个尚未执行的排队意图`);
@@ -2088,6 +2104,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     const checks: Record<string, { ok: boolean; detail?: string }> = {};
     let overallOk = true;
+    // 纯判据不执行命令/取消/释放；公开check只给布尔，不暴露维护身份或assignment。
+    checks.selfMaintenance = { ok: selfMaintenance.isHealthy() };
+    if (!checks.selfMaintenance.ok) overallOk = false;
 
     // Check 1: state readable — plus 暴露 backing store kind 到 detail
     // 供"Mongo 模式是否真正生效"这类无认证诊断。不泄漏 URI/credentials。
@@ -3790,6 +3809,7 @@ export function createServer(deps: ServerDeps): express.Express {
         pidStartedAt,
         restartStatus,
         restartWait,
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,
@@ -3814,6 +3834,7 @@ export function createServer(deps: ServerDeps): express.Express {
         runningPid: process.pid,
         pidStartedAt: (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null,
         restartStatus: 'not_required',
+        selfMaintenance: selfMaintenance.observe(),
         lastSelfUpdate: null,
         selfUpdateHistory: [],
         webBuildSha: '',
@@ -4670,6 +4691,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
   app.use('/api', (req, res, next) => {
     if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    // Let already accepted, authenticated queued work drain to completion.
+    if (pendingReplayGate.isTrusted(req)) { next(); return; }
     const draining = selfUpdateDrainBlockReason(Date.now());
     if (!draining) { next(); return; }
     res.setHeader('Retry-After', '60');
@@ -5022,6 +5045,7 @@ export function createServer(deps: ServerDeps): express.Express {
   }));
 
   app.use('/api', createBranchRouter({
+    selfMaintenanceRuntime: selfMaintenance,
     stateService: deps.stateService,
     worktreeService: deps.worktreeService,
     containerService: deps.containerService,

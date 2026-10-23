@@ -95,6 +95,7 @@ export function preserveReplacementNames(entry: BranchEntry, candidate: ServiceS
 /** 全部点名服务就绪后才切入口；持久化失败恢复旧指针，旧容器尚未回收。 */
 export async function commitServiceReplacements(options: {
   entry: BranchEntry; profileIds: readonly string[]; state: StateService; container: Pick<ContainerService, 'inspectOwnedRuntime' | 'connectReplacementPeer' | 'removeOwnedRuntime' | 'cleanupUnusedReplacementNetworks'>;
+  operationId?: string; operationGeneration?: number;
   assertCurrent?: (step: string) => void;
 }): Promise<void> {
   const { entry, profileIds, state, container, assertCurrent } = options;
@@ -136,12 +137,14 @@ export async function commitServiceReplacements(options: {
       if (referenced || !old.networkName) continue;
       assertCurrent?.('before old runtime retirement');
       await container.removeOwnedRuntime(entry, service.profileId, old, { branchId: entry.id, projectId: entry.projectId,
+        operationId: options.operationId, operationGeneration: options.operationGeneration,
         profileId: service.profileId, operation: 'ready-runtime-retirement', source: 'service-replacement',
         assertCurrent: () => assertCurrent?.('old runtime retirement command') });
       service.retainedRuntimes = service.retainedRuntimes?.filter(runtime => runtime.containerName !== old.containerName);
     }
   }
   await container.cleanupUnusedReplacementNetworks(entry, { branchId: entry.id, projectId: entry.projectId,
+    operationId: options.operationId, operationGeneration: options.operationGeneration,
     assertCurrent: () => assertCurrent?.('unused replacement network cleanup') });
   entry.replacementNetwork = undefined;
   entry.replacementOperationId = undefined;

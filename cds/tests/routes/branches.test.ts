@@ -4112,21 +4112,35 @@ describe('Branch Routes', () => {
       } finally { releaseActive(); releaseReplay(); await Promise.allSettled([active, wholeDispatch]); vi.unstubAllGlobals(); }
     });
 
-    it('受理落盘失败返回503并释放租约，旧服务未被替换', async () => {
+    it.each(['', '/api'])('受理落盘失败%s可按原请求查询脱敏原因，仍返回503并保留旧服务', async (profilePath) => {
       await request(server, 'POST', '/api/build-profiles', { id: 'api', name: 'API', dockerImage: 'node', workDir: '.', command: 'node server.js', containerPort: 3000 });
       stateService.addBranch({ id: 'admission-fail', projectId: 'default', branch: 'main', worktreePath: path.join(tmpDir, 'worktrees', 'admission-fail'),
         status: 'running', createdAt: new Date().toISOString(), services: { api: { profileId: 'api', containerName: 'old-api', hostPort: 10001, status: 'running' } } });
-      const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('disk unavailable'));
+      const record = vi.spyOn(serverEventLogStore, 'record');
+      const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('disk unavailable; Authorization: Bearer admission-test-secret; PASSWORD=admission-password'));
       const before = mock.commands.length;
       try {
-        const result = await request(server, 'POST', '/api/branches/admission-fail/deploy', { commitSha: 'a'.repeat(40) });
+        const result = await request(server, 'POST', `/api/branches/admission-fail/deploy${profilePath}`, { commitSha: 'a'.repeat(40) }, { 'X-CDS-Request-Id': 'admission-flush-failure' });
         expect(result.status).toBe(503);
         expect(String(JSON.stringify(result.body))).toContain('尚未开始执行');
         expect(mock.commands.slice(before).some((command) => command.startsWith('docker ') || command.startsWith('git '))).toBe(false);
         expect(branchOperationCoordinator.getActive('admission-fail')).toBeUndefined();
         expect(stateService.getBranch('admission-fail')?.services.api.containerName).toBe('old-api');
         expect(deploymentRunService.list({ branchId: 'admission-fail' })[0]?.status).toBe('failed');
-      } finally { flush.mockRestore(); }
+        const failure = record.mock.calls.map(([event]) => event).find(event => event.action === 'branch.deployment.admission-failed');
+        expect(failure).toMatchObject({
+          category: 'system', severity: 'error', source: 'branch-deployment-admission',
+          projectId: 'default', branchId: 'admission-fail', profileId: profilePath ? 'api' : null,
+          requestId: 'admission-flush-failure', commitSha: 'a'.repeat(40),
+          error: { code: 'deployment_admission_failed', message: expect.stringContaining('disk unavailable') },
+        });
+        const failedRun = deploymentRunService.list({ branchId: 'admission-fail' })[0];
+        expect(failure?.operationId).toBe(failedRun?.operationId);
+        expect(failure?.details?.runId).toBe(failedRun?.id);
+        expect(JSON.stringify(failure)).not.toContain('admission-test-secret');
+        expect(JSON.stringify(failure)).not.toContain('admission-password');
+        expect(JSON.stringify(result.body)).not.toContain('disk unavailable');
+      } finally { flush.mockRestore(); record.mockRestore(); }
     });
 
     it('最新请求回到当前A时取消旧待办B，不在A完成后重放B', async () => {

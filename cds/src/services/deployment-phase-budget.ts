@@ -48,7 +48,8 @@ export function setDeploymentPhaseMemoryProvider(provider: (() => number) | null
 }
 
 export type DeploymentPhase = 'pull' | 'start' | 'ready' | 'cleanup' | 'terminal';
-export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null }
+export const DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS = 20 * 60_000;
+export interface DeploymentPhaseOwner { projectId?: string; branchId?: string; profileId?: string; operationId?: string | null; operationGeneration?: number }
 interface Request {
   owner: DeploymentPhaseOwner; check?: () => void; signal?: AbortSignal;
   resolve: (release: () => void) => void; reject: (error: Error) => void;
@@ -83,6 +84,30 @@ export class DeploymentPhaseBudget {
     this.memoryReservations.set(key, { memoryMB: Math.max(1, memoryMB || 512), pids: Math.max(1, pids || 64), owner });
   }
   memorySnapshot() { return [...this.memoryReservations].map(([key, value]) => ({ key, ...value })); }
+
+  /** 退款只认本次原 owner 和预约对象；await 前后出现的同名后继均不能被清掉。 */
+  captureMemoryRelease(key: string, owner: DeploymentPhaseOwner): () => boolean {
+    const reservation = this.memoryReservations.get(key), owned = reservation?.owner === owner;
+    return () => {
+      if (!owned || !reservation || this.memoryReservations.get(key) !== reservation) return false;
+      this.releaseMemory(key); return true;
+    };
+  }
+
+  /** 只观测真实、原作用域、有界且资格仍有效的排队；执行中不属于等待。 */
+  waitingOperation(operationId: string, generation: number, scope: { projectId: string; branchId: string; profileId?: string }):
+    { phase: DeploymentPhase; enqueuedAt: number; deadlineAt: number } | undefined {
+    if (!operationId || !Number.isSafeInteger(generation) || generation < 1 || !scope.projectId || !scope.branchId) return undefined;
+    for (const [phase, queue] of this.waiting) for (const request of queue) {
+      if (request.owner.operationId !== operationId || request.owner.operationGeneration !== generation
+        || (request.owner.projectId || 'default') !== scope.projectId || request.owner.branchId !== scope.branchId
+        || scope.profileId !== undefined && request.owner.profileId !== scope.profileId
+        || !request.check || request.signal?.aborted || Date.now() - request.enqueuedAt >= DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) continue;
+      try { request.check(); } catch { continue; }
+      return { phase, enqueuedAt: request.enqueuedAt, deadlineAt: request.enqueuedAt + DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS };
+    }
+    return undefined;
+  }
   private memoryAllows(memoryMB: number, key?: string): boolean {
     const available = this.availableMemoryMB();
     const reserved = [...this.memoryReservations].reduce((sum, [name, reservation]) => sum + (name === key ? 0 : reservation.memoryMB), 0)
@@ -126,7 +151,7 @@ export class DeploymentPhaseBudget {
       for (let index = queue.length - 1; index >= 0; index--) {
         const request = queue[index];
         try { request.check?.(); if (request.signal?.aborted) throw new Error('部署阶段等待已取消');
-          if (Date.now() - request.enqueuedAt > 1200000) throw new Error('部署阶段等待超时，旧服务保持可用');
+          if (Date.now() - request.enqueuedAt >= DEPLOYMENT_PHASE_WAIT_TIMEOUT_MS) throw new Error('部署阶段等待超时，旧服务保持可用');
         } catch (error) { queue.splice(index, 1); request.signal?.removeEventListener('abort', request.abort!); request.reject(error as Error); }
       }
       while (active.size < this.limits[phase] && queue.length) {
@@ -149,7 +174,7 @@ export class DeploymentPhaseBudget {
   async run<T>(phase: DeploymentPhase, owner: DeploymentPhaseOwner, task: () => Promise<T>,
     options: Parameters<DeploymentPhaseBudget['acquire']>[2] = {}): Promise<T> {
     const release = await this.acquire(phase, owner, options);
-    try { options.check?.(); return await task(); } finally { release(); }
+    try { options.check?.(); const result = await task(); options.check?.(); return result; } finally { release(); }
   }
 }
 
@@ -164,6 +189,9 @@ export async function restoreDeploymentMemoryReservations(
   for (const branch of branches) {
     const hints = new Map(profiles(branch).map(profile => [profile.id, profile.resources?.memoryMB || 512]));
     for (const service of Object.values(branch.services)) for (const runtime of serviceRuntimeRefs(service)) {
+      const serving = service.servingRuntime;
+      if (serving?.containerId && /^[a-f0-9]{64}$/.test(serving.containerId)
+        && serving.containerName === runtime.containerName && serving.containerId === runtime.containerId) continue;
       const incomplete = runtime.creationIssued && (runtime === service ? service.status !== 'running'
         : runtime === service.pendingRuntime || !runtime.containerId);
       if (incomplete) candidates.push({ branch, profileId: service.profileId, runtime, memoryMB: hints.get(service.profileId) || 512 });
