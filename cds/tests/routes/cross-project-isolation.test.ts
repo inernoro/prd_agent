@@ -352,7 +352,7 @@ describe('Cross-project isolation on profiles/rules/export', () => {
         worktreePath: '/tmp/wt/a-svc',
         services: {
           api: {
-            profileId: 'api', containerName: 'cds_a-svc_api',
+            profileId: 'api', containerName: 'cds_a-svc_api', containerId: 'a'.repeat(64),
             hostPort: 12345, status: 'running',
           },
         },
@@ -434,7 +434,7 @@ describe('Cross-project isolation on profiles/rules/export', () => {
       stateService.addBranch({
         id: 'a-extra', projectId: 'proj-a', branch: 'extra',
         worktreePath: '/tmp/wt/a-extra',
-        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-extra_sidecar', hostPort: 12346, status: 'running' } },
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-extra_sidecar', containerId: 'b'.repeat(64), hostPort: 12346, status: 'running' } },
         status: 'running', createdAt: now,
         // The secret lives ONLY on the branch-local extra profile — not in any project build profile.
         extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { API_TOKEN: 'tok_DoNotLeakThisExtraSecret' } } as any],
@@ -458,7 +458,7 @@ describe('Cross-project isolation on profiles/rules/export', () => {
       stateService.addBranch({
         id: 'a-urlenv', projectId: 'proj-a', branch: 'urlenv',
         worktreePath: '/tmp/wt/a-urlenv',
-        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-urlenv_sidecar', hostPort: 12347, status: 'running' } },
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-urlenv_sidecar', containerId: 'b'.repeat(64), hostPort: 12347, status: 'running' } },
         status: 'running', createdAt: now,
         extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { DATABASE_URL: secretUrl } } as any],
       });
@@ -480,7 +480,7 @@ describe('Cross-project isolation on profiles/rules/export', () => {
       stateService.addBranch({
         id: 'a-hookenv', projectId: 'proj-a', branch: 'hookenv',
         worktreePath: '/tmp/wt/a-hookenv',
-        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-hookenv_sidecar', hostPort: 12348, status: 'running' } },
+        services: { sidecar: { profileId: 'sidecar', containerName: 'cds_a-hookenv_sidecar', containerId: 'b'.repeat(64), hostPort: 12348, status: 'running' } },
         status: 'running', createdAt: now,
         extraProfiles: [{ id: 'sidecar', name: 'sidecar', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 80, projectId: 'proj-a', env: { WEBHOOK_URL: hook } } as any],
       });
