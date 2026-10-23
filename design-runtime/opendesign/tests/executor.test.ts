@@ -87,7 +87,12 @@ describe('presentation source context', () => {
         designDirection: {
           schemaVersion: 'map-design-direction-v1', styleId: 'deck', styleName: '演示稿',
           styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'minimal', reviewMode: 'strict',
-          prompts: { generate: '', edit: '', review: '' }, promptFingerprint: 'native-deck-skill',
+          prompts: {
+            generate: '你是资深网页设计师，要把 MAP 知识内容做成一张好看、可信的单页网页。手机 390px 宽度下可读。',
+            edit: '你在修改一张已经发布的网页。',
+            review: '手机 390px 宽度下有没有元素溢出或文字过小。',
+          },
+          promptFingerprint: 'native-deck-skill',
         },
       },
     });
@@ -110,8 +115,12 @@ describe('presentation source context', () => {
     expect(harness.daemon.imports[0].skillId).toBe('magazine-web-ppt');
     expect(harness.daemon.runBodies).toHaveLength(2);
     expect(String(harness.daemon.runBodies[0].systemPrompt)).toContain('active OpenDesign deck skill');
+    expect(String(harness.daemon.runBodies[0].systemPrompt)).not.toContain('资深网页设计师');
+    expect(String(harness.daemon.runBodies[0].systemPrompt)).not.toContain('390px');
+    expect(String(harness.daemon.runBodies[0].systemPrompt)).not.toContain('只读这些');
     expect(String(harness.daemon.runBodies[0].systemPrompt)).not.toContain('effective rendered body text must remain at least 12px');
     expect(String(harness.daemon.runBodies[1].message)).toContain('perform one final check');
+    expect(String(harness.daemon.runBodies[1].message)).not.toContain('390px');
     expect(map!.commits).toHaveLength(1);
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
     expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('OpenDesign 自主成稿');

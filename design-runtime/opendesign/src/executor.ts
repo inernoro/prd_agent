@@ -535,7 +535,9 @@ export class DesignTaskExecutor {
       });
       const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
         platformRules,
-        direction: designDirection,
+        // 演示稿的视觉与检查合同由已选中的原生 deck skill 定义。目录风格仍提供
+        // designSystemId/品牌上下文，但通用网页的 generate/edit/review 提示不能叠加进来。
+        direction: isPresentation ? undefined : designDirection,
         brief: designContext.brief,
         brand: designContext.brand,
         editingExistingPage,
