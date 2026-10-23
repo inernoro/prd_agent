@@ -12859,9 +12859,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
   });
 
-  // 纯镜像新分支只有元数据；Git 页面操作在同项目仓库读取，不能 checkout/reset 共享仓库。
+  // canonical缺失时在同项目仓库读取元数据；切换源码模式也不能 checkout/reset 共享仓库。
   function metadataOnlyGitRepository(entry: BranchEntry): string | undefined {
-    if (deploymentNeedsSourceCheckout(stateService.getEffectiveProfilesForBranch(entry).map(profile => resolveEffectiveProfile(profile, entry)))) return undefined;
     try { fs.lstatSync(entry.worktreePath); return undefined; }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     return stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
@@ -12875,6 +12874,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
     }
     try {
       const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
@@ -18709,6 +18712,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+    }
     const count = Math.min(parseInt(req.query.count as string) || 20, 50);
     try {
       const metadataRepo = metadataOnlyGitRepository(entry);
@@ -18743,6 +18750,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
     }
     if (!isCommitShaLike(hash)) {
       res.status(400).json({ error: '提交标识无效，请从提交历史选择要切换的提交。' });
@@ -18816,6 +18827,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    {
+      const denied = assertProjectAccess(req as any, entry.projectId || 'default');
+      if (denied) { res.status(denied.status).json(denied.body); return; }
     }
 
     try {
