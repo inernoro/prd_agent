@@ -173,11 +173,16 @@ const check = (ok, message) => { if (!ok) failures.push(message); console.log(`$
 
 async function openPage(browser, url, theme) {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: 1180 }, deviceScaleFactor: 1 });
+  const actionRequests = [];
+  const browserErrors = [];
   await context.addInitScript(`try{localStorage.setItem('cds_theme','${theme}')}catch(e){}`);
   await context.addInitScript(FAKE_SSE);
   await context.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (isEventStream(pathname)) {
+    if (route.request().method() === 'POST' && /\/(restart|deploy)$/.test(pathname)) {
+      actionRequests.push(pathname);
+    }
+    if (isEventStream(pathname) || route.request().headers().accept?.includes('text/event-stream')) {
       await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': fixture\n\n' });
       return;
     }
@@ -185,10 +190,20 @@ async function openPage(browser, url, theme) {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body ?? {}) });
   });
   const page = await context.newPage();
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text());
+  });
   await page.goto(`${url}/branch-list?project=${PROJECT_ID}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  try {
+    await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  } catch (error) {
+    await page.screenshot({ path: path.join(OUT, `load-failure-${theme}.png`) });
+    console.error((await page.locator('body').innerText()).slice(0, 3000));
+    throw error;
+  }
   await page.waitForTimeout(1200);
-  return { context, page };
+  return { context, page, actionRequests, browserErrors };
 }
 
 /* 同一排 = 卡片顶边 y 相同。量每排的高度差。 */
@@ -234,7 +249,36 @@ async function main() {
     browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || '/opt/pw-browsers/chromium' });
     for (const theme of ['dark', 'light']) {
       branches = makeBranches();
-      const { context, page } = await openPage(browser, server.url, theme);
+      const { context, page, actionRequests, browserErrors } = await openPage(browser, server.url, theme);
+      const card = (id) => page.locator(`[data-branch-card-id="${id}"]`);
+      const deployButtons = (id) => card(id).getByRole('button', { name: /^(重新部署|部署) / });
+      for (const id of ['b-test', 'b-edison', 'b-pack', 'b-ident', 'b-relaxed']) {
+        check(await deployButtons(id).count() === 0, `[${theme}] ${id} 运行、等待、构建或停止态不显示直接部署入口`);
+      }
+      check(await card('b-test').getByRole('button', { name: '预览', exact: true }).count() === 1,
+        `[${theme}] 健康运行卡保留预览入口`);
+      check(await deployButtons('b-scan').count() === 1
+        && await card('b-scan').getByRole('button', { name: /^预览/ }).count() === 0,
+        `[${theme}] 异常卡保留重新部署，且不同时显示预览`);
+      await card('b-relaxed').getByRole('button', { name: /^一键启动 / }).click();
+      await page.waitForTimeout(400);
+      check(actionRequests.filter((p) => p === '/api/branches/b-relaxed/restart').length === 1
+        && !actionRequests.some((p) => p.endsWith('/deploy')),
+        `[${theme}] 一键启动只发送一次 restart，不发送 deploy`);
+      const drawer = page.getByRole('dialog', { name: '分支详情', exact: true });
+      check(await drawer.count() === 0, `[${theme}] 一键启动不冒泡打开分支详情`);
+      if (await drawer.count()) await page.getByRole('button', { name: '关闭', exact: true }).click();
+      // 卡片空白仍能打开详情；不能靠禁用整卡点击修复按钮冒泡。
+      await card('b-relaxed').click({ position: { x: 10, y: 10 } });
+      await drawer.waitFor({ state: 'visible' });
+      check(await drawer.isVisible(), `[${theme}] 信息槽空白仍可打开分支详情`);
+      await page.getByRole('button', { name: '关闭', exact: true }).click();
+      if (process.argv.includes('--interactions-only')) {
+        check(browserErrors.length === 0, `[${theme}] 无浏览器运行错误${browserErrors.length ? ': ' + browserErrors.join('; ') : ''}`);
+        await page.screenshot({ path: path.join(OUT, `interactions-${theme}.png`), fullPage: true });
+        await context.close();
+        continue;
+      }
       const rows = await measureRows(page);
       rows.forEach((row, i) => {
         const hs = row.list.map((c) => c.h);

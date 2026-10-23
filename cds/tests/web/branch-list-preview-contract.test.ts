@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation';
 
 const source = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/web/src/pages/BranchListPage.tsx'),
@@ -25,6 +26,29 @@ describe('BranchListPage preview contract', () => {
     expect(source).toContain("className={isAiOperated ? '' : 'w-32'}");
     expect(source).toContain("previewLabel={isAiOperated ? undefined : '预览'}");
     expect(source).toContain('className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"');
+  });
+
+  const cardActionContract = (source: string) => {
+    const footer = source.slice(source.indexOf('<footer'), source.indexOf('</footer>'));
+    expect(footer).toContain(') : showsIssue || failedPhase ? (');
+    expect(footer).toContain(') : isRunning ? (');
+    expect(footer).toContain('<PreviewActionSplitButton');
+    const quickStart = footer.slice(footer.indexOf('aria-label={`一键启动'));
+    expect(quickStart).toMatch(/onClick=\{\(event\) => \{\s+event\.stopPropagation\(\);\s+onRestart\(\);/);
+  };
+
+  it('keeps deployment issue-only and isolates quick start from card detail', () => {
+    cardActionContract(source);
+  });
+
+  it('rejects quick start bubbling to the card detail action', () => {
+    expectGuardRedOnMutation(cardActionContract, source,
+      mutate(source, /event\.stopPropagation\(\);\s+onRestart\(\);/, 'onRestart();'));
+  });
+
+  it('rejects an unconditional footer deployment action', () => {
+    expectGuardRedOnMutation(cardActionContract, source,
+      mutate(source, ') : showsIssue || failedPhase ? (', ') : true ? ('));
   });
 
   it('keeps commit history separate from the current commit summary', () => {

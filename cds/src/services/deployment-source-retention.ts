@@ -11,6 +11,32 @@ export interface DeploymentSourceRetentionReport {
   lastAttemptedPath?: string;
   lastScannedPath?: string;
 }
+export type DeploymentSourceHoldReason = 'filesystem-unknown' | 'identity-unknown' | 'age-or-claim-unconfirmed'
+  | 'container-mounted' | 'in-use' | 'identity-or-mount-unconfirmed' | 'protected-or-unconfirmed';
+
+/** Public counters only: never copy host paths or worker error text into the snapshot. */
+export function summarizeDeploymentSourceHolds(held: Record<string, string>): Partial<Record<DeploymentSourceHoldReason, number>> {
+  const known = new Map<string, DeploymentSourceHoldReason>([
+    ['无法确认部署源码基础目录，本轮保留', 'filesystem-unknown'],
+    ['无法确认部署源码目录，本轮保留', 'filesystem-unknown'],
+    ['无法完整读取部署源码桶', 'filesystem-unknown'],
+    ['无法读取部署源码目录', 'filesystem-unknown'],
+    ['目录归属无法确认', 'identity-unknown'],
+    ['目录过新、正在部署、台账引用或容器挂载', 'age-or-claim-unconfirmed'],
+    ['容器挂载枚举未完整确认，本轮不回收部署源码', 'identity-or-mount-unconfirmed'],
+    ['运行或停止的容器仍挂载该目录', 'container-mounted'],
+    ['源码正在准备、使用或回收', 'in-use'],
+    ['目录被认领或对象已变化', 'identity-or-mount-unconfirmed'],
+    ['临删挂载、归属或目录身份未确认', 'identity-or-mount-unconfirmed'],
+  ]);
+  const counts: Partial<Record<DeploymentSourceHoldReason, number>> = {};
+  for (const reason of Object.values(held)) {
+    const code = known.get(reason) ?? 'protected-or-unconfirmed';
+    counts[code] = (counts[code] || 0) + 1;
+  }
+  return counts;
+}
+
 const related = (a: string, b: string) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const BUSY = new Set(['building', 'starting', 'stopping', 'restarting', 'preparing', 'provisioning']);
@@ -26,16 +52,25 @@ export async function reclaimDeploymentSources(input: {
     (BUSY.has(b.status) && b.worktreePath && related(dir, WorktreeService.deploymentSourceRootFor(b.worktreePath)))
     || Object.values(b.services || {}).some(s => s.sourceCheckoutPath && related(dir, path.resolve(s.sourceCheckoutPath))));
   const isMounted = (dir: string, paths: string[]) => paths.some(p => related(dir, path.resolve(p)));
-  const realBase = await fs.realpath(input.base).catch(() => null);
+  const realBase = await fs.realpath(input.base).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') report.held[input.base] = '无法确认部署源码基础目录，本轮保留';
+    return null;
+  });
   if (!realBase) return report;
+  const isDirectory = async (dir: string): Promise<boolean> => {
+    try { return (await fs.lstat(dir)).isDirectory(); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') report.held[dir] = '无法确认部署源码目录，本轮保留';
+      return false;
+    }
+  };
   const candidates: Array<{ dir: string; mtime: number; identity: WorktreeDirectoryIdentity }> = [];
   const sourceDirs: string[] = [];
   for (const project of new Set(input.projectIds)) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(project) || project === '..') continue;
     const projectDir = path.join(input.base, project), root = path.join(projectDir, '.deployment-sources');
     // No symlinked project, source bucket, branch bucket, or leaf can widen the deletion boundary.
-    if (!(await fs.lstat(projectDir).catch(() => null))?.isDirectory()
-      || !(await fs.lstat(root).catch(() => null))?.isDirectory()) continue;
+    if (!await isDirectory(projectDir) || !await isDirectory(root)) continue;
     const roots = await fs.readdir(root, { withFileTypes: true }).catch(() => null);
     if (!roots) { report.held[root] = '无法完整读取部署源码桶'; continue; }
     for (const bucket of roots) {

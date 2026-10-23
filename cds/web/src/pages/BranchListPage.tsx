@@ -7803,7 +7803,10 @@ const BranchCard = memo(function BranchCard({
               disabled={busy}
               title="启动已停止的容器，不拉取代码、不重建镜像"
               aria-label={`一键启动 ${branch.branch}`}
-              onClick={onRestart}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRestart();
+              }}
             >
               <Play />
               一键启动

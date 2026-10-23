@@ -1,3 +1,4 @@
+import { DOCKER_LOG_LIMIT_FLAGS } from './docker-log-policy.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1929,6 +1930,7 @@ export class AgentWorkspaceSessionRuntime {
       if (runtimeAvailable === undefined) {
         const runtimeValidation = await this.executeCapabilityProbe(generation, 'runtime-validation', [
           'docker run --rm',
+          ...DOCKER_LOG_LIMIT_FLAGS,
           ...this.capabilityProbeOwnership('runtime-validation', probeOperationId),
           '--pull never',
           '--read-only',
@@ -2366,6 +2368,7 @@ export class AgentWorkspaceSessionRuntime {
         lease.creationAcknowledged = true;
         const validation = await this.executeCapabilityProbe(generation, 'storage-validation', [
           'docker run --rm',
+          ...DOCKER_LOG_LIMIT_FLAGS,
           ...this.capabilityProbeOwnership('storage-validation', probeOperationId),
           '--pull never',
           '--network none',
@@ -2619,6 +2622,7 @@ export class AgentWorkspaceSessionRuntime {
       storageKeeperCreated = true;
       const storageKeeper = await this.shell.exec([
         'docker run --detach',
+        ...DOCKER_LOG_LIMIT_FLAGS,
         '--pull never',
         `--name ${shellQuote(storageKeeperName)}`,
         '--restart no',
@@ -2692,6 +2696,7 @@ export class AgentWorkspaceSessionRuntime {
         `--memory ${shellQuote(`${policy.memoryMb}m`)}`,
         '--pids-limit 256',
         '--stop-timeout 10',
+        DOCKER_LOG_LIMIT_FLAGS[0],
         '--log-opt max-size=20m',
         '--log-opt max-file=2',
         '--tmpfs /tmp:rw,noexec,nosuid,size=128m,nr_inodes=2048',
@@ -2741,6 +2746,7 @@ export class AgentWorkspaceSessionRuntime {
       }
       const initialized = await this.shell.exec([
         'docker run --rm',
+        ...DOCKER_LOG_LIMIT_FLAGS,
         '--pull never',
         '--network none',
         '--read-only',
@@ -3567,6 +3573,7 @@ export class AgentWorkspaceSessionRuntime {
     fs.writeFileSync(envFilePath, env, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     const command = [
       'docker run --detach',
+      ...DOCKER_LOG_LIMIT_FLAGS,
       '--pull never',
       `--name ${shellQuote(containerName)}`,
       '--restart no',
@@ -3718,6 +3725,7 @@ export class AgentWorkspaceSessionRuntime {
     })).toString('base64');
     const validation = await this.shell.exec([
       'docker run --rm --network none --read-only',
+      ...DOCKER_LOG_LIMIT_FLAGS,
       `--label ${shellQuote('cds.managed=true')}`,
       `--label ${shellQuote('cds.type=agent-output-export')}`,
       `--mount ${shellQuote(`type=volume,src=${handle.workspaceVolumeName},dst=/workspace,readonly`)}`,
