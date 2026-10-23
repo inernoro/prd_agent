@@ -63,7 +63,7 @@ import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../s
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { normalizeBranchGroups } from '../services/branch-groups.js';
 import { getLatestResourceUsage, type ProjectResourceUsage } from '../services/resource-usage-sampler.js';
-import { applyDefaultDeployModesToBranch } from '../services/deploy-runtime.js';
+import { applyDefaultDeployModesToBranch, assertValidDefaultDeployModes, InvalidDefaultDeployModeError } from '../services/deploy-runtime.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import { mergeGitAuthEnv, resolveGitAuthEnv } from '../services/git-auth-env.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
@@ -3814,6 +3814,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     }
     const defaults = project.defaultDeployModes;
     const profiles = stateService.getBuildProfilesForProject(project.id);
+    try {
+      assertValidDefaultDeployModes(defaults, profiles);
+    } catch (err) {
+      if (!(err instanceof InvalidDefaultDeployModeError)) throw err;
+      res.status(409).json({ error: err.message, code: err.code });
+      return;
+    }
     // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
     // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。表里没有的 profile 对齐后
     // 回到基线，基线是源码同样算（coverAllProfiles）。

@@ -45,7 +45,7 @@ import {
   drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
-import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode, assertValidDefaultDeployModes, InvalidDefaultDeployModeError } from '../services/deploy-runtime.js';
 import {
   buildPrebuiltGateRejection,
   findNonPrebuiltProfiles,
@@ -3036,6 +3036,65 @@ export function createBranchRouter(deps: RouterDeps): Router {
     } finally { ticket?.release(); }
   }
 
+  const latestTargetPreparations = new WeakMap<DeploymentInputSnapshot, { assertCurrent: () => void; release: () => void }>();
+
+  /** 未点名的预构建请求固定真实远端目标；资格保持到同步受理，不能借用旧CI记录。 */
+  async function resolveUnpinnedArtifactTarget(req: Request, res: Response, entry: BranchEntry,
+    input: DeploymentInputSnapshot, profileId?: string, versionId?: string): Promise<boolean> {
+    if (input.targetCommitSha || req.body?.commitSha || versionId
+      || isSyntheticCdsManagedRuntimeBranch(entry, stateService.getProject(entry.projectId || 'default'))) return true;
+    const required = input.profiles.filter(profile => !profileId || profile.id === profileId)
+      .map(profile => resolveEffectiveProfile(profile, deploymentInputBranch(input, entry)))
+      .some(profile => profile.prebuiltImage && !profile.localArtifact && !profile.managedBuild);
+    if (!required) return true;
+    const branchName = entry.branch, projectId = entry.projectId || 'default';
+    const originalProject = stateService.getProject(projectId);
+    const repoRoot = stateService.getProjectRepoRoot(projectId, config.repoRoot);
+    const request: BranchOperationRequest = { projectId, branchId: entry.id, profileId,
+      kind: profileId ? 'deploy-profile' : 'deploy', trigger: triggerFromRequest(req), source: 'api.latest-remote-target' };
+    let ticket: ReturnType<BranchOperationCoordinator['beginDeploymentPreparation']> | undefined;
+    const controller = new AbortController();
+    let retained = false, released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      req.off('aborted', onAbort); res.off('close', onAbort); res.off('finish', release);
+      ticket?.release();
+    };
+    const onAbort = () => { controller.abort(); release(); };
+    req.once('aborted', onAbort); res.once('close', onAbort);
+    if (req.aborted || res.destroyed) controller.abort();
+    const assertCurrent = () => {
+      controller.signal.throwIfAborted(); ticket?.assertCurrent();
+      if (!originalProject || stateService.getProject(projectId) !== originalProject
+        || (originalProject.paused && req.query.force !== '1' && req.query.force !== 'true')
+        || stateService.getBranch(entry.id) !== entry || entry.branch !== branchName
+        || (entry.projectId || 'default') !== projectId
+        || stateService.getProjectRepoRoot(projectId, config.repoRoot) !== repoRoot) {
+        throw new BranchOperationSupersededError('', entry.id, 'latest-remote-target');
+      }
+      const access = assertProjectAccess(req as any, projectId);
+      if (access) throw new BranchOperationSupersededError('', entry.id, 'latest-remote-target-access');
+    };
+    try {
+      if (!branchOperationCoordinator) throw new Error('目标解析资格能力不可用');
+      ticket = branchOperationCoordinator.beginDeploymentPreparation(request);
+      assertCurrent();
+      const target = await worktreeService.resolveLatestRemoteHead(repoRoot, branchName, controller.signal, assertCurrent);
+      assertCurrent();
+      input.targetCommitSha = target; input.targetOrigin = 'remote-head';
+      input.remoteHeadObservedAt = new Date().toISOString();
+      latestTargetPreparations.set(input, { assertCurrent, release });
+      retained = true; res.once('finish', release);
+      return true;
+    } catch (error) {
+      if (!res.destroyed && !res.headersSent) res.status(error instanceof BranchOperationSupersededError ? 409 : 503).json({
+        error: 'latest_target_unavailable', message: '无法确认本次远端最新提交，尚未开始部署；请稍后重试',
+      });
+      return false;
+    } finally { if (!retained) release(); }
+  }
+
   async function inspectArtifactInput(entry: BranchEntry, input: DeploymentInputSnapshot, profileId: string | null | undefined,
     assertCurrent: () => void, explicitTarget?: string): Promise<ArtifactAdmission> {
     const profiles = input.profiles.filter(profile => !profileId || profile.id === profileId)
@@ -3137,8 +3196,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(503).json({ error: 'artifact_wait_unavailable', message: '产物尚未确认齐备，可靠排队能力不可用，请稍后重试；尚未开始部署' });
       return { started: false, lease: null, run: undefined };
     }
-    // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
-    const decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), { waitForArtifacts });
+    // 目标读取资格在同一同步段交给受理决策，关闭读取完成到受理之间的撤销窗口。
+    const preparation = deploymentInput && latestTargetPreparations.get(deploymentInput);
+    let decision: ReturnType<BranchOperationCoordinator['begin']> | undefined;
+    try {
+      preparation?.assertCurrent();
+      // 协调先行：重复和拒绝请求不创建占位记录，也不触发全量状态落盘。
+      decision = branchOperationCoordinator?.begin(buildBranchOperationRequest(req, entry, input), { waitForArtifacts });
+    } catch (error) {
+      if (!res.destroyed && !res.headersSent) res.status(error instanceof BranchOperationSupersededError ? 409 : 503).json({
+        error: 'latest_target_unavailable', message: '本次目标读取资格已失效，尚未开始部署',
+      });
+      return { started: false, lease: null, run: undefined };
+    } finally {
+      preparation?.release();
+      if (deploymentInput) latestTargetPreparations.delete(deploymentInput);
+    }
     if (decision?.status === 'rejected') {
       beginBranchOperation(req, res, entry, input, decision);
       return { started: false, lease: null, run: undefined };
@@ -6278,6 +6351,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      assertValidDefaultDeployModes(
+        targetProject.defaultDeployModes,
+        stateService.getBuildProfilesForProject(effectiveProjectId),
+      );
+
       // Branch ID scoping: legacy default keeps the bare slugified name
       // for back-compat (existing URLs, saved links). Non-legacy
       // projects auto-prefix with the project slug so two projects can
@@ -6343,7 +6421,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Two projects sharing a branch name (e.g. "main") get their
       // own subdirectories instead of colliding.
       const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, effectiveProjectId, id);
-      await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
 
       // 波3 配置树:分支从分支派生(快照拷贝语义,design.cds.config-tree)。
       // sourceBranchId 必须在建 worktree 之前校验,避免坏参数留下孤儿 worktree。
@@ -6407,8 +6484,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       stateService.assertBranchPreviewAddressAvailable(entry);
+      const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(
+        stateService.getBuildProfilesForProject(effectiveProjectId), entry,
+      ).map(profile => resolveEffectiveProfile(profile, entry)));
       await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
-        await worktreeService.create(branchRepoRoot, branch, worktreePath);
+        if (needsSource) {
+          await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
+          await worktreeService.create(branchRepoRoot, branch, worktreePath);
+        }
         stateService.addBranch(entry);
       });
       // Phase 8 — 新分支自动继承项目级 defaultEnv → 写入项目级 customEnv。
@@ -6457,6 +6540,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       res.status(201).json({ branch: isScopedHuman(req) ? branchForHumanView(req, entry) : entry });
     } catch (err) {
+      if (err instanceof InvalidDefaultDeployModeError) {
+        res.status(409).json({ error: err.message, code: err.code });
+        return;
+      }
       if (err instanceof WorktreeClaimHeldError) {
         res.status(409).json({ error: err.message, code: err.code });
         return;
@@ -13103,6 +13190,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       deploymentInput.targetCommitSha = /^[0-9a-f]{40}$/i.test(selectedDeploymentVersion.commitSha)
         ? selectedDeploymentVersion.commitSha.toLowerCase() : undefined;
     }
+    if (!replayInput && !await resolveUnpinnedArtifactTarget(req, res, entry, deploymentInput, undefined, requestedVersionId)) return;
     const effectiveProfilesForHash = currentProfiles.map((profile) => { const effective = resolveEffectiveProfile(profile, inputBranch()); return effective.prebuiltImage ? withoutSourceFallback(effective) : effective; });
     let deploymentConfigHash = deploymentInput.configHash || selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
@@ -13298,7 +13386,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
 
-    const requestCommitSha = selectedDeploymentVersion?.commitSha || (
+    const requestCommitSha = selectedDeploymentVersion?.commitSha || deploymentInput.targetCommitSha || (
       typeof req.body?.commitSha === 'string'
         && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
         ? req.body.commitSha
@@ -13664,19 +13752,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
           : `分支: \`${entry.branch}\`\n阶段: 准备独立部署源码`,
         force: true,
       });
+      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
       let pullResult = selectedDeploymentVersion
         ? { head: selectedDeploymentVersion.commitSha, skipped: true, reason: 'deployment-version' }
         : isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : deploymentNeedsSourceCheckout(profiles.map(p => resolveEffectiveProfile(p, inputBranch())))
-        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha)
-        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, requestCommitSha);
+        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, requestCommitSha, deploymentRepoRoot)
+        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, requestCommitSha, deploymentRepoRoot);
       // Automatic database initialization reads repository files even for image-only services.
       // Inspect the resolved target tree, never the mutable canonical checkout, before skipping source.
       if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)
-        && await worktreeService.needsDatabaseInitializationSource(entry.worktreePath, pullResult.afterFull,
+        && await worktreeService.needsDatabaseInitializationSource(fs.existsSync(entry.worktreePath) ? entry.worktreePath : deploymentRepoRoot, pullResult.afterFull,
           profiles.map(p => resolveEffectiveProfile(p, inputBranch()).workDir || '.'))) {
-        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, pullResult.afterFull);
+        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, pullResult.afterFull, deploymentRepoRoot);
       }
       const deploymentSourceEntry = hasDeploymentSource(pullResult)
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
@@ -15004,10 +15093,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: '目标提交必须是有效的 Git SHA' });
       return;
     }
-    const profileRequestCommitSha = typeof req.body?.commitSha === 'string'
+    if (!replayInput && !await resolveUnpinnedArtifactTarget(req, res, entry, deploymentInput, profileId)) return;
+    const profileRequestCommitSha = deploymentInput.targetCommitSha || (typeof req.body?.commitSha === 'string'
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
       ? req.body.commitSha
-      : undefined;
+      : undefined);
     const profileDeploymentConfigHash = deploymentInput.configHash || deploymentVersionService?.computeConfigHash([resolveEffectiveProfile(profile, inputBranch())].map(effective => effective.prebuiltImage ? withoutSourceFallback(effective) : effective), getDeploymentEnv(deploymentInput, entry.projectId || 'default'));
     deploymentInput.configHash = profileDeploymentConfigHash;
     const admission = await admitBranchDeployment(req, res, entry, {
@@ -15085,11 +15175,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Pull latest code
       logEvent({ step: 'pull', status: 'running', title: '正在拉取最新代码...', timestamp: new Date().toISOString() });
       const deployProject = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
-      const pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
+      const deploymentRepoRoot = stateService.getProjectRepoRoot(entry.projectId || 'default', config.repoRoot);
+      let pullResult = isSyntheticCdsManagedRuntimeBranch(entry, deployProject)
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : deploymentNeedsSourceCheckout([resolveEffectiveProfile(profile, inputBranch())])
-        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha)
-        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, profileRequestCommitSha);
+        ? await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, profileRequestCommitSha, deploymentRepoRoot)
+        : await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath, profileRequestCommitSha, deploymentRepoRoot);
+      if ('afterFull' in pullResult && !hasDeploymentSource(pullResult)
+        && await worktreeService.needsDatabaseInitializationSource(fs.existsSync(entry.worktreePath) ? entry.worktreePath : deploymentRepoRoot, pullResult.afterFull,
+          [resolveEffectiveProfile(profile, inputBranch()).workDir || '.'])) {
+        pullResult = await worktreeService.prepareDeploymentSource(entry.branch, entry.worktreePath, pullResult.afterFull, deploymentRepoRoot);
+      }
       const deploymentSourceEntry = hasDeploymentSource(pullResult)
         ? { ...inputBranch(), worktreePath: pullResult.sourcePath, githubCommitSha: pullResult.afterFull }
         : inputBranch();
@@ -22457,6 +22553,25 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
 
+    // Validate the future configuration before either metadata writes or physical first allocation.
+    try {
+      const owner = stateService.resolveProjectForAutoBuild(config.repoRoot);
+      const incoming = Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : [];
+      const importedIds = new Set(incoming.map(profile => profile.id));
+      const affectedProjects = new Set(owner ? [owner.id] : []);
+      for (const profile of [...stateService.getBuildProfiles(), ...stateService.previewImportedProfiles(incoming)]) {
+        if (importedIds.has(profile.id)) affectedProjects.add(profile.projectId || 'default');
+      }
+      for (const projectId of affectedProjects) {
+        assertValidDefaultDeployModes(stateService.getProject(projectId)?.defaultDeployModes,
+          stateService.previewImportedProfilesForProject(projectId, incoming));
+      }
+    } catch (error) {
+      res.status(400).json({error: (error as Error).message,
+        code: error instanceof InvalidDefaultDeployModeError ? error.code : 'invalid_import_defaults'});
+      return;
+    }
+
     // ── Start SSE stream ──
     initSSE(res);
     const send = (step: string, status: string, title: string) => {
@@ -22620,14 +22735,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       );
       const importEffective = profiles.map(profile => resolveEffectiveProfile(profile, entry!));
       const importNeedsSource = deploymentNeedsSourceCheckout(importEffective);
-      if (importNeedsSource && !fs.existsSync(entry.worktreePath)) {
-        await worktreePathActivity.withClaim([entry.worktreePath,WorktreeService.deploymentSourceRootFor(entry.worktreePath)],
-          ()=>worktreeService.create(config.repoRoot,entry!.branch,entry!.worktreePath));
-      }
       const importTarget = await worktreeService.resolveDeploymentCommit(entry.branch,
-        fs.existsSync(entry.worktreePath) ? entry.worktreePath : config.repoRoot);
-      const importSource = importNeedsSource
-        ? await worktreeService.prepareDeploymentSource(entry.branch,entry.worktreePath,importTarget.afterFull) : undefined;
+        entry.worktreePath,undefined,config.repoRoot);
+      const importNeedsInitializationSource = importNeedsSource || await worktreeService.needsDatabaseInitializationSource(
+        fs.existsSync(entry.worktreePath) ? entry.worktreePath : config.repoRoot, importTarget.afterFull,
+        importEffective.map(profile=>profile.workDir||'.'));
+      const importSource = importNeedsInitializationSource
+        ? await worktreeService.prepareDeploymentSource(entry.branch,entry.worktreePath,importTarget.afterFull,config.repoRoot) : undefined;
       const importStorageEntry = importSource ? {...entry,worktreePath:importSource.sourcePath,githubCommitSha:importSource.afterFull} : entry;
       const importAdmission = await containerService.inspectDeploymentArtifacts(importEffective,
         importTarget.afterFull, () => {});
