@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import ts from 'typescript';
@@ -54,7 +55,7 @@ describe('ContainerService', () => {
   beforeEach(() => {
     mock = new MockShellExecutor();
     mock.addResponsePattern(/docker image inspect.*json .Id/, () => ({stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:'',exitCode:0}));
-    service = new ContainerService(mock, makeConfig());
+    service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     // 本文件断言的是旧的「共享网」run 命令形态（--network cds-network、资源标志等）。分支级网络
     // 隔离（默认开）会改主网为分支网并追加 network connect，那有独立套件覆盖。这里关掉全局逃生开关，
     // 保持本套件验证旧契约不变。
@@ -389,7 +390,7 @@ describe('ContainerService', () => {
         record(record) {
           records.push({ action: record.action, operationId: record.operationId, details: record.details });
         },
-      });
+      }, undefined, undefined, unitBindMountInspector);
       aliveStub?.mockRestore();
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -429,7 +430,7 @@ describe('ContainerService', () => {
             details: record.details,
           });
         },
-      });
+      }, undefined, undefined, unitBindMountInspector);
       aliveStub?.mockRestore();
       aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -548,7 +549,7 @@ describe('ContainerService', () => {
 
       const profile = makeProfile({
         command: 'pnpm install && pnpm build && pnpm start',
-        cacheMounts: [{ kind: 'bind', hostPath: '/cache/node_modules', containerPath: '/app/node_modules', readOnly:true }],
+        cacheMounts: [],
       });
 
       await service.runService(makeEntry(), profile, makeService());
@@ -606,7 +607,7 @@ describe('ContainerService', () => {
 
     it('rejects undeclared writable cache bindings before changing the old service', async () => {
       const profile=makeProfile({cacheMounts:[{hostPath:'/cache/nuget',containerPath:'/root/.nuget'}]});
-      await expect(service.runService(makeEntry(),profile,makeService())).rejects.toThrow('storage-contract-required');
+      await expect(service.runService(makeEntry(),profile,makeService())).rejects.toThrow('storage-bind-pin-required');
       expect(mock.commands).toEqual([]);
     });
 
@@ -897,7 +898,7 @@ describe('ContainerService', () => {
             details: record.details,
           });
         },
-      });
+      }, undefined, undefined, unitBindMountInspector);
       mock.addResponsePattern(/docker exec/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker stop/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
@@ -933,7 +934,7 @@ describe('ContainerService', () => {
           expect(findRecentContainerLifecycleIntent(cid)?.completedAt).toBeUndefined();
         } else options?.beforeStart?.();
         return { stdout: 'running', stderr: '', exitCode: 0 };
-      } }, makeConfig());
+      } }, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
       vi.spyOn(guarded as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       vi.spyOn(guarded as any, 'captureContainerDiagnostics').mockResolvedValue({});
       await expect(guarded.restartServiceInPlace(cid, undefined, { operationId: 'recover-1' })).resolves.toBe(true);
@@ -948,7 +949,7 @@ describe('ContainerService', () => {
         if (command.startsWith('docker restart')) current = false;
         options?.beforeStart?.(); executed.push(command);
         return { stdout: 'running', stderr: '', exitCode: 0 };
-      } }, makeConfig());
+      } }, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
       await expect(guarded.restartServiceInPlace('a'.repeat(64), undefined,
         { assertCurrent: () => { if (!current) throw new Error('superseded'); } })).rejects.toThrow('superseded');
       expect(executed.some(command => command.startsWith('docker restart'))).toBe(false);
@@ -967,7 +968,7 @@ describe('ContainerService', () => {
             details: record.details,
           });
         },
-      });
+      }, undefined, undefined, unitBindMountInspector);
       vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
       mock.addResponse('docker inspect --format="{{.State.Status}}" cds-feature-a-api', {
         stdout: 'exited',
@@ -1039,7 +1040,7 @@ describe('ContainerService', () => {
         record(record) {
           records.push({ action: record.action, severity: record.severity, details: record.details });
         },
-      });
+      }, undefined, undefined, unitBindMountInspector);
       mock.addResponsePattern(/docker inspect/, () => ({
         stdout: '',
         stderr: 'Error response from daemon: No such container: cds-feature-a-api',
@@ -1130,7 +1131,7 @@ describe('ContainerService', () => {
       const managed = new ContainerService(mock, makeConfig(), {
         getDockerNetwork: () => undefined,
         getAppContainerName: () => 'current-api',
-      });
+      }, undefined, undefined, undefined, unitBindMountInspector);
       const lines = ['current-api|running|cds.branch.id=b,cds.profile.id=api',
         'retained-api|exited|cds.branch.id=b,cds.profile.id=api'];
       mock.addResponsePattern(/docker ps/, () => ({ stdout: (reverse ? lines.reverse() : lines).join('\n'), stderr: '', exitCode: 0 }));
@@ -1142,7 +1143,7 @@ describe('ContainerService', () => {
     it('没有发布身份时，同标签多容器不按 docker 排序猜测，也不把旧容器当成缺失的新容器', async () => {
       mock.addResponsePattern(/docker ps/, () => ({ stdout: 'one|running|cds.branch.id=b,cds.profile.id=api\ntwo|exited|cds.branch.id=b,cds.profile.id=api', stderr: '', exitCode: 0 }));
       expect((await service.discoverAppContainersWithStatus()).containers.has('b/api')).toBe(false);
-      const managed = new ContainerService(mock, makeConfig(), { getDockerNetwork: () => undefined, getAppContainerName: () => 'missing-api' });
+      const managed = new ContainerService(mock, makeConfig(), { getDockerNetwork: () => undefined, getAppContainerName: () => 'missing-api' }, undefined, undefined, undefined, unitBindMountInspector);
       expect((await managed.discoverAppContainersWithStatus()).containers.has('b/api')).toBe(false);
     });
     it('collects exit evidence without reading Docker environment variables', async () => {

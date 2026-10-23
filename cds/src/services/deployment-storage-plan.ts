@@ -11,23 +11,22 @@ export class UnsafeDeploymentStorageError extends Error {
 }
 
 export type PlannedMount = Readonly<{ kind: 'bind' | 'volume' | 'tmpfs'; source: string; target: string; readOnly: boolean;
-  purpose: 'source' | 'config' | 'cache' | 'persistent' | 'ephemeral'; storage?: Readonly<StorageBinding> }>;
+  purpose: 'source' | 'config' | 'cache' | 'persistent' | 'ephemeral'; storage?: Readonly<StorageBinding>; sourceRoot?: string; serverTool?: true }>;
 export type DeploymentStoragePlan = Readonly<{ version: 1; mounts: readonly PlannedMount[]; digest: string }>;
 const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
 function fail(reason: string): never { throw new UnsafeDeploymentStorageError('plan', reason); }
 const validKey = (v: unknown): v is string => typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(v);
 
 export function assertStorageDeclaration(mount: { readOnly?: boolean; storage?: StorageBinding }, kind: 'bind' | 'volume'): void {
-  if (kind === 'bind' && mount.readOnly === true) return;
+  // Read-only is not host authority: a socket can still control its daemon.
+  // User config/cache binds require a future independently pinned contract.
+  if (kind === 'bind') fail('storage-bind-pin-required');
   const s = mount.storage;
   if (!s) fail('storage-contract-required');
   if (s.version !== 1 || !['cache', 'persistent'].includes(s.purpose)
     || !['branch-private', 'project-shared'].includes(s.scope)
     || ![s.instanceId, s.projectId, s.serviceId, s.mountKey].every(validKey)
     || (s.scope === 'branch-private' ? !validKey(s.branchId) : s.branchId !== undefined)) fail('storage-contract-invalid');
-  // Docker resolves bind paths again inside its daemon. Until a native, owner-fenced pin
-  // exists, neither lexical validation nor a prior realpath can certify a writable bind.
-  if (kind === 'bind') fail('storage-bind-pin-required');
 }
 
 export function stableStorageVolumeName(s: StorageBinding): string {
@@ -49,6 +48,7 @@ function seal(mounts: PlannedMount[], identity: {instanceId?: string; projectId:
     if (targets.has(m.target)) fail('storage-target-duplicate');
     targets.add(m.target);
     if (m.purpose === 'source' && !m.readOnly) fail('source-must-be-readonly');
+    if (m.kind === 'bind' && m.purpose !== 'source') fail('storage-bind-pin-required');
     if (m.kind === 'volume' || !m.readOnly) {
       assertStorageDeclaration(m, m.kind === 'volume' ? 'volume' : 'bind');
       const s = m.storage!;
@@ -68,7 +68,7 @@ export function profileStoragePlan(entry: Pick<BranchEntry, 'id' | 'projectId' |
     const source = path.resolve(entry.worktreePath, profile.workDir || '.');
     const relative = path.relative(path.resolve(entry.worktreePath), source);
     if (relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) fail('source-outside-checkout');
-    mounts.push({kind: 'bind', source, target: profile.containerWorkDir || '/app', readOnly: true, purpose: 'source'});
+    mounts.push({kind: 'bind', source, target: profile.containerWorkDir || '/app', readOnly: true, purpose: 'source', sourceRoot: path.resolve(entry.worktreePath)});
   }
   for (const m of profile.cacheMounts || []) mounts.push({kind: m.kind === 'volume' ? 'volume' : 'bind', source: m.kind === 'volume' ? m.hostPath : path.resolve(entry.worktreePath, m.hostPath),
     target: m.containerPath, readOnly: m.readOnly === true, purpose: m.storage?.purpose || 'config', storage: m.storage});
@@ -85,7 +85,7 @@ export function infraStoragePlan(service: Pick<InfraService, 'id' | 'projectId' 
 /** No -v auto-mkdir and no Docker image copy-up into fresh persistent storage. */
 export function renderStoragePlan(plan: DeploymentStoragePlan): string[] {
   if (plan.version !== 1 || createHash('sha256').update(JSON.stringify(plan.mounts)).digest('hex') !== plan.digest
-    || plan.mounts.some(m => m.purpose === 'source' && !m.readOnly || m.kind === 'bind' && !m.readOnly
+    || plan.mounts.some(m => m.purpose === 'source' && !m.readOnly || m.kind === 'bind' && (!m.readOnly || (m.purpose !== 'source' && m.serverTool !== true))
       || m.kind === 'tmpfs' && (m.source !== 'tmpfs' || m.target !== '/tmp' || m.purpose !== 'ephemeral' || m.readOnly))) fail('storage-plan-invalid');
   return plan.mounts.map(m => m.kind === 'tmpfs' ? `--tmpfs ${quote(m.target)}` : `--mount ${quote(`type=${m.kind},${m.kind === 'volume' ? 'source' : 'src'}=${m.source},dst=${m.target}${m.readOnly ? ',readonly' : ''}${m.kind === 'volume' ? ',volume-nocopy' : ''}`)}`);
 }
@@ -105,7 +105,7 @@ export function withReadOnlyTools(plan: DeploymentStoragePlan, tools: ReadonlyAr
   const mounts = [...plan.mounts, ...tools.map(t => {
     if (!path.posix.isAbsolute(t.source) || !path.posix.isAbsolute(t.target) || /[,:\r\n\x00]/.test(t.source + t.target)
       || plan.mounts.some(m => m.target === t.target)) fail('storage-tool-invalid');
-    return Object.freeze({...t, kind: 'bind' as const, readOnly: true, purpose: 'config' as const});
+    return Object.freeze({...t, kind: 'bind' as const, readOnly: true, purpose: 'config' as const, serverTool: true as const});
   })];
   return Object.freeze({version: 1, mounts: Object.freeze(mounts), digest: createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
 }

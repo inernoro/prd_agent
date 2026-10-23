@@ -53,14 +53,14 @@ describe('future storage contract and actual native admission', () => {
       }
     } finally {fs.rmSync(root,{recursive:true,force:true});}
   });
-  it('preserves readonly config target and tools inside one immutable hashed plan', () => {
-    const p=withReadOnlyTools(profileStoragePlan(entry,profile([{kind:'bind',hostPath:'/config/file',containerPath:'/etc/service/config',readOnly:true}]),config),[{source:'/usr/bin/ffmpeg',target:'/usr/local/bin/ffmpeg'}]);
+  it('preserves ordinary readonly source and server tools inside one immutable hashed plan', () => {
+    const p=withReadOnlyTools(profileStoragePlan(entry,{...profile(),prebuiltImage:false},config),[{source:'/usr/bin/ffmpeg',target:'/usr/local/bin/ffmpeg'}]);
     expect(Object.isFrozen(p.mounts)).toBe(true); expect(p.mounts).toHaveLength(2); expect(renderStoragePlan(p).every(f=>f.includes('readonly'))).toBe(true);
     expect(() => renderStoragePlan({...p,digest:'forged'})).toThrow('plan-invalid');
     expect(() => renderStoragePlan({...p,mounts:[{kind:'bind',source:'/source',target:'/app',readOnly:false,purpose:'source'}]})).toThrow('plan-invalid');
   });
   it('same-target ambiguity refuses even if an earlier mount looked valid',()=> {
-    expect(()=>profileStoragePlan(entry,profile([{kind:'bind',hostPath:'/a',containerPath:'/etc/config',readOnly:true},{kind:'bind',hostPath:'/b',containerPath:'/etc/config',readOnly:true}]),config)).toThrow('target-duplicate');
+    expect(()=>profileStoragePlan(entry,profile([{kind:'volume',hostPath:stableStorageVolumeName(owner),containerPath:'/etc/config',storage:owner},{kind:'volume',hostPath:stableStorageVolumeName({...owner,mountKey:'other'}),containerPath:'/etc/config',storage:{...owner,mountKey:'other'}}]),config)).toThrow('target-duplicate');
   });
   it('no-copy stops Docker from filling a newly allocated data volume from image content',()=>{
     expect(renderStoragePlan(plan())[0]).toContain('volume-nocopy');
@@ -114,10 +114,8 @@ it('ordinary deployment never turns a missing stable volume into a new empty dat
   expect(calls.filter(c=>c.startsWith('docker volume create'))).toEqual([]);
 });
 
-it('resolves readonly config against the accepted checkout, independent from process cwd', () => {
-  const p=profileStoragePlan(entry,profile([{kind:'bind',hostPath:'./config.yml',containerPath:'/etc/myapp/config.yml',readOnly:true}]),config);
-  expect(p.mounts[0]).toMatchObject({source:entry.worktreePath+'/config.yml',target:'/etc/myapp/config.yml',readOnly:true});
-  expect(renderStoragePlan(p)[0]).toContain('src='+entry.worktreePath+'/config.yml');
+it('rejects readonly user config until native owner-fenced binding is supported', () => {
+  expect(() => profileStoragePlan(entry,profile([{kind:'bind',hostPath:'./config.yml',containerPath:'/etc/myapp/config.yml',readOnly:true}]),config)).toThrow('storage-bind-pin-required');
 });
 
 it('accepts a native Docker 29 image whose Config omits the optional Volumes key', async () => {

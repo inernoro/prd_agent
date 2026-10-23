@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import {createHash} from 'node:crypto';
@@ -67,7 +68,7 @@ function fixture() {
   const state = new StateService(path.join(dir, 'state.json'));
   state.addProject({ id: 'owned', slug: 'owned', name: 'owned' } as any); state.addBranch(entry);
   const config = { repoRoot: dir, worktreeBase: dir, dockerNetwork: 'owned-network', sharedEnv: {}, jwt: { secret: 'owned-synthetic-only', issuer: 'owned' } } as CdsConfig;
-  const service = new ContainerService(shell, config);
+  const service = new ContainerService(shell, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
   vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
   vi.spyOn(service as any, 'waitForReadiness').mockResolvedValue(true);
   const versionService = new DeploymentVersionService(state);

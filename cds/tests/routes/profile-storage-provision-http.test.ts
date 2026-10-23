@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,7 +22,7 @@ beforeEach(async()=>{
  if(c.startsWith('docker volume create')){const row=state.getStorageBirth(name)!;volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stdout:name,stderr:''}}throw Error('unexpected fixture command');})} as IShellExecutor;
  const config={repoRoot:root,worktreeBase:root,storageInstanceId:'own',dockerNetwork:'own',portStart:10001,masterPort:9900,workerPort:5500,sharedEnv:{},jwt:{secret:'own-fixture',issuer:'own'}} as CdsConfig;
  const app=express();app.use(express.json());app.use((req,_res,next)=>{(req as any).cdsProjectKey={projectId:String(req.headers['x-own-project']||'p'),keyId:'fixture'};next()});
- app.use('/api',createBranchRouter({stateService:state,containerService:new ContainerService(shell,config),worktreeService:new WorktreeService(shell,config),shell,config,branchOperationCoordinator:coordinator,registry:{getAll:()=>nodes,getOnline:()=>nodes,selectExecutor:()=>nodes[0]||null} as any}));
+ app.use('/api',createBranchRouter({stateService:state,containerService:new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector),worktreeService:new WorktreeService(shell,config),shell,config,branchOperationCoordinator:coordinator,registry:{getAll:()=>nodes,getOnline:()=>nodes,selectExecutor:()=>nodes[0]||null} as any}));
  server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
 });
 afterEach(async()=>{await new Promise<void>(r=>server.close(()=>r()));vi.restoreAllMocks();vi.unstubAllGlobals();await state.flush();fs.rmSync(root,{recursive:true,force:true});});

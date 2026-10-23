@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,7 +22,7 @@ function own(){
  const config={repoRoot:root,worktreeBase:root,storageInstanceId:'own',dockerNetwork:'own'} as any;
  const allocator=new ProfileStorageProvisionService(state,shell,config),mount={mountKey:'data',containerPath:'/data',purpose:'persistent' as const};
  const run=(b=entries[0],mounts:FreshProfileMount[]=[mount])=>allocator.provisionNewProfile(b,profile,mounts,'op_'+b.id,()=>{});
- const container=new ContainerService(shell,config,{getDockerNetwork:()=>undefined,storageBirthRequirements:p=>state.storageBirthRequirements(p),resolveProfileStorage:(b,p)=>state.resolvePublishedProfileStorage(b,p)});
+ const container=new ContainerService(shell,config,{getDockerNetwork:()=>undefined,storageBirthRequirements:p=>state.storageBirthRequirements(p),resolveProfileStorage:(b,p)=>state.resolvePublishedProfileStorage(b,p)}, undefined, undefined, undefined, unitBindMountInspector);
  return{profile,entries,target,volumes,commands,shell,config,run,container};
 }
 describe('branch-private P with real State and JSON ACK',()=>{

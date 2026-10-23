@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, vi } from 'vitest';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -9,13 +10,13 @@ const profile: BuildProfile = {id:'app',projectId:'project',name:'app',dockerIma
 const binding: StorageBinding = {version:1,instanceId:'instance',projectId:'project',scope:'branch-private',branchId:'branch',serviceId:'app',mountKey:'data',purpose:'persistent'};
 describe('actual container storage admission',()=>{
  it.each(['app','job'])('refuses dangerous %s mounts before any network or old runtime command',async kind=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector);
   const p={...profile,cacheMounts:[{kind:'bind' as const,hostPath:entry.worktreePath+'/data',containerPath:'/data'}]};
   await expect(kind==='app'?container.runService(entry,p,{profileId:'app',containerName:'old-app',hostPort:10001,status:'running'}):container.runProfileCommand(entry,p,'check')).rejects.toThrow('unsafe_deployment_storage');
   expect(shell.commands).toEqual([]);
  });
  it.each(['app','job'])('a missing stable %s volume is held before any network/create/old removal',async kind=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector);
   const name=stableStorageVolumeName(binding);
   shell.addResponsePattern(/^docker volume inspect /,()=>({exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume'}));
   const p={...profile,cacheMounts:[{kind:'volume' as const,hostPath:name,containerPath:'/data',storage:binding}]};
@@ -23,7 +24,7 @@ describe('actual container storage admission',()=>{
   expect(shell.commands).toHaveLength(1);expect(shell.commands[0]).toMatch(/^docker volume inspect /);
  });
  it('actual unbound image VOLUME refuses before pruning or removing the old app',async()=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config),id='sha256:'+'a'.repeat(64);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),id='sha256:'+'a'.repeat(64);
   shell.addResponsePattern(/^docker network inspect /,()=>({exitCode:0,stdout:'[]',stderr:''}));
   shell.addResponsePattern(/^docker pull /,()=>({exitCode:0,stdout:'',stderr:''}));
   shell.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify([id,{'/data':{}}]),stderr:''}));
@@ -60,7 +61,7 @@ describe('created runtime identity and native storage recheck',()=>{
   try{await expect(run()).rejects.toThrow('unsafe_deployment_storage');expect(shell.commands.some(c=>c.startsWith('docker start '))).toBe(false)}finally{vi.restoreAllMocks()}
  });
  function setupNative(kind:'app'|'job'|'infra',drift?:'id'|'image'|'mount'|'status'|'birth'){
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config),cid='c'.repeat(64),imageId='sha256:'+'d'.repeat(64);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),cid='c'.repeat(64),imageId='sha256:'+'d'.repeat(64);
   let made=false,name='new-app';
   const owner=kind==='infra'?{...binding,scope:'project-shared' as const,branchId:undefined}:binding;
   const volume=stableStorageVolumeName(owner),mountpoint='/var/lib/docker/volumes/'+volume+'/_data';
@@ -81,9 +82,9 @@ describe('created runtime identity and native storage recheck',()=>{
 });
 
 it('native JSON projection preserves a legal readonly bind path containing a pipe',async()=>{
- const shell=new MockShellExecutor(),container=new ContainerService(shell,config),cid='c'.repeat(64),image='sha256:'+'d'.repeat(64);
- const source='/stable/config|one.yml',target='/etc/config|one.yml';
- const plan=withRuntimeTmpfs(profileStoragePlan(entry,{...profile,cacheMounts:[{kind:'bind',hostPath:source,containerPath:target,readOnly:true}]},config));
+ const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),cid='c'.repeat(64),image='sha256:'+'d'.repeat(64);
+ const source=entry.worktreePath+'/config|one.yml',target='/etc/config|one.yml';
+ const plan=withRuntimeTmpfs(profileStoragePlan(entry,{...profile,prebuiltImage:false,workDir:'config|one.yml',containerWorkDir:target},config));
  shell.addResponsePattern(/docker inspect.*json .Mounts/,()=>({exitCode:0,stdout:JSON.stringify([cid,'/new-app',image,0,'created',[{Type:'bind',Source:source,Destination:target,RW:false}],{'/tmp':''}]),stderr:''}));
  await expect((container as any).inspectCreatedStorageContainer(shell,cid,'new-app',image,plan)).resolves.toBeUndefined();
  expect(shell.commands).toHaveLength(1);
@@ -91,7 +92,7 @@ it('native JSON projection preserves a legal readonly bind path containing a pip
 
 describe('historical infrastructure preserves its exact original runtime',()=>{
  it.each(['running','wake','failed-wake','wrong-name','short-id','paused'] as const)('legacy mapping: %s',async scenario=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config),cid='e'.repeat(64);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),cid='e'.repeat(64);
   shell.addResponsePattern(/docker inspect --format=.*json .State.Status/,()=>({exitCode:0,stdout:[scenario==='short-id'?'short':cid,scenario==='running'?'running':scenario==='paused'?'paused':'exited',scenario==='wrong-name'?'/foreign':'/legacy-db'].map(v=>JSON.stringify(v)).join('|'),stderr:''}));
   shell.addResponse('docker start '+cid,{exitCode:scenario==='failed-wake'?1:0,stdout:cid,stderr:''});
   for(const method of ['ensureNetwork','ensureInfraOnNetwork','auditInfraLogLimit','auditMysqlConnectionLimit'])vi.spyOn(container as any,method).mockResolvedValue(undefined);
@@ -108,7 +109,7 @@ describe('historical infrastructure preserves its exact original runtime',()=>{
 
 describe('preflight receipt freezes the actual admitted image and storage plan',()=>{
  it('revalidation uses the accepted image ID even when the tag now resolves to another image',async()=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector);
   const imageA='sha256:'+'a'.repeat(64),imageB='sha256:'+'b'.repeat(64);
   let moved=false;
   shell.addResponsePattern(/docker image inspect.*json .Id/,m=>({exitCode:0,stdout:JSON.stringify([m[0].includes(imageA)?imageA:moved?imageB:imageA,null]),stderr:''}));
@@ -120,14 +121,14 @@ describe('preflight receipt freezes the actual admitted image and storage plan',
   expect(shell.commands.some(c=>/^docker (pull|create|start|run|rm|stop) /.test(c))).toBe(false);
  });
  it.each(['image','mount','entry'] as const)('a changed accepted %s is rejected before a business action',async drift=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config),image='sha256:'+'a'.repeat(64);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),image='sha256:'+'a'.repeat(64);
   shell.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify([image,null]),stderr:''}));
   const accepted=await container.preflightProfileStorage(entry,{...profile,prebuiltImage:false});
   const changedEntry={...entry};
   if(drift==='image')accepted.dockerImage='other:latest';
   if(drift==='mount')accepted.cacheMounts=[{kind:'bind',hostPath:'/etc/a',containerPath:'/etc/a',readOnly:true}];
   if(drift==='entry')changedEntry.worktreePath='/other/source';
-  await expect(container.runService(changedEntry,accepted,{profileId:'app',containerName:'old-app',hostPort:10001,status:'running'})).rejects.toThrow('storage-admission-changed');
+  await expect(container.runService(changedEntry,accepted,{profileId:'app',containerName:'old-app',hostPort:10001,status:'running'})).rejects.toThrow(drift==='mount'?'storage-bind-pin-required':'storage-admission-changed');
   expect(shell.commands.some(c=>/^docker (network|pull|create|start|run|rm|stop) /.test(c))).toBe(false);
  });
 });
@@ -135,7 +136,7 @@ describe('preflight receipt freezes the actual admitted image and storage plan',
 describe('graph infrastructure admission permits only original runtime reuse',()=>{
  const legacy={id:'db',projectId:'project',name:'legacy',dockerImage:'fixture:image',containerName:'legacy.db',containerPort:8080,hostPort:10001,status:'stopped' as const,env:{},createdAt:'2026-10-23',volumes:[{type:'bind' as const,name:'/old/database',containerPath:'/data'}]};
  it.each(['running','exited','failed-wake','changed-id'] as const)('retains immutable original runtime: %s',async scenario=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config),cid='f'.repeat(64);let calls=0;
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),cid='f'.repeat(64);let calls=0;
   shell.addResponsePattern(/docker inspect --format=.*json .State.Status/,()=>({exitCode:0,stdout:[scenario==='changed-id'&&calls++>0?'e'.repeat(64):cid,scenario==='running'?'running':'exited','/legacy.db'].map(x=>JSON.stringify(x)).join('|'),stderr:''}));
   shell.addResponse('docker start '+cid,{exitCode:scenario==='failed-wake'?1:0,stdout:cid,stderr:''});
   for(const method of ['ensureNetwork','ensureInfraOnNetwork','auditInfraLogLimit','auditMysqlConnectionLimit'])vi.spyOn(container as any,method).mockResolvedValue(undefined);
@@ -148,7 +149,7 @@ describe('graph infrastructure admission permits only original runtime reuse',()
   }finally{vi.restoreAllMocks()}
  });
  it.each([124,130,-1,'wrong-name'] as const)('unknown or mismatched absence is held: %s',async scenario=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector);
   shell.addResponsePattern(/^docker inspect /,()=>({exitCode:typeof scenario==='number'?scenario:1,stdout:'',stderr:'Error: No such object: '+(scenario==='wrong-name'?'legacy-db':'legacy.db')}));
   await expect(container.preflightInfraStorage(legacy,{allowOriginalRuntime:true})).rejects.toThrow('storage-original-container-unknown');
   expect(shell.commands).toHaveLength(1);
@@ -159,7 +160,7 @@ describe('complete storage graph prepares managed artifacts before business effe
  const managed={...profile,prebuiltImage:false,managedBuild:{stack:'node' as const,installCommand:'pnpm install',buildCommand:'pnpm build',startCommand:'node server.js',artifactImage:'fixture:artifact'}};
 
  it('refuses copying source A under target B before any builder create or copy',async()=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector);
   shell.addResponsePattern(/^docker image inspect /,()=>({exitCode:1,stdout:'',stderr:'No such image'}));
   shell.addResponse('git rev-parse HEAD',{exitCode:0,stdout:'a'.repeat(40),stderr:''});
   await expect((container as any).buildManagedArtifact(entry,managed,
@@ -168,7 +169,7 @@ describe('complete storage graph prepares managed artifacts before business effe
   expect(shell.commands.some(c=>/^docker (create|cp|start|commit|run) /.test(c))).toBe(false);
  });
  it('rejects an unsafe later profile before starting even the first temporary builder',async()=>{
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector);
   const build=vi.spyOn(container as any,'buildManagedArtifact');
   try{
    await expect((container as any).preflightDeploymentStorage(entry,[managed,{...profile,id:'bad',cacheMounts:[{kind:'bind',hostPath:'/source/data',containerPath:'/data'}]}],{sourceCommitSha:'a'.repeat(40)})).rejects.toThrow('unsafe_deployment_storage');
@@ -178,7 +179,7 @@ describe('complete storage graph prepares managed artifacts before business effe
  it('creates the managed artifact under the existing build gate and preflights its fixed runtime image',async()=>{
   const {buildGateStatus,setBuildGateHostLoadProvider}=await import('../../src/services/build-gate.js');
   setBuildGateHostLoadProvider(()=>({load1:0,cores:2}));
-  const shell=new MockShellExecutor(),container=new ContainerService(shell,config),image='sha256:'+'a'.repeat(64),target='b'.repeat(40);
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),image='sha256:'+'a'.repeat(64),target='b'.repeat(40);
   shell.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify([image,null]),stderr:''}));
   vi.spyOn(container as any,'ensureNetwork').mockResolvedValue(undefined);
   const build=vi.spyOn(container as any,'buildManagedArtifact').mockImplementation(async(...args:any[])=>{
