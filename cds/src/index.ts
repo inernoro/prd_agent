@@ -2556,6 +2556,7 @@ try {
 
 const containerService = new ContainerService(shell, config, {
   storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
+  resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
   getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量

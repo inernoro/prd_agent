@@ -1,3 +1,4 @@
+import {ProfileStorageProvisionService,profileStorageBranchIdentity} from '../services/profile-storage-provision.js';
 import { StorageProvisionService,storageProvisionDigest } from '../services/storage-provision.js';
 import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
 import { UnsafeDeploymentStorageError } from '../services/deployment-storage-plan.js';
@@ -3806,6 +3807,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
    *    `/exec` middleware accepts the call. This token is the shared cluster
    *    secret minted during bootstrap.
    */
+  // Master-local profile P is not a migration protocol. Include held births and
+  // publication holds, even when that profile was removed from the current graph.
+  function hasMasterLocalProfileStorage(entry: BranchEntry): boolean {
+    const projectId = entry.projectId || 'default';
+    const snapshot = stateService.getState();
+    const ownsTarget = (target: { projectId: string; branchId: string }) =>
+      target.projectId === projectId && target.branchId === entry.id;
+    return Object.values(snapshot.profileStorageBindings || {}).some(row => ownsTarget(row.target))
+      || Object.values(snapshot.profileStoragePublications || {}).some(row => ownsTarget(row.binding.target))
+      || Object.values(snapshot.storageBirths || {}).some(row => row.binding.scope === 'branch-private'
+        && row.binding.projectId === projectId && row.binding.branchId === entry.id);
+  }
+
   async function proxyDeployToExecutor(
     executor: ExecutorNode,
     entry: BranchEntry,
@@ -3825,6 +3839,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       env?: Record<string, string>;
     } = {},
   ): Promise<'completed' | 'failed'> {
+    // Refuse before ownership/status changes, SSE or the remote deploy request.
+    if (hasMasterLocalProfileStorage(entry)) {
+      const message = 'storage_provision_target_daemon_unconfirmed';
+      failDeploymentRun(context.deploymentRunId, message, 'storage-preflight');
+      res.status(409).json({ error: message });
+      return 'failed';
+    }
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
     res.writeHead(200, {
@@ -21333,6 +21354,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }));
   }
 
+router.post('/branches/:id/storage/provision',async(req,res)=>{
+ let lease:BranchOperationLease|null=null;
+ let finalStatus:'completed'|'failed'='failed';
+ try{
+  const entry=stateService.getBranch(req.params.id),body=structuredClone(req.body||{});
+  if(!entry){res.status(404).json({error:'branch_not_found'});return;}
+  const projectId=entry.projectId||'default',denied=assertProjectAccess(req as any,projectId);
+  if(denied){res.status(denied.status).json(denied.body);return;}
+  if(body.initializeStorage!=='new-only'||typeof body.profileId!=='string'||!Array.isArray(body.freshMounts)){res.status(400).json({error:'storage_provision_input_invalid'});return;}
+  // Read the original declaration; ordinary metadata getters must remain usable while P is held.
+  const raw=mergeBranchProfiles(stateService.getBuildProfilesForProject(projectId),entry).find(p=>p.id===body.profileId);
+  if(!raw){res.status(404).json({error:'profile_not_found'});return;}
+  const profile=resolveEffectiveProfile(raw,entry);
+  const acceptedExecutor=entry.executorId;
+  if(isRemoteExecutorOwned(acceptedExecutor)||(!acceptedExecutor&&registry?.getOnline().some(node=>node.role!=='embedded'))){res.status(409).json({error:'storage_provision_target_daemon_unconfirmed'});return;}
+  lease=beginSilentBranchOperation(req,entry,{profileId:profile.id,kind:'deploy-profile',source:'storage-provision'});
+  if(!lease){res.status(409).json({error:'storage_provision_busy'});return;}
+  const acceptedLease=lease,originalBranchIdentity=profileStorageBranchIdentity(entry);
+  const assertCurrent=()=>{assertBranchOperationCurrent(acceptedLease,'profile first-allocation');if(req.aborted||res.destroyed||stateService.getBranch(entry.id)!==entry||entry.executorId!==acceptedExecutor||profileStorageBranchIdentity(entry)!==originalBranchIdentity||stateService.getProject(projectId)?.paused||assertProjectAccess(req as any,projectId))throw new Error('storage_provision_unconfirmed');};
+  assertCurrent();
+  const binding=await new ProfileStorageProvisionService(stateService,shell,config).provisionNewProfile(entry,profile,body.freshMounts,acceptedLease.operationId,assertCurrent);
+  assertCurrent();stateService.resolvePublishedProfileStorage(entry,profile);
+  finalStatus='completed';res.status(201).json({storageMode:'allocated',profileId:profile.id,mounts:binding.mounts.map(m=>({containerPath:m.containerPath,name:m.hostPath,purpose:m.storage?.purpose}))});
+ }catch{if(!res.destroyed&&!res.headersSent)res.status(409).json({error:'storage_provision_unconfirmed',recoveryRequired:true});}
+ finally{completeBranchOperation(lease,finalStatus);}
+});
+
+
   router.post('/infra', async (req, res) => {
     try {
       const body = structuredClone(req.body) as Partial<InfraService> & { initializeStorage?: 'new-only' };
@@ -22374,7 +22423,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //   2. Creates a main branch worktree (if not exists)
   //   3. Deploys the main branch (build + run all profiles)
   router.post('/import-and-init', async (req, res) => {
-    const { config: configBlob } = req.body as { config: unknown };
+    const { config: configBlob,initializeStorage } = req.body as { config: unknown;initializeStorage?:unknown };
+    if(initializeStorage!==undefined&&initializeStorage!=='new-only'){res.status(400).json({error:'storage_provision_input_invalid'});return;}
 
     // ── Parse config (same logic as import-config) ──
     let cfg: Record<string, unknown>;
@@ -22458,13 +22508,20 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         stateService.getLegacyProject()?.id ?? 'default';
       const infraDefs = resolveInfraDefs(cfg);
       const newInfraServices: InfraService[] = [];
-      for (const def of infraDefs) {
-        if (stateService.getInfraService(def.id)) continue;
-        if (def.id && def.dockerImage && def.containerPort) {
-          const service = composeDefToInfraService(def, initInfraProjectId);
-          stateService.addInfraService(service);
-          newInfraServices.push(service);
-        }
+      // Freeze every declaration before publishing or allocating the first new resource.
+      const plannedInfra=infraDefs.filter(def=>!stateService.getInfraServiceForProjectAndId(initInfraProjectId,def.id))
+        .filter(def=>def.id&&def.dockerImage&&def.containerPort).map(def=>{
+          const service=composeDefToInfraService(def,initInfraProjectId);
+          if(initializeStorage==='new-only')service.scope='project';
+          return {service,plan:infraStoragePlan(service,config)};
+        });
+      const initProject=stateService.getProject(initInfraProjectId),initInstance=config.storageInstanceId,initRoot=config.repoRoot;
+      const assertInitCurrent=()=>{if(req.aborted||res.destroyed||!initProject||stateService.getProject(initInfraProjectId)!==initProject||initProject.paused||config.storageInstanceId!==initInstance||config.repoRoot!==initRoot)throw new Error('storage_provision_unconfirmed');};
+      for(const {service,plan} of plannedInfra){
+        if(initializeStorage==='new-only'&&plan.mounts.some(m=>m.kind==='volume')){
+          await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertInitCurrent);
+        }else stateService.addInfraService(service);
+        newInfraServices.push(service);
       }
 
       syncCdsConfig();

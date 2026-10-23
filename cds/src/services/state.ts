@@ -1,3 +1,4 @@
+import {profileStorageTargetKey,profileStorageBranchIdentity,profileStorageDeclarationDigest,type ProfileStorageTarget,type ProfileStorageBinding} from "./profile-storage-provision.js";
 import {storageProvisionDigest,type StorageBirth} from './storage-provision.js';
 import {stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
 import path from 'node:path';
@@ -475,6 +476,7 @@ export class StateService {
     const loaded = this.backingStore.load();
     if (loaded) {
       this.state = loaded;
+      for(const key of Object.keys(this.state.profileStoragePublications||{})){if(this.state.profileStorageBindings)delete this.state.profileStorageBindings[key];}
       for (const pending of Object.values(this.state.storageProvisionPublications || {})) {
         this.state.infraServices = this.state.infraServices.filter(service => service.id !== pending.service.id || service.projectId !== pending.service.projectId);
       }
@@ -1073,7 +1075,7 @@ export class StateService {
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
     // 未到日志批次阈值的发布尾部仍在内存；一次实体级保存不能把它误当已落盘。
-    const completeHints = this.pendingReleaseLogLines > 0 && hints?.length && !hints.some(hint => hint.kind === 'global')
+    let completeHints = this.pendingReleaseLogLines > 0 && hints?.length && !hints.some(hint => hint.kind === 'global')
       ? [...hints, ...HINT_GLOBAL] : hints;
     let snapshot = this.state;
     if (this.storageProvisionDrafts.size) {
@@ -1087,6 +1089,19 @@ export class StateService {
       }
       snapshot = {...snapshot,storageBirths:births,storageProvisionPublications:publications,infraServices:infra};
     }
+if(this.profileStorageDrafts.size){
+ const bindings={...snapshot.profileStorageBindings},publications={...snapshot.profileStoragePublications},births={...snapshot.storageBirths};
+ for(const [key,row] of this.profileStorageDrafts){
+  if(this.committingProfileStorage.has(key)){
+   bindings[key]=structuredClone(row);delete publications[key];
+   for(const name of row.names){const birth=births[name];if(!birth||birth.stage!=='confirmed')throw new Error('storage_provision_unconfirmed');births[name]={...birth,seq:birth.seq+1,stage:'published',updatedAt:new Date().toISOString()};}
+  }else publications[key]={binding:structuredClone(row)};
+ }
+ snapshot={...snapshot,profileStorageBindings:bindings,profileStoragePublications:publications,storageBirths:births};
+}
+// In-flight storage projections must accompany unrelated entity snapshots.
+if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeHints?.length&&!completeHints.some(h=>h.kind==='global'))completeHints=[...completeHints,...HINT_GLOBAL];
+
     this.backingStore.save(snapshot, completeHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
@@ -1123,12 +1138,105 @@ export class StateService {
     return this.state;
   }
 
+
+  private profileStorageDrafts = new Map<string, ProfileStorageBinding>();
+  private committingProfileStorage = new Set<string>();
+  getProfileStorageDeclaration(target: ProfileStorageTarget): {
+      branchIdentity: string;
+      declarationDigest: string;
+  } | undefined {
+      const branch = this.getBranch(target.branchId);
+      if (!branch || (branch.projectId || 'default') !== target.projectId || !this.getProject(target.projectId))
+          return;
+      const raw = mergeBranchProfiles(this.getBuildProfilesForProject(target.projectId), branch).find(p => p.id === target.serviceId);
+      if (!raw || raw.projectId !== target.projectId)
+          return;
+      const effective = resolveEffectiveProfile(raw, branch);
+      return { branchIdentity: profileStorageBranchIdentity(branch), declarationDigest: profileStorageDeclarationDigest(effective) };
+  }
+  assertFreshProfileStorageTarget(target: ProfileStorageTarget): void {
+      const branch = this.getBranch(target.branchId);
+      // First creation only. Existing, pending, failed or retained runtime identities are not "fresh".
+      if (!branch || branch.services[target.serviceId] || this.state.profileStorageBindings?.[profileStorageTargetKey(target)])
+          throw new Error('storage_provision_unconfirmed');
+  }
+  getProfileStorageBirths(target: ProfileStorageTarget): StorageBirth[] {
+      return Object.values(this.state.storageBirths || {}).filter(r => r.binding.scope === 'branch-private' && r.binding.projectId === target.projectId && r.binding.branchId === target.branchId && r.binding.serviceId === target.serviceId).map(r => structuredClone(r));
+  }
+  getProfileStorageBinding(target: ProfileStorageTarget): ProfileStorageBinding | undefined {
+      const key = profileStorageTargetKey(target);
+      if (this.profileStorageDrafts.has(key) || this.state.profileStoragePublications?.[key])
+          throw new Error('storage_provision_unconfirmed');
+      const row = this.state.profileStorageBindings?.[key];
+      return row && structuredClone(row);
+  }
+  resolvePublishedProfileStorage(entry: Pick<BranchEntry, 'id' | 'projectId'>, profile: BuildProfile): BuildProfile {
+      const target: ProfileStorageTarget = { kind: 'profile', projectId: entry.projectId || 'default', branchId: entry.id, serviceId: profile.id };
+      const key = profileStorageTargetKey(target), row = this.getProfileStorageBinding(target);
+      if (!row) {
+          if (this.getProfileStorageBirths(target).length)
+              throw new Error('storage_provision_unconfirmed');
+          return profile;
+      }
+      const declaration = this.getProfileStorageDeclaration(target);
+      if (!declaration || declaration.branchIdentity !== row.branchIdentity || declaration.declarationDigest !== row.declarationDigest || row.names.length === 0)
+          throw new Error('storage_provision_unconfirmed');
+      const original = profileStorageDeclarationDigest(profile), resolved = profileStorageDeclarationDigest({ ...profile, cacheMounts: row.mounts });
+      if (original !== row.declarationDigest && original !== resolved)
+          throw new Error('storage_provision_unconfirmed');
+      for (const name of row.names) {
+          const birth = this.state.storageBirths?.[name];
+          if (!birth || birth.stage !== 'published' || !birth.createIssued || birth.serviceDigest !== storageProvisionDigest(row) || birth.operationId !== row.operationId || birth.binding.scope !== 'branch-private' || birth.binding.projectId !== target.projectId || birth.binding.branchId !== target.branchId || birth.binding.serviceId !== target.serviceId)
+              throw new Error('storage_provision_unconfirmed');
+      }
+      return { ...structuredClone(profile), cacheMounts: structuredClone(row.mounts) };
+  }
+  async publishProfileStorageDurably(input: ProfileStorageBinding, assertCurrent: () => void): Promise<void> {
+      const row = structuredClone(input), target = row.target, key = profileStorageTargetKey(target), names = row.names;
+      const births = names.map(n => this.state.storageBirths?.[n]);
+      const fence = () => { assertCurrent(); const d = this.getProfileStorageDeclaration(target); if (!d || d.branchIdentity !== row.branchIdentity || d.declarationDigest !== row.declarationDigest || this.state.profileStorageBindings?.[key] || !names.length || new Set(names).size !== names.length || births.some((b, i) => !b || this.state.storageBirths?.[names[i]] !== b || b.stage !== 'confirmed' || b.operationId !== row.operationId || b.serviceDigest !== storageProvisionDigest(row) || b.binding.scope !== 'branch-private' || b.binding.branchId !== target.branchId || b.binding.projectId !== target.projectId || b.binding.serviceId !== target.serviceId))
+          throw new Error('storage_provision_unconfirmed'); this.assertFreshProfileStorageTarget(target); };
+      fence();
+      if (this.profileStorageDrafts.has(key) || this.state.profileStoragePublications?.[key])
+          throw new Error('storage_provision_unconfirmed');
+      this.profileStorageDrafts.set(key, row);
+      try {
+          this.save(HINT_GLOBAL);
+          await this.flush();
+          fence();
+          this.committingProfileStorage.add(key);
+          this.save(HINT_GLOBAL);
+          await this.flush();
+          fence();
+          this.state.profileStorageBindings ??= {};
+          this.state.profileStorageBindings[key] = row;
+          for (const b of births)
+              this.state.storageBirths![b!.name] = { ...b!, seq: b!.seq + 1, stage: 'published', updatedAt: new Date().toISOString() };
+          this.profileStorageDrafts.delete(key);
+          this.committingProfileStorage.delete(key);
+      }
+      catch (error) {
+          this.profileStorageDrafts.delete(key);
+          this.committingProfileStorage.delete(key);
+          // Roll back the private/public projection; retain a hold if ACK of compensation is unknown.
+          try {
+              this.save(HINT_GLOBAL);
+              await this.flush();
+          }
+          catch {
+              this.state.profileStoragePublications ??= {};
+              this.state.profileStoragePublications[key] = { binding: row };
+          }
+          throw error;
+      }
+  }
+
   getStorageBirth(name: string): StorageBirth | undefined {
     const row = this.state.storageBirths?.[name]; return row && structuredClone(row);
   }
 
   getStorageBirthsForService(projectId: string, serviceId: string): StorageBirth[] {
-    return Object.values(this.state.storageBirths || {}).filter(row => row.binding.projectId === projectId && row.binding.serviceId === serviceId).map(row => structuredClone(row));
+    return Object.values(this.state.storageBirths || {}).filter(row => row.binding.scope==='project-shared' && row.binding.projectId === projectId && row.binding.serviceId === serviceId).map(row => structuredClone(row));
   }
 
   /** Unknown/partial first allocation holds R; legacy owner-bound volumes without a P journal retain their existing R checks. */
@@ -1139,7 +1247,7 @@ export class StateService {
       if (row.stage !== 'published' || !row.createIssued || row.name !== stableStorageVolumeName(row.binding)
         || storageProvisionDigest(row.binding) !== storageProvisionDigest(mount.storage)
         || !row.observation || row.observation.labels['cds.storage.birth'] !== row.birthNonce
-        || Object.values(this.state.storageProvisionPublications || {}).some(p => p.names.includes(row.name))) throw new Error('storage_provision_unconfirmed');
+        || Object.values(this.state.storageProvisionPublications || {}).some(p => p.names.includes(row.name)) || Object.values(this.state.profileStoragePublications||{}).some(p=>p.binding.names.includes(row.name))) throw new Error('storage_provision_unconfirmed');
       requirements[row.name] = {birthNonce:row.birthNonce,daemonId:row.daemonId,mountpoint:row.observation.mountpoint,createdAt:row.observation.createdAt};
     }
     return requirements;
@@ -1147,13 +1255,15 @@ export class StateService {
 
   async writeStorageBirthDurably(input: StorageBirth, expectedSeq: number | undefined, assertCurrent: () => void): Promise<void> {
     const row = structuredClone(input), previous = this.state.storageBirths?.[row.name]; assertCurrent();
-    if (row.version !== 1 || row.name !== stableStorageVolumeName(row.binding) || row.binding.scope !== 'project-shared'
+    const declaredTarget=(row as StorageBirth & {target?:unknown}).target;const expectedTarget=row.binding.scope==='branch-private'?{kind:'profile',projectId:row.binding.projectId,branchId:row.binding.branchId,serviceId:row.binding.serviceId}:{kind:'infra',projectId:row.binding.projectId,serviceId:row.binding.serviceId};
+    if((row.binding.scope==='branch-private'||declaredTarget!==undefined)&&storageProvisionDigest(declaredTarget)!==storageProvisionDigest(expectedTarget))throw new Error('storage_provision_unconfirmed');
+    if (row.version !== 1 || row.name !== stableStorageVolumeName(row.binding) || !['project-shared','branch-private'].includes(row.binding.scope)
       || !/^[a-f0-9]{48}$/.test(row.birthNonce) || !/^[a-f0-9]{64}$/.test(row.planDigest) || !/^[a-f0-9]{64}$/.test(row.serviceDigest)
       || previous?.seq !== expectedSeq || row.seq !== (expectedSeq || 0) + 1 || row.stage === 'published'
       || !this.getProject(row.binding.projectId) || !Number.isFinite(Date.parse(row.createdAt)) || !Number.isFinite(Date.parse(row.updatedAt))) throw new Error('storage_provision_unconfirmed');
     if (!previous) {
       if (row.stage !== 'intent' || row.createIssued || Object.keys(this.state.storageBirths || {}).length >= 1024
-        || this.getInfraServiceForProjectAndId(row.binding.projectId,row.binding.serviceId)) throw new Error('storage_provision_unconfirmed');
+        || (row.binding.scope==='project-shared'?this.getInfraServiceForProjectAndId(row.binding.projectId,row.binding.serviceId):!this.getProfileStorageDeclaration({kind:'profile',projectId:row.binding.projectId,branchId:row.binding.branchId!,serviceId:row.binding.serviceId})||!!this.getBranch(row.binding.branchId!)?.services[row.binding.serviceId])) throw new Error('storage_provision_unconfirmed');
     } else {
       const unchanged = { ...row, seq: previous.seq, stage: previous.stage, createIssued: previous.createIssued, updatedAt: previous.updatedAt, observation: previous.observation };
       const allowed = row.stage === 'held' && previous.stage !== 'published'

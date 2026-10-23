@@ -89,6 +89,7 @@ export interface ProjectNetworkResolver {
    */
   getInfraPublishHosts?(): string[];
   storageBirthRequirements?(plan: DeploymentStoragePlan): StorageBirthRequirements;
+  resolveProfileStorage?(entry: Pick<BranchEntry,'id'|'projectId'>,profile: BuildProfile): BuildProfile;
 }
 
 export interface ContainerRemoveContext {
@@ -1370,7 +1371,8 @@ export class ContainerService {
     context = {...context, customEnv: context.customEnv ? {...context.customEnv} : undefined};
     entry = {...entry};
     const profiles = inputs.map(input => {
-      const copy = structuredClone(input), prior = this.admittedProfileStorage.get(input);
+      const initial = structuredClone(input), prior = this.admittedProfileStorage.get(input);
+      const copy = this.networkResolver?.resolveProfileStorage?.(entry,initial) || initial;
       if (prior) this.admittedProfileStorage.set(copy, prior);
       assertProfileStorageBoundary(copy, entry.worktreePath);
       withRuntimeTmpfs(profileStoragePlan(entry, copy, this.config));
@@ -1416,7 +1418,8 @@ export class ContainerService {
   async preflightProfileStorage(entry: Pick<BranchEntry, 'id' | 'projectId' | 'worktreePath'>, input: BuildProfile,
     context: {assertCurrent?: (step: string) => void} = {}): Promise<BuildProfile> {
     const prior = this.admittedProfileStorage.get(input);
-    const profile = structuredClone(input), acceptedEntry = {...entry};
+    const initial = structuredClone(input), acceptedEntry = {...entry};
+    const profile = this.networkResolver?.resolveProfileStorage?.(acceptedEntry,initial) || initial;
     const shell = this.qualifiedShell(context.assertCurrent);
     assertProfileStorageBoundary(profile, acceptedEntry.worktreePath);
     if (profile.managedBuild) throw new UnsafeDeploymentStorageError(profile.id, 'storage-runtime-artifact-required');
@@ -1503,6 +1506,7 @@ export class ContainerService {
     context = {...context, sourceCheckout: context.sourceCheckout ? {...context.sourceCheckout} : undefined};
     profile = structuredClone(profile);
     entry = {...entry};
+    profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
     const shell = this.qualifiedShell(context.assertCurrent);
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
@@ -2215,6 +2219,7 @@ export class ContainerService {
   ): Promise<ExecResult> {
     profile = structuredClone(profile);
     entry = {...entry};
+    profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
     const shell = this.qualifiedShell(context.assertCurrent);
     assertProfileStorageBoundary(profile, entry.worktreePath);

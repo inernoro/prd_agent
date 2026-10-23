@@ -2189,6 +2189,8 @@ export interface DeletedProjectWorktreeTombstone {
 }
 
 export interface CdsState {
+  profileStorageBindings?: Record<string, import('./services/profile-storage-provision.js').ProfileStorageBinding>;
+  profileStoragePublications?: Record<string, {binding: import('./services/profile-storage-provision.js').ProfileStorageBinding}>;
   /** Routing rules */
   routingRules: RoutingRule[];
   /** Build profiles */

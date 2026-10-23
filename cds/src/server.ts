@@ -4601,10 +4601,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
+    shell: deps.shell,
     stateService: deps.stateService,
     containerService: deps.containerService,
     serverEventLogStore: deps.serverEventLogStore,
-    config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
+    config: deps.config,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)
