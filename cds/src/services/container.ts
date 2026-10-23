@@ -3777,6 +3777,37 @@ export class ContainerService {
     containerName: string,
     intentKind: 'cds-infra-stop' | 'cds-infra-remove' | 'cds-infra-recreate' = 'cds-infra-recreate',
   ): Promise<void> {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) throw new ContainerStopUnconfirmedError(undefined);
+    if (intentKind === 'cds-infra-stop') {
+      // A stop must preserve the original container: legacy storage may only wake
+      // this existing runtime and has no authority to recreate its historical data.
+      const format = '{{json .Id}}|{{json .Name}}|{{json .State.Running}}|{{json .State.Pid}}|{{json .State.Status}}';
+      const read = async (target: string) => {
+        const result = await this.shell.exec(`docker inspect --format=${this.shellQuote(format)} ${this.shellQuote(target)}`,
+          { timeout: 5000, executionLane: 'observation' });
+        try {
+          if (result.exitCode !== 0) throw new Error();
+          const fields = result.stdout.trim().split('|').map(value => JSON.parse(value));
+          if (fields.length !== 5 || typeof fields[0] !== 'string' || !/^[a-f0-9]{64}$/.test(fields[0])
+            || fields[1] !== '/' + containerName || typeof fields[2] !== 'boolean'
+            || !Number.isSafeInteger(fields[3]) || fields[3] < 0
+            || !['running', 'exited', 'created'].includes(fields[4])) throw new Error();
+          return { id: fields[0] as string, running: fields[2] as boolean, pid: fields[3] as number };
+        } catch { throw new ContainerStopUnconfirmedError(undefined); }
+      };
+      const original = await read(containerName);
+      this.noteLifecycleIntent(containerName, intentKind, 'infra 停止并保留原容器与数据');
+      if (original.running) {
+        const result = await this.shell.exec(`docker stop ${original.id}`);
+        if (result.exitCode !== 0) throw new ContainerStopUnconfirmedError(undefined);
+      }
+      const after = await read(original.id);
+      if (after.id !== original.id || after.running || after.pid !== 0) throw new ContainerStopUnconfirmedError(after.running);
+      this.recordContainerEvent({ severity: 'info', source: 'cds-container-service', action: 'infra.stop.completed',
+        message: 'infra original container is cold and retained', containerName,
+        details: { containerId: original.id, retained: true } });
+      return;
+    }
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
       severity: 'warn',
@@ -3789,13 +3820,14 @@ export class ContainerService {
       error: before.error,
     });
     const INFRA_REASON: Record<typeof intentKind, string> = {
-      'cds-infra-stop': 'infra 停止，不重建',
       'cds-infra-remove': 'infra 删除（容器与登记一起删）',
       'cds-infra-recreate': 'infra stop/rm 后重建',
     };
     this.noteLifecycleIntent(containerName, intentKind, INFRA_REASON[intentKind]);
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
+    if (stopResult.exitCode !== 0) throw new ContainerStopUnconfirmedError(undefined);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
+    if (rmResult.exitCode !== 0) throw new Error('infra_container_remove_unconfirmed');
     this.recordContainerEvent({
       severity: rmResult.exitCode === 0 ? 'info' : 'error',
       source: 'cds-container-service',

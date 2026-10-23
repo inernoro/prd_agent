@@ -301,6 +301,9 @@ export function parseComposeFile(filePath: string, options?: {preserveVolumeDecl
     // Skip services with relative volume mounts (app services)
     if (hasRelativeVolumeMount(entry.volumes) && !options?.preserveVolumeDeclaration) continue;
 
+    if (options?.preserveVolumeDeclaration && Object.hasOwn(entry,'volumes') && !Array.isArray(entry.volumes))
+      throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
+
     const containerPort = extractContainerPort(entry.ports);
     if (!containerPort) continue; // No port = not a network service CDS should manage
 
@@ -340,6 +343,9 @@ export function parseComposeString(yamlString: string, options?: {preserveVolume
 
     // Skip services with relative mounts (app services)
     if (hasRelativeVolumeMount(entry.volumes) && !options?.preserveVolumeDeclaration) continue;
+
+    if (options?.preserveVolumeDeclaration && Object.hasOwn(entry,'volumes') && !Array.isArray(entry.volumes))
+      throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
 
     const containerPort = extractContainerPort(entry.ports);
     if (!containerPort) continue;

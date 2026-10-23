@@ -1,3 +1,4 @@
+import {planFreshCatalogInfra,assertFreshLegacyVolumesAbsent,type FreshInfraPlan} from '../services/fresh-catalog-storage-plan.js';
 import {ProfileStorageProvisionService,profileStorageBranchIdentity} from '../services/profile-storage-provision.js';
 import { StorageProvisionService,storageProvisionDigest } from '../services/storage-provision.js';
 import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
@@ -21560,7 +21561,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
     try {
       stateService.assertInfraRemovalAllowed(id, resolved.projectId);
       // 删除路径：容器与登记一起删，下一步是「重新添加」而不是「重新启动」。
-      try { await containerService.stopInfraService(service.containerName, 'cds-infra-remove'); } catch { /* ok */ }
+      await containerService.stopInfraService(service.containerName, 'cds-infra-remove');
       stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
@@ -21641,7 +21642,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       return;
     }
     try {
-      try { await containerService.stopInfraService(accepted.containerName); } catch { /* checked by the existing start path */ }
+      await containerService.stopInfraService(accepted.containerName);
       const started = await startInfraWithPortRetry(accepted, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
@@ -21745,40 +21746,45 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         const instance=config.storageInstanceId,repoRoot=config.repoRoot;
         const identity=JSON.stringify([project?.id,project?.slug,project?.legacyFlag]);
         const configuredEnv=structuredClone(stateService.getCustomEnv(effectiveProjectId));
+        const selectedExisting=new Map(defs.flatMap(def=>{const service=stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id);return service?[[def.id,{service,digest:storageProvisionDigest(service)}] as const]:[]}));
         const assertProjectCurrent=()=>{
           if (!project || effectiveProjectId==='__system__' || !instance || project.paused
             || stateService.getProject(effectiveProjectId)!==project || assertProjectAccess(req as any,effectiveProjectId)
             || JSON.stringify([project.id,project.slug,project.legacyFlag])!==identity
             || config.storageInstanceId!==instance || config.repoRoot!==repoRoot
-            || JSON.stringify(stateService.getCustomEnv(effectiveProjectId))!==JSON.stringify(configuredEnv)) throw reject();
+            || JSON.stringify(stateService.getCustomEnv(effectiveProjectId))!==JSON.stringify(configuredEnv)
+            || [...selectedExisting].some(([id,row])=>stateService.getInfraServiceForProjectAndId(effectiveProjectId,id)!==row.service||storageProvisionDigest(row.service)!==row.digest)) throw reject();
         };
         assertProjectCurrent();
         if (!defs.length || new Set(defs.map(d=>d.id)).size!==defs.length
           || serviceIds?.some(id=>!defs.some(def=>def.id===id))) throw reject();
         // Freeze and validate the entire group before the first native allocation.
         for (const def of defs) {
-          if (def.volumesDeclared!==false || def.volumes.length
-            || stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id)
-            || stateService.getStorageBirthsForService(effectiveProjectId,def.id).length
-            || !recommendedVolumePathsForImage(def.dockerImage)?.length) throw reject();
+          const births=stateService.getStorageBirthsForService(effectiveProjectId,def.id);
+          if(selectedExisting.has(def.id)){
+            if(births.some(row=>row.stage!=='published'))throw reject();
+            results.push({id:def.id,status:'exists'});continue;
+          }
+          if(births.length)throw reject();
         }
         const reservedPorts=new Set<number>();
-        const plans=defs.map(def=>{
+        const plans=defs.filter(def=>!selectedExisting.has(def.id)).map(def=>{
           const service=composeDefToInfraService(def,effectiveProjectId);
           service.hostPort=stateService.allocatePort(config.portStart,reservedPorts);reservedPorts.add(service.hostPort);
           service.containerName=project!.legacyFlag ? `cds-infra-${def.id}` : `cds-infra-${projectResourceNamespace(project!).slice(0,12)}-${def.id}`;
-          service.scope='project';
-          service.volumes=recommendedVolumePathsForImage(def.dockerImage)!.map((containerPath,index)=>{
-            const storage={version:1 as const,instanceId:instance!,projectId:effectiveProjectId,scope:'project-shared' as const,serviceId:def.id,mountKey:index ? `data-${index+1}` : 'data',purpose:'persistent' as const};
-            return {type:'volume' as const,name:stableStorageVolumeName(storage),containerPath,storage};
-          });
-          assertInfraAuthenticationConfigured({...service,env:resolveEnvTemplates(service.env,configuredEnv),command:resolveCommandTemplate(service.command,configuredEnv),entrypoint:resolveCommandTemplate(service.entrypoint,configuredEnv)});
-          return {service,plan:infraStoragePlan(service,config)};
+          const planned=planFreshCatalogInfra(service,config,true);
+          assertInfraAuthenticationConfigured({...planned.service,env:resolveEnvTemplates(planned.service.env,configuredEnv),command:resolveCommandTemplate(planned.service.command,configuredEnv),entrypoint:resolveCommandTemplate(planned.service.entrypoint,configuredEnv)});
+          return planned;
         });
-        for (const {service,plan} of plans) {
+        // All ordinary-image admission and every old-name absence completes
+        // before any fresh birth, service metadata or runtime mutation.
+        for(const planned of plans)if(!planned.provision){planned.service=await containerService.preflightInfraStorage(planned.service,{assertCurrent:assertProjectCurrent});assertProjectCurrent();}
+        await assertFreshLegacyVolumesAbsent(plans,shell,assertProjectCurrent);
+        for (const {service,plan,provision} of plans) {
           const assertNewCurrent=()=>{assertProjectCurrent();if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id))throw reject();};
-          await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertNewCurrent);
-          allocated.push(service.id);assertProjectCurrent();
+          if(provision)await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertNewCurrent);
+          else {assertNewCurrent();stateService.addInfraService(service);}
+          if(provision)allocated.push(service.id);assertProjectCurrent();
           const published=stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id);
           const frozenDigest=storageProvisionDigest(service);
           if (!published || storageProvisionDigest(published)!==frozenDigest) throw reject();
@@ -21790,7 +21796,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
           if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id)!==published || storageProvisionDigest(published)!==storageProvisionDigest({...service,status:'running'}))throw reject();
           results.push({id:service.id,status:'started'});
         }
-        res.json({results,allocated,storageMode:'allocated'});
+        res.json({results,allocated,storageMode:allocated.length?'allocated':'not-required'});
       } catch {
         // Confirmed P volumes and held original intents survive; R failure never creates again.
         res.status(409).json({error:'storage_provision_unconfirmed',results,allocated,recoveryRequired:true});
@@ -21803,6 +21809,17 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       return;
     }
 
+    const preparedLegacy=new Map<string,InfraService>();
+    try{
+      const reserved=new Set<number>();
+      const plans=defs.filter(def=>!stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id)).map(def=>{
+        if(stateService.getStorageBirthsForService(effectiveProjectId,def.id).length)throw new Error('storage_provision_unconfirmed');
+        const service=composeDefToInfraService(def,effectiveProjectId);service.hostPort=stateService.allocatePort(config.portStart,reserved);reserved.add(service.hostPort);
+        return planFreshCatalogInfra(service,config,false);
+      });
+      for(const planned of plans)preparedLegacy.set(planned.service.id,await containerService.preflightInfraStorage(planned.service));
+    }catch{res.status(409).json({error:'storage_provision_confirmation_required',results:[],recoveryRequired:false});return;}
+
     for (const def of defs) {
       // Skip if already exists
       if (stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id)) {
@@ -21810,7 +21827,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         continue;
       }
 
-      const service = composeDefToInfraService(def, effectiveProjectId);
+      const service = preparedLegacy.get(def.id)!;
 
       try {
         stateService.addInfraService(service);
@@ -21927,11 +21944,11 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
   }
 
   /** Resolve infraServices from config — supports array of full defs or compose YAML string */
-  function resolveInfraDefs(cfg: Record<string, unknown>): ComposeServiceDef[] {
+  function resolveInfraDefs(cfg: Record<string, unknown>, strictStorageDeclarations = false): ComposeServiceDef[] {
     if (!cfg.infraServices) return [];
 
     if (typeof cfg.infraServices === 'string') {
-      return parseComposeString(cfg.infraServices as string);
+      return parseComposeString(cfg.infraServices as string, strictStorageDeclarations ? {preserveVolumeDeclaration:true} : undefined);
     }
 
     if (Array.isArray(cfg.infraServices)) {
@@ -21940,7 +21957,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         name: (s.name as string) || (s.id as string) || '',
         dockerImage: (s.dockerImage as string) || (s.image as string) || '',
         containerPort: (s.containerPort as number) || 0,
-        volumes: (s.volumes as Array<{ name: string; containerPath: string }>) || [],
+        volumes: s.volumes === undefined ? [] : s.volumes as ComposeServiceDef['volumes'],
         env: (s.env as Record<string, string>) || {},
         healthCheck: s.healthCheck as ComposeServiceDef['healthCheck'],
       }));
@@ -22448,6 +22465,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     // ── Parse config (same logic as import-config) ──
     let cfg: Record<string, unknown>;
     if (typeof configBlob === 'string') {
+      if (initializeStorage === 'new-only') {
+        try { parseComposeString(configBlob, {preserveVolumeDeclaration:true}); }
+        catch { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
+      }
       const cdsConfig = parseCdsCompose(configBlob);
       if (cdsConfig) {
         cfg = {
@@ -22505,6 +22526,37 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       // ── Phase 1: Apply config ──
       send('config', 'running', '正在写入配置...');
 
+      // Atomic storage planning before any profile/env/routing publication.
+      const initInfraProjectId=stateService.getLegacyProject()?.id ?? 'default';
+      const initProject=stateService.getProject(initInfraProjectId),initInstance=config.storageInstanceId,initRoot=config.repoRoot;
+      const originalEnv=storageProvisionDigest(stateService.getCustomEnv(initInfraProjectId)),initProjectDigest=storageProvisionDigest(initProject);
+      const expectedInfra=new Map(stateService.getInfraServicesForProject(initInfraProjectId).map(service=>[service.id,{service,digest:storageProvisionDigest(service)}]));
+      const assertInitCurrent=()=>{const rows=stateService.getInfraServicesForProject(initInfraProjectId);if(req.aborted||res.destroyed||!initProject||stateService.getProject(initInfraProjectId)!==initProject||initProject.paused||storageProvisionDigest(initProject)!==initProjectDigest||assertProjectAccess(req as any,initInfraProjectId)||config.storageInstanceId!==initInstance||config.repoRoot!==initRoot||storageProvisionDigest(stateService.getCustomEnv(initInfraProjectId))!==originalEnv||rows.length!==expectedInfra.size||rows.some(service=>expectedInfra.get(service.id)?.service!==service||expectedInfra.get(service.id)?.digest!==storageProvisionDigest(service)))throw new Error('storage_provision_unconfirmed');};
+      assertInitCurrent();
+      const initEnv={...stateService.getCustomEnv(initInfraProjectId),...(cfg.envVars as Record<string,string>||{})};
+      const infraDefs=resolveInfraDefs(cfg,initializeStorage==='new-only'),reservedInfraPorts=new Set<number>();
+      if(new Set(infraDefs.map(def=>def.id)).size!==infraDefs.length)throw new Error('storage_provision_unconfirmed');
+      const plannedInfra=infraDefs.filter(def=>!stateService.getInfraServiceForProjectAndId(initInfraProjectId,def.id)).map(def=>{
+        if(!def.id||!def.dockerImage||!def.containerPort||stateService.getStorageBirthsForService(initInfraProjectId,def.id).length)throw new Error('storage_provision_unconfirmed');
+        const service=composeDefToInfraService(def,initInfraProjectId);service.hostPort=stateService.allocatePort(config.portStart,reservedInfraPorts);reservedInfraPorts.add(service.hostPort);
+        const planned=planFreshCatalogInfra(service,config,initializeStorage==='new-only');
+        assertInfraAuthenticationConfigured({...planned.service,env:resolveEnvTemplates(planned.service.env,initEnv),command:resolveCommandTemplate(planned.service.command,initEnv),entrypoint:resolveCommandTemplate(planned.service.entrypoint,initEnv)});
+        return planned;
+      });
+      for(const planned of plannedInfra)if(!planned.provision){planned.service=await containerService.preflightInfraStorage(planned.service,{assertCurrent:assertInitCurrent});assertInitCurrent();}
+      await assertFreshLegacyVolumesAbsent(plannedInfra,shell,assertInitCurrent);
+      for(const {service,plan,provision}of plannedInfra){
+        if(provision){
+          await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertInitCurrent);
+          const published=stateService.getInfraServiceForProjectAndId(initInfraProjectId,service.id);
+          if(!published||storageProvisionDigest(published)!==storageProvisionDigest(service))throw new Error('storage_provision_unconfirmed');
+          expectedInfra.set(service.id,{service:published,digest:storageProvisionDigest(published)});
+        }assertInitCurrent();
+      }
+      for(const planned of plannedInfra.filter(row=>!row.provision))if(stateService.getInfraServiceForProjectAndId(initInfraProjectId,planned.service.id)||stateService.getStorageBirthsForService(initInfraProjectId,planned.service.id).length)throw new Error('storage_provision_unconfirmed');
+      const newInfraServices:InfraService[]=[];
+      for(const {service,provision}of plannedInfra){if(!provision)stateService.addInfraService(service);newInfraServices.push(service);}
+
       // Apply build profiles
       if (Array.isArray(cfg.buildProfiles)) {
         for (const p of cfg.buildProfiles as BuildProfile[]) {
@@ -22540,27 +22592,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         }
       }
 
-      // Apply infra service definitions (don't start yet)
-      // PR_B.1: /import-and-init 历史全局端点没带 projectId — 兜底 legacy。
-      const initInfraProjectId =
-        stateService.getLegacyProject()?.id ?? 'default';
-      const infraDefs = resolveInfraDefs(cfg);
-      const newInfraServices: InfraService[] = [];
-      // Freeze every declaration before publishing or allocating the first new resource.
-      const plannedInfra=infraDefs.filter(def=>!stateService.getInfraServiceForProjectAndId(initInfraProjectId,def.id))
-        .filter(def=>def.id&&def.dockerImage&&def.containerPort).map(def=>{
-          const service=composeDefToInfraService(def,initInfraProjectId);
-          if(initializeStorage==='new-only')service.scope='project';
-          return {service,plan:infraStoragePlan(service,config)};
-        });
-      const initProject=stateService.getProject(initInfraProjectId),initInstance=config.storageInstanceId,initRoot=config.repoRoot;
-      const assertInitCurrent=()=>{if(req.aborted||res.destroyed||!initProject||stateService.getProject(initInfraProjectId)!==initProject||initProject.paused||config.storageInstanceId!==initInstance||config.repoRoot!==initRoot)throw new Error('storage_provision_unconfirmed');};
-      for(const {service,plan} of plannedInfra){
-        if(initializeStorage==='new-only'&&plan.mounts.some(m=>m.kind==='volume')){
-          await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertInitCurrent);
-        }else stateService.addInfraService(service);
-        newInfraServices.push(service);
-      }
 
       syncCdsConfig();
       stateService.save();

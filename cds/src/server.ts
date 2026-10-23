@@ -1847,8 +1847,10 @@ export function createServer(deps: ServerDeps): express.Express {
       undefined,
       {
         recreate: async (service) => {
-          await deps.containerService.stopInfraService(service.containerName);
-          await deps.containerService.startInfraService(service, deps.stateService.getCustomEnv(service.projectId));
+          // Credential replacement requires recreation authority before stopping the old DB.
+          const accepted = await deps.containerService.preflightInfraStorage(service);
+          await deps.containerService.stopInfraService(accepted.containerName);
+          await deps.containerService.startInfraService(accepted, deps.stateService.getCustomEnv(service.projectId));
           deps.stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, service.projectId);
           deps.stateService.save();
           await deps.stateService.flush();
