@@ -2461,7 +2461,7 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(fs.existsSync(`${repoPath}/db/seed.sql`)).toBe(true);
     });
 
-    it('全栈基础设施样例可通过沙盒创建并生成前后端与三类 infra', async () => {
+    it('全栈沙盒保留项目源码，未显式分配存储前不发布半组配置', async () => {
       const exampleRoot = path.join(process.cwd(), 'examples/fullstack-infra-smoke');
       const readExample = (relativePath: string) => fs.readFileSync(path.join(exampleRoot, relativePath), 'utf-8');
       const res = await request(server, 'POST', '/api/projects', {
@@ -2483,23 +2483,12 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(res.body.sandbox).toBe(true);
       expect(res.body.project.cloneStatus).toBe('ready');
 
-      const profiles = stateService.getBuildProfilesForProject(pid);
-      expect(profiles).toHaveLength(2);
-      const frontend = profiles.find((profile) => profile.id.startsWith('frontend'))!;
-      const backend = profiles.find((profile) => profile.id.startsWith('backend'))!;
-      expect(frontend.pathPrefixes).toEqual(['/']);
-      expect(backend.pathPrefixes).toEqual(['/api/']);
-
-      const infra = stateService.getInfraServicesForProject(pid);
-      expect(infra.map((service) => service.id).sort()).toEqual(['mysql', 'rabbitmq', 'redis']);
-      expect(infra.find((service) => service.id === 'mysql')?.volumes?.[0]?.containerPath).toBe('/var/lib/mysql');
-      expect(infra.find((service) => service.id === 'redis')?.volumes?.[0]?.containerPath).toBe('/data');
-      expect(infra.find((service) => service.id === 'rabbitmq')?.volumes?.[0]?.containerPath).toBe('/var/lib/rabbitmq');
-
-      const env = stateService.getCustomEnv(pid);
-      expect(env.MYSQL_URL).toContain('mysql://');
-      expect(env.REDIS_URL).toContain('redis://');
-      expect(env.RABBITMQ_URL).toContain('amqp://');
+      expect(fs.existsSync(path.join(res.body.project.repoPath,'cds-compose.yml'))).toBe(true);
+      expect(fs.existsSync(path.join(res.body.project.repoPath,'init.sql'))).toBe(true);
+      expect(stateService.getBuildProfilesForProject(pid)).toEqual([]);
+      expect(stateService.getInfraServicesForProject(pid)).toEqual([]);
+      expect(stateService.getCustomEnv(pid).MYSQL_URL).toBeUndefined();
+      expect(shell.commands.some(command=>/^docker (run|create|volume create) /.test(command))).toBe(false);
     });
 
     it('composeYaml + gitRepoUrl 互斥 — 返回 400', async () => {
