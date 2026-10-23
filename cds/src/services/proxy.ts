@@ -2842,6 +2842,12 @@ ${shouldAutoRefresh ? `;(function(){
 
     // Proxy WebSocket upgrade
     const url = new URL(upstream);
+    // 与 HTTP 共用首个路由请求的活动/探针身份；不为连接或数据帧续租。
+    const isProbeRequest = isTrustedProbeRequest(req.headers);
+    stripProbeMarker(req.headers);
+    if (this.scheduler && !isProbeRequest) {
+      try { this.scheduler.touch(branch.id); } catch { /* 同 HTTP：活动记录不阻断转发 */ }
+    }
     const options: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
