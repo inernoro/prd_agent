@@ -3,7 +3,7 @@ export { allocateStorageBirths } from './storage-birth-primitive.js';
 export type { StorageProvisionTarget } from './storage-birth-primitive.js';
 import { createHash } from 'node:crypto';
 import type { CdsConfig, InfraService, IShellExecutor, StorageBinding } from '../types.js';
-import { infraStoragePlan, renderStoragePlan, stableStorageVolumeName, type DeploymentStoragePlan } from './deployment-storage-plan.js';
+import { infraStoragePlan, renderStoragePlan, stableStorageVolumeName, resolveStorageImage, inspectStoragePlan, type DeploymentStoragePlan } from './deployment-storage-plan.js';
 export interface StorageBirth {
     version: 1;
     target?: StorageProvisionTarget;
@@ -40,9 +40,78 @@ export const storageProvisionDigest = (v: unknown) => createHash('sha256').updat
 const digest = storageProvisionDigest;
 const safe = (s: unknown): s is string => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$/.test(s);
 const reject = () => new Error('storage_provision_unconfirmed');
+const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
 /** Explicit fresh-resource P. Runtime materialization never calls this allocator. */
 export class StorageProvisionService {
     constructor(private readonly store: StorageProvisionStore, private readonly shell: IShellExecutor, private readonly config: Pick<CdsConfig, 'repoRoot' | 'storageInstanceId'>) { }
+    /** Fixed catalog policy during explicit fresh P, never an existing-volume repair. */
+    private async initializeFreshCatalogStorage(service: InfraService, plan: DeploymentStoragePlan, names: string[], operationId: string, deadline: number, assertCurrent: () => void): Promise<void> {
+        if (service.dockerImage !== 'docker.elastic.co/elasticsearch/elasticsearch:8.11.0') return;
+        const target = '/usr/share/elasticsearch/data';
+        if (names.length !== 1 || plan.mounts.length !== 1 || plan.mounts[0].target !== target) throw reject();
+        const row = this.store.getStorageBirth(names[0]);
+        if (!row || row.stage !== 'confirmed' || row.operationId !== operationId || !row.observation) throw reject();
+        const original = structuredClone(row), originalDigest = digest(original);
+        const fence = () => { assertCurrent(); if (Date.now() >= deadline || digest(this.store.getStorageBirth(original.name)) !== originalDigest) throw reject(); };
+        const exec = async (command: string, write = false) => {
+            fence(); const result = await this.shell.exec(command, { timeout: Math.min(30000, deadline - Date.now()), executionLane: write ? 'operation' : 'observation', beforeStart: fence }); fence(); return result;
+        };
+        const proof = { [original.name]: { birthNonce: original.birthNonce, daemonId: original.daemonId, mountpoint: original.observation!.mountpoint, createdAt: original.observation!.createdAt } };
+        const checkedShell = { exec: (command, options) => exec(command, options?.executionLane !== 'observation') } as IShellExecutor;
+        await inspectStoragePlan(checkedShell, plan, false, proof);
+        const image = await resolveStorageImage(checkedShell, service.dockerImage, plan, true);
+        const user = await exec(`docker image inspect ${quote(image)} --format '{{json .Config.User}}'`);
+        if (user.exitCode !== 0 || user.stdout.trim() !== JSON.stringify('1000:0')) throw reject();
+        const name = 'cds-storage-init-' + original.birthNonce;
+        // ES uses GID 0. Grant group write on this empty root only; no chown,
+        // recursive chmod, image copy-up, business entrypoint or capabilities.
+        const program = `set -eu; test -d ${quote(target)}; test ! -L ${quote(target)}; entries=$(find ${quote(target)} -mindepth 1 -maxdepth 1 -print -quit); test -z "$entries"; initial=$(stat -c '%u:%g:%a' ${quote(target)}); test "$initial" = '0:0:755'; chmod 0770 ${quote(target)}; stat -c '%u:%g:%a' ${quote(target)}`;
+        const labels = { 'cds.storage.init.birth': original.birthNonce, 'cds.storage.init.operation': operationId };
+        const made = await exec(['docker create', `--name ${quote(name)}`, ...Object.entries(labels).map(([k, v]) => '--label ' + quote(k + '=' + v)),
+            '--network none --read-only --user 0:0 --cap-drop ALL --security-opt no-new-privileges',
+            '--memory 64m --memory-swap 64m --pids-limit 16 --restart no --log-driver json-file --log-opt max-size=1m --log-opt max-file=1',
+            '--entrypoint /bin/sh', '--mount ' + quote(`type=volume,source=${original.name},dst=${target},volume-nocopy`), quote(image), '-ceu', quote(program)].join(' '), true);
+        const cid = made.stdout.trim(); if (made.exitCode !== 0 || !/^[a-f0-9]{64}$/.test(cid)) throw reject();
+        // Cleanup may outlive the request fence, but can only stop/remove this
+        // invocation's exact native helper identity. It never removes a volume.
+        const cleanup = async () => {
+            const command = (text: string) => this.shell.exec(text, { timeout: 10000, executionLane: 'operation' });
+            const absent = (r: {exitCode:number;stdout:string;stderr:string}) => r.exitCode===1 && ['', '[]'].includes(r.stdout.trim())
+                && ['Error: No such object: '+cid,'error: no such object: '+cid,'Error response from daemon: No such container: '+cid].includes(r.stderr.trim());
+            const owned = async () => {
+                const r=await command('docker inspect '+quote(cid));if(absent(r))return null;
+                let rows:any;try{if(r.exitCode!==0 || r.stdout.length>262144)throw reject();rows=JSON.parse(r.stdout);}catch{throw reject();}
+                const c=Array.isArray(rows)&&rows.length===1?rows[0]:null;
+                if(!c || c.Id!==cid || c.Name!=='/'+name || c.Image!==image || Object.entries(labels).some(([k,v])=>c.Config?.Labels?.[k]!==v)
+                    || typeof c.State?.Running!=='boolean' || !Number.isSafeInteger(c.State.Pid) || c.State.Pid<0)throw reject();
+                return c;
+            };
+            let c=await owned();if(!c)return;
+            if(c.State.Running){await command('docker stop --time 2 '+cid);c=await owned();if(!c)return;}
+            if(c.State.Running || c.State.Pid!==0 || !['created','exited'].includes(c.State.Status))throw reject();
+            if((await command('docker rm '+cid)).exitCode!==0 || !absent(await command('docker inspect '+quote(cid))))throw reject();
+        };
+        try {
+        const inspect = async (status: 'created' | 'exited') => {
+            const result = await exec('docker inspect ' + quote(cid)); let values: any;
+            try { if (result.exitCode !== 0 || result.stdout.length > 262144) throw reject(); values = JSON.parse(result.stdout); } catch { throw reject(); }
+            if (!Array.isArray(values) || values.length !== 1) throw reject(); const c = values[0], h = c.HostConfig, st = c.State, m = c.Mounts;
+            if (c.Id !== cid || c.Name !== '/' + name || c.Image !== image || c.Config?.User !== '0:0'
+                || JSON.stringify(c.Config?.Entrypoint) !== JSON.stringify(['/bin/sh']) || JSON.stringify(c.Config?.Cmd) !== JSON.stringify(['-ceu', program])
+                || Object.entries(labels).some(([k, v]) => c.Config?.Labels?.[k] !== v)
+                || !st || st.Status !== status || st.Running !== false || st.Pid !== 0 || (status === 'exited' && st.ExitCode !== 0)
+                || !h || h.Privileged !== false || h.NetworkMode !== 'none' || h.ReadonlyRootfs !== true || h.Memory !== 67108864 || h.MemorySwap !== 67108864 || h.PidsLimit !== 16 || h.RestartPolicy?.Name !== 'no'
+                || JSON.stringify(h.CapDrop) !== JSON.stringify(['ALL']) || (h.CapAdd?.length || 0) !== 0 || JSON.stringify(h.SecurityOpt) !== JSON.stringify(['no-new-privileges'])
+                || h.LogConfig?.Type !== 'json-file' || h.LogConfig.Config?.['max-size'] !== '1m' || h.LogConfig.Config?.['max-file'] !== '1'
+                || !Array.isArray(m) || m.length !== 1 || m[0].Type !== 'volume' || m[0].Name !== original.name || m[0].Source !== original.observation!.mountpoint || m[0].Destination !== target || m[0].RW !== true) throw reject();
+        };
+        await inspect('created'); await inspectStoragePlan(checkedShell, plan, false, proof);
+        const started = await exec('docker start -a ' + cid, true);
+        if (started.exitCode !== 0 || started.stdout.trim() !== '0:0:770') throw reject();
+        await inspect('exited'); await inspectStoragePlan(checkedShell, plan, false, proof);
+        } finally { await cleanup(); }
+        await inspectStoragePlan(checkedShell, plan, false, proof); fence();
+    }
     async provisionNewInfra(input: InfraService, inputPlan: DeploymentStoragePlan, operationId: string, assertCurrent: () => void): Promise<void> {
         const service = structuredClone(input), plan = structuredClone(inputPlan), target: StorageProvisionTarget = { kind: 'infra', projectId: service.projectId, serviceId: service.id };
         const key = JSON.stringify([target.kind, target.projectId, '', target.serviceId]);
@@ -64,8 +133,10 @@ export class StorageProvisionService {
                 throw reject();
             if (this.store.getStorageBirthsForService(service.projectId, service.id).length || targets.some(m => this.store.getStorageBirth(m.source)) || infraStoragePlan(service, this.config).digest !== plan.digest)
                 throw reject();
-            await allocateStorageBirths({ store: this.store, shell: this.shell, plan, newNames: targets.map(m => m.source), target, serviceDigest: originalDigest, operationId, deadline, assertCurrent: fence, publish: names => this.store.publishProvisionedInfraDurably(service, names, operationId, () => { assertCurrent(); if (Date.now() >= deadline)
-                    throw reject(); }) });
+            await allocateStorageBirths({ store: this.store, shell: this.shell, plan, newNames: targets.map(m => m.source), target, serviceDigest: originalDigest, operationId, deadline, assertCurrent: fence, publish: async names => {
+                await this.initializeFreshCatalogStorage(service, plan, names, operationId, deadline, fence); fence();
+                return this.store.publishProvisionedInfraDurably(service, names, operationId, () => { assertCurrent(); if (Date.now() >= deadline) throw reject(); });
+            } });
         }
         catch {
             throw reject();

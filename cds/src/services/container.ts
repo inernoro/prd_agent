@@ -1458,7 +1458,7 @@ export class ContainerService {
           return service;
         } catch { throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown'); }
       }
-      const missing = ['Error: No such object: ', 'Error: no such object: ', 'Error response from daemon: No such container: '].map(prefix => prefix + service.containerName);
+      const missing = ['Error: No such object: ', 'Error: no such object: ', 'error: no such object: ', 'Error response from daemon: No such container: '].map(prefix => prefix + service.containerName);
       const absent = original.exitCode === 1 && ['', '[]'].includes(original.stdout.trim()) && missing.includes(original.stderr.trim());
       if (!absent) throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown');
     }
@@ -3374,7 +3374,7 @@ export class ContainerService {
     const observed = storageReuseInspect || await this.shell.exec(identityQuery, {executionLane:'observation'});
     const inspect = storageReuseInspect || (observed.exitCode === 0 ? acceptExistingIdentity(observed) : observed);
     if (inspect.exitCode !== 0) {
-      const missing = ['Error: No such object: ', 'Error: no such object: ', 'Error response from daemon: No such container: '].map(prefix => prefix + service.containerName);
+      const missing = ['Error: No such object: ', 'Error: no such object: ', 'error: no such object: ', 'Error response from daemon: No such container: '].map(prefix => prefix + service.containerName);
       if (inspect.exitCode !== 1 || !['', '[]'].includes(inspect.stdout.trim()) || !missing.includes(inspect.stderr.trim())) throw new UnsafeDeploymentStorageError(service.id, 'storage-original-container-unknown');
     }
     // Bug D-residual fix(2026-05-10):reuse / wake 路径都需要保证 infra 容器
@@ -3697,8 +3697,8 @@ export class ContainerService {
     }
     if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) throw new ContainerStopUnconfirmedError(undefined);
     const identity=await this.shell.exec(`docker inspect --format='{{json .Id}}|{{json .Name}}' ${this.shellQuote(containerName)}`,{timeout:5000,executionLane:'observation'});
-    const missing=['Error: No such object: ','Error: no such object: ','Error response from daemon: No such container: '].map(prefix=>prefix+containerName);
-    if (intentKind==='cds-infra-remove' && identity.exitCode===1 && ['', '[]'].includes(identity.stdout.trim()) && missing.includes(identity.stderr.trim())) return;
+    const missing=['Error: No such object: ','Error: no such object: ','error: no such object: ','Error response from daemon: No such container: '].map(prefix=>prefix+containerName);
+    if (identity.exitCode===1 && ['', '[]'].includes(identity.stdout.trim()) && missing.includes(identity.stderr.trim())) return;
     let removalId:string;
     try {const fields=identity.stdout.trim().split('|').map(x=>JSON.parse(x));
       if(identity.exitCode!==0 || fields.length!==2 || !/^[a-f0-9]{64}$/.test(fields[0]) || fields[1]!=='/'+containerName)throw new Error();

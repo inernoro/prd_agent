@@ -1,3 +1,7 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
 import { describe,it,expect,vi } from 'vitest';
 import { StorageProvisionService,type StorageBirth,type StorageProvisionStore } from '../../src/services/storage-provision.js';
 import { infraStoragePlan,stableStorageVolumeName,storageOwnerLabels } from '../../src/services/deployment-storage-plan.js';
@@ -6,6 +10,7 @@ import type { InfraService,IShellExecutor,StorageBinding } from '../../src/types
 function fixture() {
   const binding:StorageBinding={version:1,instanceId:'own',projectId:'p',scope:'project-shared',serviceId:'mysql',mountKey:'data',purpose:'persistent'};
   const name=stableStorageVolumeName(binding),rows=new Map<string,StorageBirth>(),events:string[]=[];
+  let esDrift='',helper:any,helperRemoved=false;
   let published:InfraService|undefined,volume:any,failStage:string|undefined,foreign=false,unknown=false,daemon='owned-daemon',afterCreateDaemon=false,absentStdout='',absentExit=1;
   const service:InfraService={id:'mysql',projectId:'p',scope:'project',name:'own',dockerImage:'mysql:8.0',containerPort:3306,hostPort:13306,containerName:'own-mysql',status:'stopped',env:{MYSQL_ROOT_PASSWORD:'not-output'},volumes:[{type:'volume',name,containerPath:'/var/lib/mysql',storage:binding}]};
   const plan=infraStoragePlan(service,{storageInstanceId:'own',repoRoot:'/owned'});
@@ -19,6 +24,21 @@ function fixture() {
   const shell:IShellExecutor={exec:vi.fn(async(command:string)=>{
     events.push(command);
     if(command==="docker info --format '{{.ID}}'")return {stdout:daemon,stderr:'',exitCode:0};
+    const image='sha256:'+'e'.repeat(64),cid='f'.repeat(64);
+    if(command.startsWith('docker image inspect '))return {exitCode:0,stdout:command.includes('json .Config.User')?JSON.stringify(esDrift==='image-user'?'root':'1000:0'):JSON.stringify([image,null]),stderr:''};
+    if(command.startsWith('docker create ')){
+      const scalar=(v:string)=>v.slice(1,-1).replaceAll("'\\''", "'");
+      const program=scalar(command.slice(command.lastIndexOf(" -ceu ")+6));
+      const birth=rows.get(name)!;const helperName='cds-storage-init-'+birth.birthNonce;
+      helper={Id:cid,Name:'/'+helperName,Image:image,Config:{User:'0:0',Entrypoint:['/bin/sh'],Cmd:['-ceu',program],Labels:{'cds.storage.init.birth':birth.birthNonce,'cds.storage.init.operation':birth.operationId}},State:{Status:'created',Running:false,Pid:0,ExitCode:0},HostConfig:{Privileged:false,NetworkMode:'none',ReadonlyRootfs:true,Memory:command.includes('--memory 64m')?67108864:0,MemorySwap:command.includes('--memory-swap 64m')?67108864:0,PidsLimit:16,RestartPolicy:{Name:'no'},CapDrop:['ALL'],CapAdd:null,SecurityOpt:['no-new-privileges'],LogConfig:{Type:'json-file',Config:{'max-size':'1m','max-file':'1'}}},Mounts:[{Type:'volume',Name:name,Source:volume.Mountpoint,Destination:'/usr/share/elasticsearch/data',RW:true}]};
+      if(esDrift==='caps')helper.HostConfig.CapAdd=['SYS_ADMIN'];if(esDrift==='mount')helper.Mounts[0].Name='foreign';if(esDrift==='image')helper.Image='sha256:'+'a'.repeat(64);if(esDrift==='birth')volume.Labels['cds.storage.birth']='foreign';
+      return{exitCode:0,stdout:cid,stderr:''};
+    }
+    if(command.startsWith('docker inspect '))return helperRemoved?{exitCode:1,stdout:'',stderr:(esDrift==='lowercase-absent'?'error: no such object: ':'Error: No such object: ')+cid}:{exitCode:0,stdout:JSON.stringify([helper]),stderr:''};
+    if(command.startsWith('docker start -a ')){helper.State={Status:esDrift==='not-cold'?'running':'exited',Running:esDrift==='not-cold',Pid:esDrift==='not-cold'?123:0,ExitCode:0};return{exitCode:esDrift==='nonempty'?1:0,stdout:'0:0:770',stderr:''};}
+    if(command.startsWith('docker stop --time 2 ')){helper.State={Status:'exited',Running:false,Pid:0,ExitCode:137};return{exitCode:0,stdout:cid,stderr:''};}
+    if(command.startsWith('docker rm ')){if(esDrift==='cleanup')return{exitCode:1,stdout:'',stderr:'unconfirmed'};helperRemoved=true;return{exitCode:0,stdout:cid,stderr:''};}
+
     if(command.startsWith('docker volume inspect ')) {
       if(unknown)return {stdout:'',stderr:'daemon unavailable',exitCode:1};
       return volume?{stdout:JSON.stringify([volume]),stderr:'',exitCode:0}:{stdout:absentStdout,stderr:'Error response from daemon: get '+name+': no such volume',exitCode:absentExit};
@@ -31,7 +51,7 @@ function fixture() {
     }
     throw Error('unexpected owned command');
   })} as IShellExecutor;
-  return {service,plan,binding,name,rows,events,store,shell,allocator:new StorageProvisionService(store,shell,{repoRoot:'/owned',storageInstanceId:'own'}),volume:(x:any)=>{volume=x},fail:(s:string)=>{failStage=s},foreign:()=>{foreign=true},unknown:()=>{unknown=true},daemonChange:()=>{afterCreateDaemon=true},published:()=>published,absentStdout:(v:string)=>{absentStdout=v},absentExit:(v:number)=>{absentExit=v}};
+  return {helperProgram:()=>helper.Config.Cmd[1] as string,esDrift:(v:string)=>{esDrift=v},service,plan,binding,name,rows,events,store,shell,allocator:new StorageProvisionService(store,shell,{repoRoot:'/owned',storageInstanceId:'own'}),volume:(x:any)=>{volume=x},fail:(s:string)=>{failStage=s},foreign:()=>{foreign=true},unknown:()=>{unknown=true},daemonChange:()=>{afterCreateDaemon=true},published:()=>published,absentStdout:(v:string)=>{absentStdout=v},absentExit:(v:number)=>{absentExit=v}};
 }
 
 describe('explicit new-only storage birth',()=>{
@@ -110,4 +130,40 @@ it('rechecks the original owner at the real operation slot before any volume cre
  expect(createHadFence).toBe(true);expect(createdAfterRevocation).toBe(false);
  expect(f.rows.get(f.name)).toMatchObject({stage:'issued',createIssued:true,operationId:'op_owned'});
  expect(f.published()).toBeUndefined();expect(f.events.some(x=>x.startsWith('docker volume create '))).toBe(false);
+});
+
+it('fresh Elasticsearch cannot publish a root-owned unwritable directory as usable storage',async()=>{
+ const f=fixture();f.service.dockerImage='docker.elastic.co/elasticsearch/elasticsearch:8.11.0';f.service.volumes![0].containerPath='/usr/share/elasticsearch/data';
+ const original=f.store.publishProvisionedInfraDurably;
+ f.store.publishProvisionedInfraDurably=async(...args)=>{expect(f.events.some(c=>c.startsWith('docker start -a '))).toBe(true);return original(...args);};
+ await expect(f.allocator.provisionNewInfra(f.service,infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'}),'es-fresh',()=>{})).resolves.toBeUndefined();
+});
+
+it.each(['image-user','caps','mount','image','birth','not-cold','nonempty','cleanup'])('fresh ES initialization %s never publishes or reinitializes an unknown birth',async drift=>{
+ const f=fixture();f.service.dockerImage='docker.elastic.co/elasticsearch/elasticsearch:8.11.0';f.service.volumes![0].containerPath='/usr/share/elasticsearch/data';f.esDrift(drift);
+ const plan=infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'});
+ await expect(f.allocator.provisionNewInfra(f.service,plan,'es-fresh',()=>{})).rejects.toThrow('storage_provision');expect(f.published()).toBeUndefined();
+ const row=f.rows.get(f.name)!;expect(row.stage).toBe('held');const before=f.events.length;
+ await expect(f.allocator.provisionNewInfra(f.service,plan,'another',()=>{})).rejects.toThrow();expect(f.events).toHaveLength(before);expect(f.rows.get(f.name)?.birthNonce).toBe(row.birthNonce);
+ expect(f.events.some(c=>/volume rm|rm -f|chown/.test(c))).toBe(false);
+ if(['image-user','caps','mount','image','birth'].includes(drift))expect(f.events.some(c=>c.startsWith('docker start '))).toBe(false);
+ if(drift==='not-cold'){expect(f.events).toContain('docker stop --time 2 '+'f'.repeat(64));expect(f.events).toContain('docker rm '+'f'.repeat(64));}
+});
+
+it('actual empty-directory program rejects find I/O failure before chmod',async()=>{
+ const f=fixture();f.service.dockerImage='docker.elastic.co/elasticsearch/elasticsearch:8.11.0';f.service.volumes![0].containerPath='/usr/share/elasticsearch/data';
+ await f.allocator.provisionNewInfra(f.service,infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'}),'es-fresh',()=>{});
+ const root=fs.mkdtempSync(path.join(os.tmpdir(),'storage-find-failure-')),bin=path.join(root,'bin'),data=path.join(root,'data'),marker=path.join(root,'chmod-called');fs.mkdirSync(bin);fs.mkdirSync(data);
+ try{
+  fs.writeFileSync(path.join(bin,'find'),'#!/bin/sh\nexit 13\n',{mode:0o755});
+  fs.writeFileSync(path.join(bin,'stat'),"#!/bin/sh\nprintf '%s\\n' '0:0:755'\n",{mode:0o755});
+  fs.writeFileSync(path.join(bin,'chmod'),`#!/bin/sh\n: > '${marker}'\n`,{mode:0o755});
+  const result=spawnSync('/bin/sh',['-c',f.helperProgram().replaceAll('/usr/share/elasticsearch/data',data)],{env:{PATH:bin+':/usr/bin:/bin'},encoding:'utf8'});
+  expect(result.status).not.toBe(0);expect(fs.existsSync(marker)).toBe(false);
+ }finally{fs.rmSync(root,{recursive:true,force:true})}
+});
+
+it('accepts the actual lowercase exact native missing-helper diagnostic after successful ES init',async()=>{
+ const f=fixture();f.service.dockerImage='docker.elastic.co/elasticsearch/elasticsearch:8.11.0';f.service.volumes![0].containerPath='/usr/share/elasticsearch/data';f.esDrift('lowercase-absent');
+ await expect(f.allocator.provisionNewInfra(f.service,infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'}),'es-native-missing',()=>{})).resolves.toBeUndefined();expect(f.published()?.id).toBe('mysql');
 });
