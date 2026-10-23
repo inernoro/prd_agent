@@ -28,6 +28,8 @@
 
 ## 台账
 
+2026-10-24 严格老板线上复读再次捕获 DEF-STSMK-REPORT-FACTS-001：有12项检查失败但缺结构化失败卡时，首屏误写没有业务失败；真实业务结果概览又被视觉欠证文案覆盖。原 active REG-stsmk-report-risk-001 新增 REG-stsmk-archive-failure-summary-001 机械子判据，要求非零失败不能兜底为零，并将显式业务结果佐证与完整视觉核销分开。必须从父项实际消费、旧红新绿并保留线上拒收版本；图注不能把真实失败降成只有入口，也不能把概览升级成视觉通过。原45/115/65分母不增加。
+
 2026-10-24 新增 active REG-literary-image-default-001，作为原LIT-006及每轮REG-stsmk-report-risk-001的机械子判据：真实文学默认、原生标记SSE、单卡一图、正确正文位置、刷新与所有run/asset/workspace404缺一保持失败；标记流不能代替图片。正式eb86f32c220a45c6bce89d2316502c00真实Failed、IMAGE_GEN_UNAVAILABLE，精确同requestId的GW及MAP日志空，Redis本轮单key证实错误，根因尚未确认，不能猜为额度或供应商故障；原两次尝试与清理保留，不第三次付费。新增终态先保存、失败页先于清理截图的红绿接线，防止再次丢失原失败诊断；尚未取得图片，不关闭DEF-STSMK-PRODUCTION-LIT-006。
 
 2026-10-24 原 active REG-multi-image-001/002 补真实持久化身份子判据：参考图上传回执按assetId关联唯一canvas element.id与正整数refId，允许实际V1省略可选sha/name；上传结束不等于延迟画布保存完成，只读有界等待，身份冲突立即失败且不发送模型。两图首试生成前红保留、工作区404，首试具体缺字段还是保存时序未知；不得猜顺序编号或拿源码字面量冒充实际持久化。

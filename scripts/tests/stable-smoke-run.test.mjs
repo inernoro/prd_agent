@@ -292,12 +292,13 @@ test('REG-stsmk-account-scope-001 必须由例行报告风险父项执行并传�
 test('REG-stsmk-report-risk-001 真实默认文学与视频清理合同每轮消费且任一失败传至原父项', () => {
   const directory=mkdtempSync(resolve(tmpdir(),'stsmk-journey-consumer-'));
   try {
-    for(const failedFile of ['scripts/tests/stable-smoke-default-journey.test.mjs','scripts/tests/stable-smoke-jpeg-journey.test.mjs','scripts/tests/stable-smoke-literary-mobile.test.mjs','scripts/tests/stable-smoke-video-idle-targeted.test.mjs']) {
+    for(const failedFile of ['scripts/tests/stable-smoke-default-journey.test.mjs','scripts/tests/stable-smoke-jpeg-journey.test.mjs','scripts/tests/stable-smoke-literary-mobile.test.mjs','scripts/tests/stable-smoke-video-idle-targeted.test.mjs','scripts/tests/stable-smoke-archive-failure-summary.test.mjs']) {
       const calls=[];
       const result=runReportRiskRegression(directory,(name,args)=>{
         calls.push({name,args});return {status:args.includes(failedFile)?1:0,stdout:'实际旅程子合同',stderr:''};
       });
       assert.ok(calls.some(call=>call.name==='node'&&call.args.includes(failedFile)));
+      assert.equal(calls.length,5,'报告风险父项仍只执行既有五个子命令');
       assert.equal(result.rows[0].status,'fail');
       assert.match(readFileSync(result.execution.artifactPath,'utf8'),/实际旅程子合同/);
     }

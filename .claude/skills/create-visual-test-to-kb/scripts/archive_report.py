@@ -289,6 +289,10 @@ _EVIDENCE_STATE_TRANSLATIONS = {
 
 def _evidence_action(shot):
     """Turn a vague evidence gap into an owned, executable close-out action."""
+    # A factual result context may lack visual-slot metadata without being an entry shot.
+    # Preserve its caption only; qualification and the declared status remain unchanged.
+    if shot.get("evidencePurpose") == "business-result-context":
+        return None
     status = str(shot.get("status") or shot.get("finalStatus") or "").strip()
     caption = str(shot.get("caption") or "").strip()
     if status not in {"需干预", "需补证", "未执行"} and "尚未形成通过证据" not in caption:
@@ -2625,7 +2629,17 @@ def build_interactive_html(
                 f'<nav>{evidence_link}{(" · " if evidence_link and method_link else "")}{method_link}</nav>'
                 '</article>'
             )
-        failure_html = "".join(failure_cards) or '<p class="executive-clear">本轮没有业务失败项。</p>'
+        failure_html = "".join(failure_cards)
+        if not failure_html:
+            if counts["失败"] > 0:
+                failure_html = (
+                    '<p class="executive-incomplete">'
+                    f'本轮记录 {counts["失败"]} 项失败；失败分类信息不足，'
+                    '不能据此判定没有业务失败。请核对原执行账本并补齐问题与复现信息。'
+                    '</p>'
+                )
+            else:
+                failure_html = '<p class="executive-clear">本轮没有业务失败项。</p>'
         environment_cards = []
         for row in environment:
             name = html.escape(_plain_cell(row.get("环境", "")) or "未标注环境")

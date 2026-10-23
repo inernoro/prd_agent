@@ -1043,7 +1043,8 @@ export function runReportRiskRegression(runDir, commandRunner = command) {
     'scripts/tests/stable-smoke-default-journey.test.mjs',
     'scripts/tests/stable-smoke-jpeg-journey.test.mjs',
     'scripts/tests/stable-smoke-literary-mobile.test.mjs',
-    'scripts/tests/stable-smoke-video-idle-targeted.test.mjs']);
+    'scripts/tests/stable-smoke-video-idle-targeted.test.mjs',
+    'scripts/tests/stable-smoke-archive-failure-summary.test.mjs']);
   const passed = result.status === 0 && facts.status === 0 && accountScope.status === 0 && cleanupCircuit.status === 0 && journeyContracts.status === 0;
   const artifactPath = resolve(runDir, 'report-risk-regression.log');
   writeFileSync(artifactPath, `${result.stdout || ''}\n${result.stderr || ''}\n${facts.stdout || ''}\n${facts.stderr || ''}\n${accountScope.stdout || ''}\n${accountScope.stderr || ''}\n${cleanupCircuit.stdout || ''}\n${cleanupCircuit.stderr || ''}\n${journeyContracts.stdout || ''}\n${journeyContracts.stderr || ''}`, 'utf8');
