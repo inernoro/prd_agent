@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { clearBundledCdsCliVersionCache, readBundledCdsCliVersion } from '../../src/services/cdscli-version.js';
+import { buildCdsSkillManifest } from '../../src/services/cds-skill-manifest.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../..');
@@ -17,6 +18,14 @@ function readSkillFrontmatterVersion(): string | null {
 }
 
 describe('cdscli bundled version', () => {
+  it('ships a current integrity receipt for the repository bundle', async () => {
+    const skillsRoot = path.join(repoRoot, '.claude/skills');
+    const receipt = JSON.parse(fs.readFileSync(path.join(skillsRoot, 'cds/cli/cds-skill-manifest.json'), 'utf8'));
+    const { generatedAt: _generatedAt, ...expected } = await buildCdsSkillManifest(skillsRoot);
+    const { generatedAt: _savedAt, ...actual } = receipt;
+    expect(actual, 'Run pnpm -C cds run sync:skill-manifest after editing bundled skills').toEqual(expected);
+  });
+
   it('reads cdscli.py VERSION from the repository skill bundle', () => {
     clearBundledCdsCliVersionCache();
 

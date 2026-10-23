@@ -334,6 +334,28 @@ describe('Branch Routes', () => {
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it('authenticated skill export ships the same file integrity manifest as anonymous installation', async () => {
+    const skills = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+    const root = path.join(tmpDir, '.claude/skills');
+    for (const skill of skills) {
+      fs.mkdirSync(path.join(root, skill), { recursive: true });
+      fs.writeFileSync(path.join(root, skill, 'SKILL.md'), `current ${skill}`);
+    }
+    fs.mkdirSync(path.join(root, 'cds/cli'));
+    fs.writeFileSync(path.join(root, 'cds/cli/cdscli.py'), 'VERSION = "9.8.7"\n');
+    const response = await fetch(`http://127.0.0.1:${config.masterPort}/api/export-skill`);
+    expect(response.status).toBe(200);
+    const archive = Buffer.from(await response.arrayBuffer());
+    const entries = execFileSync('tar', ['-tzf', '-'], { input: archive, encoding: 'utf8' }).trim().split('\n');
+    const name = entries.find(entry => entry.endsWith('/skills/cds/cli/cds-skill-manifest.json'))!;
+    expect(name).toBeTruthy();
+    const manifest = JSON.parse(execFileSync('tar', ['-xzOf', '-', name], { input: archive, encoding: 'utf8' }));
+    expect(manifest).toMatchObject({ version: '9.8.7', skills });
+    for (const skill of skills) {
+      expect(manifest.files[`${skill}/SKILL.md`]).toBe(createHash('sha256').update(`current ${skill}`).digest('hex'));
+    }
+  });
+
   function readyArtifactFixture() {
     const images = new Map<string, unknown>();
     mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
@@ -2254,6 +2276,26 @@ describe('Branch Routes', () => {
         expect(source.extraProfiles?.[0].env?.MODE).toBe('standalone');
       });
 
+      it.each([undefined, false, true])('派生保留项目极速默认，只有显式例外才继承源码模式: %s', async inheritSourceModes => {
+        await seedSourceWithConfig('source-exception');
+        stateService.updateBuildProfile('api', { activeDeployMode: 'express', deployModes: {
+          express: { label: '极速版', prebuilt: true, command: '' },
+          source: { label: '源码版', prebuilt: false, command: 'run' },
+        } });
+        stateService.updateProject('default', { defaultDeployModes: { api: 'express' } });
+        stateService.getBranch('source-exception')!.profileOverrides!.api!.activeDeployMode = 'source';
+        const res = await request(server, 'POST', '/api/branches', {
+          branch: 'derived-express', sourceBranchId: 'source-exception',
+          ...(inheritSourceModes === undefined ? {} : { inheritSourceModes }),
+        });
+        expect(res.status).toBe(201);
+        const created = stateService.getBranch('derived-express')!;
+        expect(created.profileOverrides?.api?.activeDeployMode).toBe(inheritSourceModes === true ? 'source' : 'express');
+        expect(created.profileOverrides?.api?.env?.KEY).toBe('from-source');
+        expect(created.extraProfiles?.map(p => p.id)).toEqual(['nacos']);
+        expect(stateService.getBranch('source-exception')!.profileOverrides!.api!.activeDeployMode).toBe('source');
+      });
+
       it('POST /branches sourceBranchId 校验:不存在 400,跨项目 400,且不留孤儿分支', async () => {
         const now = new Date().toISOString();
         const missing = await request(server, 'POST', '/api/branches', { branch: 'd1', sourceBranchId: 'ghost' });
@@ -3459,6 +3501,46 @@ describe('Branch Routes', () => {
       // The deploy itself ends in error because the pull failed.
       expect(stateService.getBranch('orphan-prepull')?.status).toBe('error');
     });
+  });
+
+  it.each([['/deploy',''], ['/deploy/api',''], ['/deploy','node dist/server.js'], ['/deploy/api','node dist/server.js']])('pure image %s command %s resolves its target without creating a detached source tree', async (endpoint,command) => {
+    const sha = 'b'.repeat(40);
+    stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'API',
+      dockerImage: `ghcr.io/acme/api:sha-${sha}`, prebuiltImage: true, command, workDir: '.', containerPort: 3000 });
+    stateService.addBranch({ id: 'image-without-source', projectId: 'default', branch: 'feature/image-only',
+      worktreePath: path.join(tmpDir, 'worktrees', 'image-without-source'), status: 'idle', services: {}, createdAt: new Date().toISOString() });
+    mock.addResponsePatternFirst(/git rev-parse/, () => ({ stdout: sha, stderr: '', exitCode: 0 }));
+    mock.addResponsePatternFirst(/git ls-tree/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+    readyArtifactFixture();
+    const response = await request(server, 'POST', `/api/branches/image-without-source${endpoint}`, { commitSha: sha });
+    expect((await waitForAcceptedRun(response)).status).toBe('running');
+    expect(mock.commands.some(command => command.includes('git fetch'))).toBe(true);
+    expect(mock.commands.filter(command => command.includes('git worktree add --detach'))).toEqual([]);
+    expect(fs.existsSync(WorktreeService.deploymentSourceRootFor(stateService.getBranch('image-without-source')!.worktreePath))).toBe(false);
+  });
+
+  it.each([true,false])('image deploy initializes only target-commit scripts (target has init: %s)',async targetHasInit=>{
+    const sha='b'.repeat(40),canonical=path.join(tmpDir,'worktrees','image-db-target');
+    fs.mkdirSync(canonical,{recursive:true});fs.writeFileSync(path.join(canonical,'manage.py'),'canonical B must not run');
+    stateService.addBuildProfile({id:'api',projectId:'default',name:'API',dockerImage:`ghcr.io/acme/api:sha-${sha}`,prebuiltImage:true,command:'node dist/server.js',workDir:'.',containerPort:3000});
+    stateService.addBranch({id:'image-db-target',projectId:'default',branch:'feature/image-db',worktreePath:canonical,status:'idle',services:{},createdAt:new Date().toISOString()});
+    mock.addResponsePatternFirst(/git rev-parse/,()=>({stdout:sha,stderr:'',exitCode:0}));
+    mock.addResponsePatternFirst(/git ls-tree/,()=>({stdout:targetHasInit?'manage.py\0':'',stderr:'',exitCode:0}));
+    mock.addResponsePatternFirst(/git worktree add --detach '([^']+)'/,match=>{
+      fs.mkdirSync(match[1],{recursive:true});fs.writeFileSync(path.join(match[1],'manage.py'),'target A only');return{stdout:'',stderr:'',exitCode:0};
+    });
+    const migration=vi.spyOn(containerService,'runProfileCommand').mockImplementation(async entry=>{
+      expect(entry.worktreePath).not.toBe(canonical);
+      expect(fs.readFileSync(path.join(entry.worktreePath,'manage.py'),'utf8')).toBe('target A only');
+      return{stdout:'migration done',stderr:'',exitCode:0};
+    });
+    readyArtifactFixture();
+    try{
+      const response=await request(server,'POST','/api/branches/image-db-target/deploy',{commitSha:sha});
+      expect((await waitForAcceptedRun(response)).status).toBe('running');
+      expect(migration).toHaveBeenCalledTimes(targetHasInit?1:0);
+      expect(fs.readFileSync(path.join(canonical,'manage.py'),'utf8')).toBe('canonical B must not run');
+    }finally{migration.mockRestore();}
   });
 
   describe('immutable deployment version reuse', () => {

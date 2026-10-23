@@ -6,12 +6,13 @@
 #   3. Filesystem isolation prevents state.json corruption from host processes
 #
 # IMPORTANT: The container needs the Docker socket mounted so CDS can manage
-# branch containers on the host. Example run command:
+# branch containers on the host. Linux host-network example (also supports
+# temporary database-pass ports and their loopback database upstreams):
 #
 #   docker run -d --name cds-master \
 #     --restart always \
 #     --memory 512m --cpus 1 \
-#     -p 9900:9900 -p 5500:5500 \
+#     --network host \
 #     -v /var/run/docker.sock:/var/run/docker.sock \
 #     -v /path/to/prd_agent:/repo \
 #     -v /path/to/.cds-worktrees:/worktrees \
@@ -19,8 +20,16 @@
 #     -e CDS_REPO_ROOT=/repo \
 #     -e CDS_WORKTREE_BASE=/worktrees \
 #     -e CDS_REPOS_BASE=/repos \
+#     -e CDS_BIND_HOST=127.0.0.1 \
 #     -e CDS_AI_ACCESS_KEY=$AI_ACCESS_KEY \
 #     cds-master:latest
+#
+# Put the HTTPS reverse proxy on the same host. For a bridge-only control panel,
+# the previous -p 9900:9900 -p 5500:5500 form remains supported, but keep
+# CDS_DATABASE_PASS_ENABLED disabled: an ephemeral listener in that namespace
+# is not published to local database tools. Enabling passes requires recreating
+# the Master with --network host, not just setting the host IP inside a bridge.
+# Do not expose a broad port range or reuse database administrator credentials.
 #
 # The three -v / -e pairs are all required for the multi-repo flow
 # introduced in P4 Part 18 (G1):
@@ -62,6 +71,7 @@ RUN apt-get update \
       docker.io \
       git \
       ca-certificates \
+      openssl \
       curl \
  && rm -rf /var/lib/apt/lists/*
 
