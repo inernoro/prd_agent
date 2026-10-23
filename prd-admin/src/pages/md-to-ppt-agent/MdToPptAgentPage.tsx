@@ -822,8 +822,8 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?:
       // 撤销栈（最多 20 条）+ dirty 标志：beforeinput 首次触发时压栈（即"首次 input 前"的修改前快照），
       // blur/换目标/按钮操作后复位 dirty
       'var hist=[];var dirty=false;' +
-      'function slidesEl(){return document.querySelector(".reveal .slides")||document.querySelector("deck-stage")||document.body;}' +
-      'function snap(){try{var s=slidesEl();if(s){hist.push(s.innerHTML);if(hist.length>20){hist.shift();}}}catch(e){}}' +
+      'function slidesEl(){return document.querySelector(".reveal .slides")||document.querySelector("deck-stage")||document.querySelector(".deck")||document.body;}' +
+      'function snap(){try{var s=slidesEl();if(s){var c=s.cloneNode(true);var bar=c.querySelector("#__map_editor_toolbar__");if(bar&&bar.parentNode){bar.parentNode.removeChild(bar);}hist.push(c.innerHTML);if(hist.length>20){hist.shift();}}}catch(e){}}' +
       'function onBI(){if(!dirty){snap();dirty=true;}}' +
       'function serialize(){try{' +
       'var root=document.documentElement.cloneNode(true);' +
@@ -853,7 +853,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?:
       'tb.addEventListener("mousedown",function(e){e.preventDefault();e.stopPropagation();});' +
       'tb.addEventListener("click",function(e){var b2=e.target.closest?e.target.closest("button"):null;if(!b2){return;}e.preventDefault();e.stopPropagation();var act=b2.getAttribute("data-act");' +
       // 撤销：弹栈回填 slides → 清空选中态 → 同步 reveal 布局 → 序列化回传；栈空时无操作
-      'if(act==="undo"){if(!hist.length){return;}var se=slidesEl();if(!se){return;}se.innerHTML=hist.pop();cur=null;dirty=false;tb.style.display="none";try{if(window.Reveal&&Reveal.sync){Reveal.sync();}}catch(e1){}try{if(window.Reveal&&Reveal.layout){Reveal.layout();}}catch(e2){}sched();return;}' +
+      'if(act==="undo"){if(!hist.length){return;}var se=slidesEl();if(!se){return;}var keepToolbar=se.contains(tb);se.innerHTML=hist.pop();if(keepToolbar){se.appendChild(tb);}cur=null;dirty=false;tb.style.display="none";try{if(window.Reveal&&Reveal.sync){Reveal.sync();}}catch(e1){}try{if(window.Reveal&&Reveal.layout){Reveal.layout();}}catch(e2){}sched();return;}' +
       'if(!cur){return;}snap();dirty=false;' +
       // 主题覆盖层（themeOverride）对标题等元素带 !important，普通内联样式会被压住；
       // 内联 setProperty(...,"important") 优先级最高，编辑结果在任何主题下都生效
@@ -867,7 +867,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?:
       'document.addEventListener("click",function(e){' +
       'if(e.target.closest&&e.target.closest("#__map_editor_toolbar__")){return;}' +
       'var el=e.target.closest?e.target.closest(SEL):null;' +
-      'if(el&&el.closest(".slides,deck-stage")){e.preventDefault();e.stopPropagation();sel(el);}else{desel(false);}' +
+      'if(el&&document.body&&el!==document.body&&document.body.contains(el)){e.preventDefault();e.stopPropagation();sel(el);}else{desel(false);}' +
       '},true);' +
       'document.addEventListener("keydown",function(e){if(e.key==="Escape"){desel(false);}},true);' +
       'window.addEventListener("resize",function(){place();});' +
@@ -899,6 +899,10 @@ function prepareExportHtml(html: string): string {
   return /<\/head\s*>/i.test(html)
     ? html.replace(/<\/head\s*>/i, (headClose) => `${PERSISTED_FONT_LINK}\n${headClose}`)
     : html;
+}
+
+export function preparePublishHtml(html: string, runtime?: string): string {
+  return runtime === 'open-design' ? html : prepareExportHtml(html);
 }
 
 // 从生成 HTML 提取 <title>，用作下载文件名与发布标题
@@ -3212,7 +3216,13 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       return;
     }
     setIsPublishing(true);
-    const publishHtml = prepareExportHtml(base);
+    const sourceRun = await getMdToPptRun(sourceRunId);
+    if (!sourceRun || sourceRun.status !== 'done') {
+      setIsPublishing(false);
+      toast.error('发布失败', '无法核对当前完成版本，请刷新恢复后再试。');
+      return;
+    }
+    const publishHtml = preparePublishHtml(base, sourceRun.runtime);
     const result = await publishMdToPpt(buildPptPublishRequest({
       htmlContent: publishHtml,
       title: extractDeckTitle(base) || 'PPT 演示',
