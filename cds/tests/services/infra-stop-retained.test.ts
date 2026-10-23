@@ -14,7 +14,7 @@ function fixture(scenario='normal'){
  shell.addResponsePattern(/^docker .*/,m=>{
   const c=m[0];
   if(c.startsWith('docker inspect ')){
-   reads++;if(scenario==='absent'||!exists)return {exitCode:1,stdout:'',stderr:'Error: No such object: '+name};
+   reads++;if(scenario==='absent'||scenario==='native-lowercase-absent'||!exists)return {exitCode:1,stdout:scenario==='native-lowercase-absent'?'[]':'',stderr:(scenario==='native-lowercase-absent'?'error: no such object: ':'Error: No such object: ')+name};
    if(scenario==='unknown')return {exitCode:124,stdout:'',stderr:'timeout'};
    if(c.includes('.State.Pid'))return {exitCode:0,stdout:[scenario==='changed-id'&&reads>1?other:cid,scenario==='changed-name'&&reads>1?'/foreign':'/'+name,running,running?42:0,running?'running':'exited'].map(x=>JSON.stringify(x)).join('|'),stderr:''};
    if(c.includes('{{json .Id}}|{{json .Name}}'))return{exitCode:0,stdout:[cid,'/'+name].map(x=>JSON.stringify(x)).join('|'),stderr:''};
@@ -90,4 +90,12 @@ it.each(['Error: No such object: ','Error response from daemon: No such containe
  const f=fixture('absent');
  await expect(f.container.stopInfraService(name,'cds-infra-remove')).resolves.toBeUndefined();
  expect(f.shell.commands.some(c=>/^docker (stop|rm) /.test(c))).toBe(false);
+});
+
+it.each(['absent','native-lowercase-absent'])('confirmed absent recreation %s completes cleanup without stop/remove or volume creation',async scenario=>{
+ const f=fixture(scenario);await expect(f.container.stopInfraService(name,'cds-infra-recreate')).resolves.toBeUndefined();
+ expect(f.state().stops).toBe(0);expect(f.state().rms).toBe(0);expect(f.shell.commands).toHaveLength(1);
+});
+it('ambiguous recreation inspection cannot remove anything',async()=>{
+ const f=fixture('unknown');await expect(f.container.stopInfraService(name,'cds-infra-recreate')).rejects.toThrow();expect(f.state().stops).toBe(0);expect(f.state().rms).toBe(0);
 });
