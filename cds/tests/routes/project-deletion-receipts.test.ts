@@ -15,7 +15,7 @@ import type { CdsState } from '../../src/types.js';
 describe('删除项目与历史回执的持久化边界', () => {
   let state: StateService, server: Server, shell: MockShellExecutor, dir: string;
   let persisted: CdsState | null, pending: CdsState | null;
-  let mode: 'ok' | 'save-fail' | 'flush-fail' | 'hold';
+  let mode: 'ok' | 'save-fail' | 'flush-fail' | 'hold' | 'preparation-fail' | 'partial-fail';
   let release: (() => void) | undefined, entered: Promise<void>, enter: () => void;
   let observer: ReturnType<typeof vi.fn>;
   let store: StateBackingStore & { flush(): Promise<void> }, origin: string;
@@ -32,12 +32,14 @@ describe('删除项目与历史回执的持久化边界', () => {
     store = {
       kind: 'json', load: () => structuredClone(persisted),
       save(value) {
+        if (mode === 'preparation-fail' && value.pendingNetworkTeardowns?.length) throw new Error('network-intent save failed');
         if (mode === 'save-fail' && removed(value)) throw new Error('injected save failure');
         pending = structuredClone(value);
       },
       async flush() {
         if (removed(pending)) {
           if (mode === 'hold') { enter(); await new Promise<void>(resolve => { release = resolve; }); }
+          if (mode === 'partial-fail') { persisted = structuredClone(pending); mode = 'ok'; throw new Error('partial write failed'); }
           if (mode === 'flush-fail') throw new Error('injected persistence failure');
         }
         if (pending) { persisted = structuredClone(pending); pending = null; }
@@ -88,6 +90,42 @@ describe('删除项目与历史回执的持久化边界', () => {
     expect(restarted.getProject('other')?.name).toBe('other-updated');
     expect((await fetch(`${origin}/api/projects/target`, { method: 'DELETE' })).status).toBe(200);
     expect(restarted.getAccessRequest('receipt')).toEqual(before);
+  });
+
+  it('准备网络清理记录保存失败时回滚容器清理记录，重启后项目仍存活且无待删在用容器', async () => {
+    state.getBranch('target-branch')!.services.api = { profileId: 'api', containerName: 'live-target-api', hostPort: 12001, status: 'running' };
+    state.save(); await state.flush(); mode = 'preparation-fail';
+    const response = await fetch(`${origin}/api/projects/target`, { method: 'DELETE' });
+    expect(response.status).toBe(500);
+    expect((await response.json()).compensationConfirmed).toBe(true);
+    const restarted = new StateService(path.join(dir, 'state.json'), dir, store); restarted.load();
+    expect(restarted.getProject('target')).toBeDefined();
+    expect(restarted.getContainerTeardownTombstones()).toEqual([]);
+    expect(restarted.getNetworkTeardowns()).toEqual([]);
+    expect(shell.commands.some(c => /^docker (?:rm|network rm)/.test(c))).toBe(false);
+  });
+
+  it('部分写入后失败会等待补偿持久化，直接重启不需要无关保存来恢复项目', async () => {
+    mode = 'partial-fail';
+    const response = await fetch(`${origin}/api/projects/target`, { method: 'DELETE' });
+    expect(response.status).toBe(500);
+    const restarted = new StateService(path.join(dir, 'state.json'), dir, store); restarted.load();
+    expect(restarted.getProject('target')).toBeDefined();
+    expect(restarted.getBranch('target-branch')).toBeDefined();
+    expect((await receiptView()).receiptArchived).not.toBe(true);
+    expect(observer).not.toHaveBeenCalled();
+  });
+
+  it('恢复写入仍不可用时明确补偿未确认，不广播删除成功或清理监控', async () => {
+    const flush = vi.spyOn(state, 'flush').mockRejectedValue(new Error('storage unavailable'));
+    try {
+      const response = await fetch(`${origin}/api/projects/target`, { method: 'DELETE' });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({ error: 'state_save_failed', compensationConfirmed: false });
+      expect(state.getProject('target')).toBeDefined();
+      expect(observer).not.toHaveBeenCalled();
+      expect((await receiptView()).receiptArchived).not.toBe(true);
+    } finally { flush.mockRestore(); }
   });
 
   it('异步失败只恢复本项目，保留等待期间其他项目的修改', async () => {

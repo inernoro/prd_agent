@@ -2421,7 +2421,7 @@ export class StateService {
 
       this.state.projects = this.state.projects.filter((p) => p.id !== id);
       this.save();
-      const write = this.flush().catch(err => { rollback(); throw err; });
+      const write = this.flush().catch(async err => { rollback(); await this.flush(); throw err; });
       this.projectRemovalWrites.set(id, write);
       void write.then(() => {
         if (this.projectRemovalWrites.get(id) === write) this.projectRemovalWrites.delete(id);

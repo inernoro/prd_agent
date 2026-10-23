@@ -4228,39 +4228,39 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // removeProject 之后，两次写之间进程被杀 / save 失败时，state 已无项目/分支、
     // 也无墓碑，收割器的补偿路径彻底断（删最后一个项目时尤其致命）。先写墓碑，
     // 再删项目，即使删项目那步失败，收割器也能按墓碑收敛。
-    const requestedAt = new Date().toISOString();
-    if (teardownContainers.length > 0) {
-      // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
-      // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
-      // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
-      const volumeBearing = new Set(dedicatedDbContainerNames);
-      stateService.addContainerTeardownTombstones(
-        teardownContainers.map((containerName) => ({
-          containerName,
-          projectId: project.id,
-          requestedAt,
-          ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
-        })),
-      );
-    }
-
-    // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
-    // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
-    // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
-    // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
-    // 至少墓碑还在，回收路径不断。
-    stateService.addDeletedProjectWorktreeBucket(project.id);
-    // cascade 前保存本项目分支网络的明确删除意图；不扫描其他项目。
-    stateService.addNetworkTeardowns(projectBranches.flatMap(b =>
-      branchTeardownNetworkNames(b).map(name => ({ name, projectId: project.id }))));
-
-    // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
-    // belonging to this project so deleting a project no longer leaves
-    // orphans in state.json. The state service returns a summary so we
-    // can hand it back to the operator (and the next agent log replay
-    // can spot what was lost).
     let summary: ReturnType<typeof stateService.removeProject>;
     try {
+      const requestedAt = new Date().toISOString();
+      if (teardownContainers.length > 0) {
+        // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
+        // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
+        // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
+        const volumeBearing = new Set(dedicatedDbContainerNames);
+        stateService.addContainerTeardownTombstones(
+          teardownContainers.map((containerName) => ({
+            containerName,
+            projectId: project.id,
+            requestedAt,
+            ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
+          })),
+        );
+      }
+
+      // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
+      // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
+      // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
+      // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
+      // 至少墓碑还在，回收路径不断。
+      stateService.addDeletedProjectWorktreeBucket(project.id);
+      // cascade 前保存本项目分支网络的明确删除意图；不扫描其他项目。
+      stateService.addNetworkTeardowns(projectBranches.flatMap(b =>
+        branchTeardownNetworkNames(b).map(name => ({ name, projectId: project.id }))));
+
+      // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
+      // belonging to this project so deleting a project no longer leaves
+      // orphans in state.json. The state service returns a summary so we
+      // can hand it back to the operator (and the next agent log replay
+      // can spot what was lost).
       summary = stateService.removeProject(project.id);
       await stateService.waitForProjectRemoval(project.id);
     } catch (err) {
@@ -4271,9 +4271,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
       for (const b of projectBranches) for (const name of branchTeardownNetworkNames(b))
         try { stateService.removeNetworkTeardown(name, project.id); } catch { /* best-effort */ }
+      let compensationConfirmed = true;
+      try { await stateService.flush(); } catch { compensationConfirmed = false; }
       res.status(500).json({
         error: 'state_save_failed',
-        message: (err as Error).message,
+        message: compensationConfirmed ? (err as Error).message : '删除未完成，恢复状态尚未保存，请稍后重试',
+        compensationConfirmed,
       });
       return;
     }
