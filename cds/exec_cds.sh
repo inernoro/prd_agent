@@ -1752,7 +1752,7 @@ nginx_observe_runtime() {
     # permission errors, mixed diagnostics or stdout are never proof of absence.
     local diagnostic
     diagnostic="$(cat "$stderr_file")"
-    if [ "$status" -eq 1 ] && [ -z "$projection" ] && { [ "$diagnostic" = "Error: No such object: $NGINX_CONTAINER" ] || [ "$diagnostic" = "Error response from daemon: No such container: $NGINX_CONTAINER" ]; }; then
+    if [ "$status" -eq 1 ] && [ -z "$projection" ] && { [ "$diagnostic" = "Error: No such object: $NGINX_CONTAINER" ] || [ "$diagnostic" = "error: no such object: $NGINX_CONTAINER" ] || [ "$diagnostic" = "Error response from daemon: No such container: $NGINX_CONTAINER" ]; }; then
       NGINX_RUNTIME_STATE=absent
     fi
     rm -f "$stderr_file"
