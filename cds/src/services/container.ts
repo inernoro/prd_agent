@@ -1199,7 +1199,7 @@ export class ContainerService {
   }
 
   /** Only the immutable container created by this invocation may start with the accepted mounts. */
-  private async inspectCreatedStorageContainer(shell: IShellExecutor, id: string, name: string, imageId: string, plan: DeploymentStoragePlan): Promise<void> {
+  private async inspectCreatedStorageContainer(shell: IShellExecutor, id: string, name: string, imageId: string, plan: DeploymentStoragePlan, expectedStatus: 'created'|'exited'|'running' = 'created'): Promise<void> {
     renderStoragePlan(plan);
     const result = await shell.exec(`docker inspect --format '[{{json .Id}},{{json .Name}},{{json .Image}},{{json .State.Pid}},{{json .State.Status}},{{json .Mounts}},{{json (index .HostConfig "Tmpfs")}}]' ${this.shellQuote(id)}`, {executionLane: 'observation'});
     if (result.exitCode !== 0) throw new UnsafeDeploymentStorageError(name, 'storage-created-container-unknown');
@@ -1207,7 +1207,7 @@ export class ContainerService {
     try { fields = JSON.parse(result.stdout); if (!Array.isArray(fields)) throw new Error(); }
     catch { throw new UnsafeDeploymentStorageError(name, 'storage-created-container-unknown'); }
     const [actualId, actualName, image, pid, status, mounts, tmpfs] = fields;
-    if (fields.length !== 7 || actualId !== id || actualName !== '/' + name || image !== imageId || pid !== 0 || status !== 'created'
+    if (fields.length !== 7 || actualId !== id || actualName !== '/' + name || image !== imageId || !Number.isSafeInteger(pid) || (expectedStatus==='running' ? pid<=0 : pid!==0) || status !== expectedStatus
       || !Array.isArray(mounts) || (tmpfs != null && (typeof tmpfs !== 'object' || Array.isArray(tmpfs)))
       || (plan.mounts.some(m => m.kind === 'tmpfs') ? Object.keys(tmpfs || {}).length !== 1 || !Object.hasOwn(tmpfs || {}, '/tmp') || tmpfs['/tmp'] !== '' : Object.keys(tmpfs || {}).length !== 0)) {
       throw new UnsafeDeploymentStorageError(name, 'storage-created-container-mismatch');
@@ -3506,7 +3506,15 @@ export class ContainerService {
       this.getProjectMarkers(service.projectId),
     );
     if (inspect.exitCode === 0) {
-      const dockerStatus = inspect.stdout.trim();
+      const dockerStatus = inspect.stdout.trim() as 'created'|'exited'|'running';
+      // A prior failed create is not evidence of admission. Recheck the entire
+      // exact runtime on every typed-storage reuse, including after a restart.
+      if (acceptedStoragePlan?.mounts.some(m=>m.kind==='volume')) {
+        const imageId=await resolveStorageImage(this.shell,storageAdmission?.imageId || service.dockerImage,acceptedStoragePlan,!storageAdmission);
+        await this.inspectCreatedStorageContainer(this.shell,storageReuseId!,service.containerName,imageId,acceptedStoragePlan,dockerStatus);
+      } else if (!acceptedStoragePlan && dockerStatus==='created') {
+        throw new UnsafeDeploymentStorageError(service.id,'storage-original-created-unadmitted');
+      }
       if (dockerStatus === 'running') {
         // 已经在跑 —— 共享复用，不动它
         // Bug C fix(2026-05-10):reused 路径必须确保 infra 连到当前 project
@@ -3808,6 +3816,15 @@ export class ContainerService {
         details: { containerId: original.id, retained: true } });
       return;
     }
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(containerName)) throw new ContainerStopUnconfirmedError(undefined);
+    const identity=await this.shell.exec(`docker inspect --format='{{json .Id}}|{{json .Name}}' ${this.shellQuote(containerName)}`,{timeout:5000,executionLane:'observation'});
+    const missing=['Error: No such object: ','Error: no such object: ','Error response from daemon: No such container: '].map(prefix=>prefix+containerName);
+    if (intentKind==='cds-infra-remove' && identity.exitCode===1 && ['', '[]'].includes(identity.stdout.trim()) && missing.includes(identity.stderr.trim())) return;
+    let removalId:string;
+    try {const fields=identity.stdout.trim().split('|').map(x=>JSON.parse(x));
+      if(identity.exitCode!==0 || fields.length!==2 || !/^[a-f0-9]{64}$/.test(fields[0]) || fields[1]!=='/'+containerName)throw new Error();
+      removalId=fields[0];
+    } catch {throw new ContainerStopUnconfirmedError(undefined);}
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
       severity: 'warn',
@@ -3824,9 +3841,9 @@ export class ContainerService {
       'cds-infra-recreate': 'infra stop/rm 后重建',
     };
     this.noteLifecycleIntent(containerName, intentKind, INFRA_REASON[intentKind]);
-    const stopResult = await this.shell.exec(`docker stop ${containerName}`);
+    const stopResult = await this.shell.exec(`docker stop ${removalId}`);
     if (stopResult.exitCode !== 0) throw new ContainerStopUnconfirmedError(undefined);
-    const rmResult = await this.shell.exec(`docker rm ${containerName}`);
+    const rmResult = await this.shell.exec(`docker rm ${removalId}`);
     if (rmResult.exitCode !== 0) throw new Error('infra_container_remove_unconfirmed');
     this.recordContainerEvent({
       severity: rmResult.exitCode === 0 ? 'info' : 'error',

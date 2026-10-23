@@ -1,7 +1,8 @@
 import type {StorageBinding} from '../types.js';
 import {profileStorageTargetKey,profileStorageBranchIdentity,profileStorageDeclarationDigest,type ProfileStorageTarget,type ProfileStorageBinding} from "./profile-storage-provision.js";
 import {storageProvisionDigest,type StorageBirth} from './storage-provision.js';
-import {stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
+import {profileStoragePlan,withRuntimeTmpfs,stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
+import {withWritableSourceLayer} from './source-workspace.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
@@ -1566,6 +1567,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         projectId:branch?.projectId || 'default',
         project:rows.filter(p=>(p.projectId || 'default')===t.projectId && p.id===t.serviceId),
         extra:(branch?.extraProfiles || []).filter(p=>p.id===t.serviceId),
+        override:branch?.profileOverrides?.[t.serviceId] || {},
       });
       // An unchanged historical orphan cannot freeze other projects. An affected
       // orphan still fails closed; a new same-id profile cannot silently adopt it.
@@ -1580,6 +1582,21 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       const before = pick(original,this.state.buildProfiles), after = pick(candidate,profiles);
       if (!before || !after || storageProvisionDigest(before) !== storageProvisionDigest(after))
         throw new Error('storage_retained_profile_mutation_refused: 服务持有已分配或待确认的私有存储，请保留服务与存储声明');
+      // Keep persisted v1 publication digests compatible. Revalidate the exact
+      // candidate plan with retained mounts before accepting workspace/mode edits.
+      const effective = resolveEffectiveProfile(mergeBranchProfiles(profiles.filter(p=>(p.projectId || 'default')===t.projectId),candidate).find(p=>p.id===t.serviceId)!,candidate);
+      const k=profileStorageTargetKey(t), row=this.profileStorageDrafts.get(k)
+        || this.state.profileStorageBindings?.[k] || this.state.profileStoragePublications?.[k]?.binding;
+      if (!row && this.getProfileStorageBirths(t).length) {
+        const previousRaw=mergeBranchProfiles(this.getBuildProfilesForProject(t.projectId),original!).find(p=>p.id===t.serviceId)!;
+        const previous=resolveEffectiveProfile(previousRaw,original!);
+        const shape=(p:BuildProfile)=>[p.workDir || '.',p.containerWorkDir || '/app',!!p.prebuiltImage,!!p.managedBuild];
+        if(storageProvisionDigest(shape(previous))!==storageProvisionDigest(shape(effective)))throw new Error('storage_retained_profile_mutation_refused: 存储分配尚未确认');
+      }
+      const mounts=row?.mounts || effective.cacheMounts || [];
+      const instanceId=mounts.find(m=>m.storage)?.storage?.instanceId || this.state.storageInstanceId;
+      try { withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(candidate,{...effective,cacheMounts:mounts},{storageInstanceId:instanceId}))); }
+      catch { throw new Error('storage_retained_profile_mutation_refused: 挂载目标与候选工作区不兼容'); }
     }
   }
 
@@ -1592,6 +1609,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   setBranchProfileOverride(branchId: string, profileId: string, override: BuildProfileOverride): void {
     const branch = this.state.branches[branchId];
     if (!branch) throw new Error(`分支 "${branchId}" 不存在`);
+    const candidate={...branch,profileOverrides:{...branch.profileOverrides,[profileId]:sanitizeProfileOverride(override) ?? {}}};
+    this.assertProfileStorageDeclarationsPreserved(Object.values(this.state.branches).map(b=>b===branch?candidate:b));
     if (!branch.profileOverrides) branch.profileOverrides = {};
     // writer 端就剥掉 null 结构哨兵字段，让新 override 一开始就干净（不写 containerPort:null /
     // dockerImage:null 这类「该继承」的伪值）。与 applyProfileOverride 的 merge 端 sanitize 双保险，
@@ -1606,6 +1625,9 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   clearBranchProfileOverride(branchId: string, profileId: string): void {
     const branch = this.state.branches[branchId];
     if (!branch?.profileOverrides) return;
+    const candidate={...branch,profileOverrides:{...branch.profileOverrides}};
+    delete candidate.profileOverrides[profileId];
+    this.assertProfileStorageDeclarationsPreserved(Object.values(this.state.branches).map(b=>b===branch?candidate:b));
     delete branch.profileOverrides[profileId];
     if (Object.keys(branch.profileOverrides).length === 0) {
       delete branch.profileOverrides;

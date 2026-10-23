@@ -54,7 +54,8 @@ function seal(mounts: PlannedMount[], identity: {instanceId?: string; projectId:
       assertStorageDeclaration(m, m.kind === 'volume' ? 'volume' : 'bind');
       const s = m.storage!;
       if (!identity.instanceId || s.instanceId !== identity.instanceId || s.projectId !== identity.projectId
-        || s.serviceId !== identity.serviceId || (s.scope === 'branch-private' && s.branchId !== identity.branchId)) fail('storage-owner-mismatch');
+        || s.serviceId !== identity.serviceId || s.scope !== (identity.branchId ? 'branch-private' : 'project-shared')
+        || s.branchId !== identity.branchId) fail('storage-owner-mismatch');
       if (m.source !== stableStorageVolumeName(s)) fail('storage-name-mismatch');
     }
   }

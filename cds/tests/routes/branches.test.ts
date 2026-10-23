@@ -7167,6 +7167,13 @@ describe('Branch Routes', () => {
   });
 
   describe('POST /api/quickstart project-scoped dependencies', () => {
+    it('rejects new stateful config before profiles/env metadata are published',async()=>{
+      const now=new Date().toISOString();stateService.addProject({id:'fresh-db',slug:'fresh-db',name:'new',kind:'git',repoPath:tmpDir,createdAt:now,updatedAt:now});
+      fs.writeFileSync(path.join(tmpDir,'cds-compose.yml'),'x-cds-env: {MUST_NOT_WRITE: yes}\nservices:\n  api:\n    image: node:20\n    command: node index.js\n    volumes: ["./app:/app"]\n    ports: ["8080"]\n  db:\n    image: mongo:8\n    ports: ["27017"]\n');
+      const before=JSON.stringify(stateService.getState());const result=await request(server,'POST','/api/quickstart?project=fresh-db');
+      expect(result.status).toBe(409);expect(result.body.error).toBe('storage-provision-new-only-required');expect(JSON.stringify(stateService.getState())).toBe(before);
+    });
+
     it('scopes application dependencies while preserving infra dependencies', async () => {
       const now = new Date().toISOString();
       stateService.addProject({
@@ -7205,6 +7212,9 @@ describe('Branch Routes', () => {
         '      - "27017"',
       ].join('\n'));
 
+      // An already registered historical dependency is retained, never allocated
+      // by this configuration-only shortcut.
+      stateService.addInfraService({id:'mongodb',projectId:'gateway-project',name:'retained mongo',dockerImage:'mongo:8',containerName:'retained-mongo',containerPort:27017,hostPort:12717,status:'stopped',env:{},volumes:[],createdAt:now});
       const res = await request(server, 'POST', '/api/quickstart?project=gateway-project');
 
       expect(res.status).toBe(201);

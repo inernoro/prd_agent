@@ -296,10 +296,10 @@ export function parseComposeFile(filePath: string, options?: {preserveVolumeDecl
   for (const [serviceId, entry] of Object.entries(doc.services)) {
     // Skip services that use build (they are app services, not infrastructure)
     // Also skip services without an image
-    if (!entry.image || entry.build && !options?.preserveVolumeDeclaration) continue;
+    if (!entry.image || entry.build) continue;
 
     // Skip services with relative volume mounts (app services)
-    if (hasRelativeVolumeMount(entry.volumes) && !options?.preserveVolumeDeclaration) continue;
+    if (hasRelativeVolumeMount(entry.volumes)) continue;
 
     if (options?.preserveVolumeDeclaration && Object.hasOwn(entry,'volumes') && !Array.isArray(entry.volumes))
       throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
@@ -339,10 +339,10 @@ export function parseComposeString(yamlString: string, options?: {preserveVolume
   const results: ComposeServiceDef[] = [];
 
   for (const [serviceId, entry] of Object.entries(doc.services)) {
-    if (!entry.image) continue;
+    if (!entry.image || entry.build) continue;
 
     // Skip services with relative mounts (app services)
-    if (hasRelativeVolumeMount(entry.volumes) && !options?.preserveVolumeDeclaration) continue;
+    if (hasRelativeVolumeMount(entry.volumes)) continue;
 
     if (options?.preserveVolumeDeclaration && Object.hasOwn(entry,'volumes') && !Array.isArray(entry.volumes))
       throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');

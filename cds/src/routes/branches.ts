@@ -1,4 +1,4 @@
-import {planFreshCatalogInfra,assertFreshLegacyVolumesAbsent,type FreshInfraPlan} from '../services/fresh-catalog-storage-plan.js';
+import {assertConfigOnlyInfraStorage,planFreshCatalogInfra,assertFreshLegacyVolumesAbsent,type FreshInfraPlan} from '../services/fresh-catalog-storage-plan.js';
 import {ProfileStorageProvisionService,profileStorageBranchIdentity} from '../services/profile-storage-provision.js';
 import { StorageProvisionService,storageProvisionDigest } from '../services/storage-provision.js';
 import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
@@ -19773,6 +19773,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (composeYaml) {
       const parsed = parseCdsCompose(composeYaml);
       if (parsed && parsed.buildProfiles.length > 0) {
+        try {assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(projectId).map(s=>s.id)));}
+        catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
         const scopedProfiles = parsed.buildProfiles.map((bp): BuildProfile => ({
           ...bp,
           id: `${bp.id}${idSuffix}`,
@@ -22200,6 +22202,8 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       }
       try { stateService.assertBuildProfileBatchStorageAllowed(Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : []); }
       catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
+      try {assertConfigOnlyInfraStorage(resolveInfraDefs(cfg,true),new Set(cleanMode==='replace-all'?[]:stateService.getInfraServicesForProject(stateService.getLegacyProject()?.id ?? 'default').map(s=>s.id)));}
+      catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
       // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
       const snapshotLabel = cleanMode === 'replace-all'
         ? `导入前（replace-all）· ${new Date().toLocaleString('zh-CN')}`
