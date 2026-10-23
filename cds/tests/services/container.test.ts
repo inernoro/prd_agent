@@ -679,6 +679,7 @@ describe('ContainerService', () => {
         await service.runService(makeEntry(), makeProfile({ resources: { memoryMB: 1024, cpus: 2 } }), makeService());
         const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
         expect(runCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
+        expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
         expect(runCmd).not.toContain('--cpus');
         expect(runCmd).not.toContain('--memory');
       } finally {
@@ -722,6 +723,7 @@ describe('ContainerService', () => {
         }), makeService());
         const createCmd = mock.commands.find((c) => c.includes('docker create') && c.includes('-managed-build'))!;
         expect(createCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
+        expect(createCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
         expect(createCmd).not.toContain('--cpus');
         expect(createCmd).not.toContain('--memory');
       } finally {
@@ -843,6 +845,7 @@ describe('ContainerService', () => {
       const runCmd = mock.commands.find(c => c.includes('docker run --rm'))!;
       expect(runCmd).toBeDefined();
       expect(runCmd).not.toContain('docker run -d');
+      expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
       expect(runCmd).toContain(`-v '${nodeModulesVolumeName('feature-a', 'api')}':'/app/node_modules'`);

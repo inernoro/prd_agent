@@ -58,7 +58,7 @@ import { JanitorService, defaultOrphanWorktreeFs } from '../../src/services/jani
 import { StateService } from '../../src/services/state.js';
 import { removeOwnedDirectory } from '../../src/services/worktree-directory-removal-process.js';
 import { readWorktreeDirectoryIdentity, WorktreeClaimHeldError } from '../../src/services/worktree-path-activity.js';
-import { reclaimDeploymentSources } from '../../src/services/deployment-source-retention.js';
+import { reclaimDeploymentSources, summarizeDeploymentSourceHolds } from '../../src/services/deployment-source-retention.js';
 import { deploymentNeedsSourceCheckout } from '../../src/services/worktree.js';
 import type { BranchEntry, BuildProfile } from '../../src/types.js';
 import { detectDatabaseInitialization, hasDatabaseInitializationSource } from '../../src/services/stack-detector.js';
@@ -237,5 +237,67 @@ describe('source requirement uses actual effective profile shape',()=>{
    const service=new WorktreeService({exec:async()=>result});
    expect(await service.needsDatabaseInitializationSource('/unused','a'.repeat(40),['.'])).toBe(true);
   }
+ });
+});
+
+
+describe('source retention observability preserves safe reclamation', () => {
+ function observe(f: Awaited<ReturnType<typeof sourceFixture>>, enabled = true) {
+  const state = new StateService(path.join(f.root, 'observation-state.json'));
+  state.addProject({id:'proj',slug:'proj',name:'Test',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()} as any);
+  state.addBranch(f.branch);
+  return new JanitorService(state, {enabled:false,worktreeTTLDays:7,diskWarnPercent:80,sweepIntervalSeconds:3600,
+   dockerPrune:false,imageRetention:false,orphanWorktrees:enabled}, f.base, undefined, () => null, undefined, undefined, f.files);
+ }
+ it('reports actual source deletion failures without copying paths or worker messages to snapshot', async () => {
+  const f=await sourceFixture(), leaf=await f.make();
+  f.files.removeDir=async()=> 'controlled worker failure containing private path';
+  const janitor=observe(f), report=await janitor.sweep(), summary=janitor.getSnapshot().lastSweep!.deploymentSources!;
+  expect(report.deploymentSources!.failed).toHaveLength(1);
+  expect(summary).toMatchObject({scanned:1,attempted:1,removed:0,failed:1,held:0});
+  expect(JSON.stringify(summary)).not.toContain(f.base);expect(JSON.stringify(summary)).not.toContain('private path');
+  expect(await fs.readFile(path.join(leaf,'source.txt'),'utf8')).toBe('immutable source');
+ });
+ it('keeps a held worker outcome separate from a deletion failure', async () => {
+  const f=await sourceFixture(),leaf=await f.make();f.files.removeDir=async()=>{throw new WorktreeClaimHeldError();};
+  const janitor=observe(f);await janitor.sweep();const summary=janitor.getSnapshot().lastSweep!.deploymentSources!;
+  expect(summary).toMatchObject({scanned:1,attempted:1,removed:0,failed:0,held:1});
+  expect(await fs.readFile(path.join(leaf,'source.txt'),'utf8')).toBe('immutable source');
+ });
+ it('distinguishes a completed empty source sweep from an unexecuted source sweep', async () => {
+  const f=await sourceFixture(),janitor=observe(f);
+  expect(janitor.getSnapshot().lastSweep).toBeNull();await janitor.sweep();
+  expect(janitor.getSnapshot().lastSweep!.deploymentSources).toEqual({scanned:0,attempted:0,removed:0,failed:0,held:0,deferred:0});
+  const disabled=observe(f,false);await disabled.sweep();expect(disabled.getSnapshot().lastSweep!.deploymentSources).toBeUndefined();
+ });
+ it('keeps a real ELOOP unknown while known ENOENT remains empty', async () => {
+  const f=await sourceFixture(),loop=path.join(f.root,'loop');await fs.symlink('loop',loop);
+  const result=await reclaimDeploymentSources({base:loop,projectIds:['proj'],branches:()=>[],files:f.files,nowMs:Date.now()});
+  expect(result.scanned).toBe(0);expect(result.held[loop]).toBeTruthy();expect(summarizeDeploymentSourceHolds(result.held)).toEqual({'filesystem-unknown':1});
+  const missing=await reclaimDeploymentSources({base:path.join(f.root,'missing'),projectIds:['proj'],branches:()=>[],files:f.files,nowMs:Date.now()});
+  expect(missing).toMatchObject({scanned:0,attempted:0,removed:[],failed:[],held:{}});
+ });
+ it.each(['project','bucket'])('records %s EACCES as held without dispatching deletion', async kind => {
+  const f=await sourceFixture(),leaf=await f.make(),blocked=kind==='project'?path.join(f.base,'proj'):path.join(f.base,'proj','.deployment-sources');
+  const original=fs.lstat.bind(fs);const read=vi.spyOn(fs,'lstat').mockImplementation(((value:any,...args:any[])=>
+   String(value)===blocked?Promise.reject(Object.assign(new Error('controlled access failure'),{code:'EACCES'})):(original as any)(value,...args)) as any);
+  try {const report=await f.sweep();expect(report.attempted).toBe(0);expect(report.removed).toEqual([]);expect(report.held[blocked]).toBeTruthy();
+   expect(summarizeDeploymentSourceHolds(report.held)).toEqual({'filesystem-unknown':1});
+   expect(await fs.readFile(path.join(leaf,'source.txt'),'utf8')).toBe('immutable source');
+  } finally {read.mockRestore();}
+ });
+ it('publishes bounded hold reasons and retains mounted, claimed and persistent-data leaves', async () => {
+  const f=await sourceFixture(),mounted=await f.make(),claimed=await f.make(),data=await f.make();
+  await fs.mkdir(path.join(data,'.cds-data'));await fs.writeFile(path.join(data,'.cds-data','db'),'keep');
+  const old=new Date(Date.now()-4*3600_000);await fs.utimes(data,old,old);
+  f.branch.services={source:{profileId:'source',status:'stopped',sourceCheckoutPath:claimed} as any};
+  f.files.listMountedHostPaths=async()=>[mounted];
+  const janitor=observe(f);await janitor.sweep();const summary=janitor.getSnapshot().lastSweep!.deploymentSources!;
+  expect(summary).toMatchObject({removed:0,failed:0,held:3,heldReasons:{'container-mounted':1,'age-or-claim-unconfirmed':1,'protected-or-unconfirmed':1}});
+  expect(Object.values(summary.heldReasons!).reduce((sum,n)=>sum+n,0)).toBe(summary.held);
+  expect(JSON.stringify(summary)).not.toContain(f.base);
+  expect(await fs.readFile(path.join(data,'.cds-data','db'),'utf8')).toBe('keep');
+  expect(await fs.readFile(path.join(mounted,'source.txt'),'utf8')).toBe('immutable source');
+  expect(await fs.readFile(path.join(claimed,'source.txt'),'utf8')).toBe('immutable source');
  });
 });

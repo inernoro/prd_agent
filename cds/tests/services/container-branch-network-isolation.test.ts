@@ -109,6 +109,7 @@ describe('ContainerService 分支级网络隔离', () => {
     // 隔离路径用 docker create（进程尚未启动），不是 docker run -d
     const runCmd = mock.commands.find((c) => c.includes('docker create'))!;
     expect(runCmd).toBeDefined();
+    expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
     expect(mock.commands.some((c) => c.includes('docker run -d'))).toBe(false);
     expect(runCmd).toContain('--network cds-br-feature-a');
     expect(runCmd).not.toContain('--network cds-proj-a');
@@ -341,6 +342,7 @@ describe('ContainerService 分支级网络隔离', () => {
     // 隔离 job 用 create→connect→start→wait→logs→rm，不是一次性 docker run --rm。
     const createCmd = mock.commands.find((c) => c.includes('docker create') && c.includes('cds-job-feature-a-apigateway'))!;
     expect(createCmd).toBeDefined();
+    expect(createCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
     expect(createCmd).toContain('--network cds-br-feature-a'); // 主网=分支网 → 能解析兄弟 app 别名
     expect(mock.commands.some((c) => c.includes('docker run --rm'))).toBe(false);
     // 连共享 infra 网（mysql/redis 可达）。
@@ -365,6 +367,7 @@ describe('ContainerService 分支级网络隔离', () => {
 
     const runCmd = mock.commands.find((c) => c.includes('docker run -d'))!;
     expect(runCmd).toContain('--network cds-proj-a');
+    expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
     expect(runCmd).not.toContain('--network cds-br-');
   });
 

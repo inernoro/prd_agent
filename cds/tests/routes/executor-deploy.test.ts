@@ -328,6 +328,20 @@ describe('Executor /exec/deploy', () => {
     expect(git(['rev-parse', 'HEAD'], repo)).toBe(A); expect(git(['remote', 'get-url', 'origin'], repo)).toBe(origin);
   });
 
+  it.each(['volume', 'bind'])('executor artifact source classification respects %s host dependencies', async kind => {
+    const f=artifactFixture();f.profiles.splice(1);
+    Object.assign(f.profiles[0], {cacheMounts:[{kind,hostPath:kind==='volume'?'owned-cache':'./config',containerPath:'/config'}]});
+    const sourcePath=path.join(tmpDir,'owned-source');fs.mkdirSync(sourcePath);
+    const prepare=vi.spyOn(WorktreeService.prototype,'prepareDeploymentSource').mockResolvedValue({
+      head:f.target,before:f.target,after:f.target.slice(0,7),afterFull:f.target,updated:false,sourcePath});
+    try {
+      const result=await postSse(server,'/exec/deploy',f.payload);
+      expect(result.events.some(event=>event.event==='complete')).toBe(true);
+      if(kind==='volume')expect(prepare).not.toHaveBeenCalled();
+      else {expect(prepare).toHaveBeenCalledTimes(1);expect(prepare).toHaveBeenCalledWith(config.repoRoot,f.entry.branch,f.entry.worktreePath,f.target,{kind:'managed-missing',worktreeBase:config.worktreeBase,projectId:f.entry.projectId||'default',branchId:f.entry.id});}
+    } finally {prepare.mockRestore();}
+  });
+
   it.each(['missing', 'local-unverified', 'unknown-target'])('旧Master直调%s在全部副作用前拒绝，保留旧服务/孤儿和分支运行态', async (failure) => {
     const f = artifactFixture(); const before = structuredClone(f.entry);
     if (failure === 'missing') mock.addResponsePatternFirst(/docker pull .*web/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));

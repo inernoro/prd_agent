@@ -1,3 +1,4 @@
+import { DOCKER_LOG_LIMIT_ARGS } from './docker-log-policy.js';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -99,7 +100,7 @@ export async function runMongoR2RecoveryDrill(opts: {
       fetchImpl: opts.fetchImpl,
     });
     const start = await runner('docker', [
-      'run', '-d', '--name', containerName,
+      'run', '-d', ...DOCKER_LOG_LIMIT_ARGS, '--name', containerName,
       '--network', 'none',
       '--mount', `type=bind,src=${archive},dst=/recovery/backup.archive.gz,readonly`,
       '--mount', `type=bind,src=${dataDir},dst=/data/db`,
