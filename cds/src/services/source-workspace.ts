@@ -27,7 +27,7 @@ export function withWritableSourceLayer(plan:DeploymentStoragePlan):DeploymentSt
     return plan;
   }
   const mounts=Object.freeze(plan.mounts.map(m=>m===source?Object.freeze({...m,target:SOURCE_STAGING_TARGET,workspaceTarget:workspace}):m));
-  return Object.freeze({version:1,mounts,digest:createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
+  return Object.freeze({...plan,version:1,mounts,digest:createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
 }
 
 /** POSIX/BusyBox primitives only. Do not follow an image's workspace symlink into data.

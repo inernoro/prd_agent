@@ -278,3 +278,18 @@ describe('ordinary preset UI compatibility still allocates every new persistent 
   const r=await post({presetIds:['mysql'],initializeStorage:'new-only'},'p',route);expect(r.status).toBe(409);expect(commands).toHaveLength(count);expect(state.getStorageBirthsForService('p','mysql-2')).toEqual([]);
  });
 });
+
+it('ordinary infra PUT cannot erase published volume ownership and preserves status edits',async()=>{
+ expect((await post(input())).status).toBe(201);const before=structuredClone(state.getInfraServiceForProjectAndId('p','mysql')),count=commands.length;
+ const url=`http://127.0.0.1:${(server.address() as any).port}/api/infra/mysql?project=p`;
+ const r=await fetch(url,{method:'PUT',headers:{'content-type':'application/json','x-owned-project':'p'},body:JSON.stringify({volumes:[]}),signal:AbortSignal.timeout(3000)});
+ expect(r.status).toBe(409);expect(await r.text()).toContain('storage_retained');expect(state.getInfraServiceForProjectAndId('p','mysql')).toEqual(before);expect(commands).toHaveLength(count);
+ const safe=await fetch(url,{method:'PUT',headers:{'content-type':'application/json','x-owned-project':'p'},body:JSON.stringify({name:'renamed',status:'stopped'}),signal:AbortSignal.timeout(3000)});
+ expect(safe.status).toBe(200);expect(state.getInfraServiceForProjectAndId('p','mysql')?.volumes).toEqual(before?.volumes);expect(commands).toHaveLength(count);
+});
+
+it('unknown custom Docker VOLUME is rejected before publishing a poisoned service',async()=>{
+ const exec=vi.mocked(shell.exec).getMockImplementation()!;vi.mocked(shell.exec).mockImplementation(async(c,o)=>c.startsWith('docker image inspect')?{exitCode:0,stderr:'',stdout:JSON.stringify(['sha256:'+'b'.repeat(64),{'/custom-data':{}}])}:exec(c,o));
+ const r=await post({id:'custom-stateful',projectId:'p',dockerImage:'example/custom-db:1',containerPort:1234});
+ expect(r.status).toBe(409);expect(state.getInfraServiceForProjectAndId('p','custom-stateful')).toBeUndefined();expect(commands.some(c=>/^docker (create|start|run|stop|rm) /.test(c))).toBe(false);
+});

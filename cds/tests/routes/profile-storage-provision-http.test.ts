@@ -10,6 +10,7 @@ import {ContainerService} from '../../src/services/container.js';
 import {WorktreeService} from '../../src/services/worktree.js';
 import {BranchOperationCoordinator} from '../../src/services/branch-operation-coordinator.js';
 import {createBranchRouter} from '../../src/routes/branches.js';
+import {createPendingImportRouter} from '../../src/routes/pending-import.js';
 import {storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import type {CdsConfig,IShellExecutor} from '../../src/types.js';
 let root:string,state:StateService,server:http.Server,commands:string[],volumes:Map<string,any>,shell:IShellExecutor,coordinator:BranchOperationCoordinator,unknown:boolean,nodes:any[];
@@ -23,6 +24,7 @@ beforeEach(async()=>{
  const config={repoRoot:root,worktreeBase:root,storageInstanceId:'own',dockerNetwork:'own',portStart:10001,masterPort:9900,workerPort:5500,sharedEnv:{},jwt:{secret:'own-fixture',issuer:'own'}} as CdsConfig;
  const app=express();app.use(express.json());app.use((req,_res,next)=>{(req as any).cdsProjectKey={projectId:String(req.headers['x-own-project']||'p'),keyId:'fixture'};next()});
  app.use('/api',createBranchRouter({stateService:state,containerService:new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector),worktreeService:new WorktreeService(shell,config),shell,config,branchOperationCoordinator:coordinator,registry:{getAll:()=>nodes,getOnline:()=>nodes,selectExecutor:()=>nodes[0]||null} as any}));
+ app.use('/api',createPendingImportRouter({stateService:state}));
  server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
 });
 afterEach(async()=>{await new Promise<void>(r=>server.close(()=>r()));vi.restoreAllMocks();vi.unstubAllGlobals();await state.flush();fs.rmSync(root,{recursive:true,force:true});});
@@ -119,4 +121,29 @@ it('orphan cleanup retains storage-bearing owner while only reading remote refs'
  expect((await post()).status).toBe(201);state.removeBranch('b');const before=structuredClone(state.getBranch('a')),exec=vi.mocked(shell.exec).getMockImplementation()!;
  vi.mocked(shell.exec).mockImplementation(async(c,o)=>{if(c.includes('git fetch origin --prune')||c.startsWith('git for-each-ref')){commands.push(c);return{exitCode:0,stdout:c.startsWith('git for-each-ref')?'main\n':'',stderr:''}}return exec(c,o)});const count=commands.length;
  const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/cleanup-orphans?project=p`,{method:'POST',headers:{'x-own-project':'p','content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(3000)});expect(await r.text()).toContain('storage_retained_branch_delete_refused');expect(state.getBranch('a')).toEqual(before);expect(commands.slice(count).every(c=>c.includes('git fetch')||c.includes('git for-each-ref'))).toBe(true);expect(volumes.size).toBe(1);
+});
+
+it.each(['delete','update','drop-extra','copy-extra','import','import-init'])('HTTP %s preserves the original private declaration before snapshot, runtime or allocation',async kind=>{
+ const original=structuredClone(state.getBuildProfile('app')!);
+ if(kind.includes('extra')){state.removeBuildProfile('app');state.setBranchExtraProfiles('a',[original]);}
+ expect((await post()).status).toBe(201);
+ const before=JSON.stringify(state.getState()),count=commands.length,snapshots=vi.spyOn(state,'createConfigSnapshot');
+ const bad={...original,cacheMounts:[{kind:'volume',hostPath:'different',containerPath:'/data'}]};
+ const [route,method,body]=kind==='delete'?['/build-profiles/app','DELETE',undefined]
+  :kind==='update'?['/build-profiles/app','PUT',bad]
+  :kind==='drop-extra'?['/branches/a/extra-services','PUT',{extraProfiles:[]}]
+  :kind==='copy-extra'?['/branches/a/copy-config-from/b','POST',{}]
+  :[kind==='import'?'/import-config':'/import-and-init','POST',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[{...original,id:'first'},bad],infraServices:[{id:'new-db',dockerImage:'mysql:8.0',containerPort:3306,env:{MYSQL_ROOT_PASSWORD:'fixture'}}]}}];
+ const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api${route}`,{method,headers:{'x-own-project':'p','content-type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(3000)});
+ expect(r.status).toBe(409);expect(await r.text()).toContain('storage_retained');
+ expect(JSON.stringify(state.getState())).toBe(before);expect(snapshots).not.toHaveBeenCalled();expect(commands).toHaveLength(count);expect(volumes.size).toBe(1);
+});
+
+it('approved Compose rejects the whole batch before an earlier safe profile is added',async()=>{
+ state.getProject('p')!.legacyFlag=true;expect((await post()).status).toBe(201);
+ const yaml='services:\n  first:\n    image: node:20\n    working_dir: /app\n    volumes: ["./first:/app"]\n    command: node first.js\n    ports: ["3001"]\n  app:\n    image: node:20\n    working_dir: /app\n    command: node app.js\n    ports: ["8080"]\n    volumes: ["./app:/app", "new-data:/data"]\n';
+ const submit=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/projects/p/pending-import`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({agentName:'own-test',composeYaml:yaml}),signal:AbortSignal.timeout(3000)});
+ const submitted=await submit.json() as any;expect(submit.status,JSON.stringify(submitted)).toBe(201);const id=submitted.importId,before=JSON.stringify(state.getState()),count=commands.length;
+ const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/pending-imports/${id}/approve`,{method:'POST',headers:{'content-type':'application/json'},body:'{"force":true}',signal:AbortSignal.timeout(3000)});
+ expect(r.status).toBe(409);expect(await r.text()).toContain('storage_retained');expect(state.getBuildProfile('first')).toBeUndefined();expect(JSON.stringify(state.getState())).toBe(before);expect(commands).toHaveLength(count);expect(volumes.size).toBe(1);
 });

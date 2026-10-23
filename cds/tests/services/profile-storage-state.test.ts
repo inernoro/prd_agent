@@ -63,3 +63,30 @@ describe('branch-private P with real State and JSON ACK',()=>{
  });
 
 });
+
+it.each(['delete-base','move-base','move-id','change-mounts','drop-extra','replace-extra','shadow-extra'])('preserves retained private declaration for %s',async kind=>{
+ const f=own();if(kind.includes('extra')){state.removeBuildProfile('app');state.setBranchExtraProfiles('a',[f.profile]);}
+ await f.run();const before=JSON.stringify(state.getState()),b=state.getBranch('a')!;
+ const mutate=()=>{switch(kind){
+  case 'delete-base':return state.removeBuildProfile('app');
+  case 'move-base':return state.updateBuildProfile('app',{projectId:'elsewhere'});
+  case 'move-id':return state.updateBuildProfile('app',{id:'other-id'});
+  case 'change-mounts':return state.updateBuildProfile('app',{cacheMounts:[{kind:'volume',hostPath:'different',containerPath:'/data'}]});
+  case 'drop-extra':return state.setBranchExtraProfiles('a',[]);
+  case 'replace-extra':return state.setBranchExtraProfiles('a',[{...f.profile,cacheMounts:[{kind:'volume',hostPath:'different',containerPath:'/data'}]}]);
+
+  case 'shadow-extra':return state.addBuildProfile({...f.profile,name:'shadow'});
+ }};
+ expect(mutate).toThrow('storage_retained');expect(JSON.stringify(state.getState())).toBe(before);
+ expect(state.resolvePublishedProfileStorage(b,f.profile).cacheMounts).toHaveLength(1);expect(f.volumes.size).toBe(1);
+});
+it('retained private storage still permits unrelated env and name edits',async()=>{
+ const f=own();await f.run();state.updateBuildProfile('app',{name:'renamed',env:{SAFE:'yes'}});state.setBranchProfileOverride('a','app',{env:{SAFE:'branch'}});
+ expect(state.resolvePublishedProfileStorage(f.entries[0],{...f.profile,env:{SAFE:'branch'}}).cacheMounts).toHaveLength(1);
+});
+
+it('a cold historical orphan cannot freeze an unrelated project profile write',async()=>{
+ const f=own();await f.run();const raw=state.getState() as any;raw.buildProfiles=raw.buildProfiles.filter((p:any)=>p.id!=='app');state.save();await state.flush();
+ const cold=new StateService(path.join(root,'state.json'));cold.load();cold.addProject({id:'q',slug:'q',name:'other',kind:'git',createdAt:'2026-10-24',updatedAt:'2026-10-24'});
+ expect(()=>cold.addBuildProfile({...f.profile,id:'other',projectId:'q'})).not.toThrow();expect(cold.getBuildProfile('other')?.projectId).toBe('q');expect(()=>cold.addBuildProfile({...f.profile})).toThrow('storage_retained');expect(cold.getProfileStorageBirths(f.target(f.entries[0]))).toHaveLength(1);await cold.flush();
+});

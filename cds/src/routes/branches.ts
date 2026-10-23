@@ -11959,6 +11959,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(400).json({ error: `来源分支 "${source.id}" 属于项目 "${source.projectId}",不能跨项目拷贝配置(profileId 引用与隔离语义均为项目内)` });
       return;
     }
+    try { stateService.assertProfileStorageDeclarationsPreserved([{...entry,
+      profileOverrides:structuredClone(source.profileOverrides || {}),extraProfiles:structuredClone(source.extraProfiles || [])}]); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     // 拷贝前自动快照(含分支层),误拷可回滚
     const snapshot = stateService.createConfigSnapshot({
       trigger: 'pre-destructive',
@@ -18397,7 +18400,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       .map((p) => p.id)
       .filter((id) => !sanitizedIds.has(id) && entry.services[id] != null);
     const hasDestructiveRemoval = destructivelyDroppedIds.length > 0;
-    stateService.setBranchExtraProfiles(entry.id, sanitized);
+    try { stateService.setBranchExtraProfiles(entry.id, sanitized); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     let updated = stateService.getBranch(entry.id)!;
     // 一步到位:声明/改额外服务是纯配置变更,不会自动重建已在运行的分支(用户实测痛点)。
     // 带 ?redeploy=1 时,持久化后触发一次真正的分支重部署(走和 webhook 自调相同的 localhost 自 POST
@@ -19039,7 +19043,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message.startsWith('storage_retained_') ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -19180,7 +19184,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
       res.json({ message: '已删除', skippedBusyCount: skippedBusy.length, skippedBusy });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message.startsWith('storage_retained_') ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -21586,6 +21590,11 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         const plan = infraStoragePlan(service,config);
         await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertNewStorageCurrent);
       } else {
+        // Inspect actual image VOLUME declarations before reporting creation success.
+        // This is observation/pull only; native container and storage creation stay separate.
+        assertNewStorageCurrent();
+        await containerService.preflightInfraStorage(service,{assertCurrent:assertNewStorageCurrent});
+        assertNewStorageCurrent();
         stateService.addInfraService(service);
         stateService.save();
       }
@@ -21594,7 +21603,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       res.status(201).json(volumeWarning ? { service: view, warning: volumeWarning } : { service: view });
     } catch (err) {
       if ((req.body as any)?.initializeStorage === 'new-only') { res.status(409).json({error:'storage_provision_unconfirmed'}); return; }
-      res.status(500).json({ error: (err as Error).message });
+      res.status(err instanceof UnsafeDeploymentStorageError ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -21615,7 +21624,7 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       stateService.save();
       res.json({ message: '已更新' });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message.startsWith('storage_retained_') ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
@@ -22191,6 +22200,8 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
         try { for (const project of stateService.getProjects()) stateService.assertProjectStorageRemovalAllowed(project.id); }
         catch (error) { res.status(409).json({ error: 'storage_retained_service_delete_refused', message: (error as Error).message }); return; }
       }
+      try { stateService.assertBuildProfileBatchStorageAllowed(Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : []); }
+      catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
       // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
       const snapshotLabel = cleanMode === 'replace-all'
         ? `导入前（replace-all）· ${new Date().toLocaleString('zh-CN')}`
@@ -22577,6 +22588,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       return;
     }
 
+    try { stateService.assertBuildProfileBatchStorageAllowed(Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : []); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
+
     // ── Start SSE stream ──
     initSSE(res);
     const send = (step: string, status: string, title: string) => {
@@ -22592,7 +22606,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const initProject=stateService.getProject(initInfraProjectId),initInstance=config.storageInstanceId,initRoot=config.repoRoot;
       const originalEnv=storageProvisionDigest(stateService.getCustomEnv(initInfraProjectId)),initProjectDigest=storageProvisionDigest(initProject);
       const expectedInfra=new Map(stateService.getInfraServicesForProject(initInfraProjectId).map(service=>[service.id,{service,digest:storageProvisionDigest(service)}]));
-      const assertInitCurrent=()=>{const rows=stateService.getInfraServicesForProject(initInfraProjectId);if(req.aborted||res.destroyed||!initProject||stateService.getProject(initInfraProjectId)!==initProject||initProject.paused||storageProvisionDigest(initProject)!==initProjectDigest||assertProjectAccess(req as any,initInfraProjectId)||config.storageInstanceId!==initInstance||config.repoRoot!==initRoot||storageProvisionDigest(stateService.getCustomEnv(initInfraProjectId))!==originalEnv||rows.length!==expectedInfra.size||rows.some(service=>expectedInfra.get(service.id)?.service!==service||expectedInfra.get(service.id)?.digest!==storageProvisionDigest(service)))throw new Error('storage_provision_unconfirmed');};
+      const assertInitCurrent=()=>{stateService.assertBuildProfileBatchStorageAllowed(Array.isArray(cfg.buildProfiles) ? cfg.buildProfiles as BuildProfile[] : []);const rows=stateService.getInfraServicesForProject(initInfraProjectId);if(req.aborted||res.destroyed||!initProject||stateService.getProject(initInfraProjectId)!==initProject||initProject.paused||storageProvisionDigest(initProject)!==initProjectDigest||assertProjectAccess(req as any,initInfraProjectId)||config.storageInstanceId!==initInstance||config.repoRoot!==initRoot||storageProvisionDigest(stateService.getCustomEnv(initInfraProjectId))!==originalEnv||rows.length!==expectedInfra.size||rows.some(service=>expectedInfra.get(service.id)?.service!==service||expectedInfra.get(service.id)?.digest!==storageProvisionDigest(service)))throw new Error('storage_provision_unconfirmed');};
       assertInitCurrent();
       const initEnv={...stateService.getCustomEnv(initInfraProjectId),...(cfg.envVars as Record<string,string>||{})};
       const infraDefs=resolveInfraDefs(cfg,initializeStorage==='new-only'),reservedInfraPorts=new Set<number>();
