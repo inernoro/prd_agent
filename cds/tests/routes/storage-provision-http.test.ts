@@ -133,6 +133,24 @@ describe('explicit existing-project presets storage P',()=>{
   const r=await post({name:'Fresh preset test',infraPresets:['mysql']},'', '/api/projects');expect(r.status).toBe(201);
   const projectId=r.body.project.id;expect(state.getStorageBirthsForService(projectId,'mysql')).toHaveLength(1);expect(state.getStorageBirthsForService(projectId,'mysql')[0].stage).toBe('published');expect(state.getInfraServiceForProjectAndId(projectId,'mysql')).toBeDefined();expect(native.size).toBe(1);
  });
+ it('fresh Mongo preset allocates and admits both image-declared volumes before any runtime create',async()=>{
+  const native=new Map<string,any>();
+  vi.mocked(shell.exec).mockImplementation(async(c)=>{
+   commands.push(c);if(c.startsWith('docker info'))return{exitCode:0,stderr:'',stdout:'own-daemon'};
+   const n=c.split(' ').at(-1)!.replace(/^'|'$/g,'');
+   if(c.startsWith('docker volume inspect'))return native.has(n)?{exitCode:0,stderr:'',stdout:JSON.stringify([native.get(n)])}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};
+   if(c.startsWith('docker volume create')){const row=state.getStorageBirth(n)!;native.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stderr:'',stdout:n};}
+   if(c.startsWith('docker image inspect'))return{exitCode:0,stderr:'',stdout:JSON.stringify(['sha256:'+'a'.repeat(64),{'/data/db':{},'/data/configdb':{}}])};
+   return{exitCode:0,stderr:'',stdout:''};
+  });
+  const r=await post({presetIds:['mongodb']},'p','/api/projects/p/infra-presets');expect(r.status).toBe(200);
+  const service=state.getInfraServiceForProjectAndId('p','mongodb')!;
+  expect(service.volumes!.map(m=>m.containerPath)).toEqual(['/data/db','/data/configdb']);expect(native.size).toBe(2);
+  expect(state.getStorageBirthsForService('p','mongodb').map(b=>b.stage)).toEqual(['published','published']);
+  const admitted=new ContainerService(shell,config,{storageBirthRequirements:plan=>state.storageBirthRequirements(plan)},undefined,undefined,undefined,unitBindMountInspector);
+  await expect(admitted.preflightInfraStorage(service)).resolves.toBeDefined();
+  expect(commands.some(c=>/^docker (create|run|start|rm) /.test(c))).toBe(false);
+ });
  it('new project P failure retains original project/network and held birth instead of rollback',async()=>{
   failInspect=true;const r=await post({name:'Failed fresh P',infraPresets:['mysql']},'', '/api/projects');expect(r.status).toBe(409);expect(r.body.recoveryRequired).toBe(true);expect(state.getProject(r.body.project.id)).toBeDefined();expect(commands.some(c=>c.startsWith('docker network rm'))).toBe(false);expect(commands.some(c=>c.includes('volume rm'))).toBe(false);
  });

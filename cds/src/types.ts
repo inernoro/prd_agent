@@ -2255,6 +2255,8 @@ export interface CdsState {
   customEnv: CustomEnvStore;
   /** CDS-managed infrastructure services (databases, caches, etc.) */
   infraServices: InfraService[];
+  /** Stable platform storage owner; accepted durably during boot before runtime admission. */
+  storageInstanceId?: string;
   storageBirths?: Record<string, import('./services/storage-provision.js').StorageBirth>;
   storageProvisionPublications?: Record<string, {service: InfraService; names: string[]; operationId: string}>;
   /** Project-scoped scheduled jobs owned by CDS. */

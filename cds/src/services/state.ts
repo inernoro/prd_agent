@@ -1108,6 +1108,38 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   }
 
 
+  /** Upgrade/default boot selects one stable storage owner, never a new owner over old births. */
+  async ensureStorageInstanceId(configured?: string): Promise<string> {
+    const previous = this.state.storageInstanceId;
+    const historical: Array<string | undefined> = Object.values(this.state.storageBirths || {}).map(row => row.binding?.instanceId);
+    const collect = (mounts?: readonly {storage?: {instanceId?: string}}[]) => {
+      for (const mount of mounts || []) if (mount.storage !== undefined) historical.push(mount.storage?.instanceId);
+    };
+    for (const service of this.state.infraServices || []) collect(service.volumes);
+    for (const row of Object.values(this.state.storageProvisionPublications || {})) collect(row.service.volumes);
+    for (const row of this.storageProvisionDrafts.values()) collect(row.service.volumes);
+    for (const profile of this.state.buildProfiles || []) collect(profile.cacheMounts);
+    for (const branch of Object.values(this.state.branches || {})) {
+      for (const profile of Object.values(branch.profileOverrides || {})) collect((profile as Partial<BuildProfile>).cacheMounts);
+      for (const profile of branch.extraProfiles || []) collect(profile.cacheMounts);
+    }
+    for (const row of Object.values(this.state.profileStorageBindings || {})) collect(row.mounts);
+    for (const row of Object.values(this.state.profileStoragePublications || {})) collect(row.binding.mounts);
+    for (const row of this.profileStorageDrafts.values()) collect(row.mounts);
+    const known = [configured, previous, ...historical].filter(value => value !== undefined);
+    if (known.some(value => typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(value))
+        || new Set(known).size > 1 || historical.some(value => value === undefined)) {
+      throw new Error('storage_instance_identity_unconfirmed');
+    }
+    const selected = configured ?? previous ?? historical[0] ?? crypto.randomUUID().replace(/-/g, '');
+    this.state.storageInstanceId = selected;
+    // Retry the same identity after a synchronous save failure; RAM alone is never an ACK.
+    this.save(HINT_GLOBAL);
+    // An unknown/failed ACK prevents startup, so no allocator can use an unconfirmed owner.
+    await this.flush();
+    return selected;
+  }
+
   private profileStorageDrafts = new Map<string, ProfileStorageBinding>();
   private committingProfileStorage = new Set<string>();
   getProfileStorageDeclaration(target: ProfileStorageTarget): {

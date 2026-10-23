@@ -138,7 +138,7 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     description: '文档型数据库，自动注入 MONGODB_URL 连接串。',
     dockerImage: 'mongo:7',
     containerPort: 27017,
-    volumePaths: ['/data/db'],
+    volumePaths: ['/data/db', '/data/configdb'],
     supportsDbName: true,
     supportsInitSql: true,
     secretKeys: ['password'],

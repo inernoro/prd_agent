@@ -2088,6 +2088,7 @@ async function initStateService(): Promise<void> {
 }
 
 await initStateService();
+config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
 await restoreDeploymentMemoryReservations(stateService.getAllBranches(), branch => stateService.getEffectiveProfilesForBranch(branch),
   { shell: isPreviewInstance() ? undefined : shell });
 
