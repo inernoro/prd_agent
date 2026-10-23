@@ -1,3 +1,7 @@
+import {ProfileStorageProvisionService,profileStorageBranchIdentity} from '../services/profile-storage-provision.js';
+import { StorageProvisionService,storageProvisionDigest } from '../services/storage-provision.js';
+import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
+import { UnsafeDeploymentStorageError } from '../services/deployment-storage-plan.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { createPreviewAddressRouter } from './preview-address.js';
 import { preserveServingRuntime, runtimeRef } from '../services/service-runtime.js';
@@ -1802,6 +1806,11 @@ function buildPrebuiltReuseInputs(
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
+  options = {...options, sourceCheckout: options.sourceCheckout ? {...options.sourceCheckout} : undefined};
+  [options.profile] = await options.containerService.preflightDeploymentStorage(
+    {...options.entry, worktreePath: options.sourceCheckout?.path || options.entry.worktreePath}, [options.profile],
+    {assertCurrent:options.assertCurrent,sourceCommitSha:options.sourceCheckout?.commitSha || options.artifactCommitSha,
+      customEnv:options.customEnv,operationId:options.operationId || undefined,onOutput:(_id,chunk)=>options.onOutput?.(chunk)});
   // 分支独立库「时间点克隆」初始化（数据库隔离收敛 4）：容器起来之前先把库准备好。
   // 幂等：目标库已存在就跳过；克隆失败抛错让部署如实失败，不让应用对着半份数据启动。
   options.assertCurrent?.(`before-db-init-${options.profile.id}`);
@@ -3724,7 +3733,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
         const updated = stateService.getInfraServiceForProjectAndId(projectId, current.id);
         if (!updated) throw err;
-        current = updated;
+        // Only the assigned port changes; retain the accepted image/mount receipt across retries.
+        current.hostPort = nextPort;
       }
     }
     return current;
@@ -3806,6 +3816,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
    *    `/exec` middleware accepts the call. This token is the shared cluster
    *    secret minted during bootstrap.
    */
+  // Master-local profile P is not a migration protocol. Include held births and
+  // publication holds, even when that profile was removed from the current graph.
+  function hasMasterLocalProfileStorage(entry: BranchEntry): boolean {
+    const projectId = entry.projectId || 'default';
+    const snapshot = stateService.getState();
+    const ownsTarget = (target: { projectId: string; branchId: string }) =>
+      target.projectId === projectId && target.branchId === entry.id;
+    return Object.values(snapshot.profileStorageBindings || {}).some(row => ownsTarget(row.target))
+      || Object.values(snapshot.profileStoragePublications || {}).some(row => ownsTarget(row.binding.target))
+      || Object.values(snapshot.storageBirths || {}).some(row => row.binding.scope === 'branch-private'
+        && row.binding.projectId === projectId && row.binding.branchId === entry.id);
+  }
+
   async function proxyDeployToExecutor(
     executor: ExecutorNode,
     entry: BranchEntry,
@@ -3825,6 +3848,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       env?: Record<string, string>;
     } = {},
   ): Promise<'completed' | 'failed'> {
+    // Refuse before ownership/status changes, SSE or the remote deploy request.
+    if (hasMasterLocalProfileStorage(entry)) {
+      const message = 'storage_provision_target_daemon_unconfirmed';
+      failDeploymentRun(context.deploymentRunId, message, 'storage-preflight');
+      res.status(409).json({ error: message });
+      return 'failed';
+    }
     // SSE headers on client side — same shape the local deploy uses so the
     // frontend doesn't need to know whether it's local or remote.
     res.writeHead(200, {
@@ -4464,6 +4494,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   async function runDatabaseInitializationForDeploy(params: {
     entry: BranchEntry;
+    /** Effective profiles already admitted to fixed runtime artifacts by storage preflight. */
     profiles: BuildProfile[];
     requestId?: string;
     operationId?: string;
@@ -4477,9 +4508,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (profiles.length === 0) return;
     const projectId = entry.projectId || 'default';
     const customEnv = params.customEnv || getMergedEnv(projectId, entry.id);
-    const firstEffective = resolveEffectiveProfile(profiles[0], entry);
+    const firstEffective = profiles[0];
     const scanTargets: Array<{ profile: BuildProfile; scanDir: string; label: string; root: boolean }> = profiles.map((profile) => {
-      const effective = resolveEffectiveProfile(profile, entry);
+      const effective = profile;
       return {
         profile: effective,
         scanDir: path.resolve(entry.worktreePath, effective.workDir || '.'),
@@ -4490,7 +4521,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const rootDir = path.resolve(entry.worktreePath);
     if (!scanTargets.some((target) => target.scanDir === rootDir)) {
       scanTargets.push({
-        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app' },
+        profile: { ...firstEffective, workDir: '.', containerWorkDir: firstEffective.containerWorkDir || '/app',
+          // A component artifact contains only its component checkout. Root-level
+          // migrations keep the admitted image identity but read a separate root
+          // source copy; never retag or rebuild the already admitted app artifact.
+          ...(firstEffective.localArtifact ? { prebuiltImage: false, localArtifact: undefined, managedBuild: undefined } : {}),
+        },
         scanDir: rootDir,
         label: '仓库根目录',
         root: true,
@@ -12619,21 +12655,53 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     try {
-      const profile = resolveEffectiveProfile(baseProfile, entry);
-      const result = await containerService.runProfileCommand(
-        entry,
-        profile,
-        rawCommand,
-        undefined,
-        getMergedEnv(entry.projectId || 'default', entry.id),
-        {
-          requestId,
-          operationId: branchOperationLease?.operationId || undefined,
-          actor: resolveActorFromRequest(req),
-          trigger: triggerFromRequest(req),
-          timeoutMs: profile.buildTimeout ?? 600_000,
-        },
-      );
+      const profile = structuredClone(resolveEffectiveProfile(baseProfile, entry));
+      const customEnv = {...getMergedEnv(entry.projectId || 'default', entry.id)};
+      const originalProject = stateService.getProject(entry.projectId || 'default');
+      const manualFacts = () => JSON.stringify({
+        branch: [entry.id, entry.projectId, entry.branch, entry.worktreePath, entry.executorId],
+        config: [config.repoRoot, config.storageInstanceId, stateService.getProjectRepoRoot(entry.projectId, config.repoRoot)],
+        profile: stateService.getEffectiveProfilesForBranch(entry).find(row => row.id === profile.id),
+        env: getMergedEnv(entry.projectId || 'default', entry.id),
+      });
+      const acceptedFacts = manualFacts();
+      const assertCurrent = (step: string) => {
+        assertBranchOperationCurrent(branchOperationLease, step);
+        if (req.aborted || res.destroyed || originalProject?.paused || stateService.getBranch(id) !== entry
+          || stateService.getProject(entry.projectId || 'default') !== originalProject
+          || manualFacts() !== acceptedFacts) throw new Error('手动迁移受理的分支或配置已变化，已拒绝继续');
+      };
+      const run = async (runEntry: BranchEntry, runProfile: BuildProfile) => {
+        assertCurrent('manual migration before run');
+        const result = await containerService.runProfileCommand(runEntry, runProfile, rawCommand, undefined, customEnv, {
+          requestId, operationId: branchOperationLease?.operationId || undefined,
+          actor: resolveActorFromRequest(req), trigger: triggerFromRequest(req),
+          timeoutMs: runProfile.buildTimeout ?? 600_000, assertCurrent,
+        });
+        assertCurrent('manual migration after run');
+        return result;
+      };
+      const result = deploymentNeedsSourceCheckout([profile])
+        ? await worktreePathActivity.withClaim([entry.worktreePath, WorktreeService.deploymentSourceRootFor(entry.worktreePath)], async () => {
+          assertCurrent('manual migration before local HEAD');
+          // Explicit manual migration means this accepted checkout HEAD, never remote latest.
+          const head = await shell.exec("git rev-parse --verify 'HEAD^{commit}'", {
+            cwd: entry.worktreePath, timeout: 3000,
+            beforeStart: () => assertCurrent('manual migration HEAD slot'),
+          });
+          assertCurrent('manual migration after local HEAD');
+          const acceptedHead = head.stdout.trim().toLowerCase();
+          if (head.exitCode !== 0 || !/^[a-f0-9]{40}$/.test(acceptedHead)) throw new Error('当前分支提交无法确认，已拒绝手动迁移');
+          const source = await worktreeService.prepareDeploymentSource(stateService.getProjectRepoRoot(entry.projectId, config.repoRoot), entry.branch, entry.worktreePath, acceptedHead);
+          assertCurrent('manual migration source prepared');
+          if (source.afterFull !== acceptedHead) throw new Error('手动迁移源码未匹配受理提交');
+          const sourceEntry = {...entry, worktreePath: source.sourcePath, githubCommitSha: acceptedHead, ciTargetSha: undefined};
+          const [acceptedProfile] = await containerService.preflightDeploymentStorage(sourceEntry, [profile], {
+            sourceCommitSha: acceptedHead, customEnv, operationId: branchOperationLease?.operationId || undefined, assertCurrent,
+          });
+          assertCurrent('manual migration storage accepted');
+          return run(sourceEntry, acceptedProfile);
+        }) : await run({...entry}, profile);
       const output = maskSecretsText(combinedOutput(result), { mask: true });
       completeBranchOperation(branchOperationLease, result.exitCode === 0 ? 'completed' : 'failed');
       res.status(result.exitCode === 0 ? 200 : 500).json({
@@ -13439,48 +13507,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 误杀对方的 check run（Codex P2，PR #1235）。
       openedCheckRunId = await checkRunRunner.ensureOpen(entry);
 
-      // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
-      // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
-      // deploy-finalize（pull + infra + db-init + 整个构建循环之后）才拆孤儿，若这些 fallible 步骤在
-      // PUT /extra-services?redeploy=1 已落库缩短后的 extraProfiles 之后中途 abort，被移除服务的容器与
-      // entry.services 行就留在原地、却没有任何有效 profile 元数据（pathPrefixes 等路由信息消失而旧容器仍跑）。
-      // executor 路径已把这步上移到 git pull 之前；本地路径同款前移。profiles 非空已由上方 profiles.length===0
-      // 分支保证（空清单走专门的就地清空路径），不会误删全部。fencing-safe：remove 前后各 assertCurrent。
-      {
-        const desiredIds = new Set(profiles.map((p) => p.id));
-        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
-        if (orphans.length > 0) {
-          const oActor = resolveActorFromRequest(req);
-          const oTrigger = triggerFromRequest(req);
-          for (const [sid, svc] of orphans) {
-            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan before ${sid}`);
-            logEvent({
-              step: 'remove-orphan-service', status: 'running',
-              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
-              detail: { profileId: sid, status: svc.status, container: svc.containerName },
-              timestamp: new Date().toISOString(),
-            });
-            try {
-              await containerService.remove(svc.containerName, {
-                projectId: entry.projectId, branchId: entry.id, profileId: sid,
-                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
-                operationGeneration: branchOperationLease?.generation,
-                assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
-                actor: oActor, trigger: oTrigger,
-                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
-                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
-              });
-            } catch (err) {
-              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
-            }
-            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan after ${sid}`);
-            delete entry.services[sid];
-            stateService.save();
-            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
-          }
-        }
-      }
-
       // 指定不可变版本时不触碰源码；普通部署仍先 pull，再按 commit + configHash 查找可复用版本。
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
@@ -13574,6 +13600,47 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
+      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
+      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
+      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
+        const refreshedEffectiveProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
+        deploymentConfigHash = deploymentVersionService.computeConfigHash(
+          refreshedEffectiveProfiles,
+          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
+        );
+        const reusable = deploymentVersionService.findReusable({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: deployedCommitSha,
+          configHash: deploymentConfigHash,
+        });
+        const reusableProfiles = reusable && materializeAdmittedReusableVersion(reusable);
+        if (reusable && reusableProfiles) {
+          selectedDeploymentVersion = reusable;
+          profiles = reusableProfiles;
+          logEvent({
+            step: 'version-reuse',
+            status: 'done',
+            title: `复用不可变版本 ${reusable.id}，跳过源码构建`,
+            detail: { versionId: reusable.id, commitSha: reusable.commitSha, configHash: reusable.configHash },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+      if (selectedDeploymentVersion && deploymentRunService && deploymentRun && deploymentConfigHash) {
+        deploymentRunService.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
+      }
+
+      // ── Compute startup layers (topological sort by dependsOn) ──
+      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
+      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
+      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
+      const deployProjectId = entry.projectId || 'default';
+      const deployProfileSuffix = deployProjectId === 'default'
+        ? ''
+        : `-${deployProject?.slug || deployProjectId}`;
+      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
+
       // ── Ensure required infrastructure is running ──
       // A profile can depend on project infra such as mongodb/redis and use
       // env templates like ${CDS_MONGODB_PORT}. Those CDS_* vars only exist
@@ -13600,6 +13667,57 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const actualInfraState = await containerService.discoverInfraContainers();
       const requiredInfraIds = computeRequiredInfra(profiles, projectInfra, actualInfraState);
       const startedInfraIds = new Set<string>();
+      const storageProfiles = profiles.map(candidate => admittedArtifactProfile(selectedDeploymentVersion ? candidate
+        : agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(candidate,inputBranch()))
+        : resolveEffectiveProfile(candidate,inputBranch()),deploymentInput.artifactAdmission));
+      const storageAccepted = await containerService.preflightDeploymentStorage(deploymentSourceEntry,storageProfiles,
+        {assertCurrent:step=>assertBranchOperationCurrent(branchOperationLease,step),
+          sourceCommitSha:hasDeploymentSource(pullResult)?pullResult.afterFull:deployedCommitSha,
+          customEnv:getDeploymentEnv(deploymentInput,entry.projectId),operationId:branchOperationLease?.operationId,
+          onOutput:(profileId,chunk)=>sendSSE(res,'log',{profileId,chunk})});
+      const acceptedProfiles = new Map(storageAccepted.map(profile=>[profile.id,profile]));
+      const acceptedInfra = new Map<string, InfraService>();
+      for (const infraId of requiredInfraIds) {
+        const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
+        if (infra) acceptedInfra.set(infraId, await containerService.preflightInfraStorage(infra,
+          {allowOriginalRuntime: true, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step)}));
+      }
+      // 全图存储准入成功后才移除孤儿；准入失败时保留全部原运行实例。
+      {
+        const desiredIds = new Set(profiles.map((p) => p.id));
+        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
+        if (orphans.length > 0) {
+          const oActor = resolveActorFromRequest(req);
+          const oTrigger = triggerFromRequest(req);
+          for (const [sid, svc] of orphans) {
+            assertBranchOperationCurrent(branchOperationLease, `admitted-remove-orphan before ${sid}`);
+            logEvent({
+              step: 'remove-orphan-service', status: 'running',
+              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
+              detail: { profileId: sid, status: svc.status, container: svc.containerName },
+              timestamp: new Date().toISOString(),
+            });
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId, branchId: entry.id, profileId: sid,
+                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
+                operationGeneration: branchOperationLease?.generation,
+                assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+                actor: oActor, trigger: oTrigger,
+                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
+                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+              });
+            } catch (err) {
+              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+            }
+            assertBranchOperationCurrent(branchOperationLease, `admitted-remove-orphan after ${sid}`);
+            delete entry.services[sid];
+            stateService.save();
+            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
+          }
+        }
+      }
+
       if (!perBranchInfra) {
         logEvent({
           step: 'infra-shared',
@@ -13625,7 +13743,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         let startedInfra = infra;
         try {
-          startedInfra = await startInfraWithPortRetry(infra, entry.projectId || 'default');
+          startedInfra = await startInfraWithPortRetry(acceptedInfra.get(infraId)!, entry.projectId || 'default');
         } catch (err) {
           const message = (err as Error).message;
           stateService.updateInfraService(infra.id, { status: 'error', errorMessage: message }, entry.projectId || 'default');
@@ -13702,37 +13820,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
-      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
-      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
-        const refreshedEffectiveProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
-        deploymentConfigHash = deploymentVersionService.computeConfigHash(
-          refreshedEffectiveProfiles,
-          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
-        );
-        const reusable = deploymentVersionService.findReusable({
-          projectId: entry.projectId || 'default',
-          branchId: entry.id,
-          commitSha: deployedCommitSha,
-          configHash: deploymentConfigHash,
-        });
-        const reusableProfiles = reusable && materializeAdmittedReusableVersion(reusable);
-        if (reusable && reusableProfiles) {
-          selectedDeploymentVersion = reusable;
-          profiles = reusableProfiles;
-          logEvent({
-            step: 'version-reuse',
-            status: 'done',
-            title: `复用不可变版本 ${reusable.id}，跳过源码构建`,
-            detail: { versionId: reusable.id, commitSha: reusable.commitSha, configHash: reusable.configHash },
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
-      if (selectedDeploymentVersion && deploymentRunService && deploymentRun && deploymentConfigHash) {
-        deploymentRunService.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
-      }
-
       if (selectedDeploymentVersion) {
         logEvent({
           step: 'database-init',
@@ -13747,7 +13834,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       } else {
         await runDatabaseInitializationForDeploy({
           entry: deploymentSourceEntry,
-          profiles,
+          profiles: storageAccepted,
           customEnv: getDeploymentEnv(deploymentInput, entry.projectId),
           requestId,
           operationId: branchOperationLease?.operationId || undefined,
@@ -13757,16 +13844,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
           logEvent,
         });
       }
-
-      // ── Compute startup layers (topological sort by dependsOn) ──
-      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
-      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
-      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
-      const deployProjectId = entry.projectId || 'default';
-      const deployProfileSuffix = deployProjectId === 'default'
-        ? ''
-        : `-${deployProject?.slug || deployProjectId}`;
-      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
 
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
       // dependency resolver only sees infra services actually owned by
@@ -13852,11 +13929,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
-          const effectiveProfile = admittedArtifactProfile(selectedDeploymentVersion
-            ? profile
-            : agentPrebuiltGated
-              ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
-              : resolveEffectiveProfile(profile, inputBranch()), deploymentInput.artifactAdmission);
+          const effectiveProfile = acceptedProfiles.get(profile.id)!;
           const branchOverride = selectedDeploymentVersion ? undefined : deploymentInput.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -14938,9 +15011,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Resolve baseline → branch override → deploy-mode override
       // 门禁下摘掉源码回退（同整分支部署）。
-      const effectiveProfile = admittedArtifactProfile(singleDeployGated
-        ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
-        : resolveEffectiveProfile(profile, inputBranch()), deploymentInput.artifactAdmission);
+      const [effectiveProfile] = await containerService.preflightDeploymentStorage(deploymentSourceEntry,
+        [admittedArtifactProfile(singleDeployGated ? withoutSourceFallback(resolveEffectiveProfile(profile,inputBranch()))
+          : resolveEffectiveProfile(profile,inputBranch()),deploymentInput.artifactAdmission)],
+        {assertCurrent:step=>assertBranchOperationCurrent(branchOperationLease,step),
+          sourceCommitSha:hasDeploymentSource(pullResult)?pullResult.afterFull:deployedCommitSha,
+          customEnv:getDeploymentEnv(deploymentInput,entry.projectId),operationId:branchOperationLease?.operationId,
+          onOutput:(profileId,chunk)=>sendSSE(res,'log',{profileId,chunk})});
       const branchOverride = deploymentInput.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -19401,19 +19478,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return {
           installPrefix: 'corepack enable && pnpm install --frozen-lockfile && ',
           runPrefix: 'corepack enable && pnpm exec ',
-          cacheMounts: [{ hostPath: `${cacheBase}/pnpm`, containerPath: '/pnpm/store' }],
+          cacheMounts: [],
         };
       case 'yarn':
         return {
           installPrefix: 'corepack enable && yarn install --frozen-lockfile && ',
           runPrefix: 'corepack enable && yarn exec ',
-          cacheMounts: [{ hostPath: `${cacheBase}/yarn`, containerPath: '/usr/local/share/.cache/yarn' }],
+          cacheMounts: [],
         };
       default:
         return {
           installPrefix: 'npm install && ',
           runPrefix: 'npx ',
-          cacheMounts: [{ hostPath: `${cacheBase}/npm`, containerPath: '/root/.npm' }],
+          cacheMounts: [],
         };
     }
   }
@@ -19577,9 +19654,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         workDir: 'prd-api',
         command: 'dotnet restore && dotnet build --no-restore && dotnet run --no-build --project src/PrdAgent.Api/PrdAgent.Api.csproj --urls http://0.0.0.0:8080',
         containerPort: 8080,
-        cacheMounts: [
-          { hostPath: `${cacheBase}/nuget`, containerPath: '/root/.nuget/packages' },
-        ],
+        cacheMounts: [],
       },
       {
         id: 'admin',
@@ -21162,9 +21237,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }));
   }
 
+router.post('/branches/:id/storage/provision',async(req,res)=>{
+ let lease:BranchOperationLease|null=null;
+ let finalStatus:'completed'|'failed'='failed';
+ try{
+  const entry=stateService.getBranch(req.params.id),body=structuredClone(req.body||{});
+  if(!entry){res.status(404).json({error:'branch_not_found'});return;}
+  const projectId=entry.projectId||'default',denied=assertProjectAccess(req as any,projectId);
+  if(denied){res.status(denied.status).json(denied.body);return;}
+  if(body.initializeStorage!=='new-only'||typeof body.profileId!=='string'||!Array.isArray(body.freshMounts)){res.status(400).json({error:'storage_provision_input_invalid'});return;}
+  // Read the original declaration; ordinary metadata getters must remain usable while P is held.
+  const raw=mergeBranchProfiles(stateService.getBuildProfilesForProject(projectId),entry).find(p=>p.id===body.profileId);
+  if(!raw){res.status(404).json({error:'profile_not_found'});return;}
+  const profile=resolveEffectiveProfile(raw,entry);
+  const acceptedExecutor=entry.executorId;
+  if(isRemoteExecutorOwned(acceptedExecutor)||(!acceptedExecutor&&registry?.getOnline().some(node=>node.role!=='embedded'))){res.status(409).json({error:'storage_provision_target_daemon_unconfirmed'});return;}
+  lease=beginSilentBranchOperation(req,entry,{profileId:profile.id,kind:'deploy-profile',source:'storage-provision'});
+  if(!lease){res.status(409).json({error:'storage_provision_busy'});return;}
+  const acceptedLease=lease,originalBranchIdentity=profileStorageBranchIdentity(entry);
+  const assertCurrent=()=>{assertBranchOperationCurrent(acceptedLease,'profile first-allocation');if(req.aborted||res.destroyed||stateService.getBranch(entry.id)!==entry||entry.executorId!==acceptedExecutor||profileStorageBranchIdentity(entry)!==originalBranchIdentity||stateService.getProject(projectId)?.paused||assertProjectAccess(req as any,projectId))throw new Error('storage_provision_unconfirmed');};
+  assertCurrent();
+  const binding=await new ProfileStorageProvisionService(stateService,shell,config).provisionNewProfile(entry,profile,body.freshMounts,acceptedLease.operationId,assertCurrent);
+  assertCurrent();stateService.resolvePublishedProfileStorage(entry,profile);
+  finalStatus='completed';res.status(201).json({storageMode:'allocated',profileId:profile.id,mounts:binding.mounts.map(m=>({containerPath:m.containerPath,name:m.hostPath,purpose:m.storage?.purpose}))});
+ }catch{if(!res.destroyed&&!res.headersSent)res.status(409).json({error:'storage_provision_unconfirmed',recoveryRequired:true});}
+ finally{completeBranchOperation(lease,finalStatus);}
+});
+
+
   router.post('/infra', async (req, res) => {
     try {
-      const body = req.body as Partial<InfraService>;
+      const body = structuredClone(req.body) as Partial<InfraService> & { initializeStorage?: 'new-only' };
+      if (body.initializeStorage !== undefined && body.initializeStorage !== 'new-only') { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
 
       if (!body.id || !body.dockerImage || !body.containerPort) {
         res.status(400).json({ error: 'id、Docker 镜像和容器端口为必填项' });
@@ -21181,7 +21285,21 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const m = assertProjectAccess(req as any, projectId);
         if (m) { res.status(m.status).json(m.body); return; }
       }
+      const newStorage = body.initializeStorage === 'new-only';
+      const originalInstance = config.storageInstanceId, originalRoot = config.repoRoot;
+      const originalProjectIdentity = JSON.stringify([targetProject.id, targetProject.slug, targetProject.legacyFlag]);
+      const assertNewStorageCurrent = () => {
+        if (assertProjectAccess(req as any,projectId) || stateService.getProject(projectId) !== targetProject
+          || targetProject.paused || JSON.stringify([targetProject.id,targetProject.slug,targetProject.legacyFlag]) !== originalProjectIdentity
+          || config.storageInstanceId !== originalInstance || config.repoRoot !== originalRoot
+          || stateService.getInfraServiceForProjectAndId(projectId,body.id!)) throw new Error('storage_provision_unconfirmed');
+      };
+      if (newStorage) {
+        try { assertNewStorageCurrent(); if (!originalInstance || projectId === '__system__') throw new Error(); }
+        catch { res.status(409).json({error:'storage_provision_unconfirmed'}); return; }
+      }
       const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
+      if (newStorage) assertNewStorageCurrent();
       // Container name must be globally unique in Docker. Legacy project
       // keeps the bare `cds-infra-<id>` format for back-compat (existing
       // running containers match). Non-legacy projects get the project
@@ -21206,9 +21324,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
         volumes = body.volumes;
       }
 
+      if (newStorage && (body.volumes === undefined || body.volumes === null)) {
+        volumes = (recommendedPaths || []).map((containerPath,index) => {
+          const storage = {version:1 as const,instanceId:originalInstance!,projectId,scope:'project-shared' as const,
+            serviceId:body.id!,mountKey:index ? `data-${index+1}` : 'data',purpose:'persistent' as const};
+          return {type:'volume' as const,name:stableStorageVolumeName(storage),containerPath,storage};
+        });
+      }
       const service: InfraService = {
         id: body.id,
         projectId,
+        ...(newStorage ? {scope:'project' as const} : {}),
         name: body.name || body.id,
         dockerImage: body.dockerImage,
         containerPort: body.containerPort,
@@ -21246,12 +21372,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
-      stateService.addInfraService(service);
-      stateService.save();
+      if (newStorage) {
+        const plan = infraStoragePlan(service,config);
+        await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertNewStorageCurrent);
+      } else {
+        stateService.addInfraService(service);
+        stateService.save();
+      }
 
       const view = infraServiceView(service);
       res.status(201).json(volumeWarning ? { service: view, warning: volumeWarning } : { service: view });
     } catch (err) {
+      if ((req.body as any)?.initializeStorage === 'new-only') { res.status(409).json({error:'storage_provision_unconfirmed'}); return; }
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -21290,12 +21422,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
+      stateService.assertInfraRemovalAllowed(id, resolved.projectId);
       // 删除路径：容器与登记一起删，下一步是「重新添加」而不是「重新启动」。
       try { await containerService.stopInfraService(service.containerName, 'cds-infra-remove'); } catch { /* ok */ }
       stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
     } catch (err) {
+      if ((err as Error).message.startsWith('storage_retained_service_delete_refused:')) { res.status(409).json({ error: 'storage_retained_service_delete_refused', message: (err as Error).message }); return; }
       res.status(500).json({ error: (err as Error).message });
     }
   });
@@ -21362,9 +21496,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (m) { res.status(m.status).json(m.body); return; }
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    let accepted: InfraService;
     try {
-      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
-      const started = await startInfraWithPortRetry(service, resolved.projectId);
+      accepted = await containerService.preflightInfraStorage(service);
+    } catch (err) {
+      // Rejected replacement must leave the running historical service and its state intact.
+      res.status(err instanceof UnsafeDeploymentStorageError ? 409 : 500).json({error: (err as Error).message});
+      return;
+    }
+    try {
+      try { await containerService.stopInfraService(accepted.containerName); } catch { /* checked by the existing start path */ }
+      const started = await startInfraWithPortRetry(accepted, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
       res.json({
@@ -21413,7 +21555,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   // Quick setup: discover infra from compose files and start them
   router.post('/infra/quickstart', async (req, res) => {
-    const { compose: composeYaml, serviceIds } = req.body as { compose?: string; serviceIds?: string[] };
+    const { compose: composeYaml, serviceIds, initializeStorage } = req.body as { compose?: string; serviceIds?: string[]; initializeStorage?: 'new-only' };
+    if (initializeStorage !== undefined && initializeStorage !== 'new-only') { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
+    const newStorage=initializeStorage==='new-only';
+    if (newStorage && serviceIds !== undefined && (!Array.isArray(serviceIds) || serviceIds.some(id=>typeof id!=='string' || !id))) { res.status(400).json({error:'storage_provision_input_invalid'}); return; }
     const results: { id: string; status: string; error?: string }[] = [];
 
     // PR_B.1：projectId 提到外层使 composeDefToInfraService(def, effectiveProjectId)
@@ -21422,11 +21567,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const bodyProject = typeof req.body.projectId === 'string' ? req.body.projectId : null;
     const effectiveProjectId =
       queryProject || bodyProject || stateService.getLegacyProject()?.id || 'default';
+    {
+      const denied = assertProjectAccess(req as any,effectiveProjectId);
+      if (denied) { res.status(denied.status).json(denied.body); return; }
+    }
 
     // Resolve service definitions: from inline compose YAML, or auto-discover from repo
     let defs: ComposeServiceDef[] = [];
     if (composeYaml) {
-      defs = parseComposeString(composeYaml);
+      try { defs = parseComposeString(composeYaml,newStorage ? {preserveVolumeDeclaration:true} : undefined); }
+      catch (error) { if (newStorage) {res.status(400).json({error:'storage_provision_input_invalid'});return;} throw error; }
     } else {
       // Scope discovery to the current project's repo root only.
       // Using config.repoRoot (the shared CDS host dir) would expose compose
@@ -21436,19 +21586,80 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const seenIds = new Set<string>();
       for (const file of composeFiles) {
         try {
-          for (const def of parseComposeFile(file)) {
+          for (const def of parseComposeFile(file,newStorage ? {preserveVolumeDeclaration:true} : undefined)) {
             if (!seenIds.has(def.id)) {
               seenIds.add(def.id);
               defs.push(def);
             }
           }
-        } catch { /* skip */ }
+        } catch { if (newStorage) {res.status(400).json({error:'storage_provision_input_invalid'});return;} /* ordinary discovery skips unreadable definitions */ }
       }
     }
 
     // Filter by requested IDs if specified
     if (serviceIds && serviceIds.length > 0) {
       defs = defs.filter(d => serviceIds.includes(d.id));
+    }
+
+    if (newStorage) {
+      const allocated:string[]=[];
+      const reject=()=>new Error('storage_provision_unconfirmed');
+      try {
+        const project=stateService.getProject(effectiveProjectId);
+        const instance=config.storageInstanceId,repoRoot=config.repoRoot;
+        const identity=JSON.stringify([project?.id,project?.slug,project?.legacyFlag]);
+        const configuredEnv=structuredClone(stateService.getCustomEnv(effectiveProjectId));
+        const assertProjectCurrent=()=>{
+          if (!project || effectiveProjectId==='__system__' || !instance || project.paused
+            || stateService.getProject(effectiveProjectId)!==project || assertProjectAccess(req as any,effectiveProjectId)
+            || JSON.stringify([project.id,project.slug,project.legacyFlag])!==identity
+            || config.storageInstanceId!==instance || config.repoRoot!==repoRoot
+            || JSON.stringify(stateService.getCustomEnv(effectiveProjectId))!==JSON.stringify(configuredEnv)) throw reject();
+        };
+        assertProjectCurrent();
+        if (!defs.length || new Set(defs.map(d=>d.id)).size!==defs.length
+          || serviceIds?.some(id=>!defs.some(def=>def.id===id))) throw reject();
+        // Freeze and validate the entire group before the first native allocation.
+        for (const def of defs) {
+          if (def.volumesDeclared!==false || def.volumes.length
+            || stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id)
+            || stateService.getStorageBirthsForService(effectiveProjectId,def.id).length
+            || !recommendedVolumePathsForImage(def.dockerImage)?.length) throw reject();
+        }
+        const reservedPorts=new Set<number>();
+        const plans=defs.map(def=>{
+          const service=composeDefToInfraService(def,effectiveProjectId);
+          service.hostPort=stateService.allocatePort(config.portStart,reservedPorts);reservedPorts.add(service.hostPort);
+          service.containerName=project!.legacyFlag ? `cds-infra-${def.id}` : `cds-infra-${projectResourceNamespace(project!).slice(0,12)}-${def.id}`;
+          service.scope='project';
+          service.volumes=recommendedVolumePathsForImage(def.dockerImage)!.map((containerPath,index)=>{
+            const storage={version:1 as const,instanceId:instance!,projectId:effectiveProjectId,scope:'project-shared' as const,serviceId:def.id,mountKey:index ? `data-${index+1}` : 'data',purpose:'persistent' as const};
+            return {type:'volume' as const,name:stableStorageVolumeName(storage),containerPath,storage};
+          });
+          assertInfraAuthenticationConfigured({...service,env:resolveEnvTemplates(service.env,configuredEnv),command:resolveCommandTemplate(service.command,configuredEnv),entrypoint:resolveCommandTemplate(service.entrypoint,configuredEnv)});
+          return {service,plan:infraStoragePlan(service,config)};
+        });
+        for (const {service,plan} of plans) {
+          const assertNewCurrent=()=>{assertProjectCurrent();if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id))throw reject();};
+          await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertNewCurrent);
+          allocated.push(service.id);assertProjectCurrent();
+          const published=stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id);
+          const frozenDigest=storageProvisionDigest(service);
+          if (!published || storageProvisionDigest(published)!==frozenDigest) throw reject();
+          await containerService.startInfraService(structuredClone(service),configuredEnv);
+          assertProjectCurrent();if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id)!==published || storageProvisionDigest(published)!==frozenDigest)throw reject();
+          stateService.updateInfraService(service.id,{status:'running'},effectiveProjectId);
+          stateService.save([{kind:'global'}]);
+          await stateService.flush();assertProjectCurrent();
+          if(stateService.getInfraServiceForProjectAndId(effectiveProjectId,service.id)!==published || storageProvisionDigest(published)!==storageProvisionDigest({...service,status:'running'}))throw reject();
+          results.push({id:service.id,status:'started'});
+        }
+        res.json({results,allocated,storageMode:'allocated'});
+      } catch {
+        // Confirmed P volumes and held original intents survive; R failure never creates again.
+        res.status(409).json({error:'storage_provision_unconfirmed',results,allocated,recoveryRequired:true});
+      }
+      return;
     }
 
     if (defs.length === 0) {
@@ -21458,7 +21669,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     for (const def of defs) {
       // Skip if already exists
-      if (stateService.getInfraService(def.id)) {
+      if (stateService.getInfraServiceForProjectAndId(effectiveProjectId,def.id)) {
         results.push({ id: def.id, status: 'exists' });
         continue;
       }
@@ -21469,10 +21680,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.addInfraService(service);
         // Phase 1: 传项目 customEnv 让 ${VAR} 展开
         await containerService.startInfraService(service, stateService.getCustomEnv(effectiveProjectId));
-        stateService.updateInfraService(service.id, { status: 'running' });
+        stateService.updateInfraService(service.id, { status: 'running' }, effectiveProjectId);
         results.push({ id: service.id, status: 'started' });
       } catch (err) {
-        stateService.updateInfraService(service.id, { status: 'error', errorMessage: (err as Error).message });
+        stateService.updateInfraService(service.id, { status: 'error', errorMessage: (err as Error).message }, effectiveProjectId);
         results.push({ id: service.id, status: 'error', error: (err as Error).message });
       }
     }
@@ -21749,6 +21960,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // Whole replacement must be rejected before profiles/env/snapshot changes.
+      if (cleanMode === 'replace-all') {
+        try { for (const project of stateService.getProjects()) stateService.assertProjectStorageRemovalAllowed(project.id); }
+        catch (error) { res.status(409).json({ error: 'storage_retained_service_delete_refused', message: (error as Error).message }); return; }
+      }
       // 1) 拍快照（replace-all 必须拍；merge 也默认拍，成本很低）
       const snapshotLabel = cleanMode === 'replace-all'
         ? `导入前（replace-all）· ${new Date().toLocaleString('zh-CN')}`
@@ -21807,7 +22023,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const infraResults: { id: string; status: string }[] = [];
       const infraDefs = resolveInfraDefs(cfg);
       for (const def of infraDefs) {
-        if (stateService.getInfraService(def.id)) {
+        if (stateService.getInfraServiceForProjectAndId(importInfraProjectId,def.id)) {
           infraResults.push({ id: def.id, status: 'exists' });
           continue;
         }
@@ -22090,7 +22306,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
   //   2. Creates a main branch worktree (if not exists)
   //   3. Deploys the main branch (build + run all profiles)
   router.post('/import-and-init', async (req, res) => {
-    const { config: configBlob } = req.body as { config: unknown };
+    const { config: configBlob,initializeStorage } = req.body as { config: unknown;initializeStorage?:unknown };
+    if(initializeStorage!==undefined&&initializeStorage!=='new-only'){res.status(400).json({error:'storage_provision_input_invalid'});return;}
 
     // ── Parse config (same logic as import-config) ──
     let cfg: Record<string, unknown>;
@@ -22174,41 +22391,25 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         stateService.getLegacyProject()?.id ?? 'default';
       const infraDefs = resolveInfraDefs(cfg);
       const newInfraServices: InfraService[] = [];
-      for (const def of infraDefs) {
-        if (stateService.getInfraService(def.id)) continue;
-        if (def.id && def.dockerImage && def.containerPort) {
-          const service = composeDefToInfraService(def, initInfraProjectId);
-          stateService.addInfraService(service);
-          newInfraServices.push(service);
-        }
+      // Freeze every declaration before publishing or allocating the first new resource.
+      const plannedInfra=infraDefs.filter(def=>!stateService.getInfraServiceForProjectAndId(initInfraProjectId,def.id))
+        .filter(def=>def.id&&def.dockerImage&&def.containerPort).map(def=>{
+          const service=composeDefToInfraService(def,initInfraProjectId);
+          if(initializeStorage==='new-only')service.scope='project';
+          return {service,plan:infraStoragePlan(service,config)};
+        });
+      const initProject=stateService.getProject(initInfraProjectId),initInstance=config.storageInstanceId,initRoot=config.repoRoot;
+      const assertInitCurrent=()=>{if(req.aborted||res.destroyed||!initProject||stateService.getProject(initInfraProjectId)!==initProject||initProject.paused||config.storageInstanceId!==initInstance||config.repoRoot!==initRoot)throw new Error('storage_provision_unconfirmed');};
+      for(const {service,plan} of plannedInfra){
+        if(initializeStorage==='new-only'&&plan.mounts.some(m=>m.kind==='volume')){
+          await new StorageProvisionService(stateService,shell,config).provisionNewInfra(service,plan,`storage_${randomUUID()}`,assertInitCurrent);
+        }else stateService.addInfraService(service);
+        newInfraServices.push(service);
       }
 
       syncCdsConfig();
       stateService.save();
       send('config', 'done', `配置已写入 (${stateService.getBuildProfiles().length} 个构建配置, ${newInfraServices.length} 个基础设施)`);
-
-      // ── Phase 2: Start infra services ──
-      const allInfra = stateService.getInfraServices();
-      const infraToStart = allInfra.filter(s => s.status !== 'running');
-      if (infraToStart.length > 0) {
-        send('infra', 'running', `正在启动 ${infraToStart.length} 个基础设施服务...`);
-        for (const svc of infraToStart) {
-          send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
-          try {
-            // Phase 1: 传项目 customEnv 让 ${VAR} 展开
-            await containerService.startInfraService(svc, stateService.getCustomEnv(svc.projectId));
-            stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
-            send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
-          } catch (err) {
-            stateService.updateInfraService(svc.id, { status: 'error', errorMessage: (err as Error).message });
-            send(`infra-${svc.id}`, 'error', `${svc.name} 启动失败: ${(err as Error).message}`);
-          }
-        }
-        stateService.save();
-        send('infra', 'done', '基础设施服务就绪');
-      } else {
-        send('infra', 'done', '基础设施服务已在运行中');
-      }
 
       // ── Phase 3: Create main branch worktree ──
       // Detect default branch name
@@ -22253,7 +22454,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       if (!entry) {
         send('worktree', 'running', `正在为 ${mainBranch} 创建工作树...`);
         const worktreePath = WorktreeService.worktreePathFor(config.worktreeBase, owner.id, mainBranchId);
-        await shell.exec(`mkdir -p "${path.posix.dirname(worktreePath)}"`);
 
         entry = {
           id: mainBranchId,
@@ -22269,10 +22469,13 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           owner.defaultDeployModes,
           stateService.getBuildProfilesForProject(owner.id),
         );
-        await worktreePathActivity.withClaim([worktreePath, WorktreeService.deploymentSourceRootFor(worktreePath)], async () => {
-          await worktreeService.create(config.repoRoot, mainBranch, worktreePath);
-          stateService.addBranch(entry!);
-        });
+        const needsSource = deploymentNeedsSourceCheckout(mergeBranchProfiles(
+          stateService.getBuildProfilesForProject(owner.id),entry).map(profile=>resolveEffectiveProfile(profile,entry!)));
+        if (needsSource) {
+          await worktreePathActivity.withClaim([worktreePath,WorktreeService.deploymentSourceRootFor(worktreePath)],async()=>{
+            await worktreeService.create(config.repoRoot,mainBranch,worktreePath);stateService.addBranch(entry!);
+          });
+        } else stateService.addBranch(entry);
         // 项目刚创建，没默认分支 → 用刚建出来的 main 分支兜底（per-project）。
         // 2026-04-27 (Codex P2): 不再 AND state.defaultBranch — 多项目环境下
         // state.defaultBranch 经常已经被另一个项目设过，这种检查会让新项目
@@ -22298,6 +22501,52 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         stateService.getBuildProfilesForProject(entry.projectId || owner.id),
         entry,
       );
+      const importEffective = profiles.map(profile => resolveEffectiveProfile(profile, entry!));
+      const importNeedsSource = deploymentNeedsSourceCheckout(importEffective);
+      if (importNeedsSource && !fs.existsSync(entry.worktreePath)) {
+        await worktreePathActivity.withClaim([entry.worktreePath,WorktreeService.deploymentSourceRootFor(entry.worktreePath)],
+          ()=>worktreeService.create(config.repoRoot,entry!.branch,entry!.worktreePath));
+      }
+      const importRepoRoot = stateService.getProjectRepoRoot(entry.projectId || owner.id, config.repoRoot);
+      const importTarget = await worktreeService.resolveDeploymentCommit(importRepoRoot, entry.branch,
+        fs.existsSync(entry.worktreePath) ? entry.worktreePath : importRepoRoot);
+      const importSource = importNeedsSource
+        ? await worktreeService.prepareDeploymentSource(importRepoRoot,entry.branch,entry.worktreePath,importTarget.afterFull) : undefined;
+      const importStorageEntry = importSource ? {...entry,worktreePath:importSource.sourcePath,githubCommitSha:importSource.afterFull} : entry;
+      const importAdmission = await containerService.inspectDeploymentArtifacts(importEffective,
+        importTarget.afterFull, () => {});
+      if (importAdmission.state !== 'ready') throw new Error('导入部署产物未通过完整核验，保留原服务与数据');
+      const importedStorage = await containerService.preflightDeploymentStorage(importStorageEntry,
+        importEffective.map(profile=>admittedArtifactProfile(profile,importAdmission)),
+        {sourceCommitSha:importAdmission.targetCommitSha,customEnv:getMergedEnv(entry.projectId,entry.id),
+          onOutput:(profileId,chunk)=>sendSSE(res,'log',{profileId,chunk})});
+      const importProfiles = new Map(importedStorage.map(profile=>[profile.id,profile]));
+      const importInfra = new Map<string, InfraService>();
+      for (const svc of stateService.getInfraServicesForProject(owner.id).filter(s => s.status !== 'running'))
+        importInfra.set(svc.id, await containerService.preflightInfraStorage(svc, {allowOriginalRuntime: true}));
+      // ── Phase 2: Start infra services ──
+      const allInfra = stateService.getInfraServicesForProject(owner.id);
+      const infraToStart = allInfra.filter(s => s.status !== 'running');
+      if (infraToStart.length > 0) {
+        send('infra', 'running', `正在启动 ${infraToStart.length} 个基础设施服务...`);
+        for (const svc of infraToStart) {
+          send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
+          try {
+            // Phase 1: 传项目 customEnv 让 ${VAR} 展开
+            await containerService.startInfraService(importInfra.get(svc.id)!, stateService.getCustomEnv(svc.projectId));
+            stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
+            send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
+          } catch (err) {
+            stateService.updateInfraService(svc.id, { status: 'error', errorMessage: (err as Error).message });
+            send(`infra-${svc.id}`, 'error', `${svc.name} 启动失败: ${(err as Error).message}`);
+          }
+        }
+        stateService.save();
+        send('infra', 'done', '基础设施服务就绪');
+      } else {
+        send('infra', 'done', '基础设施服务已在运行中');
+      }
+
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
@@ -22358,8 +22607,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               containerService,
               serverEventLogStore,
               entry,
-              profile,
+              profile: importProfiles.get(profile.id)!,
               service: svc,
+              artifactCommitSha: importAdmission.targetCommitSha,
+              sourceCheckout: importSource ? {path:importSource.sourcePath,commitSha:importSource.afterFull} : undefined,
               customEnv: mergedEnv,
               onPortChanged: ({ oldPort, newPort }) => {
                 send(`port-${profile.id}`, 'warning', `${profile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`);
@@ -22373,7 +22624,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
             svc.errorMessage = undefined;
             // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
             // （runService 直接吃 profile.*），钉住其 activeDeployMode。
-            svc.deployedMode = profile.activeDeployMode || '';
+            svc.deployedMode = importProfiles.get(profile.id)!.activeDeployMode || '';
             send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);
           } catch (err) {
             svc.status = 'error';

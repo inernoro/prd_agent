@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { ContainerService } from '../../src/services/container.js';
@@ -16,14 +17,14 @@ async function reuse(logConfig:unknown,protectedLabel:string|null='true',failure
  const mock=new MockShellExecutor(),events:any[]=[],warnings:string[]=[];
  vi.spyOn(console,'warn').mockImplementation((...args)=>{warnings.push(args.join(' '));});
  mock.addResponsePattern(/docker network inspect/,()=>({stdout:'',stderr:'',exitCode:0}));
- mock.addResponsePattern(/docker inspect --format=.*State.Status/,()=>({stdout:'running',stderr:'',exitCode:0}));
+ mock.addResponsePattern(/docker inspect --format=.*State.Status/,()=>({stdout:['a'.repeat(64),'running','/cds-infra-mongodb'].map(x=>JSON.stringify(x)).join('|'),stderr:'',exitCode:0}));
  mock.addResponsePattern(/docker inspect --format=.*LogConfig/,command=>{
   if(failure==='inspect')return {stdout:'',stderr:'private-path-and-secret-fixture',exitCode:124};
   const modern=command[0].includes('{{json .HostConfig.LogConfig');
   return {stdout:failure==='json'?'not-json-private-path-and-secret-fixture':modern?JSON.stringify({logConfig,protected:protectedLabel})
    :String((logConfig as any)?.Config?.['max-size'] || '')+'|'+(protectedLabel || ''),stderr:'',exitCode:0};
  });
- const runtime=new ContainerService(mock,config,undefined,{record:(event:any)=>events.push(event)} as any);
+ const runtime=new ContainerService(mock,config,undefined,{record:(event:any)=>events.push(event)} as any, undefined, undefined, unitBindMountInspector);
  await runtime.startInfraService(service());
  expect(mock.commands.some(command=>/^docker (rm|create|run|start)\b/.test(command))).toBe(false);
  expect(events.some(event=>event.action==='infra.reuse-running')).toBe(true);

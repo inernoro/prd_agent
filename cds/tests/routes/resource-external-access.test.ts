@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -139,7 +140,7 @@ describe('resource external TCP access', () => {
     const containerService = new ContainerService(shell, config, {
       getDockerNetwork: () => 'cds-proj-prd-agent',
       getProjectSlug: () => 'prd-agent',
-    });
+    }, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -249,7 +250,7 @@ describe('resource external TCP access', () => {
     const containerService = new ContainerService(shell, config, {
       getDockerNetwork: () => 'cds-proj-prd-agent',
       getProjectSlug: () => 'prd-agent',
-    });
+    }, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {
@@ -332,7 +333,7 @@ describe('resource external TCP access', () => {
     const containerService = new ContainerService(shell, config, {
       getDockerNetwork: () => 'cds-proj-prd-agent',
       getProjectSlug: () => 'prd-agent',
-    });
+    }, undefined, undefined, undefined, unitBindMountInspector);
     const app = express();
     app.use(express.json());
     app.use((req, _res, next) => {

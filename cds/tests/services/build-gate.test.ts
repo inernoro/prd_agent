@@ -168,6 +168,21 @@ describe('build-gate 全局构建并发闸', () => {
     expect(buildGateStatus().active).toBe(0);
   });
 
+  it.each(['abort','owner'])('onQueued同步撤销%s不丢失取消，不进入等待队列', async kind => {
+    process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
+    const holder = await acquireBuildSlot(), ac = new AbortController();
+    let cancelled = false;
+    const waiting = acquireBuildSlot({signal:ac.signal,isCancelled:()=>cancelled,
+      onQueued:()=>{if(kind==='abort')ac.abort();else cancelled=true;}});
+    const outcome=waiting.then(slot=>({slot}),error=>({error}));
+    try {
+      await tick();expect(buildGateStatus().queued).toBe(0);
+      expect(await outcome).toMatchObject({error:expect.any(BuildSlotCancelledError)});
+      expect(buildGateStatus().active).toBe(1);
+    } finally {holder.release();const result=await outcome;if('slot' in result)result.slot.release();}
+    expect(buildGateStatus().active).toBe(0);
+  });
+
   it('进入排队前已 abort / isCancelled 判真 → 直接拒绝，不占队列', async () => {
     process.env.CDS_MAX_CONCURRENT_BUILDS = '1';
     const s0 = await acquireBuildSlot();

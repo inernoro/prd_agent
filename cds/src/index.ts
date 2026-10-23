@@ -2094,6 +2094,7 @@ async function initStateService(): Promise<void> {
 }
 
 await initStateService();
+config.storageInstanceId = await stateService.ensureStorageInstanceId(config.storageInstanceId);
 
 // ── Stale self-update 清扫(2026-05-07 用户反馈"卡 web-build 看不清状态"):
 // .cds/active-update.json 里如果还有未结束的 update 记录但写它的进程已死,
@@ -2563,6 +2564,8 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
+  resolveProfileStorage: (entry,profile) => stateService.resolvePublishedProfileStorage(entry,profile),
   getAppContainerName: (branchId, profileId) => stateService.getBranch(branchId)?.services[profileId]?.containerName,
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量

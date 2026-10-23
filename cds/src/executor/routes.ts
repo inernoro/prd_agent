@@ -290,10 +290,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       entry.status = 'building';
       stateService.save();
 
-      // 期望清单收敛必须在 pull 之前（Codex P2「Run executor cleanup before git pull」）：清空/移除额外服务
-      // （payload 里没有的 service）的容器拆除不依赖最新代码；若放在 pull 之后，分支被上游删除或 git 瞬时失败会
-      // 走 catch 直接报错，master 已保存新的（空/缩减）期望清单，而 worker 上被移除的旧容器仍在跑（ghost）。
-      // 故先按 payload 收敛掉孤儿容器，再决定是否需要 pull/build。best-effort：remove 失败也删条目。
+      const removeAcceptedOrphans = async () => {
+      // 非空图在本执行器完成存储准入后才清孤儿；空清单仍走独立清空路径。
       const payloadProfileIds = new Set(profilesData.map((p) => p.id));
       for (const [sid, svc] of Object.entries(entry.services)) {
         if (payloadProfileIds.has(sid)) continue;
@@ -321,9 +319,11 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       }
       stateService.save();
 
+      };
       // 期望清单为空 = 纯清空（如清掉最后一个额外服务）：没有要构建的东西，跳过 pull（避免 git 瞬时失败/分支
       // 被上游删除把一次成功的清空翻成 error），直接落 idle + complete 返回。
       if (profilesData.length === 0) {
+        await removeAcceptedOrphans();
         entry.status = 'idle';
         entry.errorMessage = undefined;
         entry.lastAccessedAt = new Date().toISOString();
@@ -350,6 +350,14 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         sendEvent('step', { step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`,
           head: pullResult.head, after: pullResult.after, afterFull: pullResult.afterFull });
       }
+
+      const storageEntry = {...entry, worktreePath: pullResult.sourcePath};
+      profilesData = await containerService.preflightDeploymentStorage(storageEntry,
+        profilesData.map(profile=>({...profile,projectId:actualProjectId} as BuildProfile)),
+        {assertCurrent,sourceCommitSha:pullResult.afterFull,operationId:operationId || undefined,
+          customEnv:{...getMergedEnv(actualProjectId),...(envOverrides || {})},
+          onOutput:(profileId,chunk)=>sendEvent('log',{profileId,chunk})});
+      await removeAcceptedOrphans();
 
       assertCurrent();
       entry.status = 'building';
@@ -420,7 +428,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
 
           // PR_B.1：BuildProfile.projectId 改为必填，executor 接收的 profile
           // 没有这个字段 — 用 resolvedProjectId（与 entry.projectId 同源）补上。
-          const profileWithProject = { ...profile, projectId: resolvedProjectId };
+          const profileWithProject = profile as BuildProfile;
           try {
             const target = await prepareServiceReplacement({ entry, service: svc, profile: profileWithProject,
               state: stateService, container: containerService, portStart: config.portStart,
