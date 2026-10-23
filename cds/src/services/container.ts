@@ -1,3 +1,4 @@
+import { nativeBindMountInspector, guardBindMountShell, type BindMountInspector } from './deployment-bind-mount-proof.js';
 import { acquireBuildSlot } from './build-gate.js';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -702,7 +703,7 @@ export class ContainerStopUnconfirmedError extends Error {
 export class ContainerService {
   private readonly runtimePhaseOwners = new Map<string, { owner: DeploymentPhaseOwner; check?: () => void }>();
   /** Private receipts cannot be asserted by an HTTP profile or transferred across daemons. */
-  private readonly admittedProfileStorage = new WeakMap<BuildProfile, { planDigest: string; imageId: string; imageReference: string }>();
+  private readonly admittedProfileStorage = new WeakMap<BuildProfile, { planDigest: string; imageId: string; imageReference: string; checkBindMounts: () => void }>();
   private readonly admittedInfraStorage = new WeakMap<InfraService, { planDigest: string; imageId: string; imageReference: string; originalContainerId?: string }>();
   async inspectOwnedRuntime(entry: BranchEntry, profileId: string, runtime: import('../types.js').ServiceRuntimeRef, requireRunning = true): Promise<import('../types.js').ServiceRuntimeRef | null> {
     const format = '{"id":{{json .Id}},"running":{{json .State.Running}},"project":{{json (index .Config.Labels "cds.project.id")}},"branch":{{json (index .Config.Labels "cds.branch.id")}},"profile":{{json (index .Config.Labels "cds.profile.id")}},"networks":{{json .NetworkSettings.Networks}}}';
@@ -824,6 +825,8 @@ export class ContainerService {
     private readonly serverEventLogStore?: ServerEventLogSink | null,
     private readonly startupStreams?: ObservationStreamExecutor,
     private readonly logStreams?: ContainerLogStreamHub,
+    // Trusted dependency injection for native FS fixtures; production always uses real synchronous FS.
+    private readonly bindMountInspector: BindMountInspector = nativeBindMountInspector,
   ) {}
 
   inspectDeploymentArtifacts(profiles: readonly BuildProfile[], targetCommitSha: string, assertCurrent: () => void, options: { inspectLocalArtifacts?: boolean } = {}) {
@@ -957,6 +960,8 @@ export class ContainerService {
       onOutput?.('── 旧本地产物与目标或配置不一致，按已选择的源码模式重新构建 ──\n');
     }
 
+    const checkManagedSource = this.bindMountInspector(profileStoragePlan(entry, {...profile, prebuiltImage:false, managedBuild:undefined, cacheMounts:[]}, this.config));
+    checkManagedSource();
     const actualSource = await shell.exec('git rev-parse HEAD', {cwd:entry.worktreePath,timeout:3000});
     if (actualSource.exitCode !== 0 || actualSource.stdout.trim().toLowerCase() !== sourceCommitSha.toLowerCase()) throw new UnsafeDeploymentStorageError(profile.id, 'storage-source-identity-mismatch');
     const sourcePath = path.resolve(entry.worktreePath, profile.workDir || '.');
@@ -990,7 +995,7 @@ export class ContainerService {
       createdId = create.stdout.trim();
       if (!/^[a-f0-9]{64}$/.test(createdId)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-container-identity-unknown');
       await this.inspectCreatedStorageContainer(shell, createdId, builderName, builderImage, builderPlan);
-      const copy = await shell.exec(`docker cp ${this.shellQuote(`${sourcePath}/.`)} ${this.shellQuote(`${createdId}:/app`)}`);
+      const copy = await guardBindMountShell(shell, checkManagedSource).exec(`docker cp ${this.shellQuote(`${sourcePath}/.`)} ${this.shellQuote(`${createdId}:/app`)}`);
       if (copy.exitCode !== 0) throw new Error(`managed 源码复制失败:\n${combinedOutput(copy)}`);
       const start = await shell.exec(`docker start ${this.shellQuote(createdId!)}`);
       if (start.exitCode !== 0) throw new Error(`managed 构建容器启动失败:\n${combinedOutput(start)}`);
@@ -1094,6 +1099,7 @@ export class ContainerService {
   }
 
   private async inspectAcceptedStorage(shell: IShellExecutor, plan: DeploymentStoragePlan): Promise<void> {
+    this.bindMountInspector(plan)();
     const before = structuredClone(this.networkResolver?.storageBirthRequirements?.(plan) || {});
     await inspectStoragePlan(shell, plan, false, before);
     const after = this.networkResolver?.storageBirthRequirements?.(plan) || {};
@@ -1375,7 +1381,7 @@ export class ContainerService {
       const copy = this.networkResolver?.resolveProfileStorage?.(entry,initial) || initial;
       if (prior) this.admittedProfileStorage.set(copy, prior);
       assertProfileStorageBoundary(copy, entry.worktreePath);
-      withRuntimeTmpfs(profileStoragePlan(entry, copy, this.config));
+      this.bindMountInspector(withRuntimeTmpfs(profileStoragePlan(entry, copy, this.config)))();
       return copy;
     });
     const accepted: BuildProfile[] = [];
@@ -1426,11 +1432,14 @@ export class ContainerService {
     // Artifact selection is owned by the existing admission path, never by storage preflight.
     if (profile.prebuiltImage && !profile.localArtifact) throw new UnsafeDeploymentStorageError(profile.id, 'storage-image-not-admitted');
     const plan = withRuntimeTmpfs(profileStoragePlan(acceptedEntry, profile, this.config));
+    prior?.checkBindMounts();
+    const checkBindMounts = this.bindMountInspector(plan);
     await this.inspectAcceptedStorage(shell, plan);
     if (prior && (prior.planDigest !== plan.digest || prior.imageReference !== profile.dockerImage)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-admission-changed');
     const imageId = await resolveStorageImage(shell, prior?.imageId || profile.dockerImage, plan, !prior && !profile.prebuiltImage);
     await this.inspectAcceptedStorage(shell, plan);
-    this.admittedProfileStorage.set(profile, {planDigest:plan.digest, imageId, imageReference:profile.dockerImage});
+    checkBindMounts();
+    this.admittedProfileStorage.set(profile, {planDigest:plan.digest, imageId, imageReference:profile.dockerImage, checkBindMounts});
     return profile;
   }
 
@@ -1503,12 +1512,13 @@ export class ContainerService {
     } = {},
   ): Promise<void> {
     const storageAdmission = this.admittedProfileStorage.get(profile);
+    storageAdmission?.checkBindMounts();
     context = {...context, sourceCheckout: context.sourceCheckout ? {...context.sourceCheckout} : undefined};
     profile = structuredClone(profile);
     entry = {...entry};
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
-    const shell = this.qualifiedShell(context.assertCurrent);
+    let shell = this.qualifiedShell(context.assertCurrent);
     const phaseOwner = { projectId: entry.projectId, branchId: entry.id, profileId: profile.id, operationId: context.operationId };
     const phaseCheck = () => context.assertCurrent?.(`deployment phase ${profile.id}`);
     let releaseStart: (() => void) | undefined;
@@ -1532,6 +1542,10 @@ export class ContainerService {
     }
     assertProfileStorageBoundary(profile, entry.worktreePath);
     const acceptedStoragePlan = withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config));
+    const checkBindMounts = this.bindMountInspector(acceptedStoragePlan);
+    const originalAssertCurrent = context.assertCurrent;
+    context = {...context, assertCurrent: step => { originalAssertCurrent?.(step); checkBindMounts(); }};
+    shell = guardBindMountShell(shell, checkBindMounts);
     if (storageAdmission && (storageAdmission.planDigest !== acceptedStoragePlan.digest || storageAdmission.imageReference !== profile.dockerImage)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-admission-changed');
     await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
     let managedCommitSha: string | undefined;
@@ -1882,6 +1896,9 @@ export class ContainerService {
     await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
     const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount, runtimeStoragePlan } =
       await this.buildProfileVolumeFlags(entry, profile, command, onOutput, acceptedStoragePlan);
+    const checkRuntimeBinds = this.bindMountInspector(runtimeStoragePlan);
+    checkBindMounts();
+    shell = guardBindMountShell(shell, checkRuntimeBinds);
     // 全部镜像/本地产物核验结束后才清理旧别名；失败不会在拉取前拆掉可用服务。
     context.assertCurrent?.(`runService before alias cleanup ${profile.id}`);
     await this.pruneStaleAppContainersForProfile(entry, profile, service, netPlan.runNetwork, profileAliases, onOutput, context);
@@ -2221,9 +2238,13 @@ export class ContainerService {
     entry = {...entry};
     profile = this.networkResolver?.resolveProfileStorage?.(entry,profile) || profile;
     if (customEnv) customEnv = {...customEnv};
-    const shell = this.qualifiedShell(context.assertCurrent);
+    let shell = this.qualifiedShell(context.assertCurrent);
     assertProfileStorageBoundary(profile, entry.worktreePath);
     const acceptedStoragePlan = withRuntimeTmpfs(profileStoragePlan(entry, profile, this.config));
+    const checkBindMounts = this.bindMountInspector(acceptedStoragePlan);
+    const originalAssertCurrent = context.assertCurrent;
+    context = {...context, assertCurrent: step => { originalAssertCurrent?.(step); checkBindMounts(); }};
+    shell = guardBindMountShell(shell, checkBindMounts);
     await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
     profile.dockerImage = await resolveStorageImage(shell, profile.dockerImage, acceptedStoragePlan, true);
     await this.inspectAcceptedStorage(shell, acceptedStoragePlan);
@@ -2246,6 +2267,9 @@ export class ContainerService {
     const envFlag = `--env-file "${envFilePath}"`;
     const { containerWorkDir, volumeFlags, isNodeContainer, skipSrcMount, runtimeStoragePlan } =
       await this.buildProfileVolumeFlags(entry, profile, command, onOutput, acceptedStoragePlan);
+    const checkRuntimeBinds = this.bindMountInspector(runtimeStoragePlan);
+    checkBindMounts();
+    shell = guardBindMountShell(shell, checkRuntimeBinds);
 
     try {
       if (!command.trim()) {

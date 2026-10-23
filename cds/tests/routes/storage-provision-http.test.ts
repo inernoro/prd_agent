@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -22,7 +23,7 @@ beforeEach(async()=>{
  shell={exec:vi.fn(async(c:string)=>{commands.push(c);if(c.startsWith('docker info'))return {exitCode:0,stderr:'',stdout:'own-daemon'};
   if(c.startsWith('docker volume inspect'))return failInspect?{exitCode:1,stderr:'daemon unavailable',stdout:''}:volume?{exitCode:0,stderr:'',stdout:JSON.stringify([volume])}:{exitCode:1,stderr:'Error response from daemon: get '+name+': no such volume',stdout:''};
   if(c.startsWith('docker volume create')){const row=state.getStorageBirth(name)!;volume={Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-22T00:00:00Z',Labels:{...storageOwnerLabels(b),'cds.storage.birth':row.birthNonce}};return {exitCode:0,stderr:'',stdout:name}}return {exitCode:0,stderr:'',stdout:''};})} as IShellExecutor;
- container=new ContainerService(shell,config);
+ container=new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector);
  const app=express();app.use(express.json());app.use((req,_res,next)=>{if(req.headers['x-owned-project']) (req as any).cdsProjectKey={projectId:String(req.headers['x-owned-project']),keyId:'fixture'};next()});app.use('/api',createBranchRouter({stateService:state,worktreeService:new WorktreeService(shell,config),containerService:container,shell,config}));app.use('/api',createProjectsRouter({stateService:state,shell,config}));server=await new Promise(r=>{const h=app.listen(0,'127.0.0.1',()=>r(h))});
 });
 afterEach(async()=>{vi.restoreAllMocks();await new Promise<void>(r=>server.close(()=>r()));await state.flush();fs.rmSync(root,{recursive:true,force:true});selfStatusCache._resetForTests()});

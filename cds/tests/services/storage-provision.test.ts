@@ -85,10 +85,10 @@ describe('explicit new-only storage birth',()=>{
   it('changed daemon after native creation cannot publish or create a second volume',async()=>{
     const f=fixture();f.daemonChange();await expect(f.allocator.provisionNewInfra(f.service,f.plan,'op_owned',()=>{})).rejects.toThrow('storage_provision');expect(f.published()).toBeUndefined();expect(f.events.filter(x=>x.startsWith('docker volume create '))).toHaveLength(1);
   });
-  it.each(['/config/mysql.cnf','config/mysql.cnf'])('supports persistent volume with legitimate readonly config %s',async name=>{
+  it.each(['/config/mysql.cnf','config/mysql.cnf'])('readonly user config %s refuses before allocating otherwise valid persistent storage',async name=>{
     const f=fixture();f.service.volumes!.push({type:'bind',name,containerPath:'/etc/mysql/conf.d/own.cnf',readOnly:true});
-    const p=infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'});
-    await f.allocator.provisionNewInfra(f.service,p,'op_owned',()=>{});expect(f.published()?.volumes).toHaveLength(2);
+    expect(()=>infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'})).toThrow('storage-bind-pin-required');
+    expect(f.events.some(x=>x.startsWith('docker volume create '))).toBe(false);expect(f.published()).toBeUndefined();
   });
   it('same binding concurrent requests have one issued native create',async()=>{
     const f=fixture();const results=await Promise.allSettled([f.allocator.provisionNewInfra(f.service,f.plan,'op_one',()=>{}),f.allocator.provisionNewInfra(f.service,f.plan,'op_two',()=>{})]);

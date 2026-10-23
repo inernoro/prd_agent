@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import {withStorageImages} from '../helpers/storage-image-mock.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
@@ -338,7 +339,7 @@ describe('Branch Routes', () => {
     seedLegacyDefaultProject(stateService);
 
     const worktreeService = new WorktreeService(mock, config.repoRoot);
-    containerService = new ContainerService(mock, config);
+    containerService = new ContainerService(mock, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     (containerService as any).waitForContainerAlive = async () => undefined;
     (containerService as any).waitForReadiness = async () => true;
     registryNodes = [];

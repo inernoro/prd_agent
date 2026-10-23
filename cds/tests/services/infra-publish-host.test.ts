@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ContainerService, type ProjectNetworkResolver } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -179,7 +180,7 @@ describe('ContainerService 真的用上了收窄后的发布地址', () => {
   });
 
   const runInfra = async (resolver?: ProjectNetworkResolver): Promise<string> => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as unknown as { waitForContainerAlive: () => Promise<void> }, 'waitForContainerAlive')
       .mockResolvedValue(undefined);
     await service.startInfraService(makeInfraService());

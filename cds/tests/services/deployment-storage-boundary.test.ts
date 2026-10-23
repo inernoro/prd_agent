@@ -31,23 +31,19 @@ describe('explicit unsafe deployment storage plans', () => {
       .toThrow(/unsafe_deployment_storage/);
   });
 
-  it('preserves stable external binds, named volumes and ordinary source behavior without claiming all RW source safe', () => {
-    for (const p of [profile({ cacheMounts: [{ kind: 'bind', hostPath: '/cache/p', containerPath: '/data', readOnly: true }] }),
-      profile({ prebuiltImage: false, workDir: 'app', containerWorkDir: '/app' }),
-      profile({ workDir: '.cds-data', containerWorkDir: '/data' }),
-      profile({ cacheMounts: [{ kind: 'bind', hostPath: '/wt/p/.deployment-sources-old', containerPath: '/cache', readOnly: true }] })]) {
-      const before = JSON.stringify(p);
-      expect(() => assertProfileStorageBoundary(p, worktree)).not.toThrow();
-      expect(JSON.stringify(p)).toBe(before);
+  it('preserves ordinary source metadata and rejects readonly user binds without mutation', () => {
+    for (const p of [profile({ prebuiltImage:false,workDir:'app',containerWorkDir:'/app' }),profile({workDir:'.cds-data',containerWorkDir:'/data'})]) {
+      const before=JSON.stringify(p);expect(()=>assertProfileStorageBoundary(p,worktree)).not.toThrow();expect(JSON.stringify(p)).toBe(before);
+    }
+    for(const hostPath of ['/cache/p','/wt/p/.deployment-sources-old']){
+      const p=profile({cacheMounts:[{kind:'bind',hostPath,containerPath:'/config',readOnly:true}]}),before=JSON.stringify(p);
+      expect(()=>assertProfileStorageBoundary(p,worktree)).toThrow('storage-bind-pin-required');expect(JSON.stringify(p)).toBe(before);
     }
   });
 
-  it.each([false, true])('infra rejects RW source namespace but preserves explicit readonly bind: %s', readOnly => {
-    const service: Pick<InfraService, 'id' | 'projectId' | 'volumes'> = { id: 'db', projectId: 'p', volumes: [
-      { type: 'bind', name: '/wt/p/.deployment-sources/b/u/data', containerPath: '/var/lib/mysql', readOnly },
-    ] };
-    const check = () => assertInfraStorageBoundary(service, { repoRoot: '/repo', worktreeBase: '/wt' });
-    if (readOnly) expect(check).not.toThrow(); else expect(check).toThrow(/unsafe_deployment_storage/);
+  it.each([false,true])('infra never accepts a user bind solely because readonly=%s',readOnly=>{
+    const service:Pick<InfraService,'id'|'projectId'|'volumes'>={id:'db',projectId:'p',volumes:[{type:'bind',name:'/wt/p/.deployment-sources/b/u/data',containerPath:'/var/lib/mysql',readOnly}]};
+    expect(()=>assertInfraStorageBoundary(service,{repoRoot:'/repo',worktreeBase:'/wt'})).toThrow(/unsafe_deployment_storage/);
   });
 
   it('preserves legacy external infra mappings byte-for-byte without creating or migrating a volume', () => {
@@ -56,11 +52,11 @@ describe('explicit unsafe deployment storage plans', () => {
       { type: 'volume', name: 'original-project-data', containerPath: '/data' },
     ] };
     const before = JSON.stringify(service);
-    expect(() => assertInfraStorageBoundary(service, { repoRoot: '/repo', worktreeBase: '/wt' })).toThrow('storage-contract-required');
+    expect(() => assertInfraStorageBoundary(service, { repoRoot: '/repo', worktreeBase: '/wt' })).toThrow('storage-bind-pin-required');
     expect(JSON.stringify(service)).toBe(before);
   });
 });
 
 it.each(['bind', 'volume'] as const)('future writable %s requires a declared purpose and owner before any mutation', kind => {
-  expect(() => assertProfileStorageBoundary(profile({cacheMounts: [{kind, hostPath: kind === 'bind' ? '/stable/data' : 'stable-data', containerPath: '/data'}]}), worktree)).toThrow(/storage-contract-required/);
+  expect(() => assertProfileStorageBoundary(profile({cacheMounts: [{kind, hostPath: kind === 'bind' ? '/stable/data' : 'stable-data', containerPath: '/data'}]}), worktree)).toThrow(kind==='bind'?'storage-bind-pin-required':'storage-contract-required');
 });

@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,7 @@ const dirs: string[] = [];
 function barrier(): { promise: Promise<void>; release: () => void } { let release!: () => void; const promise = new Promise<void>(r => { release = r; }); return { promise, release }; }
 async function fixture(shell: IShellExecutor, log?: ServerEventLogSink): Promise<{ service: ContainerService; entry: BranchEntry; profile: BuildProfile; state: ServiceState }> {
   const dir = await mkdtemp(path.join(tmpdir(), 'cds-qualified-private-')); dirs.push(dir);
-  const service = new ContainerService(shell, { repoRoot: dir, worktreeBase: dir, dockerNetwork: 'fixture-shared', sharedEnv: {}, jwt: { secret: 'private-fixture-only', issuer: 'fixture' } } as CdsConfig, undefined, log);
+  const service = new ContainerService(shell, { repoRoot: dir, worktreeBase: dir, dockerNetwork: 'fixture-shared', sharedEnv: {}, jwt: { secret: 'private-fixture-only', issuer: 'fixture' } } as CdsConfig, undefined, log, undefined, undefined, unitBindMountInspector);
   return { service, entry: { id: 'owned-branch', projectId: 'owned-project', branch: 'owned', worktreePath: dir, services: {}, status: 'idle', createdAt: new Date().toISOString() },
     profile: { id: 'owned-api', name: 'owned-api', dockerImage: 'alpine:3.20', workDir: '.', command: 'true', containerPort: 8080, prebuiltImage: true },
     state: { profileId: 'owned-api', containerName: 'cds-owned-branch-owned-api', hostPort: 10001, status: 'building' } };

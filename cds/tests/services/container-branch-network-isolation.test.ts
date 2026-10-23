@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { createHash } from 'node:crypto';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ContainerService, type ProjectNetworkResolver } from '../../src/services/container.js';
@@ -111,7 +112,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('app 容器主网 = 分支网，并连到共享 infra 网（无别名）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     okStubs(mock);
 
@@ -150,7 +151,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('确保分支网存在（inspect 失败则 create cds-br-feature-a）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     mock.addResponsePattern(/docker network inspect cds-br-feature-a/, () => ({ stdout: '', stderr: 'No such network', exitCode: 1 }));
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -168,7 +169,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('分支网地址池耗尽时清理空闲 cds-br 网络并重试创建', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     let createAttempts = 0;
 
@@ -214,7 +215,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('地址池清理后重试遇到并发 already exists 也视为成功', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     let createAttempts = 0;
 
@@ -250,7 +251,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('分支网地址池耗尽时会释放只挂停止容器的 cds-br 网络', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     let createAttempts = 0;
 
@@ -302,7 +303,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('容忍并发竞态：分支网 create 报 "already exists" 不抛（同分支多服务同时首建）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     // 分支网 inspect 失败（不存在）→ create 报 already exists（另一个并发服务抢先建好了）
     mock.addResponsePattern(/docker network inspect cds-br-feature-a/, () => ({ stdout: '', stderr: 'No such network', exitCode: 1 }));
@@ -322,7 +323,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('infra 连接失败（no such container）让部署显式失败，绝不 docker start（Bugbot Medium）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     // 先注册失败的 connect（first-match-wins），再用 okStubs 兜底其它命令。
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: 'Error: No such container: cds-feature-a-apigateway', exitCode: 1 }));
@@ -336,7 +337,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('一次性 job（runProfileCommand）隔离时也跑分支网 + 连共享 infra 网（Bugbot「Job containers miss branch app DNS」）', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network create/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
     mock.addResponsePattern(/docker network connect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -376,7 +377,7 @@ describe('ContainerService 分支级网络隔离', () => {
   });
 
   it('infra 容器不受分支隔离影响，仍在项目共享网', async () => {
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     okStubs(mock);
 
     await service.startInfraService(makeInfra('proj-a'));
@@ -389,7 +390,7 @@ describe('ContainerService 分支级网络隔离', () => {
 
   it('逃生开关关闭隔离：app 主网退回项目共享网，无 network connect', async () => {
     process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
-    const service = new ContainerService(mock, makeConfig(), resolver);
+    const service = new ContainerService(mock, makeConfig(), resolver, undefined, undefined, undefined, unitBindMountInspector);
     aliveStub = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     okStubs(mock);
 

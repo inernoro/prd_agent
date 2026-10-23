@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import {withStorageImages} from '../helpers/storage-image-mock.js';
 import {stableStorageVolumeName,storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,7 +84,7 @@ describe('Compose 命名卷跨 CDS 重启保持挂载身份', () => {
       repoRoot: root, worktreeBase: root, masterPort: 9900, workerPort: 5500,
       dockerNetwork: 'cds-network', portStart: 10001, sharedEnv: {},
       jwt: { secret: 'test', issuer: 'test' },
-    });
+    }, undefined, undefined, undefined, undefined, unitBindMountInspector);
     await expect(containers.runService({
       id:'main',branch:'main',worktreePath:root,services:{},status:'idle',createdAt:new Date().toISOString(),
     },profile,{profileId:profile.id,containerName:'cds-main-web',hostPort:10001,status:'building'}))
@@ -104,7 +105,7 @@ describe('Compose 命名卷跨 CDS 重启保持挂载身份', () => {
     shell.addResponsePattern(/^docker volume inspect /,()=>({exitCode:0,stderr:'',stdout:JSON.stringify([{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',Labels:storageOwnerLabels(storage)}])}));
     shell.addResponsePattern(/^docker image inspect .*json .Id/,()=>({exitCode:0,stderr:'',stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null])}));
     shell.addResponsePattern(/^docker (network|pull|create|start|inspect|rm)/,()=>({exitCode:0,stderr:'',stdout:''}));
-    const container=new ContainerService(shell,{repoRoot:root,worktreeBase:root,storageInstanceId:'owned',masterPort:9900,workerPort:5500,dockerNetwork:'cds-network',portStart:10001,sharedEnv:{},jwt:{secret:'test',issuer:'test'}});
+    const container=new ContainerService(shell,{repoRoot:root,worktreeBase:root,storageInstanceId:'owned',masterPort:9900,workerPort:5500,dockerNetwork:'cds-network',portStart:10001,sharedEnv:{},jwt:{secret:'test',issuer:'test'}}, undefined, undefined, undefined, undefined, unitBindMountInspector);
     vi.spyOn(container as any,'waitForContainerAlive').mockResolvedValue(undefined);
     vi.spyOn(container as any,'pruneStaleAppContainersForProfile').mockResolvedValue(undefined);
     await container.runService({id:'main',projectId:'default',branch:'main',worktreePath:root,services:{},status:'idle',createdAt:new Date().toISOString()},restored,

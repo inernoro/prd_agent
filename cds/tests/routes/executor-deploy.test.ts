@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import {stableStorageVolumeName,storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import {withStorageImages} from '../helpers/storage-image-mock.js';
 import { runningCommitSha } from '../../src/services/running-version.js';
@@ -194,7 +195,7 @@ describe('Executor /exec/deploy', () => {
         });
       },
     };
-    const containerService = new ContainerService(mock, config, undefined, eventSink);
+    const containerService = new ContainerService(mock, config, undefined, eventSink, undefined, undefined, unitBindMountInspector);
     (containerService as any).waitForContainerAlive = async () => undefined;
     (containerService as any).waitForReadiness = async () => true;
 
@@ -288,9 +289,12 @@ describe('Executor /exec/deploy', () => {
       head:f.target,before:f.target,after:f.target.slice(0,7),afterFull:f.target,updated:false,sourcePath});
     try {
       const result=await postSse(server,'/exec/deploy',f.payload);
-      expect(result.events.some(event=>event.event==='complete')).toBe(true);
-      if(kind==='volume')expect(prepare).not.toHaveBeenCalled();
-      else {expect(prepare).toHaveBeenCalledTimes(1);expect(prepare).toHaveBeenCalledWith(f.entry.branch,f.entry.worktreePath,f.target);}
+      if(kind==='volume') {
+        expect(result.events.some(event=>event.event==='complete')).toBe(true);expect(prepare).not.toHaveBeenCalled();
+      } else {
+        expect(result.events.some(event=>event.event==='error' && JSON.stringify(event).includes('storage-bind-pin-required'))).toBe(true);
+        expect(mock.commands.some(command=>/^docker (create|run|stop|rm) /.test(command))).toBe(false);
+      }
     } finally {prepare.mockRestore();}
   });
 

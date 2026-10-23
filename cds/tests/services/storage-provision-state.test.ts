@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -35,7 +36,7 @@ describe('real State storage birth publication',()=>{
   const f=own(),flush=state.flush.bind(state);let calls=0,enter!:()=>void,resume!:()=>void;const started=new Promise<void>(r=>enter=r),gate=new Promise<void>(r=>resume=r);
   vi.spyOn(state,'flush').mockImplementation(async()=>{await flush();if(++calls===4){enter();await gate}});
   const run=f.allocator.provisionNewInfra(f.service,f.plan,'op_owned',()=>{});void run.catch(()=>{});await started;
-  const container=new ContainerService(f.shell,{repoRoot:root,storageInstanceId:'own'} as any,{getDockerNetwork:()=>undefined,storageBirthRequirements:p=>state.storageBirthRequirements(p)});
+  const container=new ContainerService(f.shell,{repoRoot:root,storageInstanceId:'own'} as any,{getDockerNetwork:()=>undefined,storageBirthRequirements:p=>state.storageBirthRequirements(p)}, undefined, undefined, undefined, unitBindMountInspector);
   try {await expect(container.preflightInfraStorage(f.service)).rejects.toThrow('storage_provision');expect(f.commands.some(c=>/docker (create|start|run)/.test(c))).toBe(false)} finally {resume()}
   await run;await expect(container.preflightInfraStorage(f.service)).resolves.toMatchObject({id:'mysql'});
   const exec=f.shell.exec.bind(f.shell);vi.spyOn(f.shell,'exec').mockImplementation(async(c,o)=>c.startsWith('docker info')?{exitCode:0,stdout:'other-daemon',stderr:''}:exec(c,o));

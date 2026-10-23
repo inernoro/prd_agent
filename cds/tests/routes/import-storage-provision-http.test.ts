@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import {describe,it,expect,beforeEach,afterEach,vi} from 'vitest';
 import os from 'node:os';import express from 'express';import http from 'node:http';import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
 import {createBranchRouter} from '../../src//routes/branches.ts';
@@ -20,7 +21,7 @@ beforeEach(()=>{caseDir=fs.mkdtempSync(path.join(os.tmpdir(),'cds-import-new-onl
  state=new StateService(path.join(caseDir,'state.json'),caseDir);state.load();state.addProject({id:'default',slug:'default',name:'warehouse',kind:'git',legacyFlag:true,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()});shell=new MockShellExecutor();
  shell.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify([image,null]),stderr:''}));shell.addResponsePattern(/git symbolic-ref/,()=>({exitCode:0,stdout:'refs/remotes/origin/main',stderr:''}));
  shell.addResponsePattern(/git rev-parse/,()=>({exitCode:0,stdout:sha,stderr:''}));
- container=new ContainerService(shell,config,{storageBirthRequirements:p=>state.storageBirthRequirements(p),resolveProfileStorage:(b,p)=>state.resolvePublishedProfileStorage(b,p)});worktree=new WorktreeService(shell,caseDir);
+ container=new ContainerService(shell,config,{storageBirthRequirements:p=>state.storageBirthRequirements(p),resolveProfileStorage:(b,p)=>state.resolvePublishedProfileStorage(b,p)}, undefined, undefined, undefined, unitBindMountInspector);worktree=new WorktreeService(shell,caseDir);
  for(const method of ['remove','removeRuntimeGroup','startInfraService','runService']){const original=container[method].bind(container);vi.spyOn(container,method).mockImplementation(async(...args:any[])=>{trace.push('MUTATE:'+method);return original(...args);});}
  const preflight=container.preflightProfileStorage.bind(container);vi.spyOn(container,'preflightProfileStorage').mockImplementation(async(e:any,p:any,c:any)=>{trace.push('preflight:'+p.id);return preflight(e,p,c);});
  vi.spyOn(worktree,'needsDatabaseInitializationSource').mockResolvedValue(false);vi.spyOn(worktree,'resolveDeploymentCommit').mockResolvedValue({head:sha,after:sha.slice(0,7),afterFull:sha});vi.spyOn(worktree,'prepareDeploymentSource').mockImplementation(async()=>{trace.push('prepare-source');const sourcePath=path.join(caseDir,'.deployment-sources/owned');fs.mkdirSync(sourcePath,{recursive:true});return {head:sha,after:sha.slice(0,7),afterFull:sha,sourcePath};});vi.spyOn(worktree,'create').mockImplementation(async(_root:any,_branch:any,dest:string)=>{fs.mkdirSync(dest,{recursive:true});});
