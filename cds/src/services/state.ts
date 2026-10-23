@@ -3987,6 +3987,25 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     );
   }
 
+  /** Preview the same upserts and orphan fallback as import, without publishing metadata. */
+  previewImportedProfiles(incoming: readonly BuildProfile[]): BuildProfile[] {
+    const profiles = new Map(this.getBuildProfiles().map(profile => [profile.id, structuredClone(profile)]));
+    for (const profile of incoming) {
+      const existing = profiles.get(profile.id);
+      const next = {...existing, ...structuredClone(profile)} as BuildProfile;
+      if (!existing && !next.projectId) next.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
+      profiles.set(profile.id, next);
+    }
+    return [...profiles.values()];
+  }
+
+  previewImportedProfilesForProject(projectId: string, incoming: readonly BuildProfile[]): BuildProfile[] {
+    if (this.getProject(projectId)?.deliveryMode === 'managed') {
+      return structuredClone(this.getBuildProfilesForProject(projectId));
+    }
+    return this.previewImportedProfiles(incoming).filter(profile => (profile.projectId || 'default') === projectId);
+  }
+
   /**
    * 这条分支**实际要部署**的服务清单 = 项目级 profiles(稳定底座) + 本分支临时额外服务
    * (branch.extraProfiles)。没声明额外服务的分支 = 项目 profiles 原样(老行为零回归)。

@@ -1277,6 +1277,21 @@ describe('Projects router (P4 Part 2)', () => {
       expect(stateService.getBranchProfileOverride('align-b1', 'plain-web')!.activeDeployMode).toBeUndefined();
     });
 
+    it('失效项目默认模式对齐整批拒绝，所有分支和 CI 状态保持原样', async () => {
+      stateService.addBuildProfile({ id: 'valid-api', projectId: 'default', name: 'API', dockerImage: 'node:20', workDir: '.', command: 'dev', containerPort: 3000,
+        deployModes: { dev: {}, express: { prebuilt: true } } });
+      stateService.addBuildProfile({ id: 'bad-worker', projectId: 'default', name: 'Worker', dockerImage: 'node:20', workDir: '.', command: 'dev', containerPort: 3001,
+        deployModes: { dev: {}, express: { prebuilt: true } } });
+      stateService.updateProject('default', { defaultDeployModes: { 'valid-api': 'express', 'bad-worker': 'removed-express' } });
+      for (const id of ['align-default-a', 'align-default-b']) stateService.addBranch({ id, projectId: 'default', branch: id, worktreePath: '/tmp/' + id, services: {}, status: 'idle', createdAt: new Date().toISOString(),
+        ciImageStatus: 'ready', ciTargetSha: 'a'.repeat(40), profileOverrides: { 'valid-api': { activeDeployMode: 'dev', env: { KEEP: 'yes' } } } });
+      const before = structuredClone(stateService.getAllBranches());
+      const response = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ code: 'invalid_default_deploy_mode' });
+      expect(stateService.getAllBranches()).toEqual(before);
+    });
+
     it('round-trips the CDS global variable inheritance opt-in', async () => {
       const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
       expect(enabled.status).toBe(200);

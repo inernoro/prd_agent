@@ -64,3 +64,21 @@ it('valid explicit import P durably publishes binding before actual R preflight 
  const cold=new StateService(path.join(caseDir,'state.json'));cold.load();// Publication assigns updatedAt separately in the durable and live projections; all identity/state fields must match.
  const coldBirth=cold.getStorageBirth(birth.name)!;expect(Number.isFinite(Date.parse(coldBirth.updatedAt))).toBe(true);expect({...coldBirth,updatedAt:birth.updatedAt}).toEqual(birth);expect(cold.getInfraServiceForProjectAndId('default','fresh').volumes[0]).toMatchObject({name:birth.name,storage:birth.binding});await cold.flush();
 });
+
+it('invalid imported default is rejected before any profile metadata or fresh storage allocation',async()=>{
+ state.updateProject('default',{defaultDeployModes:{app:'express'}});const vols=pFixture(),before=structuredClone(state.getBuildProfiles());await listen();
+ response=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[profile('app')],infraServices:[declaration('fresh')]}});
+ expect(response.body).toContain('默认模式');expect(vols.size).toBe(0);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(state.getInfraServicesForProject('default')).toHaveLength(0);expect(state.getBuildProfiles()).toEqual(before);expect(worktree.create).not.toHaveBeenCalled();expect(container.startInfraService).not.toHaveBeenCalled();
+});
+
+it.each([false,true])('invalid default in other affected project before import writes or P (move=%s)',async(move)=>{
+ state.addProject({id:'other',slug:'other',name:'other',kind:'git',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),defaultDeployModes:{apiOther:'express'}});
+ const original={...profile('apiOther'),projectId:'other',deployModes:{express:{prebuiltImage:true}}};state.addBuildProfile(original);
+ const vols=pFixture(),before=structuredClone(state.getBuildProfiles());await listen();
+ const incoming=move?{...profile('app'),id:'apiOther',projectId:'default',deployModes:{}}:{...original,deployModes:{}};
+ // Moving a profile removes the old default key's subject; it remains a compatible deleted key.
+ if(move)state.updateProject('default',{defaultDeployModes:{apiOther:'express'}});
+ response=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[incoming],infraServices:[declaration('fresh')]}});
+ expect(response.status).toBe(400);expect(JSON.parse(response.body).code).toBe('invalid_default_deploy_mode');expect(state.getBuildProfiles()).toEqual(before);
+ expect(vols.size).toBe(0);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(state.getInfraServicesForProject('default')).toHaveLength(0);expect(worktree.create).not.toHaveBeenCalled();expect(container.startInfraService).not.toHaveBeenCalled();
+});
