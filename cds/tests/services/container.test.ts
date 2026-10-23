@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
-import { nodeModulesVolumeName } from '../../src/util/node-modules-volume.js';
 import type { CdsConfig, BranchEntry, BuildProfile, BuildProfileOverride, ServiceState } from '../../src/types.js';
 
 const makeConfig = (): CdsConfig => ({
@@ -52,6 +51,7 @@ describe('ContainerService', () => {
 
   beforeEach(() => {
     mock = new MockShellExecutor();
+    mock.addResponsePattern(/docker image inspect.*json .Id/, () => ({stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:'',exitCode:0}));
     service = new ContainerService(mock, makeConfig());
     // 本文件断言的是旧的「共享网」run 命令形态（--network cds-network、资源标志等）。分支级网络
     // 隔离（默认开）会改主网为分支网并追加 network connect，那有独立套件覆盖。这里关掉全局逃生开关，
@@ -75,6 +75,13 @@ describe('ContainerService', () => {
       const labels = { 'org.opencontainers.image.revision': target, 'cds.managed.contract': contractHash };
       return { stdout: JSON.stringify(match[1].includes('--format') ? labels : [{ Id: fixedId, Os: 'linux', Architecture: 'amd64', Config: { Labels: labels } }]), stderr: '', exitCode: 0 };
     });
+    const builderId='b'.repeat(64), baseId='sha256:'+'a'.repeat(64); let builderName='';
+    mock.addResponsePatternFirst(/^docker create (.*)$/, match=>{
+      builderName=/--name '([^']+)'/.exec(match[0])![1];
+      return {stdout:builderId,stderr:'',exitCode:0};
+    });
+    mock.addResponsePatternFirst(/docker inspect.*json .Mounts/,()=>({stdout:JSON.stringify([builderId,'/'+builderName,baseId,0,'created',[],null]),stderr:'',exitCode:0}));
+    mock.addResponsePatternFirst(/docker image inspect.*json .Id/,()=>({stdout:JSON.stringify([built?fixedId:baseId,null]),stderr:'',exitCode:0}));
     return fixedId;
   }
 
@@ -106,7 +113,7 @@ describe('ContainerService', () => {
       expect(runCmd).toContain('--name cds-feature-a-api');
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain('-p 127.0.0.1:10001:8080');
-      expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
+      expect(runCmd).toContain("--mount 'type=bind,src=/wt/feature-a/prd-api,dst=/app,readonly'");
       expect(runCmd).toContain('--env-file');
       expect(runCmd).toContain('dotnet restore && dotnet watch run');
 
@@ -174,7 +181,7 @@ describe('ContainerService', () => {
       expect(mock.commands.some((command) => command.includes('docker cp') && command.includes(':/app'))).toBe(true);
       expect(mock.commands.some((command) => command.includes('docker exec') && command.includes('pnpm install && pnpm build'))).toBe(true);
       expect(mock.commands.some((command) => command.includes('docker commit') && command.includes('cds-managed/p1-api:sha-'))).toBe(true);
-      expect(mock.commands.some((command) => command.startsWith('docker pull'))).toBe(false);
+      expect(mock.commands.some(command => command.startsWith('docker pull'))).toBe(false);
       const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
       expect(runCommand).toContain(fixedId);
       expect(runCommand).toContain("sh -c 'pnpm start'");
@@ -539,7 +546,7 @@ describe('ContainerService', () => {
 
       const profile = makeProfile({
         command: 'pnpm install && pnpm build && pnpm start',
-        cacheMounts: [{ hostPath: '/cache/node_modules', containerPath: '/app/node_modules' }],
+        cacheMounts: [{ kind: 'bind', hostPath: '/cache/node_modules', containerPath: '/app/node_modules', readOnly:true }],
       });
 
       await service.runService(makeEntry(), profile, makeService());
@@ -573,7 +580,8 @@ describe('ContainerService', () => {
       // never executes it as a separate command (it's passed literally to docker / the container sh -c).
       // Both the image and the command are single-quoted, so the host shell passes them as literal
       // args to docker (the `; touch ...` suffix lives inside the quotes, never a separate host command).
-      expect(runCmd).toContain("'evil:latest; touch /tmp/pwned'");
+      expect(mock.commands.find(c => /docker image inspect.*json .Id/.test(c))).toContain("'evil:latest; touch /tmp/pwned'");
+      expect(runCmd).toContain("'sha256:"+'a'.repeat(64)+"'");
       expect(runCmd).toContain("sh -c 'node app.js; touch /tmp/pwned2'");
     });
 
@@ -589,27 +597,15 @@ describe('ContainerService', () => {
       await service.runService(makeEntry(), profile, makeService());
       const runCmd = mock.commands.find(c => c.includes('docker run'))!;
       // 整段挂载源被单引号包住，注入片段留在引号内，宿主机不会把 `;id;` 当独立命令执行。
-      expect(runCmd).toContain(`-v '/wt/feature-a/svc";id;"':`);
+      expect(runCmd).toContain(`--mount 'type=bind,src=/wt/feature-a/svc";id;",dst=/app,readonly'`);
       // 旧的双引号写法（会让 ";id;" 逃出）绝不能再出现。
       expect(runCmd).not.toContain('-v "/wt/feature-a/svc";id;""');
     });
 
-    it('should mount shared caches', async () => {
-      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/mkdir/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-
-      const profile = makeProfile({
-        cacheMounts: [
-          { hostPath: '/cache/nuget', containerPath: '/root/.nuget' },
-        ],
-      });
-
-      await service.runService(makeEntry(), profile, makeService());
-
-      const runCmd = mock.commands.find(c => c.includes('docker run -d'));
-      expect(runCmd).toContain(`-v '/cache/nuget':'/root/.nuget'`);
+    it('rejects undeclared writable cache bindings before changing the old service', async () => {
+      const profile=makeProfile({cacheMounts:[{hostPath:'/cache/nuget',containerPath:'/root/.nuget'}]});
+      await expect(service.runService(makeEntry(),profile,makeService())).rejects.toThrow('storage-contract-required');
+      expect(mock.commands).toEqual([]);
     });
 
     // ── Phase 2 cgroup resource limits ──
@@ -816,10 +812,11 @@ describe('ContainerService', () => {
       expect(runCmd).not.toContain('docker run -d');
       expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
       expect(runCmd).toContain('--network cds-network');
-      expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
-      expect(runCmd).toContain(`-v '${nodeModulesVolumeName('feature-a', 'api')}':'/app/node_modules'`);
+      expect(runCmd).toContain("--mount 'type=bind,src=/wt/feature-a/prd-api,dst=/app,readonly'");
+      expect(runCmd).not.toContain('node_modules');
+      expect(runCmd).not.toContain(' -v ');
       expect(runCmd).toContain('--label cds.type=job');
-      expect(runCmd).toContain(`'node:20'`);
+      expect(runCmd).toContain("'sha256:"+'a'.repeat(64)+"'");
       expect(runCmd).toContain(`sh -c 'pnpm exec prisma migrate deploy'`);
 
       const envFileContent = writeSpy.mock.calls[0][1] as string;

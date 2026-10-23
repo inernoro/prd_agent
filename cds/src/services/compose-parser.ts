@@ -14,12 +14,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, CacheMount, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, CacheMount, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole, StorageBinding } from '../types.js';
 import { SERVICE_ROLES } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
 import { parseWebEntryLabels } from './web-entry.js';
 import { isProbePrefix } from './topology-lint.js';
 import { normalizeBuildScope } from './prebuilt-reuse.js';
+import { isReservedPersistentTarget, UnsafeDeploymentStorageError } from './deployment-storage-boundary.js';
 
 /** Parsed infrastructure service from a compose file */
 export interface ComposeServiceDef {
@@ -103,6 +104,7 @@ interface ComposeServiceEntry {
   build?: unknown;
   ports?: Array<string | { target: number; published?: number }>;
   volumes?: string[];
+  'x-cds-storage'?: Record<string, StorageBinding>;
   environment?: Record<string, string> | string[];
   healthcheck?: {
     test?: string | string[];
@@ -306,7 +308,7 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
       name: generateDisplayName(serviceId, entry.image),
       dockerImage: entry.image,
       containerPort,
-      volumes: extractVolumes(entry.volumes),
+      volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
@@ -345,7 +347,7 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
       name: generateDisplayName(serviceId, entry.image),
       dockerImage: entry.image,
       containerPort,
-      volumes: extractVolumes(entry.volumes),
+      volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
@@ -388,6 +390,9 @@ export function toComposeYaml(services: InfraService[]): string {
     }
 
     // Container env
+    const bindings = Object.fromEntries(svc.volumes.filter(v => v.storage).map(v => [v.containerPath, structuredClone(v.storage!)]));
+    if (Object.keys(bindings).length) entry['x-cds-storage'] = bindings;
+
     if (Object.keys(svc.env).length > 0) {
       entry.environment = { ...svc.env };
     }
@@ -592,7 +597,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           env: extractEnv(entry.environment),
           pathPrefixes: pathPrefix ? pathPrefix.split(',').map(s => s.trim()) : undefined,
           dependsOn: dependsOn.length > 0 ? dependsOn : undefined,
-          cacheMounts: extractCacheMounts(entry.volumes),
+          cacheMounts: extractCacheMounts(entry.volumes, entry['x-cds-storage'], relMount),
           readinessProbe,
           resources: parseResourceLimits(entry),
           ...(entrypoint !== undefined ? { entrypoint } : {}),
@@ -624,7 +629,7 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           name: generateDisplayName(serviceId, infraImage),
           dockerImage: infraImage,
           containerPort,
-          volumes: extractVolumes(entry.volumes),
+          volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
           env: extractEnv(entry.environment),
 
           healthCheck: extractHealthCheck(entry.healthcheck),
@@ -738,13 +743,15 @@ export function toCdsCompose(
     }
     if (p.cacheMounts) {
       for (const cm of p.cacheMounts) {
-        volumes.push(`${cm.hostPath}:${cm.containerPath}`);
+        volumes.push(`${cm.hostPath}:${cm.containerPath}${cm.readOnly ? ':ro' : ''}`);
         // Named volumes need top-level declaration
         if (cm.kind === 'volume' || (!cm.kind && !cm.hostPath.startsWith('/') && !cm.hostPath.startsWith('.'))) {
           volumeNames.add(cm.hostPath);
         }
       }
     }
+    const bindings = Object.fromEntries((p.cacheMounts || []).filter(cm => cm.storage).map(cm => [cm.containerPath, structuredClone(cm.storage!)]));
+    if (Object.keys(bindings).length) entry['x-cds-storage'] = bindings;
     if (volumes.length > 0) {
       entry.volumes = volumes;
     }
@@ -841,6 +848,9 @@ export function toCdsCompose(
         if (v.type !== 'bind') volumeNames.add(v.name);
       }
     }
+
+    const bindings = Object.fromEntries(svc.volumes.filter(v => v.storage).map(v => [v.containerPath, structuredClone(v.storage!)]));
+    if (Object.keys(bindings).length) entry['x-cds-storage'] = bindings;
 
     if (Object.keys(svc.env).length > 0) {
       entry.environment = { ...svc.env };
@@ -1084,7 +1094,10 @@ const CONFIG_FILE_EXT_RE = /\.(sql|conf|cnf|ini|json|ya?ml|env|sh|properties|xml
  */
 function hasRelativeVolumeMount(volumes?: string[]): boolean {
   if (!volumes) return false;
-  return volumes.some(isAppSourceMount);
+  // Check every mount: an earlier ordinary source mount must not hide a later data bind.
+  let found = false;
+  for (const mount of volumes) if (isAppSourceMount(mount)) found = true;
+  return found;
 }
 
 /** 单个挂载条目是不是"应用源码"挂载(排除 init / 配置文件)。 */
@@ -1097,6 +1110,9 @@ function isAppSourceMount(v: string): boolean {
   if (INIT_SCRIPT_TARGET_PREFIXES.some(t => target.startsWith(t))) return false;
   // 2. 源路径以单文件配置扩展名结尾 → 单文件挂载,不算 app source
   if (CONFIG_FILE_EXT_RE.test(source)) return false;
+  if (target && isReservedPersistentTarget(target)) {
+    throw new UnsafeDeploymentStorageError('compose-bind', 'ambiguous-compose-data-bind');
+  }
   return true;
 }
 
@@ -1206,17 +1222,19 @@ function extractBuildContext(build: unknown): string | undefined {
 }
 
 /** Extract non-relative named volume mounts as cache mounts */
-function extractCacheMounts(volumes?: string[]): CacheMount[] | undefined {
+function extractCacheMounts(volumes?: string[], bindings?: Record<string,StorageBinding>, sourceMount?: {hostPath: string; containerPath: string} | null): CacheMount[] | undefined {
   if (!volumes) return undefined;
   const mounts: CacheMount[] = [];
+  let sourceConsumed = false;
   for (const v of volumes) {
+    if (typeof v !== 'string' || v.split(':').length < 2) throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
     const parts = v.split(':');
     if (parts.length >= 2) {
       const source = parts[0];
-      // Only Docker volume names; relative and absolute bind paths are not named volumes.
-      if (/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(source)) {
-        mounts.push({ kind: 'volume', hostPath: source, containerPath: parts[1] });
-      }
+      const relativeSource = source === '.' ? '.' : source.replace(/^\.\//, '');
+      if (!sourceConsumed && sourceMount && relativeSource === sourceMount.hostPath && parts[1] === sourceMount.containerPath) { sourceConsumed = true; continue; }
+      const kind = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(source) ? 'volume' : 'bind';
+      mounts.push({ kind, hostPath: source, containerPath: parts[1], ...(bindings?.[parts[1]] ? {storage:structuredClone(bindings[parts[1]])} : {}), ...(parts[2]?.split(',').includes('ro') ? {readOnly: true} : {}) });
     }
   }
   return mounts.length > 0 ? mounts : undefined;
@@ -1299,19 +1317,20 @@ function extractContainerPort(ports?: Array<string | { target: number; published
   return null;
 }
 
-function extractVolumes(volumes?: string[]): InfraVolume[] {
+function extractVolumes(volumes?: string[], bindings?: Record<string,StorageBinding>): InfraVolume[] {
   if (!volumes) return [];
 
   const result: InfraVolume[] = [];
   for (const v of volumes) {
     // Format: "name:/container/path[:ro]" or "/host/path:/container/path[:ro]" or "./rel:/container/path[:ro]"
+    if (typeof v !== 'string' || v.split(':').length < 2) throw new UnsafeDeploymentStorageError('compose-volume', 'storage-contract-required');
     const parts = v.split(':');
     if (parts.length >= 2) {
       const source = parts[0];
       const containerPath = parts[1];
-      const readOnly = parts[2] === 'ro' ? true : undefined;
+      const readOnly = parts[2]?.split(',').includes('ro') ? true : undefined;
       const type = (source.startsWith('/') || source.startsWith('.')) ? 'bind' : 'volume';
-      result.push({ name: source, containerPath, type, readOnly });
+      result.push({ name: source, containerPath, type, readOnly, ...(bindings?.[containerPath] ? {storage:structuredClone(bindings[containerPath])} : {}) });
     }
   }
   return result;

@@ -1,3 +1,4 @@
+import { UnsafeDeploymentStorageError } from '../services/deployment-storage-plan.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { normalizeRestrictedIpv4Allowlist } from '../services/restricted-ipv4-allowlist.js';
 import { createPreviewAddressRouter } from './preview-address.js';
@@ -1786,6 +1787,10 @@ function buildPrebuiltReuseInputs(
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
+  options = {...options, sourceCheckout: options.sourceCheckout ? {...options.sourceCheckout} : undefined};
+  options.profile = await options.containerService.preflightProfileStorage(
+    {...options.entry, worktreePath: options.sourceCheckout?.path || options.entry.worktreePath},
+    options.profile, {assertCurrent: options.assertCurrent});
   // 分支独立库「时间点克隆」初始化（数据库隔离收敛 4）：容器起来之前先把库准备好。
   // 幂等：目标库已存在就跳过；克隆失败抛错让部署如实失败，不让应用对着半份数据启动。
   options.assertCurrent?.(`before-db-init-${options.profile.id}`);
@@ -3715,7 +3720,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
         const updated = stateService.getInfraServiceForProjectAndId(projectId, current.id);
         if (!updated) throw err;
-        current = updated;
+        // Only the assigned port changes; retain the accepted image/mount receipt across retries.
+        current.hostPort = nextPort;
       }
     }
     return current;
@@ -13593,46 +13599,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 误杀对方的 check run（Codex P2，PR #1235）。
       openedCheckRunId = await checkRunRunner.ensureOpen(entry);
 
-      // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
-      // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
-      // deploy-finalize（pull + infra + db-init + 整个构建循环之后）才拆孤儿，若这些 fallible 步骤在
-      // PUT /extra-services?redeploy=1 已落库缩短后的 extraProfiles 之后中途 abort，被移除服务的容器与
-      // entry.services 行就留在原地、却没有任何有效 profile 元数据（pathPrefixes 等路由信息消失而旧容器仍跑）。
-      // executor 路径已把这步上移到 git pull 之前；本地路径同款前移。profiles 非空已由上方 profiles.length===0
-      // 分支保证（空清单走专门的就地清空路径），不会误删全部。fencing-safe：remove 前后各 assertCurrent。
-      {
-        const desiredIds = new Set(profiles.map((p) => p.id));
-        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
-        if (orphans.length > 0) {
-          const oActor = resolveActorFromRequest(req);
-          const oTrigger = triggerFromRequest(req);
-          for (const [sid, svc] of orphans) {
-            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan before ${sid}`);
-            logEvent({
-              step: 'remove-orphan-service', status: 'running',
-              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
-              detail: { profileId: sid, status: svc.status, container: svc.containerName },
-              timestamp: new Date().toISOString(),
-            });
-            try {
-              await containerService.remove(svc.containerName, {
-                projectId: entry.projectId, branchId: entry.id, profileId: sid,
-                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
-                actor: oActor, trigger: oTrigger,
-                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
-                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
-              });
-            } catch (err) {
-              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
-            }
-            assertBranchOperationCurrent(branchOperationLease, `pre-pull-remove-orphan after ${sid}`);
-            delete entry.services[sid];
-            stateService.save();
-            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
-          }
-        }
-      }
-
       // 指定不可变版本时不触碰源码；普通部署仍先 pull，再按 commit + configHash 查找可复用版本。
       logEvent({
         step: selectedDeploymentVersion ? 'version-resolve' : 'pull',
@@ -13726,6 +13692,46 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       stateService.save();
 
+      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
+      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
+      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
+        const refreshedEffectiveProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
+        deploymentConfigHash = deploymentVersionService.computeConfigHash(
+          refreshedEffectiveProfiles,
+          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
+        );
+        const reusable = deploymentVersionService.findReusable({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: deployedCommitSha,
+          configHash: deploymentConfigHash,
+        });
+        if (reusable) {
+          selectedDeploymentVersion = reusable;
+          profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
+          logEvent({
+            step: 'version-reuse',
+            status: 'done',
+            title: `复用不可变版本 ${reusable.id}，跳过源码构建`,
+            detail: { versionId: reusable.id, commitSha: reusable.commitSha, configHash: reusable.configHash },
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+      if (selectedDeploymentVersion && deploymentRunService && deploymentRun && deploymentConfigHash) {
+        deploymentRunService.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
+      }
+
+      // ── Compute startup layers (topological sort by dependsOn) ──
+      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
+      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
+      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
+      const deployProjectId = entry.projectId || 'default';
+      const deployProfileSuffix = deployProjectId === 'default'
+        ? ''
+        : `-${deployProject?.slug || deployProjectId}`;
+      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
+
       // ── Ensure required infrastructure is running ──
       // A profile can depend on project infra such as mongodb/redis and use
       // env templates like ${CDS_MONGODB_PORT}. Those CDS_* vars only exist
@@ -13752,6 +13758,54 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const actualInfraState = await containerService.discoverInfraContainers();
       const requiredInfraIds = computeRequiredInfra(profiles, projectInfra, actualInfraState);
       const startedInfraIds = new Set<string>();
+      const acceptedProfiles = new Map<string, BuildProfile>();
+      for (const candidate of profiles) {
+        const effective = admittedArtifactProfile(selectedDeploymentVersion ? candidate
+          : agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(candidate, inputBranch()))
+          : resolveEffectiveProfile(candidate, inputBranch()), deploymentInput.artifactAdmission);
+        acceptedProfiles.set(candidate.id, await containerService.preflightProfileStorage(deploymentSourceEntry, effective,
+          {assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step)}));
+      }
+      const acceptedInfra = new Map<string, InfraService>();
+      for (const infraId of requiredInfraIds) {
+        const infra = stateService.getInfraServiceForProjectAndId(entry.projectId || 'default', infraId);
+        if (infra) acceptedInfra.set(infraId, await containerService.preflightInfraStorage(infra,
+          {allowOriginalRuntime: true, assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step)}));
+      }
+      // 全图存储准入成功后才移除孤儿；准入失败时保留全部原运行实例。
+      {
+        const desiredIds = new Set(profiles.map((p) => p.id));
+        const orphans = Object.entries(entry.services).filter(([sid]) => !desiredIds.has(sid));
+        if (orphans.length > 0) {
+          const oActor = resolveActorFromRequest(req);
+          const oTrigger = triggerFromRequest(req);
+          for (const [sid, svc] of orphans) {
+            assertBranchOperationCurrent(branchOperationLease, `admitted-remove-orphan before ${sid}`);
+            logEvent({
+              step: 'remove-orphan-service', status: 'running',
+              title: `服务 "${sid}" 已从期望清单移除，正在下掉容器…`,
+              detail: { profileId: sid, status: svc.status, container: svc.containerName },
+              timestamp: new Date().toISOString(),
+            });
+            try {
+              await containerService.remove(svc.containerName, {
+                projectId: entry.projectId, branchId: entry.id, profileId: sid,
+                requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
+                actor: oActor, trigger: oTrigger,
+                operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
+                reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
+              });
+            } catch (err) {
+              logEvent({ step: 'remove-orphan-service', status: 'warning', title: `服务 "${sid}" 容器移除失败(忽略,仍清条目): ${(err as Error).message}`, timestamp: new Date().toISOString() });
+            }
+            assertBranchOperationCurrent(branchOperationLease, `admitted-remove-orphan after ${sid}`);
+            delete entry.services[sid];
+            stateService.save();
+            logEvent({ step: 'remove-orphan-service', status: 'done', title: `服务 "${sid}" 已下掉（已从期望清单移除）`, timestamp: new Date().toISOString() });
+          }
+        }
+      }
+
       if (!perBranchInfra) {
         logEvent({
           step: 'infra-shared',
@@ -13777,7 +13831,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         });
         let startedInfra = infra;
         try {
-          startedInfra = await startInfraWithPortRetry(infra, entry.projectId || 'default');
+          startedInfra = await startInfraWithPortRetry(acceptedInfra.get(infraId)!, entry.projectId || 'default');
         } catch (err) {
           const message = (err as Error).message;
           stateService.updateInfraService(infra.id, { status: 'error', errorMessage: message }, entry.projectId || 'default');
@@ -13854,36 +13908,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
-      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
-      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
-        const refreshedEffectiveProfiles = currentProfiles.map((profile) => agentPrebuiltGated ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch())) : resolveEffectiveProfile(profile, inputBranch()));
-        deploymentConfigHash = deploymentVersionService.computeConfigHash(
-          refreshedEffectiveProfiles,
-          getDeploymentEnv(deploymentInput, entry.projectId || 'default'),
-        );
-        const reusable = deploymentVersionService.findReusable({
-          projectId: entry.projectId || 'default',
-          branchId: entry.id,
-          commitSha: deployedCommitSha,
-          configHash: deploymentConfigHash,
-        });
-        if (reusable) {
-          selectedDeploymentVersion = reusable;
-          profiles = deploymentVersionService.materializeProfiles(reusable, currentProfiles);
-          logEvent({
-            step: 'version-reuse',
-            status: 'done',
-            title: `复用不可变版本 ${reusable.id}，跳过源码构建`,
-            detail: { versionId: reusable.id, commitSha: reusable.commitSha, configHash: reusable.configHash },
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
-      if (selectedDeploymentVersion && deploymentRunService && deploymentRun && deploymentConfigHash) {
-        deploymentRunService.attachVersion(deploymentRun.id, selectedDeploymentVersion.id, deploymentConfigHash);
-      }
-
       if (selectedDeploymentVersion) {
         logEvent({
           step: 'database-init',
@@ -13908,16 +13932,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
           logEvent,
         });
       }
-
-      // ── Compute startup layers (topological sort by dependsOn) ──
-      // 非默认项目的 profile id 带项目 slug 后缀。兼容升级前已经写入、
-      // 但 dependsOn 仍保留 Compose 原始 service id 的存量配置，避免未知
-      // 依赖被拓扑排序当作已满足，导致 Web 在 Console/Serving 前抢跑。
-      const deployProjectId = entry.projectId || 'default';
-      const deployProfileSuffix = deployProjectId === 'default'
-        ? ''
-        : `-${deployProject?.slug || deployProjectId}`;
-      profiles = normalizeProjectProfileDependencies(profiles, deployProfileSuffix);
 
       // P4 Part 17 (G2 fix): scope infra by the branch's project so the
       // dependency resolver only sees infra services actually owned by
@@ -14003,11 +14017,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // Resolve baseline → 项目默认 → 分支 override → mode override
           // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
           // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
-          const effectiveProfile = admittedArtifactProfile(selectedDeploymentVersion
-            ? profile
-            : agentPrebuiltGated
-              ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
-              : resolveEffectiveProfile(profile, inputBranch()), deploymentInput.artifactAdmission);
+          const effectiveProfile = acceptedProfiles.get(profile.id)!;
           const branchOverride = selectedDeploymentVersion ? undefined : deploymentInput.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -15079,9 +15089,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Resolve baseline → branch override → deploy-mode override
       // 门禁下摘掉源码回退（同整分支部署）。
-      const effectiveProfile = admittedArtifactProfile(singleDeployGated
-        ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
-        : resolveEffectiveProfile(profile, inputBranch()), deploymentInput.artifactAdmission);
+      const effectiveProfile = await containerService.preflightProfileStorage(deploymentSourceEntry,
+        admittedArtifactProfile(singleDeployGated
+          ? withoutSourceFallback(resolveEffectiveProfile(profile, inputBranch()))
+          : resolveEffectiveProfile(profile, inputBranch()), deploymentInput.artifactAdmission),
+        {assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step)});
       const branchOverride = deploymentInput.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
@@ -21459,9 +21471,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (m) { res.status(m.status).json(m.body); return; }
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
+    let accepted: InfraService;
     try {
-      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
-      const started = await startInfraWithPortRetry(service, resolved.projectId);
+      accepted = await containerService.preflightInfraStorage(service);
+    } catch (err) {
+      // Rejected replacement must leave the running historical service and its state intact.
+      res.status(err instanceof UnsafeDeploymentStorageError ? 409 : 500).json({error: (err as Error).message});
+      return;
+    }
+    try {
+      try { await containerService.stopInfraService(accepted.containerName); } catch { /* checked by the existing start path */ }
+      const started = await startInfraWithPortRetry(accepted, resolved.projectId);
       stateService.updateInfraService(id, { hostPort: started.hostPort, status: 'running', errorMessage: undefined }, resolved.projectId);
       stateService.save();
       res.json({
@@ -22291,29 +22311,6 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       stateService.save();
       send('config', 'done', `配置已写入 (${stateService.getBuildProfiles().length} 个构建配置, ${newInfraServices.length} 个基础设施)`);
 
-      // ── Phase 2: Start infra services ──
-      const allInfra = stateService.getInfraServices();
-      const infraToStart = allInfra.filter(s => s.status !== 'running');
-      if (infraToStart.length > 0) {
-        send('infra', 'running', `正在启动 ${infraToStart.length} 个基础设施服务...`);
-        for (const svc of infraToStart) {
-          send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
-          try {
-            // Phase 1: 传项目 customEnv 让 ${VAR} 展开
-            await containerService.startInfraService(svc, stateService.getCustomEnv(svc.projectId));
-            stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
-            send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
-          } catch (err) {
-            stateService.updateInfraService(svc.id, { status: 'error', errorMessage: (err as Error).message });
-            send(`infra-${svc.id}`, 'error', `${svc.name} 启动失败: ${(err as Error).message}`);
-          }
-        }
-        stateService.save();
-        send('infra', 'done', '基础设施服务就绪');
-      } else {
-        send('infra', 'done', '基础设施服务已在运行中');
-      }
-
       // ── Phase 3: Create main branch worktree ──
       // Detect default branch name
       let mainBranch = 'main';
@@ -22402,6 +22399,40 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         stateService.getBuildProfilesForProject(entry.projectId || owner.id),
         entry,
       );
+      const importEffective = profiles.map(profile => resolveEffectiveProfile(profile, entry!));
+      const importTarget = await worktreeService.resolveDeploymentCommit(entry.branch, entry.worktreePath);
+      const importAdmission = await containerService.inspectDeploymentArtifacts(importEffective,
+        importTarget.afterFull, () => {});
+      if (importAdmission.state !== 'ready') throw new Error('导入部署产物未通过完整核验，保留原服务与数据');
+      const importProfiles = new Map<string, BuildProfile>();
+      for (const profile of importEffective) importProfiles.set(profile.id,
+        await containerService.preflightProfileStorage(entry, admittedArtifactProfile(profile, importAdmission)));
+      const importInfra = new Map<string, InfraService>();
+      for (const svc of stateService.getInfraServices().filter(s => s.status !== 'running'))
+        importInfra.set(svc.id, await containerService.preflightInfraStorage(svc, {allowOriginalRuntime: true}));
+      // ── Phase 2: Start infra services ──
+      const allInfra = stateService.getInfraServices();
+      const infraToStart = allInfra.filter(s => s.status !== 'running');
+      if (infraToStart.length > 0) {
+        send('infra', 'running', `正在启动 ${infraToStart.length} 个基础设施服务...`);
+        for (const svc of infraToStart) {
+          send(`infra-${svc.id}`, 'running', `正在启动 ${svc.name} (${svc.dockerImage})...`);
+          try {
+            // Phase 1: 传项目 customEnv 让 ${VAR} 展开
+            await containerService.startInfraService(importInfra.get(svc.id)!, stateService.getCustomEnv(svc.projectId));
+            stateService.updateInfraService(svc.id, { status: 'running', errorMessage: undefined });
+            send(`infra-${svc.id}`, 'done', `${svc.name} 已启动 → :${svc.hostPort}`);
+          } catch (err) {
+            stateService.updateInfraService(svc.id, { status: 'error', errorMessage: (err as Error).message });
+            send(`infra-${svc.id}`, 'error', `${svc.name} 启动失败: ${(err as Error).message}`);
+          }
+        }
+        stateService.save();
+        send('infra', 'done', '基础设施服务就绪');
+      } else {
+        send('infra', 'done', '基础设施服务已在运行中');
+      }
+
       if (profiles.length > 0) {
         send('deploy', 'running', `正在部署 ${mainBranch} (${profiles.length} 个服务)...`);
 
@@ -22462,8 +22493,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
               containerService,
               serverEventLogStore,
               entry,
-              profile,
+              profile: importProfiles.get(profile.id)!,
               service: svc,
+              artifactCommitSha: importAdmission.targetCommitSha,
               customEnv: mergedEnv,
               onPortChanged: ({ oldPort, newPort }) => {
                 send(`port-${profile.id}`, 'warning', `${profile.name} 端口 ${oldPort} 已占用，改用 :${newPort} 重试`);
@@ -22477,7 +22509,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
             svc.errorMessage = undefined;
             // 2026-05-14 真实态徽章：import-and-init 用裸 profile 构建
             // （runService 直接吃 profile.*），钉住其 activeDeployMode。
-            svc.deployedMode = profile.activeDeployMode || '';
+            svc.deployedMode = importProfiles.get(profile.id)!.activeDeployMode || '';
             send(`deploy-${profile.id}`, 'done', `${profile.name} 就绪 → :${svc.hostPort}`);
           } catch (err) {
             svc.status = 'error';

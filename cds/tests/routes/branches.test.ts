@@ -6491,6 +6491,53 @@ describe('Branch Routes', () => {
 
   // ── Infra services (P4 Part 16: B1 fix) ──
 
+  describe('storage admission precedes business effects', () => {
+    it('rejects an unsafe infrastructure restart without stopping or changing historical state', async () => {
+      const service = {id:'old-db',projectId:'default',name:'old-db',dockerImage:'mysql:8',containerName:'old-db',
+        containerPort:3306,hostPort:13306,status:'running' as const,env:{},createdAt:new Date().toISOString(),
+        volumes:[{type:'bind' as const,name:config.worktreeBase+'/old/database',containerPath:'/var/lib/mysql'}]};
+      stateService.addInfraService(service);
+      const before=structuredClone(stateService.getInfraService('old-db'));
+      const stop=vi.spyOn(containerService,'stopInfraService');
+      const result=await request(server,'POST','/api/infra/old-db/restart');
+      expect(result.status).toBe(409);
+      expect((result.body as any).error).toContain('unsafe_deployment_storage');
+      expect(stop).not.toHaveBeenCalled();
+      expect(stateService.getInfraService('old-db')).toEqual(before);
+    });
+    it('first import supplies the admitted full target even when the new branch has no cached SHA', async () => {
+      const sha='abc1234'+'0'.repeat(33), image='fixture:image', digest='fixture@sha256:'+'d'.repeat(64);
+      vi.spyOn(containerService,'inspectDeploymentArtifacts').mockImplementation(async profiles=>({state:'ready',targetCommitSha:sha,checkedAt:new Date().toISOString(),
+        artifacts:profiles.map(p=>({profileIds:[p.id],requestedImage:p.dockerImage,image:digest,revision:sha,platform:'linux/amd64'}))}));
+      vi.spyOn(containerService,'preflightProfileStorage').mockImplementation(async (_entry,p)=>p);
+      const launch=vi.spyOn(containerService,'runService').mockImplementation(async (_entry,_profile,_service,_output,_env,context)=>{
+        expect(context?.artifactCommitSha).toBe(sha);
+      });
+      const result=await request(server,'POST','/api/import-and-init',{config:{$schema:'cds-config',buildProfiles:[
+        {id:'imported',projectId:'default',name:'imported',dockerImage:image,prebuiltImage:true,containerPort:8080,workDir:'.',command:''}]}});
+      expect(result.status).toBe(200);
+      expect(launch).toHaveBeenCalledOnce();
+      expect(launch.mock.calls[0][0].githubCommitSha).toBeUndefined();
+      expect(launch.mock.calls[0][1].localArtifact).toBe(true);
+    });
+    it('checks every application before removing an orphan or starting infrastructure', async () => {
+      const good={id:'safe',projectId:'default',name:'safe',dockerImage:'fixture:image',workDir:'.',command:'node server.js',containerPort:8080};
+      const bad={...good,id:'unsafe',name:'unsafe',cacheMounts:[{kind:'bind' as const,hostPath:'/tmp/deployment/database',containerPath:'/data'}]};
+      stateService.addBuildProfile(good);
+      stateService.addBuildProfile(bad);
+      stateService.addBranch({id:'storage-graph',projectId:'default',branch:'storage-graph',worktreePath:path.join(tmpDir,'worktrees','storage-graph'),
+        status:'running',createdAt:new Date().toISOString(),services:{orphan:{profileId:'orphan',containerName:'old-orphan',hostPort:10010,status:'running'}}});
+      mock.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:''}));
+      const preflight=vi.spyOn(containerService,'preflightProfileStorage');
+      const result=await request(server,'POST','/api/branches/storage-graph/deploy');
+      expect(result.status).toBe(200);
+      expect(String(result.body)).toContain('unsafe_deployment_storage');
+      expect(preflight.mock.calls.map(c=>c[1].id)).toEqual(['safe','unsafe']);
+      expect(mock.commands.some(c=>/^docker (rm|stop|run|create|start) /.test(c))).toBe(false);
+      expect(stateService.getBranch('storage-graph')!.services.orphan.containerName).toBe('old-orphan');
+    });
+  });
+
   describe('POST /api/infra (project scoping)', () => {
     it('honors body.projectId on creation', async () => {
       // Pre-create the target project

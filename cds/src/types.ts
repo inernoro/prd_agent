@@ -556,6 +556,21 @@ export interface CacheMount {
   hostPath: string;
   /** Container path where it gets mounted */
   containerPath: string;
+  /** Explicitly read-only configuration or cache. */
+  readOnly?: boolean;
+  /** Stable owner declaration for writable storage; never inferred from a path. */
+  storage?: StorageBinding;
+}
+
+export interface StorageBinding {
+  version: 1;
+  purpose: 'cache' | 'persistent';
+  instanceId: string;
+  projectId: string;
+  scope: 'branch-private' | 'project-shared';
+  branchId?: string;
+  serviceId: string;
+  mountKey: string;
 }
 
 /**
@@ -4641,6 +4656,7 @@ export interface InfraVolume {
   type?: 'volume' | 'bind';
   /** Read-only mount flag */
   readOnly?: boolean;
+  storage?: StorageBinding;
 }
 
 /** Health check configuration for infrastructure service */
@@ -4873,6 +4889,8 @@ export interface SchedulerConfig {
 
 /** Application configuration */
 export interface CdsConfig {
+  /** Fixed storage namespace, explicitly configured independently of checkout/host display names. */
+  storageInstanceId?: string;
   repoRoot: string;
   /**
    * Base directory that houses every per-project git clone for the
