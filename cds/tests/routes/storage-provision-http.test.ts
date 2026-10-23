@@ -37,6 +37,25 @@ describe('product new-only infra storage HTTP producer',()=>{
   const restored=new StateService(path.join(root,'state.json'));restored.load();expect(restored.getStorageBirth(name)?.stage).toBe('published');await restored.flush();
   const again=await post(input());expect(again.status).toBe(409);expect(commands.filter(c=>c.startsWith('docker volume create'))).toHaveLength(1);
  });
+
+ it('auto-filled known database storage without new-only is refused before publishing metadata',async()=>{
+  const body=input();delete (body as any).initializeStorage;const r=await post(body);expect(r.status).toBe(409);expect(state.getInfraServiceForProjectAndId('p','mysql')).toBeUndefined();expect(commands).toHaveLength(0);
+ });
+ it('custom bare named volume without explicit allocation is rejected before metadata or Docker',async()=>{
+  const r=await post({id:'custom',projectId:'p',dockerImage:'example/custom-db:1',containerPort:5432,volumes:[{name:'existing-user-volume',containerPath:'/custom-data'}]});
+  expect(r.status).toBe(409);expect(state.getInfraServiceForProjectAndId('p','custom')).toBeUndefined();expect(commands).toHaveLength(0);
+ });
+ it('manual new Mongo allocation uses both catalog data paths before publication and passes actual image-volume admission',async()=>{
+  const native=new Map<string,any>();vi.mocked(shell.exec).mockImplementation(async(c,o)=>{o?.beforeStart?.();commands.push(c);
+   if(c.startsWith('docker info'))return {exitCode:0,stdout:'own-daemon',stderr:''};
+   if(c.startsWith('docker image inspect'))return {exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),{'/data/db':{},'/data/configdb':{}}]),stderr:''};
+   const n=c.split(' ').at(-1)!.replace(/^'|'$/g,'');
+   if(c.startsWith('docker volume inspect'))return native.has(n)?{exitCode:0,stdout:JSON.stringify([native.get(n)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};
+   if(c.startsWith('docker volume create')){const row=state.getStorageBirth(n)!;native.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stdout:n,stderr:''}}throw Error('unexpected command '+c);
+  });
+  const r=await post({id:'mongo',projectId:'p',dockerImage:'mongo:7',containerPort:27017,env:{MONGO_INITDB_ROOT_USERNAME:'fixture',MONGO_INITDB_ROOT_PASSWORD:'fixture-password'},initializeStorage:'new-only'});
+  expect(r.status).toBe(201);const service=state.getInfraServiceForProjectAndId('p','mongo')!;expect(service.volumes.map(v=>v.containerPath)).toEqual(['/data/db','/data/configdb']);expect(native.size).toBe(2);const admitted=new ContainerService(shell,config,{getDockerNetwork:()=>undefined,storageBirthRequirements:plan=>state.storageBirthRequirements(plan)},undefined,undefined,undefined,unitBindMountInspector);await expect(admitted.preflightInfraStorage(service)).resolves.toBeDefined();
+ });
  it('foreign project cannot acquire a birth or issue Docker writes',async()=>{expect((await post(input(),'other')).status).toBe(403);expect(commands).toHaveLength(0);expect(state.getStorageBirth(name)).toBeUndefined()});
  it('unknown native absence never returns a created service',async()=>{failInspect=true;const r=await post(input());expect(r.status).toBe(409);expect(state.getInfraServiceForProjectAndId('p','mysql')).toBeUndefined();expect(commands.some(c=>c.startsWith('docker volume create'))).toBe(false)});
  it('confirm ACK failure keeps physical birth, returns hold and prevents another fresh allocation',async()=>{

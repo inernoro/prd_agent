@@ -1,3 +1,4 @@
+import type {StorageBinding} from '../types.js';
 import {profileStorageTargetKey,profileStorageBranchIdentity,profileStorageDeclarationDigest,type ProfileStorageTarget,type ProfileStorageBinding} from "./profile-storage-provision.js";
 import {storageProvisionDigest,type StorageBirth} from './storage-provision.js';
 import {stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
@@ -1727,7 +1728,33 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
    * 只清 boundBranchId 命中的：管理员手动加的监控没有这个绑定，不受影响——
    * 那是人明确要盯的东西，不该因为某条分支没了就替他删掉。
    */
+  /** Keep the declaration and journal needed to resolve retained private storage.
+   * This is not deallocation. Call before runtime/log/worktree cleanup as well as
+   * through removeBranch's final State fence. All birth stages are retained.
+   */
+  assertBranchStorageRemovalAllowed(id: string): void {
+    const branch = this.state.branches[id];
+    if (!branch) return;
+    const projectId = branch.projectId || 'default';
+    const ownsTarget = (target: {projectId: string; branchId: string}) =>
+      target.projectId === projectId && target.branchId === id;
+    const ownsBinding = (binding?: StorageBinding) => binding?.scope === 'branch-private'
+      && binding.projectId === projectId && binding.branchId === id;
+    const declarations = [
+      ...this.getBuildProfilesForProject(projectId),
+      ...Object.values(branch.profileOverrides || {}),
+      ...(branch.extraProfiles || []),
+    ];
+    const retained = Object.values(this.state.storageBirths || {}).some(row => ownsBinding(row.binding))
+      || [...this.profileStorageDrafts.values()].some(row => ownsTarget(row.target))
+      || Object.values(this.state.profileStoragePublications || {}).some(row => ownsTarget(row.binding.target))
+      || Object.values(this.state.profileStorageBindings || {}).some(row => ownsTarget(row.target))
+      || declarations.some(profile => 'cacheMounts' in profile && profile.cacheMounts?.some(mount => ownsBinding(mount.storage)));
+    if (retained) throw new Error('storage_retained_branch_delete_refused: 分支含已分配、已声明或待确认的私有存储，请保留完整分支配置并改用停止');
+  }
+
   removeBranch(id: string): string[] {
+    this.assertBranchStorageRemovalAllowed(id);
     if (!this.state.branches[id]) {
       throw new Error(`分支 "${id}" 不存在`);
     }
