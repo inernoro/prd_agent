@@ -3552,27 +3552,27 @@ export class ContainerService {
    * 同 discoverInfraContainers：移除了 `cds.network=` filter,改用 branchId
    * 关联,branch 自带 projectId 不会跨项目串数据。
    */
-  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>> {
+  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string }>> {
     return (await this.discoverAppContainersWithStatus()).containers;
   }
 
   async discoverAppContainersWithStatus(): Promise<{
     ok: boolean;
-    containers: Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
+    containers: Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
   }> {
     const result = await this.shell.exec(
-      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --no-trunc --format '{{.Names}}|{{.State}}|{{.Labels}}|{{.ID}}'`,
       { timeout: 30_000, executionLane: 'observation' },
     );
 
-    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
+    const discovered = new Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
     if (result.exitCode !== 0) return { ok: false, containers: discovered };
     if (!result.stdout.trim()) return { ok: true, containers: discovered };
 
     const ambiguous = new Set<string>();
     for (const line of result.stdout.trim().split('\n')) {
       if (!line) continue;
-      const [name, state, labels] = line.split('|');
+      const [name, state, labels, containerId] = line.split('|');
       const branchMatch = labels?.match(/cds\.branch\.id=([^,]+)/);
       const profileMatch = labels?.match(/cds\.profile\.id=([^,]+)/);
       const networkMatch = labels?.match(/cds\.network=([^,]+)/);
@@ -3586,6 +3586,7 @@ export class ContainerService {
         discovered.set(key, {
           running: state === 'running',
           containerName: name,
+          ...(/^[a-f0-9]{64}$/.test(containerId || '') ? { containerId } : {}),
           branchId: branchMatch[1],
           profileId: profileMatch[1],
           ...(networkMatch?.[1] ? { network: networkMatch[1] } : {}),

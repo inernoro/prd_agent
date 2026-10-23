@@ -3227,6 +3227,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           operation: 'branch-auto-wake',
           source: 'proxy.preview-auto-wake',
           reason: '预览访问自动唤醒（docker restart，未重建代码）',
+          assertCurrent: step => lease?.assertCurrent(step),
         });
         lease?.assertCurrent(`auto-wake after ${svc.profileId}`);
         if (!ok) {
@@ -4317,7 +4318,8 @@ janitorService.setRemoveFn(async (slug: string) => {
 
         // 重试预算属于精确运行身份；重新部署不继承旧容器的失败计数。
         if (found.containerName !== svc.containerName) continue;
-        const attemptKey = `app:${key}:${found.containerName}`;
+        if (!found.containerId) continue; // 身份未知时不把预算或命令绑定到可复用名称。
+        const attemptKey = `app:${key}:${found.containerId}`;
         for (const oldKey of restartAttempts.keys()) if (oldKey.startsWith(`app:${key}:`) && oldKey !== attemptKey) restartAttempts.delete(oldKey);
         const isNewCrash = !restartAttempts.has(attemptKey);
         const att = restartAttempts.get(attemptKey) || { count: 0, nextAtMs: 0 };
@@ -4401,7 +4403,9 @@ janitorService.setRemoveFn(async (slug: string) => {
         }
         try {
           branchOperationLease?.assertCurrent(`auto-restart before docker start ${profileId}`);
-          const startRes = await shell.exec(`docker start ${found.containerName}`);
+          const startRes = await shell.exec(`docker start ${found.containerId}`, {
+            beforeStart: () => branchOperationLease?.assertCurrent(`auto-restart execution ${profileId}`),
+          });
           branchOperationLease?.assertCurrent(`auto-restart after docker start ${profileId}`);
           activeServerEventLogStore?.record({
             category: 'container',

@@ -16069,6 +16069,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           operation: 'branch-restart',
           source: 'api.restart-branch',
           reason: '手动重新启动（docker restart，未重建代码）',
+          assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
         });
         assertBranchOperationCurrent(branchOperationLease, `restart after ${svc.profileId}`);
         if (ok) {
@@ -16102,6 +16103,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             operation: 'branch-restart-replica-member',
             source: 'api.restart-branch',
             reason: '分支重启级联拉起复制集副本（docker restart，未重建代码）',
+            assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
           });
           if (memberOk) {
             // 就绪实证后才恢复分流（Codex P1）：restartServiceInPlace 只确认容器
@@ -18424,6 +18426,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
+      const recordedId = svc.containerId, containerName = svc.containerName;
+      let containerId = expectedContainerId || recordedId;
+      if (!containerId || !/^[a-f0-9]{64}$/.test(containerId)) {
+        const identity = await shell.exec(`docker inspect --format '{{.Id}}' ${shellQuote(containerName)}`, { timeout: 5000 });
+        containerId = identity.exitCode === 0 ? identity.stdout.trim() : '';
+      }
+      if (!/^[a-f0-9]{64}$/.test(containerId)) {
+        res.status(409).json({ error: '无法确认当前容器身份，请刷新后重试' }); return;
+      }
       // #1448: the command string must reach the container's `sh` untouched.
       // JSON.stringify produced a double-quoted shell word, so the CDS host
       // shell expanded `$VAR` / `$(...)` BEFORE docker exec — `printenv`-style
@@ -18431,9 +18442,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // private key included), and `$(cmd)` ran as the CDS main process.
       // Single-quote it; the container shell does the expansion.
       const result = await shell.exec(
-        `docker exec ${stdin !== undefined ? '-i ' : ''}${expectedContainerId || svc.containerName} sh -c ${shellQuote(command)}`,
+        `docker exec ${stdin !== undefined ? '-i ' : ''}${containerId} sh -c ${shellQuote(command)}`,
         { timeout: 30_000, ...(stdin !== undefined ? { stdin } : {}), beforeStart: () => {
-          if (expectedContainerId !== undefined && stateService.getBranch(id)?.services[svc.profileId]?.containerId !== expectedContainerId)
+          const current = stateService.getBranch(id)?.services[svc.profileId];
+          if (!current || current.containerName !== containerName || current.containerId !== recordedId)
             throw new Error('当前容器身份已变化，拒绝执行');
         } },
       );

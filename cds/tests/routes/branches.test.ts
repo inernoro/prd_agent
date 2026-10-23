@@ -2459,7 +2459,8 @@ describe('Branch Routes', () => {
       const body = { profileId: 'data', command: 'cat >/dev/null', stdin: 'private-input-value', expectedContainerId: cid };
       const wrong = await request(server, 'POST', '/api/branches/b1/container-exec', { ...body, expectedContainerId: 'a'.repeat(64) });
       expect(wrong.status).toBe(409); expect(mock.commands.some(c => c.startsWith('docker exec'))).toBe(false);
-      const good = await request(server, 'POST', '/api/branches/b1/container-exec', body);
+      const { expectedContainerId: _expected, ...implicit } = body;
+      const good = await request(server, 'POST', '/api/branches/b1/container-exec', implicit);
       expect(good.status).toBe(200);
       const index = mock.commands.findIndex(c => c.startsWith('docker exec -i'));
       expect(mock.commands[index]).toBe(`docker exec -i ${cid} sh -c 'cat >/dev/null'`);
@@ -2470,7 +2471,7 @@ describe('Branch Routes', () => {
         options?.beforeStart?.(); return original(command, options);
       };
       try {
-        const stale = await request(server, 'POST', '/api/branches/b1/container-exec', body);
+        const stale = await request(server, 'POST', '/api/branches/b1/container-exec', implicit);
         expect(stale.status).toBe(409); expect(String(stale.body.error)).toContain('身份已变化');
       } finally { mock.exec = original; }
     });
@@ -2484,14 +2485,14 @@ describe('Branch Routes', () => {
       await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { env: { SECRET_TOKEN: 'supersecretvalue123' } });
       // A running service row so container-exec finds a container to exec into.
       stateService.getBranch('b1')!.services['demo-extra'] = {
-        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', containerId: 'c'.repeat(64), hostPort: 10099, status: 'running',
       };
       stateService.save();
 
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
         // simulate `echo $SECRET_TOKEN` dumping the raw secret on its own line
-        if (command.includes('docker exec cds-b1-demo-extra')) {
+        if (command.includes(`docker exec ${'c'.repeat(64)}`)) {
           return { stdout: 'supersecretvalue123\n', stderr: '', exitCode: 0 };
         }
         return originalExec(command, options);
@@ -2514,7 +2515,7 @@ describe('Branch Routes', () => {
         extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
       });
       stateService.getBranch('b1')!.services['demo-extra'] = {
-        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', containerId: 'c'.repeat(64), hostPort: 10099, status: 'running',
       };
       stateService.save();
 
@@ -2522,10 +2523,10 @@ describe('Branch Routes', () => {
       const res = await request(server, 'POST', '/api/branches/b1/container-exec', { profileId: 'demo-extra', command });
       expect(res.status).toBe(200);
 
-      const sent = mock.commands.find((c) => c.includes('docker exec cds-b1-demo-extra'));
+      const sent = mock.commands.find((c) => c.includes(`docker exec ${'c'.repeat(64)}`));
       expect(sent).toBeDefined();
       // Single-quoted word: `$` is inert on the host, and embedded single quotes are re-escaped.
-      expect(sent).toBe(`docker exec cds-b1-demo-extra sh -c '${command.replace(/'/g, `'\\''`)}'`);
+      expect(sent).toBe(`docker exec ${'c'.repeat(64)} sh -c '${command.replace(/'/g, `'\\''`)}'`);
       expect(sent).not.toContain(`sh -c "`);
     });
 
@@ -2535,13 +2536,13 @@ describe('Branch Routes', () => {
         extraProfiles: [{ id: 'demo-extra', name: 'demo-extra', dockerImage: 'nginx:alpine', containerPort: 80 }],
       });
       stateService.getBranch('b1')!.services['demo-extra'] = {
-        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', hostPort: 10099, status: 'running',
+        profileId: 'demo-extra', containerName: 'cds-b1-demo-extra', containerId: 'c'.repeat(64), hostPort: 10099, status: 'running',
       };
       stateService.save();
 
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
-        if (command.includes('docker exec cds-b1-demo-extra')) {
+        if (command.includes(`docker exec ${'c'.repeat(64)}`)) {
           return {
             stdout: [
               'HOME=/root',
@@ -2569,6 +2570,19 @@ describe('Branch Routes', () => {
       } finally {
         mock.exec = originalExec;
       }
+    });
+
+    it('旧服务行由服务端解析完整容器ID，无法证明身份时不执行命令', async () => {
+      seedBranch('b1');
+      stateService.getBranch('b1')!.services.data = { profileId: 'data', containerName: 'legacy-api', hostPort: 10099, status: 'running' };
+      const cid = 'd'.repeat(64), body = { profileId: 'data', command: 'pwd' };
+      mock.addResponsePatternFirst(/^docker inspect --format '\{\{.Id\}\}' 'legacy-api'$/, () => ({ stdout: cid, stderr: '', exitCode: 0 }));
+      expect((await request(server, 'POST', '/api/branches/b1/container-exec', body)).status).toBe(200);
+      expect(mock.commands).toContain(`docker exec ${cid} sh -c 'pwd'`);
+      mock.commands.length = 0;
+      mock.addResponsePatternFirst(/^docker inspect --format '\{\{.Id\}\}' 'legacy-api'$/, () => ({ stdout: '', stderr: 'missing', exitCode: 1 }));
+      expect((await request(server, 'POST', '/api/branches/b1/container-exec', body)).status).toBe(409);
+      expect(mock.commands.some(c => c.startsWith('docker exec'))).toBe(false);
     });
 
     it('PUT /profile-overrides masks extra-profile secret env in the save response (Codex P1)', async () => {
@@ -7132,6 +7146,23 @@ describe('Branch Routes', () => {
       });
       const res = await request(server, 'POST', '/api/branches/feat-x/restart');
       expect(res.status).toBe(409);
+    });
+
+    it('重启等待实际执行槽时被取消，不再发出docker restart', async () => {
+      stateService.addBranch({ id: 'cancel-restart', branch: 'cancel/restart', projectId: 'default', worktreePath: '/tmp/cancel-restart', services: {}, status: 'idle', createdAt: new Date().toISOString() });
+      stateService.getBranch('cancel-restart')!.services.api = { profileId: 'api', containerName: 'cancel-api', hostPort: 10001, status: 'stopped' };
+      const original = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker restart')) {
+          branchOperationCoordinator.cancelBranch('cancel-restart', 'queued restart superseded');
+          options?.beforeStart?.();
+        }
+        return original(command, options);
+      };
+      try {
+        expect((await request(server, 'POST', '/api/branches/cancel-restart/restart')).status).toBe(409);
+        expect(mock.commands.some(c => c.startsWith('docker restart'))).toBe(false);
+      } finally { mock.exec = original; }
     });
 
     it('records manual restart as a fenced branch operation with container operationId', async () => {

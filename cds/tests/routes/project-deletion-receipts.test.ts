@@ -36,8 +36,8 @@ describe('删除项目与历史回执的持久化边界', () => {
       },
       async flush() {
         if (removed(pending)) {
-          if (mode === 'flush-fail') throw new Error('injected persistence failure');
           if (mode === 'hold') { enter(); await new Promise<void>(resolve => { release = resolve; }); }
+          if (mode === 'flush-fail') throw new Error('injected persistence failure');
         }
         if (pending) { persisted = structuredClone(pending); pending = null; }
       },
@@ -48,6 +48,9 @@ describe('删除项目与历史回执的持久化边界', () => {
     state.addAccessRequest({ id: 'receipt', kind: 'bootstrap', projectId: '__new_project__', status: 'approved', agentName: 'regression',
       purpose: '删除与回执', pollTokenHash: 'a'.repeat(64), createdAt: now, decidedAt: now, deliveredAt: now,
       creationReceiptEnabled: true, createdProject: { id: 'target', name: 'target', createdAt: now } });
+    state.addBranch({ id: 'target-branch', projectId: 'target', branch: 'lab', worktreePath: dir, services: {}, status: 'idle', createdAt: now });
+    state.addProjectGrant({ id: 'grant-target', projectId: 'target', principalId: 'tester', origin: 'approved', grantedAt: now });
+    (state.getState() as CdsState).customEnv.target = { RETAIN: 'original' };
     await state.flush(); shell = new MockShellExecutor();
     const app = express(); app.use(express.json());
     app.use((req, _res, next) => { Object.assign(req, { cdsUser: { id: 'owner', isSystemOwner: true, authProvider: 'local' }, cdsSession: {} }); next(); });
@@ -67,6 +70,12 @@ describe('删除项目与历史回执的持久化边界', () => {
     const publish = vi.spyOn(cdsEventsBus, 'publish'); mode = failure;
     const response = await fetch(`${origin}/api/projects/target`, { method: 'DELETE' });
     expect(response.status).toBe(500);
+    expect(state.getProject('target')).toBeDefined();
+    expect(state.getBranch('target-branch')).toBeDefined();
+    expect(state.getState().projectGrants?.find(g => g.id === 'grant-target')?.revokedAt).toBeUndefined();
+    expect(state.getState().customEnv.target).toEqual({ RETAIN: 'original' });
+    // 后续无关保存不能把失败的删除悄悄落盘。
+    mode = 'ok'; state.updateProject('other', { name: 'other-updated' }); await state.flush();
     expect((await receiptView()).receiptArchived).not.toBe(true);
     expect((await receiptView()).creationReceiptEnabled).toBe(true);
     expect(state.getAccessRequest('receipt')).toEqual(before);
@@ -74,8 +83,24 @@ describe('删除项目与历史回执的持久化边界', () => {
     expect(shell.commands.some(c => /^docker (?:rm|network rm)/.test(c))).toBe(false);
     const restarted = new StateService(path.join(dir, 'state.json'), dir, store); restarted.load();
     expect(restarted.getProject('target')).toBeDefined();
-    expect(restarted.getProject('other')).toBeDefined();
+    expect(restarted.getProject('other')?.name).toBe('other-updated');
+    expect((await fetch(`${origin}/api/projects/target`, { method: 'DELETE' })).status).toBe(200);
     expect(restarted.getAccessRequest('receipt')).toEqual(before);
+  });
+
+  it('异步失败只恢复本项目，保留等待期间其他项目的修改', async () => {
+    mode = 'hold';
+    const deleting = fetch(`${origin}/api/projects/target`, { method: 'DELETE' });
+    await entered;
+    state.updateProject('other', { name: 'concurrent-edit' });
+    mode = 'flush-fail'; release?.();
+    expect((await deleting).status).toBe(500);
+    expect(state.getProject('target')).toBeDefined();
+    expect(state.getProject('other')?.name).toBe('concurrent-edit');
+    mode = 'ok'; await state.flush(); state.load();
+    expect(state.getProject('target')).toBeDefined();
+    expect(state.getProject('other')?.name).toBe('concurrent-edit');
+    expect((await receiptView()).receiptArchived).not.toBe(true);
   });
 
   it('落盘期间保持回执；确认成功才归档，其他项目和审计不变，重启后仍成立', async () => {
