@@ -90,6 +90,7 @@ export interface ProjectNetworkResolver {
 
 export interface ContainerRemoveContext {
   assertCurrent?: (step: string) => void;
+  onProgress?: (step: 'admitted' | 'diagnostics-returned' | 'stop' | 'stop-returned' | 'rm' | 'rm-returned') => void;
   kind?: ContainerLifecycleIntentKind;
   reason?: string;
   projectId?: string | null;
@@ -2909,10 +2910,12 @@ export class ContainerService {
     const releaseMemory = deploymentPhaseBudget.captureMemoryRelease(containerName);
     const shell = this.qualifiedShell(context.assertCurrent);
     context.assertCurrent?.('before-remove-diagnostics');
+    context.onProgress?.('admitted');
     const reason = context.reason || 'CDS 显式 remove 调用触发容器销毁';
     const kind = context.kind || 'cds-remove';
     const before = await this.captureContainerDiagnostics(containerName, 300);
     context.assertCurrent?.('after-remove-diagnostics');
+    context.onProgress?.('diagnostics-returned');
     this.recordContainerEvent({
       severity: 'warn',
       source: 'cds-container-service',
@@ -2938,8 +2941,16 @@ export class ContainerService {
       },
     });
     this.noteLifecycleIntent(containerName, kind, reason, context);
-    const stopResult = await shell.exec(`docker stop ${containerName}`, { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
-    const rmResult = await shell.exec(`docker rm ${containerName}`, { executionLane: 'operation', executionPurpose: 'temporary-cleanup' });
+    const dispatch = (step: 'stop' | 'rm') => shell.exec(`docker ${step} ${containerName}`, {
+      executionLane: 'operation', executionPurpose: 'temporary-cleanup', beforeStart: () => {
+        context.assertCurrent?.(`cleanup ${step} dispatch`);
+        context.onProgress?.(step);
+      },
+    });
+    const stopResult = await dispatch('stop');
+    context.assertCurrent?.('after cleanup stop return');
+    context.onProgress?.('stop-returned');
+    const rmResult = await dispatch('rm');
     const completion = classifyRemoveCompletion(rmResult);
     if (completion.severity !== 'error') releaseMemory();
     this.recordContainerEvent({
@@ -2971,6 +2982,8 @@ export class ContainerService {
         source: context.source ?? null,
       },
     });
+    context.assertCurrent?.('after cleanup rm return');
+    context.onProgress?.('rm-returned');
   }
 
   async isRunning(containerName: string): Promise<boolean> {
