@@ -294,6 +294,7 @@ describe('presentation source context', () => {
     const id = `sb-${'7'.repeat(64)}`;
     const sourceHtml = '<p>5% 只是示例，不是强制值。</p>';
     const parentHtml = '<!doctype html><html><body><main><div class="reveal"><div class="slides"><section>父版本</section></div></div></main></body></html>';
+    const proposalHtml = parentHtml.replace('父版本', '用户修改后的版本');
     const plan = JSON.stringify({
       SchemaVersion: 'map-mdppt-source-plan-v2',
       Fingerprint: 'frozen',
@@ -313,6 +314,7 @@ describe('presentation source context', () => {
     const pkg = buildPackage([
       { path: 'current/index.html', content: parentHtml, mediaType: 'text/html' },
       { path: 'brief/source-plan.json', content: plan, mediaType: 'application/json' },
+      { path: 'proposal/manual-edit.html', content: proposalHtml, mediaType: 'text/html' },
       { path: 'knowledge/source.md', content: '5% 只是示例，不是强制值。', mediaType: 'text/markdown' },
     ], {
       taskExtras: {
@@ -321,11 +323,18 @@ describe('presentation source context', () => {
           sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
           requiredSlideIndexes: [1],
           sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) },
+          manualEditProposal: {
+            authority: 'user-authored-untrusted-proposal',
+            path: 'proposal/manual-edit.html',
+            contentHash: digest(Buffer.from(proposalHtml)),
+          },
         },
       },
     });
-    harness.daemon.onRun = ({ workspaceDir, index }) => {
+    harness.daemon.onRun = ({ body, workspaceDir, index }) => {
       if (index === 1) {
+        expect(String(body.systemPrompt)).toContain('/workspace/current/ is the read-only authoritative reference');
+        expect(String(body.systemPrompt)).toContain('Modify only the editable working copy already seeded at /workspace/index.html');
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), `<!doctype html><html><body><main><div class="reveal"><div class="slides"><section data-slide-index="1"><div data-mdppt-source="${id}"></div></section></div></div></main></body></html>`);
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
@@ -337,6 +346,42 @@ describe('presentation source context', () => {
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
     expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain(`data-mdppt-source="${id}"`);
     expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).not.toContain(sourceHtml);
+  });
+
+  it('rejects a presentation edit that changes the frozen current reference instead of its editable root copy', async () => {
+    const parentHtml = '<!doctype html><html><body><main><h1>父版本</h1></main></body></html>';
+    const proposalHtml = parentHtml.replace('父版本', '用户修改后的版本');
+    harness = await startHarness();
+    const pkg = buildPackage([
+      { path: 'current/index.html', content: parentHtml, mediaType: 'text/html' },
+      { path: 'proposal/manual-edit.html', content: proposalHtml, mediaType: 'text/html' },
+    ], {
+      taskExtras: {
+        presentationContract: {
+          schemaVersion: 'map-html-ppt-contract-v1', version: 2, targetPages: 1,
+          sourceContentHash: 'a'.repeat(64), outlineHash: 'b'.repeat(64), theme: 'storytelling',
+          requiredSlideIndexes: [1],
+          manualEditProposal: {
+            authority: 'user-authored-untrusted-proposal',
+            path: 'proposal/manual-edit.html',
+            contentHash: digest(Buffer.from(proposalHtml)),
+          },
+        },
+      },
+    });
+    harness.daemon.onRun = ({ workspaceDir, index }) => {
+      if (index === 1) {
+        expect(fs.readFileSync(path.join(workspaceDir, 'index.html'), 'utf8')).toBe(parentHtml);
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), proposalHtml);
+        fs.writeFileSync(path.join(workspaceDir, 'current', 'index.html'), proposalHtml);
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg);
+
+    expect(view.error.code).toBe('workspace_input_changed');
+    expect(map!.commits).toHaveLength(0);
   });
 
   it.skipIf(!hasExternalCompletionChainFixture())(

@@ -5,3 +5,4 @@
 | fix | design-runtime | 隔离演示稿任务中的通用网页创作与审查提示，保留原生 deck 技能和品牌上下文 |
 | fix | prd-api | 手动保存改为同一演示稿站点的可回退版本，显式发布前不切换公开内容 |
 | fix | design-runtime | 将原生演示稿技能生成的资源说明保留在工作区而不误作公开网页资源 |
+| fix | design-runtime | 修复演示稿手动编辑误导 OpenDesign 修改冻结父稿而触发安全拒绝的问题 |
