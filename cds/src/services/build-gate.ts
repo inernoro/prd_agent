@@ -268,6 +268,8 @@ export async function acquireBuildSlot(opts?: AcquireOptions): Promise<BuildSlot
   opts?.onQueued?.(throttledByLoad
     ? { ahead: waiters.length, active, max, throttledByLoad: true, load: pressure }
     : { ahead: waiters.length, active, max });
+  // onQueued is synchronous user code and may cancel before the listener exists.
+  if (opts?.signal?.aborted || opts?.isCancelled?.()) throw new BuildSlotCancelledError('排队通知期间已被取消/取代');
   if (throttledByLoad) ensureLoadPump();
   await new Promise<void>((resolve, reject) => {
     const waiter: Waiter = {

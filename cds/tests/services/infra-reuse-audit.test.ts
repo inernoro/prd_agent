@@ -16,7 +16,7 @@ async function reuse(logConfig:unknown,protectedLabel:string|null='true',failure
  const mock=new MockShellExecutor(),events:any[]=[],warnings:string[]=[];
  vi.spyOn(console,'warn').mockImplementation((...args)=>{warnings.push(args.join(' '));});
  mock.addResponsePattern(/docker network inspect/,()=>({stdout:'',stderr:'',exitCode:0}));
- mock.addResponsePattern(/docker inspect --format=.*State.Status/,()=>({stdout:'running',stderr:'',exitCode:0}));
+ mock.addResponsePattern(/docker inspect --format=.*State.Status/,()=>({stdout:['a'.repeat(64),'running','/cds-infra-mongodb'].map(x=>JSON.stringify(x)).join('|'),stderr:'',exitCode:0}));
  mock.addResponsePattern(/docker inspect --format=.*LogConfig/,command=>{
   if(failure==='inspect')return {stdout:'',stderr:'private-path-and-secret-fixture',exitCode:124};
   const modern=command[0].includes('{{json .HostConfig.LogConfig');

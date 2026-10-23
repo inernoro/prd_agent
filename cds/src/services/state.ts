@@ -1,3 +1,5 @@
+import {storageProvisionDigest,type StorageBirth} from './storage-provision.js';
+import {stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { identityChanged, identityRecord, importLegacyProjectSlug, projectIdentitySnapshot, type ProjectIdentityActor } from './project-identity-history.js';
@@ -471,6 +473,9 @@ export class StateService {
     const loaded = this.backingStore.load();
     if (loaded) {
       this.state = loaded;
+      for (const pending of Object.values(this.state.storageProvisionPublications || {})) {
+        this.state.infraServices = this.state.infraServices.filter(service => service.id !== pending.service.id || service.projectId !== pending.service.projectId);
+      }
       // Migrate older state files
       if (!this.state.logs) this.state.logs = {};
       if (!this.state.deploymentRuns) this.state.deploymentRuns = {};
@@ -1032,6 +1037,9 @@ export class StateService {
   /** Listeners notified after every save() */
   private onSaveListeners: Array<() => void> = [];
 
+  private storageProvisionDrafts = new Map<string,{service:InfraService;names:string[];operationId:string}>();
+  private committingStorageProvisions = new Set<string>();
+
   /** Register a callback that fires after each save() */
   onSave(fn: () => void): void {
     this.onSaveListeners.push(fn);
@@ -1065,7 +1073,19 @@ export class StateService {
     // 未到日志批次阈值的发布尾部仍在内存；一次实体级保存不能把它误当已落盘。
     const completeHints = this.pendingReleaseLogLines > 0 && hints?.length && !hints.some(hint => hint.kind === 'global')
       ? [...hints, ...HINT_GLOBAL] : hints;
-    this.backingStore.save(this.state, completeHints);
+    let snapshot = this.state;
+    if (this.storageProvisionDrafts.size) {
+      const publications = {...snapshot.storageProvisionPublications}, births = {...snapshot.storageBirths};
+      const infra = [...snapshot.infraServices];
+      for (const [key,pending] of this.storageProvisionDrafts) {
+        if (this.committingStorageProvisions.has(key)) {
+          infra.push(structuredClone(pending.service)); delete publications[key];
+          for (const name of pending.names) { const row = births[name]; births[name] = {...row,seq:row.seq+1,stage:'published',updatedAt:new Date().toISOString()}; }
+        } else publications[key] = structuredClone(pending);
+      }
+      snapshot = {...snapshot,storageBirths:births,storageProvisionPublications:publications,infraServices:infra};
+    }
+    this.backingStore.save(snapshot, completeHints);
     // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
     this.pendingReleaseLogLines = 0;
 
@@ -1100,6 +1120,79 @@ export class StateService {
   getState(): Readonly<CdsState> {
     return this.state;
   }
+
+  getStorageBirth(name: string): StorageBirth | undefined {
+    const row = this.state.storageBirths?.[name]; return row && structuredClone(row);
+  }
+
+  getStorageBirthsForService(projectId: string, serviceId: string): StorageBirth[] {
+    return Object.values(this.state.storageBirths || {}).filter(row => row.binding.projectId === projectId && row.binding.serviceId === serviceId).map(row => structuredClone(row));
+  }
+
+  /** Unknown/partial first allocation holds R; legacy owner-bound volumes without a P journal retain their existing R checks. */
+  storageBirthRequirements(plan: DeploymentStoragePlan): StorageBirthRequirements {
+    const requirements: StorageBirthRequirements = {};
+    for (const mount of plan.mounts.filter(m => m.kind === 'volume')) {
+      const row = this.state.storageBirths?.[mount.source]; if (!row) continue;
+      if (row.stage !== 'published' || !row.createIssued || row.name !== stableStorageVolumeName(row.binding)
+        || storageProvisionDigest(row.binding) !== storageProvisionDigest(mount.storage)
+        || !row.observation || row.observation.labels['cds.storage.birth'] !== row.birthNonce
+        || Object.values(this.state.storageProvisionPublications || {}).some(p => p.names.includes(row.name))) throw new Error('storage_provision_unconfirmed');
+      requirements[row.name] = {birthNonce:row.birthNonce,daemonId:row.daemonId,mountpoint:row.observation.mountpoint,createdAt:row.observation.createdAt};
+    }
+    return requirements;
+  }
+
+  async writeStorageBirthDurably(input: StorageBirth, expectedSeq: number | undefined, assertCurrent: () => void): Promise<void> {
+    const row = structuredClone(input), previous = this.state.storageBirths?.[row.name]; assertCurrent();
+    if (row.version !== 1 || row.name !== stableStorageVolumeName(row.binding) || row.binding.scope !== 'project-shared'
+      || !/^[a-f0-9]{48}$/.test(row.birthNonce) || !/^[a-f0-9]{64}$/.test(row.planDigest) || !/^[a-f0-9]{64}$/.test(row.serviceDigest)
+      || previous?.seq !== expectedSeq || row.seq !== (expectedSeq || 0) + 1 || row.stage === 'published'
+      || !this.getProject(row.binding.projectId) || !Number.isFinite(Date.parse(row.createdAt)) || !Number.isFinite(Date.parse(row.updatedAt))) throw new Error('storage_provision_unconfirmed');
+    if (!previous) {
+      if (row.stage !== 'intent' || row.createIssued || Object.keys(this.state.storageBirths || {}).length >= 1024
+        || this.getInfraServiceForProjectAndId(row.binding.projectId,row.binding.serviceId)) throw new Error('storage_provision_unconfirmed');
+    } else {
+      const unchanged = { ...row, seq: previous.seq, stage: previous.stage, createIssued: previous.createIssued, updatedAt: previous.updatedAt, observation: previous.observation };
+      const allowed = row.stage === 'held' && previous.stage !== 'published'
+        || previous.stage === 'intent' && row.stage === 'issued' && row.createIssued
+        || previous.stage === 'issued' && row.stage === 'confirmed' && row.createIssued && !!row.observation;
+      if (!allowed || previous.createIssued && !row.createIssued || storageProvisionDigest(unchanged) !== storageProvisionDigest(previous)) throw new Error('storage_provision_unconfirmed');
+    }
+    this.state.storageBirths ??= {}; this.state.storageBirths[row.name] = row;
+    this.save(HINT_GLOBAL); await this.flush(); assertCurrent();
+    if (this.state.storageBirths[row.name] !== row) throw new Error('storage_provision_unconfirmed');
+  }
+
+  /** Fresh infra stays private while the birth-confirmed configuration waits for both persistence barriers. */
+  async publishProvisionedInfraDurably(service: InfraService,names: string[],operationId: string,assertCurrent: () => void): Promise<void> {
+    const draft = { service: structuredClone(service), names: [...names], operationId }, key = JSON.stringify([service.projectId, service.id]);
+    const births = names.map(name => this.state.storageBirths?.[name]), project = this.getProject(service.projectId);
+    const fence = () => {
+      assertCurrent();
+      if (!project || this.getProject(service.projectId) !== project || service.scope !== 'project' || !names.length || new Set(names).size !== names.length || this.getInfraServiceForProjectAndId(service.projectId,service.id)
+        || births.some((row,i) => !row || this.state.storageBirths?.[names[i]] !== row || row.stage !== 'confirmed'
+          || row.operationId !== operationId || row.serviceDigest !== storageProvisionDigest(draft.service)
+          || row.binding.projectId !== service.projectId || row.binding.serviceId !== service.id)) throw new Error('storage_provision_unconfirmed');
+    };
+    fence();
+    if (this.storageProvisionDrafts.has(key) || this.state.storageProvisionPublications?.[key]) throw new Error('storage_provision_unconfirmed');
+    this.storageProvisionDrafts.set(key,draft);
+    try {
+      this.save(HINT_GLOBAL); await this.flush(); fence();
+      this.committingStorageProvisions.add(key); this.save(HINT_GLOBAL); await this.flush(); fence();
+      this.state.infraServices.push(structuredClone(draft.service));
+      for (const row of births) this.state.storageBirths![row!.name] = {...row!,seq:row!.seq+1,stage:'published',updatedAt:new Date().toISOString()};
+      this.storageProvisionDrafts.delete(key); this.committingStorageProvisions.delete(key);
+    } catch (error) {
+      this.storageProvisionDrafts.delete(key); this.committingStorageProvisions.delete(key);
+      try { this.save(HINT_GLOBAL); await this.flush(); }
+      catch { this.state.storageProvisionPublications ??= {}; this.state.storageProvisionPublications[key] = draft; }
+      throw error;
+    }
+  }
+
+
 
   // ── Scheduled jobs ──
 
@@ -4129,6 +4222,9 @@ export class StateService {
   }
 
   addInfraService(service: InfraService): void {
+    const key=JSON.stringify([service.projectId,service.id]);
+    if (this.storageProvisionDrafts.has(key) || this.state.storageProvisionPublications?.[key]
+      || this.getStorageBirthsForService(service.projectId,service.id).length) throw new Error('storage_provision_unconfirmed');
     service.scope = classifyInfraScope(service);
     if (service.scope === 'system') {
       service.projectId = SYSTEM_PROJECT_ID;

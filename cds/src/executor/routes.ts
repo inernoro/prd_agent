@@ -321,10 +321,11 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       }
 
       const storageEntry = {...entry, worktreePath: pullResult.sourcePath};
-      const acceptedProfiles: BuildProfile[] = [];
-      for (const profile of profilesData) acceptedProfiles.push(await containerService.preflightProfileStorage(storageEntry,
-        {...profile, projectId: actualProjectId} as BuildProfile, {assertCurrent}));
-      profilesData = acceptedProfiles;
+      profilesData = await containerService.preflightDeploymentStorage(storageEntry,
+        profilesData.map(profile=>({...profile,projectId:actualProjectId} as BuildProfile)),
+        {assertCurrent,sourceCommitSha:pullResult.afterFull,operationId:operationId || undefined,
+          customEnv:{...getMergedEnv(actualProjectId),...(envOverrides || {})},
+          onOutput:(profileId,chunk)=>sendEvent('log',{profileId,chunk})});
       await removeAcceptedOrphans();
 
       assertCurrent();

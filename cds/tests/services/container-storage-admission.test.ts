@@ -154,3 +154,41 @@ describe('graph infrastructure admission permits only original runtime reuse',()
   expect(shell.commands).toHaveLength(1);
  });
 });
+
+describe('complete storage graph prepares managed artifacts before business effects',()=>{
+ const managed={...profile,prebuiltImage:false,managedBuild:{stack:'node' as const,installCommand:'pnpm install',buildCommand:'pnpm build',startCommand:'node server.js',artifactImage:'fixture:artifact'}};
+
+ it('refuses copying source A under target B before any builder create or copy',async()=>{
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  shell.addResponsePattern(/^docker image inspect /,()=>({exitCode:1,stdout:'',stderr:'No such image'}));
+  shell.addResponse('git rev-parse HEAD',{exitCode:0,stdout:'a'.repeat(40),stderr:''});
+  await expect((container as any).buildManagedArtifact(entry,managed,
+   {profileId:'app',containerName:'owned-builder',hostPort:0,status:'building'},'b'.repeat(40),'owned-network'))
+   .rejects.toThrow('storage-source-identity-mismatch');
+  expect(shell.commands.some(c=>/^docker (create|cp|start|commit|run) /.test(c))).toBe(false);
+ });
+ it('rejects an unsafe later profile before starting even the first temporary builder',async()=>{
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config);
+  const build=vi.spyOn(container as any,'buildManagedArtifact');
+  try{
+   await expect((container as any).preflightDeploymentStorage(entry,[managed,{...profile,id:'bad',cacheMounts:[{kind:'bind',hostPath:'/source/data',containerPath:'/data'}]}],{sourceCommitSha:'a'.repeat(40)})).rejects.toThrow('unsafe_deployment_storage');
+   expect(build).not.toHaveBeenCalled();expect(shell.commands).toEqual([]);
+  }finally{vi.restoreAllMocks()}
+ });
+ it('creates the managed artifact under the existing build gate and preflights its fixed runtime image',async()=>{
+  const {buildGateStatus,setBuildGateHostLoadProvider}=await import('../../src/services/build-gate.js');
+  setBuildGateHostLoadProvider(()=>({load1:0,cores:2}));
+  const shell=new MockShellExecutor(),container=new ContainerService(shell,config),image='sha256:'+'a'.repeat(64),target='b'.repeat(40);
+  shell.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify([image,null]),stderr:''}));
+  vi.spyOn(container as any,'ensureNetwork').mockResolvedValue(undefined);
+  const build=vi.spyOn(container as any,'buildManagedArtifact').mockImplementation(async(...args:any[])=>{
+   expect(buildGateStatus().active).toBe(1);expect(args[3]).toBe(target);
+   return {...managed,managedBuild:undefined,prebuiltImage:true,localArtifact:true,dockerImage:image,command:'node server.js'};
+  });
+  try{
+   const output=await (container as any).preflightDeploymentStorage(entry,[managed],{sourceCommitSha:target});
+   expect(build).toHaveBeenCalledOnce();expect(output[0]).toMatchObject({dockerImage:image,localArtifact:true,managedBuild:undefined});
+   expect(buildGateStatus().active).toBe(0);expect(buildGateStatus().queued).toBe(0);
+  }finally{setBuildGateHostLoadProvider();vi.restoreAllMocks()}
+ });
+});

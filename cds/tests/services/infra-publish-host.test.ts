@@ -52,6 +52,8 @@ const makeInfraService = (overrides?: Partial<InfraService>): InfraService => ({
 });
 
 const okDockerStubs = (mock: MockShellExecutor): void => {
+  mock.addResponsePattern(/^docker inspect --format=.*json .State.Status/,()=>({stdout:'',stderr:'Error: No such object: cds-infra-mongodb',exitCode:1}));
+  mock.addResponsePattern(/^docker image inspect .*json .Id/,()=>({stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:'',exitCode:0}));
   mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
   mock.addResponsePattern(/docker (ps|inspect)/, () => ({ stdout: '', stderr: '', exitCode: 1 }));
   mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

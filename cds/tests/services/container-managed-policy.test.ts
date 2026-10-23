@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
+import {createHash} from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { ContainerService } from '../../src/services/container.js';
@@ -9,6 +10,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import type { BranchEntry, BuildProfile, CdsConfig, IShellExecutor, ServiceState } from '../../src/types.js';
 const dirs: string[] = [];
 const target = 'b'.repeat(40), oldId = `sha256:${'a'.repeat(64)}`, fixedId = `sha256:${'c'.repeat(64)}`;
+const builderId = `sha256:${'e'.repeat(64)}`;
 const artifact = 'owned/managed:sha-' + 'd'.repeat(40);
 function fixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-managed-policy-')); dirs.push(dir); fs.writeFileSync(path.join(dir, 'owned.txt'), 'owned-source');
@@ -17,7 +19,10 @@ function fixture() {
   const entry: BranchEntry = { id: 'owned', projectId: 'owned', branch: 'owned', status: 'running', worktreePath: dir,
     githubCommitSha: 'a'.repeat(40), createdAt: new Date().toISOString(), services: {} };
   const runtime: ServiceState = { profileId: 'web', containerName: 'old-owned-web', hostPort: 10001, status: 'running' }; entry.services.web = runtime;
-  const commands: string[] = [], buildEnvs: string[] = [], images = new Map<string, any>(); let sourceHead = target, commitRevision = target;
+  const commands: string[] = [], buildEnvs: string[] = [], images = new Map<string, any>(), created = new Map<string, any>(), builderIds: string[] = [];
+  const baseImage = { Id: builderId, Os: 'linux', Architecture: 'amd64', Config: { Labels: {}, Volumes: null } };
+  images.set('node:22-alpine',baseImage); images.set(builderId,baseImage);
+  let sourceHead = target, commitRevision = target;
   const shell: IShellExecutor = { exec: async (command, options) => {
     options?.beforeStart?.(); commands.push(command);
     if (command.startsWith('docker create') && command.includes('-managed-build-')) {
@@ -25,13 +30,30 @@ function fixture() {
       if (envFile) buildEnvs.push(fs.readFileSync(envFile, 'utf8'));
     }
     const ok = (stdout = '') => ({ stdout, stderr: '', exitCode: 0 });
+    if (command.startsWith('docker create')) {
+      const name = /--name (?:'([^']+)'|([^ ]+))/.exec(command)?.slice(1).find(Boolean)!;
+      const id = createHash('sha256').update(name).digest('hex');
+      const imageId = command.match(/sha256:[a-f0-9]{64}/g)?.at(-1)!;
+      const mounts = [...command.matchAll(/--mount '([^']+)'/g)].map(match => {
+        const fields = Object.fromEntries(match[1].split(',').map(field => field.includes('=') ? field.split('=') : [field,true]));
+        return {Type: fields.type,Source: fields.src || fields.source,Destination: fields.dst,RW: !fields.readonly};
+      });
+      const tmpfs = command.includes("--tmpfs '/tmp'") ? {'/tmp':''} : null;
+      created.set(id,[id,'/'+name,imageId,0,'created',mounts,tmpfs]);
+      if(name.includes('-managed-build-'))builderIds.push(id);
+      return ok(id);
+    }
+    if (command.startsWith('docker inspect') && command.includes('json .Mounts')) {
+      const id=command.match(/[a-f0-9]{64}/g)?.at(-1)!;
+      return created.has(id) ? ok(JSON.stringify(created.get(id))) : {exitCode:1,stdout:'',stderr:'No such object: '+id};
+    }
     if (command === 'git rev-parse HEAD') return ok(sourceHead);
     if (command.startsWith('docker info')) return ok(JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }));
     if (command.startsWith('docker image inspect')) {
       const image = command.match(/docker image inspect '([^']+)'/)?.[1] || '';
       const metadata = images.get(image);
       if (!metadata) return { stdout: '', stderr: 'No such image: owned', exitCode: 1 };
-      return ok(JSON.stringify(command.includes('--format') ? metadata.Config.Labels : [metadata]));
+      return ok(JSON.stringify(command.includes('[{{json .Id}},') ? [metadata.Id, metadata.Config.Volumes ?? null] : command.includes('--format') ? metadata.Config.Labels : [metadata]));
     }
     if (command.startsWith('docker pull')) return { stdout: '', stderr: 'manifest unknown', exitCode: 1 };
     if (command.startsWith('docker commit')) {
@@ -51,7 +73,7 @@ function fixture() {
   const versionService = new DeploymentVersionService(state);
   const hash = () => { const env = (service as any).resolveProfileRuntimeEnv({ ...entry, pinnedCommit: undefined, githubCommitSha: sourceHead, ciTargetSha: undefined }, profile); delete env.CDS_BUILD_TIME; return versionService.computeConfigHash([profile], env); };
   const cached = (revision = target, contractHash = hash()) => { const metadata = { Id: oldId, Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': revision, 'cds.managed.contract': contractHash } } }; images.set(artifact, metadata); images.set(oldId, metadata); };
-  return { service, state, versionService, entry, profile, runtime, commands, buildEnvs, images, hash, cached, setHead: (value: string) => { sourceHead = value; }, setCommittedRevision: (value: string) => { commitRevision = value; } };
+  return { service, state, versionService, entry, profile, runtime, commands, buildEnvs, images, builderIds, hash, cached, setHead: (value: string) => { sourceHead = value; }, setCommittedRevision: (value: string) => { commitRevision = value; } };
 }
 afterEach(async () => { vi.restoreAllMocks(); await flushAllJsonStateStores(); for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
 describe('受管产物生产身份与显式源码政策', () => {
@@ -95,7 +117,8 @@ describe('受管产物生产身份与显式源码政策', () => {
     const f = fixture(); f.setCommittedRevision('e'.repeat(40));
     await expect(f.service.runService(f.entry, f.profile, f.runtime)).rejects.toThrow('新构建产物');
     expect(f.commands.some(c => c.startsWith('docker run') || c.startsWith('docker rm -f old-owned-web'))).toBe(false);
-    expect(f.commands.some(c => c.startsWith('docker rm -f') && c.includes('-managed-build-'))).toBe(true);
+    expect(f.builderIds).toHaveLength(1);
+    expect(f.commands).toContain(`docker rm -f '${f.builderIds[0]}'`);
   });
   it.each(['revision', 'platform', 'unknown-target'])('本地固定版本拒绝%s并保持旧容器', async reason => {
     const f = fixture(); f.cached(reason === 'revision' ? 'e'.repeat(40) : target);

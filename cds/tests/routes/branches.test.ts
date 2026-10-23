@@ -1,3 +1,4 @@
+import {withStorageImages} from '../helpers/storage-image-mock.js';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
@@ -192,7 +193,9 @@ describe('Branch Routes', () => {
     process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
     config = makeConfig(tmpDir);
-    mock = new MockShellExecutor();
+    mock = withStorageImages(new MockShellExecutor());
+    // Explicit synthetic base-image inventory for control-flow fixtures; native identity has dedicated tests.
+    mock.addResponsePattern(/^docker image inspect .* --format '\[\{\{json .Id/, () => ({stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:'',exitCode:0}));
 
     // 模拟真正的 detached worktree：解析得到完整身份，快照 HEAD 与请求目标一致。
     const sourceHeads = new Map<string, string>();
@@ -361,7 +364,7 @@ describe('Branch Routes', () => {
     mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ Architecture: 'x86_64', OSType: 'linux' }), stderr: '', exitCode: 0 }));
     mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: 'available', stderr: '', exitCode: 0 }));
     mock.addResponsePatternFirst(/docker image inspect (.+)/, match => {
-      const reference = match[1].replace(/'/g, ''); const sha = /:sha-([a-f0-9]{40})/.exec(reference)?.[1];
+      const reference = /^'([^']+)'/.exec(match[1])?.[1] ?? match[1].split(' ')[0]; const sha = /:sha-([a-f0-9]{40})/.exec(reference)?.[1];
       if (!images.has(reference) && sha) {
         const content = `sha256:${sha + sha.slice(0, 24)}`, digest = reference.split('@')[0].replace(/:sha-[a-f0-9]{40}$/, '') + '@' + content;
         const metadata = { Id: content, RepoDigests: [digest], Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': sha } } };
@@ -417,12 +420,12 @@ describe('Branch Routes', () => {
           return shell.exec(command, { ...options, env: { ...options?.env, PATH: '/usr/bin:/bin:/usr/sbin:/sbin' } });
         }
         if (command.startsWith('docker run --rm') && command.includes('prisma')) {
-          const mount = command.match(/-v '([^']+)':'\/app'/);
+          const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/app,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
           if (mount) migrationMounts.push(fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8'));
           return { stdout: '', stderr: '', exitCode: 0 };
         }
         if (isAppLaunchCommand(command)) {
-          const mount = command.match(/-v '([^']+)':'\/app'/);
+          const mount = command.match(/--mount 'type=bind,src=([^,]+),dst=\/app,readonly'/) ?? command.match(/-v '([^']+)':'\/app'/);
           if (mount) mounts.push({ path: mount[1], version: fs.readFileSync(path.join(mount[1], 'version.txt'), 'utf8') });
         }
         return original(command, options);
@@ -3456,7 +3459,7 @@ describe('Branch Routes', () => {
       ]));
     });
 
-    it('removes orphan services BEFORE the pull so a later pull failure cannot leave ghosts (Codex P2)', async () => {
+    it('preserves original orphan services when source preparation fails before full graph admission', async () => {
       await request(server, 'POST', '/api/build-profiles', {
         id: 'api', name: 'API', dockerImage: 'node', command: 'node server.js', workDir: '.', containerPort: 3000,
       });
@@ -3476,9 +3479,7 @@ describe('Branch Routes', () => {
       });
       stateService.save();
 
-      // Fail the pull (git reset --hard) for THIS branch's worktree — a fallible step AFTER the
-      // pre-pull orphan cleanup. If cleanup ran late (in finalize), the failed pull would skip it and
-      // leave demo-extra as a ghost.
+      // Source failure cannot authorize removing any original service before graph admission.
       const originalExec = mock.exec.bind(mock);
       mock.exec = async (command, options) => {
         if (command.includes('git fetch') && options?.cwd?.includes('orphan-prepull')) {
@@ -3493,9 +3494,9 @@ describe('Branch Routes', () => {
         mock.exec = originalExec;
       }
 
-      // Orphan torn down pre-pull → no ghost: container removed + state row dropped.
-      expect(stateService.getBranch('orphan-prepull')?.services['demo-extra']).toBeUndefined();
-      expect(mock.commands.some((c) => c.includes('docker rm cds-orphan-prepull-demo-extra'))).toBe(true);
+      // A failed unconfirmed graph preserves the exact original runtime.
+      expect(stateService.getBranch('orphan-prepull')?.services['demo-extra']?.containerName).toBe('cds-orphan-prepull-demo-extra');
+      expect(mock.commands.some((c) => /^docker (rm|stop|create|run) /.test(c))).toBe(false);
       // The still-desired api service is untouched by orphan cleanup.
       expect(stateService.getBranch('orphan-prepull')?.services['api']).toBeTruthy();
       // The deploy itself ends in error because the pull failed.
@@ -3637,13 +3638,14 @@ describe('Branch Routes', () => {
       const contentId = `sha256:${'9'.repeat(64)}`; let built = false, contractHash = '';
       mock.addResponsePatternFirst(/docker info/, () => ({ stdout: JSON.stringify({ OSType: 'linux', Architecture: 'amd64' }), stderr: '', exitCode: 0 }));
       mock.addResponsePatternFirst(/docker image inspect (.*)/, match => {
+        if(match[1].includes('[{{json .Id}},'))return {stdout:JSON.stringify([built?contentId:'sha256:'+'a'.repeat(64),null]),stderr:'',exitCode:0};
         if (!built) return { stdout: '', stderr: 'No such image', exitCode: 1 };
         const labels = { 'org.opencontainers.image.revision': commitSha, 'cds.managed.contract': contractHash };
         return { stdout: JSON.stringify(match[1].includes('--format') ? labels : [{ Id: contentId, Os: 'linux', Architecture: 'amd64', Config: { Labels: labels } }]), stderr: '', exitCode: 0 };
       });
       mock.addResponsePattern(/docker create .*managed-build/, () => ({ stdout: 'builder', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker cp/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-      mock.addResponsePattern(/docker exec .*managed-build/, () => ({ stdout: 'built', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker exec '?[a-f0-9]{64}'? /, () => ({ stdout: 'built', stderr: '', exitCode: 0 }));
       mock.addResponsePatternFirst(/docker commit (.*)/, match => { built = true; contractHash = match[1].match(/LABEL cds\.managed\.contract=([a-f0-9]{64})/)?.[1] || ''; return { stdout: contentId, stderr: '', exitCode: 0 }; });
       mock.addResponsePattern(/docker start .*managed-build/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
@@ -3661,14 +3663,14 @@ describe('Branch Routes', () => {
         artifactKind: 'managed-image',
         reusable: true,
       });
-      const buildExecCount = mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build')).length;
+      const buildExecCount = mock.commands.filter((command) => /^docker exec '?[a-f0-9]{64}'? /.test(command)).length;
       const sourcePullCount = mock.commands.filter((command) => command.includes('git fetch')).length;
 
       const second = await request(server, 'POST', '/api/branches/managed-auto/deploy', { commitSha });
       expect(second.status).toBe(200);
       expect(String(second.body)).toContain('已锁定版本');
       expect(String(second.body)).not.toContain('npm install && npm run build');
-      expect(mock.commands.filter((command) => command.includes('docker exec') && command.includes('managed-build'))).toHaveLength(buildExecCount);
+      expect(mock.commands.filter((command) => /^docker exec '?[a-f0-9]{64}'? /.test(command))).toHaveLength(buildExecCount);
       expect(mock.commands.filter((command) => command.includes('git fetch'))).toHaveLength(sourcePullCount);
       expect(stateService.getDeploymentVersions({ branchId: 'managed-auto' })).toHaveLength(1);
     });
@@ -6532,7 +6534,8 @@ describe('Branch Routes', () => {
       const result=await request(server,'POST','/api/branches/storage-graph/deploy');
       expect(result.status).toBe(200);
       expect(String(result.body)).toContain('unsafe_deployment_storage');
-      expect(preflight.mock.calls.map(c=>c[1].id)).toEqual(['safe','unsafe']);
+      expect(preflight).not.toHaveBeenCalled();
+      expect(mock.commands.some(c=>/^docker image inspect/.test(c))).toBe(false);
       expect(mock.commands.some(c=>/^docker (rm|stop|run|create|start) /.test(c))).toBe(false);
       expect(stateService.getBranch('storage-graph')!.services.orphan.containerName).toBe('old-orphan');
     });

@@ -29,6 +29,7 @@ export interface ComposeServiceDef {
   dockerImage: string;
   containerPort: number;
   volumes: InfraVolume[];
+  volumesDeclared?: boolean;
   env: Record<string, string>;
   healthCheck?: InfraHealthCheck;
   /**
@@ -284,7 +285,7 @@ export function discoverComposeFiles(dir: string): string[] {
  * Only services with an `image` field and no relative volume mounts are extracted
  * (services with relative mounts are considered application services).
  */
-export function parseComposeFile(filePath: string): ComposeServiceDef[] {
+export function parseComposeFile(filePath: string, options?: {preserveVolumeDeclaration?:boolean}): ComposeServiceDef[] {
   const content = fs.readFileSync(filePath, 'utf-8');
   const doc = yaml.load(content) as ComposeFile | null;
 
@@ -295,10 +296,10 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
   for (const [serviceId, entry] of Object.entries(doc.services)) {
     // Skip services that use build (they are app services, not infrastructure)
     // Also skip services without an image
-    if (entry.build || !entry.image) continue;
+    if (!entry.image || entry.build && !options?.preserveVolumeDeclaration) continue;
 
     // Skip services with relative volume mounts (app services)
-    if (hasRelativeVolumeMount(entry.volumes)) continue;
+    if (hasRelativeVolumeMount(entry.volumes) && !options?.preserveVolumeDeclaration) continue;
 
     const containerPort = extractContainerPort(entry.ports);
     if (!containerPort) continue; // No port = not a network service CDS should manage
@@ -309,6 +310,7 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
       dockerImage: entry.image,
       containerPort,
       volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
+      ...(options?.preserveVolumeDeclaration ? {volumesDeclared:Object.hasOwn(entry,'volumes')} : {}),
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),
@@ -326,7 +328,7 @@ export function parseComposeFile(filePath: string): ComposeServiceDef[] {
 /**
  * Parse an inline compose YAML string (e.g., from import config).
  */
-export function parseComposeString(yamlString: string): ComposeServiceDef[] {
+export function parseComposeString(yamlString: string, options?: {preserveVolumeDeclaration?:boolean}): ComposeServiceDef[] {
   const doc = yaml.load(yamlString) as ComposeFile | null;
 
   if (!doc?.services) return [];
@@ -337,7 +339,7 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
     if (!entry.image) continue;
 
     // Skip services with relative mounts (app services)
-    if (hasRelativeVolumeMount(entry.volumes)) continue;
+    if (hasRelativeVolumeMount(entry.volumes) && !options?.preserveVolumeDeclaration) continue;
 
     const containerPort = extractContainerPort(entry.ports);
     if (!containerPort) continue;
@@ -348,6 +350,7 @@ export function parseComposeString(yamlString: string): ComposeServiceDef[] {
       dockerImage: entry.image,
       containerPort,
       volumes: extractVolumes(entry.volumes, entry['x-cds-storage']),
+      ...(options?.preserveVolumeDeclaration ? {volumesDeclared:Object.hasOwn(entry,'volumes')} : {}),
       env: extractEnv(entry.environment),
 
       healthCheck: extractHealthCheck(entry.healthcheck),

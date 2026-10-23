@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { ContainerService, type ProjectNetworkResolver } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
+import { withStorageImages } from '../helpers/storage-image-mock.js';
 import type { CdsConfig, BranchEntry, BuildProfile, ServiceState, InfraService } from '../../src/types.js';
 
 /**
@@ -85,7 +86,16 @@ describe('ContainerService 多项目网络隔离', () => {
   let prevIsolation: string | undefined;
 
   beforeEach(() => {
-    mock = new MockShellExecutor();
+    mock = withStorageImages(new MockShellExecutor());
+    // Synthetic image inventory: this network fixture declares no Dockerfile VOLUME.
+    mock.addResponsePattern(/^docker image inspect .* --format '\[\{\{json \.Id\}\},/, () => ({
+      stdout: JSON.stringify(['sha256:' + 'a'.repeat(64), null]), stderr: '', exitCode: 0,
+    }));
+    mock.addResponsePattern(/^docker inspect --format '\[\{\{json \.Id\}\}.*json \.Mounts/, () => ({stdout: '', stderr: '', exitCode: 0}));
+    // First-create infra precondition: exact requested name is absent, never an unknown inspect.
+    mock.addResponsePattern(/^docker inspect --format='\{\{json \.Id\}\}\|\{\{json \.State\.Status\}\}\|\{\{json \.Name\}\}' '([^']+)'$/, (match) => ({
+      stdout: '', stderr: `Error: No such object: ${match[1]}`, exitCode: 1,
+    }));
     // 本套件验证的是「项目级网络(P4)」契约：app/infra 容器跟随 project.dockerNetwork。
     // 分支级网络隔离（默认开）会把 app 容器主网换成分支网 cds-br-<id>，那是另一层、另有专门套件
     // （container-branch-network-isolation.test.ts）。这里关掉全局逃生开关，专测项目级网络解析这一层。

@@ -1,3 +1,5 @@
+import {withStorageImages} from '../helpers/storage-image-mock.js';
+import {stableStorageVolumeName,storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import fs from 'node:fs';
@@ -69,7 +71,7 @@ describe('Compose 命名卷跨 CDS 重启保持挂载身份', () => {
     expect(parseCdsCompose(yaml)!.buildProfiles[0].cacheMounts).toEqual(expected);
   });
 
-  it('保存并重新加载后仍用原 Docker 卷启动，不为卷名 mkdir 或改成缓存目录', async () => {
+  it('历史卷声明重载后保持原名，归属未确认时拒绝重建且不创建空卷', async () => {
     state.addBuildProfile(profileFromCompose());
     state.save();
     await flushAllJsonStateStores();
@@ -82,19 +84,35 @@ describe('Compose 命名卷跨 CDS 重启保持挂载身份', () => {
       dockerNetwork: 'cds-network', portStart: 10001, sharedEnv: {},
       jwt: { secret: 'test', issuer: 'test' },
     });
-    vi.spyOn(containers as any, 'waitForContainerAlive').mockResolvedValue(undefined);
-    shell.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-    shell.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
-    shell.addResponsePattern(/docker pull/, () => ({ stdout: 'pulled', stderr: '', exitCode: 0 }));
-    shell.addResponsePattern(/docker run/, () => ({ stdout: 'container-id', stderr: '', exitCode: 0 }));
-    await containers.runService({
-      id: 'main', branch: 'main', worktreePath: root, services: {}, status: 'idle',
-      createdAt: new Date().toISOString(),
-    }, profile, { profileId: profile.id, containerName: 'cds-main-web', hostPort: 10001, status: 'building' });
-    const run = shell.commands.find((command) => command.includes('docker run -d'));
-    expect(run).toContain("-v 'small-steps-data':'/data'");
-    expect(run).not.toContain('.cds-cache');
-    expect(shell.commands.some((command) => command.startsWith('mkdir ') && command.includes(volumeName))).toBe(false);
+    await expect(containers.runService({
+      id:'main',branch:'main',worktreePath:root,services:{},status:'idle',createdAt:new Date().toISOString(),
+    },profile,{profileId:profile.id,containerName:'cds-main-web',hostPort:10001,status:'building'}))
+      .rejects.toThrow('storage-contract-required');
+    expect(shell.commands).toEqual([]);
+    expect(reloaded.getBuildProfiles()[0].cacheMounts).toEqual([{kind:'volume',hostPath:volumeName,containerPath:'/data'}]);
+  });
+
+  it('显式归属卷冷重载后复用同一身份，经实际创建投影核验后按精确CID启动',async()=>{
+    const storage={version:1 as const,instanceId:'owned',projectId:'default',scope:'branch-private' as const,
+      branchId:'main',serviceId:'web',mountKey:'data',purpose:'persistent' as const};
+    const name=stableStorageVolumeName(storage),profile=profileFromCompose();
+    profile.cacheMounts=[{kind:'volume',hostPath:name,containerPath:'/data',storage}];
+    state.addBuildProfile(profile);state.save();await state.flush();
+    const cold=new StateService(path.join(root,'state.json'),root);cold.load();
+    const restored=cold.getBuildProfiles()[0];expect(restored.cacheMounts).toEqual(profile.cacheMounts);
+    shell=withStorageImages(shell);
+    shell.addResponsePattern(/^docker volume inspect /,()=>({exitCode:0,stderr:'',stdout:JSON.stringify([{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',Labels:storageOwnerLabels(storage)}])}));
+    shell.addResponsePattern(/^docker image inspect .*json .Id/,()=>({exitCode:0,stderr:'',stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null])}));
+    shell.addResponsePattern(/^docker (network|pull|create|start|inspect|rm)/,()=>({exitCode:0,stderr:'',stdout:''}));
+    const container=new ContainerService(shell,{repoRoot:root,worktreeBase:root,storageInstanceId:'owned',masterPort:9900,workerPort:5500,dockerNetwork:'cds-network',portStart:10001,sharedEnv:{},jwt:{secret:'test',issuer:'test'}});
+    vi.spyOn(container as any,'waitForContainerAlive').mockResolvedValue(undefined);
+    vi.spyOn(container as any,'pruneStaleAppContainersForProfile').mockResolvedValue(undefined);
+    await container.runService({id:'main',projectId:'default',branch:'main',worktreePath:root,services:{},status:'idle',createdAt:new Date().toISOString()},restored,
+      {profileId:'web',containerName:'cds-main-web',hostPort:10001,status:'building'});
+    const create=shell.commands.find(c=>c.startsWith('docker create '))!;
+    expect(create).toContain('source='+name+',dst=/data,volume-nocopy');
+    expect(shell.commands.some(c=>/^docker start [a-f0-9]{64}$/.test(c))).toBe(true);
+    expect(shell.commands.some(c=>/^mkdir |^docker volume create |^docker run /.test(c))).toBe(false);
   });
 
   it('缓存诊断和修复不把业务卷当目录，清理请求也不能删除同名旧目录', async () => {

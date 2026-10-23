@@ -2555,6 +2555,7 @@ try {
 }
 
 const containerService = new ContainerService(shell, config, {
+  storageBirthRequirements: (plan) => stateService.storageBirthRequirements(plan),
   // Week 4.9 多项目网络隔离：从 StateService 取 project.dockerNetwork。
   // ContainerService 不直接依赖 StateService（避免循环导入）,通过这个轻量
   // 适配器拿值。老项目 dockerNetwork 字段可能为空,此时返回 undefined,

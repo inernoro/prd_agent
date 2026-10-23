@@ -1,3 +1,4 @@
+import { acquireBuildSlot } from './build-gate.js';
 import fs from 'node:fs';
 import net from 'node:net';
 import http from 'node:http';
@@ -953,6 +954,8 @@ export class ContainerService {
       onOutput?.('── 旧本地产物与目标或配置不一致，按已选择的源码模式重新构建 ──\n');
     }
 
+    const actualSource = await shell.exec('git rev-parse HEAD', {cwd:entry.worktreePath,timeout:3000});
+    if (actualSource.exitCode !== 0 || actualSource.stdout.trim().toLowerCase() !== sourceCommitSha.toLowerCase()) throw new UnsafeDeploymentStorageError(profile.id, 'storage-source-identity-mismatch');
     const sourcePath = path.resolve(entry.worktreePath, profile.workDir || '.');
     if (!fs.existsSync(sourcePath)) throw new Error(`managed 构建目录不存在: ${sourcePath}`);
     // Builders have an independent writable layer and no data/source bind. An image VOLUME
@@ -1357,6 +1360,56 @@ export class ContainerService {
    * Mounts the worktree + shared cache volumes into a Docker container.
    * Uses profile.command to run everything in one persistent container.
    */
+  /** Freeze every declaration before temporary builds; no database or serving runtime is changed. */
+  async preflightDeploymentStorage(entry: BranchEntry, inputs: readonly BuildProfile[], context: {
+    assertCurrent?: (step: string) => void; sourceCommitSha?: string; customEnv?: Record<string,string>;
+    operationId?: string; signal?: AbortSignal; onOutput?: (profileId:string, chunk:string) => void;
+  } = {}): Promise<BuildProfile[]> {
+    context = {...context, customEnv: context.customEnv ? {...context.customEnv} : undefined};
+    entry = {...entry};
+    const profiles = inputs.map(input => {
+      const copy = structuredClone(input), prior = this.admittedProfileStorage.get(input);
+      if (prior) this.admittedProfileStorage.set(copy, prior);
+      assertProfileStorageBoundary(copy, entry.worktreePath);
+      withRuntimeTmpfs(profileStoragePlan(entry, copy, this.config));
+      return copy;
+    });
+    const accepted: BuildProfile[] = [];
+    for (let profile of profiles) {
+      if (profile.managedBuild) {
+        if (!context.sourceCommitSha || !/^[a-f0-9]{40}$/.test(context.sourceCommitSha)) throw new UnsafeDeploymentStorageError(profile.id, 'storage-runtime-artifact-required');
+        const cancelled = new AbortController();
+        const abort = () => cancelled.abort();
+        context.signal?.addEventListener('abort', abort, {once:true});
+        if (context.signal?.aborted) abort();
+        const isCancelled = () => {try {context.assertCurrent?.('managed artifact admission');return false} catch {abort();return true}};
+        const timer = context.assertCurrent ? setInterval(isCancelled,1000) : undefined;
+        timer?.unref();
+        let slot: Awaited<ReturnType<typeof acquireBuildSlot>> | undefined;
+        try {
+          slot = await acquireBuildSlot({holder:{branchId:entry.id,profileId:profile.id,operationId:context.operationId,label:profile.name},
+            signal:cancelled.signal,isCancelled,
+            onQueued: info => context.onOutput?.(profile.id,`源码产物等待构建槽：前面 ${info.ahead} 个，正在构建 ${info.active}/${info.max}\n`)});
+          context.assertCurrent?.('before managed storage artifact');
+          if (cancelled.signal.aborted) throw new Error('managed artifact cancelled');
+          const network = this.getNetworkForProject(entry.projectId);
+          await this.ensureNetwork(network);
+          profile = await this.buildManagedArtifact(entry, profile,
+            {profileId:profile.id,containerName:`cds-${entry.id}-${profile.id}`,hostPort:0,status:'building'},
+            context.sourceCommitSha,network,context.customEnv,chunk=>context.onOutput?.(profile.id,chunk),step=>{
+              if(cancelled.signal.aborted)throw new Error('managed artifact cancelled');
+              context.assertCurrent?.(step);
+            });
+        } finally {
+          slot?.release();if(timer)clearInterval(timer);
+          context.signal?.removeEventListener('abort',abort);
+        }
+      }
+      accepted.push(await this.preflightProfileStorage(entry,profile,{assertCurrent:context.assertCurrent}));
+    }
+    return accepted;
+  }
+
   /** Read-only local-daemon preflight; callers must admit a complete graph before any business action. */
   async preflightProfileStorage(entry: Pick<BranchEntry, 'id' | 'projectId' | 'worktreePath'>, input: BuildProfile,
     context: {assertCurrent?: (step: string) => void} = {}): Promise<BuildProfile> {
