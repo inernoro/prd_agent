@@ -1631,6 +1631,19 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
       volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(birth.binding),'cds.storage.birth':birth.birthNonce}});
       return{stdout:name,stderr:'',exitCode:0};
     });
+    const image='sha256:'+'a'.repeat(64),cid='c'.repeat(64);let helper:any,helperRemoved=false;
+    shell.addResponsePatternFirst(/^docker image inspect (.*)$/,m=>({stdout:m[1].includes('json .Config.User')?JSON.stringify('appuser'):JSON.stringify([image,m[1].includes('apache/kafka')||m[1].includes(image)?{'/etc/kafka/secrets':{},'/var/lib/kafka/data':{},'/mnt/shared/config':{}}:null]),stderr:'',exitCode:0}));
+    shell.addResponsePatternFirst(/^docker create (.*)$/,m=>{
+      const command=m[1],mounts=[...command.matchAll(/type=volume,source=([^,]+),dst=([^,]+),/g)];
+      const birth=stateService.getStorageBirth(mounts[0][1])!;
+      expect(birth.stage).toBe('confirmed');expect(mounts).toHaveLength(3);helperRemoved=false;
+      const raw=command.slice(command.lastIndexOf(' -ceu ')+6),program=raw.slice(1,-1).replaceAll("'\\''", "'");
+      helper={Id:cid,Name:'/cds-storage-init-'+birth.birthNonce,Image:image,Config:{User:'0:0',Entrypoint:['/bin/sh'],Cmd:['-ceu',program],Labels:{'cds.storage.init.birth':birth.birthNonce,'cds.storage.init.operation':birth.operationId}},State:{Status:'created',Running:false,Pid:0,ExitCode:0},HostConfig:{Privileged:false,NetworkMode:'none',ReadonlyRootfs:true,Memory:67108864,MemorySwap:67108864,PidsLimit:16,RestartPolicy:{Name:'no'},CapDrop:['ALL'],CapAdd:['CAP_CHOWN'],SecurityOpt:['no-new-privileges'],LogConfig:{Type:'json-file',Config:{'max-size':'1m','max-file':'1'}}},Mounts:mounts.map(x=>({Type:'volume',Name:x[1],Source:(volumes.get(x[1]) as any).Mountpoint,Destination:x[2],RW:true}))};
+      return{stdout:cid,stderr:'',exitCode:0};
+    });
+    shell.addResponsePatternFirst(/^docker inspect (.*)$/,m=>{expect(m[1].replace(/^'|'$/g,'')).toBe(cid);return helperRemoved?{exitCode:1,stdout:'[]',stderr:'error: no such object: '+cid}:{exitCode:0,stdout:JSON.stringify([helper]),stderr:''};});
+    shell.addResponsePatternFirst(/^docker start -a (.*)$/,m=>{expect(m[1]).toBe(cid);helper.State={Status:'exited',Running:false,Pid:0,ExitCode:0};return{exitCode:0,stdout:['0:1000:770','0:1000:770','0:1000:770'].join('\n'),stderr:''};});
+    shell.addResponsePatternFirst(/^docker rm (.*)$/,m=>{expect(m[1]).toBe(cid);expect(helper.State.Running).toBe(false);helperRemoved=true;return{exitCode:0,stdout:cid,stderr:''};});
     return volumes;
   }
 

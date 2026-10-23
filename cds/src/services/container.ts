@@ -969,9 +969,11 @@ export class ContainerService {
     if (!fs.existsSync(sourcePath)) throw new Error(`managed 构建目录不存在: ${sourcePath}`);
     // Builders have an independent writable layer and no data/source bind. An image VOLUME
     // would silently put copied source in an anonymous volume, so freeze and reject it first.
-    const builderPlan = profileStoragePlan(entry, {...profile, prebuiltImage:true, managedBuild:undefined, cacheMounts:[]}, this.config);
-    const builderImage = await resolveStorageImage(shell, profile.dockerImage, builderPlan, true);
     const builderName = `${service.containerName}-managed-build-${randomBytes(6).toString('hex')}`;
+    // The temporary writable layer is a different resource from the eventual
+    // app: it must never borrow its retained volumes or shrink its denominator.
+    const builderPlan = profileStoragePlan(entry, {...profile, id:builderName, prebuiltImage:true, managedBuild:undefined, cacheMounts:[]}, this.config);
+    const builderImage = await resolveStorageImage(shell, profile.dockerImage, builderPlan, true);
     const envFilePath = this.writeEnvFile(resolvedEnv);
     const buildCommand = [contract.installCommand, contract.buildCommand].filter(Boolean).join(' && ') || 'true';
     onOutput?.(`── managed 构建: ${contract.stack}，产物 ${artifactImage} ──\n`);

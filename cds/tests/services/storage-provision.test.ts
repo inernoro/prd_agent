@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import { describe,it,expect,vi } from 'vitest';
 import { StorageProvisionService,type StorageBirth,type StorageProvisionStore } from '../../src/services/storage-provision.js';
 import { infraStoragePlan,stableStorageVolumeName,storageOwnerLabels } from '../../src/services/deployment-storage-plan.js';
@@ -10,7 +11,7 @@ import type { InfraService,IShellExecutor,StorageBinding } from '../../src/types
 function fixture() {
   const binding:StorageBinding={version:1,instanceId:'own',projectId:'p',scope:'project-shared',serviceId:'mysql',mountKey:'data',purpose:'persistent'};
   const name=stableStorageVolumeName(binding),rows=new Map<string,StorageBirth>(),events:string[]=[];
-  let esDrift='',helper:any,helperRemoved=false;
+  let esDrift='',helper:any,helperRemoved=false;const volumes=new Map<string,any>();
   let published:InfraService|undefined,volume:any,failStage:string|undefined,foreign=false,unknown=false,daemon='owned-daemon',afterCreateDaemon=false,absentStdout='',absentExit=1;
   const service:InfraService={id:'mysql',projectId:'p',scope:'project',name:'own',dockerImage:'mysql:8.0',containerPort:3306,hostPort:13306,containerName:'own-mysql',status:'stopped',env:{MYSQL_ROOT_PASSWORD:'not-output'},volumes:[{type:'volume',name,containerPath:'/var/lib/mysql',storage:binding}]};
   const plan=infraStoragePlan(service,{storageInstanceId:'own',repoRoot:'/owned'});
@@ -24,30 +25,32 @@ function fixture() {
   const shell:IShellExecutor={exec:vi.fn(async(command:string)=>{
     events.push(command);
     if(command==="docker info --format '{{.ID}}'")return {stdout:daemon,stderr:'',exitCode:0};
-    const image='sha256:'+'e'.repeat(64),cid='f'.repeat(64);
-    if(command.startsWith('docker image inspect '))return {exitCode:0,stdout:command.includes('json .Config.User')?JSON.stringify(esDrift==='image-user'?'root':'1000:0'):JSON.stringify([image,null]),stderr:''};
+    const image='sha256:'+'e'.repeat(64),cid=helper?.Id||'f'.repeat(64);
+    if(command.startsWith('docker image inspect '))return esDrift==='image-unavailable'?{exitCode:1,stdout:'',stderr:'permission denied'}:{exitCode:0,stdout:command.includes('json .Config.User')?JSON.stringify(esDrift==='image-user'?'root':service.dockerImage.startsWith('mcr.')?'mssql':service.dockerImage.startsWith('apache/kafka')?'appuser':'1000:0'):JSON.stringify([image,esDrift==='image-volume-extra'?{'/undeclared':{}}:null]),stderr:''};
     if(command.startsWith('docker create ')){
       const scalar=(v:string)=>v.slice(1,-1).replaceAll("'\\''", "'");
       const program=scalar(command.slice(command.lastIndexOf(" -ceu ")+6));
-      const birth=rows.get(name)!;const helperName='cds-storage-init-'+birth.birthNonce;
-      helper={Id:cid,Name:'/'+helperName,Image:image,Config:{User:'0:0',Entrypoint:['/bin/sh'],Cmd:['-ceu',program],Labels:{'cds.storage.init.birth':birth.birthNonce,'cds.storage.init.operation':birth.operationId}},State:{Status:'created',Running:false,Pid:0,ExitCode:0},HostConfig:{Privileged:false,NetworkMode:'none',ReadonlyRootfs:true,Memory:command.includes('--memory 64m')?67108864:0,MemorySwap:command.includes('--memory-swap 64m')?67108864:0,PidsLimit:16,RestartPolicy:{Name:'no'},CapDrop:['ALL'],CapAdd:null,SecurityOpt:['no-new-privileges'],LogConfig:{Type:'json-file',Config:{'max-size':'1m','max-file':'1'}}},Mounts:[{Type:'volume',Name:name,Source:volume.Mountpoint,Destination:'/usr/share/elasticsearch/data',RW:true}]};
+      const mounted=/type=volume,source=([^,]+),dst=([^,]+),/.exec(command)!;const mountedName=mounted[1],mountedTarget=mounted[2];volume=volumes.get(mountedName)||volume;helperRemoved=false;const createdCid=service.dockerImage.startsWith('apache/kafka')?createHash('sha256').update(mountedName).digest('hex'):cid;
+      const birth=rows.get(mountedName)!;const helperName='cds-storage-init-'+birth.birthNonce;
+      helper={Id:createdCid,Name:'/'+helperName,Image:image,Config:{User:'0:0',Entrypoint:['/bin/sh'],Cmd:['-ceu',program],Labels:{'cds.storage.init.birth':birth.birthNonce,'cds.storage.init.operation':birth.operationId}},State:{Status:'created',Running:false,Pid:0,ExitCode:0},HostConfig:{Privileged:false,NetworkMode:'none',ReadonlyRootfs:true,Memory:command.includes('--memory 64m')?67108864:0,MemorySwap:command.includes('--memory-swap 64m')?67108864:0,PidsLimit:16,RestartPolicy:{Name:'no'},CapDrop:['ALL'],CapAdd:command.includes('--cap-add CHOWN')?['CAP_CHOWN']:null,SecurityOpt:['no-new-privileges'],LogConfig:{Type:'json-file',Config:{'max-size':'1m','max-file':'1'}}},Mounts:[...command.matchAll(/type=volume,source=([^,]+),dst=([^,]+),/g)].map(x=>({Type:'volume',Name:x[1],Source:volumes.get(x[1]).Mountpoint,Destination:x[2],RW:true}))};
       if(esDrift==='caps')helper.HostConfig.CapAdd=['SYS_ADMIN'];if(esDrift==='mount')helper.Mounts[0].Name='foreign';if(esDrift==='image')helper.Image='sha256:'+'a'.repeat(64);if(esDrift==='birth')volume.Labels['cds.storage.birth']='foreign';
-      return{exitCode:0,stdout:cid,stderr:''};
+      return{exitCode:0,stdout:helper.Id,stderr:''};
     }
     if(command.startsWith('docker inspect '))return helperRemoved?{exitCode:1,stdout:'',stderr:(esDrift==='lowercase-absent'?'error: no such object: ':'Error: No such object: ')+cid}:{exitCode:0,stdout:JSON.stringify([helper]),stderr:''};
-    if(command.startsWith('docker start -a ')){helper.State={Status:esDrift==='not-cold'?'running':'exited',Running:esDrift==='not-cold',Pid:esDrift==='not-cold'?123:0,ExitCode:0};return{exitCode:esDrift==='nonempty'?1:0,stdout:'0:0:770',stderr:''};}
+    if(command.startsWith('docker start -a ')){helper.State={Status:esDrift==='not-cold'?'running':'exited',Running:esDrift==='not-cold',Pid:esDrift==='not-cold'?123:0,ExitCode:0};return{exitCode:esDrift==='nonempty'?1:0,stdout:service.dockerImage.startsWith('apache/kafka')?['0:1000:770','0:1000:770','0:1000:770'].join('\n'):service.dockerImage.startsWith('mcr.')?'0:10001:770':'0:0:770',stderr:''};}
     if(command.startsWith('docker stop --time 2 ')){helper.State={Status:'exited',Running:false,Pid:0,ExitCode:137};return{exitCode:0,stdout:cid,stderr:''};}
     if(command.startsWith('docker rm ')){if(esDrift==='cleanup')return{exitCode:1,stdout:'',stderr:'unconfirmed'};helperRemoved=true;return{exitCode:0,stdout:cid,stderr:''};}
 
     if(command.startsWith('docker volume inspect ')) {
       if(unknown)return {stdout:'',stderr:'daemon unavailable',exitCode:1};
-      return volume?{stdout:JSON.stringify([volume]),stderr:'',exitCode:0}:{stdout:absentStdout,stderr:'Error response from daemon: get '+name+': no such volume',exitCode:absentExit};
+      const requested=/'([^']+)'$/.exec(command)![1],seen=volumes.get(requested)||(requested===name?volume:undefined);
+      return seen?{stdout:JSON.stringify([seen]),stderr:'',exitCode:0}:{stdout:absentStdout,stderr:'Error response from daemon: get '+requested+': no such volume',exitCode:absentExit};
     }
     if(command.startsWith('docker volume create ')){
-      const birth=rows.get(name)!;expect(birth.stage).toBe('issued');
-      volume={Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-22T00:00:00Z',Labels:{...storageOwnerLabels(binding),'cds.storage.birth':foreign?'foreign':birth.birthNonce}};
-      if(afterCreateDaemon)daemon='other-daemon';
-      return {stdout:name,stderr:'',exitCode:0};
+      const requested=/'([^']+)'$/.exec(command)![1];const birth=rows.get(requested)!;expect(birth.stage).toBe('issued');
+      volume={Name:requested,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+requested+'/_data',CreatedAt:'2026-10-22T00:00:00Z',Labels:{...storageOwnerLabels(birth.binding),'cds.storage.birth':foreign?'foreign':birth.birthNonce}};
+      volumes.set(requested,volume);if(afterCreateDaemon)daemon='other-daemon';
+      return {stdout:requested,stderr:'',exitCode:0};
     }
     throw Error('unexpected owned command');
   })} as IShellExecutor;
@@ -166,4 +169,23 @@ it('actual empty-directory program rejects find I/O failure before chmod',async(
 it('accepts the actual lowercase exact native missing-helper diagnostic after successful ES init',async()=>{
  const f=fixture();f.service.dockerImage='docker.elastic.co/elasticsearch/elasticsearch:8.11.0';f.service.volumes![0].containerPath='/usr/share/elasticsearch/data';f.esDrift('lowercase-absent');
  await expect(f.allocator.provisionNewInfra(f.service,infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'}),'es-native-missing',()=>{})).resolves.toBeUndefined();expect(f.published()?.id).toBe('mysql');
+});
+
+it.each([
+ ['sqlserver','mcr.microsoft.com/mssql/server:2022-latest',['/var/opt/mssql']],
+ ['kafka','apache/kafka:3.7.0',['/etc/kafka/secrets','/var/lib/kafka/data','/mnt/shared/config']],
+] as const)('fresh fixed catalog %s prepares every declared empty root before publication',async(_id,image,paths)=>{
+ const f=fixture();f.service.dockerImage=image;f.service.volumes=paths.map((target,index)=>{const storage={...f.binding,mountKey:'catalog'+index};return{type:'volume',name:stableStorageVolumeName(storage),containerPath:target,storage}});
+ await f.allocator.provisionNewInfra(f.service,infraStoragePlan(f.service,{storageInstanceId:'own',repoRoot:'/owned'}),'fresh-catalog',()=>{});
+ expect(f.published()?.id).toBe('mysql');expect(f.events.filter(c=>c.startsWith('docker start -a'))).toHaveLength(1);
+ expect(f.events.filter(c=>c.startsWith('docker create')).every(c=>c.includes('--cap-add CHOWN'))).toBe(true);
+ expect(f.helperProgram()).toContain(image.startsWith('apache')?"'1000:1000'":"'10001:10001'");
+ expect(f.helperProgram()).toContain(image.startsWith('apache')?'chgrp 1000 ':'chgrp 10001 ');
+ expect([...f.rows.values()].every(r=>r.stage==='published')).toBe(true);expect(f.events.some(c=>/volume rm|rm -f/.test(c))).toBe(false);
+});
+
+it.each(['image-unavailable','image-volume-extra'])('unknown or incomplete image plan %s cannot issue a storage birth',async reason=>{
+ const f=fixture();f.esDrift(reason);
+ await expect(f.allocator.provisionNewInfra(f.service,f.plan,'image-preflight',()=>{})).rejects.toThrow('storage_provision');
+ expect(f.rows.size).toBe(0);expect(f.published()).toBeUndefined();expect(f.events.some(c=>c.startsWith('docker volume '))).toBe(false);
 });
