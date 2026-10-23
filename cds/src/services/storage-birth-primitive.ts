@@ -19,6 +19,11 @@ export interface BirthJournal {
 }
 const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
 const reject = () => new Error('storage_provision_unconfirmed');
+/** Only these native diagnostics prove absence; unknown/timeout/exists never do. */
+export function isExactMissingStorageVolume(result: {exitCode: number; stdout: string; stderr: string}, name: string): boolean {
+    const errors = ['Error response from daemon: get ' + name + ': no such volume', 'Error response from daemon: No such volume: ' + name, 'Error: No such volume: ' + name];
+    return result.exitCode === 1 && ['', '[]'].includes(result.stdout.trim()) && errors.includes(result.stderr.trim());
+}
 /** One native birth kernel for both wrappers. No scope authorization, lock or freshness is inferred here. */
 export async function allocateStorageBirths(o: {
     store: BirthJournal;
@@ -53,8 +58,7 @@ export async function allocateStorageBirths(o: {
             await store.writeStorageBirthDurably(row, undefined, fence);
             fence();
             const absent = await exec('docker volume inspect ' + quote(row.name));
-            const errors = ['Error response from daemon: get ' + row.name + ': no such volume', 'Error response from daemon: No such volume: ' + row.name, 'Error: No such volume: ' + row.name];
-            if (absent.exitCode !== 1 || !['', '[]'].includes(absent.stdout.trim()) || !errors.includes(absent.stderr.trim()))
+            if (!isExactMissingStorageVolume(absent, row.name))
                 throw reject();
             row = { ...row, seq: row.seq + 1, stage: 'issued', createIssued: true, updatedAt: new Date().toISOString() };
             births[births.length - 1] = row;

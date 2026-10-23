@@ -30,7 +30,7 @@ afterEach(async()=>{await flushAllJsonStateStores();if(server)await new Promise<
 
 function declaration(id:string,legacy=false,bad=false){
  const storage={version:1,instanceId:'warehouse-instance',projectId:'default',scope:'project-shared',serviceId:id,mountKey:'data',purpose:'persistent'} as const;
- return {id,name:id,dockerImage:'fixture:db',containerPort:5432,volumes:[{type:'volume',name:legacy?'legacy-keep-exact':stableStorageVolumeName(storage),containerPath:'/data',...(legacy?{}:{storage:{...storage,...(bad?{serviceId:'foreign-service'}:{})}})}],env:{}};
+ return {id,name:id,dockerImage:'fixture:db',containerPort:5432,volumes:[{type:'volume',name:legacy?'legacy-keep-exact':stableStorageVolumeName(storage),containerPath:'/data',...(legacy?{}:{storage:{...storage,...(bad?{serviceId:'foreign-service'}:{})}})}],env:{POSTGRES_PASSWORD:'fixture-password'}};
 }
 function pFixture(){
  const volumes=new Map<string,any>();const execute=shell.exec.bind(shell);
@@ -56,7 +56,7 @@ it('bad second import declaration refuses before first P birth or infra metadata
 });
 it('explicit legacy named volume cannot become a renamed fresh empty P',async()=>{
  const vols=pFixture();await listen();response=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[],infraServices:[declaration('legacy',true)]}});
- expect(response.body).toContain('storage-contract-required');expect(vols.size).toBe(0);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(state.getInfraServicesForProject('default')).toHaveLength(0);expect(container.startInfraService).not.toHaveBeenCalled();
+ expect(response.body).toContain('storage_fresh_catalog_unconfirmed');expect(vols.size).toBe(0);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(state.getInfraServicesForProject('default')).toHaveLength(0);expect(container.startInfraService).not.toHaveBeenCalled();
 });
 it('valid explicit import P durably publishes binding before actual R preflight and startup boundary',async()=>{
  const vols=pFixture();await listen();response=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[],infraServices:[declaration('fresh')]}});
@@ -81,4 +81,20 @@ it.each([false,true])('invalid default in other affected project before import w
  response=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[incoming],infraServices:[declaration('fresh')]}});
  expect(response.status).toBe(400);expect(JSON.parse(response.body).code).toBe('invalid_default_deploy_mode');expect(state.getBuildProfiles()).toEqual(before);
  expect(vols.size).toBe(0);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(state.getInfraServicesForProject('default')).toHaveLength(0);expect(worktree.create).not.toHaveBeenCalled();expect(container.startInfraService).not.toHaveBeenCalled();
+});
+
+function catalogDeclaration(){return {id:'catalog-db',name:'catalog-db',dockerImage:'mysql:8.0',containerPort:3306,env:{MYSQL_ROOT_PASSWORD:'fixture-password'},volumes:[{type:'volume',name:'original-catalog-data',containerPath:'/var/lib/mysql'}]};}
+it('confirmed new-only catalog import uses native absence then a new binding, never the legacy name',async()=>{
+ const vols=pFixture();await listen();const result=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[],infraServices:[catalogDeclaration()]}});
+ expect(result.body).not.toContain('初始化失败');expect(vols.size).toBe(1);expect(vols.has('original-catalog-data')).toBe(false);const saved=state.getInfraServiceForProjectAndId('default','catalog-db');expect(saved.volumes[0]).toMatchObject({containerPath:'/var/lib/mysql',storage:{instanceId:'warehouse-instance',serviceId:'catalog-db'}});expect(saved.volumes[0].name).not.toBe('original-catalog-data');expect(trace).toContain('R-START:catalog-db');
+});
+it.each(['exists','no-confirmation'])('failed catalog import preserves profiles, env and routing before any P: %s',async kind=>{
+ const vols=pFixture();if(kind==='exists')vols.set('original-catalog-data',{Name:'original-catalog-data',Driver:'local'});const profiles=structuredClone(state.getBuildProfiles()),env=structuredClone(state.getCustomEnv()),routes=structuredClone(state.getRoutingRules());await listen();
+ const result=await request('/api/import-and-init',{...(kind==='exists'?{initializeStorage:'new-only'}:{}),config:{$schema:'cds-config',buildProfiles:[profile('must-not-publish')],envVars:{MUST_NOT_PUBLISH:'owned-fixture'},routingRules:[{id:'must-not-publish',name:'fixture',enabled:true,priority:0}],infraServices:[catalogDeclaration()]}});
+ expect(result.body).toContain('初始化失败');expect(state.getBuildProfiles()).toEqual(profiles);expect(state.getCustomEnv()).toEqual(env);expect(state.getRoutingRules()).toEqual(routes);expect(state.getInfraServicesForProject('default')).toEqual([]);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(shell.commands.some((c:string)=>c.startsWith('docker volume create'))).toBe(false);expect(container.startInfraService).not.toHaveBeenCalled();if(kind==='exists')expect(vols.get('original-catalog-data')).toEqual({Name:'original-catalog-data',Driver:'local'});
+});
+it.each(['full-yaml','nested-yaml','json-array'])('new-only import refuses explicit null storage before allocation or metadata: %s',async shape=>{
+ const vols=pFixture();await listen();const yaml='x-cds-project:\n  name: fixture\nservices:\n  catalog-db:\n    image: mysql:8.0\n    ports: ["3306:3306"]\n    environment:\n      MYSQL_ROOT_PASSWORD: fixture-password\n    volumes: null\n';
+ const cfg=shape==='full-yaml'?yaml:{$schema:'cds-config',buildProfiles:[],infraServices:shape==='nested-yaml'?yaml:[{...catalogDeclaration(),volumes:null}]};
+ const before=structuredClone(state.getBuildProfiles());const result=await request('/api/import-and-init',{initializeStorage:'new-only',config:cfg});expect(result.status===400||result.body.includes('初始化失败')).toBe(true);expect(vols.size).toBe(0);expect(state.getBuildProfiles()).toEqual(before);expect(state.getInfraServicesForProject('default')).toEqual([]);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(container.startInfraService).not.toHaveBeenCalled();
 });

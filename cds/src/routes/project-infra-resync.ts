@@ -1,3 +1,4 @@
+import {planFreshCatalogInfra,assertFreshLegacyVolumesAbsent,type FreshInfraPlan} from '../services/fresh-catalog-storage-plan.js';
 import { projectResourceNamespace } from '../services/preview-slug.js';
 // 项目基础设施重新同步路由 (2026-05-29)
 //
@@ -306,6 +307,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
       const reserved=new Set<number>();
       const preparedUpdates=new Map<string,InfraService>();
       const preparedAdds=new Map<string,{service:InfraService;provision:boolean}>();
+      const freshPlans:FreshInfraPlan[]=[];
       const authenticate=(service:InfraService)=>assertInfraAuthenticationConfigured({...service,
         env:resolveEnvTemplates(service.env,configuredEnv),command:resolveCommandTemplate(service.command,configuredEnv),
         entrypoint:resolveCommandTemplate(service.entrypoint,configuredEnv)});
@@ -325,19 +327,12 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
           || !Number.isInteger(service.hostPort) || service.hostPort<1 || service.hostPort>65535)throw reject();
         reserved.add(service.hostPort);
         let provision=false;
+        if(Object.hasOwn(raw[def.id]||{},'volumes') && !Array.isArray(raw[def.id].volumes))throw reject();
         if(!old) {
-          if(service.volumes.length)throw reject(); // never adopt/rename caller-supplied legacy storage
-          const paths=recommendedVolumePathsFromCatalog(service.dockerImage);
-          if(initializeStorage==='new-only' && paths?.length) {
-            if(Object.hasOwn(raw[def.id]||{},'volumes') || !deps.shell || !config.storageInstanceId
-              || stateService.getStorageBirthsForService(projectId,service.id).length)throw reject();
-            service.scope='project';
-            service.volumes=paths.map((containerPath,index)=>{
-              const storage={version:1 as const,instanceId:config.storageInstanceId!,projectId,scope:'project-shared' as const,
-                serviceId:service.id,mountKey:index?`data-${index+1}`:'data',purpose:'persistent' as const};
-              return {type:'volume' as const,name:stableStorageVolumeName(storage),containerPath,storage};
-            });provision=true;
-          }
+          if(stateService.getStorageBirthsForService(projectId,service.id).length)throw reject();
+          const planned=planFreshCatalogInfra(service,config,initializeStorage==='new-only');
+          if(planned.provision&&!deps.shell)throw reject();
+          Object.assign(service,planned.service);provision=planned.provision;freshPlans.push(planned);
         } else if(Object.hasOwn(raw[def.id]||{},'volumes') && !Array.isArray(raw[def.id].volumes))throw reject();
         if(old && storageProvisionDigest(old.volumes||[])!==storageProvisionDigest(service.volumes))throw reject();
         authenticate(service);assertInfraStorageBoundary(service,config);infraStoragePlan(service,config);
@@ -350,6 +345,7 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
       for(const [id,add] of preparedAdds) {
         if(!add.provision){add.service=await containerService.preflightInfraStorage(add.service,{assertCurrent:fence});fence();}
       }
+      await assertFreshLegacyVolumesAbsent(freshPlans,deps.shell!,fence);
       // Explicit fresh P finishes and ACKs before any destructive phase. Failures keep original births.
       for(const [id,add] of preparedAdds) {
         if(!add.provision)continue;
