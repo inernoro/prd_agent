@@ -100,7 +100,7 @@ describe('Janitor 真实命令与观测隔离', () => {
     await expect(f.adapters.imageDocker.listImages()).rejects.toThrow();
   });
 
-  it('强删前引用未知时保留镜像，恶意样式参数仍只是一个真实 argv', async () => {
+  it('任何删除前引用未知时保留镜像，恶意样式参数仍只是一个真实 argv', async () => {
     const f = await fixture();
     process.env.CDS_JANITOR_CONFLICT = '1';
     process.env.CDS_JANITOR_QUERY_FAILURE = 'ps';
@@ -109,9 +109,8 @@ describe('Janitor 真实命令与观测隔离', () => {
     const result = await f.adapters.imageDocker.removeImage(image);
     expect(result?.startsWith(janitorModule.IMAGE_HELD_PREFIX)).toBe(true);
     const trace = await f.trace();
-    expect(trace.find(item => item.args[0] === 'rmi')?.args).toEqual(['rmi', image]);
     expect(trace.find(item => item.args[0] === 'ps')?.args).toContain(`ancestor=${image}`);
-    expect(trace.filter(item => item.args[0] === 'rmi')).toHaveLength(1);
+    expect(trace.filter(item => item.args[0] === 'rmi')).toHaveLength(0);
     expect(f.operation.exec.mock.calls.every(([, options]) => options?.executionLane === 'operation')).toBe(true);
     await expect(access(sentinel)).rejects.toMatchObject({ code: 'ENOENT' });
   });

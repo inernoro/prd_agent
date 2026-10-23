@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { expectGuardRedOnMutation, mutate } from '../helpers/guard-mutation';
 
 const source = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/web/src/pages/BranchListPage.tsx'),
@@ -21,7 +22,7 @@ describe('BranchListPage preview contract', () => {
     expect(source).not.toContain('openPreview(branch, true)');
   });
 
-  it('keeps preview, release and quick start in the middle slot, separate from footer deployment', () => {
+  const cardActionContract = (source: string) => {
     const middleAt = source.indexOf('<div data-card-info');
     const footerAt = source.indexOf('<footer', middleAt);
     expect(middleAt).toBeGreaterThan(-1);
@@ -30,12 +31,28 @@ describe('BranchListPage preview contract', () => {
     expect(middle).toContain('<PreviewActionSplitButton');
     expect(middle).toContain('onRelease={onRelease}');
     expect(middle).toContain('previewConfirmDescription={previewCapacityWarning && !isAiOperated ? previewCapacityWarning : undefined}');
-    expect(middle).toContain('onClick={onRestart}');
+    const quickStart = middle.slice(middle.indexOf('aria-label={`一键启动'));
+    expect(quickStart).toMatch(/onClick=\{\(event\) => \{\s+event\.stopPropagation\(\);\s+onRestart\(\);/);
     expect(middle).toContain('不拉取代码、不重建镜像');
     const footer = source.slice(footerAt, source.indexOf('</footer>', footerAt));
     expect(footer).not.toContain('<PreviewActionSplitButton');
     expect(footer).toContain('onDeploy();');
+    expect(footer).toContain('!buildPhase && (showsIssue || failedPhase)');
     expect(footer).toContain('disabled={busy || Boolean(buildPhase)}');
+  };
+
+  it('keeps preview, release and quick start separate from issue-only footer deployment', () => {
+    cardActionContract(source);
+  });
+
+  it('rejects quick start bubbling to the card detail action', () => {
+    expectGuardRedOnMutation(cardActionContract, source,
+      mutate(source, /event\.stopPropagation\(\);\s+onRestart\(\);/, 'onRestart();'));
+  });
+
+  it('rejects an unconditional footer deployment action', () => {
+    expectGuardRedOnMutation(cardActionContract, source,
+      mutate(source, '!buildPhase && (showsIssue || failedPhase)', 'true'));
   });
 
   it('keeps commit history separate from the current commit summary', () => {

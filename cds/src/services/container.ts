@@ -31,15 +31,8 @@ import { applyMysqlConnectionDefaults, isMysqlFamilyImage, parseDeclaredMaxConne
 import { inspectDeploymentArtifacts } from './artifact-admission.js';
 import { computeDeploymentConfigHash } from './deployment-version.js';
 
-/**
- * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
- *
- * docker 默认 json-file 驱动**没有上限**：长跑分支的容器日志会一直写到根盘满。
- * 2026-07-27 根盘 100% 写满导致 CDS 自用 mongo 退出、全站 502 三十五分钟，事后
- * 宿主实测 /var/lib/docker/containers 已积 3.5GB。50m x 3 = 单容器上界 150MB，
- * 既够排障回看，也让「日志」这条增长曲线从无界变有界。
- */
-export const DOCKER_LOG_LIMIT_FLAGS = ['--log-opt max-size=50m', '--log-opt max-file=3'];
+import { DOCKER_LOG_LIMIT_FLAGS, hasBoundedDockerLogs } from './docker-log-policy.js';
+export { DOCKER_LOG_LIMIT_FLAGS } from './docker-log-policy.js';
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
@@ -966,6 +959,7 @@ export class ContainerService {
       assertCurrent?.(`managed build before create ${profile.id}`);
       const create = await shell.exec([
         'docker create',
+        ...DOCKER_LOG_LIMIT_FLAGS,
         `--name ${this.shellQuote(builderName)}`,
         `--network ${this.shellQuote(network)}`,
         // managed 构建是本机最吃 CPU 的一段（装依赖 + 打包），必须和其它托管
@@ -2122,6 +2116,7 @@ export class ContainerService {
       const jobImage = (profile.dockerImage || '').trim();
       // 容器规格（不含 run 动词 / --network / --rm / --name），隔离与非隔离两条路径共用。
       const jobSpec = [
+        ...DOCKER_LOG_LIMIT_FLAGS,
         ...volumeFlags,
         ...entrypointFlags,
         // 一次性构建/迁移作业是 CPU 大头,同样挂低权重 slice(2026-09-08)。
@@ -3831,48 +3826,51 @@ export class ContainerService {
   }
 
   private async auditInfraLogLimit(service: InfraService): Promise<void> {
+    const unknown = () => {
+      try {
+        console.warn(`[infra-audit] ${service.containerName} 日志与保护状态无法确认；保留现有容器，未自动重建。`);
+        this.recordContainerEvent({
+          severity: 'warn', source: 'cds-container-service', action: 'infra.protection-audit.unknown',
+          message: 'reused infra logging or protection state unavailable',
+          projectId: service.projectId, serviceId: service.id, containerName: service.containerName,
+          details: { logLimitStatus: 'unknown', protectedLabelStatus: 'unknown' },
+      });
+      } catch { /* Best-effort audit reporting must not block existing-container reuse. */ }
+    };
     try {
       const r = await this.shell.exec(
-        `docker inspect --format='{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .Config.Labels "cds.protected"}}' ${service.containerName}`,
+        `docker inspect --format='{"logConfig":{{json .HostConfig.LogConfig}},"protected":{{json (index .Config.Labels "cds.protected")}}}' ${service.containerName}`,
+        { timeout: 5000, executionLane: 'observation' },
       );
-      if (r.exitCode !== 0) return;
-      const raw = (r.stdout || '').trim().replace(/^'|'$/g, '');
-      const [maxSizeRaw, protectedRaw] = raw.split('|');
-      const maxSize = (maxSizeRaw || '').trim();
-      // docker 对缺失的 label 会渲染成 `<no value>`（Go 模板 index 取空）
-      const protectedLabel = (protectedRaw || '').trim();
-      const hasProtection = protectedLabel === 'true';
+      if (r.exitCode !== 0 || r.stderr.trim() || Buffer.byteLength(r.stdout) > 4096) { unknown(); return; }
+      let actual: { logConfig?: unknown; protected?: unknown };
+      try { actual = JSON.parse(r.stdout); } catch { unknown(); return; }
+      if (!actual || typeof actual !== 'object' || Array.isArray(actual)
+        || !Object.hasOwn(actual, 'logConfig') || !Object.hasOwn(actual, 'protected')
+        || !actual.logConfig || typeof actual.logConfig !== 'object' || Array.isArray(actual.logConfig)
+        || actual.protected !== null && typeof actual.protected !== 'string') { unknown(); return; }
+      const bounded = hasBoundedDockerLogs(actual.logConfig);
+      const hasProtection = actual.protected === 'true';
       const missing: string[] = [];
-      if (!maxSize) missing.push('日志限额（--log-opt max-size）');
+      if (!bounded) missing.push('日志限额（json-file/max-size/max-file）');
       if (!hasProtection) missing.push('保护标记（label cds.protected=true）');
       if (missing.length === 0) return;
       const consequences = [
-        !maxSize ? '容器日志会无上限占用根盘 —— 这正是 2026-07-27 根盘写满的根因之一' : '',
-        !hasProtection ? '停止后会被运维手册里 label!=cds.protected=true 的清理命令误删' : '',
+        !bounded ? '实际日志驱动或轮转上限不满足受管约束，不能确认磁盘占用有界' : '',
+        !hasProtection ? '停止后缺少保护标记，可能被通用清理命令误删' : '',
       ].filter(Boolean).join('；');
       console.warn(
         `[infra-audit] ${service.containerName} 缺少：${missing.join('、')}（复用已存在的容器，docker 无法补改）。`
-        + ` ${consequences}。`
-        + ` 低峰期执行 POST /api/infra/${service.id}/restart 让 CDS 按当前定义重建即可补齐（会短暂断连）。`,
+        + ` ${consequences}。需要受保护的维护交接；普通复用不会重建或截断现有容器。`,
       );
       this.recordContainerEvent({
-        severity: 'warn',
-        source: 'cds-container-service',
-        action: 'infra.protection-audit.missing',
+        severity: 'warn', source: 'cds-container-service', action: 'infra.protection-audit.missing',
         message: `reused infra container missing ${missing.join(' + ')}: ${service.containerName}`,
-        projectId: service.projectId,
-        serviceId: service.id,
-        containerName: service.containerName,
-        details: {
-          missingLogLimit: !maxSize,
-          missingProtectedLabel: !hasProtection,
-          remedy: `POST /api/infra/${service.id}/restart`,
-          reason: 'docker 无法给已存在容器补 label / log-opt，只能重建',
-        },
+        projectId: service.projectId, serviceId: service.id, containerName: service.containerName,
+        details: { missingLogLimit: !bounded, missingProtectedLabel: !hasProtection,
+          remedy: 'protected-maintenance-handover', reason: 'existing container logging and protection settings are not changed by reuse' },
       });
-    } catch {
-      /* 体检失败不影响复用 */
-    }
+    } catch { unknown(); }
   }
 
   private async ensureInfraOnNetwork(

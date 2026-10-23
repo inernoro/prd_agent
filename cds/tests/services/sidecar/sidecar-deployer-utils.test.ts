@@ -10,9 +10,12 @@
  * compose 路径 / 加更多敏感后缀）都先在这里加 case。
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  SidecarDeployer,
+  type SidecarSpec,
+  type DeployContext,
   isSafeContainerSlug,
   isSafeDockerImage,
   isSafeEnvKey,
@@ -222,5 +225,27 @@ describe('renderEnvFlags', () => {
     expect(() => renderEnvFlags({ 'FOO BAR': 'v' })).toThrow(/unsafe env key/);
     expect(() => renderEnvFlags({ '$(whoami)': 'v' })).toThrow(/unsafe env key/);
     expect(() => renderEnvFlags({ '1FOO': 'v' })).toThrow(/unsafe env key/);
+  });
+});
+
+describe('SidecarDeployer newborn Docker log budget', () => {
+  it('bounds the actual remote docker-run command before its image', async () => {
+    const deployer = new SidecarDeployer({} as never);
+    const runtime = deployer as unknown as {
+      stageInstalling(host: never, spec: SidecarSpec, ctx: DeployContext): Promise<void>;
+      sshExec(host: never, command: string): Promise<string>;
+    };
+    const exec = vi.spyOn(runtime, 'sshExec').mockResolvedValue('');
+    try {
+      await runtime.stageInstalling({} as never, { image: 'example/sidecar:v1', slug: 'logs', port: 7400 }, {
+        deployment: {} as never, emit: vi.fn(), patch: vi.fn(),
+      });
+      const command = exec.mock.calls.map((call) => call[1]).find((value) => value.startsWith('docker run -d'));
+      expect(command).toBeDefined();
+      for (const flag of ['--log-driver json-file', '--log-opt max-size=50m', '--log-opt max-file=3']) {
+        expect(command).toContain(flag);
+        expect(command!.indexOf(flag)).toBeLessThan(command!.indexOf("'example/sidecar:v1'"));
+      }
+    } finally { exec.mockRestore(); }
   });
 });

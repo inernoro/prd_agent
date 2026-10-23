@@ -7666,7 +7666,10 @@ const BranchCard = memo(function BranchCard({
               disabled={busy}
               title="启动已停止的容器，不拉取代码、不重建镜像"
               aria-label={`一键启动 ${branch.branch}`}
-              onClick={onRestart}
+              onClick={(event) => {
+                event.stopPropagation();
+                onRestart();
+              }}
             >
               <Play />
               一键启动
@@ -7756,13 +7759,13 @@ const BranchCard = memo(function BranchCard({
             <FileText />
             日志
           </Button>
-          <Button
+          {!buildPhase && (showsIssue || failedPhase) ? <Button
             size="sm"
             variant="default"
             className="h-8 w-[4.5rem] border border-foreground/10 bg-foreground px-2 text-background shadow-sm [&_svg]:size-[1.125rem] hover:bg-foreground/90 hover:text-background focus-visible:ring-foreground/25"
             disabled={busy || Boolean(buildPhase)}
             title="按项目最新构建配置重新部署这个分支"
-            aria-label={`${showsIssue || failedPhase ? '重新部署' : '部署'} ${branch.branch}`}
+            aria-label={`重新部署 ${branch.branch}`}
             onClick={(event) => {
               event.stopPropagation();
               onDeploy();
@@ -7770,7 +7773,7 @@ const BranchCard = memo(function BranchCard({
           >
             <RotateCw />
             部署
-          </Button>
+          </Button> : null}
         </div>
       </footer>
     </article>

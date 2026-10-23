@@ -1,5 +1,5 @@
 import { WorktreeService } from './worktree.js';
-import { reclaimDeploymentSources, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
+import { reclaimDeploymentSources, summarizeDeploymentSourceHolds, type DeploymentSourceHoldReason, type DeploymentSourceRetentionReport } from './deployment-source-retention.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -144,6 +144,12 @@ function createImageDocker(run: DockerRunner): ImageDockerFns {
       return out.split('\n').filter(Boolean);
     },
     removeImage: async (image) => {
+      // ps.Image 可能是 digest、ID 或另一个 tag。删除前直接按 daemon 的
+      // image identity 查全部容器（含停止），不能等 rmi 已经取消 tag 后再检查。
+      const currentRefs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000, run).catch(() => '__ERR__ 容器引用查询未确认');
+      if (currentRefs.startsWith('__ERR__') || currentRefs.trim() !== '') {
+        return `${IMAGE_HELD_PREFIX}有容器引用或引用检查失败，未执行普通删除、未强制删除`;
+      }
       const out = await execDocker(['rmi', image], 60_000, run);
       if (!out.startsWith('__ERR__')) return null;
       const err = out.replace('__ERR__ ', '');
@@ -542,7 +548,8 @@ export interface JanitorSnapshot {
     } | null;
     /** 孤儿 worktree 对账摘要。null = 本次未执行。 */
     orphanWorktrees: { removed: number; failed: number; deferred: number } | null;
-    deploymentSources?: { scanned: number; attempted: number; removed: number; held: number; deferred: number };
+    deploymentSources?: { scanned: number; attempted: number; removed: number; failed: number; held: number; deferred: number;
+      heldReasons?: Partial<Record<DeploymentSourceHoldReason, number>> };
     dockerPrune: string[] | null;
     errors: number;
   } | null;
@@ -979,10 +986,11 @@ export class JanitorService {
               deferred: report.orphanWorktrees.deferred,
             }
             : null,
-          ...(report.deploymentSources && (report.deploymentSources.scanned || report.deploymentSources.failed.length
-            || Object.keys(report.deploymentSources.held).length) ? { deploymentSources: {
+          ...(report.deploymentSources ? { deploymentSources: {
             scanned: report.deploymentSources.scanned, attempted: report.deploymentSources.attempted,
-            removed: report.deploymentSources.removed.length, held: Object.keys(report.deploymentSources.held).length,
+            removed: report.deploymentSources.removed.length, failed: report.deploymentSources.failed.length,
+            held: Object.keys(report.deploymentSources.held).length,
+            ...(Object.keys(report.deploymentSources.held).length ? { heldReasons: summarizeDeploymentSourceHolds(report.deploymentSources.held) } : {}),
             deferred: report.deploymentSources.deferred,
           } } : {}),
           dockerPrune: report.dockerPrune?.reclaimed ?? null,

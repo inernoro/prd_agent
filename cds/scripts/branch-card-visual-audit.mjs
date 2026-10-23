@@ -14,7 +14,7 @@
  *   3. 状态翻转后 data-deploy-phase 依次变为 done / failed（收尾有没有接上线）；
  *   4. 页脚里的构建文字没有被截断（scrollWidth ≤ clientWidth）。
  *
- * 用法：node scripts/branch-card-visual-audit.mjs [--out <dir>] [--width 1920]
+ * 用法：node scripts/branch-card-visual-audit.mjs [--out <dir>] [--width 1920] [--interactions-only]
  * 截图写进 --out（默认 /tmp/branch-card-audit），不进仓库。
  */
 import { createRequire } from 'node:module';
@@ -177,11 +177,16 @@ const check = (ok, message) => { if (!ok) failures.push(message); console.log(`$
 
 async function openPage(browser, url, theme) {
   const context = await browser.newContext({ viewport: { width: WIDTH, height: 1180 }, deviceScaleFactor: 1 });
+  const actionRequests = [];
+  const browserErrors = [];
   await context.addInitScript(`try{localStorage.setItem('cds_theme','${theme}')}catch(e){}`);
   await context.addInitScript(FAKE_SSE);
   await context.route('**/api/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (isEventStream(pathname)) {
+    if (route.request().method() === 'POST' && /\/(restart|deploy)$/.test(pathname)) {
+      actionRequests.push(pathname);
+    }
+    if (isEventStream(pathname) || route.request().headers().accept?.includes('text/event-stream')) {
       await route.fulfill({ status: 200, contentType: 'text/event-stream', body: ': fixture\n\n' });
       return;
     }
@@ -189,10 +194,20 @@ async function openPage(browser, url, theme) {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body ?? {}) });
   });
   const page = await context.newPage();
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text());
+  });
   await page.goto(`${url}/branch-list?project=${PROJECT_ID}`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  try {
+    await page.waitForSelector('[data-branch-card-id="b-test"]', { timeout: 30000 });
+  } catch (error) {
+    await page.screenshot({ path: path.join(OUT, `load-failure-${theme}.png`) });
+    console.error((await page.locator('body').innerText()).slice(0, 3000));
+    throw error;
+  }
   await page.waitForTimeout(1200);
-  return { context, page };
+  return { context, page, actionRequests, browserErrors };
 }
 
 /* 同一排 = 卡片顶边 y 相同。量每排的高度差。 */
@@ -238,7 +253,36 @@ async function main() {
     browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM || '/opt/pw-browsers/chromium' });
     for (const theme of ['dark', 'light']) {
       branches = makeBranches();
-      const { context, page } = await openPage(browser, server.url, theme);
+      const { context, page, actionRequests, browserErrors } = await openPage(browser, server.url, theme);
+      const card = (id) => page.locator(`[data-branch-card-id="${id}"]`);
+      const deployButtons = (id) => card(id).getByRole('button', { name: /^(重新部署|部署) / });
+      for (const id of ['b-test', 'b-edison', 'b-pack', 'b-ident', 'b-relaxed']) {
+        check(await deployButtons(id).count() === 0, `[${theme}] ${id} 运行、等待、构建或停止态不显示直接部署入口`);
+      }
+      check(await card('b-test').getByRole('button', { name: '预览', exact: true }).count() === 1,
+        `[${theme}] 健康运行卡保留预览入口`);
+      check(await deployButtons('b-scan').count() === 1
+        && await card('b-scan').getByRole('button', { name: /^预览/ }).count() === 0,
+        `[${theme}] 异常卡保留重新部署，且不同时显示预览`);
+      await card('b-relaxed').getByRole('button', { name: /^一键启动 / }).click();
+      await page.waitForTimeout(400);
+      check(actionRequests.filter((p) => p === '/api/branches/b-relaxed/restart').length === 1
+        && !actionRequests.some((p) => p.endsWith('/deploy')),
+        `[${theme}] 一键启动只发送一次 restart，不发送 deploy`);
+      const drawer = page.getByRole('dialog', { name: '分支详情', exact: true });
+      check(await drawer.count() === 0, `[${theme}] 一键启动不冒泡打开分支详情`);
+      if (await drawer.count()) await page.getByRole('button', { name: '关闭', exact: true }).click();
+      // 卡片空白仍能打开详情；不能靠禁用整卡点击修复按钮冒泡。
+      await card('b-relaxed').locator('[data-card-versions]').click();
+      await drawer.waitFor({ state: 'visible' });
+      check(await drawer.isVisible(), `[${theme}] 信息槽空白仍可打开分支详情`);
+      await page.getByRole('button', { name: '关闭', exact: true }).click();
+      if (process.argv.includes('--interactions-only')) {
+        check(browserErrors.length === 0, `[${theme}] 无浏览器运行错误${browserErrors.length ? ': ' + browserErrors.join('; ') : ''}`);
+        await page.screenshot({ path: path.join(OUT, `interactions-${theme}.png`), fullPage: true });
+        await context.close();
+        continue;
+      }
       const rows = await measureRows(page);
       rows.forEach((row, i) => {
         const hs = row.list.map((c) => c.h);
@@ -330,10 +374,11 @@ async function main() {
             fixedHeight: Math.abs(c.height - parseFloat(getComputedStyle(document.documentElement).fontSize) * 15.25) <= 1,
             infoInside: i.top >= c.top && i.bottom <= f.top + 1 && i.right <= c.right,
             footerInside: f.bottom <= c.bottom && f.top > i.top,
-            footerOnlyActions: actions.length === 2 && actions.map((b) => b.textContent.trim()).join('|') === '日志|部署'
+            footerOnlyActions: actions.length >= 1 && actions.length <= 2 && actions[0].textContent.trim() === '日志'
+              && (actions.length === 1 || actions[1].textContent.trim() === '部署')
               && !footer.querySelector('[data-card-versions], [data-footer-status]'),
             actionsFit: actionRects.every((r) => r.left >= c.left && r.right <= c.right && r.top >= f.top && r.bottom <= f.bottom)
-              && actionRects[0].right <= actionRects[1].left,
+              && actionRects.every((r, index) => index === 0 || actionRects[index - 1].right <= r.left),
             summarySingleLine: singleLine(summary),
             versionsSingleLine: !versions || [...versions.children].every(singleLine),
           };
@@ -752,6 +797,7 @@ async function main() {
         check(relaxedHidden && relaxedShown.mounted && !relaxedShown.inDormant,
           `停止的分支单独部署一个服务时离开收起的「未运行」分组（部署前${relaxedHidden ? '被收起' : '可见'}，部署中${relaxedShown.mounted ? '已渲染' : '未渲染'}${relaxedShown.inDormant ? '、仍在未运行分组' : ''}）`);
       }
+      check(browserErrors.length === 0, `[${theme}] 无浏览器运行错误${browserErrors.length ? ': ' + browserErrors.join('; ') : ''}`);
       await context.close();
     }
   } finally {
