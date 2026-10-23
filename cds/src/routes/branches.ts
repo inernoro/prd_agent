@@ -3182,9 +3182,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (run?.status === 'cancelled' || run?.status === 'failed') throw new BranchOperationSupersededError(decision?.operationId || run.operationId || '', entry.id, '受理期间原部署已结束');
       decision?.lease?.assertCurrent('after-admission-persistence');
     } catch (err) {
+      const superseded = err instanceof BranchOperationSupersededError;
+      const failedRun = run || (decision && deploymentRunService?.getForOperation(decision.operationId, decision.generation));
+      if (!superseded) serverEventLogStore?.record({
+        category: 'system', severity: 'error', source: 'branch-deployment-admission',
+        action: 'branch.deployment.admission-failed',
+        message: '部署受理失败，尚未开始执行；旧服务保留，请按请求标识查看诊断原因',
+        projectId: entry.projectId || 'default', branchId: entry.id, profileId: input.profileId || null,
+        requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+        operationId: decision?.operationId || null, operationKind: input.kind,
+        operationTrigger: triggerFromRequest(req), operationSource: input.source,
+        commitSha: input.commitSha || null,
+        error: { code: 'deployment_admission_failed', message: maskSecretsText(err instanceof Error ? err.message : String(err), { mask: true }).slice(0, 1200) },
+        details: { operationGeneration: decision?.generation, admissionStatus: decision?.status, runId: failedRun?.id || null },
+      });
       if (decision?.lease) completeBranchOperation(decision.lease, err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed');
       else if (decision) branchOperationCoordinator?.abandonAdmission(decision.operationId, decision.generation);
-      const superseded = err instanceof BranchOperationSupersededError;
       res.status(superseded ? 409 : 503).json({ error: superseded
         ? '部署已被更新的操作取代，请查看最新部署结果'
         : '部署记录暂未能可靠保存，尚未开始执行，请稍后重试' });
