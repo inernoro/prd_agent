@@ -29,13 +29,14 @@ const options = new Map([['1:1', { size: '1024x1024' }], ['2:3', { size: '1024x1
 let root: Root;
 let host: HTMLDivElement;
 let mobile = true;
+let chatVisible = true;
 let disabled = false;
 const changed = vi.fn();
 function Harness() {
   const [sizeSelectorOpen, setSizeSelectorOpen] = React.useState(false);
   const [composerSize, setComposerSize] = React.useState('1024x1024');
   const picker = runInNewContext(pickerScript(), {
-    React, Popover, sizeSelectorOpen, setSizeSelectorOpen, isMobile: mobile,
+    React, Popover, sizeSelectorOpen, setSizeSelectorOpen, isMobile: mobile, mobileShowChat: chatVisible,
     composerSize, autoSizeForSelectedImage: null, imageGenSize: '1024x1024',
     currentModelSizesNotApplicable: disabled, detectTierFromSize,
     sizeToAspectMap: new Map([['1024x1024', '1:1'], ['1024x1536', '2:3']]),
@@ -52,6 +53,7 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   mobile = true;
+  chatVisible = true;
   disabled = false;
   changed.mockClear();
   host = document.createElement('div');
@@ -73,7 +75,7 @@ describe('聊天尺寸弹层定位与选择接线', () => {
         const element = React.createElement(type as React.ElementType, props, ...children as React.ReactNode[]);
         if (type === Popover.Content) tree = element;
         return element;
-      } }, Popover, sizeSelectorOpen: true, setSizeSelectorOpen: vi.fn(), isMobile: true,
+      } }, Popover, sizeSelectorOpen: true, setSizeSelectorOpen: vi.fn(), isMobile: true, mobileShowChat: true,
       currentModelSizesNotApplicable: true, composerSize: '1024x1024', autoSizeForSelectedImage: null,
       imageGenSize: '1024x1024', detectTierFromSize, sizeToAspectMap: new Map(),
       detectAspectFromSize: () => '1:1', ratiosByResolution: { '1k': options, '2k': new Map(), '4k': new Map() },
@@ -108,6 +110,27 @@ describe('聊天尺寸弹层定位与选择接线', () => {
     await React.act(async () => document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true })));
     expect(dialog()).toBeNull();
     expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  it('跨断点或手机聊天收起时隐藏 Portal，聊天重显保留原打开状态', async () => {
+    mobile = false;
+    chatVisible = false;
+    await render();
+    await click(trigger());
+    expect(dialog()).not.toBeNull();
+    mobile = true;
+    await render();
+    expect(dialog()).toBeNull();
+    chatVisible = true;
+    await render();
+    expect(dialog()).not.toBeNull();
+    chatVisible = false;
+    await render();
+    expect(dialog()).toBeNull();
+    mobile = false;
+    await render();
+    expect(dialog()).not.toBeNull();
+    expect(changed).not.toHaveBeenCalled();
   });
 
   it('尺寸不适用时保持禁用，不打开浮层或改动尺寸', async () => {

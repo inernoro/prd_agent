@@ -9461,7 +9461,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               <div className="mt-1 flex items-center justify-between gap-1.5">
                 {/* 左侧：尺寸/比例选择器 */}
-                <Popover.Root open={sizeSelectorOpen} onOpenChange={setSizeSelectorOpen}>
+                <Popover.Root open={sizeSelectorOpen && (!isMobile || mobileShowChat)} onOpenChange={setSizeSelectorOpen}>
                   <Popover.Trigger asChild>
                   <button
                     type="button"
