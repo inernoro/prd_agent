@@ -39,6 +39,11 @@ describe('infra-catalog SSOT', () => {
     }
   });
 
+  it('declares both official Mongo7 data paths for explicit owned provisioning', () => {
+    expect(getInfraCatalogEntry('mongodb')!.volumePaths).toEqual(['/data/db', '/data/configdb']);
+    expect(recommendedVolumePathsFromCatalog('mongo:7')).toEqual(['/data/db', '/data/configdb']);
+  });
+
   it('reproduces the legacy postgres preset exactly', () => {
     const pg = getInfraCatalogEntry('postgres');
     expect(pg).toBeDefined();
