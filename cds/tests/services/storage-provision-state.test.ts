@@ -48,3 +48,21 @@ describe('real State storage birth publication',()=>{
   const restored=new StateService(path.join(root,'state.json'));restored.load();expect(restored.getInfraServiceForProjectAndId('p','mysql')).toBeUndefined();expect(()=>(restored as any).storageBirthRequirements(f.plan)).toThrow('storage_provision');await restored.flush();
  });
 });
+
+it.each(['volumes','id','projectId','scope','path','owner'])('refuses changing allocated infra %s before mutating metadata',async kind=>{
+ const f=own();await f.allocator.provisionNewInfra(f.service,f.plan,'op_owned',()=>{});
+ const before=structuredClone(state.getInfraServiceForProjectAndId('p','mysql'));
+ const patch=kind==='volumes'?{volumes:[]}:kind==='id'?{id:'moved'}:kind==='projectId'?{projectId:'q'}:kind==='scope'?{scope:'system' as const}:{volumes:f.service.volumes.map(v=>({...v,...(kind==='path'?{containerPath:'/different'}:{storage:{...v.storage!,instanceId:'other'}})}))};
+ expect(()=>state.updateInfraService('mysql',patch,'p')).toThrow('storage_retained');
+ expect(state.getInfraServiceForProjectAndId('p','mysql')).toEqual(before);
+ expect(()=>state.updateInfraService('mysql',{name:'renamed',status:'stopped'},'p')).not.toThrow();
+});
+it('empty accepted infra plan cannot omit an original retained birth',async()=>{
+ const f=own();await f.allocator.provisionNewInfra(f.service,f.plan,'op_owned',()=>{});
+ const empty=infraStoragePlan({...f.service,volumes:[]},{repoRoot:root,storageInstanceId:'own'});
+ expect(()=>state.storageBirthRequirements(empty)).toThrow('storage_provision');
+ const count=f.commands.length;
+ const c=new ContainerService(f.shell,{repoRoot:root,storageInstanceId:'own'} as any,{getDockerNetwork:()=>undefined,storageBirthRequirements:p=>state.storageBirthRequirements(p)},undefined,undefined,undefined,unitBindMountInspector);
+ await expect(c.preflightInfraStorage({...f.service,volumes:[]})).rejects.toThrow('storage_provision');
+ expect(f.commands).toHaveLength(count);
+});

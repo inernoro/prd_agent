@@ -1024,7 +1024,7 @@ function CreateInfraDialog({
           return;
         }
         const imageBase = (value: string) => (value.toLowerCase().split('/').pop() || '').split(':')[0];
-        const freshStorage = catalogItems.some(item => item.hasPersistence && imageBase(item.dockerImage) === imageBase(dockerImage));
+        const freshStorage = catalogItems.some(item => item.hasPersistence && imageBase(dockerImage).startsWith(imageBase(item.dockerImage)));
         if (freshStorage && !window.confirm('将为该服务创建全新的空数据卷，不会复用或改动现有数据卷。是否继续？')) return;
         await apiRequest(`/api/infra?project=${encodeURIComponent(projectId)}`, {
           method: 'POST',

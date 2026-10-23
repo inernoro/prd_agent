@@ -21,3 +21,8 @@ describe('retained storage deletion refusal',()=>{
   expect(()=>s.removeInfraService('db')).toThrow('storage_retained_service_delete_refused');
  });
 });
+
+it('keeps declaration-only imported storage reachable without a birth journal',()=>{
+ const s=fake() as any;s.state.infraServices[0].volumes=[{name:'retained',storage:{version:1,instanceId:'own',projectId:'p',scope:'project-shared',serviceId:'db',mountKey:'data',purpose:'persistent'}}];
+ const before=JSON.stringify(s.state);expect(()=>s.removeInfraService('db','p')).toThrow('storage_retained');expect(()=>s.assertProjectStorageRemovalAllowed('p')).toThrow('storage_retained');expect(JSON.stringify(s.state)).toBe(before);
+});

@@ -1243,6 +1243,15 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   /** Unknown/partial first allocation holds R; legacy owner-bound volumes without a P journal retain their existing R checks. */
   storageBirthRequirements(plan: DeploymentStoragePlan): StorageBirthRequirements {
     const requirements: StorageBirthRequirements = {};
+    // A zero-volume candidate still has an owner: never shrink its retained denominator.
+    const owner = plan.owner;
+    if (owner) for (const row of Object.values(this.state.storageBirths || {})) {
+      const b = row.binding;
+      if (b.projectId !== owner.projectId || b.serviceId !== owner.serviceId
+          || (owner.branchId ? b.scope !== 'branch-private' || b.branchId !== owner.branchId : b.scope !== 'project-shared')) continue;
+      if (!plan.mounts.some(m => m.kind === 'volume' && m.source === row.name
+          && storageProvisionDigest(m.storage) === storageProvisionDigest(b))) throw new Error('storage_provision_unconfirmed');
+    }
     for (const mount of plan.mounts.filter(m => m.kind === 'volume')) {
       const row = this.state.storageBirths?.[mount.source]; if (!row) continue;
       if (row.stage !== 'published' || !row.createIssued || row.name !== stableStorageVolumeName(row.binding)
@@ -1521,6 +1530,57 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
 
   getBranchProfileOverride(branchId: string, profileId: string): BuildProfileOverride | undefined {
     return this.state.branches[branchId]?.profileOverrides?.[profileId];
+  }
+
+  /** Simulate every import prefix before publishing the first profile or allocating storage. */
+  assertBuildProfileBatchStorageAllowed(incoming: readonly BuildProfile[]): void {
+    let rows = [...this.state.buildProfiles];
+    for (const input of incoming) {
+      const index = rows.findIndex(p=>p.id===input.id);
+      const candidate = index >= 0 ? {...rows[index],...input} : {...input,
+        projectId:input.projectId || this.resolveOrphanFallbackProject()?.id || 'default'};
+      rows = index >= 0 ? rows.map((p,i)=>i===index?candidate:p) : [...rows,candidate];
+      this.assertProfileStorageDeclarationsPreserved(undefined,rows);
+    }
+  }
+
+  /** Pure whole-candidate check, before any metadata, P, runtime or snapshot mutation. */
+  assertProfileStorageDeclarationsPreserved(
+    branches: readonly BranchEntry[] = Object.values(this.state.branches || {}),
+    profiles: readonly BuildProfile[] = this.state.buildProfiles,
+  ): void {
+    const targets = new Map<string, ProfileStorageTarget>();
+    const add = (t: ProfileStorageTarget) => targets.set(profileStorageTargetKey(t), t);
+    for (const row of Object.values(this.state.storageBirths || {})) if (row.binding.scope === 'branch-private')
+      add({kind:'profile',projectId:row.binding.projectId,branchId:row.binding.branchId!,serviceId:row.binding.serviceId});
+    for (const row of [...this.profileStorageDrafts.values(), ...Object.values(this.state.profileStorageBindings || {}),
+      ...Object.values(this.state.profileStoragePublications || {}).map(p => p.binding)]) add(row.target);
+    for (const branch of Object.values(this.state.branches || {})) for (const profile of this.getEffectiveProfilesForBranch(branch))
+      for (const mount of profile.cacheMounts || []) if (mount.storage?.scope === 'branch-private' && mount.storage.branchId === branch.id)
+        add({kind:'profile',projectId:branch.projectId || 'default',branchId:branch.id,serviceId:profile.id});
+    const candidates = new Map(branches.map(b => [b.id,b]));
+    for (const t of targets.values()) {
+      const candidate = candidates.get(t.branchId); if (!candidate) continue;
+      const original = this.getBranch(t.branchId);
+      const members = (branch: BranchEntry | undefined, rows: readonly BuildProfile[]) => ({
+        projectId:branch?.projectId || 'default',
+        project:rows.filter(p=>(p.projectId || 'default')===t.projectId && p.id===t.serviceId),
+        extra:(branch?.extraProfiles || []).filter(p=>p.id===t.serviceId),
+      });
+      // An unchanged historical orphan cannot freeze other projects. An affected
+      // orphan still fails closed; a new same-id profile cannot silently adopt it.
+      if (storageProvisionDigest(members(original,this.state.buildProfiles)) === storageProvisionDigest(members(candidate,profiles))) continue;
+      const pick = (branch: BranchEntry | undefined, rows: readonly BuildProfile[]) => {
+        if (!branch || (branch.projectId || 'default') !== t.projectId) return null;
+        const baseline = rows.filter(p => (p.projectId || 'default') === t.projectId);
+        const raw = mergeBranchProfiles(baseline, branch).find(p => p.id === t.serviceId);
+        if (!raw || raw.projectId !== t.projectId) return null;
+        return {source:baseline.some(p=>p.id===t.serviceId)?'project':'branch',declaration:profileStorageDeclarationDigest(resolveEffectiveProfile(raw,branch))};
+      };
+      const before = pick(original,this.state.buildProfiles), after = pick(candidate,profiles);
+      if (!before || !after || storageProvisionDigest(before) !== storageProvisionDigest(after))
+        throw new Error('storage_retained_profile_mutation_refused: 服务持有已分配或待确认的私有存储，请保留服务与存储声明');
+    }
   }
 
   /**
@@ -1871,6 +1931,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     // PR_B.1: 兜底到 legacy project 的真实 id（不是硬编码 'default'）。
     if (!profile.projectId) profile.projectId = this.resolveOrphanFallbackProject()?.id ?? 'default';
     this.assertBuildProfileRuntimeBoundary(profile);
+    this.assertProfileStorageDeclarationsPreserved(undefined,[...this.state.buildProfiles,profile]);
     this.state.buildProfiles.push(profile);
   }
 
@@ -1878,10 +1939,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const idx = this.state.buildProfiles.findIndex(p => p.id === id);
     if (idx === -1) throw new Error(`构建配置 "${id}" 不存在`);
     this.assertBuildProfileRuntimeBoundary({ ...this.state.buildProfiles[idx], ...updates });
+    this.assertProfileStorageDeclarationsPreserved(undefined,this.state.buildProfiles.map((p,i)=>i===idx?{...p,...updates}:p));
     Object.assign(this.state.buildProfiles[idx], updates);
   }
 
   removeBuildProfile(id: string): void {
+    this.assertProfileStorageDeclarationsPreserved(undefined,this.state.buildProfiles.filter(p => p.id !== id));
     this.state.buildProfiles = this.state.buildProfiles.filter(p => p.id !== id);
   }
 
@@ -4056,6 +4119,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const sanitized = (extraProfiles || []).filter(
       (p) => p && isValidExtraProfileId(p.id),
     );
+    this.assertProfileStorageDeclarationsPreserved([{...branch,extraProfiles:sanitized}]);
     if (sanitized.length === 0) {
       delete branch.extraProfiles;
     } else {
@@ -4439,6 +4503,13 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       ? this.state.infraServices.findIndex(s => s.id === id && (s.projectId || 'default') === projectId)
       : this.state.infraServices.findIndex(s => s.id === id);
     if (idx === -1) throw new Error(`基础设施服务 "${id}" 不存在`);
+    const previous = this.state.infraServices[idx], candidate = {...previous,...updates};
+    const pid = previous.projectId || 'default', key = JSON.stringify([pid,id]);
+    const retained = this.getStorageBirthsForService(pid,id).length || this.storageProvisionDrafts.has(key)
+      || this.state.storageProvisionPublications?.[key] || previous.volumes?.some(v=>v.storage !== undefined);
+    const declaration = (s: InfraService) => ({id:s.id,projectId:s.projectId || 'default',scope:s.scope,volumes:s.volumes || []});
+    if (retained && storageProvisionDigest(declaration(previous)) !== storageProvisionDigest(declaration(candidate)))
+      throw new Error('storage_retained_infra_mutation_refused: 已分配或待确认的存储声明不可通过普通配置修改');
     Object.assign(this.state.infraServices[idx], updates);
   }
 
@@ -4449,7 +4520,8 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const retained = (pid: string) => {
       const key = JSON.stringify([pid, id]);
       return this.storageProvisionDrafts.has(key) || Boolean(this.state.storageProvisionPublications?.[key])
-        || this.getStorageBirthsForService(pid, id).length > 0;
+        || this.getStorageBirthsForService(pid, id).length > 0
+        || this.getInfraServiceForProjectAndId(pid,id)?.volumes?.some(v=>v.storage !== undefined);
     };
     const projects = projectId ? [projectId] : [...new Set([
       ...this.state.infraServices.filter(s => s.id === id).map(s => s.projectId || 'default'),
@@ -4461,7 +4533,12 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
   }
 
   assertProjectStorageRemovalAllowed(projectId: string): void {
-    const retained = Object.values(this.state.storageBirths || {}).some(r => r.binding.projectId === projectId)
+    const hasStorage = (p: Partial<BuildProfile>) => p.cacheMounts?.some(m=>m.storage !== undefined);
+    const retained = this.state.infraServices.some(s=>(s.projectId || 'default')===projectId && s.volumes?.some(v=>v.storage !== undefined))
+      || this.state.buildProfiles?.some(p=>(p.projectId || 'default')===projectId && hasStorage(p))
+      || Object.values(this.state.branches || {}).some(b=>(b.projectId || 'default')===projectId
+        && [...Object.values(b.profileOverrides || {}),...(b.extraProfiles || [])].some(p=>hasStorage(p as Partial<BuildProfile>)))
+      || Object.values(this.state.storageBirths || {}).some(r => r.binding.projectId === projectId)
       || [...this.storageProvisionDrafts.values(), ...Object.values(this.state.storageProvisionPublications || {})]
         .some(r => (r.service.projectId || 'default') === projectId)
       || [...this.profileStorageDrafts.values()].some(r => r.target.projectId === projectId)

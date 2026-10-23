@@ -12,7 +12,8 @@ export class UnsafeDeploymentStorageError extends Error {
 
 export type PlannedMount = Readonly<{ kind: 'bind' | 'volume' | 'tmpfs'; source: string; target: string; readOnly: boolean;
   purpose: 'source' | 'config' | 'cache' | 'persistent' | 'ephemeral'; storage?: Readonly<StorageBinding>; sourceRoot?: string; workspaceTarget?: string; serverTool?: true }>;
-export type DeploymentStoragePlan = Readonly<{ version: 1; mounts: readonly PlannedMount[]; digest: string }>;
+export type StoragePlanOwner = Readonly<{instanceId?: string; projectId: string; branchId?: string; serviceId: string}>;
+export type DeploymentStoragePlan = Readonly<{ version: 1; owner?: StoragePlanOwner; mounts: readonly PlannedMount[]; digest: string }>;
 const quote = (s: string) => "'" + s.replace(/'/g, "'\\''") + "'";
 function fail(reason: string): never { throw new UnsafeDeploymentStorageError('plan', reason); }
 const validKey = (v: unknown): v is string => typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(v);
@@ -58,7 +59,7 @@ function seal(mounts: PlannedMount[], identity: {instanceId?: string; projectId:
     }
   }
   const frozen = mounts.map(m => Object.freeze({...m, ...(m.storage ? {storage: Object.freeze({...m.storage})} : {})}));
-  return Object.freeze({version: 1, mounts: Object.freeze(frozen), digest: createHash('sha256').update(JSON.stringify(frozen)).digest('hex')});
+  return Object.freeze({version: 1, owner: Object.freeze({...identity}), mounts: Object.freeze(frozen), digest: createHash('sha256').update(JSON.stringify(frozen)).digest('hex')});
 }
 
 export function profileStoragePlan(entry: Pick<BranchEntry, 'id' | 'projectId' | 'worktreePath'>, profile: BuildProfile,
@@ -96,7 +97,7 @@ export function withRuntimeTmpfs(plan: DeploymentStoragePlan, enabled = true): D
   if (!enabled) return plan;
   if (plan.mounts.some(m => m.target === '/tmp')) fail('storage-target-duplicate');
   const mounts = Object.freeze([...plan.mounts, Object.freeze({kind:'tmpfs' as const,source:'tmpfs',target:'/tmp',readOnly:false,purpose:'ephemeral' as const})]);
-  return Object.freeze({version:1, mounts, digest:createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
+  return Object.freeze({...plan, version:1, mounts, digest:createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
 }
 
 /** Append only read-only host tools to an already validated accepted plan. */
@@ -107,7 +108,7 @@ export function withReadOnlyTools(plan: DeploymentStoragePlan, tools: ReadonlyAr
       || plan.mounts.some(m => m.target === t.target)) fail('storage-tool-invalid');
     return Object.freeze({...t, kind: 'bind' as const, readOnly: true, purpose: 'config' as const, serverTool: true as const});
   })];
-  return Object.freeze({version: 1, mounts: Object.freeze(mounts), digest: createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
+  return Object.freeze({...plan, version: 1, mounts: Object.freeze(mounts), digest: createHash('sha256').update(JSON.stringify(mounts)).digest('hex')});
 }
 
 export type StorageBirthRequirements = Record<string, {birthNonce:string;daemonId:string;mountpoint:string;createdAt:string}>;

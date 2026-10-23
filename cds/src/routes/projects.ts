@@ -1355,6 +1355,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       })),
       idSuffix,
     );
+    // Throw to the existing finite auto-config error path; do not fall through
+    // into heuristic imports after a retained-storage refusal.
+    stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles);
     for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
