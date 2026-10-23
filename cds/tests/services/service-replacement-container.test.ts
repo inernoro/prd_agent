@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, expect, it, vi } from 'vitest';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -6,7 +7,7 @@ import { branchAppNetworkName } from '../../src/services/branch-network.js';
 
 function fixture() {
   const shell = new MockShellExecutor();
-  const container = new ContainerService(shell, { dockerNetwork: 'shared', sharedEnv: {}, repoRoot: '/tmp' } as CdsConfig);
+  const container = new ContainerService(shell, { dockerNetwork: 'shared', sharedEnv: {}, repoRoot: '/tmp' } as CdsConfig, undefined, undefined, undefined, undefined, unitBindMountInspector);
   const entry = { id: 'branch', projectId: 'project' } as BranchEntry;
   const runtime = { containerName: 'old-api', containerId: 'a'.repeat(64), hostPort: 10001, networkName: 'old-network' };
   const identity = { id: runtime.containerId, running: true, branch: entry.id, project: entry.projectId,

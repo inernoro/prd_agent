@@ -65,6 +65,17 @@ export function previewMirrorBlockedByRealData(state: StateService): boolean {
 
 export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMirrorFile): boolean {
   if (previewMirrorBlockedByRealData(state)) return false;
+  // Retirement must not remove audit/config before the State storage fence.
+  const retiring = state.getProjects().filter(p => p.mirror || isSnapshotProjectId(p.id));
+  const retiringIds = new Set(retiring.map(p => p.id));
+  try {
+    for (const branch of state.getAllBranches())
+      if (branch.mirror || retiringIds.has(branch.projectId || 'default')) state.assertBranchStorageRemovalAllowed(branch.id);
+    for (const project of retiring) state.assertProjectStorageRemovalAllowed(project.id);
+  } catch (error) {
+    console.warn(`[preview-mirror] retaining private-storage metadata: ${(error as Error).message}`);
+    return false;
+  }
   let changed = false;
 
   // 1. 静态快照退役：只退快照播下的那批（项目按 snap- 前缀，报告按标题在快照里），

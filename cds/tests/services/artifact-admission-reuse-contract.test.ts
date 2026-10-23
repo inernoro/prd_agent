@@ -1,3 +1,4 @@
+import {withStorageImages} from '../helpers/storage-image-mock.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -240,12 +241,13 @@ describe('增量 CI 与完整产物准入的复用契约', () => {
     const { shell, profile } = reusable();
     const local = { ...profile, dockerImage: fixedImage, localArtifact: true };
     shell.addResponsePatternFirst(/docker image inspect/, () => ({ stdout: JSON.stringify([{ Id: contentId, RepoDigests: [fixedImage],
-      Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': revision } } }]), stderr: '', exitCode: 0 }));
+      Os: 'linux', Architecture: 'amd64', Config: { Labels: { 'org.opencontainers.image.revision': revision }, Volumes: null } }]), stderr: '', exitCode: 0 }));
+    shell.addResponsePatternFirst(/^for p in /, () => ({stdout:'',stderr:'',exitCode:0}));
     shell.addResponsePattern(/.*/, () => ({ stdout: 'd'.repeat(64), stderr: '', exitCode: 0 }));
     const runtime: ServiceState = { profileId: 'api', containerName: `owned-digest-${revision[0]}`, hostPort: 10001, status: 'running' };
     const entry: BranchEntry = { id: 'owned-digest', projectId: 'owned', branch: 'owned', worktreePath: '/tmp/owned-artifact-fixture',
       githubCommitSha: target, ciTargetSha: target, status: 'running', createdAt: new Date().toISOString(), services: { api: runtime } };
-    const service = new ContainerService(shell, { repoRoot: entry.worktreePath, worktreeBase: entry.worktreePath,
+    const service = new ContainerService(withStorageImages(shell), { repoRoot: entry.worktreePath, worktreeBase: entry.worktreePath,
       dockerNetwork: 'owned-network', sharedEnv: {}, jwt: { secret: 'synthetic-only', issuer: 'owned' } } as CdsConfig);
     const alive = vi.spyOn(service as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     const ready = vi.spyOn(service as any, 'waitForReadiness').mockResolvedValue(true);
@@ -260,7 +262,7 @@ describe('增量 CI 与完整产物准入的复用契约', () => {
         } });
       expect(runtime.deployedImage).toBe(fixedImage);
       expect(environment?.CDS_COMMIT_SHA).toBe(revision);
-      expect(shell.commands.find(command => /^docker (run|create) /.test(command))).toContain(`'${fixedImage}'`);
+      expect(shell.commands.find(command => /^docker (run|create) /.test(command))).toContain(`'${contentId}'`);
       expect(shell.commands.some(command => command.startsWith('docker pull') || /git |docker (exec|commit)/.test(command))).toBe(false);
     } finally { alive.mockRestore(); ready.mockRestore(); envFile.mockRestore(); }
   });

@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 /**
  * Multi-project end-to-end smoke test (2026-05-04).
  *
@@ -112,7 +113,7 @@ describe('Multi-project end-to-end isolation (data + endpoints)', () => {
     const shell = new MockShellExecutor();
     shell.addResponsePattern(/.*/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
     const worktreeService = new WorktreeService(shell);
-    const containerService = new ContainerService(shell, config);
+    const containerService = new ContainerService(shell, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
 
     const app = express();
     app.use(express.json());
