@@ -531,7 +531,11 @@ describe('已受理部署的持久输入与重启恢复', () => {
       expect(service.get(run.id)?.status).toBe(scenario.status);
       expect(record.mock.calls.some(([event]) => event.operationId === run.operationId && event.action === 'branch.operation.deferred')).toBe(handedOff);
       expect(coordinator.drainReady()).toEqual([]);
-      release(); await write.catch(() => {}); rename?.mockRestore(); await state.flush();
+      release(); await write.catch(() => {}); rename?.mockRestore();
+      if (scenario.flush === 'failed') await expect(state.flush()).rejects.toThrow('synthetic restart state failure');
+      // Assertions above captured the failed gate. Only a new explicit write can
+      // acknowledge recovery; a second observer cannot consume the first error.
+      state.save(); await state.flush();
       const persisted = JSON.parse(fs.readFileSync(file, 'utf8'));
       expect(persisted.deploymentRuns[run.id].status).toBe(scenario.status);
       expect(Boolean(persisted.deploymentIntents[run.id])).toBe(scenario.status === 'queued');
@@ -777,7 +781,9 @@ describe('已受理部署的持久输入与重启恢复', () => {
     const recovered = new DeploymentRunService(reopened), coordinator = new BranchOperationCoordinator();
     expect(recovered.restoreQueued(coordinator).map((r) => r.id)).toEqual([run.id]);
     expect(coordinator.drainReady()).toHaveLength(1);
-    await reopened.flush(); await state.flush();
+    await reopened.flush();
+    // A different store's successful recovery must not acknowledge this store's failed claim.
+    await expect(state.flush()).rejects.toThrow('synthetic disk unavailable');
   });
 
   it('正在确认的取消记录不被其他分支新增历史裁剪，确认后才允许回收', async () => {
