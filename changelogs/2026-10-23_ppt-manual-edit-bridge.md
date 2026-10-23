@@ -4,3 +4,4 @@
 | fix | design-runtime | 演示稿改用 OpenDesign 原生 deck 技能生成与单轮检查，普通网页继续使用 web-prototype |
 | fix | design-runtime | 隔离演示稿任务中的通用网页创作与审查提示，保留原生 deck 技能和品牌上下文 |
 | fix | prd-api | 手动保存改为同一演示稿站点的可回退版本，显式发布前不切换公开内容 |
+| fix | design-runtime | 将原生演示稿技能生成的资源说明保留在工作区而不误作公开网页资源 |

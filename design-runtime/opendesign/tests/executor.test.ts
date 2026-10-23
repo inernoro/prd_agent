@@ -644,6 +644,37 @@ function committedHtml(commit: { files: Array<{ path: string; contentBase64: str
   return Buffer.from(file.contentBase64, 'base64').toString('utf8');
 }
 
+describe('public output boundary', () => {
+  it('keeps the native deck assets README private without allowing public Markdown', async () => {
+    harness = await startHarness();
+    const pkg = buildPackage([]);
+    harness.daemon.onRun = ({ workspaceDir, index }) => {
+      if (index === 1) {
+        fs.mkdirSync(path.join(workspaceDir, 'assets'), { recursive: true });
+        fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><head><link rel="stylesheet" href="assets/deck.css"></head><body><main><h1>Native deck</h1><p>完整可见正文。</p></main></body></html>');
+        fs.writeFileSync(path.join(workspaceDir, 'assets/deck.css'), 'body { color: #123; }');
+        fs.writeFileSync(path.join(workspaceDir, 'assets/README.md'), '# Agent workspace notes\nThis file is not a public page resource.\n');
+      }
+      return { status: 'succeeded', deliverableEntryFile: 'index.html' };
+    };
+
+    const view = await runToEnd(pkg);
+    expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    const committedPaths = map!.commits[0].files.map((file: { path: string }) => file.path);
+    expect(committedPaths).toContain('assets/deck.css');
+    expect(committedPaths).not.toContain('assets/README.md');
+
+    const markdown = Buffer.from('# Public notes');
+    expect(() => buildGeneratedPublicArtifactPackage('<!doctype html><html><body>Public</body></html>', [{
+      path: 'assets/NOTES.md',
+      contentBase64: markdown.toString('base64'),
+      sha256: digest(markdown),
+      size: markdown.length,
+      mediaType: 'text/markdown; charset=utf-8',
+    }])).toThrow(AgentWorkspaceRuntimeError);
+  });
+});
+
 describe('edit runs seeded from the current published site', () => {
   it.each([[false, true], [true, true]])('seeds complete edit resources and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
     harness = await startHarness();
