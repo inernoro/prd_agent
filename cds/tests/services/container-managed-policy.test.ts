@@ -7,6 +7,8 @@ import path from 'node:path';
 import { ContainerService } from '../../src/services/container.js';
 import { DeploymentVersionService, isImmutableImageReference } from '../../src/services/deployment-version.js';
 import { StateService } from '../../src/services/state.js';
+import { ProfileStorageProvisionService } from '../../src/services/profile-storage-provision.js';
+import { profileStoragePlan, storageOwnerLabels } from '../../src/services/deployment-storage-plan.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import type { BranchEntry, BuildProfile, CdsConfig, IShellExecutor, ServiceState } from '../../src/types.js';
 const dirs: string[] = [];
@@ -77,6 +79,28 @@ function fixture() {
   return { service, state, versionService, entry, profile, runtime, commands, buildEnvs, images, builderIds, hash, cached, setHead: (value: string) => { sourceHead = value; }, setCommittedRevision: (value: string) => { commitRevision = value; } };
 }
 afterEach(async () => { vi.restoreAllMocks(); await flushAllJsonStateStores(); for (const dir of dirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true }); });
+it('real published app storage does not become a temporary builder mount requirement',async()=>{
+  const f=fixture(),config=(f.service as any).config as CdsConfig;
+  config.storageInstanceId='owned';f.profile.projectId='owned';f.state.addBuildProfile(f.profile);
+  f.state.getBranch('owned')!.services={};
+  const volumes=new Map<string,any>();
+  const pshell:IShellExecutor={exec:async(c,o)=>{
+    o?.beforeStart?.();const name=/'([^']+)'$/.exec(c)?.[1]||'';
+    if(c.startsWith('docker info'))return{exitCode:0,stdout:'owned-daemon',stderr:''};
+    if(c.startsWith('docker volume inspect'))return volumes.has(name)?{exitCode:0,stdout:JSON.stringify([volumes.get(name)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume'};
+    if(c.startsWith('docker volume create')){const row=f.state.getStorageBirth(name)!;volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-24T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stdout:name,stderr:''};}
+    throw Error('unexpected P command');
+  }};
+  await new ProfileStorageProvisionService(f.state,pshell,config).provisionNewProfile(f.entry,f.profile,[{mountKey:'data',containerPath:'/data',purpose:'persistent'}],'owned-builder-storage',()=>{});
+  const bound=f.state.resolvePublishedProfileStorage(f.entry,f.profile);
+  const resolver={getDockerNetwork:()=> 'owned-network',storageBirthRequirements:(p:any)=>f.state.storageBirthRequirements(p)};
+  const service=new ContainerService((f.service as any).shell,config,resolver,undefined,undefined,undefined,unitBindMountInspector);
+  await expect((service as any).buildManagedArtifact(f.entry,bound,f.runtime,target,'owned-network')).resolves.toMatchObject({dockerImage:fixedId});
+  const create=f.commands.find(c=>c.startsWith('docker create')&&c.includes('-managed-build-'))!;
+  expect(create).toBeDefined();expect(create).not.toContain('--mount');expect(f.commands.some(c=>c.startsWith('docker cp'))).toBe(true);
+  expect(()=>f.state.storageBirthRequirements(profileStoragePlan(f.entry,{...bound,prebuiltImage:true,managedBuild:undefined,cacheMounts:[]},config))).toThrow('storage_provision');
+  expect(f.commands.some(c=>/^docker (stop|rm).*old-owned-web/.test(c))).toBe(false);
+});
 describe('受管产物生产身份与显式源码政策', () => {
   it('同源码及配置再次派发仅更新时间时复用实际已有产物，不重新编译', async () => {
     const f = fixture(); await f.service.runService(f.entry, f.profile, f.runtime);

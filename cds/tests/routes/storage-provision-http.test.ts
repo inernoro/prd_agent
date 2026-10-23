@@ -21,6 +21,7 @@ beforeEach(async()=>{
  selfStatusCache._resetForTests();root=fs.mkdtempSync(path.join(os.tmpdir(),'cds-storage-http-'));state=new StateService(path.join(root,'state.json'));state.load();state.addProject({id:'p',slug:'p',name:'own',kind:'git',createdAt:'2026-10-22',updatedAt:'2026-10-22'});
  config={repoRoot:root,worktreeBase:path.join(root,'wt'),storageInstanceId:'own',masterPort:9900,workerPort:5500,dockerNetwork:'owned',portStart:15000,rootDomains:['owned.invalid'],sharedEnv:{},jwt:{secret:'local-test',issuer:'test'}};commands=[];volume=undefined;failInspect=false;
  shell={exec:vi.fn(async(c:string)=>{commands.push(c);if(c.startsWith('docker info'))return {exitCode:0,stderr:'',stdout:'own-daemon'};
+  if(c.startsWith('docker image inspect'))return {exitCode:0,stderr:'',stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null])};
   if(c.startsWith('docker volume inspect')){const requested=c.match(/'([^']+)'$/)?.[1]||'';return failInspect?{exitCode:1,stderr:'daemon unavailable',stdout:''}:volume?.Name===requested?{exitCode:0,stderr:'',stdout:JSON.stringify([volume])}:{exitCode:1,stderr:'Error response from daemon: get '+requested+': no such volume',stdout:''};}
   if(c.startsWith('docker volume create')){const row=state.getStorageBirth(name)!;volume={Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-22T00:00:00Z',Labels:{...storageOwnerLabels(b),'cds.storage.birth':row.birthNonce}};return {exitCode:0,stderr:'',stdout:name}}return {exitCode:0,stderr:'',stdout:''};})} as IShellExecutor;
  container=new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector);
@@ -103,6 +104,7 @@ describe('explicit existing-project presets storage P',()=>{
  it('the first fresh group can freeze two explicit instances but repeating cannot increment to a third',async()=>{
   const native=new Map<string,any>();vi.mocked(shell.exec).mockImplementation(async(c)=>{
    commands.push(c);if(c.startsWith('docker info'))return {exitCode:0,stderr:'',stdout:'own-daemon'};
+   if(c.startsWith('docker image inspect'))return {exitCode:0,stderr:'',stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null])};
    const volumeName=c.split(' ').at(-1)!.replace(/^'|'$/g,'');
    if(c.startsWith('docker volume inspect'))return native.has(volumeName)?{exitCode:0,stderr:'',stdout:JSON.stringify([native.get(volumeName)])}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+volumeName+': no such volume'};
    if(c.startsWith('docker volume create')){const birth=state.getStorageBirth(volumeName)!;native.set(volumeName,{Name:volumeName,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+volumeName+'/_data',CreatedAt:'2026-10-22T00:00:00Z',Labels:{...storageOwnerLabels(birth.binding),'cds.storage.birth':birth.birthNonce}});return {exitCode:0,stderr:'',stdout:volumeName}}
@@ -144,6 +146,7 @@ describe('explicit existing-project presets storage P',()=>{
  it('new project preset creation uses actual P without needing an optional UI flag',async()=>{
   const native=new Map<string,any>();vi.mocked(shell.exec).mockImplementation(async(c)=>{
    commands.push(c);if(c.startsWith('docker info'))return {exitCode:0,stderr:'',stdout:'own-daemon'};
+   if(c.startsWith('docker image inspect'))return {exitCode:0,stderr:'',stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null])};
    const n=c.split(' ').at(-1)!.replace(/^'|'$/g,'');
    if(c.startsWith('docker volume inspect'))return native.has(n)?{exitCode:0,stderr:'',stdout:JSON.stringify([native.get(n)])}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};
    if(c.startsWith('docker volume create')){const row=state.getStorageBirth(n)!;native.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return {exitCode:0,stderr:'',stdout:n}}
@@ -253,8 +256,17 @@ describe('HTTP retained storage is rejected before lifecycle or metadata changes
 });
 
 describe('ordinary preset UI compatibility still allocates every new persistent ID',()=>{
- function nativeFixture(){const native=new Map<string,any>();vi.mocked(shell.exec).mockImplementation(async(c)=>{
+ function nativeFixture(){const native=new Map<string,any>(),helpers=new Map<string,any>();let issued=0;vi.mocked(shell.exec).mockImplementation(async(c)=>{
   commands.push(c);if(c.startsWith('docker info'))return {exitCode:0,stderr:'',stdout:'own-daemon'};
+  if(c.startsWith('docker image inspect'))return {exitCode:0,stderr:'',stdout:c.includes('json .Config.User')?JSON.stringify('appuser'):JSON.stringify(['sha256:'+'a'.repeat(64),c.includes('apache/kafka')?{'/etc/kafka/secrets':{},'/var/lib/kafka/data':{},'/mnt/shared/config':{}}:null])};
+  if(c.startsWith('docker create ')){
+   const mount=/type=volume,source=([^,]+),dst=([^,]+),/.exec(c)!,row=state.getStorageBirth(mount[1])!,cid=(++issued).toString(16).padStart(64,'0'),name='cds-storage-init-'+row.birthNonce;
+   const raw=c.slice(c.lastIndexOf(' -ceu ')+6),program=raw.slice(1,-1).replaceAll("'\\''", "'");
+   helpers.set(cid,{Id:cid,Name:'/'+name,Image:'sha256:'+'a'.repeat(64),Config:{User:'0:0',Entrypoint:['/bin/sh'],Cmd:['-ceu',program],Labels:{'cds.storage.init.birth':row.birthNonce,'cds.storage.init.operation':row.operationId}},State:{Status:'created',Running:false,Pid:0,ExitCode:0},HostConfig:{Privileged:false,NetworkMode:'none',ReadonlyRootfs:true,Memory:67108864,MemorySwap:67108864,PidsLimit:16,RestartPolicy:{Name:'no'},CapDrop:['ALL'],CapAdd:['CHOWN'],SecurityOpt:['no-new-privileges'],LogConfig:{Type:'json-file',Config:{'max-size':'1m','max-file':'1'}}},Mounts:[...c.matchAll(/type=volume,source=([^,]+),dst=([^,]+),/g)].map(x=>({Type:'volume',Name:x[1],Source:native.get(x[1]).Mountpoint,Destination:x[2],RW:true}))});return{exitCode:0,stdout:cid,stderr:''};
+  }
+  if(c.startsWith('docker inspect ')){const id=c.match(/[a-f0-9]{64}/g)!.at(-1)!;return helpers.has(id)?{exitCode:0,stdout:JSON.stringify([helpers.get(id)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'error: no such object: '+id};}
+  if(c.startsWith('docker start -a ')){const id=c.split(' ').at(-1)!;helpers.get(id).State={Status:'exited',Running:false,Pid:0,ExitCode:0};return{exitCode:0,stdout:['0:1000:770','0:1000:770','0:1000:770'].join('\n'),stderr:''};}
+  if(c.startsWith('docker rm ')){helpers.delete(c.split(' ').at(-1)!);return{exitCode:0,stdout:'',stderr:''};}
   const n=c.split(' ').at(-1)!.replace(/^'|'$/g,'');
   if(c.startsWith('docker volume inspect'))return native.has(n)?{exitCode:0,stderr:'',stdout:JSON.stringify([native.get(n)])}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};
   if(c.startsWith('docker volume create')){const row=state.getStorageBirth(n)!;native.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return {exitCode:0,stderr:'',stdout:n}}

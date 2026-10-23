@@ -412,7 +412,7 @@ export const INFRA_CATALOG: InfraCatalogEntry[] = [
     description: '分布式流处理（KRaft 单节点，SASL/PLAIN 认证），自动注入 KAFKA_BROKERS 与 SASL 凭据。',
     dockerImage: 'apache/kafka:3.7.0',
     containerPort: 9092,
-    volumePaths: ['/var/lib/kafka/data'],
+    volumePaths: ['/etc/kafka/secrets', '/var/lib/kafka/data', '/mnt/shared/config'],
     secretKeys: ['password'],
     /**
      * KRaft 单节点，客户端监听器叫 **CLIENT**，协议是 SASL_PLAINTEXT + PLAIN。
