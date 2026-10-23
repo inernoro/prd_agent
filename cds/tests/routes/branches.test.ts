@@ -152,6 +152,71 @@ function seedLegacyDefaultProject(stateService: StateService): void {
 }
 
 describe('Branch Routes', () => {
+  describe('手动镜像认领回执恢复', () => {
+    const sha = 'a'.repeat(40);
+    function seedClaim() {
+      stateService.getProject('default')!.githubRepoFullName = 'acme/new-repo';
+      stateService.addBuildProfile({ id: 'claim-web', projectId: 'default', name: 'Web', dockerImage: 'node', workDir: '.', containerPort: 8080,
+        deployModes: { express: { label: 'Express', dockerImage: 'ghcr.io/acme/demo:sha-${CDS_COMMIT_SHA}', prebuilt: true } } });
+      const entry: BranchEntry = { id: 'claim-branch', projectId: 'default', branch: 'feature', worktreePath: tmpDir, status: 'running', services: {}, createdAt: new Date().toISOString(),
+        githubRepoFullName: 'acme/old-repo', githubCommitSha: sha, ciTargetSha: sha, ciImageStatus: 'waiting', ciWorkflowRunUrl: '', profileOverrides: { 'claim-web': { activeDeployMode: 'express' } } };
+      stateService.addBranch(entry);
+      return entry;
+    }
+    const run = { repository: { full_name: 'acme/old-repo' }, head_branch: 'feature', head_sha: sha,
+      path: '.github/workflows/branch-image.yml', status: 'completed', conclusion: 'success' };
+    it('项目重新关联后仍使用在途分支缓存的仓库核验真实回执', async () => {
+      const entry = seedClaim(); const original = globalThis.fetch;
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(run)));
+      globalThis.fetch = fetcher;
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha, workflowRunUrl: 'https://github.com/acme/old-repo/actions/runs/123', dryRun: true });
+        expect(result.status).toBe(200);
+        expect(fetcher.mock.calls[0][0]).toBe('https://api.github.com/repos/acme/old-repo/actions/runs/123');
+        expect(entry.ciImageStatus).toBe('waiting');
+      } finally { globalThis.fetch = original; }
+    });
+    it('仅传提交时自动查询并保存核验后的规范运行链接', async () => {
+      const entry = seedClaim(); const original = globalThis.fetch;
+      globalThis.fetch = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ workflow_runs: [{ ...run, id: 123 }] })))
+        .mockResolvedValueOnce(new Response(JSON.stringify(run)));
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha });
+        expect(result.status).toBe(200);
+        expect((result.body as any).patch.ciWorkflowRunUrl).toBe('https://github.com/acme/old-repo/actions/runs/123');
+        expect(stateService.getBranch(entry.id)?.ciWorkflowRunUrl).toBe('https://github.com/acme/old-repo/actions/runs/123');
+        expect(stateService.getBranch(entry.id)?.ciImageStatus).toBe('ready');
+      } finally { globalThis.fetch = original; }
+    });
+    it('省略链接时不复用旧失败运行链接，而是查询同提交的新运行', async () => {
+      const entry = seedClaim(); entry.ciWorkflowRunUrl = 'https://github.com/acme/old-repo/actions/runs/123'; entry.ciImageStatus = 'failed';
+      const original = globalThis.fetch;
+      const fetcher = vi.fn<typeof fetch>()
+        .mockResolvedValueOnce(new Response(JSON.stringify({ workflow_runs: [{ ...run, id: 456 }] })))
+        .mockResolvedValueOnce(new Response(JSON.stringify(run)));
+      globalThis.fetch = fetcher;
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha });
+        expect(result.status).toBe(200);
+        expect(stateService.getBranch(entry.id)?.ciWorkflowRunUrl).toBe('https://github.com/acme/old-repo/actions/runs/456');
+        expect(fetcher.mock.calls[0][0]).toContain('/actions/workflows/branch-image.yml/runs?');
+        expect(fetcher.mock.calls[1][0]).toBe('https://api.github.com/repos/acme/old-repo/actions/runs/456');
+      } finally { globalThis.fetch = original; }
+    });
+    it('同名但路径不符的成功回执不能改写运行和等待状态', async () => {
+      const entry = seedClaim(); const before = JSON.stringify(entry); const original = globalThis.fetch;
+      globalThis.fetch = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ ...run, path: '.github/workflows/ci.yml', name: 'Branch Image' })));
+      try {
+        const result = await request(server, 'POST', '/api/branches/claim-branch/prebuilt-image/claim', { commitSha: sha, workflowRunUrl: 'https://github.com/acme/old-repo/actions/runs/123' });
+        expect(result.status).toBe(409);
+        expect((result.body as any).error).toBe('ci_evidence_mismatch');
+        expect(JSON.stringify(stateService.getBranch(entry.id))).toBe(before);
+      } finally { globalThis.fetch = original; }
+    });
+  });
+
+
   let tmpDir: string;
   let server: http.Server;
   let config: CdsConfig;
@@ -2384,6 +2449,30 @@ describe('Branch Routes', () => {
       // A traversal/metachar containerWorkDir override is also rejected.
       const badCwd = await request(server, 'PUT', '/api/branches/b1/profile-overrides/demo-extra', { containerWorkDir: '/app/../etc' });
       expect(badCwd.status).toBe(400);
+    });
+
+    it('container-exec fences exact identity and sends sensitive input over stdin rather than command arguments', async () => {
+      seedBranch('b1'); const cid = 'b'.repeat(64);
+      stateService.getBranch('b1')!.services['data'] = {
+        profileId: 'data', containerId: cid, containerName: 'cds-b1-data', hostPort: 10099, status: 'running',
+      };
+      const body = { profileId: 'data', command: 'cat >/dev/null', stdin: 'private-input-value', expectedContainerId: cid };
+      const wrong = await request(server, 'POST', '/api/branches/b1/container-exec', { ...body, expectedContainerId: 'a'.repeat(64) });
+      expect(wrong.status).toBe(409); expect(mock.commands.some(c => c.startsWith('docker exec'))).toBe(false);
+      const good = await request(server, 'POST', '/api/branches/b1/container-exec', body);
+      expect(good.status).toBe(200);
+      const index = mock.commands.findIndex(c => c.startsWith('docker exec -i'));
+      expect(mock.commands[index]).toBe(`docker exec -i ${cid} sh -c 'cat >/dev/null'`);
+      expect(mock.stdins[index]).toBe(body.stdin); expect(mock.commands.join('\n')).not.toContain(body.stdin);
+      const original = mock.exec.bind(mock);
+      mock.exec = async (command, options) => {
+        if (command.startsWith('docker exec')) stateService.getBranch('b1')!.services.data.containerId = 'a'.repeat(64);
+        options?.beforeStart?.(); return original(command, options);
+      };
+      try {
+        const stale = await request(server, 'POST', '/api/branches/b1/container-exec', body);
+        expect(stale.status).toBe(409); expect(String(stale.body.error)).toContain('身份已变化');
+      } finally { mock.exec = original; }
     });
 
     it('container-exec masks a secret stored via profile-overrides (Codex P2: resolve overrides before masking exec output)', async () => {

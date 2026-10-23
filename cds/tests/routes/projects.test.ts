@@ -25,6 +25,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 import type { Project, BranchEntry, BuildProfile, CdsConfig } from '../../src/types.js';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
+import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 import { namedServiceLabel } from '../../src/services/preview-entrypoints.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -1338,6 +1339,19 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.error).toBe('legacy_protected');
     });
 
+    it('项目删除成功才广播回执归档进度，其他项目不变', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'receipt-archive' });
+      const pid = created.body.project.id;
+      const publish = vi.spyOn(cdsEventsBus, 'publish');
+      try {
+        expect((await request(server, 'DELETE', '/api/projects/no-such-id')).status).toBe(404);
+        expect(publish).not.toHaveBeenCalledWith('access-request.progress', expect.objectContaining({ stage: 'project-deleted' }));
+        expect((await request(server, 'DELETE', `/api/projects/${pid}`)).status).toBe(200);
+        expect(stateService.getProject(pid)).toBeUndefined();
+        expect(publish).toHaveBeenCalledWith('access-request.progress', { projectId: pid, stage: 'project-deleted' });
+      } finally { publish.mockRestore(); }
+    });
+
     it('returns 404 for unknown project ids', async () => {
       const res = await request(server, 'DELETE', '/api/projects/no-such-id');
       expect(res.status).toBe(404);
@@ -1359,6 +1373,7 @@ describe('Projects router (P4 Part 2)', () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'cascade-b1',
+        replacementNetworks: ['cds-br-cascade-b1-r-' + 'a'.repeat(32)],
         projectId: pid,
         branch: 'main',
         worktreePath: '/tmp/wt-1',
@@ -1437,6 +1452,8 @@ describe('Projects router (P4 Part 2)', () => {
       const del = await request(server, 'DELETE', '/api/projects/' + pid);
       expect(del.status).toBe(200);
       expect(del.body.cascade.branches.sort()).toEqual(['cascade-b1', 'cascade-b2']);
+      expect(stateService.getNetworkTeardowns().map(n => n.name).sort()).toEqual(['cds-br-cascade-b1', 'cds-br-cascade-b1-r-' + 'a'.repeat(32), 'cds-br-cascade-b2']);
+      expect(stateService.getNetworkTeardowns().every(n => n.projectId === pid)).toBe(true);
       expect(del.body.cascade.buildProfiles.sort()).toEqual(['cascade-p1', 'cascade-p2']);
       expect(del.body.cascade.infraServices).toEqual(['cascade-i1']);
       expect(del.body.cascade.routingRules).toEqual(['cascade-r1']);

@@ -394,6 +394,8 @@ export class StateService {
   private releaseLogFlushTimer: NodeJS.Timeout | null = null;
 
   private readonly projectRemovedListeners: Array<(summary: ProjectRemovalSummary) => void> = [];
+  /** 删除中的内存缺席不是持久化成功；失败记录保持阻止回执归档。 */
+  private readonly projectRemovalWrites = new Map<string, Promise<void> | undefined>();
   /** 分支删除时被级联清掉的自定义监控 id —— 运行态台账靠它同步抹除。 */
   private readonly orphanedMonitorListeners: Array<(monitorIds: string[]) => void> = [];
 
@@ -2153,6 +2155,25 @@ export class StateService {
     return [...(this.state.pendingContainerTeardowns || [])];
   }
 
+  /** 明确删除意图的网络清理台账；不能靠扫描名字猜项目归属。 */
+  addNetworkTeardowns(networks: Array<{ name: string; projectId: string }>): void {
+    const list = this.state.pendingNetworkTeardowns ||= [];
+    for (const item of networks) {
+      if (!list.some(n => n.name === item.name && n.projectId === item.projectId)) list.push(item);
+    }
+    this.save();
+  }
+
+  getNetworkTeardowns(): Array<{ name: string; projectId: string }> {
+    return [...(this.state.pendingNetworkTeardowns || [])];
+  }
+
+  removeNetworkTeardown(name: string, projectId: string): void {
+    this.state.pendingNetworkTeardowns = (this.state.pendingNetworkTeardowns || [])
+      .filter(n => n.name !== name || n.projectId !== projectId);
+    this.save();
+  }
+
   /**
    * 已删项目的 worktree 桶墓碑（Codex PR #1275 三轮 P2）。
    *
@@ -2256,6 +2277,17 @@ export class StateService {
     this.orphanedMonitorListeners.push(listener);
   }
 
+  isProjectRemovalConfirmed(id: string): boolean {
+    return !this.getProject(id) && !this.projectRemovalWrites.has(id);
+  }
+
+  async waitForProjectRemoval(id: string): Promise<void> {
+    if (!this.projectRemovalWrites.has(id)) return;
+    const write = this.projectRemovalWrites.get(id);
+    if (!write) throw new Error('项目删除尚未成功保存');
+    await write;
+  }
+
   removeProject(id: string): ProjectRemovalSummary {
     if (!this.state.projects) {
       return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
@@ -2302,6 +2334,8 @@ export class StateService {
       .filter((m) => m.projectId === id)
       .map((m) => m.id);
 
+    // 先标记，覆盖 removeLogs/dropCustomEnvScope 等内部保存也可能抛错的路径。
+    this.projectRemovalWrites.set(id, undefined);
     // ── Cascade mutate ──
     for (const bid of branchesToRemove) {
       delete this.state.branches[bid];
@@ -2338,6 +2372,11 @@ export class StateService {
 
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
+    const write = this.flush();
+    this.projectRemovalWrites.set(id, write);
+    void write.then(() => {
+      if (this.projectRemovalWrites.get(id) === write) this.projectRemovalWrites.delete(id);
+    }, () => { /* 保留未确认记录，不把失败的删除解释成成功归档。 */ });
 
     const summary: ProjectRemovalSummary = {
       uptimeMonitors: uptimeMonitorsToRemove,

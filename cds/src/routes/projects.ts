@@ -1,3 +1,4 @@
+import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { addressWriteLocked } from '../services/preview-address-settings.js';
 /**
@@ -4243,6 +4244,9 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
     // 至少墓碑还在，回收路径不断。
     stateService.addDeletedProjectWorktreeBucket(project.id);
+    // cascade 前保存本项目分支网络的明确删除意图；不扫描其他项目。
+    stateService.addNetworkTeardowns(projectBranches.flatMap(b =>
+      branchTeardownNetworkNames(b).map(name => ({ name, projectId: project.id }))));
 
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
     // belonging to this project so deleting a project no longer leaves
@@ -4252,18 +4256,23 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     let summary: ReturnType<typeof stateService.removeProject>;
     try {
       summary = stateService.removeProject(project.id);
+      await stateService.waitForProjectRemoval(project.id);
     } catch (err) {
       // removeProject 失败 = 项目仍存活（容器仍归它所有）。回滚刚写的墓碑，
       // 否则收割器会按残留墓碑 rm -f 一个未被删除项目的在用容器（Codex P2）。
       for (const containerName of teardownContainers) {
         try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
       }
+      for (const b of projectBranches) for (const name of branchTeardownNetworkNames(b))
+        try { stateService.removeNetworkTeardown(name, project.id); } catch { /* best-effort */ }
       res.status(500).json({
         error: 'state_save_failed',
         message: (err as Error).message,
       });
       return;
     }
+
+    cdsEventsBus.publish('access-request.progress', { projectId: project.id, stage: 'project-deleted' });
 
     // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
     // 墓碑已在 removeProject 之前落库，异步段崩溃 / docker 暂不可用时收割器
@@ -4292,6 +4301,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       } catch (err) {
         console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
       }
+      await processNetworkTeardowns(shell, stateService);
       if (dockerNetwork) {
         const result = await removeDockerNetwork(dockerNetwork);
         if (!result.ok) {
@@ -4304,7 +4314,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         `[projects] 项目 ${project.id} 物理清理完成: ${teardownContainers.length} 个容器` +
         (dockerNetwork ? ` + 网络 ${dockerNetwork}` : ''),
       );
-    })();
+    })().catch(err => console.warn(`[projects] 网络清理稍后重试: ${(err as Error).message}`));
 
     const totalCascade =
       summary.branches.length +

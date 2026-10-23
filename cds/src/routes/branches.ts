@@ -162,7 +162,7 @@ import { isPreviewInstance, profileHostsPreviewInstance } from '../services/prev
 import { buildPreviewMirror, findMirrorLeaks, replayPreviewMirrorSeries, writePreviewMirror } from '../services/preview-mirror.js';
 import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
-import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
+import { preparePrebuiltImageClaim, verifyPrebuiltWorkflowRun } from '../services/prebuilt-image-claim.js';
 import { ProxyService } from '../services/proxy.js';
 import { archiveBranchContainerLogs } from '../services/container-log-archiver.js';
 import { normalizeLogText, type ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -12863,6 +12863,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    const project = stateService.getProject(entry.projectId || 'default');
+    let authorization: string | undefined;
+    try {
+      const installationId = entry.githubInstallationId || project?.githubInstallationId;
+      const token = githubApp && installationId
+        ? await githubApp.getInstallationToken(installationId)
+        : stateService.getGithubDeviceAuth(project?.githubCredentialUserId)?.token;
+      authorization = token ? `Bearer ${token}` : undefined;
+    } catch {
+      res.status(503).json({ error: 'ci_evidence_unavailable', message: '暂时无法核对项目的 GitHub 回执，未认领镜像；请稍后重试。' }); return;
+    }
+    const evidence = await verifyPrebuiltWorkflowRun({
+      repository: entry.githubRepoFullName || project?.githubRepoFullName || '',
+      branch: entry.branch, commitSha, workflowRunUrl, authorization,
+    });
+    if (!evidence.ok) {
+      res.status(evidence.status).json({ error: evidence.error, message: evidence.message }); return;
+    }
+    const current = stateService.getBranch(id);
+    if (!current || current !== entry || current.ciTargetSha !== plan.previous.ciTargetSha
+      || current.githubCommitSha !== plan.previous.githubCommitSha) {
+      res.status(409).json({ error: 'ci_target_changed', message: '核对期间分支目标已更新，未覆盖新状态；请重试。' }); return;
+    }
+
+    plan.patch.ciWorkflowRunUrl = evidence.workflowRunUrl;
+    plan.noChange = plan.noChange && plan.previous.ciWorkflowRunUrl === evidence.workflowRunUrl;
+
     if (!dryRun) {
       stateService.updateBranchGithubMeta(id, plan.patch);
       stateService.save();
@@ -18364,10 +18391,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-exec', async (req, res) => {
     const { id } = req.params;
-    const { profileId, command } = req.body as { profileId?: string; command?: string };
+    const { profileId, command, stdin, expectedContainerId } = req.body as {
+      profileId?: string; command?: string; stdin?: string; expectedContainerId?: string;
+    };
     if (!command || typeof command !== 'string' || !command.trim()) {
       res.status(400).json({ error: '请输入命令' });
       return;
+    }
+    if (stdin !== undefined && (typeof stdin !== 'string' || Buffer.byteLength(stdin) > 1024 * 1024)) {
+      res.status(400).json({ error: '标准输入必须是最多 1 MiB 的字符串' }); return;
+    }
+    if (expectedContainerId !== undefined && (typeof expectedContainerId !== 'string' || !/^[a-f0-9]{64}$/.test(expectedContainerId))) {
+      res.status(400).json({ error: '必须提供完整容器身份' }); return;
     }
 
     const entry = stateService.getBranch(id);
@@ -18376,10 +18411,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
 
+    const access = assertProjectAccess(req as any, entry.projectId || 'default');
+    if (access) { res.status(access.status).json(access.body); return; }
+
     const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
     if (!svc) {
       res.status(404).json({ error: '未找到运行中的服务' });
       return;
+    }
+    if (expectedContainerId !== undefined && svc.containerId !== expectedContainerId) {
+      res.status(409).json({ error: '当前容器身份已变化，拒绝执行' }); return;
     }
 
     try {
@@ -18390,8 +18431,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // private key included), and `$(cmd)` ran as the CDS main process.
       // Single-quote it; the container shell does the expansion.
       const result = await shell.exec(
-        `docker exec ${svc.containerName} sh -c ${shellQuote(command)}`,
-        { timeout: 30_000 },
+        `docker exec ${stdin !== undefined ? '-i ' : ''}${expectedContainerId || svc.containerName} sh -c ${shellQuote(command)}`,
+        { timeout: 30_000, ...(stdin !== undefined ? { stdin } : {}), beforeStart: () => {
+          if (expectedContainerId !== undefined && stateService.getBranch(id)?.services[svc.profileId]?.containerId !== expectedContainerId)
+            throw new Error('当前容器身份已变化，拒绝执行');
+        } },
       );
       // F15 (HIGH severity, 2026-05-02): docker exec output is the #1 leak
       // vector — `env` / `printenv` / `cat .env` / app debug commands all
@@ -18455,7 +18499,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         masked: mask,
       });
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message });
+      res.status((err as Error).message === '当前容器身份已变化，拒绝执行' ? 409 : 500).json({ error: (err as Error).message });
     }
   });
 
