@@ -2423,6 +2423,8 @@ export interface CdsState {
    * 收割器补偿成功 / 发现同名容器已属后继项目时逐条移除。旧状态可缺省。
    */
   pendingContainerTeardowns?: ContainerTeardownTombstone[];
+  /** 删除项目时持久化本项目的网络清理任务；仅清理无端点、无人认领的网络。 */
+  pendingNetworkTeardowns?: Array<{ name: string; projectId: string }>;
   /**
    * 已删项目的 worktree 桶墓碑（见 DeletedProjectWorktreeTombstone 注释）。
    * 孤儿对账把这些 id 并入「已知项目桶」白名单，桶清空后自动摘除。

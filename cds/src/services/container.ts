@@ -57,6 +57,8 @@ import type { ServerEventLogSink, ServerEventRecord, ServerEventSeverity } from 
  * config.dockerNetwork 共享网络,保持 backward compat。
  */
 export interface ProjectNetworkResolver {
+  /** 当前受管容器身份；保留的历史运行不能覆盖它的巡检结果。 */
+  getAppContainerName?(branchId: string, profileId: string): string | undefined;
   /** 返回该项目的 dockerNetwork,缺失则返回 undefined（调用方走 config 兜底）。 */
   getDockerNetwork(projectId: string): string | undefined;
   /**
@@ -877,8 +879,8 @@ export class ContainerService {
     kind: ContainerLifecycleIntentKind,
     reason: string,
     context: ContainerRemoveContext = {},
-  ): void {
-    recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
+  ) {
+    return recordContainerLifecycleIntent({ containerName, kind, reason, ...context });
   }
 
   private qualifiedShell(assertCurrent?: (step: string) => void): IShellExecutor {
@@ -2656,9 +2658,11 @@ export class ContainerService {
   async restartServiceInPlace(
     containerName: string,
     onOutput?: (chunk: string) => void,
-    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason'> = {},
+    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source' | 'reason' | 'assertCurrent'> = {},
   ): Promise<boolean> {
-    const inspect = await this.shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
+    const shell = this.qualifiedShell(context.assertCurrent);
+    context.assertCurrent?.('before restart identity');
+    const inspect = await shell.exec(`docker inspect --format="{{.State.Status}}" ${containerName}`);
     if (inspect.exitCode !== 0) {
       onOutput?.(`── 容器 ${containerName} 不存在，无法原地重启 ──\n`);
       this.recordContainerEvent({
@@ -2684,7 +2688,20 @@ export class ContainerService {
       return false;
     }
     onOutput?.(`── 原地重启: docker restart ${containerName} ──\n`);
-    const result = await this.shell.exec(`docker restart ${containerName}`);
+    context.assertCurrent?.('before docker restart');
+    let restartIntent: ReturnType<typeof recordContainerLifecycleIntent>;
+    let result: Awaited<ReturnType<IShellExecutor['exec']>>;
+    try {
+      result = await shell.exec(`docker restart ${containerName}`, {
+        beforeStart: () => {
+          context.assertCurrent?.('restart execution admitted');
+          restartIntent = this.noteLifecycleIntent(containerName, 'cds-restart', context.reason || '原地重启现有容器', context);
+        },
+      });
+    } finally {
+      if (restartIntent) restartIntent.completedAt = new Date().toISOString();
+    }
+    context.assertCurrent?.('after docker restart');
     if (result.exitCode !== 0) {
       onOutput?.(`── docker restart 失败: ${combinedOutput(result)} ──\n`);
       const diagnostics = await this.captureContainerDiagnostics(containerName, 200);
@@ -3718,34 +3735,41 @@ export class ContainerService {
    * 同 discoverInfraContainers：移除了 `cds.network=` filter,改用 branchId
    * 关联,branch 自带 projectId 不会跨项目串数据。
    */
-  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string }>> {
+  async discoverAppContainers(): Promise<Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string }>> {
     return (await this.discoverAppContainersWithStatus()).containers;
   }
 
   async discoverAppContainersWithStatus(): Promise<{
     ok: boolean;
-    containers: Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
+    containers: Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>;
   }> {
     const result = await this.shell.exec(
-      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format '{{.Names}}|{{.State}}|{{.Labels}}'`,
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --no-trunc --format '{{.Names}}|{{.State}}|{{.Labels}}|{{.ID}}'`,
       { timeout: 30_000, executionLane: 'observation' },
     );
 
-    const discovered = new Map<string, { running: boolean; containerName: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
+    const discovered = new Map<string, { running: boolean; containerName: string; containerId?: string; branchId: string; profileId: string; network?: string; exitCode?: number; oomKilled?: boolean; finishedAt?: string }>();
     if (result.exitCode !== 0) return { ok: false, containers: discovered };
     if (!result.stdout.trim()) return { ok: true, containers: discovered };
 
+    const ambiguous = new Set<string>();
     for (const line of result.stdout.trim().split('\n')) {
       if (!line) continue;
-      const [name, state, labels] = line.split('|');
+      const [name, state, labels, containerId] = line.split('|');
       const branchMatch = labels?.match(/cds\.branch\.id=([^,]+)/);
       const profileMatch = labels?.match(/cds\.profile\.id=([^,]+)/);
       const networkMatch = labels?.match(/cds\.network=([^,]+)/);
       if (branchMatch && profileMatch) {
         const key = `${branchMatch[1]}/${profileMatch[1]}`;
+        const currentName = this.networkResolver?.getAppContainerName?.(branchMatch[1], profileMatch[1]);
+        if (currentName && name !== currentName) continue;
+        // docker ps 的先后顺序不代表发布身份。没有状态指针且同标签多容器时不猜。
+        if (ambiguous.has(key)) continue;
+        if (discovered.has(key)) { discovered.delete(key); ambiguous.add(key); continue; }
         discovered.set(key, {
           running: state === 'running',
           containerName: name,
+          ...(/^[a-f0-9]{64}$/.test(containerId || '') ? { containerId } : {}),
           branchId: branchMatch[1],
           profileId: profileMatch[1],
           ...(networkMatch?.[1] ? { network: networkMatch[1] } : {}),

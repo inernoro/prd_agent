@@ -396,6 +396,8 @@ export class StateService {
   private releaseLogFlushTimer: NodeJS.Timeout | null = null;
 
   private readonly projectRemovedListeners: Array<(summary: ProjectRemovalSummary) => void> = [];
+  /** 删除中的内存缺席不是持久化成功；失败记录保持阻止回执归档。 */
+  private readonly projectRemovalWrites = new Map<string, Promise<void> | undefined>();
   /** 分支删除时被级联清掉的自定义监控 id —— 运行态台账靠它同步抹除。 */
   private readonly orphanedMonitorListeners: Array<(monitorIds: string[]) => void> = [];
 
@@ -2246,6 +2248,25 @@ export class StateService {
     return [...(this.state.pendingContainerTeardowns || [])];
   }
 
+  /** 明确删除意图的网络清理台账；不能靠扫描名字猜项目归属。 */
+  addNetworkTeardowns(networks: Array<{ name: string; projectId: string }>): void {
+    const list = this.state.pendingNetworkTeardowns ||= [];
+    for (const item of networks) {
+      if (!list.some(n => n.name === item.name && n.projectId === item.projectId)) list.push(item);
+    }
+    this.save();
+  }
+
+  getNetworkTeardowns(): Array<{ name: string; projectId: string }> {
+    return [...(this.state.pendingNetworkTeardowns || [])];
+  }
+
+  removeNetworkTeardown(name: string, projectId: string): void {
+    this.state.pendingNetworkTeardowns = (this.state.pendingNetworkTeardowns || [])
+      .filter(n => n.name !== name || n.projectId !== projectId);
+    this.save();
+  }
+
   /**
    * 已删项目的 worktree 桶墓碑（Codex PR #1275 三轮 P2）。
    *
@@ -2349,6 +2370,17 @@ export class StateService {
     this.orphanedMonitorListeners.push(listener);
   }
 
+  isProjectRemovalConfirmed(id: string): boolean {
+    return !this.getProject(id) && !this.projectRemovalWrites.has(id);
+  }
+
+  async waitForProjectRemoval(id: string): Promise<void> {
+    if (!this.projectRemovalWrites.has(id)) return;
+    const write = this.projectRemovalWrites.get(id);
+    if (!write) throw new Error('项目删除尚未成功保存');
+    await write;
+  }
+
   removeProject(id: string): ProjectRemovalSummary {
     if (!this.state.projects) {
       return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
@@ -2395,43 +2427,44 @@ export class StateService {
       .filter((m) => m.projectId === id)
       .map((m) => m.id);
 
-    // ── Cascade mutate ──
-    for (const bid of branchesToRemove) {
-      delete this.state.branches[bid];
-      // Also drop any operation logs tied to this branch — reuse the
-      // existing removeLogs() helper which knows the storage layout.
-      this.removeLogs(bid);
-    }
-    if (this.state.buildProfiles) {
-      this.state.buildProfiles = this.state.buildProfiles.filter((p) => p.projectId !== id);
-    }
-    if (this.state.infraServices) {
-      this.state.infraServices = this.state.infraServices.filter(
-        (s) => s.projectId !== id || isSystemInfraService(s),
-      );
-    }
-    if (this.state.routingRules) {
-      this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
-    }
-    // Drop this project's customEnv scope too so a deleted project doesn't
-    // leave behind a dangling bucket that would revive on re-create with
-    // the same id. _global is never removed.
-    this.dropCustomEnvScope(id);
-    for (const grant of this.state.projectGrants || []) {
-      if (grant.projectId === id && !grant.revokedAt) {
-        grant.revokedAt = new Date().toISOString();
-        grant.revokedBy = 'system:project-deleted';
+    // 仅保存本项目级联会修改的记录；失败恢复不能覆盖等待期间其他项目的写入。
+    const snapshot = structuredClone({
+      project,
+      branches: branchesToRemove.map(bid => this.state.branches[bid]),
+      logs: Object.fromEntries(branchesToRemove.filter(bid => this.state.logs[bid]).map(bid => [bid, this.state.logs[bid]])),
+      buildProfiles: (this.state.buildProfiles || []).filter(p => p.projectId === id),
+      infraServices: (this.state.infraServices || []).filter(p => infraServicesToRemove.includes(p.id)),
+      routingRules: (this.state.routingRules || []).filter(p => p.projectId === id),
+      grants: (this.state.projectGrants || []).filter(p => projectGrantsToRevoke.includes(p.id)),
+      dbLedger: (this.state.dbLedger || []).filter(p => p.projectId === id),
+      monitors: uptimeMonitorsToRemove.map(mid => this.state.uptimeMonitors![mid]),
+      customEnv: this.state.customEnv?.[id],
+    });
+    let restored = false;
+    const rollback = () => {
+      if (restored) return;
+      restored = true;
+      const restore = <T extends { id: string }>(current: T[], previous: T[]): T[] =>
+        [...current, ...previous.filter(p => !current.some(c => c.id === p.id))];
+      this.state.projects = restore(this.state.projects || [], [snapshot.project]);
+      this.state.buildProfiles = restore(this.state.buildProfiles || [], snapshot.buildProfiles);
+      this.state.infraServices = restore(this.state.infraServices || [], snapshot.infraServices);
+      this.state.routingRules = restore(this.state.routingRules || [], snapshot.routingRules);
+      this.state.dbLedger = restore(this.state.dbLedger || [], snapshot.dbLedger);
+      for (const b of snapshot.branches) this.state.branches[b.id] ??= b;
+      for (const [bid, logs] of Object.entries(snapshot.logs)) this.state.logs[bid] ??= logs;
+      for (const m of snapshot.monitors) (this.state.uptimeMonitors ??= {})[m.id] ??= m;
+      if (snapshot.customEnv) this.state.customEnv[id] ??= snapshot.customEnv;
+      for (const previous of snapshot.grants) {
+        const current = this.state.projectGrants?.find(g => g.id === previous.id);
+        if (current?.revokedBy === 'system:project-deleted') {
+          current.revokedAt = previous.revokedAt;
+          current.revokedBy = previous.revokedBy;
+        }
       }
-    }
-
-    if (this.state.dbLedger) {
-      this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
-    }
-    for (const mid of uptimeMonitorsToRemove) delete this.state.uptimeMonitors?.[mid];
-
-    this.state.projects = this.state.projects.filter((p) => p.id !== id);
-    this.save();
-
+      // 排队中的失败快照也必须由恢复态覆盖，防止之后无关保存提交失败的删除。
+      try { this.save(); } catch { /* 原持久化故障交还调用方；内存保持可重试。 */ }
+    };
     const summary: ProjectRemovalSummary = {
       uptimeMonitors: uptimeMonitorsToRemove,
       branches: branchesToRemove,
@@ -2441,9 +2474,57 @@ export class StateService {
       projectGrants: projectGrantsToRevoke,
       dbLedgerEntries: dbLedgerToRemove,
     };
-    for (const listener of this.projectRemovedListeners) {
-      try { listener(summary); } catch (err) { console.warn(`[state] 删项目观察者异常：${(err as Error).message}`); }
-    }
+
+    try {
+      // 变更前标记未确认删除，覆盖保存与异步落盘失败。
+      this.projectRemovalWrites.set(id, undefined);
+      // ── Cascade mutate ──
+      for (const bid of branchesToRemove) {
+        delete this.state.branches[bid];
+        // Also drop any operation logs tied to this branch — reuse the
+        // existing removeLogs() helper which knows the storage layout.
+        this.removeLogs(bid);
+      }
+      if (this.state.buildProfiles) {
+        this.state.buildProfiles = this.state.buildProfiles.filter((p) => p.projectId !== id);
+      }
+      if (this.state.infraServices) {
+        this.state.infraServices = this.state.infraServices.filter(
+          (s) => s.projectId !== id || isSystemInfraService(s),
+        );
+      }
+      if (this.state.routingRules) {
+        this.state.routingRules = this.state.routingRules.filter((r) => r.projectId !== id);
+      }
+      // Drop this project's customEnv scope too so a deleted project doesn't
+      // leave behind a dangling bucket that would revive on re-create with
+      // the same id. _global is never removed.
+      this.dropCustomEnvScope(id);
+      for (const grant of this.state.projectGrants || []) {
+        if (grant.projectId === id && !grant.revokedAt) {
+          grant.revokedAt = new Date().toISOString();
+          grant.revokedBy = 'system:project-deleted';
+        }
+      }
+
+      if (this.state.dbLedger) {
+        this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
+      }
+      for (const mid of uptimeMonitorsToRemove) delete this.state.uptimeMonitors?.[mid];
+
+      this.state.projects = this.state.projects.filter((p) => p.id !== id);
+      this.save();
+      const write = this.flush().catch(async err => { rollback(); await this.flush(); throw err; });
+      this.projectRemovalWrites.set(id, write);
+      void write.then(() => {
+        if (this.projectRemovalWrites.get(id) === write) this.projectRemovalWrites.delete(id);
+        for (const listener of this.projectRemovedListeners) {
+          try { listener(summary); } catch (err) { console.warn(`[state] 删项目观察者异常：${(err as Error).message}`); }
+        }
+      }, () => { /* 保留未确认记录，不把失败的删除解释成成功归档。 */ });
+
+    } catch (err) { rollback(); throw err; }
+
     return summary;
   }
 
