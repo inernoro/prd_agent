@@ -117,6 +117,26 @@ public class VideoSceneConcurrencyTests
         test.AssertNoSubmitOrDownload();
     }
 
+    [Fact]
+    public async Task DirectCancellationMock_ExecuteFallbackMustNotTerminateJobWhenCancelArrivesAtFailureWrite()
+    {
+        using var test = new DirectCancellationFixture(null);
+        test.Run.Status = VideoGenRunStatus.Queued;
+        test.Run.CancelRequested = false;
+        test.FailResumedMetadataWrite = true;
+        test.CancelAtFailureWrite = true;
+        await test.ProcessBackgroundFailureAsync();
+        test.MetadataFailureObserved.ShouldBeTrue();
+        test.FailureWriteCancellationObserved.ShouldBeTrue();
+        test.Run.Status.ShouldBe(VideoGenRunStatus.Queued);
+        test.Run.CurrentPhase.ShouldBe("videogen-reconciling");
+        test.Run.DirectVideoJobId.ShouldBe("synthetic-upstream-job");
+        test.Run.EndedAt.ShouldBeNull();
+        test.Field("DirectVideoReconciledAt").ShouldBeNull();
+        test.Run.DirectVideoCost.ShouldBeNull();
+        test.AssertNoSubmitOrDownload();
+    }
+
     // This fixture never constructs MongoClient or an application host. All persistence and upstream calls are strict mocks.
     private sealed class DirectCancellationFixture : IDisposable
     {
@@ -130,6 +150,9 @@ public class VideoSceneConcurrencyTests
         public bool CancelAtDownloadingPhase { get; set; }
         public bool CancelAtFailureWrite { get; set; }
         public bool FailureWriteCancellationObserved { get; private set; }
+        public bool FailResumedMetadataWrite { get; set; }
+        public bool MetadataFailureObserved { get; private set; }
+        private CancellationTokenSource? _backgroundStop;
         public Func<OpenRouterVideoStatus> Status { get; set; } = () => throw new Xunit.Sdk.XunitException("Unexpected status call");
         private readonly ServiceProvider _services;
         private readonly VideoGenRunWorker _worker;
@@ -155,10 +178,17 @@ public class VideoSceneConcurrencyTests
                 {
                     var sets = update.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry))["$set"].AsBsonDocument;
                     var statusName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.Status)).ElementName;
+                    var jobName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.DirectVideoJobId)).ElementName;
+                    if (FailResumedMetadataWrite && !MetadataFailureObserved && sets.Contains(jobName))
+                    {
+                        MetadataFailureObserved = true;
+                        throw new InvalidOperationException("Synthetic resumed metadata write failure");
+                    }
                     if (CancelAtFailureWrite && sets.TryGetValue(statusName, out var status) && status == VideoGenRunStatus.Failed)
                     {
                         Run.CancelRequested = true;
                         FailureWriteCancellationObserved = true;
+                        _backgroundStop?.Cancel();
                     }
                     if (!Matches(filter)) return Task.FromResult<UpdateResult>(new UpdateResult.Acknowledged(0, 0, null));
                     Apply(update);
@@ -169,6 +199,13 @@ public class VideoSceneConcurrencyTests
                 .Returns((FilterDefinition<VideoGenRun> filter, UpdateDefinition<VideoGenRun> update, FindOneAndUpdateOptions<VideoGenRun, VideoGenRun> options, CancellationToken _) =>
                 {
                     options.ReturnDocument.ShouldBe(ReturnDocument.After);
+                    var query = filter.Render(new RenderArgs<VideoGenRun>(BsonSerializer.LookupSerializer<VideoGenRun>(), BsonSerializer.SerializerRegistry));
+                    var deletionName = BsonClassMap.LookupClassMap(typeof(VideoGenRun)).GetMemberMap(nameof(VideoGenRun.DeletionRequestedAt)).ElementName;
+                    if (query.Contains(deletionName))
+                    {
+                        Run.DeletionRequestedAt.ShouldBeNull();
+                        return Task.FromResult<VideoGenRun>(null!);
+                    }
                     Matches(filter).ShouldBeTrue();
                     Apply(update);
                     return Task.FromResult(BsonSerializer.Deserialize<VideoGenRun>(Run.ToBsonDocument()));
@@ -216,6 +253,21 @@ public class VideoSceneConcurrencyTests
         public Task ClaimAsync() => (Task)typeof(VideoGenRunWorker).GetMethod("ClaimQueuedRunAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(_worker, [CancellationToken.None])!;
         public object? Field(string name) => typeof(VideoGenRun).GetProperty(name)!.GetValue(Run);
+        public async Task ProcessBackgroundFailureAsync()
+        {
+            using var stop = new CancellationTokenSource();
+            _backgroundStop = stop;
+            typeof(VideoGenRunWorker).GetProperty("DirectVideoPollingWindow", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_worker, TimeSpan.Zero);
+            var task = (Task)typeof(VideoGenRunWorker).GetMethod("ExecuteAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(_worker, [stop.Token])!;
+            try { await task.WaitAsync(TimeSpan.FromSeconds(3)); }
+            finally
+            {
+                stop.Cancel();
+                try { await task.WaitAsync(TimeSpan.FromSeconds(3)); }
+                catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+                _backgroundStop = null;
+            }
+        }
         public Task ProcessAsync(TimeSpan? window = null)
         {
             typeof(VideoGenRunWorker).GetProperty("DirectVideoPollInterval", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(_worker, TimeSpan.Zero);

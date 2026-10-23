@@ -81,9 +81,9 @@ public class VideoGenRunWorker : BackgroundService
                         if (queued.Mode == VideoGenMode.Direct)
                         {
                             var fresh = await _db.VideoGenRuns.Find(x => x.Id == queued.Id).FirstOrDefaultAsync(CancellationToken.None);
-                            if (fresh?.CancelRequested == true && !string.IsNullOrWhiteSpace(fresh.DirectVideoJobId))
+                            if (fresh != null && !string.IsNullOrWhiteSpace(fresh.DirectVideoJobId))
                             {
-                                await RequeueCancelledDirectJobAsync(fresh, fresh.DirectVideoJobId);
+                                await FailDirectRunAsync(fresh, fresh.DirectVideoJobId, false, "VIDEOGEN_ERROR", ex.Message);
                                 continue;
                             }
                         }
