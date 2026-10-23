@@ -28,6 +28,12 @@ jobs:
             cds:
               - 'cds/**'
               - '.github/workflows/cds.yml'
+              - '.github/workflows/cds-prebuilt.yml'
+              - '.claude/skills/cds/**'
+              - '.claude/skills/cds-project-scan/**'
+              - '.claude/skills/cds-deploy-pipeline/**'
+              - '.claude/skills/cds-release/**'
+              - '.claude/skills/preview-url/**'
               # cds/tests 里有守卫在断言这份巡检工作流的接线（豁免开关挂没挂满四步、
               # 触发路径覆没覆盖登记与解析器）。不把被守文件登记进来，只改它的 PR
               # 会整个跳过测试 job——守卫从落地起就对它要防的场景不设防。
@@ -93,6 +99,9 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+      - name: Agent setup CLI HTTP integration
+        run: python3 -m unittest discover -s ../.claude/skills/cds/tests -p 'test_cdscli_setup_check.py'
+
       # 上手向导的窄屏可达性只有真浏览器量得出来：源码守卫能证明主按钮写在
       # JSX 里，证明不了它在 390px 的手机上够不够得着。2026-09-03 那次
       # 「步骤 03 没有下一步、也滑不动」编译、类型、单测、源码守卫全绿。
@@ -109,6 +118,9 @@ jobs:
 
       - name: Agent starter mobile reachability
         run: pnpm run smoke:agent-starter-mobile
+
+      - name: Agent setup target and discovery recovery
+        run: pnpm run smoke:agent-setup-scope
 
       # 整页窄屏布局冒烟。它 2026-09-03 之前从未被任何 workflow 调用过——判据不弱，
       # 只是前置（真实 CDS 实例 + 项目数据 + Docker）在 CI 上凑不齐。离线模式把数据

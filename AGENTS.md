@@ -127,6 +127,8 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 8. 「完成」标准
 
+**项目发布合同（不可绕过）**：默认 `cds-release.sh` 由项目提交与 CI 测试，CDS 只执行同提交脚本并记录正文哈希，不猜业务部署类型；独立脚本仅做明确备选，旧模式仅兼容。代码/资源变化须同步发布验证，禁借旧 CI、删校验、热改服务器或换旧模式绕过；须有同提交 CI、真实发布与公网证据。细则见 `.claude/rules/project-release-contract.md`。
+
 声称完成前必须全部满足：后端编译零错误（判据见 `cds-first-verification.md` 的权威位置表：Branch Image 绿 = API 编得出来，CI 的 `Server Build & Test` 绿 = sln 零 error + 非集成非手工 xUnit；CDS 只负责运行、不负责编译）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
 
 禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。

@@ -829,6 +829,26 @@ import {
   revokeTeamWeekShareReal,
   viewTeamWeekShareReal,
 } from '@/services/real/reportAgent';
+import {
+  listMonthlyReportsReal,
+  getMonthlyReportReal,
+  createMonthlyReportReal,
+  updateMonthlyReportReal,
+  deleteMonthlyReportReal,
+  submitMonthlyReportReal,
+  recordMonthlyReportViewReal,
+  getMonthlyReportViewsSummaryReal,
+  listMonthlyWeeklyCandidatesReal,
+  getMonthlyTeamOverviewReal,
+  listMonthlyCommentsReal,
+  createMonthlyCommentReal,
+  updateMonthlyCommentReal,
+  deleteMonthlyCommentReal,
+  uploadMonthlyCommentImageReal,
+  listMonthlyLikesReal,
+  likeMonthlyReportReal,
+  unlikeMonthlyReportReal,
+} from '@/services/real/reportAgentMonthly';
 export type {
   CreateTeamWeekShareInput,
   TeamWeekShareCreateResult,
@@ -1258,6 +1278,25 @@ export const getTeamIssuesView: GetTeamIssuesViewContract = withAuth(getTeamIssu
 export const getPersonalTrends: GetPersonalTrendsContract = withAuth(getPersonalTrendsReal);
 export const getTeamTrends: GetTeamTrendsContract = withAuth(getTeamTrendsReal);
 export const exportReportMarkdown = exportReportMarkdownReal;
+// Report Agent 月报
+export const listMonthlyReports = withAuth(listMonthlyReportsReal);
+export const getMonthlyReport = withAuth(getMonthlyReportReal);
+export const createMonthlyReport = withAuth(createMonthlyReportReal);
+export const updateMonthlyReport = withAuth(updateMonthlyReportReal);
+export const deleteMonthlyReport = withAuth(deleteMonthlyReportReal);
+export const submitMonthlyReport = withAuth(submitMonthlyReportReal);
+export const recordMonthlyReportView = withAuth(recordMonthlyReportViewReal);
+export const getMonthlyReportViewsSummary = withAuth(getMonthlyReportViewsSummaryReal);
+export const listMonthlyWeeklyCandidates = withAuth(listMonthlyWeeklyCandidatesReal);
+export const getMonthlyTeamOverview = withAuth(getMonthlyTeamOverviewReal);
+export const listMonthlyComments: ListCommentsContract = withAuth(listMonthlyCommentsReal);
+export const createMonthlyComment: CreateCommentContract = withAuth(createMonthlyCommentReal);
+export const updateMonthlyComment: UpdateCommentContract = withAuth(updateMonthlyCommentReal);
+export const deleteMonthlyComment: DeleteCommentContract = withAuth(deleteMonthlyCommentReal);
+export const uploadMonthlyCommentImage: UploadReportCommentImageContract = withAuth(uploadMonthlyCommentImageReal);
+export const listMonthlyLikes: ListReportLikesContract = withAuth(listMonthlyLikesReal);
+export const likeMonthlyReport: LikeReportContract = withAuth(likeMonthlyReportReal);
+export const unlikeMonthlyReport: UnlikeReportContract = withAuth(unlikeMonthlyReportReal);
 export const exportTeamSummaryMarkdown = exportTeamSummaryMarkdownReal;
 export const markVacation: MarkVacationContract = withAuth(markVacationReal);
 export const cancelVacation: CancelVacationContract = withAuth(cancelVacationReal);

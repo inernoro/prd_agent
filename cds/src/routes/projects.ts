@@ -1,3 +1,5 @@
+import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
+import { addressWriteLocked } from '../services/preview-address-settings.js';
 /**
  * Projects API router.
  *
@@ -2429,7 +2431,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       send('step', { step: 'run', status: 'running', title: '创建容器 + 装载代码(docker cp)…' });
       // 用 sh -c(不是 sh -lc):login shell 会重置 PATH,导致 golang/rust 等把工具放 ENV PATH 的镜像 "go: not found"。
       const createRes = await shell.exec(
-        `docker create --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${workloadCgroupFlags().map((f) => `${f} `).join('')}${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
+        `docker create ${DOCKER_LOG_LIMIT_FLAGS.join(' ')} --name ${containerName} --label cds.validate=1 --memory=1536m --cpus=1.5 ${workloadCgroupFlags().map((f) => `${f} `).join('')}${port ? `-e PORT=${port} ` : ''}${q(image)} sh -c ${q(`cd /app && ${command}`)}`,
         { timeout: 30000 },
       );
       if (createRes.exitCode !== 0) {
@@ -3467,6 +3469,10 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         slashCommand?: boolean;
       };
     }>;
+
+    if (body.slug !== undefined && addressWriteLocked(stateService)) {
+      res.status(409).json({ error: 'address_busy', message: '地址设置正在保存，请稍后重新加载后重试。' }); return;
+    }
 
     if (body.expectedIdentityVersion !== undefined &&
         body.expectedIdentityVersion !== projectIdentityVersion(project)) {

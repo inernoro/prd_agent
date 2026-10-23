@@ -41,7 +41,6 @@ import {
   moveReportToFolder,
   renameReportFolder,
   reportDownloadUrl,
-  reportRawUrl,
   type AcceptanceReport,
   type KnowledgeBaseConnection,
   type OverviewCluster,
@@ -2270,9 +2269,9 @@ function RenameFolderDialog({
 }
 
 /**
- * Report viewer. HTML via iframe `src` → /raw with sandbox (no allow-same-origin).
- * Markdown fetched, converted with `marked`, injected via srcDoc into the same
- * no-same-origin sandbox. See routes/reports.ts security note.
+ * Fetch authenticated content in the parent, then render HTML / Markdown
+ * in an opaque-origin srcDoc sandbox. Loading failures stay visible instead
+ * of becoming a blank iframe. Raw downloads retain server CSP.
  */
 function ReportViewer({
   report, onBack, onOpenNav, onSync,
@@ -2285,6 +2284,7 @@ function ReportViewer({
   const [mdHtml, setMdHtml] = useState<string | null>(null);
   const [mdError, setMdError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const reqRef = useRef(0);
   // iframe 是 no-same-origin sandbox，感知不到应用的 data-theme——
   // 旧写法 color-scheme: light dark 只跟 OS 配色，用户在 CDS 里切主题时
@@ -2295,11 +2295,15 @@ function ReportViewer({
   useEffect(() => {
     setMdHtml(null);
     setMdError(null);
-    if (!report || report.format !== 'md') return;
     const token = ++reqRef.current;
+    if (!report) return;
     fetchReportRaw(report.id)
       .then((raw) => {
         if (reqRef.current !== token) return;
+        if (report.format === 'html') {
+          setMdHtml(raw);
+          return;
+        }
         const parsed = marked.parse(raw, { async: false }) as string;
         const linkColor = theme === 'dark' ? '#60a5fa' : '#2563eb';
         const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
@@ -2318,7 +2322,7 @@ function ReportViewer({
         if (reqRef.current !== token) return;
         setMdError(err instanceof ApiError ? err.message : String(err));
       });
-  }, [report, theme]);
+  }, [report, theme, loadAttempt]);
 
   useEffect(() => {
     if (!expanded) return undefined;
@@ -2385,12 +2389,13 @@ function ReportViewer({
         </div>
       </div>
       <div className="min-h-0 flex-1 bg-white">
-        {report.format === 'html' ? (
-          <iframe key={report.id} title={report.title} src={reportRawUrl(report.id)} sandbox="allow-scripts" className="h-full w-full border-0" />
-        ) : mdError ? (
-          <div className="p-4"><ErrorBlock message={mdError} /></div>
+        {mdError ? (
+          <div className="space-y-3 p-4">
+            <ErrorBlock message={mdError} />
+            <Button variant="outline" size="sm" onClick={() => setLoadAttempt((value) => value + 1)}>重新加载报告</Button>
+          </div>
         ) : mdHtml === null ? (
-          <div className="p-4"><LoadingBlock label="正在渲染 Markdown" /></div>
+          <div className="p-4"><LoadingBlock label="正在加载报告正文" /></div>
         ) : (
           <iframe key={report.id} title={report.title} srcDoc={mdHtml} sandbox="allow-scripts" className="h-full w-full border-0" />
         )}

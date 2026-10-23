@@ -35,6 +35,7 @@ export function TeamManager() {
   const [teamDesc, setTeamDesc] = useState('');
   const [leaderUserId, setLeaderUserId] = useState('');
   const [reportVisibility, setReportVisibility] = useState<string>(ReportVisibilityMode.AllMembers);
+  const [monthlyReportVisibility, setMonthlyReportVisibility] = useState<string>(ReportVisibilityMode.AllMembers);
   const [autoSubmitSchedule, setAutoSubmitSchedule] = useState('');
   const [weeklyDeadline, setWeeklyDeadline] = useState('sunday-23:59');
 
@@ -60,6 +61,7 @@ export function TeamManager() {
     setTeamDesc('');
     setLeaderUserId('');
     setReportVisibility(ReportVisibilityMode.AllMembers);
+    setMonthlyReportVisibility(ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule('');
     setWeeklyDeadline('sunday-23:59');
     setShowTeamDialog(true);
@@ -73,6 +75,7 @@ export function TeamManager() {
     setTeamDesc(t.description || '');
     setLeaderUserId(t.leaderUserId);
     setReportVisibility(t.reportVisibility || ReportVisibilityMode.AllMembers);
+    setMonthlyReportVisibility(t.monthlyReportVisibility || ReportVisibilityMode.AllMembers);
     setAutoSubmitSchedule(t.autoSubmitSchedule || '');
     setWeeklyDeadline(t.weeklyDeadline || 'sunday-23:59');
     setShowTeamDialog(true);
@@ -87,6 +90,7 @@ export function TeamManager() {
       leaderUserId,
       description: teamDesc.trim() || undefined,
       reportVisibility,
+      monthlyReportVisibility,
       autoSubmitSchedule: autoSubmitSchedule || undefined,
       weeklyDeadline: weeklyDeadline || undefined,
     };
@@ -337,6 +341,24 @@ export function TeamManager() {
                   <option value={ReportVisibilityMode.AllMembers}>团队成员可互相查看</option>
                   <option value={ReportVisibilityMode.LeadersOnly}>仅负责人可查看</option>
                 </select>
+              </div>
+
+              {/* Monthly report visibility：月报第三章是对同事的评价，允许与周报分开设置 */}
+              <div>
+                <div className="text-[11px] mb-1.5 font-medium" style={{ color: 'var(--text-secondary)' }}>月报可见性</div>
+                <select
+                  className="w-full px-3 py-2 rounded-lg text-[13px]"
+                  style={{ background: 'var(--bg-secondary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
+                  value={monthlyReportVisibility}
+                  onChange={(e) => setMonthlyReportVisibility(e.target.value)}
+                  data-testid="monthly-visibility-select"
+                >
+                  <option value={ReportVisibilityMode.AllMembers}>团队成员可互相查看</option>
+                  <option value={ReportVisibilityMode.LeadersOnly}>仅负责人可查看</option>
+                </select>
+                <div className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
+                  月报草稿始终只有作者本人可见
+                </div>
               </div>
 
               {/* Weekly deadline */}

@@ -1564,7 +1564,7 @@ export interface ReleaseArtifact {
   artifactPath?: string;
 }
 
-export type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'generated-static';
+export type ReleaseExecutionMode = 'project-script' | 'managed-script' | 'existing-script' | 'generated-compose' | 'generated-static';
 
 /**
  * 生产发布的可执行合同。existing-script 复用项目自带脚本；另外两种模式由
@@ -1572,6 +1572,12 @@ export type ReleaseExecutionMode = 'existing-script' | 'generated-compose' | 'ge
  */
 export interface ReleaseStrategy {
   mode: ReleaseExecutionMode;
+  /** Default: the project's CI-tested file, read at the immutable release commit. */
+  scriptFile?: string;
+  /** Project-owned workflow which tests the release contract; never image CI. */
+  ciWorkflowFile?: string;
+  /** Explicit fallback only: script maintained in CDS, not in the project. */
+  script?: string;
   /** existing-script 模式下的项目脚本或命令。 */
   command?: string;
   /** generated-compose 模式下相对远端 Git 仓库根目录的 compose 文件。 */
@@ -1873,7 +1879,7 @@ export interface ReleasePlan {
   id: string;
   projectId: string;
   name: string;
-  template: 'ssh-script' | 'generated-compose' | 'generated-static' | 'docker-compose-remote' | 'image-push' | 'webhook';
+  template: 'project-script' | 'managed-script' | 'ssh-script' | 'generated-compose' | 'generated-static' | 'docker-compose-remote' | 'image-push' | 'webhook';
   targetType: ReleaseTarget['type'];
   steps: ReleasePlanStep[];
   failureStrategy: 'stop' | 'rollback';
@@ -2052,6 +2058,8 @@ export interface ReleaseRun {
   executionSnapshot?: {
     mode: ReleaseExecutionMode;
     scriptSha256: string;
+    /** Immutable evidence/cache for replay after a preview checkout is retired. */
+    scriptContent?: string;
     summary: string;
     strategy: ReleaseStrategy;
   };
@@ -3747,7 +3755,31 @@ export interface ProjectIdentityRecord {
   after: ProjectIdentitySnapshot;
 }
 
+export interface PreviewAddressOverride {
+  /** DNS-facing name only; Git branch/resource identity never changes. */
+  branchName?: string;
+  projectSlug?: string;
+  customSubdomain?: string;
+}
+
+export interface PreviewAddressAudit {
+  id: string;
+  at: string;
+  actor: string;
+  requestId?: string;
+  branchId: string;
+  action: 'save' | 'verify' | 'visit-conflict' | 'rejected' | 'release' | 'preview';
+  scope: 'branch' | 'project';
+  result: string;
+  before?: unknown;
+  after?: unknown;
+}
+
 export interface Project {
+  /** Server-owned address index keyed by Git ref; removed with its branch, never an independent reservation. */
+  previewAddresses?: Record<string, PreviewAddressOverride>;
+  /** Append-only address/verification audit. Never accepted from request bodies. */
+  previewAddressAudit?: PreviewAddressAudit[];
   /** 独立于活动日志保留的设置变更记录；baseline 只证明观察时的状态。 */
   identityHistory?: ProjectIdentityRecord[];
   /** 父实例镜像来的只读项目（预览实例专用） */

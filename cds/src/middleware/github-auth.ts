@@ -17,6 +17,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthService } from '../services/auth-service.js';
 import { GH_SESSION_COOKIE, buildSessionCookie } from '../routes/auth.js';
+import { isPublicAgentSetupRoute } from '../shared/agent-setup.js';
 
 /** Paths that bypass the auth gate entirely. */
 const PUBLIC_PATHS: (string | RegExp)[] = [
@@ -125,7 +126,7 @@ export function createGithubAuthMiddleware(deps: {
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
     // render assets before the user is authenticated.
-    if (isPublicPath(req.path)) {
+    if (isPublicAgentSetupRoute(req.method, req.path) || isPublicPath(req.path)) {
       next();
       return;
     }
