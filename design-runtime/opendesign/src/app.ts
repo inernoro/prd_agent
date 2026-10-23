@@ -59,7 +59,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
     engineUid: config.engineUid,
     engineGid: config.engineGid,
     // 服务自己的代码目录（镜像里是 /opt/map-design-runtime/dist）、工作目录与只读资源都不许落进任务目录。
-    protectedPaths: [fileURLToPath(new URL('.', import.meta.url)), process.cwd(), config.webPrototypeSourceDir, config.designSystemsDir],
+    protectedPaths: [fileURLToPath(new URL('.', import.meta.url)), process.cwd(), config.webPrototypeSourceDir, config.presentationSkillSourceDir, config.designSystemsDir],
   });
   const executor = new DesignTaskExecutor({
     paths: {
@@ -68,6 +68,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
       templatesDir: config.templatesDir,
       outputDir: config.outputDir,
       webPrototypeSourceDir: config.webPrototypeSourceDir,
+      presentationSkillSourceDir: config.presentationSkillSourceDir,
     },
     daemon,
     fetchImpl: overrides.fetchImpl,
@@ -89,6 +90,7 @@ export async function createDesignRuntime(config: ServiceConfig, overrides: Desi
   const selfCheck = overrides.selfCheck ?? await runEngineSelfCheck({
     codexBin: config.codexBin,
     webPrototypeSourceDir: config.webPrototypeSourceDir,
+    presentationSkillSourceDir: config.presentationSkillSourceDir,
     designSystemsDir: config.designSystemsDir,
     engineHome: config.engineHome,
     engineUid: config.engineUid,

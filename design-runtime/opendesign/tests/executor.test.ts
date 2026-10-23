@@ -84,12 +84,17 @@ describe('presentation source context', () => {
           requiredSlideIndexes: [1],
           sourcePlan: { path: 'brief/source-plan.json', contentHash: digest(Buffer.from(plan)) },
         },
+        designDirection: {
+          schemaVersion: 'map-design-direction-v1', styleId: 'deck', styleName: '演示稿',
+          styleDescription: '由所选 OpenDesign deck skill 决定', designSystemId: 'minimal', reviewMode: 'strict',
+          prompts: { generate: '', edit: '', review: '' }, promptFingerprint: 'native-deck-skill',
+        },
       },
     });
     harness.daemon.onRun = ({ workspaceDir, index, body }) => {
       if (index === 1) {
         expect(fs.existsSync(path.join(workspaceDir, 'index.html'))).toBe(false);
-        expect(String(body.systemPrompt)).toContain('frozen input material and provenance');
+        expect(String(body.systemPrompt)).toContain('input context and provenance');
         fs.writeFileSync(path.join(workspaceDir, 'index.html'), '<!doctype html><html><body><main><h1>OpenDesign 自主成稿</h1><p>TODO 由上游内容能力自行处理</p></main></body></html>');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
@@ -101,7 +106,12 @@ describe('presentation source context', () => {
     }));
 
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
-    expect(harness.daemon.runBodies.length).toBeGreaterThan(0);
+    expect(harness.daemon.imports).toHaveLength(1);
+    expect(harness.daemon.imports[0].skillId).toBe('magazine-web-ppt');
+    expect(harness.daemon.runBodies).toHaveLength(2);
+    expect(String(harness.daemon.runBodies[0].systemPrompt)).toContain('active OpenDesign deck skill');
+    expect(String(harness.daemon.runBodies[0].systemPrompt)).not.toContain('effective rendered body text must remain at least 12px');
+    expect(String(harness.daemon.runBodies[1].message)).toContain('perform one final check');
     expect(map!.commits).toHaveLength(1);
     const committed = map!.commits[0].files.find((file: { path: string }) => file.path === 'index.html');
     expect(Buffer.from(committed.contentBase64, 'base64').toString('utf8')).toContain('OpenDesign 自主成稿');
@@ -167,7 +177,7 @@ describe('presentation source context', () => {
         expect(restored).toBe(candidate);
         expect(restored).not.toContain('candidate/index.html');
         expect(String(body.systemPrompt)).toContain('server-retained failed preview');
-        expect(String(body.systemPrompt)).toContain('non-final repair candidate');
+        expect(String(body.systemPrompt)).toContain('non-final input');
       }
       return { status: 'succeeded', deliverableEntryFile: 'index.html' };
     };
@@ -801,6 +811,7 @@ describe('workspace task contract', () => {
     };
     const view = await runToEnd(pkg);
     expect(view.state, JSON.stringify(view.error)).toBe('succeeded');
+    expect(harness.daemon.imports[0].skillId).toBe('web-prototype');
   });
 
   it('refuses to follow a redirect on the pinned input transfer', async () => {
@@ -1472,7 +1483,7 @@ describe('live preview delivery', () => {
       return new Response('{}', { status: statuses.shift() ?? 200 });
     }) as unknown as typeof fetch;
     const executor = new DesignTaskExecutor({
-      paths: { workspaceDir, dataDir: workspaceDir, templatesDir: workspaceDir, outputDir: workspaceDir, webPrototypeSourceDir: workspaceDir },
+      paths: { workspaceDir, dataDir: workspaceDir, templatesDir: workspaceDir, outputDir: workspaceDir, webPrototypeSourceDir: workspaceDir, presentationSkillSourceDir: workspaceDir },
       daemon: { current: () => undefined } as any,
       fetchImpl,
       relayPort: 0,
@@ -1510,7 +1521,7 @@ describe('live preview delivery', () => {
       return new Response('{}', { status: 200 });
     }) as unknown as typeof fetch;
     const executor = new DesignTaskExecutor({
-      paths: { workspaceDir, dataDir: workspaceDir, templatesDir: workspaceDir, outputDir: workspaceDir, webPrototypeSourceDir: workspaceDir },
+      paths: { workspaceDir, dataDir: workspaceDir, templatesDir: workspaceDir, outputDir: workspaceDir, webPrototypeSourceDir: workspaceDir, presentationSkillSourceDir: workspaceDir },
       daemon: { current: () => undefined } as any,
       fetchImpl,
       relayPort: 0,

@@ -33,10 +33,12 @@ import { runtimeDiagnosticPreview } from './diagnostics.js';
 import { OpenDesignClient, signalForDeadline, type OpenDesignRunOutcome } from './engine/client.js';
 import type { EngineDaemon } from './engine/daemon.js';
 import { startEgressRelay, type EgressRelay, type EgressRelayOptions } from './engine/egress-relay.js';
+import { registerPresentationSkill } from './engine/presentation-skill.js';
 import { prepareWebPrototypeResources } from './engine/web-prototype.js';
 import { AgentWorkspaceRuntimeError, type StageReporter } from './errors.js';
 import {
   OPEN_DESIGN_CODEX_HOME_RELATIVE,
+  OPEN_DESIGN_PRESENTATION_SKILL,
   OPEN_DESIGN_WEB_PROTOTYPE_SKILL,
   buildOpenDesignCodexConfig,
   buildPlatformRules,
@@ -188,6 +190,7 @@ export interface ExecutorPaths {
   templatesDir: string;
   outputDir: string;
   webPrototypeSourceDir: string;
+  presentationSkillSourceDir: string;
 }
 
 export interface ExecutorOptions {
@@ -374,14 +377,25 @@ export class DesignTaskExecutor {
       fileCount: files.length,
       repairCandidateRestored: repairCandidateSeed !== undefined,
     });
-    prepareWebPrototypeResources(
-      {
-        sourceDir: this.options.paths.webPrototypeSourceDir,
-        templatesDir: this.options.paths.templatesDir,
-        workspaceDir,
-      },
-      (target) => this.chownForEngine(target),
-    );
+    const isPresentation = collectDesignTaskContext(workspaceDir).presentation !== undefined;
+    if (isPresentation) {
+      registerPresentationSkill(
+        {
+          sourceDir: this.options.paths.presentationSkillSourceDir,
+          templatesDir: this.options.paths.templatesDir,
+        },
+        (target) => this.chownForEngine(target),
+      );
+    } else {
+      prepareWebPrototypeResources(
+        {
+          sourceDir: this.options.paths.webPrototypeSourceDir,
+          templatesDir: this.options.paths.templatesDir,
+          workspaceDir,
+        },
+        (target) => this.chownForEngine(target),
+      );
+    }
     await this.daemonClient().waitForHealth(task.timeoutSeconds);
     if (signal.aborted) {
       throw new AgentWorkspaceRuntimeError(
@@ -416,6 +430,12 @@ export class DesignTaskExecutor {
     if (!transferToken || transferToken.length > 8192) {
       throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspace transfer token is missing');
     }
+    const designContext = collectDesignTaskContext(workspaceDir);
+    const isPresentation = designContext.presentation !== undefined;
+    const requiredSkillId = isPresentation
+      ? OPEN_DESIGN_PRESENTATION_SKILL
+      : OPEN_DESIGN_WEB_PROTOTYPE_SKILL;
+    validatePresentationSourcePlanIdentity(workspaceDir, designContext.presentation?.sourcePlan);
     const daemonHandle = this.options.daemon.current();
     const client = this.daemonClient();
     onStage('open_design_importing');
@@ -424,7 +444,7 @@ export class DesignTaskExecutor {
       body: {
         baseDir: workspaceDir,
         name: `MAP design ${sessionId.slice(-12)}`,
-        skillId: OPEN_DESIGN_WEB_PROTOTYPE_SKILL,
+        skillId: requiredSkillId,
         orchestratorWorkspace: {
           kind: 'scratch',
           sourceLabel: 'MAP design workspace',
@@ -441,8 +461,8 @@ export class DesignTaskExecutor {
     if (!projectId || !conversationId) {
       throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import returned no project identity');
     }
-    if (project?.skillId !== OPEN_DESIGN_WEB_PROTOTYPE_SKILL) {
-      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required web prototype skill');
+    if (project?.skillId !== requiredSkillId) {
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required task skill');
     }
     const relayClientToken = daemonHandle?.modelPlaceholderToken || '';
     if (!model.apiKey || /[\0\r\n]/.test(model.apiKey) || !relayClientToken || /[\0\r\n]/.test(relayClientToken)) {
@@ -484,9 +504,6 @@ export class DesignTaskExecutor {
     // 证据口径与 MAP 发布闸（HostedSiteEditRunWorker.BuildQualityEvidence）一致：用户写的标题与要求是
     // 生成请求，不是能证明日期、联系方式、网址或数值的证据。此前这里把它们算进证据，同一页在这里通过、
     // 到 MAP 最后一步才被拒，白等一整轮（判据与接线纪律 形状 3，Codex P2，2026-09-24）。
-    const designContext = collectDesignTaskContext(workspaceDir);
-    const isPresentation = designContext.presentation !== undefined;
-    validatePresentationSourcePlanIdentity(workspaceDir, designContext.presentation?.sourcePlan);
     const qualityEvidence = collectArtifactQualityEvidence(workspaceDir, false);
     const checkArtifactQuality = createArtifactQualityGate(
       qualityEvidence,
@@ -505,7 +522,8 @@ export class DesignTaskExecutor {
       this.writeCodexConfig(buildOpenDesignCodexConfig(relay.proxiedBaseUrl, model.model));
       const designDirection = designContext.direction;
       const reviewMode = designDirection?.reviewMode ?? 'light';
-      const reviewPasses = reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
+      // PPT 的终审由所选 deck skill 承担，固定一轮；MAP 的 off/strict 不得跳过或叠加自研审美轮次。
+      const reviewPasses = isPresentation ? 1 : reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
       const mainRunDeadline = reviewPasses > 0
         ? budget.finalizationDeadline - budget.minimumQualityPassMs
         : budget.finalizationDeadline;
@@ -713,7 +731,8 @@ export class DesignTaskExecutor {
           }
           const repairReason = classifyQualityRepairReason(error);
           if (!repairReason) throw error;
-          if (qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS) {
+          const maximumRepairAttempts = isPresentation ? 1 : MAX_QUALITY_REPAIR_ATTEMPTS;
+          if (qualityRepairAttempt >= maximumRepairAttempts) {
             throw traceableDeterministicQualityRejection(
               error,
               repairReason.code,

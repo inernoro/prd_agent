@@ -157,15 +157,16 @@ describe('OpenDesign prompt quality contracts', () => {
     });
 
     for (const prompt of [generation, review]) {
-      expect(prompt).toContain('390px');
-      expect(prompt).toContain('frozen');
+      expect(prompt).not.toContain('390px');
       expect(prompt).not.toContain('exactly 20');
     }
+    expect(generation).toContain('reference context only');
+    expect(review).toContain('active OpenDesign deck skill');
     expect(generation).toContain('suggests 20 slides');
-    expect(generation).toContain('not a platform-enforced output shape');
+    expect(generation).toContain('Its grouping and count are reference context only');
     expect(generation).toContain('cookies, localStorage, sessionStorage');
     expect(generation).toContain('packaged relative assets');
-    expect(review).toContain('final page grouping and count');
+    expect(review).toContain('choose the final content structure, visual design, and page count');
   });
 
   it('treats a manual presentation edit as an untrusted proposal while keeping the current package authoritative', () => {
@@ -1457,9 +1458,9 @@ describe('every quality rejection must reach the repair loop', () => {
       source.indexOf('} catch (error) {', source.indexOf('hardenedHtml = checkArtifactQuality(')),
     ).slice(0, 900);
     expect(repairEntry).toContain('error.code !== \'design_output_quality_rejected\'');
-    expect(repairEntry).toContain('qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS');
+    expect(repairEntry).toContain('const maximumRepairAttempts = isPresentation ? 1 : MAX_QUALITY_REPAIR_ATTEMPTS');
     const classifierIndex = repairEntry.indexOf('const repairReason = classifyQualityRepairReason(error);');
-    const attemptLimitIndex = repairEntry.indexOf('qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS');
+    const attemptLimitIndex = repairEntry.indexOf('qualityRepairAttempt >= maximumRepairAttempts');
     expect(classifierIndex).toBeGreaterThan(0);
     expect(attemptLimitIndex).toBeGreaterThan(classifierIndex);
     expect(repairEntry.slice(attemptLimitIndex)).toContain('traceableDeterministicQualityRejection(');

@@ -1,4 +1,4 @@
-// 启动自检：镜像是否带着本服务钉住的 Codex CLI 与 web-prototype 技能资源，以及有哪些设计系统可选。
+// 启动自检：镜像是否带着本服务钉住的 Codex CLI、网页与演示稿技能资源，以及有哪些设计系统可选。
 // 对应原 CDS 能力探针里那段 `docker run ... codex --version && test -f ...`：判据相同，只是现在
 // 服务就在镜像里，直接执行、直接查文件。结果在启动时算一次（镜像不可变），能力接口复用。
 import { execFile } from 'node:child_process';
@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { DESIGN_SYSTEM_ID_RE, OPEN_DESIGN_CODEX_VERSION } from '../prompts.js';
 import { probeBrowserQuality, type BrowserQualityProbe } from '../quality/browser-runner.js';
+import { missingPresentationSkillSourceFiles } from './presentation-skill.js';
 import { missingWebPrototypeSourceFiles } from './web-prototype.js';
 
 export interface EngineSelfCheck {
@@ -48,6 +49,7 @@ function readCodexVersion(codexBin: string): Promise<{ version: string | null; o
 export async function runEngineSelfCheck(input: {
   codexBin: string;
   webPrototypeSourceDir: string;
+  presentationSkillSourceDir: string;
   designSystemsDir: string;
   engineHome?: string;
   engineUid?: number;
@@ -58,7 +60,10 @@ export async function runEngineSelfCheck(input: {
     codexVersion: codex.version,
     codexMatches: codex.version === `codex-cli ${OPEN_DESIGN_CODEX_VERSION}`,
     codexObservation: codex.observation,
-    missingSkillFiles: missingWebPrototypeSourceFiles(input.webPrototypeSourceDir),
+    missingSkillFiles: [
+      ...missingWebPrototypeSourceFiles(input.webPrototypeSourceDir).map((item) => `web-prototype/${item}`),
+      ...missingPresentationSkillSourceFiles(input.presentationSkillSourceDir).map((item) => `guizang-ppt/${item}`),
+    ],
     designSystems: listDesignSystems(input.designSystemsDir),
     browserQuality: probeBrowserQuality({
       engineHome: input.engineHome,

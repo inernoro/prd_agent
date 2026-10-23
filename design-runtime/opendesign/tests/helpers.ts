@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { createDesignRuntime, type DesignRuntime, type DesignRuntimeOverrides } from '../src/app.js';
 import type { ServiceConfig } from '../src/config.js';
 import type { DaemonExit, DaemonHandle, EngineDaemon } from '../src/engine/daemon.js';
+import { OPEN_DESIGN_PRESENTATION_SKILL_FILES } from '../src/engine/presentation-skill.js';
 import { MAP_DESIGN_WORKSPACE_SCHEMA } from '../src/workspace/transfer.js';
 
 export const FIXTURES = path.join(__dirname, 'fixtures');
@@ -148,8 +149,9 @@ export class FakeOpenDesign implements EngineDaemon {
       return;
     }
     if (url.pathname === '/api/import/folder' && req.method === 'POST') {
-      this.imports.push(JSON.parse((await readBody(req)).toString('utf8')));
-      json(res, 200, { project: { id: 'od-project', skillId: 'web-prototype' }, conversationId: 'od-conversation' });
+      const body = JSON.parse((await readBody(req)).toString('utf8')) as Record<string, unknown>;
+      this.imports.push(body);
+      json(res, 200, { project: { id: 'od-project', skillId: body.skillId }, conversationId: 'od-conversation' });
       return;
     }
     if (url.pathname === '/api/projects/od-project/conversations' && req.method === 'POST') {
@@ -390,6 +392,18 @@ export interface Harness {
 
 export const API_KEY = 'service-api-key-for-tests';
 
+function createPresentationSkillSource(root: string): string {
+  const sourceDir = path.join(root, 'official-guizang-ppt');
+  for (const relative of OPEN_DESIGN_PRESENTATION_SKILL_FILES) {
+    const target = path.join(sourceDir, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, relative === 'SKILL.md'
+      ? '---\nname: magazine-web-ppt\n---\n# Test deck skill\n'
+      : `test fixture: ${relative}\n`);
+  }
+  return sourceDir;
+}
+
 export async function startHarness(options: { apiKey?: string; overrides?: DesignRuntimeOverrides } = {}): Promise<Harness> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'design-runtime-test-'));
   const config: ServiceConfig = {
@@ -400,6 +414,7 @@ export async function startHarness(options: { apiKey?: string; overrides?: Desig
     templatesDir: path.join(root, 'design-templates'),
     outputDir: path.join(root, 'output'),
     webPrototypeSourceDir: path.join(FIXTURES, 'web-prototype'),
+    presentationSkillSourceDir: createPresentationSkillSource(root),
     designSystemsDir: path.join(FIXTURES, 'design-systems'),
     odPort: 0,
     odCommand: [],

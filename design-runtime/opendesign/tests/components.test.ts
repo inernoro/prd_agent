@@ -13,6 +13,11 @@ import { loadConfig } from '../src/config.js';
 import { probeDaemonHealth } from '../src/engine/client.js';
 import { OpenDesignDaemon, buildDaemonEnv, type DaemonExit } from '../src/engine/daemon.js';
 import { isDeniedEgressAddress, startEgressRelay, type EgressRelay } from '../src/engine/egress-relay.js';
+import {
+  OPEN_DESIGN_PRESENTATION_SKILL_FILES,
+  missingPresentationSkillSourceFiles,
+  registerPresentationSkill,
+} from '../src/engine/presentation-skill.js';
 import { listDesignSystems } from '../src/engine/self-check.js';
 import {
   findTemplateAssertionFailure,
@@ -401,6 +406,36 @@ describe('web-prototype template preparation', () => {
   });
 });
 
+describe('presentation skill registration', () => {
+  function makeSource(root: string, name = 'magazine-web-ppt') {
+    const source = path.join(root, 'source');
+    for (const relative of OPEN_DESIGN_PRESENTATION_SKILL_FILES) {
+      const target = path.join(source, relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, relative === 'SKILL.md' ? `---\nname: ${name}\n---\n` : relative);
+    }
+    return source;
+  }
+
+  it('registers the complete official bundle byte-for-byte and rejects a wrong registry name', () => {
+    const root = tempDir('design-runtime-presentation-skill-');
+    const source = makeSource(root);
+    registerPresentationSkill({ sourceDir: source, templatesDir: path.join(root, 'templates') }, () => undefined);
+    const target = path.join(root, 'templates', 'guizang-ppt');
+    expect(missingPresentationSkillSourceFiles(target)).toEqual([]);
+    for (const relative of OPEN_DESIGN_PRESENTATION_SKILL_FILES) {
+      expect(fs.readFileSync(path.join(target, relative))).toEqual(fs.readFileSync(path.join(source, relative)));
+    }
+
+    const wrong = tempDir('design-runtime-presentation-skill-wrong-');
+    const wrongSource = makeSource(wrong, 'guizang-ppt');
+    expect(() => registerPresentationSkill(
+      { sourceDir: wrongSource, templatesDir: path.join(wrong, 'templates') },
+      () => undefined,
+    )).toThrow(expect.objectContaining({ code: 'workspace_design_template_init_failed' }));
+  });
+});
+
 describe('wiring guards', () => {
   const executorSource = fs.readFileSync(path.join(SERVICE_ROOT, 'src/executor.ts'), 'utf8');
 
@@ -502,6 +537,7 @@ describe('wiring guards', () => {
       odDataDir: '/app/.od',
       templatesDir: '/app/design-templates',
       webPrototypeSourceDir: '/app/plugins/_official/examples/web-prototype',
+      presentationSkillSourceDir: '/app/plugins/_official/examples/guizang-ppt',
       odPort: 7456,
       egressPort: 8787,
       engineUid: 1001,

@@ -61,7 +61,7 @@ export async function describeCapabilities(context: CapabilitiesContext): Promis
     engineConditions.push(renderCondition({
       code: 'engine_resources_missing',
       actor: { kind: 'deployment', label: '运行镜像' },
-      event: `不带本服务要求的 Codex CLI ${OPEN_DESIGN_CODEX_VERSION} 或 web-prototype 技能资源`,
+      event: `不带本服务要求的 Codex CLI ${OPEN_DESIGN_CODEX_VERSION} 或 OpenDesign 技能资源`,
       impact: '引擎无法按约定执行设计任务，暂不接新任务',
       urgency: { kind: 'act', action: '按 design-runtime/opendesign/Dockerfile 重建并重新部署镜像' },
       retryable: false,
