@@ -1023,19 +1023,6 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const [fallbackPrompt, setFallbackPrompt] = useState<FallbackPrompt | null>(null);
   const modelPrefSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sizeSelectorOpen, setSizeSelectorOpen] = useState(false);
-  const sizeSelectorRef = useRef<HTMLDivElement>(null);
-
-  // 点击外部关闭尺寸选择器
-  useEffect(() => {
-    if (!sizeSelectorOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (sizeSelectorRef.current && !sizeSelectorRef.current.contains(e.target as Node)) {
-        setSizeSelectorOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [sizeSelectorOpen]);
 
   // 水印配置
   const [watermarkStatus, setWatermarkStatus] = useState<{ enabled: boolean; name?: string | null }>({ enabled: false });
@@ -9474,14 +9461,14 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
               <div className="mt-1 flex items-center justify-between gap-1.5">
                 {/* 左侧：尺寸/比例选择器 */}
-                <div ref={sizeSelectorRef} className="relative flex items-center gap-1.5">
+                <Popover.Root open={sizeSelectorOpen && (!isMobile || mobileShowChat)} onOpenChange={setSizeSelectorOpen}>
+                  <Popover.Trigger asChild>
                   <button
                     type="button"
                     className={`inline-flex h-7 items-center gap-1 rounded-full px-2 text-[11px] font-semibold ${sizeSelectorOpen ? 'surface-action-accent' : 'surface-action'} ${currentModelSizesNotApplicable ? 'cursor-default opacity-70' : 'cursor-pointer'}`}
                     aria-label="尺寸比例"
                     title={currentModelSizesNotApplicable ? '该模型不提供尺寸选择' : '选择分辨率和比例'}
                     disabled={currentModelSizesNotApplicable}
-                    onClick={() => { if (!currentModelSizesNotApplicable) setSizeSelectorOpen((v) => !v); }}
                   >
                     {(() => {
                       if (currentModelSizesNotApplicable) {
@@ -9500,10 +9487,24 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <span className="text-[9px] text-token-muted">▾</span>
                     )}
                   </button>
+                  </Popover.Trigger>
 
                   {/* 尺寸/比例 Popover */}
-                  {sizeSelectorOpen ? (
-                      <div className="surface-popover absolute bottom-full right-0 z-50 mb-2 w-[260px] rounded-[14px] p-3">
+                  <Popover.Portal>
+                      <Popover.Content
+                        side="top"
+                        align="end"
+                        sideOffset={8}
+                        collisionPadding={8}
+                        className={`${isMobile ? 'surface-tone-dark ' : ''}surface-popover z-50 rounded-[14px] p-3`}
+                        style={{
+                          width: 'min(260px, calc(100vw - 16px))',
+                          maxHeight: 'var(--radix-popover-content-available-height)',
+                          minHeight: 0,
+                          overflowY: 'auto',
+                          overscrollBehavior: 'contain',
+                        }}
+                      >
                         {/* 分辨率（档位）- 只显示模型支持的分辨率 */}
                         {(() => {
                           const availableTiers = (['1k', '2k', '4k'] as const).filter((t) => ratiosByResolution[t].size > 0);
@@ -9581,9 +9582,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             });
                           })()}
                         </div>
-                      </div>
-                  ) : null}
-                </div>
+                      </Popover.Content>
+                  </Popover.Portal>
+                </Popover.Root>
 
                 {/* 右侧：模型偏好 + 水印 */}
                 <div className="flex items-center gap-1.5">
