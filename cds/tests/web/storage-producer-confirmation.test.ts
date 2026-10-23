@@ -43,9 +43,9 @@ describe('storage producer UI confirmation before any request',()=>{
   assert.equal(t.calls.length,0);assert.match(errors[0]||'',/存储|目录/);
  });
 
- for(const accept of [false,true])it('React custom catalog image '+(accept?'confirms explicit allocation':'cancels before metadata'),async()=>{
+ for(const image of ['mongo:7','mysql/mysql-server:8']) for(const accept of [false,true])it('React custom catalog image '+image+' '+(accept?'confirms explicit allocation':'cancels before metadata'),async()=>{
   const t=context(accept),ast=ts.createSourceFile('input.tsx',topology,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);const outer=ast.statements.find(n=>ts.isFunctionDeclaration(n)&&n.name?.text==='CreateInfraDialog');let submit:any;const visit=(n:any)=>{if(ts.isFunctionDeclaration(n)&&n.name?.text==='submit')submit=n;ts.forEachChild(n,visit)};visit(outer);assert(submit);
-  Object.assign(t.ctx,{isCustom:true,id:'new-mongo',name:'new Mongo',image:'mongo:7',port:27017,envText:'',catalogItems:[{id:'mongodb',dockerImage:'mongo:7',hasPersistence:true}],projectId:'current-project',startAfterCreate:false,setError(){},setSubmitting(){},window:{confirm:t.ctx.confirm},parseEnvText:()=>({}),apiRequest:async(url:string,body:any)=>{t.calls.push({url,...body})},onOpenChange(){},onCreated:async()=>{},onToast(){},ApiError:class extends Error{}});
+  Object.assign(t.ctx,{isCustom:true,id:'new-mongo',name:'new Mongo',image,port:27017,envText:'',catalogItems:[{id:'mongodb',dockerImage:'mongo:7',hasPersistence:true},{id:'mysql',dockerImage:'mysql:8',hasPersistence:true}],projectId:'current-project',startAfterCreate:false,setError(){},setSubmitting(){},window:{confirm:t.ctx.confirm},parseEnvText:()=>({}),apiRequest:async(url:string,body:any)=>{t.calls.push({url,...body})},onOpenChange(){},onCreated:async()=>{},onToast(){},ApiError:class extends Error{}});
   vm.runInContext(ts.transpileModule('globalThis.submit='+submit.getText(ast),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText,t.ctx);await t.ctx.submit({preventDefault(){}});
   assert.equal(t.calls.length,accept?1:0);assert.equal(t.confirmations.length,1);if(accept)assert.equal(t.calls[0].body.initializeStorage,'new-only');
  });

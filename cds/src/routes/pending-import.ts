@@ -378,6 +378,8 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       (parsed.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
       idSuffix,
     );
+    try { stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles); }
+    catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     const appliedProfiles: string[] = [];
     for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
