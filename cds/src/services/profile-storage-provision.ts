@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { withWritableSourceLayer } from './source-workspace.js';
 import type { BranchEntry, BuildProfile, CacheMount, CdsConfig, IShellExecutor, StorageBinding } from '../types.js';
 import { profileStoragePlan, stableStorageVolumeName, renderStoragePlan, withRuntimeTmpfs } from './deployment-storage-plan.js';
 import { allocateStorageBirths, storageProvisionDigest, type StorageBirth } from './storage-provision.js';
@@ -66,7 +67,8 @@ export class ProfileStorageProvisionService {
             const fresh = requests.map(m => { if (!key(m.mountKey) || keys.has(m.mountKey) || !['cache', 'persistent'].includes(m.purpose) || !path.posix.isAbsolute(m.containerPath) || path.posix.normalize(m.containerPath) !== m.containerPath || targets.has(m.containerPath))
                 throw reject(); keys.add(m.mountKey); targets.add(m.containerPath); const storage: StorageBinding = { version: 1, instanceId: instance, projectId: target.projectId, scope: 'branch-private', branchId: target.branchId, serviceId: target.serviceId, mountKey: m.mountKey, purpose: m.purpose }; return { kind: 'volume' as const, hostPath: stableStorageVolumeName(storage), containerPath: m.containerPath, storage }; });
             const record: ProfileStorageBinding = { version: 1, target, ...original, mounts: [...raw, ...fresh], names: fresh.map(m => m.hostPath), operationId };
-            const plan = withRuntimeTmpfs(profileStoragePlan(entry, { ...profile, cacheMounts: record.mounts }, this.config));
+            // Reuse runtime's exact source-workspace rules BEFORE any intent, native read or allocation.
+            const plan = withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry, { ...profile, cacheMounts: record.mounts }, this.config)));
             renderStoragePlan(plan);
             if (fresh.some(m => this.store.getStorageBirth(m.hostPath)))
                 throw reject();

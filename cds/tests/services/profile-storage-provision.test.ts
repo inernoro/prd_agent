@@ -20,3 +20,22 @@ it('a stopped or failed old resource target cannot be treated as a fresh scope',
 it('fresh destination never overwrites a declared physical mount',async()=>{const f=fixture();await expect(f.run('a',{...f.profile,cacheMounts:[{kind:'volume',hostPath:'old-data',containerPath:'/data'}]})).rejects.toThrow();expect(f.commands).toHaveLength(0)});
 
 it.each(['/tmp','/app'])('fresh mount cannot hide reserved runtime/source target %s',async containerPath=>{const f=fixture();await expect(f.run('a',{...f.profile,prebuiltImage:false},[{mountKey:'fresh',containerPath,purpose:'persistent'}])).rejects.toThrow();expect(f.commands).toHaveLength(0)});
+
+// V122: P must reject the same source overlap that runtime would reject, before ANY birth.
+it.each([
+ ['/app','/app/data'], // mount is below writable source workspace
+ ['/app/component','/app'], // mount is above writable source workspace
+ ['/app','/app'], // equal destination (also rejected by plan sealing)
+ ['/app','/.__cds_source_ro/cache'], // fixed source staging subtree
+ ['/tmp/app','/data'], // runtime tmpfs is an ancestor of source workspace
+])('source P refuses workspace %s versus mount %s before physical or durable work',async(workspace,containerPath)=>{
+ const f=fixture();Object.assign(f.profile,{prebuiltImage:false,containerWorkDir:workspace});
+ await expect(f.run('a',f.profile,[{mountKey:'fresh',containerPath,purpose:'persistent'}])).rejects.toThrow();
+ expect(f.commands).toEqual([]);expect(f.rows.size).toBe(0);expect(f.volumes.size).toBe(0);expect(f.published.size).toBe(0);
+});
+it.each(['source-disjoint','prebuilt-source-free','managed-source-free'])('safe Profile P still allocates: %s',async kind=>{
+ const f=fixture();Object.assign(f.profile,{prebuiltImage:kind==='prebuilt-source-free',containerWorkDir:'/app',...(kind==='managed-source-free'?{managedBuild:{strategy:'fixture'}}:{})});
+ const containerPath=kind==='source-disjoint'?'/data':'/app/data';
+ const accepted=await f.run('a',f.profile,[{mountKey:'fresh',containerPath,purpose:'persistent'}]);
+ expect(accepted.names).toHaveLength(1);expect(f.volumes.size).toBe(1);expect(f.published.size).toBe(1);
+});

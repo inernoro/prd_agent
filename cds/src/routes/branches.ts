@@ -137,7 +137,7 @@ import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExe
 import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { markDropped, settleBranchDbsOnDelete, type BranchDbDeleteChoice } from '../services/db-ledger.js';
 import { realDbLedgerOps } from '../services/db-ledger-ops.js';
-import { getInfraCatalogPublic } from '../services/infra-catalog.js';
+import { getInfraCatalogPublic, recommendedVolumePathsFromCatalog } from '../services/infra-catalog.js';
 import { assertInfraAuthenticationConfigured } from '../services/infra-auth-policy.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
@@ -6049,6 +6049,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let branchOperationLease: BranchOperationLease | null = null;
       let branchOperationFinalStatus: 'completed' | 'failed' | 'cancelled' = 'completed';
       try {
+        stateService.assertBranchStorageRemovalAllowed(branch.id);
         branchOperationLease = beginSilentBranchOperation(req, branch, {
           kind: 'cleanup-stopped',
           source: 'api.cleanup-stopped',
@@ -12360,6 +12361,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (m) { res.status(m.status).json(m.body); return; }
     }
 
+    try { stateService.assertBranchStorageRemovalAllowed(id); }
+    catch (error) { res.status(409).json({error:'storage_retained_branch_delete_refused',message:(error as Error).message}); return; }
+
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || undefined;
     const actor = resolveActorFromRequest(req);
     const trigger = typeof req.headers['x-cds-trigger'] === 'string' ? req.headers['x-cds-trigger'] : undefined;
@@ -12377,6 +12381,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (branchOperationCoordinator && !branchOperationLease) return;
     const deleteStartedAt = nowIso();
     const previousDeleteIntent = {
+      deleting: entry.deleting,
       status: entry.status,
       lastStoppedAt: entry.lastStoppedAt,
       lastStopSource: entry.lastStopSource,
@@ -12698,6 +12703,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
         const upstreamUrl = `http://${remoteExecutor.host}:${remoteExecutor.port}/exec/delete`;
         let proxied = false;
+        let retainedStorageRefusal = false;
         try {
           const upstream = await fetch(upstreamUrl, {
             method: 'POST',
@@ -12722,10 +12728,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
             });
           } else {
             const errText = await upstream.text().catch(() => '');
+            if (upstream.status === 409) {
+              try { retainedStorageRefusal = JSON.parse(errText).error === 'storage_retained_branch_delete_refused'; } catch { /* ordinary legacy rejection */ }
+            }
             sendSSE(res, 'step', {
               step: 'dispatch',
               status: 'warning',
-              title: `执行器拒绝删除 (HTTP ${upstream.status})，仍继续清理主节点状态`,
+              title: retainedStorageRefusal ? '执行器保留私有存储，主节点停止删除' : `执行器拒绝删除 (HTTP ${upstream.status})，仍继续清理主节点状态`,
               log: errText.slice(0, 200),
             });
           }
@@ -12736,6 +12745,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
             title: `无法连接执行器 ${remoteExecutor.id}，仍继续清理主节点状态`,
             log: (err as Error).message,
           });
+        }
+
+        if (retainedStorageRefusal) {
+          branchOperationFinalStatus = 'failed';
+          entry.status = previousDeleteIntent.status;
+          entry.deleting = previousDeleteIntent.deleting;
+          entry.lastStoppedAt = previousDeleteIntent.lastStoppedAt;
+          entry.lastStopSource = previousDeleteIntent.lastStopSource;
+          entry.lastStopReason = previousDeleteIntent.lastStopReason;
+          stateService.save();
+          await stateService.flush();
+          sendSSE(res,'error',{code:'storage_retained_branch_delete_refused',message:'执行器保留了私有存储，主节点保留原分支配置；请改用停止。'});
+          return;
         }
 
         // Drop master-side state unconditionally — if the executor is
@@ -20690,6 +20712,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       let removedCount = 0;
       const skippedBusy: Array<{ branchId: string; reason: string }> = [];
       for (const entry of toRemove) {
+        try { stateService.assertBranchStorageRemovalAllowed(entry.id); }
+        catch (error) {
+          skippedBusy.push({branchId:entry.id,reason:(error as Error).message});
+          sendSSE(res,'step',{step:'cleanup',status:'warning',title:`保留 ${entry.id}：${(error as Error).message}`});
+          continue;
+        }
         const branchOperationLease = beginSilentBranchOperation(req, entry, {
           kind: 'cleanup-orphans',
           source: 'api.cleanup',
@@ -20875,6 +20903,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
       // Step 3: stop containers + remove worktrees in parallel, then update state
       await Promise.all(orphans.map(async (entry) => {
+        try { stateService.assertBranchStorageRemovalAllowed(entry.id); }
+        catch (error) {
+          skippedBusy.push({branchId:entry.id,reason:(error as Error).message});
+          sendSSE(res,'step',{step:`cleanup-${entry.id}`,status:'warning',title:`保留 ${entry.branch}：${(error as Error).message}`});
+          return;
+        }
         const branchOperationLease = beginSilentBranchOperation(req, entry, {
           kind: 'cleanup-orphans',
           source: 'api.cleanup-orphans',
@@ -20927,6 +20961,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
             await worktreeService.remove(repoRoot, entry.worktreePath);
           } catch { /* ok */ }
 
+          // Keep the original branch lease through the final metadata removal;
+          // a new P cannot begin between runtime cleanup and dropping its owner.
+          assertBranchOperationCurrent(branchOperationLease, 'cleanup orphan before state delete');
+          stateService.assertBranchStorageRemovalAllowed(entry.id);
+          await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
+          assertBranchOperationCurrent(branchOperationLease, 'cleanup orphan before metadata delete');
+          stateService.assertBranchStorageRemovalAllowed(entry.id);
+          stateService.removeLogs(entry.id);
+          stateService.removeBranch(entry.id);
           cleanedOrphans.push(entry);
           sendSSE(res, 'step', { step: `cleanup-${entry.id}`, status: 'done', title: `已清理 ${entry.branch}` });
         } catch (err) {
@@ -20938,13 +20981,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }));
 
-      // State mutations are serial (state is in-memory, no async needed)
-      for (const entry of cleanedOrphans) {
-        // 删分支即删分支网（Codex P2「Remove branch networks from all cleanup flows」）。
-        await containerService.removeBranchNetwork(entry.id, entry.replacementNetworks).catch(() => { /* best-effort */ });
-        stateService.removeLogs(entry.id);
-        stateService.removeBranch(entry.id);
-      }
       const cleaned = cleanedOrphans.length;
 
       stateService.save();
@@ -21045,6 +21081,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // ── Factory reset: stop all containers, clear all config, keep Docker volumes ──
 
   router.post('/factory-reset', async (req, res) => {
+    const storageProjectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    try {
+      for (const branch of stateService.getAllBranches())
+        if (!storageProjectFilter || (branch.projectId || 'default') === storageProjectFilter)
+          stateService.assertBranchStorageRemovalAllowed(branch.id);
+      for (const projectId of storageProjectFilter ? [storageProjectFilter] : stateService.getProjects().map(p => p.id))
+        stateService.assertProjectStorageRemovalAllowed(projectId);
+    } catch (error) {
+      res.status(409).json({error:(error as Error).message.split(':')[0],message:(error as Error).message});
+      return;
+    }
     initSSE(res);
     try {
       // Optional ?project=<id> scopes the reset to that project only:
@@ -21515,6 +21562,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * surface the data-loss risk.
    */
   function recommendedVolumePathsForImage(image: string): string[] | null {
+    const catalog = recommendedVolumePathsFromCatalog(image);
+    if (catalog) return catalog;
     const lower = (image || '').toLowerCase();
     const baseRaw = lower.split('/').pop() || lower;
     const base = baseRaw.split(':')[0];
@@ -21599,6 +21648,13 @@ router.post('/branches/:id/storage/provision',async(req,res)=>{
       if (newStorage) {
         try { assertNewStorageCurrent(); if (!originalInstance || projectId === '__system__') throw new Error(); }
         catch { res.status(409).json({error:'storage_provision_unconfirmed'}); return; }
+      }
+      // Auto-filled or unowned named storage requires explicit allocation. Refuse the
+      // old metadata-then-start flow before even allocating a port, rather than
+      // publishing an unstartable service or adopting a possibly historical volume.
+      if (!newStorage && ((recommendedVolumePathsForImage(body.dockerImage)?.length && (body.volumes === undefined || body.volumes === null))
+        || (Array.isArray(body.volumes) && body.volumes.some(v => !v?.storage)))) {
+        res.status(409).json({error:'storage_provision_required', message:'自定义持久卷尚未确认归属，未创建服务。请先使用明确的新存储分配流程；现有数据卷不能自动接管。'}); return;
       }
       const hostPort = stateService.allocatePort(config.portStart, await collectListeningPorts(shell));
       if (newStorage) assertNewStorageCurrent();
