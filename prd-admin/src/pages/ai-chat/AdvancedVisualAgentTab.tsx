@@ -73,6 +73,7 @@ import { resolveImageRefs, buildRequestText } from '@/lib/imageRefResolver';
 import { parseVisualMessageDisplay } from '@/lib/visualMessageDisplay';
 import { glassToolbar } from '@/lib/glassStyles';
 import { canvasSaveCooldownRemaining, CANVAS_SAVE_DEBOUNCE_MS } from '@/lib/canvasSaveSchedule';
+import { resolveCanvasToolShortcut } from '@/lib/canvasToolShortcut';
 import {
   checkLayerSourcesReadable,
   createCompositePngBlob,
@@ -6381,6 +6382,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   }, [selectedKeys]);
 
   // Figma 风格快捷键（仅在画布区域操作时生效）
+  // - H: 手型工具
+  // - V: 选择工具
   // - Shift+1: 适配全部内容 (Zoom to Fit)
   // - Shift+2: 适配选中内容 (Zoom to Selection)，无选中时等同于 Shift+1
   // - Shift+0: 缩放到 100% (Zoom to 100%)
@@ -6413,6 +6416,13 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       const isBracketLeft = e.key === '[' || e.code === 'BracketLeft';
       const isG = e.key === 'g' || e.key === 'G' || e.code === 'KeyG';
       const isA = e.key === 'a' || e.key === 'A' || e.code === 'KeyA';
+
+      const toolShortcut = resolveCanvasToolShortcut(e);
+      if (toolShortcut) {
+        e.preventDefault();
+        setActiveTool(toolShortcut);
+        return;
+      }
 
       // Cmd/Ctrl+A: 全选画布元素（Figma 同款；没有它就没法「选几个一起编组/导出」）
       if (isMod && !e.shiftKey && !e.altKey && isA) {
