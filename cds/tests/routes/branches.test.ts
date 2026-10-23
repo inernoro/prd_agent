@@ -473,6 +473,9 @@ describe('Branch Routes', () => {
       git(['commit', '-am', '版本B'], repo);
       const shaB = git(['rev-parse', 'HEAD'], repo);
       const current = path.join(tmpDir, 'source-current'); git(['clone', repo, current], tmpDir);
+      // A clone does not inherit the source repository's local author settings.
+      git(['config', 'user.name', 'source-test'], current);
+      git(['config', 'user.email', 'source-test@example.invalid'], current);
       const entry: BranchEntry = { id: 'source-check', projectId: 'default', branch: 'main', worktreePath: current,
         status: 'idle', createdAt: new Date().toISOString(), services: {} };
       stateService.addBranch(entry);
