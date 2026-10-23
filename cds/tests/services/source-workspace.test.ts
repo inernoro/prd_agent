@@ -1,6 +1,5 @@
 import {describe,it,expect,afterEach,vi} from 'vitest';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {profileStoragePlan,withRuntimeTmpfs,withReadOnlyTools,stableStorageVolumeName,resolveStorageImage} from '../../src/services/deployment-storage-plan.js';
@@ -11,7 +10,9 @@ const config:CdsConfig={repoRoot:'/unused',worktreeBase:'/unused',storageInstanc
 const profile:BuildProfile={id:'app',projectId:'p',name:'app',workDir:'.',dockerImage:'node:20',containerWorkDir:'/app',containerPort:8080,command:'pnpm install && node app.js'};
 const entry=(p:string)=>({id:'b',projectId:'p',branch:'b',worktreePath:p,status:'idle',services:{},createdAt:'2026-10-23'} as BranchEntry);
 const roots:string[]=[];
-const temp=()=>{const p=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'source-workspace-')));roots.push(p);return p;};
+// These host-executed workspace fixtures must not live under the container's /tmp tmpfs.
+// In Linux CI os.tmpdir() is /tmp; macOS concealed that overlap under /private/var.
+const temp=()=>{const p=fs.realpathSync(fs.mkdtempSync(path.join(process.cwd(),'.source-workspace-')));roots.push(p);return p;};
 const plan=(root:string,extra:Partial<BuildProfile>={})=>withWritableSourceLayer(withRuntimeTmpfs(profileStoragePlan(entry(root),{...profile,...extra},config)));
 const q=(s:string)=>"'"+s.replace(/'/g,"'\\''")+"'";
 afterEach(()=>{vi.restoreAllMocks();for(const p of roots.splice(0))fs.rmSync(p,{recursive:true,force:true});});
