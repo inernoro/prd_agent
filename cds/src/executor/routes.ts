@@ -644,12 +644,15 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
       actor?: string | null;
       trigger?: string | null;
     };
-    preparations.cancelBranch(branchId, '执行器终止请求');
     const entry = stateService.getBranch(branchId);
     if (!entry) {
+      preparations.cancelBranch(branchId, '执行器终止请求');
       res.status(404).json({ error: `Branch "${branchId}" not found` });
       return;
     }
+    try { stateService.assertBranchStorageRemovalAllowed(branchId); }
+    catch (error) { res.status(409).json({error:'storage_retained_branch_delete_refused',message:(error as Error).message}); return; }
+    preparations.cancelBranch(branchId, '执行器终止请求');
     try {
       for (const svc of Object.values(entry.services)) {
         try {

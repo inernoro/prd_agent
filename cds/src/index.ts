@@ -3932,6 +3932,7 @@ janitorService.setRemoveFn(async (slug: string) => {
   // Reuse the existing removal path: stop containers → git worktree remove → drop state.
   const branch = stateService.getBranch(slug);
   if (!branch) return;
+  stateService.assertBranchStorageRemovalAllowed(slug);
   const branchOperationLease = beginBackgroundBranchOperation({
     branchId: slug,
     kind: 'janitor-remove',
@@ -4059,6 +4060,11 @@ janitorService.setRemoveFn(async (slug: string) => {
         });
       }
       if (appDiscovery.ok && shouldPruneDeletedBranchStartupResidue(branch, appContainers)) {
+        try { stateService.assertBranchStorageRemovalAllowed(branch.id); }
+        catch (error) {
+          console.warn(`[startup-reconcile] retaining private-storage branch ${branch.id}: ${(error as Error).message}`);
+          continue;
+        }
         activeServerEventLogStore?.record({
           category: 'container',
           severity: 'warn',

@@ -5290,6 +5290,10 @@ async function saveCustomInfra() {
       openInfraModal();
       return;
     }
+    if (volumes.length) {
+      showToast('自定义持久卷尚未确认归属，未创建服务。请改用基础设施目录；现有数据卷请联系管理员恢复。', 'error');
+      return;
+    }
     await api('POST', `/infra?project=${encodeURIComponent(CURRENT_PROJECT_ID)}`, {
       id, name, dockerImage, containerPort, volumes, injectEnv, env: {},
     });

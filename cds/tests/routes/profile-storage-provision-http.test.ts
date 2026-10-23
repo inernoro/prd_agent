@@ -77,3 +77,46 @@ it.each(['no-P','other-branch-P'])('remote without target-local P remains availa
  const calls=lateExecutor();const result=await deployOverHttp({commitSha:fixtureCommit(),targetExecutorId:'late-remote'});
  expect(result.status).toBe(200);expect(calls.filter(c=>c.url.endsWith('/exec/deploy'))).toHaveLength(1);
 });
+
+it.each(['manual','webhook'])('private storage blocks %s DELETE before cancellation or runtime/state cleanup',async trigger=>{
+ expect((await post()).status).toBe(201);const branch=state.getBranch('a')!,before=structuredClone(branch),count=commands.length,rows=state.getProfileStorageBirths({kind:'profile',projectId:'p',branchId:'a',serviceId:'app'});
+ const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/branches/a`,{method:'DELETE',headers:{'x-own-project':'p','x-cds-trigger':trigger},signal:AbortSignal.timeout(3000)});expect(r.status).toBe(409);expect((await r.json() as any).error).toBe('storage_retained_branch_delete_refused');expect(state.getBranch('a')).toEqual(before);expect(commands).toHaveLength(count);expect(state.getProfileStorageBirths({kind:'profile',projectId:'p',branchId:'a',serviceId:'app'})).toEqual(rows);expect(volumes.size).toBe(1);
+});
+
+// V122 actual Router + State + controlled native CLI: no P may precede workspace admission.
+it.each([
+ ['/app','/app/data'], ['/app/component','/app'], ['/app','/app'],
+ ['/app','/.__cds_source_ro/cache'], ['/tmp/app','/data'],
+])('source Profile P rejects %s versus %s before any birth or native operation',async(workspace,containerPath)=>{
+ const profile=state.getBuildProfilesForProject('p')[0];
+ Object.assign(profile,{prebuiltImage:false,localArtifact:false,managedBuild:undefined,containerWorkDir:workspace});
+ const before=structuredClone(profile);
+ const result=await post('a','p',{...input(),freshMounts:[{mountKey:'fresh',containerPath,purpose:'persistent'}]});
+ expect(result.status).toBe(409);expect(result.body.error).toBe('storage_provision_unconfirmed');
+ expect(commands).toEqual([]);expect(volumes.size).toBe(0);
+ const target={kind:'profile' as const,projectId:'p',branchId:'a',serviceId:'app'};
+ expect(state.getProfileStorageBirths(target)).toEqual([]);expect(state.getProfileStorageBinding(target)).toBeUndefined();
+ expect(state.getBuildProfilesForProject('p')[0]).toEqual(before);
+});
+it('source-free prebuilt Profile P permits /app/data and reliably publishes only its new binding',async()=>{
+ const result=await post('a','p',{...input(),freshMounts:[{mountKey:'fresh',containerPath:'/app/data',purpose:'persistent'}]});
+ expect(result.status).toBe(201);expect(volumes.size).toBe(1);
+ expect(state.getProfileStorageBinding({kind:'profile',projectId:'p',branchId:'a',serviceId:'app'})?.mounts[0].containerPath).toBe('/app/data');
+});
+
+it('remote retained-storage refusal keeps master branch declaration instead of finalizing deletion',async()=>{
+ const savedFetch=globalThis.fetch;lateExecutor();state.getBranch('a')!.executorId='late-remote';const before=structuredClone(state.getBranch('a')),count=commands.length;
+ vi.stubGlobal('fetch',async()=>new Response(JSON.stringify({error:'storage_retained_branch_delete_refused'}),{status:409}));
+ const response=await savedFetch(`http://127.0.0.1:${(server.address() as any).port}/api/branches/a`,{method:'DELETE',headers:{'x-own-project':'p'},signal:AbortSignal.timeout(3000)});const text=await response.text();
+ expect(text).toContain('storage_retained_branch_delete_refused');expect(state.getBranch('a')).toBeDefined();expect(state.getBranch('a')?.deleting).toBe(before?.deleting);expect(state.getBranch('a')?.status).toBe(before?.status);expect(commands).toHaveLength(count);
+});
+
+it.each(['/factory-reset?project=p','/factory-reset','/cleanup?project=p','/branches/cleanup-stopped?project=p'])('retained private storage survives bulk removal %s before runtime cleanup',async route=>{
+ expect((await post()).status).toBe(201);state.removeBranch('b');const branch=state.getBranch('a')!;branch.services.app={profileId:'app',containerName:'original-own-runtime',hostPort:1,status:'stopped'};const before=structuredClone(branch),count=commands.length;
+ const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api${route}`,{method:'POST',headers:{'x-own-project':'p','content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(3000)});const text=await r.text();expect(text).toContain('storage_retained_branch_delete_refused');expect(state.getBranch('a')).toEqual(before);expect(commands).toHaveLength(count);expect(volumes.size).toBe(1);
+});
+it('orphan cleanup retains storage-bearing owner while only reading remote refs',async()=>{
+ expect((await post()).status).toBe(201);state.removeBranch('b');const before=structuredClone(state.getBranch('a')),exec=vi.mocked(shell.exec).getMockImplementation()!;
+ vi.mocked(shell.exec).mockImplementation(async(c,o)=>{if(c.includes('git fetch origin --prune')||c.startsWith('git for-each-ref')){commands.push(c);return{exitCode:0,stdout:c.startsWith('git for-each-ref')?'main\n':'',stderr:''}}return exec(c,o)});const count=commands.length;
+ const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/cleanup-orphans?project=p`,{method:'POST',headers:{'x-own-project':'p','content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(3000)});expect(await r.text()).toContain('storage_retained_branch_delete_refused');expect(state.getBranch('a')).toEqual(before);expect(commands.slice(count).every(c=>c.includes('git fetch')||c.includes('git for-each-ref'))).toBe(true);expect(volumes.size).toBe(1);
+});

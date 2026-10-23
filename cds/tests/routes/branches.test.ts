@@ -7287,7 +7287,7 @@ describe('Branch Routes', () => {
       const res = await request(server, 'POST', '/api/infra', {
         id: 'redis',
         name: 'Redis',
-        dockerImage: 'redis:7-alpine',
+        dockerImage: 'nginx:alpine', // Scope fixture is stateless; actual DB first allocation has separate HTTP coverage.
         containerPort: 6379,
         env: { REDIS_PASSWORD: 'test-secret' },
         command: ['sh', '-c', 'exec redis-server --requirepass "$REDIS_PASSWORD"'],
@@ -7308,7 +7308,7 @@ describe('Branch Routes', () => {
       const res = await request(server, 'POST', '/api/infra', {
         id: 'mongo',
         name: 'MongoDB',
-        dockerImage: 'mongo:8.0',
+        dockerImage: 'nginx:alpine', // No implicit database allocation in a project-scoping fixture.
         containerPort: 27017,
         env: {
           MONGO_INITDB_ROOT_USERNAME: 'test-admin',

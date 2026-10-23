@@ -52,4 +52,14 @@ describe('branch-private P with real State and JSON ACK',()=>{
  it('cannot lend branch A physical mounts to branch B',async()=>{const f=own();await Promise.all(f.entries.map(e=>f.run(e)));const a=state.resolvePublishedProfileStorage(f.entries[0],f.profile),before=f.commands.length;await expect(f.container.preflightProfileStorage(f.entries[1],a)).rejects.toThrow('storage_provision');expect(f.commands).toHaveLength(before);});
  it('a retained stopped runtime is never interpreted as fresh first allocation',async()=>{const f=own();f.entries[0].services.app={profileId:'app',containerName:'original',hostPort:1,status:'stopped'};await expect(f.run()).rejects.toThrow();expect(f.commands).toEqual([]);});
  it('duplicate concurrent P cannot create a second nonce or volume',async()=>{const f=own();const results=await Promise.allSettled([f.run(),f.run()]);expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);expect(f.volumes.size).toBe(1);expect(f.commands.filter(c=>c.startsWith('docker volume create'))).toHaveLength(1);});
+ it('published private storage keeps its branch declaration across direct removal and cold reopen',async()=>{
+  const f=own();await f.run();const before=structuredClone(f.entries[0]),row=state.getProfileStorageBinding(f.target(f.entries[0]));
+  expect(()=>state.removeBranch(f.entries[0].id)).toThrow('storage_retained_branch_delete_refused');expect(state.getBranch(f.entries[0].id)).toEqual(before);expect(state.getProfileStorageBinding(f.target(f.entries[0]))).toEqual(row);expect(f.volumes.size).toBe(1);
+  await state.flush();const cold=new StateService(path.join(root,'state.json'));cold.load();expect(()=>cold.removeBranch(f.entries[0].id)).toThrow('storage_retained_branch_delete_refused');expect(cold.resolvePublishedProfileStorage(f.entries[0],f.profile).cacheMounts).toHaveLength(1);await cold.flush();
+ });
+ it('held private birth keeps branch and original nonce, while an unrelated empty branch stays removable',async()=>{
+  const f=own(),flush=state.flush.bind(state);let n=0;vi.spyOn(state,'flush').mockImplementation(async()=>{await flush();if(++n===3)throw Error('lost original ACK')});await expect(f.run()).rejects.toThrow();
+  const row=state.getProfileStorageBirths(f.target(f.entries[0]))[0];expect(row.stage).toBe('held');expect(()=>state.removeBranch(f.entries[0].id)).toThrow('storage_retained_branch_delete_refused');expect(state.getStorageBirth(row.name)?.birthNonce).toBe(row.birthNonce);expect(()=>state.removeBranch(f.entries[1].id)).not.toThrow();expect(state.getBranch(f.entries[1].id)).toBeUndefined();
+ });
+
 });
