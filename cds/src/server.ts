@@ -1845,8 +1845,10 @@ export function createServer(deps: ServerDeps): express.Express {
       undefined,
       {
         recreate: async (service) => {
-          await deps.containerService.stopInfraService(service.containerName);
-          await deps.containerService.startInfraService(service, deps.stateService.getCustomEnv(service.projectId));
+          // Credential replacement requires recreation authority before stopping the old DB.
+          const accepted = await deps.containerService.preflightInfraStorage(service);
+          await deps.containerService.stopInfraService(accepted.containerName);
+          await deps.containerService.startInfraService(accepted, deps.stateService.getCustomEnv(service.projectId));
           deps.stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, service.projectId);
           deps.stateService.save();
           await deps.stateService.flush();
@@ -4601,10 +4603,11 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createAccessRequestsRouter({ stateService: deps.stateService, authMode }));
   // 2026-05-29 项目基础设施重新同步(用户反馈:断头应用,缺 yaml resync)
   app.use('/api', createProjectInfraResyncRouter({
+    shell: deps.shell,
     stateService: deps.stateService,
     containerService: deps.containerService,
     serverEventLogStore: deps.serverEventLogStore,
-    config: { portStart: deps.config?.portStart, repoRoot: deps.config?.repoRoot ?? process.cwd() },
+    config: deps.config,
     assertProjectAccess: assertProjectAccess as any,
   }));
   // 项目虚拟 cds-compose.yml 读写(配置 SSOT，2026-05-29)
