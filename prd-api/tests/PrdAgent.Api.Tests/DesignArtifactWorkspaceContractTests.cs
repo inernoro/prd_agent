@@ -1341,6 +1341,39 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Contains("CDS result", hardenedAgain, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CurrentPresentationFilesUseNormalizedTrustedIndexAndPreserveOrdinaryAssets()
+    {
+        var hardenedHtml = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"></head><body>父稿</body></html>";
+        var normalizedHtml = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(hardenedHtml);
+        var hardenedIndex = BuildFile("index.html", hardenedHtml, "text/html; charset=utf-8");
+        var asset = BuildFile("assets/deck.css", "body{color:#123}", "text/css; charset=utf-8");
+        var evidence = BuildFile("assets/provenance.json", "{}", "application/json; charset=utf-8");
+
+        var current = DesignArtifactWorkspaceBroker.MaterializeCurrentPresentationFiles(
+            new ParsedDesignWorkspaceResult(normalizedHtml, [hardenedIndex, asset, evidence]));
+
+        var currentIndex = Assert.Single(current, file => file.Path == "current/index.html");
+        Assert.Equal(normalizedHtml, Encoding.UTF8.GetString(Convert.FromBase64String(currentIndex.ContentBase64)));
+        Assert.Equal(Hash(Encoding.UTF8.GetBytes(normalizedHtml)), currentIndex.Sha256);
+        Assert.Equal(Encoding.UTF8.GetByteCount(normalizedHtml), currentIndex.Size);
+        var currentAsset = Assert.Single(current, file => file.Path == "current/assets/deck.css");
+        Assert.Equal(asset.ContentBase64, currentAsset.ContentBase64);
+        Assert.Equal(asset.Sha256, currentAsset.Sha256);
+        Assert.Equal(asset.Size, currentAsset.Size);
+        Assert.Equal(asset.MediaType, currentAsset.MediaType);
+        Assert.DoesNotContain(current, file => file.Path.EndsWith("provenance.json", StringComparison.Ordinal));
+
+        const string unsafeHtml = "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"></head><body><iframe></iframe><object></object></body></html>";
+        var unsafeIndex = BuildFile("index.html", unsafeHtml, "text/html; charset=utf-8");
+        var unsafeCurrent = Assert.Single(DesignArtifactWorkspaceBroker.MaterializeCurrentPresentationFiles(
+            new ParsedDesignWorkspaceResult(
+                HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(unsafeHtml),
+                [unsafeIndex])));
+        Assert.Equal(unsafeHtml, Encoding.UTF8.GetString(Convert.FromBase64String(unsafeCurrent.ContentBase64)));
+        Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(unsafeHtml));
+    }
+
     [Theory]
     [MemberData(nameof(UntrustedSystemMetaVariants))]
     public void TrustedCdsBoundaryDoesNotStripMovedDuplicateOrCustomHttpEquiv(string html)

@@ -338,10 +338,24 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             || (!string.IsNullOrWhiteSpace(run.PresentationInput?.ParentPackageHash)
                 && !FixedEquals(run.PresentationInput.ParentPackageHash, parent.WorkspaceResultSha256)))
             throw CurrentVersionChanged();
+        return MaterializeCurrentPresentationFiles(package);
+    }
+
+    internal static IReadOnlyList<DesignWorkspaceFile> MaterializeCurrentPresentationFiles(
+        ParsedDesignWorkspaceResult package)
+    {
+        var normalizedIndexBytes = Encoding.UTF8.GetBytes(package.IndexHtml);
         return package.Files
             .Where(file => !string.Equals(file.Path, DesignArtifactPublicRevision.InternalManifestPath, StringComparison.Ordinal)
                            && !IsPresentationRuntimeEvidencePath(file.Path))
-            .Select(file => file with { Path = "current/" + file.Path })
+            .Select(file => string.Equals(file.Path, "index.html", StringComparison.Ordinal)
+                ? new DesignWorkspaceFile(
+                    "current/index.html",
+                    Convert.ToBase64String(normalizedIndexBytes),
+                    Sha256Hex(normalizedIndexBytes),
+                    normalizedIndexBytes.LongLength,
+                    file.MediaType)
+                : file with { Path = "current/" + file.Path })
             .ToList();
     }
 
