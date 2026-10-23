@@ -677,6 +677,31 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     artifact.SiteId,
                     artifact.RevisionId,
                     ct);
+                if (run.Operation != DesignArtifactOperations.Edit)
+                {
+                    var baseline = await db.HostedSiteRevisions
+                        .Find(item => item.Id == artifact.RevisionId
+                                      && item.SiteId == artifact.SiteId
+                                      && item.CreatedByUserId == run.UserId
+                                      && item.SourceRunId == run.Id
+                                      && item.Status == HostedSiteRevisionStatuses.Published)
+                        .Project(item => item.PublishedContentVersion)
+                        .SingleOrDefaultAsync(ct);
+                    if (baseline == default)
+                        throw new InvalidOperationException("演示稿初始版本与生成任务不一致，请稍后重试");
+
+                    var pointerWrite = await db.HostedSites.UpdateOneAsync(
+                        item => item.Id == artifact.SiteId
+                                && item.OwnerUserId == run.UserId
+                                && item.SourceRef == run.Id
+                                && item.ContentVersion == baseline
+                                && (item.PublishedRevisionId == null
+                                    || item.PublishedRevisionId == artifact.RevisionId),
+                        Builders<HostedSite>.Update.Set(item => item.PublishedRevisionId, artifact.RevisionId),
+                        cancellationToken: ct);
+                    if (pointerWrite.MatchedCount != 1)
+                        throw new InvalidOperationException("演示稿初始版本指针已变化，请稍后重试");
+                }
             }
         }
         catch (Exception ex)

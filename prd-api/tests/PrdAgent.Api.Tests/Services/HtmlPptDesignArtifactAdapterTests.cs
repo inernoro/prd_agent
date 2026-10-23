@@ -765,6 +765,7 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Assert.Equal(sourcePlanHash, parentCompatibility.SourcePlanHash);
             Assert.Equal(completedGeneration.ArtifactSiteId, parentCompatibility.PublishedSiteId);
             Assert.Equal(completedGeneration.ArtifactRevisionId, parentCompatibility.PublishedVersionId);
+            Assert.Null(parentCompatibility.PublishIntentStatus);
             var hostedGenerationHtml = parentCompatibility.Html;
             Assert.NotEqual(generationHtml, hostedGenerationHtml);
             var parentSite = await fixture.Db.HostedSites
@@ -776,6 +777,8 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Assert.Equal(generationPackage.RunId, parentRevision.SourceRunId);
             Assert.Equal(completedGeneration.ArtifactRevisionId, parentRevision.Id);
             Assert.Equal(hostedGenerationHtml, parentRevision.Html);
+            Assert.Equal(parentRevision.Id, parentSite.PublishedRevisionId);
+            Assert.Equal(parentSite.ContentVersion, parentRevision.PublishedContentVersion);
             var coordinator = new HtmlPptPublishCoordinator(
                 fixture.Db,
                 sites,
@@ -783,16 +786,6 @@ public sealed class HtmlPptDesignArtifactAdapterTests
                 Adapter(fixture, new InMemoryRunEventStore()),
                 NullLogger<HtmlPptPublishCoordinator>.Instance,
                 publicLifecycle);
-            var publishedGeneration = await coordinator.PublishAsync(
-                parentCompatibility,
-                parentCompatibility.Title,
-                null,
-                [],
-                []);
-            Assert.Equal(parentSite.Id, publishedGeneration.Site.Id);
-            Assert.Equal(parentRevision.Id, publishedGeneration.Revision.Id);
-            parentSite = publishedGeneration.Site;
-            parentRevision = publishedGeneration.Revision;
 
             var compatibility = Run(
                 manualPackage.RunId,
@@ -928,6 +921,7 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Assert.Equal(completedDesign.Id, completedCompatibility.Id);
             Assert.Equal(parentCompatibility.Id, completedCompatibility.ParentRunId);
             Assert.Equal(sourcePlanHash, completedCompatibility.SourcePlanHash);
+            Assert.Null(completedCompatibility.PublishIntentStatus);
             Assert.Equal(hostedManualHtml, completedCompatibility.Html);
             Assert.Equal(hostedManualHtmlHash, completedCompatibility.HtmlHash);
             Assert.Contains("完成链用户修订稿", completedCompatibility.Html, StringComparison.Ordinal);
