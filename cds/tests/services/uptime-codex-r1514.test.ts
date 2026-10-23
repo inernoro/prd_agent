@@ -652,6 +652,7 @@ describe('第五轮 P2 删项目级联删自定义监控', () => {
     await svc.runCycle();
     expect(svc.getSummary(10).targets.map((t) => t.id)).toEqual(['monitor@mon-obs']);
     state.removeProject('p-obs');
+    await state.waitForProjectRemoval('p-obs');
     expect(svc.getSummary(10).targets).toHaveLength(0);
     expect(svc.getRecord('monitor@mon-obs')).toBeUndefined();
   });

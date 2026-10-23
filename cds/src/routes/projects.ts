@@ -1,3 +1,4 @@
+import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { addressWriteLocked } from '../services/preview-address-settings.js';
 /**
@@ -3206,7 +3207,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       } catch (err) {
         // 半成品状态:project + network 已建,但 sandbox bootstrap 失败。
         // 回滚 project + network,告诉用户错误。
-        try { stateService.removeProject(id); } catch { /* state save 失败也只能 log */ }
+        try {
+          stateService.removeProject(id);
+          await stateService.waitForProjectRemoval(id);
+        } catch {
+          res.status(500).json({ error: 'state_save_failed', message: '项目回滚尚未成功保存，已保留项目及网络，请稍后重试删除' });
+          return;
+        }
         await removeDockerNetwork(network).catch(() => { /* 已记录 */ });
         if (err instanceof ProjectFileError) {
           res.status(err.status).json({
@@ -4221,49 +4228,60 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // removeProject 之后，两次写之间进程被杀 / save 失败时，state 已无项目/分支、
     // 也无墓碑，收割器的补偿路径彻底断（删最后一个项目时尤其致命）。先写墓碑，
     // 再删项目，即使删项目那步失败，收割器也能按墓碑收敛。
-    const requestedAt = new Date().toISOString();
-    if (teardownContainers.length > 0) {
-      // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
-      // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
-      // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
-      const volumeBearing = new Set(dedicatedDbContainerNames);
-      stateService.addContainerTeardownTombstones(
-        teardownContainers.map((containerName) => ({
-          containerName,
-          projectId: project.id,
-          requestedAt,
-          ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
-        })),
-      );
-    }
-
-    // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
-    // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
-    // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
-    // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
-    // 至少墓碑还在，回收路径不断。
-    stateService.addDeletedProjectWorktreeBucket(project.id);
-
-    // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
-    // belonging to this project so deleting a project no longer leaves
-    // orphans in state.json. The state service returns a summary so we
-    // can hand it back to the operator (and the next agent log replay
-    // can spot what was lost).
     let summary: ReturnType<typeof stateService.removeProject>;
     try {
+      const requestedAt = new Date().toISOString();
+      if (teardownContainers.length > 0) {
+        // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
+        // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
+        // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
+        const volumeBearing = new Set(dedicatedDbContainerNames);
+        stateService.addContainerTeardownTombstones(
+          teardownContainers.map((containerName) => ({
+            containerName,
+            projectId: project.id,
+            requestedAt,
+            ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
+          })),
+        );
+      }
+
+      // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
+      // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
+      // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
+      // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
+      // 至少墓碑还在，回收路径不断。
+      stateService.addDeletedProjectWorktreeBucket(project.id);
+      // cascade 前保存本项目分支网络的明确删除意图；不扫描其他项目。
+      stateService.addNetworkTeardowns(projectBranches.flatMap(b =>
+        branchTeardownNetworkNames(b).map(name => ({ name, projectId: project.id }))));
+
+      // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
+      // belonging to this project so deleting a project no longer leaves
+      // orphans in state.json. The state service returns a summary so we
+      // can hand it back to the operator (and the next agent log replay
+      // can spot what was lost).
       summary = stateService.removeProject(project.id);
+      await stateService.waitForProjectRemoval(project.id);
     } catch (err) {
       // removeProject 失败 = 项目仍存活（容器仍归它所有）。回滚刚写的墓碑，
       // 否则收割器会按残留墓碑 rm -f 一个未被删除项目的在用容器（Codex P2）。
       for (const containerName of teardownContainers) {
         try { stateService.removeContainerTeardownTombstone(containerName); } catch { /* best-effort */ }
       }
+      for (const b of projectBranches) for (const name of branchTeardownNetworkNames(b))
+        try { stateService.removeNetworkTeardown(name, project.id); } catch { /* best-effort */ }
+      let compensationConfirmed = true;
+      try { await stateService.flush(); } catch { compensationConfirmed = false; }
       res.status(500).json({
         error: 'state_save_failed',
-        message: (err as Error).message,
+        message: compensationConfirmed ? (err as Error).message : '删除未完成，恢复状态尚未保存，请稍后重试',
+        compensationConfirmed,
       });
       return;
     }
+
+    cdsEventsBus.publish('access-request.progress', { projectId: project.id, stage: 'project-deleted' });
 
     // 容器 + 网络的物理清理放后台异步跑（不拖慢 DELETE 响应到多秒级）。
     // 墓碑已在 removeProject 之前落库，异步段崩溃 / docker 暂不可用时收割器
@@ -4292,6 +4310,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       } catch (err) {
         console.warn(`[projects] 删除项目 ${project.id} 的墓碑清理异常（收割器会重试）: ${(err as Error).message}`);
       }
+      await processNetworkTeardowns(shell, stateService);
       if (dockerNetwork) {
         const result = await removeDockerNetwork(dockerNetwork);
         if (!result.ok) {
@@ -4304,7 +4323,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         `[projects] 项目 ${project.id} 物理清理完成: ${teardownContainers.length} 个容器` +
         (dockerNetwork ? ` + 网络 ${dockerNetwork}` : ''),
       );
-    })();
+    })().catch(err => console.warn(`[projects] 网络清理稍后重试: ${(err as Error).message}`));
 
     const totalCascade =
       summary.branches.length +
