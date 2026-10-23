@@ -1447,6 +1447,7 @@ export const api = {
       subscribeGithubBatch: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github/batch`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
+      download: (entryId: string) => `/api/document-store/entries/${encodeURIComponent(entryId)}/download`,
       creativePublish: (entryId: string) => `/api/document-store/entries/${entryId}/creative-publish`,
       // 版本控制：历史版本列表 / 取某版本正文 / 恢复某版本
       versions: (entryId: string) => `/api/document-store/entries/${entryId}/versions`,

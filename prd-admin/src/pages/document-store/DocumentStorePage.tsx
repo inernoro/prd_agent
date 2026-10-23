@@ -78,12 +78,10 @@ import { ShareLinkPanel } from './ShareLinkPanel';
 import {
   DOC_DOWNLOAD_FORMATS,
   resolveInitialDownloadScope,
-  resolveTextExtension,
-  shouldFetchOriginalFile,
-  toPlainText,
   type DocDownloadFormat,
   type DocDownloadScope,
 } from './downloadFormats';
+import { buildEntryDownload, ORIGINAL_DOWNLOAD_FAILURE_MESSAGE } from './entryDownload';
 import {
   hasQuickRecordRequest,
   hasRecordInStoreRequest,
@@ -945,45 +943,6 @@ export function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle,
 
 // ── 下载：范围 + 格式 ──
 // 范围/格式判定是纯函数，抽到 downloadFormats.ts 供测试（见 __tests__/downloadFormats.test.ts）
-/**
- * 按所选格式把一条文档导出成一个可写盘的文件。
- * 返回 null = 这条确实没有可导出的内容（正文为空且原始文件也取不到），由调用方计入失败数。
- */
-async function buildEntryDownload(
-  entry: { id: string; title: string },
-  format: DocDownloadFormat,
-  makeName: (title: string, ext: string) => string,
-): Promise<{ name: string; data: Blob | string } | null> {
-  const res = await getDocumentContent(entry.id);
-  if (!res.success || !res.data) return null;
-  const { content, fileUrl, contentType } = res.data;
-  const hasText = content != null && content !== '';
-
-  // 「原始文件」且是二进制条目（pdf/docx/图片…）：先试原文件。fileUrl 多为对象存储/CDN 绝对
-  // 地址（TencentCosStorage 返回公网 URL），不带 Access-Control-Allow-Origin，浏览器端 fetch
-  // 会被 CORS 拦掉；取不到就降级为抽取正文，至少不整条丢失（真·原文件需后端同源代理）。
-  if (shouldFetchOriginalFile(format, contentType, fileUrl)) {
-    try {
-      const resp = await fetch(fileUrl!);
-      if (resp.ok) {
-        const blob = await resp.blob();
-        const m = /\.([a-zA-Z0-9]{1,8})(?:\?|$)/.exec(fileUrl!);
-        return {
-          name: makeName(entry.title.replace(/\.[a-zA-Z0-9]{1,8}$/, ''), m ? `.${m[1]}` : ''),
-          data: blob,
-        };
-      }
-    } catch {
-      // CORS / 网络失败 → 落到下面的正文降级
-    }
-  }
-  if (!hasText) return null;
-  // 纯文本格式要真的去掉标记，不能只换后缀（否则 .txt 里全是 # / [](), 与文案不符）
-  const data = format === 'text' ? toPlainText(content!, contentType) : content!;
-  if (data === '') return null;
-  return { name: makeName(entry.title, resolveTextExtension(format, contentType)), data };
-}
-
 // 下载对话框：范围默认「当前这篇」，没有打开文档时自动落到整库并禁用单篇选项。
 // export 供 __tests__/DownloadDialog.test.tsx 直接渲染断言默认范围（用户明确要求默认当前文章）。
 export function DownloadDialog({ storeName, entryTitle, busy, onDownload, onClose }: {
@@ -2217,7 +2176,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         const file = await buildEntryDownload(target, format, safeName);
         if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
         if (!file) {
-          toast.error('下载失败', '这篇文档没有可导出的内容（正文为空，或原始文件取不到）');
+          toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '这篇文档没有可导出的内容（正文为空，或原始文件取不到）');
           return;
         }
         saveFile(
@@ -2274,16 +2233,20 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         }
       }
       if (ok === 0) {
-        toast.error('下载失败', '所有文档均未能导出（可能正文为空或网络受限）');
+        toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '所有文档均未能导出（可能正文为空或网络受限）');
         return;
       }
       const out = await zip.generateAsync({ type: 'blob' });
       if (!downloadAliveRef.current) return; // 已离开视图：不再触发用户没预期的文件下载
       saveFile(out, `${(store.name || '知识库').replace(/[\\/:*?"<>|]/g, '_')}.zip`);
-      toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
+      if (format === 'original' && fail > 0) {
+        toast.warning('部分原件未下载', `已打包 ${ok} 篇，${fail} 篇原件未取得。请稍后重试，或另选正文格式导出。`);
+      } else {
+        toast.success('下载完成', `已打包 ${ok} 篇${fail > 0 ? `（${fail} 篇导出失败）` : ''}`);
+      }
     } catch (err) {
       console.error('[DocumentStore] download failed:', err);
-      if (downloadAliveRef.current) toast.error('下载失败', '导出文档时出错，请重试');
+      if (downloadAliveRef.current) toast.error('下载失败', format === 'original' ? ORIGINAL_DOWNLOAD_FAILURE_MESSAGE : '导出文档时出错，请重试');
     } finally {
       downloadInFlightRef.current = false;
       if (downloadAliveRef.current) setDownloading(false);
