@@ -1,3 +1,4 @@
+import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-plan.js';
 import { processNetworkTeardowns, branchTeardownNetworkNames } from '../services/network-teardown.js';
 import { DOCKER_LOG_LIMIT_FLAGS } from '../services/docker-log-policy.js';
 import { addressWriteLocked } from '../services/preview-address-settings.js';
@@ -1354,6 +1355,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     );
     // Throw to the existing finite auto-config error path; do not fall through
     // into heuristic imports after a retained-storage refusal.
+    assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));
     stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles);
     for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);

@@ -153,3 +153,8 @@ it('published exact birth is accepted read-only on its original daemon',async()=
  const s={exec:vi.fn(async(c:string)=>c.startsWith('docker info')?{exitCode:0,stdout:'owned-daemon',stderr:''}:{exitCode:0,stdout:JSON.stringify([v]),stderr:''})} as IShellExecutor;
  await expect((inspectStoragePlan as any)(s,plan(),false,required)).resolves.toBeUndefined();
 });
+
+it('an application cannot borrow a same-id project-shared infrastructure volume',()=>{
+ const shared:StorageBinding={...owner,scope:'project-shared'};delete shared.branchId;
+ expect(()=>profileStoragePlan(entry,profile([{kind:'volume',hostPath:stableStorageVolumeName(shared),containerPath:'/data',storage:shared}]),config)).toThrow('storage-owner-mismatch');
+});

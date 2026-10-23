@@ -60,6 +60,13 @@ describe('created runtime identity and native storage recheck',()=>{
   const {shell,run}=setupNative('app',drift);
   try{await expect(run()).rejects.toThrow('unsafe_deployment_storage');expect(shell.commands.some(c=>c.startsWith('docker start '))).toBe(false)}finally{vi.restoreAllMocks()}
  });
+ it.each(['image','mount','status','birth'] as const)('infra created rejection %s cannot be woken on retry',async drift=>{
+  const {shell,container,run}=setupNative('infra',drift);
+  try{await expect(run()).rejects.toThrow('unsafe_deployment_storage');
+   const before=shell.commands.length;await expect(run()).rejects.toThrow('unsafe_deployment_storage');
+   expect(shell.commands.slice(before).some(c=>c.startsWith('docker start '))).toBe(false);
+  }finally{vi.restoreAllMocks()}
+ });
  function setupNative(kind:'app'|'job'|'infra',drift?:'id'|'image'|'mount'|'status'|'birth'){
   const shell=new MockShellExecutor(),container=new ContainerService(shell,config,undefined,undefined,undefined,undefined,unitBindMountInspector),cid='c'.repeat(64),imageId='sha256:'+'d'.repeat(64);
   let made=false,name='new-app';
@@ -68,7 +75,7 @@ describe('created runtime identity and native storage recheck',()=>{
   shell.addResponsePattern(/^docker volume inspect /,()=>({exitCode:0,stdout:JSON.stringify([{Name:volume,Driver:'local',Options:null,Mountpoint:mountpoint,Labels:drift==='birth'&&made?{}:storageOwnerLabels(owner)}]),stderr:''}));
   shell.addResponsePattern(/docker image inspect.*json .Id/,()=>({exitCode:0,stdout:JSON.stringify([imageId,null]),stderr:''}));
   shell.addResponsePattern(/docker inspect.*json .Mounts/,()=>({exitCode:0,stdout:JSON.stringify([cid,'/'+name,drift==='image'?'sha256:'+'e'.repeat(64):imageId,drift==='status'?42:0,drift==='status'?'running':'created',[{Type:'volume',Name:drift==='mount'?'foreign':volume,Source:mountpoint,Destination:'/data',RW:true}],kind==='infra'?null:{'/tmp':''}]),stderr:''}));
-  shell.addResponsePattern(/docker inspect --format=.*json .State.Status/,()=>({exitCode:1,stdout:'',stderr:'Error: No such object: new-infra'}));
+  shell.addResponsePattern(/docker inspect --format=.*json .State.Status/,()=>made?{exitCode:0,stdout:[cid,'created','/new-infra'].map(x=>JSON.stringify(x)).join('|'),stderr:''}:{exitCode:1,stdout:'',stderr:'Error: No such object: new-infra'});
   shell.addResponsePattern(/^docker pull /,()=>({exitCode:0,stdout:'',stderr:''}));
   shell.addResponsePattern(/^docker create (.*)$/,m=>{made=true;name=m[0].match(/--name (?:'([^']+)'|([^ ]+))/)?.slice(1).find(Boolean)||'';return {exitCode:0,stdout:drift==='id'?'short':cid,stderr:''}});
   shell.addResponsePattern(/^docker (start|rm|network connect|logs) /,()=>({exitCode:0,stdout:'',stderr:''}));

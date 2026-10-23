@@ -1,5 +1,5 @@
 import type {CdsConfig, InfraService, IShellExecutor} from '../types.js';
-import {infraStoragePlan, stableStorageVolumeName, type DeploymentStoragePlan} from './deployment-storage-plan.js';
+import {UnsafeDeploymentStorageError,infraStoragePlan, stableStorageVolumeName, type DeploymentStoragePlan} from './deployment-storage-plan.js';
 import {recommendedVolumePathsFromCatalog} from './infra-catalog.js';
 import {isExactMissingStorageVolume} from './storage-birth-primitive.js';
 const reject = () => new Error('storage_fresh_catalog_unconfirmed');
@@ -51,4 +51,13 @@ export async function assertFreshLegacyVolumesAbsent(plans: readonly FreshInfraP
   const acceptedDaemon=await daemon();
   for(const name of names){if(!isExactMissingStorageVolume(await exec('docker volume inspect '+quote(name)),name))throw reject();}
   if(await daemon()!==acceptedDaemon)throw reject();
+}
+
+/** Configuration-only imports cannot create or adopt durable storage. Reject
+ * the complete new-service group before publishing profiles, env or snapshots;
+ * explicit new-only import-and-init remains the allocation path. Existing
+ * service definitions and their historical runtime are left untouched. */
+export function assertConfigOnlyInfraStorage(defs: readonly Pick<InfraService,'id'|'dockerImage'|'volumes'>[], existingIds: ReadonlySet<string>): void {
+  for(const def of defs) if(!existingIds.has(def.id) && ((def.volumes?.length || 0)>0 || recommendedVolumePathsFromCatalog(def.dockerImage)?.length))
+    throw new UnsafeDeploymentStorageError(def.id,'storage-provision-new-only-required');
 }

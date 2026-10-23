@@ -90,3 +90,19 @@ it('a cold historical orphan cannot freeze an unrelated project profile write',a
  const cold=new StateService(path.join(root,'state.json'));cold.load();cold.addProject({id:'q',slug:'q',name:'other',kind:'git',createdAt:'2026-10-24',updatedAt:'2026-10-24'});
  expect(()=>cold.addBuildProfile({...f.profile,id:'other',projectId:'q'})).not.toThrow();expect(cold.getBuildProfile('other')?.projectId).toBe('q');expect(()=>cold.addBuildProfile({...f.profile})).toThrow('storage_retained');expect(cold.getProfileStorageBirths(f.target(f.entries[0]))).toHaveLength(1);await cold.flush();
 });
+
+it.each(['baseline','override','clear'])('retained workspace candidate %s cannot overlap a published private mount',async kind=>{
+ const f=own();state.updateBuildProfile('app',{prebuiltImage:false,localArtifact:false,containerWorkDir:'/app'});
+ if(kind==='clear'){state.updateBuildProfile('app',{containerWorkDir:'/data'});state.setBranchProfileOverride('a','app',{containerWorkDir:'/app'});}
+ const raw=state.getBuildProfilesForProject('p')[0],effective={...raw,containerWorkDir:'/app'};
+ await new ProfileStorageProvisionService(state,f.shell,f.config).provisionNewProfile(f.entries[0],effective,[{mountKey:'data',containerPath:'/data',purpose:'persistent'}],'workspace-op',()=>{});
+ const before=JSON.stringify(state.getState());
+ const change=()=>kind==='baseline'?state.updateBuildProfile('app',{containerWorkDir:'/data'}):kind==='override'?state.setBranchProfileOverride('a','app',{containerWorkDir:'/data'}):state.clearBranchProfileOverride('a','app');
+ expect(change).toThrow('storage_retained_profile_mutation_refused');expect(JSON.stringify(state.getState())).toBe(before);
+});
+it('legal workspace edits retain the original v1 publication digest across cold reopen',async()=>{
+ const f=own();state.updateBuildProfile('app',{prebuiltImage:false,localArtifact:false,containerWorkDir:'/app'});
+ const row=await new ProfileStorageProvisionService(state,f.shell,f.config).provisionNewProfile(f.entries[0],state.getBuildProfilesForProject('p')[0],[{mountKey:'data',containerPath:'/data',purpose:'persistent'}],'workspace-op',()=>{});
+ state.setBranchProfileOverride('a','app',{containerWorkDir:'/safe'});await state.flush();
+ const cold=new StateService(path.join(root,'state.json'));cold.load();expect(cold.getProfileStorageBinding(f.target(f.entries[0]))?.declarationDigest).toBe(row.declarationDigest);expect(cold.resolvePublishedProfileStorage(f.entries[0],cold.getBuildProfilesForProject('p')[0]).cacheMounts).toHaveLength(1);await cold.flush();
+});

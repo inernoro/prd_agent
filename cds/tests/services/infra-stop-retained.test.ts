@@ -14,9 +14,10 @@ function fixture(scenario='normal'){
  shell.addResponsePattern(/^docker .*/,m=>{
   const c=m[0];
   if(c.startsWith('docker inspect ')){
-   reads++;if(!exists)return {exitCode:1,stdout:'',stderr:'Error: No such object: '+name};
+   reads++;if(scenario==='absent'||!exists)return {exitCode:1,stdout:'',stderr:'Error: No such object: '+name};
    if(scenario==='unknown')return {exitCode:124,stdout:'',stderr:'timeout'};
    if(c.includes('.State.Pid'))return {exitCode:0,stdout:[scenario==='changed-id'&&reads>1?other:cid,scenario==='changed-name'&&reads>1?'/foreign':'/'+name,running,running?42:0,running?'running':'exited'].map(x=>JSON.stringify(x)).join('|'),stderr:''};
+   if(c.includes('{{json .Id}}|{{json .Name}}'))return{exitCode:0,stdout:[cid,'/'+name].map(x=>JSON.stringify(x)).join('|'),stderr:''};
    return {exitCode:0,stdout:[cid,running?'running':'exited','/'+name].map(x=>JSON.stringify(x)).join('|'),stderr:''};
   }
   if(c.startsWith('docker stop ')){stops++;if(scenario==='stop-fail')return{exitCode:1,stdout:'',stderr:'controlled failure'};if(scenario!=='remains-running')running=false;return{exitCode:0,stdout:cid,stderr:''};}
@@ -83,4 +84,10 @@ describe('credential rotation recreation preserves storage preflight ordering',(
   expect(f.deps.containerService.startInfraService).toHaveBeenCalledWith(f.accepted,{});
   expect(f.deps.containerService.preflightInfraStorage).toHaveBeenCalledWith(legacy);
  });
+});
+
+it.each(['Error: No such object: ','Error response from daemon: No such container: '])('stateless removal accepts only exactly confirmed absent container %s',async prefix=>{
+ const f=fixture('absent');
+ await expect(f.container.stopInfraService(name,'cds-infra-remove')).resolves.toBeUndefined();
+ expect(f.shell.commands.some(c=>/^docker (stop|rm) /.test(c))).toBe(false);
 });

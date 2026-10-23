@@ -909,3 +909,11 @@ describe('explicit storage declarations survive compose roundtrip',()=>{
     expect(()=>parseComposeString('services:\n  db:\n    image: mysql:8\n    ports: ["3306"]\n    volumes: [".:/repo", "./database:/var/lib/mysql"]\n')).toThrow('ambiguous-compose-data-bind');
   });
 });
+
+it('strict infrastructure discovery preserves application classification for file and string input',async()=>{
+ const os=await import('node:os');const {parseComposeFile}=await import('../../src/services/compose-parser.js');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'strict-infra-'));
+ const content=`services:\n  built-app:\n    image: app:latest\n    build: .\n    ports: ["8080:80"]\n  source-app:\n    image: node:20\n    ports: ["8081:80"]\n    volumes: [".:/app"]\n  db:\n    image: postgres:16\n    ports: ["5432:5432"]\n    volumes: ["data:/var/lib/postgresql/data"]\n`;
+ try{const file=path.join(dir,'compose.yml');fs.writeFileSync(file,content);for(const defs of [parseComposeString(content,{preserveVolumeDeclaration:true}),parseComposeFile(file,{preserveVolumeDeclaration:true})])expect(defs.map(s=>s.id)).toEqual(['db']);}
+ finally{fs.rmSync(dir,{recursive:true,force:true});}
+});

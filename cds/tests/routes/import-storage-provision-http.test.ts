@@ -80,3 +80,9 @@ it.each(['full-yaml','nested-yaml','json-array'])('new-only import refuses expli
  const cfg=shape==='full-yaml'?yaml:{$schema:'cds-config',buildProfiles:[],infraServices:shape==='nested-yaml'?yaml:[{...catalogDeclaration(),volumes:null}]};
  const before=structuredClone(state.getBuildProfiles());const result=await request('/api/import-and-init',{initializeStorage:'new-only',config:cfg});expect(result.status===400||result.body.includes('初始化失败')).toBe(true);expect(vols.size).toBe(0);expect(state.getBuildProfiles()).toEqual(before);expect(state.getInfraServicesForProject('default')).toEqual([]);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(container.startInfraService).not.toHaveBeenCalled();
 });
+
+it('config-only import rejects an entire unowned storage batch before profile/env/snapshot writes',async()=>{
+ await listen();const before=JSON.stringify(state.getState()),snapshot=vi.spyOn(state,'createConfigSnapshot');
+ const response=await request('/api/import-config',{config:{$schema:'cds-config',buildProfiles:[profile('must-not-publish')],envVars:{MUST_NOT_WRITE:'yes'},infraServices:[declaration('legacy-config-only',true)]}});
+ expect(response.status).toBe(409);expect(JSON.stringify(state.getState())).toBe(before);expect(snapshot).not.toHaveBeenCalled();expect(shell.commands).toEqual([]);
+});

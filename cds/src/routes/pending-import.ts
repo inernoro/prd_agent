@@ -1,3 +1,4 @@
+import {assertConfigOnlyInfraStorage} from '../services/fresh-catalog-storage-plan.js';
 import { projectResourceNamespace } from '../services/preview-slug.js';
 /**
  * Pending imports — Agent-submitted CDS compose YAML awaiting operator approval.
@@ -378,6 +379,8 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       (parsed.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
       idSuffix,
     );
+    try {assertConfigOnlyInfraStorage(parsed.infraServices,new Set(stateService.getInfraServicesForProject(project.id).map(s=>s.id)));}
+    catch(error){res.status(409).json({error:'storage-provision-new-only-required',message:(error as Error).message});return;}
     try { stateService.assertBuildProfileBatchStorageAllowed(scopedProfiles); }
     catch (error) { res.status(409).json({error:'storage_retained_profile_mutation_refused',message:(error as Error).message}); return; }
     const appliedProfiles: string[] = [];
