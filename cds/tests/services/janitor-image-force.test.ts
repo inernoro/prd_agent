@@ -103,3 +103,24 @@ describe('held 与 failed 必须分开（2026-07-28 生产实测）', () => {
     expect(r!.startsWith(IMAGE_HELD_PREFIX)).toBe(false);
   });
 });
+
+
+describe('任何删除前都重新核对原生镜像身份引用', () => {
+  beforeEach(() => { execCalls.length=0;execResults={}; });
+  it('别名或 image ID 容器引用命中 ancestor 时，连普通 rmi 也不发出', async () => {
+    execResults={'ps -a --filter ancestor=img:tag':'exact-stopped-cid','rmi img:tag':'Untagged: img:tag'};
+    const r=await defaultImageDocker.removeImage('img:tag');
+    expect(r?.startsWith(IMAGE_HELD_PREFIX)).toBe(true);
+    expect(execCalls.some(a=>a[0]==='rmi')).toBe(false);
+  });
+  it('原生引用查询失败时不发普通 rmi', async () => {
+    execResults={'ps -a --filter ancestor=img:tag':'ERR:inspect unavailable','rmi img:tag':'Untagged: img:tag'};
+    expect((await defaultImageDocker.removeImage('img:tag'))?.startsWith(IMAGE_HELD_PREFIX)).toBe(true);
+    expect(execCalls.some(a=>a[0]==='rmi')).toBe(false);
+  });
+  it('先确认没有引用，才尝试非强制删除', async () => {
+    expect(await defaultImageDocker.removeImage('img:tag')).toBeNull();
+    expect(execCalls[0]).toEqual(['ps','-a','--filter','ancestor=img:tag','-q']);
+    expect(execCalls[1]).toEqual(['rmi','img:tag']);
+  });
+});
