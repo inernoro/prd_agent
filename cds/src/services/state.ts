@@ -2372,6 +2372,16 @@ export class StateService {
       // 排队中的失败快照也必须由恢复态覆盖，防止之后无关保存提交失败的删除。
       try { this.save(); } catch { /* 原持久化故障交还调用方；内存保持可重试。 */ }
     };
+    const summary: ProjectRemovalSummary = {
+      uptimeMonitors: uptimeMonitorsToRemove,
+      branches: branchesToRemove,
+      buildProfiles: buildProfilesToRemove,
+      infraServices: infraServicesToRemove,
+      routingRules: routingRulesToRemove,
+      projectGrants: projectGrantsToRevoke,
+      dbLedgerEntries: dbLedgerToRemove,
+    };
+
     try {
       // 变更前标记未确认删除，覆盖保存与异步落盘失败。
       this.projectRemovalWrites.set(id, undefined);
@@ -2415,22 +2425,13 @@ export class StateService {
       this.projectRemovalWrites.set(id, write);
       void write.then(() => {
         if (this.projectRemovalWrites.get(id) === write) this.projectRemovalWrites.delete(id);
+        for (const listener of this.projectRemovedListeners) {
+          try { listener(summary); } catch (err) { console.warn(`[state] 删项目观察者异常：${(err as Error).message}`); }
+        }
       }, () => { /* 保留未确认记录，不把失败的删除解释成成功归档。 */ });
 
     } catch (err) { rollback(); throw err; }
 
-    const summary: ProjectRemovalSummary = {
-      uptimeMonitors: uptimeMonitorsToRemove,
-      branches: branchesToRemove,
-      buildProfiles: buildProfilesToRemove,
-      infraServices: infraServicesToRemove,
-      routingRules: routingRulesToRemove,
-      projectGrants: projectGrantsToRevoke,
-      dbLedgerEntries: dbLedgerToRemove,
-    };
-    for (const listener of this.projectRemovedListeners) {
-      try { listener(summary); } catch (err) { console.warn(`[state] 删项目观察者异常：${(err as Error).message}`); }
-    }
     return summary;
   }
 

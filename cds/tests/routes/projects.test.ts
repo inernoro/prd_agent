@@ -2500,6 +2500,18 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       expect(second.status).toBe(201);
     });
 
+    it('沙盒初始化失败且删除落盘失败时保留项目网络，不迟到清理恢复后的项目', async () => {
+      shell.addResponse('git init -b main', { stdout: '', stderr: 'init failed', exitCode: 128 });
+      const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('injected rollback write failure'));
+      try {
+        const res = await request(server, 'POST', '/api/projects', { name: 'Rollback Fail', slug: 'rollback-fail', composeYaml: 'services: {}' });
+        expect(res.status).toBe(500);
+        expect(res.body.error).toBe('state_save_failed');
+        expect(stateService.getProjects().some(p => p.slug === 'rollback-fail')).toBe(true);
+        expect(shell.commands.some(c => c.startsWith('docker network rm'))).toBe(false);
+      } finally { flush.mockRestore(); }
+    });
+
     it('git init 失败时报 500 + 回滚 project + 回滚 docker network', async () => {
       // exact-match 优先于 pattern → 用 addResponse 强制 init 失败,
       // 不影响 beforeEach 里其它 git 命令的 happy mock。

@@ -17,6 +17,7 @@ describe('删除项目与历史回执的持久化边界', () => {
   let persisted: CdsState | null, pending: CdsState | null;
   let mode: 'ok' | 'save-fail' | 'flush-fail' | 'hold';
   let release: (() => void) | undefined, entered: Promise<void>, enter: () => void;
+  let observer: ReturnType<typeof vi.fn>;
   let store: StateBackingStore & { flush(): Promise<void> }, origin: string;
   const removed = (value: CdsState | null) => !!value && !value.projects?.some(p => p.id === 'target');
   async function receiptView() {
@@ -51,7 +52,7 @@ describe('删除项目与历史回执的持久化边界', () => {
     state.addBranch({ id: 'target-branch', projectId: 'target', branch: 'lab', worktreePath: dir, services: {}, status: 'idle', createdAt: now });
     state.addProjectGrant({ id: 'grant-target', projectId: 'target', principalId: 'tester', origin: 'approved', grantedAt: now });
     (state.getState() as CdsState).customEnv.target = { RETAIN: 'original' };
-    await state.flush(); shell = new MockShellExecutor();
+    await state.flush(); observer = vi.fn(); state.onProjectRemoved(observer); shell = new MockShellExecutor();
     const app = express(); app.use(express.json());
     app.use((req, _res, next) => { Object.assign(req, { cdsUser: { id: 'owner', isSystemOwner: true, authProvider: 'local' }, cdsSession: {} }); next(); });
     app.use('/api', createProjectsRouter({ stateService: state, shell }));
@@ -70,6 +71,7 @@ describe('删除项目与历史回执的持久化边界', () => {
     const publish = vi.spyOn(cdsEventsBus, 'publish'); mode = failure;
     const response = await fetch(`${origin}/api/projects/target`, { method: 'DELETE' });
     expect(response.status).toBe(500);
+    expect(observer).not.toHaveBeenCalled();
     expect(state.getProject('target')).toBeDefined();
     expect(state.getBranch('target-branch')).toBeDefined();
     expect(state.getState().projectGrants?.find(g => g.id === 'grant-target')?.revokedAt).toBeUndefined();
@@ -92,9 +94,11 @@ describe('删除项目与历史回执的持久化边界', () => {
     mode = 'hold';
     const deleting = fetch(`${origin}/api/projects/target`, { method: 'DELETE' });
     await entered;
+    expect(observer).not.toHaveBeenCalled();
     state.updateProject('other', { name: 'concurrent-edit' });
     mode = 'flush-fail'; release?.();
     expect((await deleting).status).toBe(500);
+    expect(observer).not.toHaveBeenCalled();
     expect(state.getProject('target')).toBeDefined();
     expect(state.getProject('other')?.name).toBe('concurrent-edit');
     mode = 'ok'; await state.flush(); state.load();
@@ -110,9 +114,11 @@ describe('删除项目与历史回执的持久化边界', () => {
     await entered;
     try {
       expect((await receiptView()).receiptArchived).not.toBe(true);
+      expect(observer).not.toHaveBeenCalled();
       expect(publish).not.toHaveBeenCalledWith('access-request.progress', expect.objectContaining({ stage: 'project-deleted' }));
     } finally { mode = 'ok'; release?.(); }
     expect((await deleting).status).toBe(200);
+    expect(observer).toHaveBeenCalledTimes(1);
     expect(await receiptView()).toMatchObject({ receiptArchived: true, creationReceiptEnabled: false, status: 'approved' });
     expect(publish).toHaveBeenCalledWith('access-request.progress', { projectId: 'target', stage: 'project-deleted' });
     expect(state.getAccessRequest('receipt')).toEqual(before); expect(state.getProject('other')).toEqual(other);

@@ -3207,7 +3207,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       } catch (err) {
         // 半成品状态:project + network 已建,但 sandbox bootstrap 失败。
         // 回滚 project + network,告诉用户错误。
-        try { stateService.removeProject(id); } catch { /* state save 失败也只能 log */ }
+        try {
+          stateService.removeProject(id);
+          await stateService.waitForProjectRemoval(id);
+        } catch {
+          res.status(500).json({ error: 'state_save_failed', message: '项目回滚尚未成功保存，已保留项目及网络，请稍后重试删除' });
+          return;
+        }
         await removeDockerNetwork(network).catch(() => { /* 已记录 */ });
         if (err instanceof ProjectFileError) {
           res.status(err.status).json({
