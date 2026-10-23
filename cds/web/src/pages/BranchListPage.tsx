@@ -7662,7 +7662,7 @@ const BranchCard = memo(function BranchCard({
               </span>
             ) : footerSha ? (
               <span data-footer-primary-status className="min-w-0 max-w-full shrink truncate whitespace-nowrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground" title={`运行版本 ${branch.runningCommitSha || '未确认'}；待发布目标 ${branch.targetCommitSha || '未确认'}`}>
-                {showsIssue ? '需处理' : branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? '待发布' : isRunning ? '运行中' : '待部署'}
+                {showsIssue ? '异常' : branch.targetCommitSha && branch.targetCommitSha !== branch.runningCommitSha ? '待发布' : isRunning ? '运行中' : '待部署'}
               </span>
             ) : null}
             {/* AI 活跃时这一格让给「AI 在做什么」：它有时效性，commit subject
@@ -7696,7 +7696,7 @@ const BranchCard = memo(function BranchCard({
             ) : (
               <span className="min-w-0 flex-1" aria-hidden />
             )}
-            {failedPhase ? null : (
+            {failedPhase || showsIssue ? null : (
             <button
               type="button"
               className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
