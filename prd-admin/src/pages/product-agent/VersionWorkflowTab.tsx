@@ -769,7 +769,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
               <Field label="需求来源 *"><InitiationInput value={demandSource} onChange={(e) => setDemandSource(e.target.value)} placeholder="例如：内部、客户名称" /></Field>
               <Field label="是否需要 UI 设计 *"><InitiationSelect value={needUiDesign} onChange={(e) => setNeedUiDesign(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
               <Field label="是否属于 AI POC 项目 *"><InitiationSelect value={isAiPoc} onChange={(e) => setIsAiPoc(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></InitiationSelect></Field>
-              <Field label="产品负责人 *"><UserSearchSelect value={ownerId} onChange={setOwnerId} onSelectUser={(user) => setOwnerDisplayName(user.displayName)} placeholder={ownerDisplayName ? `当前：${ownerDisplayName}（可搜索改选）` : '搜索并选择产品负责人'} /><span className="mt-1 block text-xs text-token-muted">默认申请人，代申请时可改选；不需要负责人审批。</span></Field>
+              <Field label="产品负责人 *"><UserSearchSelect value={ownerId} onChange={setOwnerId} onSelectUser={(user) => setOwnerDisplayName(user.displayName)} placeholder={ownerDisplayName ? `当前：${ownerDisplayName}（可搜索改选）` : '搜索并选择产品负责人'} /></Field>
               <Field label="备注（选填）" full><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className={INITIATION_CONTROL_CLASS} /></Field>
             </div>
           </section>
@@ -829,7 +829,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   return (
     <>
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
+      <Table headers={['产品', '项目类别', `立项号（${items.filter((item) => item.tCode?.trim()).length}）`, '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
           const isOwner = !item.legacyRegistration && item.createdBy === currentUserId;
           const showRetryReview = isOwner && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
@@ -910,7 +910,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', `正式版本号（${items.filter((item) => item.vCode?.trim()).length}）`, '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>

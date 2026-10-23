@@ -94,6 +94,7 @@ describe('内部立项单页来源与失败恢复', () => {
     api.createInitiation.mockResolvedValue({ success: true, data: seed({ ownerId: 'owner', ownerName: '其他负责人', reviewPassed: true, status: 'decision_pending' }) });
     await mount();
     expect(field<HTMLSelectElement>('产品负责人 *').value).toBe('me');
+    expect(host.textContent).not.toContain('默认申请人，代申请时可改选；不需要负责人审批。');
     expect(field<HTMLSelectElement>('是否需要开评审会').value).toBe('yes');
     await change(field('产品负责人 *'), 'owner');
     await change(host.querySelector<HTMLSelectElement>('[aria-label="搜索方案名称或文件名"]')!, 'passed');
