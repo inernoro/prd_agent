@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DeploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
 
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -53,6 +53,58 @@ describe('部署阶段容量准入', () => {
     await expect(budget.run('pull', { projectId: 'b' }, async () => true)).resolves.toBe(true);
   });
 
+  it('仅实际有界且原代 scope 仍有效的等待可用作心跳收割证据', async () => {
+    let now = 1000, current = true;
+    const time = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
+    const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api', operationId: 'owned-op', operationGeneration: 2 };
+    const waiting = budget.acquire('start', owner, { signal: controller.signal,
+      check: () => { if (!current) throw new Error('本代已失效'); } }).catch(() => undefined);
+    try {
+      expect(budget.waitingOperation('owned-op', 2, owner)).toMatchObject({ phase: 'start', enqueuedAt: 1000, deadlineAt: 1_201_000 });
+      expect(budget.waitingOperation('owned-op', 2, { projectId: 'p1', branchId: 'b1' })).toBeDefined();
+      expect(budget.waitingOperation('owned-op', 1, owner)).toBeUndefined();
+      for (const scope of [{ ...owner, projectId: 'p2' }, { ...owner, branchId: 'b2' }, { ...owner, profileId: 'web' }]) {
+        expect(budget.waitingOperation('owned-op', 2, scope)).toBeUndefined();
+      }
+      now += 16 * 60_000;
+      expect(budget.waitingOperation('owned-op', 2, owner)).toBeDefined();
+      current = false;
+      expect(budget.waitingOperation('owned-op', 2, owner)).toBeUndefined();
+      current = true; now += 5 * 60_000;
+      expect(budget.waitingOperation('owned-op', 2, owner)).toBeUndefined();
+    } finally { controller.abort(); await waiting; time.mockRestore(); }
+  });
+
+  it('没有原资格 check 的陈旧调用不产生等待证明，执行中也不是等待', async () => {
+    const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
+    const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api', operationId: 'owned-op', operationGeneration: 2 };
+    const waiting = budget.acquire('start', owner, { signal: controller.signal }).catch(() => undefined);
+    try { expect(budget.waitingOperation('owned-op', 2, owner)).toBeUndefined(); }
+    finally { controller.abort(); await waiting; }
+    const release = await budget.acquire('pull', owner, { check: () => {} });
+    try { expect(budget.waitingOperation('owned-op', 2, owner)).toBeUndefined(); }
+    finally { release(); }
+  });
+
+  it('阶段 task 异步返回后仍须核对资格，迟到成功不能被继续使用', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000);
+    let current = true;
+    await expect(budget.run('pull', {}, async () => { current = false; return 'late-result'; },
+      { check: () => { if (!current) throw new Error('本代已失效'); } })).rejects.toThrow('本代已失效');
+    expect((budget.snapshot().pull as { active: unknown[] }).active).toEqual([]);
+  });
+
+  it('历史默认项目省略 projectId 的真实队列仍归属 default，不借给其他项目', async () => {
+    const budget = new DeploymentPhaseBudget(() => 0), controller = new AbortController();
+    const waiting = budget.acquire('start', { branchId: 'b1', profileId: 'api', operationId: 'owned-op', operationGeneration: 2 },
+      { check: () => {}, signal: controller.signal }).catch(() => undefined);
+    try {
+      expect(budget.waitingOperation('owned-op', 2, { projectId: 'default', branchId: 'b1', profileId: 'api' })).toBeDefined();
+      expect(budget.waitingOperation('owned-op', 2, { projectId: 'p2', branchId: 'b1', profileId: 'api' })).toBeUndefined();
+    } finally { controller.abort(); await waiting; }
+  });
+
   it('Docker创建返回后启动槽归还，未就绪内存预留仍保留到就绪或真实回收', async () => {
     const budget = new DeploymentPhaseBudget(() => 2000);
     const release = await budget.acquire('start', { projectId: 'a' }, { memoryMB: 600, reservationKey: 'warming' });
@@ -76,6 +128,19 @@ describe('部署阶段容量准入', () => {
     expect(budget.memorySnapshot()[0].pids).toBe(64);
     pids = 192; budget.pump(); const release = await next; release();
     budget.releaseMemory('warming'); budget.releaseMemory('next');
+  });
+
+  it('acquire await 恢复前已有同字段后继预约，原 owner 不能捕获其退款许可', async () => {
+    const budget = new DeploymentPhaseBudget(() => 10000);
+    const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api', operationId: 'op', operationGeneration: 1 };
+    const admitted = budget.acquire('start', owner, { reservationKey: 'owned', memoryMB: 512 });
+    const successor = { ...owner };
+    budget.reserveKnownMemory('owned', 600, successor, 128);
+    const release = await admitted;
+    expect(budget.captureMemoryRelease('owned', owner)()).toBe(false);
+    expect(budget.memorySnapshot()[0]).toMatchObject({ memoryMB: 600, pids: 128 });
+    expect(budget.memorySnapshot()[0].owner).toBe(successor);
+    release(); budget.releaseMemory('owned');
   });
 });
 
@@ -102,6 +167,19 @@ describe('重启后的部署内存预留', () => {
     expect(f.shell.commands).toHaveLength(1);
     expect(f.shell.commands[0]).toMatch(/^docker inspect /);
     expect(f.branch.services.web.status).toBe('error');
+  });
+
+  it('聚合 building 不重复预约同一已发布 CID，新 pending 候选仍保留预约', async () => {
+    const f = fixture('running'), service = f.branch.services.web;
+    service.status = 'building';
+    service.servingRuntime = { containerName: service.containerName, containerId: id, creationIssued: true, hostPort: service.hostPort };
+    await restoreDeploymentMemoryReservations([f.branch], () => [], { shell: f.shell, budget: f.budget });
+    expect(f.budget.memorySnapshot()).toEqual([]);
+    service.pendingRuntime = { containerName: 'new-web', creationIssued: true, hostPort: 10002 };
+    await restoreDeploymentMemoryReservations([f.branch], () => [], { shell: f.shell, budget: f.budget });
+    expect(f.budget.memorySnapshot()).toEqual([expect.objectContaining({ key: 'new-web', owner: {
+      projectId: 'project', branchId: 'branch', profileId: 'web',
+    } })]);
   });
 
   it.each(['running', 'created', 'restarting'])('未完成的 %s 容器仍保留启动余量', async status => {

@@ -25,6 +25,7 @@ import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, t
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { IsolatedShellExecutor } from './services/isolated-shell-executor.js';
+import { confirmMaintenanceBoot } from './services/self-maintenance-retention.js';
 import { ContainerLogStreamHub } from './services/container-log-stream-hub.js';
 import { ObservationStreamExecutor } from './services/observation-stream-executor.js';
 import { StateService } from './services/state.js';
@@ -4708,7 +4709,7 @@ async function shutdown(signal: string): Promise<void> {
   if (shutdownInProgress) return;
   shutdownInProgress = true;
   console.log(`[shutdown] received ${signal}, stopping services...`);
-  branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown');
+  branchOperationCoordinator.interruptAll(`CDS process is shutting down (${signal})`, 'process.shutdown', { normalShutdown: true });
   // 已禁止新部署。尽早释放长日志/事件的空闲进程与内存，实际资源确认
   // 继续使用保留的operation/observation执行器及原来的清理期限。
   const logReadersShutdown = Promise.all([
@@ -5762,6 +5763,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
 } else {
   // ── Standalone or Scheduler mode: start dashboard + proxy ──
   listenWithRetry(app, config.masterPort, 'Dashboard', () => {
+    confirmMaintenanceBoot(config.repoRoot);
     console.log(`  Dashboard:  http://localhost:${config.masterPort}`);
     console.log(`  Worker:     http://localhost:${config.workerPort}`);
     console.log(`  Bridge:     http://localhost:${config.masterPort}/api/bridge/ (HTTP polling)`);

@@ -292,6 +292,7 @@ export class BranchOperationCoordinator {
   private generations = new Map<string, number>();
 
   private readonly operationEndListeners = new Set<(operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void>();
+  private readonly normalShutdownPendingGuards = new Set<(pending: PendingWebhookDeploy) => boolean>();
 
   constructor(private readonly events?: ServerEventLogSink | null) {}
 
@@ -411,6 +412,11 @@ export class BranchOperationCoordinator {
   onOperationEnded(listener: (operationId: string, generation: number, status: 'cancelled' | 'failed' | 'interrupted') => void): () => void {
     this.operationEndListeners.add(listener);
     return () => this.operationEndListeners.delete(listener);
+  }
+
+  onNormalShutdownPending(guard: (pending: PendingWebhookDeploy) => boolean): () => void {
+    this.normalShutdownPendingGuards.add(guard);
+    return () => this.normalShutdownPendingGuards.delete(guard);
   }
 
   hasWaitingOperation(operationId: string, generation: number): boolean {
@@ -681,7 +687,7 @@ export class BranchOperationCoordinator {
     }
   }
 
-  interruptAll(reason: string, source: string): void {
+  interruptAll(reason: string, source: string, options: { normalShutdown?: boolean } = {}): void {
     this.artifactTargetReads.clear();
     for (const active of this.active.values()) {
       this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
@@ -692,7 +698,24 @@ export class BranchOperationCoordinator {
         cancelReason: active.cancelReason || null,
       });
     }
-    for (const pending of this.pendingWebhookDeploys.values()) {
+    for (const [key, pending] of this.pendingWebhookDeploys) {
+      const { operationId, generation } = pending;
+      const sameIdentity = (item: { operationId: string; generation: number }) => item.operationId === operationId && item.generation === generation;
+      const unclaimed = ![...this.active.values()].some(sameIdentity)
+        && ![...this.pendingReplayClaims.values()].some(claim => sameIdentity(claim.pending))
+        && ![...this.reservedContinuations.values()].some(sameIdentity);
+      const preserved = options.normalShutdown === true && unclaimed && [...this.normalShutdownPendingGuards].some(guard => {
+        try { return guard(pending); } catch { return false; }
+      });
+      if (preserved && this.pendingWebhookDeploys.get(key) === pending
+        && pending.operationId === operationId && pending.generation === generation) {
+        this.pendingWebhookDeploys.delete(key);
+        this.deploymentInputs.delete(this.replayKey({ operationId, generation }));
+        this.record('branch.operation.deferred', pending.request, operationId, generation, 'info', {
+          reason, source, pending: true, preserved: true,
+        });
+        continue;
+      }
       this.record('branch.operation.interrupted', pending.request, pending.operationId, pending.generation, 'warn', {
         reason,
         source,
@@ -715,6 +738,27 @@ export class BranchOperationCoordinator {
         continueWith: reserved.continueWith,
       });
     }
+    // 取消重启后进程仍可服务，旧执行体、待办和续接都不能继续持有执行许可。
+    this.active.clear();
+    this.pendingWebhookDeploys.clear();
+    this.reservedContinuations.clear();
+    this.pendingReplayClaims.clear();
+    this.deploymentInputs.clear();
+  }
+
+  /** 运行心跳过期只撤销精确原身份，不能取消同分支其他服务或已续接的新代次。 */
+  revokeInterrupted(identity: { operationId: string; generation: number; branchId: string; projectId: string; profileId?: string }): boolean {
+    const entry = this.findActiveEntryByOperation(identity.operationId), active = entry?.active;
+    if (!entry || !active || active.generation !== identity.generation || active.branchId !== identity.branchId
+      || (active.request.projectId || 'default') !== identity.projectId
+      || (active.request.profileId || undefined) !== identity.profileId) return false;
+    active.cancelled = true;
+    active.cancelReason = 'deployment run heartbeat expired';
+    this.active.delete(entry.key);
+    this.record('branch.operation.interrupted', active.request, active.operationId, active.generation, 'warn', {
+      reason: active.cancelReason,
+    });
+    return true;
   }
 
   isCurrent(branchId: string, operationId: string, generation: number): boolean {
@@ -1124,7 +1168,7 @@ export class BranchOperationCoordinator {
       severity,
       source: 'branch-operation-coordinator',
       action,
-      message: `${action}: ${request.branchId} ${request.kind}`,
+      message: action === 'branch.operation.deferred' ? '保留原待办，重启后待校验' : `${action}: ${request.branchId} ${request.kind}`,
       projectId: request.projectId || null,
       branchId: request.branchId,
       profileId: request.profileId || null,
