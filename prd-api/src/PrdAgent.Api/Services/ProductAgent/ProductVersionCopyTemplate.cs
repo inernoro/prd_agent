@@ -14,7 +14,7 @@ internal static class ProductVersionCopyTemplate
         NeedUiDesign = item.NeedUiDesign,
         IsAiPoc = item.IsAiPoc,
         DemandSource = item.DemandSource,
-        PlanName = item.PlanName,
+        PlanName = WithInternalCode(item),
         PlannedProjectAt = item.PlannedProjectAt,
     }), item.OwnerName);
 
@@ -32,6 +32,15 @@ internal static class ProductVersionCopyTemplate
         PlannedReleaseAt = item.PlannedReleaseAt,
         PlannedTrainingMinutes = item.PlannedTrainingMinutes,
     }), item.OwnerName);
+
+    private static string WithInternalCode(ProductInitiation item)
+    {
+        var title = item.PlanName;
+        if (string.IsNullOrWhiteSpace(item.AppName) || string.IsNullOrWhiteSpace(item.TCode)) return title;
+        var bracket = title.IndexOfAny(new[] { '（', '(' });
+        // 新申领按已选应用与实际T号重建前缀，不猜测旧内容，不改变原始名称。
+        return bracket < 0 ? title : item.AppName.Trim() + item.TCode.Trim() + title[bracket..];
+    }
 
     private static string WithOwner(string text, string? name)
     {
