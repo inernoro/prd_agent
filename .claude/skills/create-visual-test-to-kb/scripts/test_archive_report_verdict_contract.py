@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 SCRIPT = pathlib.Path(__file__).with_name("archive_report.py")
@@ -819,6 +820,27 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
         "warnings": [],
     }]
     figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
+
+    def test_reg_stsmk_report_external_link_001_uses_same_frame_for_cds_report_links(self):
+        with mock.patch.dict(
+            "os.environ",
+            {"CDS_HOST": "https://cds.miduo.org"},
+            clear=False,
+        ):
+            same_report = archive_report._render_inline(
+                "[打开技术附录](https://cds.miduo.org/reports?project=prd-agent&report=tech-1)"
+            )
+            same_host_page = archive_report._render_inline(
+                "[打开普通页面](https://cds.miduo.org/projects/prd-agent)"
+            )
+            other_report = archive_report._render_inline(
+                "[打开外部报告](https://reports.example.test/reports?report=tech-1)"
+            )
+
+        self.assertIn('target="_self"', same_report)
+        self.assertNotIn('rel="noopener noreferrer"', same_report)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', same_host_page)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', other_report)
 
     @staticmethod
     def business_decision_body(not_run: int, inconclusive: int) -> str:

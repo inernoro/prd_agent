@@ -27,7 +27,7 @@
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 REPORT_KINDS = (
@@ -572,6 +572,25 @@ def _method_note(text):
     )
 
 
+def _link_target_attrs(url):
+    """Keep CDS report-to-report navigation inside the sandboxed viewer frame."""
+    if not re.match(r"https?://", url):
+        return ""
+
+    report_url = urlsplit(url)
+    cds_url = urlsplit(os.environ.get("CDS_HOST", ""))
+    is_same_cds_report = (
+        report_url.scheme == "https"
+        and cds_url.scheme == "https"
+        and report_url.netloc == cds_url.netloc
+        and report_url.path.rstrip("/") == "/reports"
+        and bool(parse_qs(report_url.query).get("report"))
+    )
+    if is_same_cds_report:
+        return ' target="_self"'
+    return ' target="_blank" rel="noopener noreferrer"'
+
+
 def _render_inline(text):
     tokens = []
 
@@ -587,8 +606,9 @@ def _render_inline(text):
 
     def link_repl(m):
         label = html.escape(m.group(1).strip())
-        url = html.escape(m.group(2).strip(), quote=True)
-        target = ' target="_blank" rel="noopener noreferrer"' if re.match(r"https?://", url) else ""
+        raw_url = m.group(2).strip()
+        url = html.escape(raw_url, quote=True)
+        target = _link_target_attrs(raw_url)
         return stash(f'<a href="{url}"{target}>{label}</a>')
 
     def code_repl(m):
