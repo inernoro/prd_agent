@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { withWritableSourceLayer } from './source-workspace.js';
 import type { BranchEntry, BuildProfile, CacheMount, CdsConfig, IShellExecutor, StorageBinding } from '../types.js';
-import { profileStoragePlan, stableStorageVolumeName, renderStoragePlan, withRuntimeTmpfs } from './deployment-storage-plan.js';
+import { profileStoragePlan, stableStorageVolumeName, renderStoragePlan, withRuntimeTmpfs, resolveStorageImage } from './deployment-storage-plan.js';
 import { allocateStorageBirths, storageProvisionDigest, type StorageBirth } from './storage-provision.js';
 export interface ProfileStorageTarget {
     kind: 'profile';
@@ -72,6 +72,12 @@ export class ProfileStorageProvisionService {
             renderStoragePlan(plan);
             if (fresh.some(m => this.store.getStorageBirth(m.hostPath)))
                 throw reject();
+            // Match runtime's complete actual image plan before recording any
+            // birth: an omitted Docker VOLUME must leave the target retryable.
+            const preparedShell = { exec: async (command, options) => {
+                fence(); const result = await this.shell.exec(command, { ...options, timeout: Math.min(30000, deadline - Date.now()), beforeStart: fence }); fence(); return result;
+            } } as IShellExecutor;
+            await resolveStorageImage(preparedShell, profile.dockerImage, plan, true);
             await allocateStorageBirths({ store: this.store, shell: this.shell, plan, newNames: record.names, target, serviceDigest: storageProvisionDigest(record), operationId, deadline, assertCurrent: fence, publish: () => this.store.publishProfileStorageDurably(record, () => { assertCurrent(); if (Date.now() >= deadline)
                     throw reject(); }) });
             return structuredClone(record);
