@@ -889,6 +889,24 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?:
   return result;
 }
 
+function resolveWorkbenchPreviewSource(input: {
+  html: string;
+  editor: boolean;
+  documentId: string;
+  assetBaseUrl?: string;
+}): { srcDoc: string } | { src: string } | Record<string, never> {
+  if (input.html.trim()) {
+    return {
+      srcDoc: prepareIframeHtml(input.html, {
+        editor: input.editor,
+        documentId: input.documentId,
+        assetBaseUrl: input.assetBaseUrl,
+      }),
+    };
+  }
+  return input.assetBaseUrl ? { src: input.assetBaseUrl } : {};
+}
+
 // 新版本在服务端生成阶段固化字体；旧历史版本导出或发布时只补同一份确定性字体声明。
 // 服务端仍以来源 run + 该唯一规范化变换做哈希校验，并把旧版本另存为派生版本。
 const PERSISTED_FONT_LINK =
@@ -1672,13 +1690,16 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   // 身份随文档/编辑模式更换，普通重渲染不改 srcDoc；旧文档的 ready 不可解锁新文档。
   const previewDocument = useMemo(() => {
     const id = crypto.randomUUID();
-    const useEditableDraft = editMode;
     return {
       id,
-      html: useEditableDraft || !artifactSiteUrl
-        ? prepareIframeHtml(generatedHtml, { editor: useEditableDraft, documentId: id, assetBaseUrl: artifactSiteUrl })
-        : '',
-      url: useEditableDraft ? '' : artifactSiteUrl,
+      // 已随 run 返回的权威 HTML 统一走隔离桥，托管 URL 只作为多文件资源 base；
+      // HTML 尚未取回时仍保留远端兜底，不能用空 srcDoc 抢占正常等待与恢复路径。
+      frameSource: resolveWorkbenchPreviewSource({
+        html: generatedHtml,
+        editor: editMode,
+        documentId: id,
+        assetBaseUrl: artifactSiteUrl,
+      }),
     };
   }, [generatedHtml, artifactSiteUrl, editMode]);
   const [readyPreviewId, setReadyPreviewId] = useState<string | null>(null);
@@ -5238,14 +5259,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                   key={previewDocument.id}
                   ref={iframeRef}
                   className="flex-1 w-full border-0"
-                  {...(previewDocument.url
-                    ? { src: previewDocument.url }
-                    : { srcDoc: previewDocument.html })}
+                  {...previewDocument.frameSource}
                   sandbox="allow-scripts"
                   title="PPT 预览"
                   style={{ minHeight: 0 }}
                   onLoad={() => {
-                    if (previewDocument.url) {
+                    if ('src' in previewDocument.frameSource) {
                       iframeRef.current?.contentWindow?.postMessage({
                         type: 'map-ppt-init',
                         documentId: previewDocument.id,

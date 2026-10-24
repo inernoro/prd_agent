@@ -7,29 +7,52 @@ import { describe, expect, it } from 'vitest';
 const source = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url), 'utf8');
 // 执行实际注入脚本，而不是复刻一个“等价”的测试实现。
 const factory = source.slice(source.indexOf('function prepareIframeHtml('), source.indexOf('// 新版本在服务端生成阶段固化字体'));
-const prepare = new Function('FONT_LINKS', ts.transpile(factory) + ';return prepareIframeHtml;')('') as (html: string, opts: { documentId: string; editor?: boolean; assetBaseUrl?: string }) => string;
+const frameFactory = new Function(
+  'FONT_LINKS',
+  ts.transpile(factory) + ';return { prepareIframeHtml, resolveWorkbenchPreviewSource };',
+)('') as {
+  prepareIframeHtml: (html: string, opts: { documentId: string; editor?: boolean; assetBaseUrl?: string }) => string;
+  resolveWorkbenchPreviewSource: (input: { html: string; editor: boolean; documentId: string; assetBaseUrl?: string }) => { srcDoc?: string; src?: string };
+};
+const prepare = frameFactory.prepareIframeHtml;
 const publishFactory = source.slice(source.indexOf('const PERSISTED_FONT_LINK'), source.indexOf('// 从生成 HTML 提取'));
 const preparePublish = new Function(ts.transpile(publishFactory.replace('export function', 'function')) + ';return preparePublishHtml;')() as (html: string, runtime?: string) => string;
 const html = prepare('<html><head></head><body></body></html>', { documentId: 'current-document' });
 const control = [...html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]).find(s => s.includes('function slides()'))!;
 
-function runtime(reveal?: { isReady: () => boolean; getIndices: () => { h: number }; on: () => void }) {
+function runtime(
+  reveal?: { isReady: () => boolean; getIndices: () => { h: number }; on: () => void },
+  slideCount = 1,
+) {
   const messages: Array<{ type: string; documentId: string }> = [];
   const intervals = new Map<number, () => void>();
   const tasks: Array<() => void> = [];
   const events = new Map<string, (event?: unknown) => void>();
   let next = 0;
   let navigations = 0;
-  const node = { getAttribute: () => 'slide active', getBoundingClientRect: () => ({ left: 0, top: 0, right: 100, bottom: 100 }), classList: { contains: () => true } };
-  const document = { readyState: 'loading', querySelectorAll: () => [node], dispatchEvent: () => { navigations++; } };
+  let activeIndex = 0;
+  let notifyMutation = () => {};
+  const nodes = Array.from({ length: slideCount }, (_, index) => ({
+    getAttribute: () => index === activeIndex ? 'slide active' : 'slide',
+    getBoundingClientRect: () => index === activeIndex
+      ? { left: 0, top: 0, right: 100, bottom: 100 }
+      : { left: 200, top: 0, right: 300, bottom: 100 },
+    classList: { contains: (name: string) => name === 'slide' || (name === 'active' && index === activeIndex) },
+  }));
+  const document = { readyState: 'loading', querySelectorAll: () => nodes, dispatchEvent: () => { navigations++; } };
   vm.runInNewContext(control, {
     document, parent: { postMessage: (message: { type: string; documentId: string }) => messages.push(message) },
     window: { Reveal: reveal, innerWidth: 100, innerHeight: 100, getComputedStyle: () => ({ opacity: '1' }), addEventListener: (type: string, listener: () => void) => events.set(type, listener) },
-    Reveal: reveal, MutationObserver: class { observe() {} }, KeyboardEvent: class {},
+    Reveal: reveal, MutationObserver: class { constructor(callback: () => void) { notifyMutation = callback; } observe() {} }, KeyboardEvent: class {},
     setInterval: (callback: () => void) => { intervals.set(++next, callback); return next; },
     clearInterval: (id: number) => intervals.delete(id), setTimeout: (callback: () => void) => tasks.push(callback),
   });
-  return { messages, document, events, tasks, tick: () => [...intervals.values()].forEach(callback => callback()), navigations: () => navigations };
+  return {
+    messages, document, events, tasks,
+    tick: () => [...intervals.values()].forEach(callback => callback()),
+    navigations: () => navigations,
+    activate: (index: number) => { activeIndex = index; notifyMutation(); },
+  };
 }
 
 describe('PPT 文档导航就绪合同', () => {
@@ -72,6 +95,22 @@ describe('PPT 文档导航就绪合同', () => {
     expect(frame.messages).toEqual([]);
     ready = true; frame.tick();
     expect(frame.messages).toContainEqual({ type: 'map-ppt-ready', documentId: 'current-document' });
+  });
+
+  it('原生五页 deck 自己切换 active 时同步外层页码', () => {
+    const frame = runtime(undefined, 5);
+    frame.document.readyState = 'interactive';
+    frame.events.get('DOMContentLoaded')!();
+    frame.tasks.splice(0).forEach(task => task());
+    frame.tick();
+    expect(frame.messages).toContainEqual({
+      type: 'map-ppt-slide', documentId: 'current-document', cur: 1, total: 5,
+    });
+
+    frame.activate(3);
+    expect(frame.messages).toContainEqual({
+      type: 'map-ppt-slide', documentId: 'current-document', cur: 4, total: 5,
+    });
   });
 
   it('圈选回复和编辑回传保留当前文档身份，父层过滤不会丢失合法响应', () => {
@@ -158,17 +197,49 @@ describe('PPT 文档导航就绪合同', () => {
     expect(editable).toContain('querySelectorAll("[data-map-inject],#__map_editor_toolbar__")');
   });
 
+  it('有权威 HTML 时选择带资源基址的 srcDoc，未取回 HTML 时保留远端兜底', () => {
+    const authoritativeHtml = '<!doctype html><html><head><link rel="stylesheet" href="assets/deck.css"></head><body>'
+      + '<main class="deck">'
+      + Array.from({ length: 5 }, (_, index) => `<section class="slide${index === 0 ? ' active' : ''}">第 ${index + 1} 页</section>`).join('')
+      + '</main></body></html>';
+    const frameSource = frameFactory.resolveWorkbenchPreviewSource({
+      html: authoritativeHtml,
+      editor: false,
+      documentId: 'history-run-7428',
+      assetBaseUrl: 'https://preview.example/sites/site-2dfd/.versions/revision-d/index.html?v=1',
+    });
+
+    expect(Object.keys(frameSource)).toEqual(['srcDoc']);
+    expect(frameSource.srcDoc).toContain('<base href="https://preview.example/sites/site-2dfd/.versions/revision-d/" data-map-inject>');
+    expect(frameSource.srcDoc).toContain('<main class="deck">');
+    expect(frameSource.srcDoc?.match(/class="slide/g)).toHaveLength(5);
+    expect(frameSource.srcDoc).toContain('documentId:"history-run-7428"');
+
+    expect(frameFactory.resolveWorkbenchPreviewSource({
+      html: '',
+      editor: false,
+      documentId: 'history-run-loading',
+      assetBaseUrl: 'https://preview.example/sites/site-2dfd/.versions/revision-d/index.html?v=1',
+    })).toEqual({
+      src: 'https://preview.example/sites/site-2dfd/.versions/revision-d/index.html?v=1',
+    });
+    expect(frameFactory.resolveWorkbenchPreviewSource({
+      html: '', editor: false, documentId: 'new-run-loading',
+    })).toEqual({});
+  });
+
   it('父层按当前文档身份解锁，替换后旧 ready 无效；按钮和处理器共用门禁，隔离保持', () => {
     expect(source).toContain('const previewReady = readyPreviewId === previewDocument.id');
     expect(source).toContain('if (d.documentId !== previewDocument.id) return;');
     expect(source).toContain('key={previewDocument.id}');
-    expect(source).toContain('? { src: previewDocument.url }');
-    expect(source).toContain(': { srcDoc: previewDocument.html }');
+    expect(source).toContain('{...previewDocument.frameSource}');
+    expect(source).not.toContain('? { src: previewDocument.url }');
     expect(source).toContain("type: 'map-ppt-init'");
-    expect(source).toContain('documentId: previewDocument.id');
-    expect(source).toContain('const useEditableDraft = editMode');
+    expect(source).toContain('editor: editMode');
     expect(source).toContain('assetBaseUrl: artifactSiteUrl');
-    expect(source).toContain("url: useEditableDraft ? '' : artifactSiteUrl");
+    expect(source).not.toContain("url: useEditableDraft ? '' : artifactSiteUrl");
+    expect(source).toContain("if ('src' in previewDocument.frameSource)");
+    expect(source).toContain('documentId: previewDocument.id');
     expect(source).toContain('}, [generatedHtml, artifactSiteUrl, editMode])');
     expect(source.match(/disabled=\{!previewReady\}/g)).toHaveLength(2);
     expect(source).toContain('if (!previewReady) return;');
