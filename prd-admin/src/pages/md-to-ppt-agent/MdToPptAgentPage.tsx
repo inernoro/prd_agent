@@ -761,6 +761,7 @@ function prepareIframeHtml(html: string, opts?: { editor?: boolean; documentId?:
     'function anchoredNav(dir){pressKey(dir==="prev"?"ArrowLeft":"ArrowRight",dir==="prev"?37:39);}' +
     'function anchoredGoto(h){var guard=0;while(cur()>1&&guard<60){anchoredNav("prev");guard++;}for(var i=0;i<h&&i<60;i++){anchoredNav("next");}}' +
     'function rep(){try{parent.postMessage({type:"map-ppt-slide"' + bridgeIdentity + ',cur:cur(),total:tot()},"*");}catch(e){}}' +
+    'window.addEventListener("keydown",function(e){if(e.key==="Escape"||e.key==="Esc"){try{parent.postMessage({type:"map-ppt-exit"' + bridgeIdentity + '},"*");}catch(err){}}},true);' +
     // 圈选信息桥：父页面发来视口百分比矩形，换算像素后在中心点 + 四角内缩 10% 共 5 个采样点
     // elementFromPoint 取元素，向上找最近的语义祖先（到 .slides 为止），去重收集至多 5 条描述回传。
     // 任何异常也必须回传（texts 为空数组），不许静默吞掉。
@@ -905,6 +906,21 @@ function resolveWorkbenchPreviewSource(input: {
     };
   }
   return input.assetBaseUrl ? { src: input.assetBaseUrl } : {};
+}
+
+function resolvePresentationSlideIndex(input: {
+  eventSource: unknown;
+  presentationSource: unknown;
+  expectedDocumentId: string;
+  data: { type?: string; documentId?: string; cur?: number } | null;
+}): number | null {
+  const { data } = input;
+  if (input.eventSource !== input.presentationSource
+    || !data
+    || data.documentId !== input.expectedDocumentId
+    || data.type !== 'map-ppt-slide'
+    || typeof data.cur !== 'number') return null;
+  return Math.max(0, data.cur - 1);
 }
 
 // 新版本在服务端生成阶段固化字体；旧历史版本导出或发布时只补同一份确定性字体声明。
@@ -1702,6 +1718,18 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       }),
     };
   }, [generatedHtml, artifactSiteUrl, editMode]);
+  const presentationDocument = useMemo(() => {
+    const id = `presentation-${previewDocument.id}`;
+    return {
+      id,
+      frameSource: resolveWorkbenchPreviewSource({
+        html: generatedHtml,
+        editor: false,
+        documentId: id,
+        assetBaseUrl: artifactSiteUrl,
+      }),
+    };
+  }, [generatedHtml, artifactSiteUrl, previewDocument.id]);
   const [readyPreviewId, setReadyPreviewId] = useState<string | null>(null);
   const previewReady = readyPreviewId === previewDocument.id;
   const [dirtyEdits, setDirtyEdits] = useState(false);
@@ -1833,6 +1861,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   const [presentMode, setPresentMode] = useState(false);
   const [presentIdx, setPresentIdx] = useState(0);
   const presentIframeRef = useRef<HTMLIFrameElement>(null);
+  const presentationReadyRef = useRef(false);
+  const presentationRestoreRef = useRef(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const mobileInputRef = useRef<HTMLTextAreaElement>(null);
@@ -2033,16 +2063,50 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     return `第${slide}页，${what}。修改要求：${note}`;
   }, []);
 
+  const closePresentation = useCallback(() => {
+    const finalIndex = presentationRestoreRef.current;
+    restoreSlideRef.current = finalIndex;
+    setSlidePos({ cur: finalIndex + 1, total: deckThumbDocs.length });
+    iframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: finalIndex }, '*');
+    setPresentMode(false);
+  }, [deckThumbDocs.length]);
+
   // ─── iframe postMessage 监听：页码上报 + 编辑稿回传 + ready 页位恢复 + 圈选信息
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
-      // opaque origin 下 e.origin === 'null'，只认来自当前预览 iframe 的消息
-      if (e.source !== iframeRef.current?.contentWindow) return;
       const d = e.data as {
         type?: string; documentId?: string; html?: string; cur?: number; total?: number;
         id?: string; slide?: number; texts?: string[];
       } | null;
       if (!d || typeof d !== 'object') return;
+      // opaque origin 下 e.origin === 'null'，全屏与工作台各自校验 source + documentId。
+      if (e.source === presentIframeRef.current?.contentWindow) {
+        if (d.documentId !== presentationDocument.id) return;
+        if (d.type === 'map-ppt-exit') {
+          closePresentation();
+          return;
+        }
+        if (d.type === 'map-ppt-ready') {
+          presentationReadyRef.current = true;
+          const target = presentationRestoreRef.current;
+          if (target > 0) {
+            presentIframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: target }, '*');
+          }
+          return;
+        }
+        const nextIndex = resolvePresentationSlideIndex({
+          eventSource: e.source,
+          presentationSource: presentIframeRef.current?.contentWindow,
+          expectedDocumentId: presentationDocument.id,
+          data: d,
+        });
+        if (nextIndex != null) {
+          setPresentIdx(nextIndex);
+          if (presentationReadyRef.current) presentationRestoreRef.current = nextIndex;
+        }
+        return;
+      }
+      if (e.source !== iframeRef.current?.contentWindow) return;
       if (d.documentId !== previewDocument.id) return;
       if (d.type === 'map-ppt-slide' && typeof d.cur === 'number' && typeof d.total === 'number') {
         setSlidePos({ cur: d.cur, total: d.total });
@@ -2075,7 +2139,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, [composeFeedback, previewDocument.id]);
+  }, [closePresentation, composeFeedback, presentationDocument.id, previewDocument.id]);
 
   // ─── 圈选提交：向 iframe 反查选区内元素，1s 无响应则退化为坐标描述
   const handleFeedbackSubmit = useCallback((payload: { rect: SelectionRectPct; note: string }) => {
@@ -2111,13 +2175,17 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   // ─── 全屏演示：自定义覆盖层（含底部子页缩略条，诉求 9：不再只有一张全屏 ppt）
   const handleFullscreen = useCallback(() => {
-    setPresentIdx((slidePos?.cur ?? 1) - 1);
+    const target = (slidePos?.cur ?? 1) - 1;
+    presentationReadyRef.current = false;
+    presentationRestoreRef.current = target;
+    setPresentIdx(target);
     setPresentMode(true);
   }, [slidePos]);
 
   // 演示模式跳页：缩略条点击 / 方向键 → goto 主演示 iframe
   const presentGoto = useCallback((idx0: number) => {
     const n = Math.max(0, Math.min(idx0, Math.max(0, deckThumbDocs.length - 1)));
+    presentationRestoreRef.current = n;
     setPresentIdx(n);
     presentIframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: n }, '*');
   }, [deckThumbDocs.length]);
@@ -2127,7 +2195,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setPresentMode(false); }
+      if (e.key === 'Escape') { closePresentation(); }
       else if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); presentGoto(presentIdx + 1); }
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); presentGoto(presentIdx - 1); }
     };
@@ -2136,7 +2204,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       window.removeEventListener('keydown', onKey);
       document.body.style.overflow = previousBodyOverflow;
     };
-  }, [presentMode, presentIdx, presentGoto]);
+  }, [closePresentation, presentMode, presentIdx, presentGoto]);
 
   // ─── 下载独立 HTML（含当前主题样式，可直接双击打开演示）
   const handleDownload = useCallback(() => {
@@ -5418,7 +5486,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               >下一页</button>
               <button
                 type="button"
-                onClick={() => setPresentMode(false)}
+                onClick={closePresentation}
                 data-testid="present-close"
                 className="min-h-11 px-2 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft"
               >退出全屏 (Esc)</button>
@@ -5427,22 +5495,17 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           <div className="flex-1 min-h-0 bg-token-nested">
             <iframe
               ref={presentIframeRef}
-              {...(artifactSiteUrl
-                ? { src: artifactSiteUrl }
-                : { srcDoc: prepareIframeHtml(generatedHtml) })}
+              {...presentationDocument.frameSource}
               sandbox="allow-scripts"
               title="全屏演示"
               className="w-full h-full border-0"
               onLoad={() => {
-                 if (artifactSiteUrl) {
+                 if ('src' in presentationDocument.frameSource) {
                    presentIframeRef.current?.contentWindow?.postMessage({
                      type: 'map-ppt-init',
-                     documentId: `presentation-${previewDocument.id}`,
+                     documentId: presentationDocument.id,
                    }, '*');
                  }
-                if (presentIdx > 0) {
-                  window.setTimeout(() => presentIframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: presentIdx }, '*'), 400);
-                }
               }}
             />
           </div>

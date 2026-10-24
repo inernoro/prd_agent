@@ -9,10 +9,16 @@ const source = readFileSync(new URL('../MdToPptAgentPage.tsx', import.meta.url),
 const factory = source.slice(source.indexOf('function prepareIframeHtml('), source.indexOf('// 新版本在服务端生成阶段固化字体'));
 const frameFactory = new Function(
   'FONT_LINKS',
-  ts.transpile(factory) + ';return { prepareIframeHtml, resolveWorkbenchPreviewSource };',
+  ts.transpile(factory) + ';return { prepareIframeHtml, resolveWorkbenchPreviewSource, resolvePresentationSlideIndex };',
 )('') as {
   prepareIframeHtml: (html: string, opts: { documentId: string; editor?: boolean; assetBaseUrl?: string }) => string;
   resolveWorkbenchPreviewSource: (input: { html: string; editor: boolean; documentId: string; assetBaseUrl?: string }) => { srcDoc?: string; src?: string };
+  resolvePresentationSlideIndex: (input: {
+    eventSource: unknown;
+    presentationSource: unknown;
+    expectedDocumentId: string;
+    data: { type?: string; documentId?: string; cur?: number } | null;
+  }) => number | null;
 };
 const prepare = frameFactory.prepareIframeHtml;
 const publishFactory = source.slice(source.indexOf('const PERSISTED_FONT_LINK'), source.indexOf('// 从生成 HTML 提取'));
@@ -226,6 +232,49 @@ describe('PPT 文档导航就绪合同', () => {
     expect(frameFactory.resolveWorkbenchPreviewSource({
       html: '', editor: false, documentId: 'new-run-loading',
     })).toEqual({});
+  });
+
+  it('全屏主演示区复用权威 HTML 和同一隔离桥，不单独退回托管直链', () => {
+    const fullscreenSource = source.slice(
+      source.indexOf('{/* 演示模式（自定义全屏）'),
+      source.indexOf('{/* 底部子页缩略条'),
+    );
+
+    expect(source).toContain('const presentationDocument = useMemo(() =>');
+    expect(fullscreenSource).toContain('{...presentationDocument.frameSource}');
+    expect(fullscreenSource).not.toContain('artifactSiteUrl\n                ? { src: artifactSiteUrl }');
+    const presentationWindow = {};
+    expect(frameFactory.resolvePresentationSlideIndex({
+      eventSource: presentationWindow,
+      presentationSource: presentationWindow,
+      expectedDocumentId: 'presentation-history-run-7428',
+      data: { type: 'map-ppt-slide', documentId: 'presentation-history-run-7428', cur: 5 },
+    })).toBe(4);
+    expect(frameFactory.resolvePresentationSlideIndex({
+      eventSource: {},
+      presentationSource: presentationWindow,
+      expectedDocumentId: 'presentation-history-run-7428',
+      data: { type: 'map-ppt-slide', documentId: 'presentation-history-run-7428', cur: 5 },
+    })).toBeNull();
+    expect(frameFactory.resolvePresentationSlideIndex({
+      eventSource: presentationWindow,
+      presentationSource: presentationWindow,
+      expectedDocumentId: 'presentation-history-run-7428',
+      data: { type: 'map-ppt-slide', documentId: 'stale-presentation', cur: 5 },
+    })).toBeNull();
+    const fullscreenFrame = runtime(undefined, 5);
+    fullscreenFrame.events.get('keydown')!({ key: 'Escape' });
+    expect(fullscreenFrame.messages).toContainEqual({
+      type: 'map-ppt-exit', documentId: 'current-document',
+    });
+    expect(source).toContain("if (d.type === 'map-ppt-ready')");
+    expect(source).toContain('const target = presentationRestoreRef.current;');
+    expect(source).toContain('presentationRestoreRef.current = target;');
+    expect(source).not.toContain("window.setTimeout(() => presentIframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto'");
+    expect(source).toContain('const closePresentation = useCallback(() =>');
+    expect(source).toContain("if (d.type === 'map-ppt-exit')");
+    expect(source).toContain("iframeRef.current?.contentWindow?.postMessage({ type: 'map-ppt-goto', h: finalIndex }, '*')");
+    expect(fullscreenSource).toContain('onClick={closePresentation}');
   });
 
   it('父层按当前文档身份解锁，替换后旧 ready 无效；按钮和处理器共用门禁，隔离保持', () => {
