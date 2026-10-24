@@ -13,12 +13,12 @@ import {createBranchRouter} from '../../src/routes/branches.js';
 import {createPendingImportRouter} from '../../src/routes/pending-import.js';
 import {storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import type {CdsConfig,IShellExecutor} from '../../src/types.js';
-let root:string,state:StateService,server:http.Server,commands:string[],volumes:Map<string,any>,shell:IShellExecutor,coordinator:BranchOperationCoordinator,unknown:boolean,nodes:any[];
+let root:string,state:StateService,server:http.Server,commands:string[],volumes:Map<string,any>,shell:IShellExecutor,coordinator:BranchOperationCoordinator,unknown:boolean,nodes:any[],imageVolumes:Record<string,unknown>|null;
 beforeEach(async()=>{
  root=fs.mkdtempSync(path.join(os.tmpdir(),'cds-profile-p-http-'));state=new StateService(path.join(root,'state.json'));state.load();state.addProject({id:'p',slug:'p',name:'own',kind:'git',createdAt:'2026-10-23',updatedAt:'2026-10-23'});
  state.addBuildProfile({id:'app',projectId:'p',name:'app',workDir:'.',dockerImage:'fixture:image',prebuiltImage:true,localArtifact:true,containerPort:8080});for(const id of ['a','b'])state.addBranch({id,projectId:'p',branch:id,worktreePath:path.join(root,id),services:{},status:'idle',createdAt:'2026-10-23'});
- nodes=[];commands=[];volumes=new Map();unknown=false;coordinator=new BranchOperationCoordinator();
- shell={exec:vi.fn(async(c,o)=>{o?.beforeStart?.();commands.push(c);if(c.startsWith('docker info'))return{exitCode:0,stdout:'own-daemon',stderr:''};const name=/'([^']+)'$/.exec(c)?.[1]||'';
+ imageVolumes=null;nodes=[];commands=[];volumes=new Map();unknown=false;coordinator=new BranchOperationCoordinator();
+ shell={exec:vi.fn(async(c,o)=>{o?.beforeStart?.();commands.push(c);if(c.startsWith('docker image inspect'))return{exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),imageVolumes]),stderr:''};if(c.startsWith('docker info'))return{exitCode:0,stdout:'own-daemon',stderr:''};const name=/'([^']+)'$/.exec(c)?.[1]||'';
  if(c.startsWith('docker volume inspect'))return unknown?{exitCode:124,stdout:'',stderr:'unavailable'}:volumes.has(name)?{exitCode:0,stdout:JSON.stringify([volumes.get(name)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume'};
  if(c.startsWith('docker volume create')){const row=state.getStorageBirth(name)!;volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-23T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stdout:name,stderr:''}}throw Error('unexpected fixture command');})} as IShellExecutor;
  const config={repoRoot:root,worktreeBase:root,storageInstanceId:'own',dockerNetwork:'own',portStart:10001,masterPort:9900,workerPort:5500,sharedEnv:{},jwt:{secret:'own-fixture',issuer:'own'}} as CdsConfig;
@@ -146,4 +146,24 @@ it('approved Compose rejects the whole batch before an earlier safe profile is a
  const submitted=await submit.json() as any;expect(submit.status,JSON.stringify(submitted)).toBe(201);const id=submitted.importId,before=JSON.stringify(state.getState()),count=commands.length;
  const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/pending-imports/${id}/approve`,{method:'POST',headers:{'content-type':'application/json'},body:'{"force":true}',signal:AbortSignal.timeout(3000)});
  expect(r.status).toBe(409);expect(await r.text()).toContain('storage_retained');expect(state.getBuildProfile('first')).toBeUndefined();expect(JSON.stringify(state.getState())).toBe(before);expect(commands).toHaveLength(count);expect(volumes.size).toBe(1);
+});
+
+it('actual HTTP and State refuse incomplete image plan without poisoning the target, then accept both declared paths',async()=>{
+ imageVolumes={'/data':{},'/config':{}};
+ const rejected=await post();expect(rejected.status).toBe(409);
+ const target={kind:'profile' as const,projectId:'p',branchId:'a',serviceId:'app'};
+ expect(state.getProfileStorageBirths(target)).toEqual([]);expect(state.getProfileStorageBinding(target)).toBeUndefined();expect(volumes.size).toBe(0);
+ expect(commands.every(c=>c.startsWith('docker image inspect'))).toBe(true);
+ const accepted=await post('a','p',{...input(),freshMounts:[{mountKey:'data',containerPath:'/data',purpose:'persistent'},{mountKey:'config',containerPath:'/config',purpose:'persistent'}]});
+ expect(accepted.status).toBe(201);expect(accepted.body.mounts).toHaveLength(2);expect(volumes.size).toBe(2);
+ await state.flush();const cold=new StateService(path.join(root,'state.json'));cold.load();expect(cold.getProfileStorageBinding(target)?.names).toHaveLength(2);await cold.flush();
+});
+
+it('project pause while the actual profile image is observed revokes P before any birth',async()=>{
+ const original=vi.mocked(shell.exec).getMockImplementation()!;
+ vi.mocked(shell.exec).mockImplementation(async(c,o)=>{const r=await original(c,o);if(c.startsWith('docker image inspect'))state.getProject('p')!.paused=true;return r;});
+ expect((await post()).status).toBe(409);
+ const target={kind:'profile' as const,projectId:'p',branchId:'a',serviceId:'app'};
+ expect(state.getProfileStorageBirths(target)).toEqual([]);expect(state.getProfileStorageBinding(target)).toBeUndefined();expect(volumes.size).toBe(0);
+ expect(commands.every(c=>c.startsWith('docker image inspect'))).toBe(true);
 });
