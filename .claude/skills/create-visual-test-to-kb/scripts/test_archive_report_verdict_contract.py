@@ -828,7 +828,7 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
             clear=False,
         ):
             same_report = archive_report._render_inline(
-                "[打开技术附录](https://cds.miduo.org/reports?project=prd-agent&report=tech-1)"
+                "[打开技术附录](https://cds.miduo.org/reports?project=prd-agent&report=tech-1#case-lit-006)"
             )
             same_host_page = archive_report._render_inline(
                 "[打开普通页面](https://cds.miduo.org/projects/prd-agent)"
@@ -838,6 +838,7 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
             )
 
         self.assertIn('target="_self"', same_report)
+        self.assertIn('href="/_cds/api/reports/tech-1/raw#case-lit-006"', same_report)
         self.assertNotIn('rel="noopener noreferrer"', same_report)
         self.assertIn('target="_blank" rel="noopener noreferrer"', same_host_page)
         self.assertIn('target="_blank" rel="noopener noreferrer"', other_report)

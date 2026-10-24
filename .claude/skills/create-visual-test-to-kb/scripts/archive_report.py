@@ -27,7 +27,7 @@
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 REPORT_KINDS = (
@@ -572,23 +572,27 @@ def _method_note(text):
     )
 
 
-def _link_target_attrs(url):
-    """Keep CDS report-to-report navigation inside the sandboxed viewer frame."""
+def _render_link_target(url):
+    """Return the safe rendered URL and navigation attributes for a link."""
     if not re.match(r"https?://", url):
-        return ""
+        return url, ""
 
     report_url = urlsplit(url)
     cds_url = urlsplit(os.environ.get("CDS_HOST", ""))
+    report_id = (parse_qs(report_url.query).get("report") or [""])[0].strip()
     is_same_cds_report = (
         report_url.scheme == "https"
         and cds_url.scheme == "https"
         and report_url.netloc == cds_url.netloc
         and report_url.path.rstrip("/") == "/reports"
-        and bool(parse_qs(report_url.query).get("report"))
+        and bool(report_id)
     )
     if is_same_cds_report:
-        return ' target="_self"'
-    return ' target="_blank" rel="noopener noreferrer"'
+        raw_url = f"/_cds/api/reports/{quote(report_id, safe='')}/raw"
+        if report_url.fragment:
+            raw_url += f"#{report_url.fragment}"
+        return raw_url, ' target="_self"'
+    return url, ' target="_blank" rel="noopener noreferrer"'
 
 
 def _render_inline(text):
@@ -607,8 +611,8 @@ def _render_inline(text):
     def link_repl(m):
         label = html.escape(m.group(1).strip())
         raw_url = m.group(2).strip()
-        url = html.escape(raw_url, quote=True)
-        target = _link_target_attrs(raw_url)
+        rendered_url, target = _render_link_target(raw_url)
+        url = html.escape(rendered_url, quote=True)
         return stash(f'<a href="{url}"{target}>{label}</a>')
 
     def code_repl(m):
