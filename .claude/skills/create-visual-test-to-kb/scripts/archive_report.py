@@ -27,7 +27,7 @@
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 REPORT_KINDS = (
@@ -576,6 +576,27 @@ def _method_note(text):
     )
 
 
+def _render_link_target(url):
+    """Return the safe rendered URL and navigation attributes for a link."""
+    if not re.match(r"https?://", url):
+        return url, ""
+
+    link_url = urlsplit(url)
+    cds_url = urlsplit(os.environ.get("CDS_HOST", ""))
+    is_same_cds_share = (
+        link_url.scheme == "https"
+        and cds_url.scheme == "https"
+        and link_url.netloc == cds_url.netloc
+        and bool(re.fullmatch(r"/r/[A-Za-z0-9_-]+", link_url.path))
+    )
+    if is_same_cds_share:
+        share_url = link_url.path
+        if link_url.fragment:
+            share_url += f"#{link_url.fragment}"
+        return share_url, ' target="_self"'
+    return url, ' target="_blank" rel="noopener noreferrer"'
+
+
 def _render_inline(text):
     tokens = []
 
@@ -591,8 +612,9 @@ def _render_inline(text):
 
     def link_repl(m):
         label = html.escape(m.group(1).strip())
-        url = html.escape(m.group(2).strip(), quote=True)
-        target = ' target="_blank" rel="noopener noreferrer"' if re.match(r"https?://", url) else ""
+        raw_url = m.group(2).strip()
+        rendered_url, target = _render_link_target(raw_url)
+        url = html.escape(rendered_url, quote=True)
         return stash(f'<a href="{url}"{target}>{label}</a>')
 
     def code_repl(m):
@@ -623,7 +645,7 @@ def _render_inline(text):
         raw,
     )
     raw = re.sub(
-        r"(?<![a-f0-9/])\b([a-f0-9]{8,40})\b(?![a-f0-9])",
+        r"(?<![a-f0-9/_-])\b([a-f0-9]{8,40})\b(?![a-f0-9_-])",
         lambda m: stash(
             f'<a href="{GITHUB_COMMIT_BASE}{html.escape(m.group(1), quote=True)}" '
             f'target="_blank" rel="noopener noreferrer"><code>{html.escape(m.group(1))}</code></a>'
