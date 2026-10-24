@@ -5,12 +5,12 @@ import type {StorageBirth} from '../../src/services/storage-provision.js';
 function fixture(){
  const rows=new Map<string,StorageBirth>(),published=new Map<string,ProfileStorageBinding>(),volumes=new Map<string,any>(),commands:string[]=[];
  const entry=(id:string)=>({id,projectId:'p',branch:id,createdAt:'2026-10-23',worktreePath:'/own/'+id,services:{},status:'idle' as const});
- const profile={id:'app',projectId:'p',name:'app',workDir:'.',dockerImage:'fixture:image',prebuiltImage:true,containerPort:8080};let fail='',revoked=false,history=false,foreign=false;
+ const profile={id:'app',projectId:'p',name:'app',workDir:'.',dockerImage:'fixture:image',prebuiltImage:true,containerPort:8080};let fail='',revoked=false,history=false,foreign=false,imageVolumes:Record<string,unknown>|null=null,imageUnavailable=false;
  const target=(id:string):ProfileStorageTarget=>({kind:'profile',projectId:'p',branchId:id,serviceId:'app'});
  const store={getProfileStorageDeclaration:(t:ProfileStorageTarget)=>({branchIdentity:profileStorageBranchIdentity(entry(t.branchId)),declarationDigest:profileStorageDeclarationDigest(profile)}),assertFreshProfileStorageTarget:()=>{if(history)throw Error('old target')},getProfileStorageBinding:(t:ProfileStorageTarget)=>published.get(profileStorageTargetKey(t)),getProfileStorageBirths:(t:ProfileStorageTarget)=>[...rows.values()].filter(r=>r.binding.projectId===t.projectId&&r.binding.branchId===t.branchId&&r.binding.serviceId===t.serviceId),getStorageBirth:(n:string)=>rows.get(n),writeStorageBirthDurably:async(r:StorageBirth,seq:number|undefined,fence:()=>void)=>{fence();expect(rows.get(r.name)?.seq).toBe(seq);if(fail===r.stage)throw Error('ACK failed');rows.set(r.name,structuredClone(r));fence()},publishProfileStorageDurably:async(row:ProfileStorageBinding,fence:()=>void)=>{fence();if(fail==='publish')throw Error('public ACK failed');published.set(profileStorageTargetKey(row.target),structuredClone(row));for(const n of row.names){const r=rows.get(n)!;rows.set(n,{...r,stage:'published',seq:r.seq+1})}}};
- const shell={exec:async(c:string,o?:any)=>{commands.push(c);if(c.startsWith('docker volume create')&&fail==='queue')revoked=true;o?.beforeStart?.();if(c.startsWith('docker info'))return{exitCode:0,stdout:'own-daemon',stderr:''};const n=c.match(/'([^']+)'$/)?.[1]!;if(c.startsWith('docker volume inspect'))return volumes.has(n)?{exitCode:0,stdout:JSON.stringify([volumes.get(n)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};if(c.startsWith('docker volume create')){const r=rows.get(n)!;volumes.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23',Labels:{...storageOwnerLabels(r.binding),'cds.storage.birth':foreign?'foreign':r.birthNonce}});return{exitCode:0,stdout:n,stderr:''}}throw Error('unexpected command')}};
+ const shell={exec:async(c:string,o?:any)=>{commands.push(c);if(c.startsWith('docker image inspect')&&fail==='image-queue')revoked=true;if(c.startsWith('docker volume create')&&fail==='queue')revoked=true;o?.beforeStart?.();if(c.startsWith('docker image inspect'))return imageUnavailable?{exitCode:1,stdout:'',stderr:'denied'}:{exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),imageVolumes]),stderr:''};if(c.startsWith('docker info'))return{exitCode:0,stdout:'own-daemon',stderr:''};const n=c.match(/'([^']+)'$/)?.[1]!;if(c.startsWith('docker volume inspect'))return volumes.has(n)?{exitCode:0,stdout:JSON.stringify([volumes.get(n)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+n+': no such volume'};if(c.startsWith('docker volume create')){const r=rows.get(n)!;volumes.set(n,{Name:n,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+n+'/_data',CreatedAt:'2026-10-23',Labels:{...storageOwnerLabels(r.binding),'cds.storage.birth':foreign?'foreign':r.birthNonce}});return{exitCode:0,stdout:n,stderr:''}}throw Error('unexpected command')}};
  const service=new ProfileStorageProvisionService(store,shell,{repoRoot:'/own',storageInstanceId:'own'}),mounts=[{mountKey:'data',containerPath:'/data',purpose:'persistent' as const}];
- const run=(id='a',p:any=profile,requested=mounts)=>service.provisionNewProfile(entry(id),p,requested,'op_'+id,()=>{if(revoked)throw Error('owner revoked')});return{run,rows,published,volumes,commands,profile,fail:(x:string)=>fail=x,history:()=>history=true,foreign:()=>foreign=true};
+ const run=(id='a',p:any=profile,requested=mounts)=>service.provisionNewProfile(entry(id),p,requested,'op_'+id,()=>{if(revoked)throw Error('owner revoked')});return{run,rows,published,volumes,commands,profile,fail:(x:string)=>fail=x,history:()=>history=true,foreign:()=>foreign=true,imageVolumes:(v:Record<string,unknown>|null)=>imageVolumes=v,imageUnavailable:()=>imageUnavailable=true};
 }
 it('two branch-private wrappers execute the same native birth kernel with different names and unchanged baseline',async()=>{const f=fixture();const [a,b]=await Promise.all([f.run('a'),f.run('b')]);expect(a.names[0]).not.toBe(b.names[0]);expect(f.volumes.size).toBe(2);expect(f.profile).not.toHaveProperty('cacheMounts');expect([...f.rows.values()].every(r=>r.stage==='published'&&r.target?.kind==='profile')).toBe(true)});
 it.each(['intent','issued','confirmed','publish'])('failed %s cannot publish or authorize a second create',async stage=>{const f=fixture();f.fail(stage);await expect(f.run()).rejects.toThrow();expect(f.published.size).toBe(0);const count=f.volumes.size;await expect(f.run()).rejects.toThrow();expect(f.volumes.size).toBe(count);expect(f.commands.some(c=>c.includes('volume rm'))).toBe(false)});
@@ -38,4 +38,24 @@ it.each(['source-disjoint','prebuilt-source-free','managed-source-free'])('safe 
  const containerPath=kind==='source-disjoint'?'/data':'/app/data';
  const accepted=await f.run('a',f.profile,[{mountKey:'fresh',containerPath,purpose:'persistent'}]);
  expect(accepted.names).toHaveLength(1);expect(f.volumes.size).toBe(1);expect(f.published.size).toBe(1);
+});
+
+it('incomplete actual image volumes are refused before any birth and the complete same target can retry',async()=>{
+ const f=fixture();f.imageVolumes({'/data':{},'/config':{}});
+ await expect(f.run()).rejects.toThrow('storage-image-volume-unbound');
+ expect(f.rows.size).toBe(0);expect(f.volumes.size).toBe(0);expect(f.published.size).toBe(0);
+ expect(f.commands.every(c=>c.startsWith('docker image inspect'))).toBe(true);
+ const result=await f.run('a',f.profile,[{mountKey:'data',containerPath:'/data',purpose:'persistent'},{mountKey:'config',containerPath:'/config',purpose:'persistent'}]);
+ expect(result.names).toHaveLength(2);expect(f.volumes.size).toBe(2);expect(f.published.size).toBe(1);
+});
+it('unknown actual profile image cannot leave a birth intent or poisoned binding',async()=>{
+ const f=fixture();f.imageUnavailable();await expect(f.run()).rejects.toThrow('storage-image-identity-unknown');
+ expect(f.rows.size).toBe(0);expect(f.volumes.size).toBe(0);expect(f.published.size).toBe(0);
+ expect(f.commands.every(c=>c.startsWith('docker image inspect'))).toBe(true);
+});
+
+it('revoked profile image observation is fenced at its actual slot before any birth',async()=>{
+ const f=fixture();f.fail('image-queue');await expect(f.run()).rejects.toThrow('owner revoked');
+ expect(f.rows.size).toBe(0);expect(f.volumes.size).toBe(0);expect(f.published.size).toBe(0);
+ expect(f.commands.every(c=>c.startsWith('docker image inspect'))).toBe(true);
 });

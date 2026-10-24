@@ -33,9 +33,9 @@ export default function VisualAgentFullscreenPage() {
 
   return (
     <div
-      className="surface-tone-dark h-full w-full relative"
+      className={isEditor ? 'h-full w-full relative' : 'surface-tone-dark h-full w-full relative'}
       style={{
-        background: '#0a0a0c',
+        background: isEditor ? 'var(--bg-base)' : '#0a0a0c',
       }}
     >
       {/* SystemDialogHost - 独立页面需要自己渲染对话框 */}
@@ -55,14 +55,14 @@ export default function VisualAgentFullscreenPage() {
         type="button"
         onClick={onBack}
         className="fixed top-5 left-5 z-50 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200 border border-token-subtle"
-        style={{ background: '#2c2c2e', boxShadow: '0 4px 16px rgba(0,0,0,0.35)', color: 'var(--text-primary)' }}
+        style={{ background: 'var(--bg-elevated)', boxShadow: '0 4px 16px rgba(0,0,0,0.35)', color: 'var(--text-primary)' }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = '#363638';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';
+          e.currentTarget.style.background = 'var(--bg-card-hover)';
+          e.currentTarget.style.borderColor = 'var(--border-default)';
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = '#2c2c2e';
-          e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.08)';
+          e.currentTarget.style.background = 'var(--bg-elevated)';
+          e.currentTarget.style.borderColor = 'var(--border-subtle)';
         }}
       >
         <ArrowLeft size={18} />
