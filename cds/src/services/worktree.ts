@@ -370,17 +370,25 @@ export class WorktreeService {
     const valid = await this.shell.exec(`git check-ref-format --branch ${quote(branch)}`, { cwd: targetDir });
     if (valid.exitCode !== 0) throw new Error('无法准备非法分支的部署源码');
     const before = await this.shell.exec('git rev-parse HEAD', { cwd: targetDir });
-    const fetched = await this.fetchWithLockRetry(targetDir, branch);
-    if (fetched.exitCode !== 0) throw new Error(`部署源码拉取失败:\n${combinedOutput(fetched)}`);
     const ref = commitSha || `origin/${branch}`;
     const resolve = () => this.shell.exec(`git rev-parse --verify ${quote(`${ref}^{commit}`)}`, { cwd: targetDir });
+    // 前置准入已冻结完整目标；精确的本地对象无需第二次网络读取。
+    // 未点名、短 SHA 或本地缺失的目标仍必须刷新远端。
     let resolved = await resolve();
+    const localExact = commitSha?.length === 40 && resolved.exitCode === 0
+      && resolved.stdout.trim().toLowerCase() === commitSha.toLowerCase();
+    if (!localExact) {
+      const fetched = await this.fetchWithLockRetry(targetDir, branch);
+      if (fetched.exitCode !== 0) throw new Error(`部署源码拉取失败:\n${combinedOutput(fetched)}`);
+      resolved = await resolve();
+    }
     if (resolved.exitCode !== 0 && commitSha?.length === 40) {
       const targeted = await this.fetchWithLockRetry(targetDir, commitSha);
       if (targeted.exitCode === 0) resolved = await resolve();
     }
     const sha = resolved.stdout.trim().toLowerCase();
-    if (resolved.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(sha)) throw new Error('目标提交不可用，请确认完整提交及仓库访问权限');
+    if (resolved.exitCode !== 0 || !/^[0-9a-f]{40}$/.test(sha)
+      || commitSha?.length === 40 && sha !== commitSha.toLowerCase()) throw new Error('目标提交不可用，请确认完整提交及仓库访问权限');
     const log = await this.shell.exec(`git log --oneline -1 ${quote(sha)}`, { cwd: targetDir });
     return { head: log.stdout.trim() || sha, before: before.stdout.trim(), after: sha.slice(0, 7),
       afterFull: sha, updated: before.stdout.trim().toLowerCase() !== sha };
