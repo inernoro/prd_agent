@@ -1869,12 +1869,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
+    const empty = files.filter(f => f.size === 0);
+    for (const f of empty) {
+      toast.error(`文件为空: ${f.name}`, '请选择非空文件后重新上传');
+    }
     // 前端预检 20MB 上限：超限文件即时报错，不进入上传白等
     const oversized = files.filter(f => f.size > MAX_UPLOAD_BYTES);
     for (const f of oversized) {
       toast.error(`文件过大: ${f.name}`, `单文件上限 20MB（该文件 ${(f.size / 1024 / 1024).toFixed(1)}MB）`);
     }
-    const accepted = files.filter(f => f.size <= MAX_UPLOAD_BYTES);
+    const accepted = files.filter(f => f.size > 0 && f.size <= MAX_UPLOAD_BYTES);
     if (accepted.length === 0) return;
 
     setUploading(true);
