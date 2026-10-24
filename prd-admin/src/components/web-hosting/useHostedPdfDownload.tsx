@@ -1,3 +1,4 @@
+import { acceptPackageDownloadRequest, downloadHostedPackage, PACKAGE_DOWNLOAD_STATUS, withPackageDownloadBridge } from './packageDownloadBridge';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { downloadHostedPdf } from '@/services/real/webPages';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -29,12 +30,39 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
 
   useEffect(() => {
     let active = true;
+    const abort = new AbortController();
     pendingRef.current = null;
     setStatus({ kind: 'idle', message: '' });
     const receive = (event: MessageEvent) => {
       const frame = iframeRef.current?.contentWindow;
       if (frame && event.source === frame && event.data?.type === 'map-hosted-pdf-ready') {
         notifyFrame();
+        return;
+      }
+      if (acceptPackageDownloadRequest(event.data, event.source, frame, context)) {
+        const request = event.data;
+        const reply = (kind: Exclude<Status['kind'], 'idle'>, message: string, percent = 0) => {
+          if (!active) return;
+          setStatus({ kind, message });
+          frame?.postMessage({ type: PACKAGE_DOWNLOAD_STATUS, requestId: request.requestId, status: kind, message, percent }, '*');
+        };
+        if (pendingRef.current) {
+          reply('error', '已有文件正在准备，请等待当前下载完成。'); return;
+        }
+        if (navigator.userActivation?.isActive !== true) {
+          reply('error', '请亲自点击完整教程包下载按钮后重试。'); return;
+        }
+        const pending = {};
+        pendingRef.current = pending;
+        reply('pending', '正在连接完整教程包…');
+        void downloadHostedPackage(context, abort.signal, (message, percent) => reply('pending', message, percent))
+          .then(result => {
+            if (!active) return;
+            saveBlobAsFile(result.blob, result.fileName);
+            reply('handed-off', '完整 ZIP 已交给浏览器，请查看下载列表。', 100);
+          }).catch((error: unknown) => {
+            reply('error', error instanceof Error ? error.message : '下载中断，请检查网络后重试。');
+          }).finally(() => { if (pendingRef.current === pending) pendingRef.current = null; });
         return;
       }
       if (!acceptPdfDownloadRequest(event.data, event.source, frame, context)) return;
@@ -68,11 +96,11 @@ export function useHostedPdfDownload(site: PdfDownloadSite | null, share?: { tok
       }).finally(() => { if (pendingRef.current === pending) pendingRef.current = null; });
     };
     window.addEventListener('message', receive);
-    return () => { active = false; window.removeEventListener('message', receive); };
+    return () => { active = false; abort.abort(); window.removeEventListener('message', receive); };
   }, [context, shareToken, sharePassword, notifyFrame]);
 
   return { iframeRef, notifyFrame, status,
-    decorateHtml: (html: string) => withPdfDownloadBridge(html, context) };
+    decorateHtml: (html: string) => withPackageDownloadBridge(withPdfDownloadBridge(html, context), context) };
 }
 
 export function HostedPdfDownloadStatus({ status }: { status: Status }) {

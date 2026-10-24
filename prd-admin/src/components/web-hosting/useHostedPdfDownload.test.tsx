@@ -4,8 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
 
-const { download, save } = vi.hoisted(() => ({ download: vi.fn(), save: vi.fn() }));
+const { download, save, packageDownload } = vi.hoisted(() => ({ download: vi.fn(), save: vi.fn(), packageDownload: vi.fn() }));
 vi.mock('@/services/real/webPages', () => ({ downloadHostedPdf: download }));
+vi.mock('./packageDownloadBridge', async importOriginal => ({ ...(await importOriginal<typeof import('./packageDownloadBridge')>()), downloadHostedPackage: packageDownload }));
 vi.mock('./sourceDownload', () => ({ saveBlobAsFile: save }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>正在准备</span> }));
 
@@ -34,7 +35,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
-  download.mockReset(); save.mockReset(); vi.unstubAllGlobals();
+  download.mockReset(); save.mockReset(); packageDownload.mockReset(); vi.unstubAllGlobals();
 });
 describe('PDF下载的父页处理', () => {
   it('伪造frame与未登记PDF都不发起下载', async () => {
@@ -86,5 +87,46 @@ describe('PDF下载的父页处理', () => {
       window.dispatchEvent(new MessageEvent('message', { source: bridge.iframeRef.current!.contentWindow!, data: { type: 'map-hosted-pdf-ready' } }));
     });
     expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: 'map-hosted-pdf-init', siteId: 'site-a', pdfFilePaths: ['guide.pdf'] }), '*');
+  });
+});
+
+describe('完整包在原分享页下载', () => {
+  function packageRequest(source?: MessageEventSource | null) {
+    const frame = bridge.iframeRef.current!.contentWindow!;
+    const config = JSON.parse(bridge.decorateHtml('<main/>').match(/var context=(.*);/)![1]);
+    window.dispatchEvent(new MessageEvent('message', { source: source === undefined ? frame : source,
+      data: { type: 'map-hosted-package-download', siteId: site.id, nonce: config.nonce, requestId: 'package-click' } }));
+  }
+  it('当前frame的真实点击得到进度和单个ZIP，重复点击只下载一次', async () => {
+    let finish!: (value: unknown) => void;
+    packageDownload.mockImplementation((_context, _signal, progress) => {
+      progress('完整教程包：50%', 50);
+      return new Promise(resolve => { finish = resolve; });
+    });
+    await act(async () => { packageRequest(window); });
+    expect(packageDownload).not.toHaveBeenCalled();
+    await act(async () => { packageRequest(); packageRequest(); });
+    expect(packageDownload).toHaveBeenCalledTimes(1);
+    const blob = new Blob(['zip'], { type: 'application/zip' });
+    await act(async () => { finish({ blob, fileName: '教程.zip' }); });
+    expect(save).toHaveBeenCalledWith(blob, '教程.zip');
+    expect(container.textContent).toContain('完整 ZIP 已交给浏览器');
+    expect(download).not.toHaveBeenCalled();
+  });
+  it('切换站点会中止下载，迟到结果不会保存', async () => {
+    let finish!: (value: unknown) => void;
+    packageDownload.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    await act(async () => { packageRequest(); });
+    const signal = packageDownload.mock.calls[0][1] as AbortSignal;
+    await act(async () => { root.render(<Harness activeSite={{ ...site, id: 'other-site' }} />); });
+    expect(signal.aborted).toBe(true);
+    await act(async () => { finish({ blob: new Blob(['zip']), fileName: 'old.zip' }); });
+    expect(save).not.toHaveBeenCalled();
+  });
+  it('校验失败显示重试且不保存文件', async () => {
+    packageDownload.mockRejectedValue(new Error('下载文件校验失败，请重新下载。'));
+    await act(async () => { packageRequest(); });
+    expect(container.textContent).toContain('校验失败');
+    expect(save).not.toHaveBeenCalled();
   });
 });
