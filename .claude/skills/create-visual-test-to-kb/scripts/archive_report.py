@@ -27,7 +27,7 @@
 import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
 REPORT_KINDS = (
@@ -577,21 +577,19 @@ def _render_link_target(url):
     if not re.match(r"https?://", url):
         return url, ""
 
-    report_url = urlsplit(url)
+    link_url = urlsplit(url)
     cds_url = urlsplit(os.environ.get("CDS_HOST", ""))
-    report_id = (parse_qs(report_url.query).get("report") or [""])[0].strip()
-    is_same_cds_report = (
-        report_url.scheme == "https"
+    is_same_cds_share = (
+        link_url.scheme == "https"
         and cds_url.scheme == "https"
-        and report_url.netloc == cds_url.netloc
-        and report_url.path.rstrip("/") == "/reports"
-        and bool(report_id)
+        and link_url.netloc == cds_url.netloc
+        and bool(re.fullmatch(r"/r/[A-Za-z0-9_-]+", link_url.path))
     )
-    if is_same_cds_report:
-        raw_url = f"/_cds/api/reports/{quote(report_id, safe='')}/raw"
-        if report_url.fragment:
-            raw_url += f"#{report_url.fragment}"
-        return raw_url, ' target="_self"'
+    if is_same_cds_share:
+        share_url = link_url.path
+        if link_url.fragment:
+            share_url += f"#{link_url.fragment}"
+        return share_url, ' target="_self"'
     return url, ' target="_blank" rel="noopener noreferrer"'
 
 
@@ -643,7 +641,7 @@ def _render_inline(text):
         raw,
     )
     raw = re.sub(
-        r"(?<![a-f0-9/])\b([a-f0-9]{8,40})\b(?![a-f0-9])",
+        r"(?<![a-f0-9/_-])\b([a-f0-9]{8,40})\b(?![a-f0-9_-])",
         lambda m: stash(
             f'<a href="{GITHUB_COMMIT_BASE}{html.escape(m.group(1), quote=True)}" '
             f'target="_blank" rel="noopener noreferrer"><code>{html.escape(m.group(1))}</code></a>'

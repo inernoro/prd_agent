@@ -821,27 +821,39 @@ class InteractiveReportLinkContractTests(unittest.TestCase):
     }]
     figure_srcs = {"fig-01-proof": "https://assets.example.test/01-proof.png"}
 
-    def test_reg_stsmk_report_external_link_001_uses_same_frame_for_cds_report_links(self):
+    def test_reg_stsmk_report_external_link_001_uses_same_frame_for_cds_report_shares(self):
         with mock.patch.dict(
             "os.environ",
             {"CDS_HOST": "https://cds.miduo.org"},
             clear=False,
         ):
-            same_report = archive_report._render_inline(
-                "[打开技术附录](https://cds.miduo.org/reports?project=prd-agent&report=tech-1#case-lit-006)"
+            same_report_share = archive_report._render_inline(
+                "[打开技术附录](https://cds.miduo.org/r/public-token#case-lit-006)"
             )
             same_host_page = archive_report._render_inline(
                 "[打开普通页面](https://cds.miduo.org/projects/prd-agent)"
+            )
+            protected_report = archive_report._render_inline(
+                "[打开受保护报告](https://cds.miduo.org/reports?project=prd-agent&report=tech-1)"
             )
             other_report = archive_report._render_inline(
                 "[打开外部报告](https://reports.example.test/reports?report=tech-1)"
             )
 
-        self.assertIn('target="_self"', same_report)
-        self.assertIn('href="/_cds/api/reports/tech-1/raw#case-lit-006"', same_report)
-        self.assertNotIn('rel="noopener noreferrer"', same_report)
+        self.assertIn('target="_self"', same_report_share)
+        self.assertIn('href="/r/public-token#case-lit-006"', same_report_share)
+        self.assertNotIn('rel="noopener noreferrer"', same_report_share)
         self.assertIn('target="_blank" rel="noopener noreferrer"', same_host_page)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', protected_report)
         self.assertIn('target="_blank" rel="noopener noreferrer"', other_report)
+
+    def test_run_id_date_segment_is_not_rendered_as_a_commit_link(self):
+        rendered = archive_report._render_inline(
+            "运行 stsmk-20261024-resume-o5d7mE；修复提交 6fa8bd6f"
+        )
+
+        self.assertNotIn("/commit/20261024", rendered)
+        self.assertIn("/commit/6fa8bd6f", rendered)
 
     @staticmethod
     def business_decision_body(not_run: int, inconclusive: int) -> str:
