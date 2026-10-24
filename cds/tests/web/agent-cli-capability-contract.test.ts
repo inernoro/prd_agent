@@ -18,6 +18,58 @@ function help(...args: string[]): string {
 }
 
 describe('CDS Agent CLI 能力契约', () => {
+  it('MongoDB CLI 绑定项目、数据库和结构化输入，待批退出 3，拒绝错库和任意动作', () => {
+    expect(help('db', 'mongo-write')).toContain('--input-file');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-mongo-cli-'));
+    const input = path.join(dir, 'write.json');
+    const script = `
+import importlib.util, sys
+spec=importlib.util.spec_from_file_location('cli',sys.argv[1]); cli=importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+def call(method,path,body=None,**kwargs):
+ if path.startswith('/api/branches/'):
+  return {'branch':{'projectId':'p1'}}
+ assert path=='/api/cds-system/operator/request'
+ assert body=={'opId':'database.mongo','args':{'projectId':'p1','branchId':'b1','resourceId':'infra:mongo','write':{'database':'qa','action':'insertOne','collection':'items','document':{'_id':'qa1'}}}}
+ return {'request':{'id':'mongo1','opId':'database.mongo','status':'pending'}}
+cli._call=call
+sys.argv=['cdscli','db','mongo-write','b1','infra:mongo','--project','p1','--database','qa','--input-file',sys.argv[2]]
+cli.main()
+`;
+    const run = () => spawnSync('python3', ['-c', script, cliPath, input], { encoding: 'utf8', env: { ...process.env, CDS_HOST: 'https://cds.example.test', CDS_PROJECT_KEY: 'cdsp_contract_secret', AI_ACCESS_KEY: '', CDS_PROJECT_ID: '' } });
+    try {
+      fs.writeFileSync(input, JSON.stringify({ database: 'qa', action: 'insertOne', collection: 'items', document: { _id: 'qa1' } }));
+      const pending = run(); expect(pending.status, pending.stderr).toBe(3); expect(JSON.parse(pending.stdout).data.status).toBe('pending');
+      fs.writeFileSync(input, JSON.stringify({ database: 'other', action: 'insertOne' })); expect(run().status).toBe(2);
+      fs.writeFileSync(input, JSON.stringify({ action: 'eval' })); expect(run().status).toBe(2);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('数据库 CLI 生成项目绑定的具体 SQL 待批请求，不能把待批准报告成执行完成', () => {
+    expect(help('db')).toContain('execute');
+    expect(help('db', 'execute')).toContain('--sql-file');
+    const script = `
+import importlib.util, sys, json
+spec=importlib.util.spec_from_file_location('cli',sys.argv[1]); cli=importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+def call(method,path,body=None,**kwargs):
+ if path.startswith('/api/branches/'):
+  return {'branch':{'projectId':'p1'}}
+ assert method=='POST' and path=='/api/cds-system/operator/request'
+ assert body=={'opId':'database.sql','args':{'projectId':'p1','branchId':'b1','resourceId':'infra:mysql','sql':'UPDATE sample SET n=1; UPDATE sample SET n=2'}}
+ return {'request':{'id':'request1','opId':'database.sql','status':'pending'}}
+cli._call=call
+sys.argv=['cdscli','db','execute','b1','infra:mysql','--project',sys.argv[2],'--sql','UPDATE sample SET n=1; UPDATE sample SET n=2']
+cli.main()
+`;
+    const env = { ...process.env, CDS_HOST: 'https://cds.example.test', CDS_PROJECT_KEY: 'cdsp_contract_secret', AI_ACCESS_KEY: '', CDS_PROJECT_ID: '' };
+    const pending = spawnSync('python3', ['-c', script, cliPath, 'p1'], { encoding: 'utf8', env });
+    expect(pending.status, pending.stderr).toBe(3);
+    expect(JSON.parse(pending.stdout).data.status).toBe('pending');
+    expect(pending.stdout).not.toContain('cdsp_contract_secret');
+    const mismatch = spawnSync('python3', ['-c', script, cliPath, 'p2'], { encoding: 'utf8', env });
+    expect(mismatch.status).toBe(2);
+    expect(JSON.parse(mismatch.stdout).error).toContain('分支不属于指定项目');
+  });
+
   it('提供提示词实际引用的认证摘要、Self 状态和环境变量元数据命令', () => {
     expect(help('auth')).toContain('inspect');
     expect(help('auth', 'inspect')).toContain('--strict');

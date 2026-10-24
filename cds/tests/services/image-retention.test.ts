@@ -139,3 +139,38 @@ describe('镜像回收的实例归属边界（Codex 第二十八轮 P1）', () =
     expect(imageRepository('registry.local:5000/team/api')).toBe('registry.local:5000/team/api');
   });
 });
+
+
+describe('不可变制品引用与宿主 tag 的同一保留合同', () => {
+  const pinned = (n: number) => `${img('api', n)}@sha256:${String(n).repeat(64)}`;
+  const ref = (image: string, day: number) => ({ image, branchId: 'b', profileId: 'api', createdAt: `2026-10-${day}T00:00:00Z` });
+  it('带端口的 tag@digest 和 digest-only 都解析到实际仓库', () => {
+    expect(imageRepository(`registry.local:5000/team/api:sha-${sha(1)}@sha256:${'a'.repeat(64)}`)).toBe('registry.local:5000/team/api');
+    expect(imageRepository(`registry.local:5000/team/api@sha256:${'a'.repeat(64)}`)).toBe('registry.local:5000/team/api');
+  });
+  it('全 pinned 台账仍回收旧 tag，同时保护最近两代', () => {
+    const plan = computeImageRetentionPlan({ ledger: [ref(pinned(3),23),ref(pinned(2),22),ref(pinned(1),21)], hostImages:[1,2,3].map(n=>img('api',n)), inUseImages:[], keepGenerations:2 });
+    expect(plan.remove).toEqual([img('api',1)]);
+    expect(plan.keptReasons[img('api',3)]).toContain('最近');
+  });
+  it('历史 raw 台账不能让近期 pinned 代漏保留', () => {
+    const plan=computeImageRetentionPlan({ledger:[ref(pinned(3),23),ref(img('api',1),21)],hostImages:[1,3].map(n=>img('api',n)),inUseImages:[],keepGenerations:1});
+    expect(plan.remove).toEqual([img('api',1)]);
+  });
+  it('同一代 raw 与 pinned 不重复挤占保留名额', () => {
+    const plan=computeImageRetentionPlan({ledger:[ref(pinned(3),23),ref(img('api',3),22),ref(pinned(2),21),ref(pinned(1),20)],hostImages:[1,2,3].map(n=>img('api',n)),inUseImages:[],keepGenerations:2});
+    expect(plan.remove).toEqual([img('api',1)]);
+  });
+  it('停止或运行容器的 pinned 引用保护对应 tag', () => {
+    const plan=computeImageRetentionPlan({ledger:[ref(pinned(3),23)],hostImages:[1,2,3].map(n=>img('api',n)),inUseImages:[pinned(1)],keepGenerations:1});
+    expect(plan.remove).toEqual([img('api',2)]);
+  });
+  it('最近一代只有 digest 时无法证明对应 tag，整个仓库保守保留', () => {
+    const plan=computeImageRetentionPlan({ledger:[ref(`ghcr.io/acme/api@sha256:${'a'.repeat(64)}`,23),ref(img('api',1),21)],hostImages:[1,2].map(n=>img('api',n)),inUseImages:[],keepGenerations:1});
+    expect(plan.remove).toEqual([]);
+  });
+  it('在用 digest-only 引用无法映射 tag 时保留同仓库', () => {
+    const plan=computeImageRetentionPlan({ledger:[ref(pinned(3),23)],hostImages:[1,2,3].map(n=>img('api',n)),inUseImages:[`ghcr.io/acme/api@sha256:${'a'.repeat(64)}`],keepGenerations:1});
+    expect(plan.remove).toEqual([]);
+  });
+});

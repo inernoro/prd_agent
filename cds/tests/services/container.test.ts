@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
+import ts from 'typescript';
+import { clearContainerLifecycleIntentsForTest, findRecentContainerLifecycleIntent } from '../../src/services/container-diagnostics.js';
 import { ContainerService, applyProfileOverride, resolveEffectiveProfile } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { nodeModulesVolumeName } from '../../src/util/node-modules-volume.js';
@@ -648,6 +650,7 @@ describe('ContainerService', () => {
         await service.runService(makeEntry(), makeProfile({ resources: { memoryMB: 1024, cpus: 2 } }), makeService());
         const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
         expect(runCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
+        expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
         expect(runCmd).not.toContain('--cpus');
         expect(runCmd).not.toContain('--memory');
       } finally {
@@ -691,6 +694,7 @@ describe('ContainerService', () => {
         }), makeService());
         const createCmd = mock.commands.find((c) => c.includes('docker create') && c.includes('-managed-build'))!;
         expect(createCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
+        expect(createCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
         expect(createCmd).not.toContain('--cpus');
         expect(createCmd).not.toContain('--memory');
       } finally {
@@ -812,6 +816,7 @@ describe('ContainerService', () => {
       const runCmd = mock.commands.find(c => c.includes('docker run --rm'))!;
       expect(runCmd).toBeDefined();
       expect(runCmd).not.toContain('docker run -d');
+      expect(runCmd).toContain('--log-driver json-file --log-opt max-size=50m --log-opt max-file=3');
       expect(runCmd).toContain('--network cds-network');
       expect(runCmd).toContain(`-v '/wt/feature-a/prd-api':'/app'`);
       expect(runCmd).toContain(`-v '${nodeModulesVolumeName('feature-a', 'api')}':'/app/node_modules'`);
@@ -920,6 +925,40 @@ describe('ContainerService', () => {
   });
 
   describe('restartServiceInPlace', () => {
+    it('only records a restart intent when the command is admitted, with a bounded event window', async () => {
+      clearContainerLifecycleIntentsForTest();
+      const cid = 'c'.repeat(64);
+      const guarded = new ContainerService({ exec: async (command, options) => {
+        if (command.startsWith('docker restart')) {
+          expect(findRecentContainerLifecycleIntent(cid)).toBeUndefined();
+          options?.beforeStart?.();
+          expect(findRecentContainerLifecycleIntent(cid)).toMatchObject({ kind: 'cds-restart', operationId: 'recover-1' });
+          expect(findRecentContainerLifecycleIntent(cid)?.completedAt).toBeUndefined();
+        } else options?.beforeStart?.();
+        return { stdout: 'running', stderr: '', exitCode: 0 };
+      } }, makeConfig());
+      vi.spyOn(guarded as any, 'waitForContainerAlive').mockResolvedValue(undefined);
+      vi.spyOn(guarded as any, 'captureContainerDiagnostics').mockResolvedValue({});
+      await expect(guarded.restartServiceInPlace(cid, undefined, { operationId: 'recover-1' })).resolves.toBe(true);
+      expect(findRecentContainerLifecycleIntent(cid)?.completedAt).toBeTruthy();
+      clearContainerLifecycleIntentsForTest();
+    });
+
+    it('执行槽等待后租约失效时不发出 docker restart', async () => {
+      clearContainerLifecycleIntentsForTest();
+      const executed: string[] = []; let current = true;
+      const guarded = new ContainerService({ exec: async (command, options) => {
+        if (command.startsWith('docker restart')) current = false;
+        options?.beforeStart?.(); executed.push(command);
+        return { stdout: 'running', stderr: '', exitCode: 0 };
+      } }, makeConfig());
+      await expect(guarded.restartServiceInPlace('a'.repeat(64), undefined,
+        { assertCurrent: () => { if (!current) throw new Error('superseded'); } })).rejects.toThrow('superseded');
+      expect(executed.some(command => command.startsWith('docker restart'))).toBe(false);
+      expect(findRecentContainerLifecycleIntent('a'.repeat(64))).toBeUndefined();
+    });
+
+
     it('records operationId on docker restart events', async () => {
       const records: Array<{ action: string; operationId?: string | null; branchId?: string | null; details?: Record<string, unknown> }> = [];
       service = new ContainerService(mock, makeConfig(), undefined, {
@@ -1051,6 +1090,64 @@ describe('ContainerService', () => {
   });
 
   describe('discoverAppContainersWithStatus', () => {
+    it('真实巡检循环给同名替换容器重新分配预算，并按不可变ID启动', async () => {
+      const source = fs.readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
+      const body = source.slice(source.indexOf('  async function runAutoRestartTick()'), source.indexOf('  // 孤儿容器收割器的 timer'));
+      const script = ts.transpileModule(body, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
+      let cid = 'a'.repeat(64), now = 1_000_000;
+      const svc = { profileId: 'api', containerName: 'same-name', status: 'running' };
+      const exec = vi.fn(async (_command: string) => ({ exitCode: 1, stdout: '', stderr: 'failed' }));
+      const deps = {
+        restartAttempts: new Map(), lastSuccessfulStartMs: new Map(), SOFT_FAIL_WINDOW_MS: 60_000,
+        stateService: { getAllBranches: () => [{ id: 'b', branch: 'b', services: { api: svc } }], getInfraServices: () => [],
+          save() {}, incrementBranchStat() {}, appendActivityLog() {} },
+        containerService: { discoverAppContainers: async () => new Map([['b/api', { containerName: 'same-name', containerId: cid, running: false }]]),
+          discoverInfraContainers: async () => new Map() },
+        shell: { exec }, activeServerEventLogStore: undefined, archiveBranchContainerLogs: async () => {},
+        beginBackgroundBranchOperation: () => ({ operationId: 'op', assertCurrent() {}, request: {} }),
+        completeBackgroundBranchOperation() {},
+      };
+      const tick = new Function(...Object.keys(deps), `${script};return runAutoRestartTick;`)(...Object.values(deps));
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      try {
+        for (let i = 0; i < 3; i++) { await tick(); now += 1_000_000; }
+        expect(exec).toHaveBeenCalledTimes(3);
+        cid = 'b'.repeat(64); await tick();
+        expect(exec).toHaveBeenCalledTimes(4);
+        expect(exec.mock.calls[3][0]).toBe(`docker start ${cid}`);
+        expect(svc.status).toBe('running');
+      } finally { clock.mockRestore(); }
+    });
+
+    it('盘点同名容器的不可变ID随实际运行对象变化', async () => {
+      let cid = 'a'.repeat(64);
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: `same-name|running|cds.branch.id=b,cds.profile.id=api|${cid}`, stderr: '', exitCode: 0 }));
+      expect((await service.discoverAppContainers()).get('b/api')?.containerId).toBe(cid);
+      cid = 'b'.repeat(64);
+      expect((await service.discoverAppContainers()).get('b/api')?.containerId).toBe(cid);
+      expect(mock.commands[0]).toContain('--no-trunc');
+    });
+
+
+    it.each([false, true])('巡检只认当前容器，历史失败容器的排列顺序不影响结果（reverse=%s）', async reverse => {
+      const managed = new ContainerService(mock, makeConfig(), {
+        getDockerNetwork: () => undefined,
+        getAppContainerName: () => 'current-api',
+      });
+      const lines = ['current-api|running|cds.branch.id=b,cds.profile.id=api',
+        'retained-api|exited|cds.branch.id=b,cds.profile.id=api'];
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: (reverse ? lines.reverse() : lines).join('\n'), stderr: '', exitCode: 0 }));
+      const result = await managed.discoverAppContainersWithStatus();
+      expect(result.containers.get('b/api')).toMatchObject({ containerName: 'current-api', running: true });
+      expect(mock.commands).toHaveLength(1);
+    });
+
+    it('没有发布身份时，同标签多容器不按 docker 排序猜测，也不把旧容器当成缺失的新容器', async () => {
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: 'one|running|cds.branch.id=b,cds.profile.id=api\ntwo|exited|cds.branch.id=b,cds.profile.id=api', stderr: '', exitCode: 0 }));
+      expect((await service.discoverAppContainersWithStatus()).containers.has('b/api')).toBe(false);
+      const managed = new ContainerService(mock, makeConfig(), { getDockerNetwork: () => undefined, getAppContainerName: () => 'missing-api' });
+      expect((await managed.discoverAppContainersWithStatus()).containers.has('b/api')).toBe(false);
+    });
     it('collects exit evidence without reading Docker environment variables', async () => {
       mock.addResponsePattern(/docker ps/, () => ({
         stdout: 'c-api|exited|cds.branch.id=b,cds.profile.id=api\nc-web|running|cds.branch.id=b,cds.profile.id=web',

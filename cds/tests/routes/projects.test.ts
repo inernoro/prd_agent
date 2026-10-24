@@ -25,6 +25,7 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import type { GitHubAppClient } from '../../src/services/github-app-client.js';
 import type { Project, BranchEntry, BuildProfile, CdsConfig } from '../../src/types.js';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
+import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 import { namedServiceLabel } from '../../src/services/preview-entrypoints.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -1338,6 +1339,19 @@ describe('Projects router (P4 Part 2)', () => {
       expect(res.body.error).toBe('legacy_protected');
     });
 
+    it('项目删除成功才广播回执归档进度，其他项目不变', async () => {
+      const created = await request(server, 'POST', '/api/projects', { name: 'receipt-archive' });
+      const pid = created.body.project.id;
+      const publish = vi.spyOn(cdsEventsBus, 'publish');
+      try {
+        expect((await request(server, 'DELETE', '/api/projects/no-such-id')).status).toBe(404);
+        expect(publish).not.toHaveBeenCalledWith('access-request.progress', expect.objectContaining({ stage: 'project-deleted' }));
+        expect((await request(server, 'DELETE', `/api/projects/${pid}`)).status).toBe(200);
+        expect(stateService.getProject(pid)).toBeUndefined();
+        expect(publish).toHaveBeenCalledWith('access-request.progress', { projectId: pid, stage: 'project-deleted' });
+      } finally { publish.mockRestore(); }
+    });
+
     it('returns 404 for unknown project ids', async () => {
       const res = await request(server, 'DELETE', '/api/projects/no-such-id');
       expect(res.status).toBe(404);
@@ -1359,6 +1373,7 @@ describe('Projects router (P4 Part 2)', () => {
       const now = new Date().toISOString();
       stateService.addBranch({
         id: 'cascade-b1',
+        replacementNetworks: ['cds-br-cascade-b1-r-' + 'a'.repeat(32)],
         projectId: pid,
         branch: 'main',
         worktreePath: '/tmp/wt-1',
@@ -1437,6 +1452,8 @@ describe('Projects router (P4 Part 2)', () => {
       const del = await request(server, 'DELETE', '/api/projects/' + pid);
       expect(del.status).toBe(200);
       expect(del.body.cascade.branches.sort()).toEqual(['cascade-b1', 'cascade-b2']);
+      expect(stateService.getNetworkTeardowns().map(n => n.name).sort()).toEqual(['cds-br-cascade-b1', 'cds-br-cascade-b1-r-' + 'a'.repeat(32), 'cds-br-cascade-b2']);
+      expect(stateService.getNetworkTeardowns().every(n => n.projectId === pid)).toBe(true);
       expect(del.body.cascade.buildProfiles.sort()).toEqual(['cascade-p1', 'cascade-p2']);
       expect(del.body.cascade.infraServices).toEqual(['cascade-i1']);
       expect(del.body.cascade.routingRules).toEqual(['cascade-r1']);
@@ -1802,6 +1819,23 @@ describe('Projects router — multi-repo clone (P4 Part 18 G1.3)', () => {
     // run an arbitrary command, streaming logs. A project-scoped key has no authorized
     // target project/repo, so allowing it = borrowing the server token to clone + exfil
     // any private repo. Only admin / cookie auth (no cdsProjectKey) may call them.
+    it('validate-runtime bounds the emitted newborn create even when its probe fails', async () => {
+      shell.addResponsePattern(/^git clone --depth 1 /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^docker pull /, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      shell.addResponsePattern(/^docker create /, () => ({ stdout: '', stderr: 'fixture create rejected', exitCode: 1 }));
+      const res = await request(server, 'POST', '/api/validate-runtime', {
+        gitRepoUrl: 'https://github.com/example/log-fixture.git', image: 'node:22', command: 'exit 0',
+      });
+      expect(res.status).toBe(200);
+      expect(res.body).toContain('容器无法创建');
+      const command = shell.commands.find((value) => value.startsWith('docker create '));
+      expect(command).toBeDefined();
+      for (const flag of ['--log-driver json-file', '--log-opt max-size=50m', '--log-opt max-file=3']) {
+        expect(command).toContain(flag);
+        expect(command!.indexOf(flag)).toBeLessThan(command!.indexOf("'node:22'"));
+      }
+    });
+
     it('validate-runtime → 403 project_key_forbidden for a project-scoped key', async () => {
       const res = await request(server, 'POST', '/api/validate-runtime',
         { gitRepoUrl: 'https://github.com/foo/bar.git', image: 'node:20', command: 'node x.js' },
@@ -2464,6 +2498,18 @@ describe('Projects router — F11 沙盒模式 + F12 文件上传', () => {
       // 新 id 不会和旧目录冲突,所以这一步反而会成功 — 跳过该断言路径,
       // 改为下一个 it 用直接的 stub 路径测 bootstrap 错误回滚。
       expect(second.status).toBe(201);
+    });
+
+    it('沙盒初始化失败且删除落盘失败时保留项目网络，不迟到清理恢复后的项目', async () => {
+      shell.addResponse('git init -b main', { stdout: '', stderr: 'init failed', exitCode: 128 });
+      const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('injected rollback write failure'));
+      try {
+        const res = await request(server, 'POST', '/api/projects', { name: 'Rollback Fail', slug: 'rollback-fail', composeYaml: 'services: {}' });
+        expect(res.status).toBe(500);
+        expect(res.body.error).toBe('state_save_failed');
+        expect(stateService.getProjects().some(p => p.slug === 'rollback-fail')).toBe(true);
+        expect(shell.commands.some(c => c.startsWith('docker network rm'))).toBe(false);
+      } finally { flush.mockRestore(); }
     });
 
     it('git init 失败时报 500 + 回滚 project + 回滚 docker network', async () => {

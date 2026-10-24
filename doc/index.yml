@@ -19,6 +19,7 @@ folders:
     name: 七、报告与周报
 
 docs:
+  guide.cds.release-scripts: "CDS 项目发布脚本 · 指南"
   # 一、产品规格
   spec.cds.compose-contract: "cds-compose 契约 · SSOT · 规格"
   spec.cds.map-pairing-protocol: "CDS 与 MAP 配对协议 · 规格"
@@ -75,6 +76,7 @@ docs:
   design.cds.managed-delivery: "CDS 托管交付契约 · 设计"
   design.cds.multi-project: "CDS 多项目 · 设计"
   design.cds.onboarding: "CDS 项目接入与配置收敛设计 · 设计"
+  design.cds.public.pass: "MyCDS 外网通行证 · 设计"
   design.cds.agent-onboarding-harness: "CDS 角色化 Agent 一键上手范型 · 设计"
   design.cds.project-bootstrap: "CDS 项目初始化（Project Bootstrap） · 设计"
   design.cds.railway-onboarding-flow: "CDS Railway 式部署向导设计 · 设计"
