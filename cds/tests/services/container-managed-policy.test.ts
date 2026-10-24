@@ -86,6 +86,7 @@ it('real published app storage does not become a temporary builder mount require
   const volumes=new Map<string,any>();
   const pshell:IShellExecutor={exec:async(c,o)=>{
     o?.beforeStart?.();const name=/'([^']+)'$/.exec(c)?.[1]||'';
+    if(c.startsWith('docker image inspect'))return{exitCode:0,stdout:JSON.stringify([fixedId,null]),stderr:''};
     if(c.startsWith('docker info'))return{exitCode:0,stdout:'owned-daemon',stderr:''};
     if(c.startsWith('docker volume inspect'))return volumes.has(name)?{exitCode:0,stdout:JSON.stringify([volumes.get(name)]),stderr:''}:{exitCode:1,stdout:'[]',stderr:'Error response from daemon: get '+name+': no such volume'};
     if(c.startsWith('docker volume create')){const row=f.state.getStorageBirth(name)!;volumes.set(name,{Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-24T00:00:00Z',Labels:{...storageOwnerLabels(row.binding),'cds.storage.birth':row.birthNonce}});return{exitCode:0,stdout:name,stderr:''};}
