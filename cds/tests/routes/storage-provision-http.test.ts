@@ -10,6 +10,7 @@ import {WorktreeService} from '../../src/services/worktree.js';
 import {ContainerService} from '../../src/services/container.js';
 import {createProjectsRouter} from '../../src/routes/projects.js';
 import {createBranchRouter} from '../../src/routes/branches.js';
+import {createSnapshotsRouter} from '../../src/routes/snapshots.js';
 import {stableStorageVolumeName,storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import {MongoSplitStateBackingStore,type ISplitMongoHandle} from '../../src/infra/state-store/mongo-split-store.js';
 import {selfStatusCache} from '../../src/services/self-status-cache.js';
@@ -25,7 +26,7 @@ beforeEach(async()=>{
   if(c.startsWith('docker volume inspect')){const requested=c.match(/'([^']+)'$/)?.[1]||'';return failInspect?{exitCode:1,stderr:'daemon unavailable',stdout:''}:volume?.Name===requested?{exitCode:0,stderr:'',stdout:JSON.stringify([volume])}:{exitCode:1,stderr:'Error response from daemon: get '+requested+': no such volume',stdout:''};}
   if(c.startsWith('docker volume create')){const row=state.getStorageBirth(name)!;volume={Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-22T00:00:00Z',Labels:{...storageOwnerLabels(b),'cds.storage.birth':row.birthNonce}};return {exitCode:0,stderr:'',stdout:name}}return {exitCode:0,stderr:'',stdout:''};})} as IShellExecutor;
  container=new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector);
- const app=express();app.use(express.json());app.use((req,_res,next)=>{if(req.headers['x-owned-project']) (req as any).cdsProjectKey={projectId:String(req.headers['x-owned-project']),keyId:'fixture'};next()});app.use('/api',createBranchRouter({stateService:state,worktreeService:new WorktreeService(shell,config),containerService:container,shell,config}));app.use('/api',createProjectsRouter({stateService:state,shell,config}));server=await new Promise(r=>{const h=app.listen(0,'127.0.0.1',()=>r(h))});
+ const app=express();app.use(express.json());app.use((req,_res,next)=>{if(req.headers['x-owned-project']) (req as any).cdsProjectKey={projectId:String(req.headers['x-owned-project']),keyId:'fixture'};next()});app.use('/api',createBranchRouter({stateService:state,worktreeService:new WorktreeService(shell,config),containerService:container,shell,config}));app.use('/api',createProjectsRouter({stateService:state,shell,config}));app.use('/api',createSnapshotsRouter({stateService:state}));server=await new Promise(r=>{const h=app.listen(0,'127.0.0.1',()=>r(h))});
 });
 afterEach(async()=>{vi.restoreAllMocks();await new Promise<void>(r=>server.close(()=>r()));await state.flush();fs.rmSync(root,{recursive:true,force:true});selfStatusCache._resetForTests()});
 async function post(body:any,project='p',route='/api/infra'){
@@ -33,6 +34,16 @@ async function post(body:any,project='p',route='/api/infra'){
 }
 const input=()=>({id:'mysql',projectId:'p',dockerImage:'mysql:8.0',containerPort:3306,env:{MYSQL_ROOT_PASSWORD:'fixture-password'},initializeStorage:'new-only'});
 describe('product new-only infra storage HTTP producer',()=>{
+ it('a real declaration-only POST remains protected from an older snapshot before any backup or write',async()=>{
+  const snapshot=state.createConfigSnapshot({trigger:'manual',label:'before-declaration',projectId:'p'});
+  volume={Name:name,Driver:'local',Options:null,Mountpoint:'/var/lib/docker/volumes/'+name+'/_data',CreatedAt:'2026-10-22T00:00:00Z',Labels:storageOwnerLabels(b)};
+  const body={id:'mysql',projectId:'p',dockerImage:'mysql:8.0',containerPort:3306,env:{MYSQL_ROOT_PASSWORD:'fixture-password'},volumes:[{type:'volume',name,containerPath:'/var/lib/mysql',storage:b}]};
+  const created=await post(body);expect(created.status).toBe(201);expect(state.getStorageBirth(name)).toBeUndefined();
+  state.save();await state.flush();const before=JSON.stringify(state.getState()),diskBefore=fs.readFileSync(path.join(root,'state.json'),'utf8'),count=commands.length,backup=vi.spyOn(state,'createConfigSnapshot');
+  const rejected=await post({},'p',`/api/config-snapshots/${snapshot.id}/rollback`);expect(rejected.status).toBe(409);expect(rejected.body.error).toBe('storage_retained_service_delete_refused');
+  expect(backup).not.toHaveBeenCalled();expect(JSON.stringify(state.getState())).toBe(before);expect(commands).toHaveLength(count);await state.flush();expect(fs.readFileSync(path.join(root,'state.json'),'utf8')).toBe(diskBefore);
+  const cold=new StateService(path.join(root,'state.json'));cold.load();expect(cold.getInfraServiceForProjectAndId('p','mysql')?.volumes).toEqual(body.volumes);expect(cold.getStorageBirth(name)).toBeUndefined();await cold.flush();
+ });
  it('server-owned binding is physically born and durably confirmed before 201; repeat creates nothing',async()=>{
   const r=await post(input());expect(r.status).toBe(201);expect(commands.filter(c=>c.startsWith('docker volume create'))).toHaveLength(1);expect(state.getStorageBirth(name)?.stage).toBe('published');expect(state.getInfraServiceForProjectAndId('p','mysql')?.volumes?.[0]).toMatchObject({name,storage:b});
   const restored=new StateService(path.join(root,'state.json'));restored.load();expect(restored.getStorageBirth(name)?.stage).toBe('published');await restored.flush();

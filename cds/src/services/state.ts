@@ -5941,6 +5941,10 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
     const same = (left: unknown, right: unknown) => storageProvisionDigest(left) === storageProvisionDigest(right);
     const infraTargets = new Map<string, {projectId: string; id: string}>();
     const addInfra = (projectId: string, id: string) => infraTargets.set(JSON.stringify([projectId,id]), {projectId,id});
+    // Existing owner-bound declarations also retain identity without a P journal.
+    // Match ordinary deletion's denominator before an older snapshot replaces it.
+    for (const service of this.state.infraServices)
+      if (service.volumes?.some(volume=>volume.storage !== undefined)) addInfra(service.projectId || 'default',service.id);
     for (const row of Object.values(this.state.storageBirths || {}))
       if (row.binding.scope === 'project-shared') addInfra(row.binding.projectId,row.binding.serviceId);
     for (const row of [...this.storageProvisionDrafts.values(),...Object.values(this.state.storageProvisionPublications || {})])
@@ -5953,6 +5957,10 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
         || !same(this.state.customEnv?.[GLOBAL_ENV_SCOPE],target.payload.customEnv?.[GLOBAL_ENV_SCOPE])) refuse();
     }
     const profileProjects = new Set<string>([
+      ...this.state.buildProfiles.filter(profile=>profile.cacheMounts?.some(mount=>mount.storage !== undefined)).map(profile=>profile.projectId || 'default'),
+      ...Object.values(this.state.branches).filter(branch=>[
+        ...Object.values(branch.profileOverrides || {}),...(branch.extraProfiles || []),
+      ].some(profile=>profile.cacheMounts?.some(mount=>mount.storage !== undefined))).map(branch=>branch.projectId || 'default'),
       ...Object.values(this.state.storageBirths || {}).filter(row=>row.binding.scope==='branch-private').map(row=>row.binding.projectId),
       ...this.profileStorageDrafts.values(),
       ...Object.values(this.state.profileStoragePublications || {}).map(row=>row.binding),
