@@ -4482,6 +4482,7 @@ function InfraResyncDialog({
       onToast('删除项需要输入 yes 确认');
       return;
     }
+    if (diff.adds.length > 0 && !window.confirm(`将为新增 ${diff.adds.length} 个服务中需要存储的服务创建独立空数据卷。不会接管或替换历史卷；已有或无法确认的卷会中止。是否继续？`)) return;
     setBusy(true);
     try {
       const res = await fetch(
@@ -4490,12 +4491,12 @@ function InfraResyncDialog({
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined, deleteVolumes }),
+          body: JSON.stringify({ composeYaml: yamlText, confirmText: confirmTextInput || undefined, deleteVolumes, ...(diff.adds.length > 0 ? {initializeStorage: 'new-only'} : {}) }),
         },
       );
       const body = await res.json();
       if (!res.ok) {
-        onToast(`执行失败:${body.error || res.status}`);
+        onToast(`执行失败:${body.error || res.status}${body.recoveryRequired ? '；已保留已分配的存储与原配置，请先核对结果，不要重复新建。' : ''}`);
         return;
       }
       const a = body.applied || {};
@@ -4527,8 +4528,8 @@ function InfraResyncDialog({
         <DialogHeader>
           <DialogTitle>重新同步项目基础设施</DialogTitle>
           <DialogDescription>
-            粘贴 cds-compose.yml,先预览 diff,再执行。<strong>docker named volume 保留</strong>,
-            被删/重建的容器其数据卷会被新容器自动接回。
+            粘贴 cds-compose.yml，先预览再执行。已有服务只复用经核验的原存储映射；
+            新增服务经确认后创建独立空卷。已有或无法确认的历史卷不会被接管、替换或重新创建。
           </DialogDescription>
         </DialogHeader>
 

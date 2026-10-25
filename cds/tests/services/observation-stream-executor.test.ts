@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -117,7 +118,7 @@ describe('独立启动日志执行槽真实进程', () => {
     await writeFile(path.join(dir, 'docker'), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(trace)},JSON.stringify({ppid:process.ppid,args:process.argv.slice(2)}));process.stdout.write('startup-');setTimeout(()=>process.stdout.write('ready'),40);setInterval(()=>{},1000);\n`, { mode: 0o700 });
     process.env.PATH = `${dir}:${originalPath || ''}`;
     const pool = await streams(); vi.clearAllMocks();
-    const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, pool);
+    const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, pool, undefined, unitBindMountInspector);
     const progress: string[] = [];
     const ready = await container.waitForStartupSignal('owned-fixture', 'startup-ready', chunk => { progress.push(chunk); }, 2);
     if (!ready) console.error(JSON.stringify({ scope: 'owned-startup-signal-fixture', progress, stats: pool.getStats(),
@@ -132,7 +133,7 @@ describe('独立启动日志执行槽真实进程', () => {
     const failed = { exec: async (_command: string, options: { onData: (chunk: string) => void }) => {
       options.onData('ready'); throw Object.assign(new Error('fixture cleanup unknown'), { code: 'cleanup' });
     } } as unknown as ObservationStreamExecutor;
-    const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, failed);
+    const container = new ContainerService(new ShellExecutor(), {} as CdsConfig, undefined, undefined, failed, undefined, unitBindMountInspector);
     expect(await container.waitForStartupSignal('owned-fixture', 'ready')).toBe(false);
   });
 });
