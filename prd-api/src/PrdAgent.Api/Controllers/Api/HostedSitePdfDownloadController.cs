@@ -14,8 +14,8 @@ namespace PrdAgent.Api.Controllers.Api;
 [AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
 public sealed class HostedSitePdfDownloadController : ControllerBase
 {
-    // 现有存储读取接口返回 byte[]；为低内存实例设置独立下载预算，不改托管容量。
-    public const long MaxPdfDownloadBytes = 32L * 1024 * 1024;
+    // 存储读取返回 byte[]；元数据与实际内容共用独立下载预算，不改托管容量。
+    public const long MaxPdfDownloadBytes = 320L * 1024 * 1024;
     private readonly IHostedSiteService _sites;
     private readonly IAssetStorage _storage;
     private readonly ILogger<HostedSitePdfDownloadController> _logger;
@@ -65,7 +65,7 @@ public sealed class HostedSitePdfDownloadController : ControllerBase
         if (file == null) return MissingPdf();
         if (file.Size > MaxPdfDownloadBytes)
             return StatusCode(413, ApiResponse<object>.Fail("PDF_DOWNLOAD_TOO_LARGE",
-                "这份 PDF 超过 32 MB 在线下载上限，请联系分享者提供文件。"));
+                $"这份 PDF 超过 {MaxPdfDownloadBytes / (1024 * 1024)} MiB 在线下载上限，请联系分享者提供较小文件。"));
         const string scopeMarker = "__pdf_download_scope__";
         var scope = _storage.BuildSiteKey(site.Id, scopeMarker)[..^scopeMarker.Length];
         if (!file.CosKey.StartsWith(scope, StringComparison.Ordinal)
