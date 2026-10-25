@@ -11,6 +11,7 @@ import {WorktreeService} from '../../src/services/worktree.js';
 import {BranchOperationCoordinator} from '../../src/services/branch-operation-coordinator.js';
 import {createBranchRouter} from '../../src/routes/branches.js';
 import {createPendingImportRouter} from '../../src/routes/pending-import.js';
+import {createProjectsRouter} from '../../src/routes/projects.js';
 import {storageOwnerLabels} from '../../src/services/deployment-storage-plan.js';
 import type {CdsConfig,IShellExecutor} from '../../src/types.js';
 let root:string,state:StateService,server:http.Server,commands:string[],volumes:Map<string,any>,shell:IShellExecutor,coordinator:BranchOperationCoordinator,unknown:boolean,nodes:any[],imageVolumes:Record<string,unknown>|null;
@@ -25,6 +26,7 @@ beforeEach(async()=>{
  const app=express();app.use(express.json());app.use((req,_res,next)=>{(req as any).cdsProjectKey={projectId:String(req.headers['x-own-project']||'p'),keyId:'fixture'};next()});
  app.use('/api',createBranchRouter({stateService:state,containerService:new ContainerService(shell,config, undefined, undefined, undefined, undefined, unitBindMountInspector),worktreeService:new WorktreeService(shell,config),shell,config,branchOperationCoordinator:coordinator,registry:{getAll:()=>nodes,getOnline:()=>nodes,selectExecutor:()=>nodes[0]||null} as any}));
  app.use('/api',createPendingImportRouter({stateService:state}));
+ app.use('/api',createProjectsRouter({stateService:state,shell,config}));
  server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));
 });
 afterEach(async()=>{await new Promise<void>(r=>server.close(()=>r()));vi.restoreAllMocks();vi.unstubAllGlobals();await state.flush();fs.rmSync(root,{recursive:true,force:true});});
@@ -166,4 +168,29 @@ it('project pause while the actual profile image is observed revokes P before an
  const target={kind:'profile' as const,projectId:'p',branchId:'a',serviceId:'app'};
  expect(state.getProfileStorageBirths(target)).toEqual([]);expect(state.getProfileStorageBinding(target)).toBeUndefined();expect(volumes.size).toBe(0);
  expect(commands.every(c=>c.startsWith('docker image inspect'))).toBe(true);
+});
+
+it.each(['explicit-source','follow-source-baseline'])('mode alignment %s validates the entire batch before changing any live branch',async kind=>{
+ state.updateBuildProfile('app',{prebuiltImage:false,localArtifact:false,containerWorkDir:'/app',deployModes:{source:{label:'source',prebuilt:false},express:{label:'express',prebuilt:true}}});
+ for(const id of ['a','b'])state.setBranchProfileOverride(id,'app',{activeDeployMode:'express',env:{KEEP:id}});
+ state.getProject('p')!.defaultDeployModes=kind==='explicit-source'?{app:'source'}:{};
+ expect((await post('b','p',{...input(),freshMounts:[{mountKey:'data',containerPath:'/app/data',purpose:'persistent'}]})).status).toBe(201);
+ for(const id of ['a','b'])Object.assign(state.getBranch(id)!,{ciImageStatus:'ready',ciTargetSha:'c'.repeat(40)});
+ state.save();await state.flush();const before=JSON.stringify(state.getState()),diskBefore=fs.readFileSync(path.join(root,'state.json'),'utf8'),count=commands.length;
+ const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/projects/p/align-deploy-modes`,{method:'POST',headers:{'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(3000)});
+ expect(r.status).toBe(409);expect(await r.text()).toContain('storage_retained_profile_mutation_refused');
+ expect(JSON.stringify(state.getState())).toBe(before);expect(commands).toHaveLength(count);expect(volumes.size).toBe(1);
+ await state.flush();expect(fs.readFileSync(path.join(root,'state.json'),'utf8')).toBe(diskBefore);
+ const cold=new StateService(path.join(root,'state.json'));cold.load();for(const id of ['a','b'])expect(cold.getBranchProfileOverride(id,'app')).toEqual(state.getBranchProfileOverride(id,'app'));expect(cold.getProfileStorageBinding({kind:'profile',projectId:'p',branchId:'b',serviceId:'app'})).toEqual(state.getProfileStorageBinding({kind:'profile',projectId:'p',branchId:'b',serviceId:'app'}));await cold.flush();
+});
+
+it('legal mode alignment preserves private storage and all unrelated overrides',async()=>{
+ state.updateBuildProfile('app',{prebuiltImage:false,localArtifact:false,containerWorkDir:'/app',deployModes:{source:{label:'source',prebuilt:false},express:{label:'express',prebuilt:true}}});
+ for(const id of ['a','b'])state.setBranchProfileOverride(id,'app',{activeDeployMode:'express',env:{KEEP:id}});
+ expect((await post('b')).status).toBe(201);state.getProject('p')!.defaultDeployModes={app:'source'};
+ const names=[...volumes.keys()],count=commands.length;
+ const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/api/projects/p/align-deploy-modes`,{method:'POST',headers:{'content-type':'application/json'},body:'{}',signal:AbortSignal.timeout(3000)});
+ expect(r.status).toBe(200);expect((await r.json() as any).aligned).toBe(2);
+ for(const id of ['a','b'])expect(state.getBranchProfileOverride(id,'app')).toMatchObject({activeDeployMode:'source',env:{KEEP:id}});
+ expect(state.getProfileStorageBinding({kind:'profile',projectId:'p',branchId:'b',serviceId:'app'})?.names).toEqual(names);expect(commands).toHaveLength(count);
 });
