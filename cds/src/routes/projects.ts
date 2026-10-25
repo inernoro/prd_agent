@@ -3869,6 +3869,28 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       }
     }
     const branches = stateService.getBranchesForProject(project.id);
+    // Validate the complete batch against unchanged live declarations. Applying
+    // defaults to a live branch first would make the retained-storage comparison
+    // see the candidate as its own original and skip admission.
+    const candidates = new Map(branches.map(branch => {
+      const candidate = structuredClone(branch);
+      applyDefaultDeployModesToBranch(candidate, defaults, profiles);
+      for (const profile of profiles) {
+        if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
+          const override = candidate.profileOverrides?.[profile.id];
+          if (override) delete override.activeDeployMode;
+        }
+      }
+      return [branch.id, candidate] as const;
+    }));
+    try {
+      stateService.assertProfileStorageDeclarationsPreserved(
+        stateService.getAllBranches().map(branch => candidates.get(branch.id) || branch),
+      );
+    } catch (error) {
+      res.status(409).json({ error: 'storage_retained_profile_mutation_refused', message: (error as Error).message });
+      return;
+    }
     const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
     for (const branch of branches) {
       // 对齐前记录各 profile 当前激活模式,用于判定本次对齐是否真的改了模式。
@@ -3877,17 +3899,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         prevModes[profile.id] = branch.profileOverrides?.[profile.id]?.activeDeployMode || '';
       }
       // 复用 SSOT 写入逻辑（建分支与 webhook 自动建分支同款）
-      applyDefaultDeployModesToBranch(branch, defaults, profiles);
+      const candidate = candidates.get(branch.id)!;
       const modes: Record<string, string> = {};
       let modeChanged = false;
       for (const profile of profiles) {
-        const ov = branch.profileOverrides?.[profile.id];
+        const ov = candidate.profileOverrides?.[profile.id];
         if (!Object.prototype.hasOwnProperty.call(defaults, profile.id)) {
           // 2026-10-08：表里没有 = 「跟随构建配置」。新分支不会拷这一项，所以对齐也要把分支覆盖里
           // 残留的模式清掉、回到基线；只跳过会让页面写着「跟随（极速版）」而存量分支仍停在 dev。
-          if (!ov || ov.activeDeployMode === undefined) continue;
-          const { activeDeployMode: _dropped, ...rest } = ov;
-          stateService.setBranchProfileOverride(branch.id, profile.id, rest);
+          if (branch.profileOverrides?.[profile.id]?.activeDeployMode === undefined) continue;
+          stateService.setBranchProfileOverride(branch.id, profile.id, ov || {});
           modes[profile.id] = profile.activeDeployMode || '';
           modeChanged = true;
           continue;
