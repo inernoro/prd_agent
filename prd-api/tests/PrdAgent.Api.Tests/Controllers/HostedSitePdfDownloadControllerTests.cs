@@ -62,6 +62,82 @@ public class HostedSitePdfDownloadControllerTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Registered46MbPdf_DownloadsUnchangedForSharedAndOwnedAccess(bool owned)
+    {
+        var (controller, sites, storage) = Build(owned);
+        var site = Site();
+        var pdf = ValidPdfWithSize(46_260_601);
+        site.Files[0].Size = pdf.Length;
+        if (owned)
+        {
+            sites.Setup(x => x.GetByIdAsync("site-a", "viewer", It.IsAny<CancellationToken>())).ReturnsAsync(site);
+            sites.Setup(x => x.CanEditSiteAsync(site, "viewer", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        }
+        else
+        {
+            sites.Setup(x => x.ResolveShareSiteAsync("share", "site-a", null, null, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ShareSiteResolveResult { Site = site });
+        }
+        storage.Setup(x => x.TryDownloadBytesAsync("web-hosting/sites/site-a/.versions/v1/guide.pdf", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pdf);
+
+        var result = Assert.IsType<FileContentResult>(owned
+            ? await controller.DownloadOwnedPdf("site-a", PdfPath)
+            : await controller.DownloadSharedPdf("share", "site-a", PdfPath));
+
+        Assert.Same(pdf, result.FileContents);
+        Assert.Equal(46_260_601, result.FileContents.Length);
+        Assert.Equal("application/pdf", result.ContentType);
+        Assert.Equal("教材.pdf", result.FileDownloadName);
+        Assert.Equal("nosniff", controller.Response.Headers["X-Content-Type-Options"]);
+        Assert.Equal("sandbox", controller.Response.Headers["Content-Security-Policy"]);
+        Assert.Equal("private, no-store", controller.Response.Headers.CacheControl);
+        storage.VerifyAll();
+        sites.VerifyAll();
+    }
+
+    // A complete one-page PDF with whitespace padding before xref, not a committed large fixture.
+    private static byte[] ValidPdfWithSize(int size)
+    {
+        var content = "%PDF-1.4\n";
+        var offsets = new List<int> { 0 };
+        foreach (var obj in new[] {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>" })
+        {
+            offsets.Add(Encoding.ASCII.GetByteCount(content));
+            content += $"{offsets.Count - 1} 0 obj\n{obj}\nendobj\n";
+        }
+        var xrefOffset = size - 256;
+        var xref = "xref\n0 4\n0000000000 65535 f \n" +
+            string.Join("", offsets.Skip(1).Select(x => $"{x:D10} 00000 n \n")) +
+            $"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xrefOffset}\n%%EOF\n";
+        var pdf = new byte[size];
+        Array.Fill(pdf, (byte)' ');
+        Encoding.ASCII.GetBytes(content).CopyTo(pdf, 0);
+        Encoding.ASCII.GetBytes(xref).CopyTo(pdf, xrefOffset);
+        return pdf;
+    }
+
+    [Fact]
+    public async Task ActualBytesOverBudget_AreRejectedWhenMetadataUnderstatesSize()
+    {
+        var (controller, sites, storage) = Build();
+        sites.Setup(x => x.ResolveShareSiteAsync("share", "site-a", null, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ShareSiteResolveResult { Site = Site() });
+        var pdf = new byte[checked((int)HostedSitePdfDownloadController.MaxPdfDownloadBytes + 1)];
+        Encoding.ASCII.GetBytes("%PDF-1.7\n").CopyTo(pdf, 0);
+        storage.Setup(x => x.TryDownloadBytesAsync("web-hosting/sites/site-a/.versions/v1/guide.pdf", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(pdf);
+
+        Assert.IsType<NotFoundObjectResult>(await controller.DownloadSharedPdf("share", "site-a", PdfPath));
+        storage.VerifyAll();
+    }
+
+    [Theory]
     [InlineData(401)]
     [InlineData(403)]
     [InlineData(404)]
@@ -142,6 +218,10 @@ public class HostedSitePdfDownloadControllerTests
             .ReturnsAsync(new ShareSiteResolveResult { Site = site });
         var result = Assert.IsType<ObjectResult>(await controller.DownloadSharedPdf("share", "site-a", PdfPath));
         Assert.Equal(413, result.StatusCode);
+        Assert.Equal(320L * 1024 * 1024, HostedSitePdfDownloadController.MaxPdfDownloadBytes);
+        var response = Assert.IsType<ApiResponse<object>>(result.Value);
+        Assert.Equal("PDF_DOWNLOAD_TOO_LARGE", response.Error?.Code);
+        Assert.Contains("320 MiB", response.Error?.Message);
         storage.Verify(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
