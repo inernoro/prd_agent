@@ -12,6 +12,22 @@ function fixture(){
  s.state.configSnapshots=[snapshot];return {s:s as StateService,raw:s,target:snapshot};
 }
 describe('P metadata survives snapshot rollback',()=>{
+ it.each(['infra','baseline','override','extra'])('retains declaration-only %s storage without a birth journal row',kind=>{
+  const {s,raw,target}=fixture();raw.state.storageBirths={};
+  const storage={version:1,instanceId:'own',projectId:'p',scope:kind==='infra'?'project-shared':'branch-private',...(kind==='infra'?{}:{branchId:'b'}),serviceId:kind==='infra'?'db':'app',mountKey:'data',purpose:'persistent'};
+  if(kind==='infra'){raw.state.infraServices[0].volumes[0].storage=storage;target.payload.infraServices=[];}
+  else {
+   const cacheMounts=[{kind:'volume',hostPath:'original-volume',containerPath:'/data',storage}];
+   if(kind==='baseline'){raw.state.buildProfiles[0].cacheMounts=cacheMounts;target.payload.buildProfiles=[];}
+   if(kind==='override'){raw.state.branches.b.profileOverrides.app.cacheMounts=cacheMounts;target.payload.branchConfigs={};}
+   if(kind==='extra'){raw.state.branches.b.extraProfiles=[{id:'extra',projectId:'p',cacheMounts}];target.payload.branchConfigs={};}
+  }
+  const before=JSON.stringify(raw.state);expect(()=>s.rollbackToConfigSnapshot('before')).toThrow('storage_retained_service_delete_refused');expect(raw.createConfigSnapshot).not.toHaveBeenCalled();expect(raw.save).not.toHaveBeenCalled();expect(JSON.stringify(raw.state)).toBe(before);
+ });
+ it('declaration-only storage permits identical retained config and unrelated project rollback',()=>{
+  const {s,raw,target}=fixture();raw.state.storageBirths={};raw.state.infraServices[0].volumes[0].storage={version:1,instanceId:'own',projectId:'p',scope:'project-shared',serviceId:'db',mountKey:'data',purpose:'persistent'};target.payload.infraServices=structuredClone(raw.state.infraServices);target.payload.customEnv.other.KEY='after';
+  expect(()=>s.rollbackToConfigSnapshot('before')).not.toThrow();expect(raw.state.customEnv.other.KEY).toBe('after');expect(raw.createConfigSnapshot).toHaveBeenCalledTimes(1);
+ });
  it.each(['absent','changed'])('rejects %s original infra definition before backup/write',kind=>{
   const {s,raw,target}=fixture();if(kind==='absent')target.payload.infraServices=[];else target.payload.infraServices[0].env.PW='wrong';
   const before=JSON.stringify(raw.state);expect(()=>s.rollbackToConfigSnapshot('before')).toThrow('storage_retained_service_delete_refused');expect(raw.createConfigSnapshot).not.toHaveBeenCalled();expect(raw.save).not.toHaveBeenCalled();expect(JSON.stringify(raw.state)).toBe(before);
