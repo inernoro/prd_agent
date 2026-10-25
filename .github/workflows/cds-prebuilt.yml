@@ -62,6 +62,9 @@ jobs:
           cd cds
           OUT_DIR=dist node scripts/build-dist-esbuild.mjs
 
+      - name: Verify backend imports without source checkout
+        run: pnpm -C cds exec vitest run tests/services/prebuilt-source-free-import.test.ts
+
       - name: Build web (vite → cds/web/dist)
         run: pnpm -C cds/web build
 
