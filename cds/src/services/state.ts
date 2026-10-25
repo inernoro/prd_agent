@@ -5908,7 +5908,7 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
       ...this.state.buildProfiles.filter(profile=>profile.cacheMounts?.some(mount=>mount.storage !== undefined)).map(profile=>profile.projectId || 'default'),
       ...Object.values(this.state.branches).filter(branch=>[
         ...Object.values(branch.profileOverrides || {}),...(branch.extraProfiles || []),
-      ].some(profile=>profile.cacheMounts?.some(mount=>mount.storage !== undefined))).map(branch=>branch.projectId || 'default'),
+      ].some(profile=>(profile as Partial<BuildProfile>).cacheMounts?.some(mount=>mount.storage !== undefined))).map(branch=>branch.projectId || 'default'),
       ...Object.values(this.state.storageBirths || {}).filter(row=>row.binding.scope==='branch-private').map(row=>row.binding.projectId),
       ...this.profileStorageDrafts.values(),
       ...Object.values(this.state.profileStoragePublications || {}).map(row=>row.binding),
