@@ -7,6 +7,7 @@ using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Api.Models;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Core.Security;
@@ -24,17 +25,20 @@ public sealed class NotificationsController : ControllerBase
     private readonly AdminPushNotificationService _pushService;
     private readonly AdminNotificationEventService _eventService;
     private readonly IConfiguration _configuration;
+    private readonly IAdminPermissionService _adminPermissions;
 
     public NotificationsController(
         MongoDbContext db,
         AdminPushNotificationService pushService,
         AdminNotificationEventService eventService,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IAdminPermissionService adminPermissions)
     {
         _db = db;
         _pushService = pushService;
         _eventService = eventService;
         _configuration = configuration;
+        _adminPermissions = adminPermissions;
     }
 
     [HttpGet]
@@ -43,7 +47,7 @@ public sealed class NotificationsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var now = DateTime.UtcNow;
-        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, HasAdminNotificationPermission());
+        var filter = BuildVisibleNotificationFilter(userId, now, includeHandled, await HasAdminNotificationPermissionAsync(ct));
 
         var items = await _db.AdminNotifications
             .Find(filter)
@@ -239,7 +243,7 @@ public sealed class NotificationsController : ControllerBase
             userId,
             now,
             includeHandled: false,
-            includeAdmin: HasAdminNotificationPermission());
+            includeAdmin: await HasAdminNotificationPermissionAsync(ct));
         var update = Builders<AdminNotification>.Update
             .Set(x => x.Status, "handled")
             .Set(x => x.HandledAt, now)
@@ -268,7 +272,7 @@ public sealed class NotificationsController : ControllerBase
             userId,
             now,
             includeHandled: false,
-            includeAdmin: HasAdminNotificationPermission());
+            includeAdmin: await HasAdminNotificationPermissionAsync(ct));
         var update = Builders<AdminNotification>.Update
             .Set(x => x.Status, "handled")
             .Set(x => x.HandledAt, now)
@@ -293,7 +297,7 @@ public sealed class NotificationsController : ControllerBase
             || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
     }
 
-    private bool HasAdminNotificationPermission()
+    private async Task<bool> HasAdminNotificationPermissionAsync(CancellationToken ct)
     {
         if (string.Equals(User.FindFirst(AiAccessKeyAuthenticationHandler.ClaimTypeIsAiSuperAccess)?.Value, "1", StringComparison.Ordinal)
             || string.Equals(User.FindFirst(StableSmokeAuthenticationHandler.ClaimTypeIsStableSmokeAccess)?.Value, "1", StringComparison.Ordinal))
@@ -301,13 +305,17 @@ public sealed class NotificationsController : ControllerBase
             return true;
         }
 
-        var permissions = User.FindAll("permissions").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        return User.IsInRole(UserRole.ADMIN.ToString())
-            && (permissions.Contains(AdminPermissionCatalog.Super)
+        if (!User.IsInRole(UserRole.ADMIN.ToString())) return false;
+
+        // 通知路径豁免管理权限中间件，正常登录不会注入 permissions；按当前权限回查。
+        var isRoot = string.Equals(User.FindFirst("isRoot")?.Value, "1", StringComparison.Ordinal);
+        var effectivePermissions = await _adminPermissions.GetEffectivePermissionsAsync(this.GetRequiredUserId(), isRoot, ct);
+        var permissions = effectivePermissions.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return permissions.Contains(AdminPermissionCatalog.Super)
             || permissions.Contains(AdminPermissionCatalog.SettingsWrite)
             || permissions.Contains(AdminPermissionCatalog.OpenPlatformManage)
             || permissions.Contains(AdminPermissionCatalog.AutomationsManage)
-            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage));
+            || permissions.Contains(AdminPermissionCatalog.DefectAgentManage);
     }
 
     private static FilterDefinition<AdminNotification> BuildVisibleNotificationFilter(

@@ -1197,16 +1197,35 @@ public sealed class AdminPushNotificationServiceTests
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(true, true)]
-    public async Task NotificationsController_List_ShouldUseActualRoleAndPermissionClaims(bool adminRole, bool adminPermission)
+    public async Task NotificationsController_List_ShouldUseLivePermissionsWithoutInjectedClaims(bool adminRole, bool adminPermission)
     {
         await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
         await InsertLegacyQuotaAsync(testDb, "null");
         var controller = CreateNotificationsController(testDb.Context, "u1",
             adminRole: adminRole, adminPermission: adminPermission);
         Assert.Equal(adminRole, controller.User.IsInRole(UserRole.ADMIN.ToString()));
+        Assert.Empty(controller.User.FindAll("permissions"));
 
         var items = ReadNotificationItems(await controller.List(ct: CancellationToken.None));
         Assert.Equal(adminRole && adminPermission, items.Any(x => x.GetProperty("id").GetString() == "quota"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NotificationsController_HandleAll_ShouldUseLivePermissionsInsteadOfStaleClaims(bool adminPermission)
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        await InsertLegacyQuotaAsync(testDb, "missing");
+        var controller = CreateNotificationsController(testDb.Context, "u1", adminRole: true, adminPermission: adminPermission);
+        // 公共通知路径不注入声明；即使残留管理声明，也必须服从当前有效权限。
+        ((ClaimsIdentity)controller.User.Identity!).AddClaim(new Claim("permissions", AdminPermissionCatalog.SettingsWrite));
+        var items = ReadNotificationItems(await controller.List(ct: CancellationToken.None));
+        Assert.Equal(adminPermission, items.Any(x => x.GetProperty("id").GetString() == "quota"));
+        Assert.IsType<OkObjectResult>(await controller.HandleAll(CancellationToken.None));
+        var quota = await testDb.Context.AdminNotifications.Find(x => x.Id == "quota").SingleAsync();
+        Assert.Equal(adminPermission ? "handled" : "open", quota.Status);
+        Assert.Equal(QuotaRawMessage, quota.Message);
     }
 
     [Theory]
@@ -1528,10 +1547,8 @@ public sealed class AdminPushNotificationServiceTests
         var claims = new List<Claim>
         {
             new("sub", userId),
-            new("permissions", AdminPermissionCatalog.Access),
+            new("role", (adminRole ? UserRole.ADMIN : UserRole.QA).ToString()),
         };
-        if (adminRole) claims.Add(new Claim("role", UserRole.ADMIN.ToString()));
-        if (adminPermission) claims.Add(new Claim("permissions", AdminPermissionCatalog.SettingsWrite));
         if (stableSmoke)
         {
             claims.Add(new Claim(
@@ -1539,7 +1556,14 @@ public sealed class AdminPushNotificationServiceTests
                 "1"));
         }
 
-        return new NotificationsController(db, push, events, TestConfiguration)
+        IReadOnlyList<string> effectivePermissions = adminPermission
+            ? [AdminPermissionCatalog.Access, AdminPermissionCatalog.SettingsWrite]
+            : [AdminPermissionCatalog.Access];
+        var permissions = new Moq.Mock<IAdminPermissionService>(Moq.MockBehavior.Strict);
+        permissions.Setup(x => x.GetEffectivePermissionsAsync(userId, false, Moq.It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult(effectivePermissions));
+
+        return new NotificationsController(db, push, events, TestConfiguration, permissions.Object)
         {
             ControllerContext = new ControllerContext
             {
