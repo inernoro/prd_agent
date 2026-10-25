@@ -1,4 +1,5 @@
 import { traceExecutor } from '../helpers/cleanup-lifecycle-trace.js';
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, readFile, rm, access, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -470,7 +471,7 @@ describe('IsolatedShellExecutor 真实进程', () => {
     const e = new IsolatedShellExecutor(operation, { processFactory: () => childProcess.spawn(process.execPath, ['--eval', 'throw new Error("fixture")'], { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }) });
     executors.push(e);
     const config = { repoRoot: '/unused', worktreeBase: '/unused', dockerNetwork: 'unused', sharedEnv: {}, jwt: { secret: 'fixture', issuer: 'fixture' } } as CdsConfig;
-    const container = new ContainerService(e, config);
+    const container = new ContainerService(e, config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     for (const read of [
       () => container.isRunning('fixture'), () => container.getRunningContainerNamesSnapshot(),
       () => container.getInfraHealth('fixture'), () => container.discoverAppContainersWithStatus(),

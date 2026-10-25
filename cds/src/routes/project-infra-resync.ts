@@ -1,3 +1,4 @@
+import {planFreshCatalogInfra,assertFreshLegacyVolumesAbsent,type FreshInfraPlan} from '../services/fresh-catalog-storage-plan.js';
 import { projectResourceNamespace } from '../services/preview-slug.js';
 // 项目基础设施重新同步路由 (2026-05-29)
 //
@@ -32,8 +33,15 @@ import { Router } from 'express';
 import nodeFs from 'node:fs';
 import nodePath from 'node:path';
 import type { StateService } from '../services/state.js';
-import type { InfraService } from '../types.js';
-import { parseCdsCompose, discoverComposeFiles } from '../services/compose-parser.js';
+import type { InfraService, IShellExecutor } from '../types.js';
+import {randomUUID} from 'node:crypto';
+import {load as loadYaml} from 'js-yaml';
+import {StorageProvisionService,storageProvisionDigest} from '../services/storage-provision.js';
+import {infraStoragePlan,stableStorageVolumeName} from '../services/deployment-storage-plan.js';
+import {assertInfraStorageBoundary} from '../services/deployment-storage-boundary.js';
+import {recommendedVolumePathsFromCatalog} from '../services/infra-catalog.js';
+import {assertInfraAuthenticationConfigured} from '../services/infra-auth-policy.js';
+import { parseCdsCompose, discoverComposeFiles, resolveEnvTemplates, resolveCommandTemplate } from '../services/compose-parser.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import type { ContainerService } from '../services/container.js';
 import type { ServerEventLogSink } from '../services/server-event-log-store.js';
@@ -129,7 +137,8 @@ export interface InfraResyncDeps {
   stateService: StateService;
   containerService: ContainerService;
   serverEventLogStore?: ServerEventLogSink | null;
-  config: { portStart?: number; repoRoot: string };
+  shell?: IShellExecutor;
+  config: { portStart?: number; repoRoot: string; storageInstanceId?: string };
   assertProjectAccess: (req: any, projectId: string) => { status: number; body: unknown } | null;
 }
 
@@ -254,171 +263,132 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     const access = deps.assertProjectAccess(req, projectId);
     if (access) { res.status(access.status).json(access.body); return; }
     const project = stateService.getProject(projectId);
-    if (!project) { res.status(404).json({ error: '项目不存在' }); return; }
-
-    const { composeYaml, confirmText, deleteVolumes } = (req.body || {}) as { composeYaml?: string; confirmText?: string; deleteVolumes?: boolean };
-    if (!composeYaml || !composeYaml.trim()) {
-      res.status(400).json({ error: 'composeYaml 必填' });
-      return;
+    if (!project) { res.status(404).json({error:'项目不存在'}); return; }
+    const {composeYaml, confirmText, deleteVolumes, initializeStorage} = req.body || {};
+    if (typeof composeYaml !== 'string' || !composeYaml.trim()
+      || initializeStorage !== undefined && initializeStorage !== 'new-only') {
+      res.status(400).json({error:'storage_provision_input_invalid'}); return;
     }
-    const { diff, error } = computeDiff(projectId, composeYaml);
-    if (error) {
-      res.status(error.status).json({ error: error.message, cmdValidationError: error.cmdValidationError });
-      return;
+    const {diff, error} = computeDiff(projectId, composeYaml);
+    if (error) { res.status(error.status).json({error:error.message,cmdValidationError:error.cmdValidationError}); return; }
+    if (!diff) { res.status(500).json({error:'内部:diff 为空'}); return; }
+    if (diff.removes.length && (typeof confirmText !== 'string' || confirmText.trim().toLowerCase() !== 'yes')) {
+      res.status(400).json({error:'此操作将删除 infra,必须传 confirmText="yes" 确认',removes:diff.removes}); return;
     }
-    if (!diff) { res.status(500).json({ error: '内部:diff 为空' }); return; }
-
-    // 有 removes 时强制 confirmText
-    if (diff.removes.length > 0 && (confirmText || '').trim().toLowerCase() !== 'yes') {
-      res.status(400).json({
-        error: '此操作将删除 infra,必须传 confirmText="yes" 确认',
-        removes: diff.removes,
-      });
-      return;
-    }
-
-    serverEventLogStore?.record({
-      category: 'system',
-      severity: 'warn',
-      source: 'project-infra-resync',
-      action: 'infra.resync.start',
-      message: `开始重新同步项目 ${projectId} 的基础设施 (add=${diff.adds.length} update=${diff.updates.length} remove=${diff.removes.length})`,
-      projectId,
-      details: {
-        adds: diff.adds.map((a) => a.id),
-        updates: diff.updates.map((u) => ({ id: u.id, reasons: u.reasons })),
-        removes: diff.removes.map((r) => r.id),
-      },
-    });
-
-    // 重新解析以拿原始 def
-    const parsed = parseCdsCompose(composeYaml);
-    const yamlById = new Map((parsed?.infraServices || []).map((s) => [s.id, s]));
-
-    const applied = { added: [] as string[], updated: [] as string[], removed: [] as string[] };
-    const errors: Array<{ phase: string; id: string; message: string }> = [];
-
-    // Phase 1: removes — 停 + 删容器 + 删 state(默认数据卷保留;
-    // deleteVolumes=true 时显式删 named volume,需用户弹窗勾选过)
-    const volumeRemovals: Array<{ name: string; ok: boolean; error?: string }> = [];
-    for (const r of diff.removes) {
-      try {
-        const current = stateService.getInfraServiceForProjectAndId(projectId, r.id);
-        // Phase 1 是删除：停完就 removeInfraService，登记也没了，下一步是重新添加。
-        try { await containerService.stopInfraService(r.containerName, 'cds-infra-remove'); } catch { /* tolerate */ }
-        if (deleteVolumes && current) {
-          const namedVols = (current.volumes || [])
-            .filter((v) => v.type !== 'bind')
-            .map((v) => v.name);
-          if (namedVols.length > 0) {
-            const vr = await containerService.removeNamedVolumes(namedVols);
-            volumeRemovals.push(...vr);
-          }
-        }
-        stateService.removeInfraService(r.id, projectId);
-        applied.removed.push(r.id);
-      } catch (err) {
-        errors.push({ phase: 'remove', id: r.id, message: (err as Error).message });
-      }
-    }
-
-    // Phase 2: updates — 停 + 删旧容器(同名 volume 不动)+ 用新签名重建 state + start
-    for (const u of diff.updates) {
-      try {
-        const current = stateService.getInfraServiceForProjectAndId(projectId, u.id);
-        const yamlSvc = yamlById.get(u.id);
-        if (!current || !yamlSvc) continue;
-        try { await containerService.stopInfraService(current.containerName); } catch { /* tolerate */ }
-        // 更新字段:image/cmd/entrypoint/env/volumes/port,保留 hostPort + containerName
-        // Codex review(PR #684, P2):diffSignatures 把 restartPolicy 报成 update reason,
-        // 但执行路径以前不写 restartPolicy → startInfraService 回落旧/默认值,后续预览
-        // 永远报同一处漂移。这里把 restartPolicy 也落库(yaml 显式声明才写,未声明保留
-        // current,与 diffSignatures 的 `yaml ?? current` 判定一致)。
-        stateService.updateInfraService(u.id, {
-          dockerImage: yamlSvc.dockerImage,
-          containerPort: yamlSvc.containerPort,
-          env: yamlSvc.env || {},
-          volumes: yamlSvc.volumes || [],
-          healthCheck: yamlSvc.healthCheck,
-          ...(yamlSvc.command !== undefined ? { command: yamlSvc.command } : { command: undefined }),
-          ...(yamlSvc.entrypoint !== undefined ? { entrypoint: yamlSvc.entrypoint } : { entrypoint: undefined }),
-          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: sanitizeDockerRestartPolicy(yamlSvc.restartPolicy) } : {}),
-          status: 'stopped',
-          errorMessage: undefined,
-        }, projectId);
-        const refreshed = stateService.getInfraServiceForProjectAndId(projectId, u.id);
-        if (refreshed) {
-          try {
-            await containerService.startInfraService(refreshed, stateService.getCustomEnv(projectId));
-            stateService.updateInfraService(u.id, { status: 'running', errorMessage: undefined }, projectId);
-          } catch (startErr) {
-            stateService.updateInfraService(u.id, { status: 'error', errorMessage: (startErr as Error).message }, projectId);
-            errors.push({ phase: 'update.start', id: u.id, message: (startErr as Error).message });
-          }
-        }
-        applied.updated.push(u.id);
-      } catch (err) {
-        errors.push({ phase: 'update', id: u.id, message: (err as Error).message });
-      }
-    }
-
-    // Phase 3: adds — 标准 addInfraService 路径
-    for (const a of diff.adds) {
-      try {
-        const yamlSvc = yamlById.get(a.id);
-        if (!yamlSvc) continue;
-        const containerName = project.legacyFlag
-          ? `cds-infra-${yamlSvc.id}`
-          : `cds-infra-${projectResourceNamespace(project).slice(0, 12)}-${yamlSvc.id}`;
-        const service: InfraService = {
-          id: yamlSvc.id,
-          projectId,
-          name: yamlSvc.name || yamlSvc.id,
-          dockerImage: yamlSvc.dockerImage,
-          containerPort: yamlSvc.containerPort,
-          hostPort: stateService.allocatePort(config.portStart || 10000),
-          containerName,
-          status: 'stopped',
-          volumes: yamlSvc.volumes || [],
-          env: yamlSvc.env || {},
-          healthCheck: yamlSvc.healthCheck,
-          ...(yamlSvc.command !== undefined ? { command: yamlSvc.command } : {}),
-          ...(yamlSvc.entrypoint !== undefined ? { entrypoint: yamlSvc.entrypoint } : {}),
-          // Codex review(PR #684, P2):新增 infra 也要带上 yaml 声明的 restartPolicy,
-          // 否则首次部署就回落默认,和 update 路径同病。
-          ...(yamlSvc.restartPolicy !== undefined ? { restartPolicy: sanitizeDockerRestartPolicy(yamlSvc.restartPolicy) } : {}),
-          createdAt: new Date().toISOString(),
-        };
-        stateService.addInfraService(service);
-        try {
-          await containerService.startInfraService(service, stateService.getCustomEnv(projectId));
-          stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, projectId);
-        } catch (startErr) {
-          stateService.updateInfraService(service.id, { status: 'error', errorMessage: (startErr as Error).message }, projectId);
-          errors.push({ phase: 'add.start', id: service.id, message: (startErr as Error).message });
-        }
-        applied.added.push(service.id);
-      } catch (err) {
-        errors.push({ phase: 'add', id: a.id, message: (err as Error).message });
-      }
-    }
-
-    stateService.save();
-
-    serverEventLogStore?.record({
-      category: 'system',
-      severity: errors.length > 0 ? 'warn' : 'info',
-      source: 'project-infra-resync',
-      action: 'infra.resync.done',
-      message: `项目 ${projectId} 基础设施同步完成 (added=${applied.added.length} updated=${applied.updated.length} removed=${applied.removed.length} errors=${errors.length})`,
-      projectId,
-      details: { applied, errors },
-    });
+    const applied = {added:[] as string[],updated:[] as string[],removed:[] as string[]};
+    const allocated:string[]=[];
+    const errors:Array<{phase:string;id:string;message:string}>=[];
+    const volumeRemovals:Array<{name:string;ok:boolean;error?:string}>=[];
+    const reject=()=>new Error('storage_resync_unconfirmed');
+    const configuredEnv=structuredClone(stateService.getCustomEnv(projectId));
+    const projectDigest=storageProvisionDigest(project);
+    const configDigest=storageProvisionDigest(config);
+    const expected=new Map(stateService.getInfraServicesForProject(projectId).map(s=>[s.id,{ref:s,digest:storageProvisionDigest(s)}]));
+    const acceptOwnWrite=(id:string)=>{
+      const current=stateService.getInfraServiceForProjectAndId(projectId,id);
+      if(current)expected.set(id,{ref:current,digest:storageProvisionDigest(current)});else expected.delete(id);
+    };
+    const fence=()=>{
+      if(stateService.getProject(projectId)!==project || project.paused || projectDigest!==storageProvisionDigest(project)
+        || configDigest!==storageProvisionDigest(config) || deps.assertProjectAccess(req,projectId)
+        || storageProvisionDigest(stateService.getCustomEnv(projectId))!==storageProvisionDigest(configuredEnv))throw reject();
+      const current=stateService.getInfraServicesForProject(projectId);
+      if(current.length!==expected.size || current.some(s=>expected.get(s.id)?.ref!==s || expected.get(s.id)?.digest!==storageProvisionDigest(s)))throw reject();
+    };
     try {
-      cdsEventsBus.publish('pending-import.count', { pendingCount: stateService.getPendingImports().filter((i) => i.status === 'pending').length });
-    } catch { /* ignore */ }
-
-    res.json({ applied, errors, volumeRemovals });
+      fence();
+      // ALL removals are checked before any new allocation, update or runtime action.
+      for (const change of diff.removes) stateService.assertInfraRemovalAllowed(change.id, projectId);
+      const parsed=parseCdsCompose(composeYaml)!;
+      const definitions=new Map(parsed.infraServices.map(s=>[s.id,s]));
+      const raw=(loadYaml(composeYaml) as any)?.services || {};
+      // A relative bind must not silently reclassify an old DB as an app/removal.
+      if(diff.removes.some(r=>Object.hasOwn(raw,r.id)))throw reject();
+      const reserved=new Set<number>();
+      const preparedUpdates=new Map<string,InfraService>();
+      const preparedAdds=new Map<string,{service:InfraService;provision:boolean}>();
+      const freshPlans:FreshInfraPlan[]=[];
+      const authenticate=(service:InfraService)=>assertInfraAuthenticationConfigured({...service,
+        env:resolveEnvTemplates(service.env,configuredEnv),command:resolveCommandTemplate(service.command,configuredEnv),
+        entrypoint:resolveCommandTemplate(service.entrypoint,configuredEnv)});
+      // First pass is pure for the ENTIRE graph; no Docker, State mutation or birth.
+      for(const change of [...diff.updates,...diff.adds]) {
+        const def=definitions.get(change.id);if(!def)throw reject();
+        const old=expected.get(change.id)?.ref;
+        const service:InfraService={...(old?structuredClone(old):{
+          id:def.id,projectId,name:def.name||def.id,hostPort:stateService.allocatePort(config.portStart||10000,reserved),
+          containerName:project.legacyFlag?`cds-infra-${def.id}`:`cds-infra-${projectResourceNamespace(project).slice(0,12)}-${def.id}`,
+          createdAt:new Date().toISOString(),
+        }),dockerImage:def.dockerImage,containerPort:def.containerPort,env:structuredClone(def.env||{}),volumes:structuredClone(def.volumes||[]),
+          healthCheck:structuredClone(def.healthCheck),command:structuredClone(def.command),entrypoint:structuredClone(def.entrypoint),
+          ...(def.restartPolicy!==undefined?{restartPolicy:sanitizeDockerRestartPolicy(def.restartPolicy)}:{}),status:'stopped',errorMessage:undefined};
+        if(!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(service.containerName)
+          || !Number.isInteger(service.containerPort) || service.containerPort<1 || service.containerPort>65535
+          || !Number.isInteger(service.hostPort) || service.hostPort<1 || service.hostPort>65535)throw reject();
+        reserved.add(service.hostPort);
+        let provision=false;
+        if(Object.hasOwn(raw[def.id]||{},'volumes') && !Array.isArray(raw[def.id].volumes))throw reject();
+        if(!old) {
+          if(stateService.getStorageBirthsForService(projectId,service.id).length)throw reject();
+          const planned=planFreshCatalogInfra(service,config,initializeStorage==='new-only');
+          if(planned.provision&&!deps.shell)throw reject();
+          Object.assign(service,planned.service);provision=planned.provision;freshPlans.push(planned);
+        } else if(Object.hasOwn(raw[def.id]||{},'volumes') && !Array.isArray(raw[def.id].volumes))throw reject();
+        if(old && storageProvisionDigest(old.volumes||[])!==storageProvisionDigest(service.volumes))throw reject();
+        authenticate(service);assertInfraStorageBoundary(service,config);infraStoragePlan(service,config);
+        if(old)preparedUpdates.set(service.id,service);else preparedAdds.set(service.id,{service,provision});
+      }
+      // ALL replacements are admitted strictly before the first remove/stop.
+      for(const [id,service] of preparedUpdates) {
+        preparedUpdates.set(id,await containerService.preflightInfraStorage(service,{assertCurrent:fence}));fence();
+      }
+      for(const [id,add] of preparedAdds) {
+        if(!add.provision){add.service=await containerService.preflightInfraStorage(add.service,{assertCurrent:fence});fence();}
+      }
+      await assertFreshLegacyVolumesAbsent(freshPlans,deps.shell!,fence);
+      // Explicit fresh P finishes and ACKs before any destructive phase. Failures keep original births.
+      for(const [id,add] of preparedAdds) {
+        if(!add.provision)continue;
+        const frozen=storageProvisionDigest(add.service);
+        await new StorageProvisionService(stateService,deps.shell!,config).provisionNewInfra(add.service,infraStoragePlan(add.service,config),`storage_${randomUUID()}`,fence);
+        const published=stateService.getInfraServiceForProjectAndId(projectId,id);
+        if(!published || storageProvisionDigest(published)!==frozen)throw reject();
+        acceptOwnWrite(id);fence();allocated.push(id);
+        add.service=await containerService.preflightInfraStorage(add.service,{assertCurrent:fence});fence();
+      }
+      fence();
+      serverEventLogStore?.record({category:'system',severity:'warn',source:'project-infra-resync',action:'infra.resync.start',
+        message:`开始重新同步项目 ${projectId} 的基础设施`,projectId,
+        details:{adds:diff.adds.map(s=>s.id),updates:diff.updates.map(s=>s.id),removes:diff.removes.map(s=>s.id)}});
+      for(const r of diff.removes) {
+        fence();const current=expected.get(r.id)!.ref;
+        await containerService.stopInfraService(current.containerName,'cds-infra-remove');fence();
+        if(deleteVolumes){const names=(current.volumes||[]).filter(v=>v.type!=='bind').map(v=>v.name);
+          if(names.length){volumeRemovals.push(...await containerService.removeNamedVolumes(names));fence();}}
+        stateService.removeInfraService(r.id,projectId);acceptOwnWrite(r.id);applied.removed.push(r.id);
+      }
+      for(const [id,accepted] of preparedUpdates) {
+        fence();await containerService.stopInfraService(accepted.containerName);fence();
+        // State and runtime consume the SAME frozen declaration, not newly resolved mutable inputs.
+        stateService.updateInfraService(id,structuredClone(accepted),projectId);acceptOwnWrite(id);
+        await containerService.startInfraService(accepted,configuredEnv);fence();
+        stateService.updateInfraService(id,{status:'running',errorMessage:undefined},projectId);acceptOwnWrite(id);applied.updated.push(id);
+      }
+      for(const [id,add] of preparedAdds) {
+        fence();if(!add.provision){stateService.addInfraService(structuredClone(add.service));acceptOwnWrite(id);}
+        await containerService.startInfraService(add.service,configuredEnv);fence();
+        stateService.updateInfraService(id,{status:'running',errorMessage:undefined},projectId);acceptOwnWrite(id);applied.added.push(id);
+      }
+      stateService.save();await stateService.flush();fence();
+      serverEventLogStore?.record({category:'system',severity:'info',source:'project-infra-resync',action:'infra.resync.done',
+        message:`项目 ${projectId} 基础设施同步完成`,projectId,details:{applied,errors}});
+      try{cdsEventsBus.publish('pending-import.count',{pendingCount:stateService.getPendingImports().filter(i=>i.status==='pending').length});}catch{/* observer only */}
+      res.json({applied,errors,volumeRemovals,allocated});
+    } catch (error) {
+      if ((error as Error).message.startsWith('storage_retained_service_delete_refused:')) { res.status(409).json({error:'storage_retained_service_delete_refused',message:(error as Error).message,applied,allocated}); return; }
+      // No retry/reallocation/rollback guesses. A confirmed or uncertain P remains held for reconciliation.
+      res.status(409).json({error:'storage_resync_unconfirmed',applied,allocated,recoveryRequired:true});
+    }
   });
 
   return router;

@@ -1,3 +1,8 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
+import {withStorageImages} from '../helpers/storage-image-mock.js';
+import type {IShellExecutor} from '../../src/types.js';
+// Runtime absence/readiness scenarios remain independent of synthetic create-time storage inventory.
+const withMemoryStorageImages=<T extends IShellExecutor>(shell:T)=>withStorageImages(shell,{freshCreatedProjection:true});
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ContainerService } from '../../src/services/container.js';
 import { DeploymentPhaseBudget, deploymentPhaseBudget, restoreDeploymentMemoryReservations } from '../../src/services/deployment-phase-budget.js';
@@ -28,7 +33,9 @@ describe('部署内存预约生命周期', () => {
   let mock: MockShellExecutor;
   let service: ContainerService;
   beforeEach(() => {
-    mock = new MockShellExecutor(); service = new ContainerService(mock, config);
+    mock = new MockShellExecutor();
+    mock.addResponsePattern(/^docker image inspect .* --format '\[\{\{json .Id/,()=>({exitCode:0,stdout:JSON.stringify(['sha256:'+'a'.repeat(64),null]),stderr:''}));
+    service = new ContainerService(withMemoryStorageImages(mock), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     vi.stubEnv('CDS_BRANCH_NETWORK_ISOLATION', '0');
     setBuildGateHostLoadProvider(() => ({ load1: 0, cores: 18 }));
   });
@@ -98,10 +105,10 @@ describe('部署内存预约生命周期', () => {
     mock.addResponsePatternFirst(/docker inspect --format.*"running"/, () => ({ stdout: JSON.stringify({
       id: runtime.containerId, running: false, project: 'p1', branch: 'b1', profile: 'api',
       networks: { 'old-network': { Aliases: ['api'] } } }), stderr: '', exitCode: 0 }));
-    const delayed = new ContainerService({ exec: (command, options) => {
+    const delayed = new ContainerService(withMemoryStorageImages({ exec: (command, options) => {
       if (command.startsWith('docker stop')) { entered(); return response; }
       return mock.exec(command, options);
-    } }, config);
+    } }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const stop = delayed.stopRuntimeGroup(oldRuntime, '旧操作停止', owner);
     await stopping;
     deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 768, { ...owner, operationId: 'op-new', operationGeneration: 2 });
@@ -190,7 +197,7 @@ describe('部署内存预约生命周期', () => {
     entry.services.api = { ...runtime, containerName: 'replacement', status: 'running' };
     let finish!: (value: ExecResult) => void;
     const response = new Promise<ExecResult>(resolve => { finish = resolve; });
-    const delayed = new ContainerService({ exec: () => response }, config);
+    const delayed = new ContainerService(withMemoryStorageImages({ exec: () => response }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const checking = delayed.reconcileDeploymentMemoryReservations([entry], { recoveredOnly: true, creationSettled: () => true });
     await Promise.resolve();
     deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 768, { ...owner, operationId: 'op-new', operationGeneration: 2 });
@@ -259,9 +266,9 @@ describe('部署内存预约生命周期', () => {
     let elapsed = 0;
     vi.spyOn(performance, 'now').mockImplementation(() => elapsed);
     const timeouts: number[] = [];
-    const bounded = new ContainerService({ exec: async (_command, options) => {
+    const bounded = new ContainerService(withMemoryStorageImages({ exec: async (_command, options) => {
       timeouts.push(options!.timeout!); elapsed += 6000; return absent();
-    } }, config);
+    } }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const result = await bounded.reconcileDeploymentMemoryReservations([entry], { creationSettled: () => true });
     expect(timeouts).toEqual([5000, 5000, 3000]);
     expect(result.retained).toEqual(['cds-b1-api-3', 'cds-b1-api-4']);
@@ -280,7 +287,7 @@ describe('部署内存预约生命周期', () => {
     const entry = branch(); restoreDeploymentMemoryReservations([entry], () => [profile]);
     let release!: (value: ExecResult) => void;
     const response = new Promise<ExecResult>(resolve => { release = resolve; });
-    const delayed = new ContainerService({ exec: () => response }, config);
+    const delayed = new ContainerService(withMemoryStorageImages({ exec: () => response }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     const checking = delayed.reconcileDeploymentMemoryReservations([entry], { creationSettled: () => true });
     await Promise.resolve();
     deploymentPhaseBudget.reserveKnownMemory(runtime.containerName, 768, { ...owner, operationId: 'op-new', operationGeneration: 2 });
@@ -396,7 +403,7 @@ describe('部署内存预约生命周期', () => {
         id: runtime.containerId, running: false, restarting: false, status: 'created', project: 'p1', branch: 'b1', profile: 'api' }) });
     await expect(service.runService(entry, profile, candidate, undefined, undefined, owner)).rejects.toThrow('启动结果未知');
     expect(mock.commands.some(command => command.startsWith('docker create'))).toBe(true);
-    expect(mock.commands).toContain(`docker start ${candidate.containerName}`);
+    expect(mock.commands).toContain(`docker start ${candidate.containerId}`);
     expect(candidate.containerId).toBe(runtime.containerId);
     expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ key: candidate.containerName, owner })]);
   });
@@ -406,7 +413,7 @@ describe('部署内存预约生命周期', () => {
       state === 'absent' ? absent() : { ...inspection(false), stdout: JSON.stringify({
         id: runtime.containerId, running: false, restarting: false, status: 'created', project: 'p1', branch: 'b1', profile: 'api' }) });
     await expect(service.runService(entry, profile, candidate, undefined, undefined, owner)).rejects.toThrow('start failed');
-    expect(mock.commands).toContain(`docker start ${candidate.containerName}`);
+    expect(mock.commands).toContain(`docker start ${candidate.containerId}`);
     expect(deploymentPhaseBudget.memorySnapshot()).toEqual([]);
   });
 
@@ -415,13 +422,13 @@ describe('部署内存预约生命周期', () => {
     let entered!: () => void, finish!: (result: ExecResult) => void, oldCurrent = true, calls = 0;
     const starting = new Promise<void>(resolve => { entered = resolve; });
     const response = new Promise<ExecResult>(resolve => { finish = resolve; });
-    const delayed = new ContainerService({ exec: (command, options) => {
+    const delayed = new ContainerService(withMemoryStorageImages({ exec: (command, options) => {
       if (command.startsWith('docker start') && calls++ === 0) {
         entered(); return response.then(result => { options?.beforeStart?.(); return result; });
       }
       options?.beforeStart?.();
       return mock.exec(command, options);
-    } }, config);
+    } }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     vi.spyOn(delayed as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     const old = delayed.runService(entry, profile, candidate, undefined, undefined,
       { ...owner, assertCurrent: () => { if (!oldCurrent) throw new Error('旧资格失效'); } });
@@ -439,11 +446,11 @@ describe('部署内存预约生命周期', () => {
     let entered!: () => void, finish!: (result: ExecResult) => void, calls = 0, newCurrent = true;
     const starting = new Promise<void>(resolve => { entered = resolve; });
     const response = new Promise<ExecResult>(resolve => { finish = resolve; });
-    const delayed = new ContainerService({ exec: (command, options) => {
+    const delayed = new ContainerService(withMemoryStorageImages({ exec: (command, options) => {
       options?.beforeStart?.();
       if (command.startsWith('docker start') && calls++ === 0) { entered(); return response; }
       return mock.exec(command, options);
-    } }, config);
+    } }), config, undefined, undefined, undefined, undefined, unitBindMountInspector);
     vi.spyOn(delayed as any, 'waitForContainerAlive').mockResolvedValue(undefined);
     const old = delayed.runService(entry, profile, candidate, undefined, undefined, owner);
     const rejected = expect(old).rejects.toThrow('旧start明确失败');
@@ -472,11 +479,11 @@ describe('部署内存预约生命周期', () => {
       ? runtime.containerId! : newId, stderr: '', exitCode: 0 }));
     const record = vi.fn(), oldSaved = vi.fn(async () => undefined);
     const commandBoundary = boundary === 'network' ? 'docker network connect' : `docker ${boundary}`;
-    const delayed = new ContainerService({ exec: (command, options) => {
+    const delayed = new ContainerService(withMemoryStorageImages({ exec: (command, options) => {
       options?.beforeStart?.();
       if (!intercepted && command.startsWith(commandBoundary)) { intercepted = true; entered(); return response; }
       return mock.exec(command, options);
-    } }, config, undefined, { record });
+    } }), config, undefined, { record }, undefined, undefined, unitBindMountInspector);
     const old = delayed.runService(entry, profile, candidate, undefined, undefined, { ...owner, onRuntimeCreated: oldSaved,
       assertCurrent: () => { if (!oldCurrent) throw new Error('旧资格失效'); } });
     const outcome = old.then(() => undefined, error => error as Error);

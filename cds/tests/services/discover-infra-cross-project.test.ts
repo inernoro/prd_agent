@@ -1,3 +1,4 @@
+import {unitBindMountInspector} from '../helpers/storage-bind-fixture.js';
 import { describe, it, expect } from 'vitest';
 import { ContainerService } from '../../src/services/container.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
@@ -27,7 +28,7 @@ const makeConfig = (): CdsConfig => ({
 describe('discoverInfraContainers — 跨项目隔离', () => {
   it('两个项目都有 svc.id="mongodb" 时,Map key 用 containerName 不撞', async () => {
     const mock = new MockShellExecutor();
-    const service = new ContainerService(mock, makeConfig());
+    const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     // 模拟 docker ps 返回两个项目的同名 mongodb 容器
     mock.addResponsePattern(/docker ps/, () => ({
       stdout: [
@@ -56,7 +57,7 @@ describe('discoverInfraContainers — 跨项目隔离', () => {
 
   it('value.containerName 与 key 一致,方便调用方反查', async () => {
     const mock = new MockShellExecutor();
-    const service = new ContainerService(mock, makeConfig());
+    const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     mock.addResponsePattern(/docker ps/, () => ({
       stdout: 'cds-infra-geo-mongodb|running|cds.managed=true,cds.type=infra,cds.service.id=mongodb,cds.network=cds-proj-geo',
       stderr: '',
@@ -71,7 +72,7 @@ describe('discoverInfraContainers — 跨项目隔离', () => {
 
   it('docker ps 无输出时返回空 Map(不抛错)', async () => {
     const mock = new MockShellExecutor();
-    const service = new ContainerService(mock, makeConfig());
+    const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     mock.addResponsePattern(/docker ps/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
 
     const found = await service.discoverInfraContainers();
@@ -80,7 +81,7 @@ describe('discoverInfraContainers — 跨项目隔离', () => {
 
   it('docker ps 失败时返回空 Map(降级,不阻断 deploy)', async () => {
     const mock = new MockShellExecutor();
-    const service = new ContainerService(mock, makeConfig());
+    const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     mock.addResponsePattern(/docker ps/, () => ({
       stdout: '', stderr: 'cannot connect to docker daemon', exitCode: 1,
     }));
@@ -91,7 +92,7 @@ describe('discoverInfraContainers — 跨项目隔离', () => {
 
   it('混合多种 service.id 不串(redis / mongodb / postgres 三项目 9 容器)', async () => {
     const mock = new MockShellExecutor();
-    const service = new ContainerService(mock, makeConfig());
+    const service = new ContainerService(mock, makeConfig(), undefined, undefined, undefined, undefined, unitBindMountInspector);
     const lines: string[] = [];
     for (const proj of ['a', 'b', 'c']) {
       for (const svc of ['mongodb', 'redis', 'postgres']) {
