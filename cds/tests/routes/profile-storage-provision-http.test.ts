@@ -132,7 +132,7 @@ it.each(['delete','update','drop-extra','copy-extra','import','import-init'])('H
  const before=JSON.stringify(state.getState()),count=commands.length,snapshots=vi.spyOn(state,'createConfigSnapshot');
  const bad={...original,cacheMounts:[{kind:'volume',hostPath:'different',containerPath:'/data'}]};
  const [route,method,body]=kind==='delete'?['/build-profiles/app','DELETE',undefined]
-  :kind==='update'?['/build-profiles/app','PUT',bad]
+  :kind==='update'?['/build-profiles/app','PUT',{cacheMounts:bad.cacheMounts}]
   :kind==='drop-extra'?['/branches/a/extra-services','PUT',{extraProfiles:[]}]
   :kind==='copy-extra'?['/branches/a/copy-config-from/b','POST',{}]
   :[kind==='import'?'/import-config':'/import-and-init','POST',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[{...original,id:'first'},bad],infraServices:[{id:'new-db',dockerImage:'mysql:8.0',containerPort:3306,env:{MYSQL_ROOT_PASSWORD:'fixture'}}]}}];

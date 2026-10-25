@@ -65,6 +65,24 @@ it('valid explicit import P durably publishes binding before actual R preflight 
  const coldBirth=cold.getStorageBirth(birth.name)!;expect(Number.isFinite(Date.parse(coldBirth.updatedAt))).toBe(true);expect({...coldBirth,updatedAt:birth.updatedAt}).toEqual(birth);expect(cold.getInfraServiceForProjectAndId('default','fresh').volumes[0]).toMatchObject({name:birth.name,storage:birth.binding});await cold.flush();
 });
 
+it('invalid imported default is rejected before any profile metadata or fresh storage allocation',async()=>{
+ state.updateProject('default',{defaultDeployModes:{app:'express'}});const vols=pFixture(),before=structuredClone(state.getBuildProfiles());await listen();
+ response=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[profile('app')],infraServices:[declaration('fresh')]}});
+ expect(response.body).toContain('默认模式');expect(vols.size).toBe(0);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(state.getInfraServicesForProject('default')).toHaveLength(0);expect(state.getBuildProfiles()).toEqual(before);expect(worktree.create).not.toHaveBeenCalled();expect(container.startInfraService).not.toHaveBeenCalled();
+});
+
+it.each([false,true])('invalid default in other affected project before import writes or P (move=%s)',async(move)=>{
+ state.addProject({id:'other',slug:'other',name:'other',kind:'git',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),defaultDeployModes:{apiOther:'express'}});
+ const original={...profile('apiOther'),projectId:'other',deployModes:{express:{prebuiltImage:true}}};state.addBuildProfile(original);
+ const vols=pFixture(),before=structuredClone(state.getBuildProfiles());await listen();
+ const incoming=move?{...profile('app'),id:'apiOther',projectId:'default',deployModes:{}}:{...original,deployModes:{}};
+ // Moving a profile removes the old default key's subject; it remains a compatible deleted key.
+ if(move)state.updateProject('default',{defaultDeployModes:{apiOther:'express'}});
+ response=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[incoming],infraServices:[declaration('fresh')]}});
+ expect(response.status).toBe(400);expect(JSON.parse(response.body).code).toBe('invalid_default_deploy_mode');expect(state.getBuildProfiles()).toEqual(before);
+ expect(vols.size).toBe(0);expect(Object.keys(state.getState().storageBirths||{})).toHaveLength(0);expect(state.getInfraServicesForProject('default')).toHaveLength(0);expect(worktree.create).not.toHaveBeenCalled();expect(container.startInfraService).not.toHaveBeenCalled();
+});
+
 function catalogDeclaration(){return {id:'catalog-db',name:'catalog-db',dockerImage:'mysql:8.0',containerPort:3306,env:{MYSQL_ROOT_PASSWORD:'fixture-password'},volumes:[{type:'volume',name:'original-catalog-data',containerPath:'/var/lib/mysql'}]};}
 it('confirmed new-only catalog import uses native absence then a new binding, never the legacy name',async()=>{
  const vols=pFixture();await listen();const result=await request('/api/import-and-init',{initializeStorage:'new-only',config:{$schema:'cds-config',buildProfiles:[],infraServices:[catalogDeclaration()]}});
