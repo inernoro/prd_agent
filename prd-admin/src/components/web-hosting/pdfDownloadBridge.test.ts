@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acceptPdfDownloadRequest, pdfDownloadUrlMap, withPdfDownloadBridge } from './pdfDownloadBridge';
 import { SRCDOC_PREVIEW_SANDBOX, DIRECT_PREVIEW_SANDBOX } from './previewHtml';
 
@@ -7,7 +8,82 @@ const context = { siteId: 'site-a', siteUrl: 'https://assets.example/site/.versi
 const request = { type: 'map-hosted-pdf-download', siteId: context.siteId, nonce: context.nonce,
   filePath: context.pdfFilePaths[0], requestId: 'request-1' };
 
+// 浏览器维护 isTrusted；这里执行真实注入脚本，用受控事件数据按 window→document
+// 捕获阶段派发。子页面先注册 document 监听，防止测试靠注册先后掩盖原回归。
+function executeBridgeClick(href: string, patch: Record<string, unknown> = {}) {
+  type Click = Record<string, unknown> & { stopped: boolean; defaultPrevented: boolean };
+  type Listener = (event: Click) => void;
+  const listeners: { target: 'window' | 'document'; capture: boolean; listener: Listener }[] = [];
+  const childDocument = vi.fn();
+  listeners.push({ target: 'document', capture: true, listener: childDocument });
+  const postMessage = vi.fn();
+  const fakeWindow = { parent: { postMessage }, addEventListener: vi.fn(
+    (_type: string, listener: Listener, capture: boolean) =>
+      listeners.push({ target: 'window', capture, listener })) };
+  const fakeDocument = new Proxy(document, { get(target, key) {
+    if (key === 'addEventListener') return (_type: string, listener: Listener, capture: boolean) =>
+      listeners.push({ target: 'document', capture, listener });
+    const value = Reflect.get(target, key);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
+  const html = withPdfDownloadBridge('<main/>', context);
+  const script = html.slice(html.indexOf('>(function(){') + 1, html.lastIndexOf('</script>'));
+  new Function('window', 'document', 'Element', 'URL', 'crypto', script)(
+    fakeWindow, fakeDocument, Element, URL, { randomUUID: () => 'trusted-click-1' });
+  const link = document.createElement('a');
+  link.href = href;
+  document.body.append(link);
+  const event: Click = { isTrusted: true, target: link, button: 0, defaultPrevented: false,
+    ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, stopped: false, ...patch };
+  const preventDefault = vi.fn(() => { event.defaultPrevented = true; });
+  const stopImmediatePropagation = vi.fn(() => { event.stopped = true; });
+  Object.assign(event, { preventDefault, stopImmediatePropagation });
+  for (const target of ['window', 'document'] as const) {
+    for (const item of listeners.filter(x => x.target === target && x.capture)) {
+      if (event.stopped) break;
+      item.listener(event);
+    }
+  }
+  return { postMessage, childDocument, preventDefault, stopImmediatePropagation, fakeWindow };
+}
+afterEach(() => { document.body.innerHTML = ''; });
+
 describe('受控 PDF 下载桥', () => {
+  it('实际注入脚本由window优先接管登记PDF，只发一次请求且不启动子页面监听', () => {
+    const click = executeBridgeClick('https://assets.example/site/.versions/v1/downloads/%E6%95%99%E6%9D%90.pdf?download=1#page=2');
+    expect(click.fakeWindow.addEventListener).toHaveBeenCalledWith('click', expect.any(Function), true);
+    expect(click.preventDefault).toHaveBeenCalledOnce();
+    expect(click.stopImmediatePropagation).toHaveBeenCalledOnce();
+    expect(click.postMessage).toHaveBeenCalledOnce();
+    expect(click.postMessage).toHaveBeenCalledWith({ ...request, requestId: 'trusted-click-1' }, '*');
+    expect(click.childDocument).not.toHaveBeenCalled();
+  });
+  it.each([
+    'https://assets.example/site/.versions/v1/downloads/unknown.pdf',
+    'https://attacker.example/downloads/%E6%95%99%E6%9D%90.pdf',
+  ])('未登记PDF也在window阻止，不触发子页面或父层下载：%s', href => {
+    const click = executeBridgeClick(href);
+    expect(click.stopImmediatePropagation).toHaveBeenCalledOnce();
+    expect(click.preventDefault).toHaveBeenCalledOnce();
+    expect(click.postMessage).not.toHaveBeenCalled();
+    expect(click.childDocument).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('未登记');
+  });
+  it.each([
+    { isTrusted: false }, { defaultPrevented: true }, { button: 1 },
+    { ctrlKey: true }, { metaKey: true }, { shiftKey: true }, { altKey: true },
+  ])('可信点击门禁仍有效：%j', patch => {
+    const click = executeBridgeClick('https://assets.example/site/.versions/v1/downloads/%E6%95%99%E6%9D%90.pdf', patch);
+    expect(click.postMessage).not.toHaveBeenCalled();
+    expect(click.stopImmediatePropagation).not.toHaveBeenCalled();
+  });
+  it('普通HTML链接继续到达子页面监听', () => {
+    const click = executeBridgeClick('https://assets.example/site/.versions/v1/next.html');
+    expect(click.childDocument).toHaveBeenCalledOnce();
+    expect(click.postMessage).not.toHaveBeenCalled();
+    expect(click.preventDefault).not.toHaveBeenCalled();
+  });
+
   it('只接受当前iframe、当前上下文和登记PDF的明确消息', () => {
     const frame = {} as Window;
     expect(acceptPdfDownloadRequest(request, frame, frame, context)).toBe(true);
