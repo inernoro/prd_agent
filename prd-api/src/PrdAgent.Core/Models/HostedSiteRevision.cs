@@ -556,7 +556,9 @@ public static class HostedSiteRevisionRules
                 // 页面带空格时，来源那句不算陈述而页面那句算，误判为无依据（2026-09-25 #1622 预览验收）。
                 @"(?<![A-Za-z0-9_\uE000\uE001])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?(?<=[A-Za-z])(?![A-Za-z]))",
                 @"(?<unit>￥|¥|\$)\s*(?<number>\d+(?:[.,]\d+)*)",
-                @"(?<![A-Za-z0-9_\uE000\uE001])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?!\s*(?:月|小时))",
+                // 中文没有通用的正则词界；量词同时可能是名词词首。只排除确定的复合词，
+                // 避免把 `12.16项目代号` 读成 `12.16项`，同时保留 `3项`、`3项项目`、`3个项目`。
+                @"(?<![A-Za-z0-9_\uE000\uE001])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条(?!款|例|目)|次(?!数|要)|篇(?!章)|字(?!段|体|数)|人|位(?!置)|家|项(?!目|链)|例(?!如|会)|份(?!额)|种(?!类|植)|类(?!型|目|似)|层(?!级|次)|步(?!骤|行)|章(?!节)|节(?!点|目|奏|日)|页(?!面|码))(?!\s*(?:月|小时))",
             };
             foreach (var pattern in patterns)
             {
@@ -823,27 +825,38 @@ public static class HostedSiteRevisionRules
     }
 
     /// <summary>
-    /// 日期统一成「年-月[-日]」再比：「2026/9/24」与「2026-09-24」是同一天。作证据时，完整日期
-    /// 同时支撑它的「年-月」（页面写「2026-09」取自来源里的 9 月 24 日），中文写法
-    /// 「2026 年 9 月 24 日」也算证据——此前两者都被判成来源里没有的日期（2026-09-24 真人验收）。
-    /// 页面侧仍只认数字写法，判据范围不扩大；只是证据不再比真实来源窄。
+    /// 日期统一成「年-月[-日]」或「月-日」再比：「2026/9/24」与「2026-09-24」是同一天。
+    /// 作证据时完整日期同时支撑它的「年-月」，中文写法「2026 年 9 月 24 日」与「12 月 16 日」
+    /// 也算证据。页面侧仍只认数字写法；只是证据不再比真实来源窄。
     /// </summary>
     private static HashSet<string> ExtractSensitiveFacts(string text, bool asEvidence = false)
     {
         var facts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool AddMonthDayFact(string month, string day)
+        {
+            var monthNumber = int.Parse(month, System.Globalization.CultureInfo.InvariantCulture);
+            var dayNumber = int.Parse(day, System.Globalization.CultureInfo.InvariantCulture);
+            int[] maximumDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            if (monthNumber is < 1 or > 12 || dayNumber < 1 || dayNumber > maximumDays[monthNumber - 1])
+                return false;
+            facts.Add($"month-day:{monthNumber:00}-{dayNumber:00}");
+            return true;
+        }
         foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
                      text ?? string.Empty,
-                     @"https?://[^\s<>\""']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)",
+                     @"https?://[^\s<>\""']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])(?!\d)|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)",
                      RegexOptions))
         {
             var value = match.Value.TrimEnd('.', ',', ';', ':', '，', '。', '；', '：', ')', ']', '}', '>', '`').ToLowerInvariant();
             var date = System.Text.RegularExpressions.Regex.Match(value, @"^((?:19|20)\d{2})[-/.](\d{1,2})(?:[-/.](\d{1,2}))?$");
-            if (!date.Success)
+            if (date.Success)
             {
-                facts.Add(value);
+                AddDateFacts(facts, date.Groups[1].Value, date.Groups[2].Value, date.Groups[3].Success ? date.Groups[3].Value : null, asEvidence);
                 continue;
             }
-            AddDateFacts(facts, date.Groups[1].Value, date.Groups[2].Value, date.Groups[3].Success ? date.Groups[3].Value : null, asEvidence);
+            var monthDay = System.Text.RegularExpressions.Regex.Match(value, @"^(\d{1,2})[-/.](\d{1,2})$");
+            if (monthDay.Success && AddMonthDayFact(monthDay.Groups[1].Value, monthDay.Groups[2].Value)) continue;
+            facts.Add(value);
         }
         if (asEvidence)
         {
@@ -853,6 +866,13 @@ public static class HostedSiteRevisionRules
                          RegexOptions))
             {
                 AddDateFacts(facts, match.Groups[1].Value, match.Groups[2].Value, match.Groups[3].Success ? match.Groups[3].Value : null, asEvidence: true);
+            }
+            foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                         text ?? string.Empty,
+                         @"(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]",
+                         RegexOptions))
+            {
+                AddMonthDayFact(match.Groups[1].Value, match.Groups[2].Value);
             }
         }
         return facts;

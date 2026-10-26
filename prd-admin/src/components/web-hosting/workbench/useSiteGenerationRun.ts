@@ -4,15 +4,16 @@ import { toast } from '@/lib/toast';
 import {
   cancelDesignArtifactRun,
   createDesignArtifactRun,
+  getActiveDesignArtifactRun,
   getDesignArtifactRun,
   getSite,
   getSiteContent,
+  restartDesignArtifactRun,
   streamDesignArtifactRun,
 } from '@/services/real/webPages';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
-  appendRunNarration,
   designPreviewEventDocument,
   elapsedSecondsSince,
   isNewerPreviewRevision,
@@ -23,7 +24,9 @@ import {
   closeGenerationStages,
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
+  resolvePersistedRunPreview,
   resolveRunModelBadge,
+  runtimeFailureRecoveryMessage,
   type GenerationStage,
 } from '../siteGenerateProgress';
 
@@ -35,7 +38,7 @@ import {
  */
 
 const ACTIVE_GENERATION_RUN_KEY = 'web-hosting-design-active-run-v1';
-/** map-gateway 没有 preview 事件，用累计 delta 做预览时的刷新间隔。 */
+/** 兼容恢复历史 map-gateway 任务：它没有 preview 事件，用累计 delta 做预览刷新。 */
 const DELTA_PREVIEW_THROTTLE_MS = 500;
 
 /**
@@ -55,6 +58,11 @@ function forgetActiveRun(): void {
 
 function readActiveRun(): string | null {
   try { return sessionStorage.getItem(ACTIVE_GENERATION_RUN_KEY); } catch { return null; }
+}
+
+function createRestartIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 /**
@@ -90,7 +98,6 @@ export interface GenerationNotice {
 export interface GenerationRequest {
   instruction: string;
   title?: string;
-  runtimeId: string;
   sourceSurface: 'knowledge-base' | 'web-hosting';
   knowledge: KnowledgeEntrySelection[];
   styleId: string | null;
@@ -123,19 +130,21 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
   const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
   const [runInfo, setRunInfo] = useState<{ styleName?: string | null; promptFingerprint?: string | null } | null>(null);
   const [resolvedModel, setResolvedModel] = useState<{ model: string; platform: string } | null>(null);
-  const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewSandbox, setPreviewSandbox] = useState(AI_STREAM_PREVIEW_SANDBOX);
   const [generating, setGenerating] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [stopRequested, setStopRequested] = useState(false);
   const [completedSite, setCompletedSite] = useState<CompletedGeneration | null>(null);
+  const [restartableRunId, setRestartableRunId] = useState<string | null>(null);
   /** 恢复时从服务端读回的标题：刷新之后对话里要能说出「正在生成的是哪一篇」。 */
   const [recoveredTitle, setRecoveredTitle] = useState('');
   const streamRef = useRef('');
   const lastPaintAtRef = useRef(0);
   const previewRevisionRef = useRef(-1);
   const abortRef = useRef<AbortController | null>(null);
+  const discoveryRef = useRef(0);
+  const restartKeyRef = useRef<{ runId: string; key: string } | null>(null);
   // 同步可读的「这个实例手上有没有任务」：接管别人交出的 runId 前要判，state 来不及。
   const busyRef = useRef(false);
   const onCreatedRef = useRef(onCreated);
@@ -178,6 +187,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     const now = Date.now();
     setStages((current) => closeGenerationStages(current, now));
     setCompletedSite({ id: siteId, url: siteUrl });
+    setRestartableRunId(null);
     setProgress(100);
     setPhase('网页已生成并保存到网页托管，只有你能看到');
     setGenerating(false);
@@ -188,13 +198,14 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     onCreatedRef.current(siteId);
   }, [applyPreviewHtml]);
 
-  const failGeneration = useCallback((message: string) => {
+  const failGeneration = useCallback((message: string, interruptedRunId?: string) => {
     busyRef.current = false;
     setGenerating(false);
     setActiveRunId(null);
     setStopRequested(false);
     setPhase(message);
     setNotice({ tone: 'error', text: message });
+    setRestartableRunId(interruptedRunId || null);
     forgetActiveRun();
   }, []);
 
@@ -239,6 +250,14 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
         setRunInfo({ styleName: result.data.styleName, promptFingerprint: result.data.promptFingerprint });
         setRunStartedAtMs(Date.parse(result.data.createdAt));
         if (result.data.title) setRecoveredTitle((current) => current || result.data.title || '');
+        const persistedPreview = resolvePersistedRunPreview(result.data);
+        if (persistedPreview && isNewerPreviewRevision(persistedPreview.revision, previewRevisionRef.current)) {
+          previewRevisionRef.current = persistedPreview.revision;
+          applyPreviewHtml(
+            designPreviewEventDocument(persistedPreview.html),
+            DESIGN_PREVIEW_EVENT_SANDBOX,
+          );
+        }
         const status = result.data.status.toLowerCase();
         const siteId = resolveGeneratedSiteId(result.data);
         if (status === 'done' && siteId) {
@@ -250,23 +269,26 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
           return;
         }
         if (status === 'error' || status === 'cancelled') {
+          const interrupted = status === 'error' && result.data.phaseCode === 'interrupted';
           failGeneration(status === 'cancelled'
             ? '网页生成已取消，未保存或发布新页面'
-            : result.data.error || '网页生成未完成，请重新发起');
+            : runtimeFailureRecoveryMessage(result.data, 'generate'), interrupted ? runId : undefined);
           return;
         }
         setGenerating(true);
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 1500));
     }
-  }, [failGeneration, finishGeneration]);
+  }, [applyPreviewHtml, failGeneration, finishGeneration]);
 
   const resumeRun = useCallback((runId: string) => {
+    abortRef.current?.abort();
     const recovery = new AbortController();
     abortRef.current = recovery;
     busyRef.current = true;
     setGenerating(true);
     setActiveRunId(runId);
+    setRestartableRunId(null);
     setPhase('正在恢复上次未完成的网页生成任务');
     void recoverActiveRun(runId, recovery.signal);
   }, [recoverActiveRun]);
@@ -288,10 +310,10 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     setRunInfo(null);
     // 工作台常驻挂载：不在这里清掉，重开之后会把上一轮的模型当成本轮的显示出来。
     setResolvedModel(null);
-    setThinking('');
     setPreviewHtml('');
     setPreviewSandbox(AI_STREAM_PREVIEW_SANDBOX);
     setCompletedSite(null);
+    setRestartableRunId(null);
     setRecoveredTitle('');
     setActiveRunId(null);
     setStopRequested(false);
@@ -301,8 +323,17 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
 
     busyRef.current = false;
 
+    const discovery = ++discoveryRef.current;
     const runId = readActiveRun();
-    if (runId) resumeRun(runId);
+    if (runId) {
+      resumeRun(runId);
+      return;
+    }
+    void getActiveDesignArtifactRun({ operation: 'generate', includeLatestFailed: true }).then((result) => {
+      if (discovery !== discoveryRef.current || busyRef.current || !result.success || !result.data) return;
+      rememberActiveRun(result.data.runId);
+      resumeRun(result.data.runId);
+    });
   }, [resumeRun]);
 
   // 别的实例交出来的任务：自己空着就接过来，忙着就只留在存储里，下次打开再接。
@@ -339,6 +370,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
   const start = async (request: GenerationRequest) => {
     const text = request.instruction.trim();
     if (!text || generating || busyRef.current) return;
+    discoveryRef.current += 1;
     // 校验排在拿忙碌标记之前，与修改入口同一条规则：失败不进入忙碌态，也不清掉当前预览。
     if (request.knowledge.some((entry) => !entry.entryId || !entry.storeId)) {
       failGeneration('引用知识身份不完整，请重新选择');
@@ -357,10 +389,9 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     setElapsedSeconds(0);
     setRunStartedAtMs(Date.now());
     setLastEventAtMs(null);
-    setActiveRunRuntime(request.runtimeId);
+    setActiveRunRuntime(null);
     setRunInfo(null);
     setCompletedSite(null);
-    setThinking('');
     setPreviewHtml('');
     setPreviewSandbox(AI_STREAM_PREVIEW_SANDBOX);
     previewRevisionRef.current = -1;
@@ -378,7 +409,6 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     const created = await createDesignArtifactRun({
       instruction: text,
       title: request.title?.trim() || undefined,
-      runtime: request.runtimeId,
       sourceSurface: request.sourceSurface,
       // 目标空间跟着请求走，不再等完成回调——用户中途离开时那条回调根本不会执行。
       destinationTeamId: destinationTeamIdRef.current ?? null,
@@ -424,10 +454,6 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
             setResolvedModel({ model: item.model, platform: item.platform });
             return;
           }
-          if (item.kind === 'thinking') {
-            setThinking((previous) => appendRunNarration(previous, item.text, 600));
-            return;
-          }
           if (item.kind === 'preview') {
             // 整页替换；断线重放的旧 revision 不许把新页面盖回去。
             if (!isNewerPreviewRevision(item.revision, previewRevisionRef.current)) return;
@@ -455,7 +481,10 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
           }
           if (item.kind === 'error') {
             terminalObserved = true;
-            failGeneration(item.message);
+            failGeneration(
+              item.message,
+              item.code === 'DESIGN_ARTIFACT_INTERRUPTED' ? created.data.runId : undefined,
+            );
             toast.error('网页生成失败', item.message);
             return;
           }
@@ -502,6 +531,29 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     setPhase('服务器正在停止生成，完成前不会保存页面');
   };
 
+  const restart = async () => {
+    if (!restartableRunId || busyRef.current) return;
+    const sourceRunId = restartableRunId;
+    const current = restartKeyRef.current;
+    const key = current?.runId === sourceRunId ? current.key : createRestartIdempotencyKey();
+    restartKeyRef.current = { runId: sourceRunId, key };
+    busyRef.current = true;
+    setGenerating(true);
+    setResolvedModel(null);
+    setNotice(null);
+    setPhase('正在用上次冻结的资料和要求重开任务');
+    const result = await restartDesignArtifactRun(sourceRunId, key);
+    if (!result.success) {
+      busyRef.current = false;
+      setGenerating(false);
+      setNotice({ tone: 'error', text: result.error?.message || '任务重开失败，请稍后再试' });
+      return;
+    }
+    restartKeyRef.current = null;
+    rememberActiveRun(result.data.runId);
+    resumeRun(result.data.runId);
+  };
+
   return {
     notice,
     setNotice,
@@ -513,7 +565,6 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     activeRunRuntime,
     runInfo,
     resolvedModel,
-    thinking,
     previewHtml,
     previewSandbox,
     generating,
@@ -521,9 +572,11 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     stopRequested,
     completedSite,
     recoveredTitle,
+    restartableRunId,
     reset,
     start,
     stop,
+    restart,
   };
 }
 

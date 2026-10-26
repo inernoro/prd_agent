@@ -423,6 +423,7 @@ public sealed class AdminPushNotificationService
             if (reserved.MatchedCount != 1) throw new InvalidOperationException("通知状态已变化，请稍后再测试");
             notification.Id = Guid.NewGuid().ToString("N");
             var receipt = new AdminPushDeliveryLog { UserId = userId, NotificationId = notification.Id,
+                CoveredNotificationDeliveryKeys = [DeliveryKey(notification)],
                 SubscriptionId = sub.Id, TopicKey = sub.TopicKey, DeliveryState = "reserved", CreatedAt = now };
             await _db.AdminPushDeliveryLogs.InsertOneAsync(receipt, cancellationToken: ct);
             return await DeliverAsync(userId, sub, notification, saveLog: true, ct, receipt);
@@ -478,15 +479,31 @@ public sealed class AdminPushNotificationService
                    | Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, now));
             // 在分页之前排除已处理项，防止较新的已发送记录挡住旧的独立问题。
             var terminalReceipt = new BsonDocument("$lookup", new BsonDocument {
-                { "from", "admin_push_delivery_logs" }, { "let", new BsonDocument("noticeId", new BsonDocument("$toString", "$_id")) },
+                { "from", "admin_push_delivery_logs" }, { "let", new BsonDocument {
+                    { "noticeId", new BsonDocument("$toString", "$_id") },
+                    { "episode", new BsonDocument("$ifNull", new BsonArray { "$PushEpisode", 0 }) },
+                    { "deliveryKey", new BsonDocument("$concat", new BsonArray {
+                        new BsonDocument("$toString", "$_id"), ":episode:",
+                        new BsonDocument("$toString", new BsonDocument("$ifNull", new BsonArray { "$PushEpisode", 0 }))
+                    }) }
+                } },
                 { "pipeline", new BsonArray {
                     new BsonDocument("$match", new BsonDocument {
                         { "UserId", userId },
                         { "$or", new BsonArray { new BsonDocument("Success", true),
                             new BsonDocument("DeliveryState", new BsonDocument("$in", new BsonArray { "reserved", "unconfirmed" })) } },
                         { "$expr", new BsonDocument("$or", new BsonArray {
-                            new BsonDocument("$eq", new BsonArray { "$NotificationId", "$$noticeId" }),
-                            new BsonDocument("$in", new BsonArray { "$$noticeId", new BsonDocument("$ifNull", new BsonArray { "$CoveredNotificationIds", new BsonArray() }) })
+                            new BsonDocument("$in", new BsonArray { "$$deliveryKey", new BsonDocument("$ifNull", new BsonArray { "$CoveredNotificationDeliveryKeys", new BsonArray() }) }),
+                            new BsonDocument("$and", new BsonArray {
+                                new BsonDocument("$eq", new BsonArray { "$$episode", 0 }),
+                                new BsonDocument("$eq", new BsonArray {
+                                    new BsonDocument("$size", new BsonDocument("$ifNull", new BsonArray { "$CoveredNotificationDeliveryKeys", new BsonArray() })), 0
+                                }),
+                                new BsonDocument("$or", new BsonArray {
+                                    new BsonDocument("$eq", new BsonArray { "$NotificationId", "$$noticeId" }),
+                                    new BsonDocument("$in", new BsonArray { "$$noticeId", new BsonDocument("$ifNull", new BsonArray { "$CoveredNotificationIds", new BsonArray() }) })
+                                })
+                            })
                         }) }
                     }), new BsonDocument("$limit", 1), new BsonDocument("$project", new BsonDocument("_id", 1))
                 } }, { "as", "_pushReceipt" }
@@ -528,7 +545,7 @@ public sealed class AdminPushNotificationService
                 foreach (var notice in candidates.Where(n => MatchesTopic(subscription.TopicKey, n)))
                 {
                     var receipts = logs.Where(l => (l.TopicKey == subscription.TopicKey || l.CoveredNotificationIds.Contains(notice.Id))
-                        && (l.NotificationId == notice.Id || l.CoveredNotificationIds.Contains(notice.Id))).ToList();
+                        && CoversDelivery(l, notice)).ToList();
                     // 发送结果不确定时不盲目重放；记录仍可供管理员追查。
                     if (receipts.Any(l => l.Success || l.DeliveryState is "reserved" or "unconfirmed")) continue;
                     if (receipts.Count >= 3 || receipts.Any(l => l.CreatedAt > now.Subtract(FailedRetryCooldown))) continue;
@@ -563,6 +580,7 @@ public sealed class AdminPushNotificationService
             {
                 UserId = userId, SubscriptionId = selected.Route.Id, TopicKey = selected.Route.TopicKey,
                 NotificationId = notification.Id, CoveredNotificationIds = notices.Select(n => n.Id).ToList(),
+                CoveredNotificationDeliveryKeys = notices.Select(DeliveryKey).ToList(),
                 DeliveryState = "reserved", CreatedAt = now,
             };
             // 先持久化额度与批次，再执行有外部副作用的网络调用。
@@ -607,20 +625,31 @@ public sealed class AdminPushNotificationService
 
     private static string IncidentKey(AdminNotification notice) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { notice.Source,
-            !string.IsNullOrWhiteSpace(notice.Key) ? notice.Key
+            notice.Source == "gateway-alert" ? notice.Id
+                : !string.IsNullOrWhiteSpace(notice.Key) ? notice.Key
                 : !string.IsNullOrWhiteSpace(notice.ActionUrl) ? notice.ActionUrl : notice.Id }))));
 
     private static bool IsFreshUrgent(AdminNotification notice, DispatchBudget budget) =>
         notice.Level == "error" && !budget.Incidents.Contains(IncidentKey(notice));
 
-    private async Task<bool> HasSuccessfulDeliveryAsync(AdminPushSubscription subscription, string notificationId, CancellationToken ct)
+    private static string DeliveryKey(AdminNotification notification)
+        => $"{notification.Id}:episode:{notification.PushEpisode.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
+    private static bool CoversDelivery(AdminPushDeliveryLog log, AdminNotification notification)
+        => log.CoveredNotificationDeliveryKeys is { Count: > 0 }
+            ? log.CoveredNotificationDeliveryKeys.Contains(DeliveryKey(notification))
+            : notification.PushEpisode == 0
+                && (log.NotificationId == notification.Id || log.CoveredNotificationIds.Contains(notification.Id));
+
+    private async Task<bool> HasSuccessfulDeliveryAsync(AdminPushSubscription subscription, AdminNotification notification, CancellationToken ct)
     {
-        return await _db.AdminPushDeliveryLogs
+        var logs = await _db.AdminPushDeliveryLogs
             .Find(x => x.UserId == subscription.UserId
                 && x.TopicKey == subscription.TopicKey
-                && x.NotificationId == notificationId
+                && (x.NotificationId == notification.Id || x.CoveredNotificationIds.Contains(notification.Id))
                 && x.Success)
-            .AnyAsync(ct);
+            .ToListAsync(ct);
+        return logs.Any(log => CoversDelivery(log, notification));
     }
 
     private async Task MarkExistingNotificationsAsDeliveredAsync(AdminPushSubscription subscription, DateTime enabledAt, CancellationToken ct)
@@ -633,6 +662,12 @@ public sealed class AdminPushNotificationService
             Builders<AdminNotification>.Filter.Eq(x => x.ExpiresAt, null),
             Builders<AdminNotification>.Filter.Gt(x => x.ExpiresAt, enabledAt));
         filter &= Builders<AdminNotification>.Filter.Lte(x => x.CreatedAt, enabledAt);
+        // 原 CreatedAt 不能代表重开代次的开始。读取到的代次必须确实早于启用点。
+        // 发布前旧数据只含第 0 代；缺起点的非零代次无法证明为历史，保守保留投递机会。
+        filter &= Builders<AdminNotification>.Filter.Lt(x => x.PushEpisodeStartedAtUtcTicks, enabledAt.Ticks)
+            | (Builders<AdminNotification>.Filter.Eq(x => x.PushEpisodeStartedAtUtcTicks, null)
+               & (Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, 0)
+                  | Builders<AdminNotification>.Filter.Exists(x => x.PushEpisode, false)));
 
         var candidates = await _db.AdminNotifications
             .Find(filter)
@@ -646,13 +681,14 @@ public sealed class AdminPushNotificationService
         foreach (var notification in candidates)
         {
             if (!MatchesTopic(subscription.TopicKey, notification)) continue;
-            if (await HasSuccessfulDeliveryAsync(subscription, notification.Id, ct)) continue;
+            if (await HasSuccessfulDeliveryAsync(subscription, notification, ct)) continue;
 
             logs.Add(new AdminPushDeliveryLog
             {
                 UserId = subscription.UserId,
                 SubscriptionId = subscription.Id,
                 NotificationId = notification.Id,
+                CoveredNotificationDeliveryKeys = [DeliveryKey(notification)],
                 TopicKey = subscription.TopicKey,
                 ChannelType = subscription.ChannelType,
                 Method = "BASELINE",
@@ -688,6 +724,7 @@ public sealed class AdminPushNotificationService
         var log = reservation ?? new AdminPushDeliveryLog {
             UserId = userId, SubscriptionId = subscription.Id,
             NotificationId = notification.Id, TopicKey = subscription.TopicKey,
+            CoveredNotificationDeliveryKeys = [DeliveryKey(notification)],
         };
         var sendStarted = false;
         var sw = Stopwatch.StartNew();

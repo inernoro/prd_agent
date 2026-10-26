@@ -17,6 +17,27 @@ const anchor = (o: Partial<AnchorRect> = {}): AnchorRect => ({ top: 600, bottom:
 const box = (p: { top: number; maxHeight: number }) => ({ top: p.top, bottom: p.top + p.maxHeight });
 
 describe('贴着触发器弹出的浮层落点', () => {
+  it.each([110, 253.25])('短菜单实际高度 %s 时，底边仍紧贴按钮而非悬空', (height) => {
+    const p = placeAnchoredPanel({ anchor: anchor(), viewport: VIEWPORT, prefer: 'above', width: 260, maxHeight: 320, height });
+    expect(p.top + height).toBe(600 - 6);
+    expect(p.maxHeight).toBe(320);
+  });
+
+  it('按实际高度夹紧下方短菜单，不把高度上限当成已占用空间', () => {
+    const p = placeAnchoredPanel({ anchor: anchor({ top: 680, bottom: 716 }), viewport: VIEWPORT, prefer: 'below', width: 260, maxHeight: 320, height: 60 });
+    expect(p.side).toBe('below');
+    expect(p.top).toBe(722);
+    expect(p.top + 60).toBeLessThanOrEqual(800 - 8);
+  });
+
+  it('手机输入法缩小并移动视觉视口后，仍在可见范围内', () => {
+    const p = placeAnchoredPanel({ anchor: anchor({ top: 180, bottom: 216, left: 20, right: 140 }), viewport: { width: 390, height: 300, top: 120 }, prefer: 'above', width: 260, maxHeight: 320, height: 110 });
+    expect(p.side).toBe('below');
+    expect(p.top).toBe(222);
+    expect(p.top + 110).toBeLessThanOrEqual(420 - 8);
+    expect(p.top).toBeGreaterThanOrEqual(128);
+  });
+
   it('空间够时按首选方向来', () => {
     const above = placeAnchoredPanel({ anchor: anchor(), viewport: VIEWPORT, prefer: 'above', width: 260, maxHeight: 320 });
     expect(above.side).toBe('above');

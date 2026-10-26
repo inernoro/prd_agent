@@ -16,6 +16,31 @@ describe('apiDownload', () => {
     vi.restoreAllMocks();
   });
 
+  it('默认下载仍要求登录，公开分享显式放行后才允许匿名取附件', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(['%PDF-1.7']), {
+      status: 200, headers: { 'content-type': 'application/pdf' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('window', { location: { origin: 'https://admin.example.test', pathname: '/s/wp/share' } });
+    await expect(apiDownload('/private.pdf', 'guide.pdf')).rejects.toThrow('尚未登录');
+    expect(fetchMock).not.toHaveBeenCalled();
+    await expect(apiDownload('/shared.pdf', 'guide.pdf', false, true)).resolves.toMatchObject({ contentType: 'application/pdf' });
+    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty('Authorization');
+  });
+
+  it('公开下载遇到分享403不会刷新会话或注销用户', async () => {
+    const logout = vi.fn();
+    Object.assign(authState, { token: 'existing-token', isAuthenticated: true, logout });
+    vi.stubGlobal('window', { location: { origin: 'https://admin.example.test', pathname: '/s/wp/share' } });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: 'SHARE_PASSWORD_REQUIRED', message: '请检查分享密码后重试。' },
+    }), { status: 403, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(apiDownload('/shared.pdf', 'guide.pdf', false, true)).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(logout).not.toHaveBeenCalled();
+  });
+
   it('原生下载地址复用带路径前缀的独立 API 基址', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.example.test/platform/');
 

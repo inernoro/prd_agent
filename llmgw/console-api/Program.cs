@@ -3387,6 +3387,7 @@ app.MapGet("/gw/logs/{id}", async (HttpContext http, string id) =>
         {
             detail.ProviderReportedCost = reportedCost.Amount;
             detail.ProviderCostCurrency = reportedCost.Currency;
+            detail.CostKind = GatewayCostKindNames.ProviderActual;
         }
     }
     return Json(ApiEnvelope<LlmLogDetail>.Ok(detail), jsonOptions);
@@ -12344,6 +12345,7 @@ app.MapPost("/gw/cost-reconciliations/import", async (HttpContext http, CostReco
             {
                 { "ProviderReportedCost", new BsonDecimal128(providerReportedCost.Value) },
                 { "ProviderCostCurrency", actualCurrency },
+                { "CostKind", GatewayCostKindNames.ProviderActual },
                 { "FxSnapshotId", string.IsNullOrWhiteSpace(body.FxSnapshotId) ? BsonNull.Value : body.FxSnapshotId.Trim() },
                 { "ReconciliationStatus", reconciliationStatus },
                 { "ReconciliationDelta", decision.Delta is null ? BsonNull.Value : new BsonDecimal128(decision.Delta.Value) },
@@ -16780,11 +16782,13 @@ static LlmLogListItem MapListItem(BsonDocument d) => new()
     StatusCode = d.AsNullableInt("StatusCode"),
     InputTokens = d.AsNullableInt("InputTokens"),
     OutputTokens = d.AsNullableInt("OutputTokens"),
+    ReasoningTokens = d.AsNullableInt("ReasoningTokens"),
     TokenUsageSource = d.AsNullableString("TokenUsageSource"),
     ImageSuccessCount = d.AsNullableInt("ImageSuccessCount"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
     EstimatedCostUsd = d.AsNullableDecimal("EstimatedCostUsd"),
+    CostKind = ResolveLogCostKind(d),
     PriceSnapshotHash = d.AsNullableString("PriceSnapshotHash"),
     ProviderRequestId = d.AsNullableString("ProviderRequestId"),
     ProviderReportedCost = d.AsNullableDecimal("ProviderReportedCost"),
@@ -16846,6 +16850,10 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ToolCallCount = d.AsNullableInt("ToolCallCount"),
     InputTokens = d.AsNullableInt("InputTokens"),
     OutputTokens = d.AsNullableInt("OutputTokens"),
+    ReasoningTokens = d.AsNullableInt("ReasoningTokens"),
+    CacheCreationInputTokens = d.AsNullableInt("CacheCreationInputTokens"),
+    CacheReadInputTokens = d.AsNullableInt("CacheReadInputTokens"),
+    CacheCreationCountedInsideInput = d.AsNullableBool("CacheCreationCountedInsideInput"),
     ImageSuccessCount = d.AsNullableInt("ImageSuccessCount"),
     OutputImages = MapLogImages(d, "OutputImages"),
     OutputImageCaptureStatus = d.AsNullableString("OutputImageCaptureStatus"),
@@ -16867,6 +16875,7 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     // 是这次没花钱、还是这条模型压根没配价——后者才是他要去处理的事。
     CostStatus = ResolveLogCostStatus(d),
     CostUnpricedReason = d.AsNullableString("CostUnpricedReason"),
+    CostKind = ResolveLogCostKind(d),
     EstimatedCallCost = d.AsNullableDecimal("EstimatedCallCost"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
@@ -19945,6 +19954,44 @@ static string ResolveLogCostStatus(BsonDocument d)
 }
 
 /// <summary>
+/// 金额证据性质。供应商实际账单永远优先于请求完成时的估算快照；存量日志没有 CostKind 时
+/// 按已有事实回退，绝不把 APIYI 的人工价格表伪装成供应商实际结算。
+/// </summary>
+static string ResolveLogCostKind(BsonDocument d)
+{
+    if (d.AsNullableDecimal("ProviderReportedCost") is not null)
+    {
+        return GatewayCostKindNames.ProviderActual;
+    }
+
+    var stored = d.AsNullableString("CostKind")?.Trim().ToLowerInvariant();
+    if (GatewayCostKindNames.All.Contains(stored, StringComparer.Ordinal))
+    {
+        return stored!;
+    }
+
+    var status = ResolveLogCostStatus(d);
+    if (status == GatewayCostStatusNames.NoUsage) return GatewayCostKindNames.NoUsage;
+    if (status != GatewayCostStatusNames.Priced) return GatewayCostKindNames.Unpriced;
+
+    var provider = string.Join(' ', new[]
+    {
+        d.AsNullableString("Provider"),
+        d.AsNullableString("PlatformId"),
+        d.AsNullableString("PlatformName"),
+    }.Where(value => !string.IsNullOrWhiteSpace(value)));
+    if (provider.Contains("apiyi", StringComparison.OrdinalIgnoreCase)
+        || provider.Equals("openai", StringComparison.OrdinalIgnoreCase))
+    {
+        return GatewayCostKindNames.OfficialBaselineEstimate;
+    }
+
+    return string.Equals(d.AsNullableString("PriceSource")?.Trim(), "upstream", StringComparison.OrdinalIgnoreCase)
+        ? GatewayCostKindNames.ProviderPolicyEstimate
+        : GatewayCostKindNames.OfficialBaselineEstimate;
+}
+
+/// <summary>
 /// 网关写进日志的成本状态取值。console-api 是独立工程、引用不到网关那份常量，
 /// 只能在这里复述一份；两边漂移会让统计口径和写入口径对不上，所以由
 /// <c>GatewayCostStatusMirrorGuardTests</c> 从源码上钉住。
@@ -19958,6 +20005,24 @@ static class GatewayCostStatusNames
     public const string Unpriced = "unpriced";
     public const string StaleCurrency = "stale_currency";
     public const string NoUsage = "no_usage";
+}
+
+static class GatewayCostKindNames
+{
+    public const string ProviderActual = "provider_actual";
+    public const string OfficialBaselineEstimate = "official_baseline_estimate";
+    public const string ProviderPolicyEstimate = "provider_policy_estimate";
+    public const string Unpriced = "unpriced";
+    public const string NoUsage = "no_usage";
+
+    public static readonly string[] All =
+    [
+        ProviderActual,
+        OfficialBaselineEstimate,
+        ProviderPolicyEstimate,
+        Unpriced,
+        NoUsage,
+    ];
 }
 
 /// <summary>
