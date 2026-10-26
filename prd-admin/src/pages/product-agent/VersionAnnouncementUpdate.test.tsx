@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -6,6 +7,7 @@ import { getProductAnnouncementSyncStatus, updateProductAnnouncements } from '@/
 
 vi.mock('@/services/real/productAgent', () => ({ getProductAnnouncementSyncStatus: vi.fn(), updateProductAnnouncements: vi.fn() }));
 vi.mock('@/components/ui/VideoLoader', () => ({ MapSpinner: () => <span>更新中</span> }));
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const status = (state: string, message: string) => ({ success: true as const, error: null, data: {
   status: state, runId: 'run', message, pages: 2, discovered: 3, updated: 1, conflicts: 0,
 } });
