@@ -820,8 +820,7 @@ export function ReleaseWorkflowDetail({
                   {selectedInitiation && (
                     <InfoBox>
                       <b>方案：</b>{selectedInitiation.planName}<br />
-                      <b>级别：</b>{SCALE_LABEL[selectedInitiation.versionType]}<br />
-                      <b>关联需求：</b>{inheritedRequirementIds.length} 条（在「需求」标签页查看与追加）
+                      <b>级别：</b>{SCALE_LABEL[selectedInitiation.versionType]}
                     </InfoBox>
                   )}
                 </>
