@@ -1330,9 +1330,12 @@ public class ModelResolver : IModelResolver
 
         if (resolved.Count == 0)
         {
+            var enabledOfferings = available.Where(x => x.Enabled).ToList();
+            var allRecovering = enabledOfferings.Count > 0
+                && enabledOfferings.All(x => x.HealthStatus == ModelHealthStatus.Unavailable);
             return ModelResolutionResult.NotFound(expectedModel,
                 $"逻辑模型没有可用上游 Offering: {logical.PublicId}",
-                GatewayRouteFailure.OfferingUnresolvable,
+                allRecovering ? GatewayRouteFailure.ModelPoolAllUnavailable : GatewayRouteFailure.OfferingUnresolvable,
                 "logical-model-offering",
                 appCallerCode,
                 logicalModelPublicId: logical.PublicId);

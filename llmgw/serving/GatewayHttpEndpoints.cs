@@ -221,7 +221,7 @@ public static class GatewayHttpEndpoints
                 context.Request.Path.Value ?? string.Empty,
                 CancellationToken.None,
                 context.Response.StatusCode,
-                "GATEWAY_REQUEST_REJECTED");
+                context.Items["llmgw.route.failure-code"] as string ?? "GATEWAY_REQUEST_REJECTED");
         });
 
         app.MapGet("/gw/v1/healthz", () => Results.Content(JsonSerializer.Serialize(new
@@ -1423,6 +1423,8 @@ public static class GatewayHttpEndpoints
                         routedRequest.RequiredOfferingId,
                         token);
                 var raw = await gateway.SendRawWithResolutionAsync(routedRequest, res, token);
+                if (!res.Success && !raw.Success)
+                    http.Items["llmgw.route.failure-code"] = raw.ErrorCode;
                 if (canonicalOnly)
                     raw = PrdAgent.Infrastructure.LlmGateway.ImageGen.GatewayImageResponseNormalizer.Normalize(raw);
                 multipartRequestSucceeded = raw.Success;
@@ -1430,7 +1432,7 @@ public static class GatewayHttpEndpoints
                 {
                     if (raw.Success)
                         await executionStore.CompleteAsync(GetVerifiedTenantId(http), execution.ExecutionId, JsonSerializer.Serialize(raw, jsonOpts), CancellationToken.None);
-                    else if (raw.StatusCode >= 500)
+                    else if (raw.StatusCode >= 500 && res.Success)
                         await executionStore.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
                     else
                         await executionStore.FailAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);

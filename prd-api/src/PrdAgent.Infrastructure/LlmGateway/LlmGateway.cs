@@ -506,8 +506,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 // 向请求失败的用户发送故障通知
                 _ = TryNotifyUserFailureAsync(request, resolution);
 
-                return GatewayResponse.Fail("MODEL_NOT_FOUND",
-                    resolution.ErrorMessage ?? "未找到可用模型", 404);
+                return GatewayResponse.Fail(resolution.FailureCode ?? "MODEL_NOT_FOUND",
+                    resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
             }
 
             // 2. 选择首个适配器；若首个候选不支持，发送循环会记录失败并尝试后续候选。
@@ -1326,8 +1326,8 @@ public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return GatewayRawResponse.Fail(InvalidAppCallerErrorCode, error, 400);
 
         if (!resolution.Success || string.IsNullOrWhiteSpace(resolution.ActualModel))
-            return GatewayRawResponse.Fail("MODEL_NOT_FOUND",
-                resolution.ErrorMessage ?? "未找到可用模型", 404);
+            return GatewayRawResponse.Fail(resolution.FailureCode ?? "MODEL_NOT_FOUND",
+                resolution.ErrorMessage ?? "未找到可用模型", GatewayRouteFailure.HttpStatusCode(resolution.FailureCode));
 
         if (!string.IsNullOrWhiteSpace(request.RequiredLogicalModelPublicId)
             && !string.Equals(

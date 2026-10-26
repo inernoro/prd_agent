@@ -31,6 +31,48 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task GatewayRejectedRequests_ReachPhoneQueue_WithoutBurstOrIndependentLoss()
+    {
+        await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
+        var gateway = new LlmGatewayDataContext(testDb.ConnectionString, testDb.DatabaseName);
+        var config = new ConfigurationBuilder().AddConfiguration(TestConfiguration)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["LlmGateway:InternalTenantId"] = "test-tenant" }).Build();
+        var watchdog = new LlmGatewayIncidentWatchdog(gateway, testDb.Context, new AdminPushDispatchSignal(),
+            config, NullLogger<LlmGatewayIncidentWatchdog>.Instance);
+        await testDb.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
+            UserId = "u1", TopicKey = "api-request-alert", Enabled = true, ChannelType = "url", Method = "GET",
+            UrlTemplate = "https://example.com/push/{{message}}",
+        });
+        await gateway.LlmRequestLogs.InsertManyAsync(Enumerable.Range(0, 100).Select(i => new LlmRequestLog {
+            RequestId = $"entry-{i}", TenantId = "test-tenant", Provider = "gateway-auth", Model = "",
+            Path = "/gateway/image-generation", AppCallerCode = "test.image::generation", AppCallerTitle = "配图",
+            Status = "failed", StatusCode = 404, Error = "GATEWAY_REQUEST_REJECTED", StartedAt = DateTime.UtcNow,
+        }));
+        await gateway.LlmRequestLogs.InsertOneAsync(new LlmRequestLog {
+            RequestId = "upstream-access", TenantId = "test-tenant", Provider = "test-provider", Model = "image-model",
+            AppCallerCode = "test.image::generation", AppCallerTitle = "配图", RequestType = "generation",
+            Status = "failed", StatusCode = 401, Error = "Unauthorized IP address", StartedAt = DateTime.UtcNow,
+        });
+        await watchdog.SweepOnceAsync(default);
+        var notices = await testDb.Context.AdminNotifications.Find(_ => true).ToListAsync();
+        Assert.Equal(2, notices.Count);
+        Assert.All(notices, n => Assert.Equal("error", n.Level));
+        var http = new RecordingHttpClientFactory();
+        var push = CreateService(testDb.Context, http);
+        await push.DispatchPendingAsync(default);
+        Assert.Single(http.Requests);
+        var receipt = await testDb.Context.AdminPushDeliveryLogs.Find(_ => true).SingleAsync();
+        Assert.True(receipt.Success);
+        Assert.Equal(2, receipt.CoveredNotificationIds.Count);
+        Assert.All(notices, n => Assert.Contains(n.Id, receipt.CoveredNotificationIds));
+        await watchdog.SweepOnceAsync(default);
+        await ExpireRecipientWindowAsync(testDb.Context);
+        await CreateService(testDb.Context, http).DispatchPendingAsync(default);
+        Assert.Single(http.Requests);
+        Assert.Equal(2, await testDb.Context.AdminNotifications.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
     public async Task Burst136_AggregatesAtChannel_AndRetainsEveryIndependentRecord()
     {
         await using var testDb = await AdminPushTestDatabase.TryCreateAsync();
@@ -1354,13 +1396,15 @@ public sealed class AdminPushNotificationServiceTests
 
     private sealed class AdminPushTestDatabase : IAsyncDisposable
     {
-        private AdminPushTestDatabase(MongoClient client, string databaseName, MongoDbContext context)
+        private AdminPushTestDatabase(MongoClient client, string databaseName, MongoDbContext context, string connectionString)
         {
+            ConnectionString = connectionString;
             Client = client;
             DatabaseName = databaseName;
             Context = context;
         }
 
+        public string ConnectionString { get; }
         public MongoClient Client { get; }
         public string DatabaseName { get; }
         public MongoDbContext Context { get; }
@@ -1378,7 +1422,7 @@ public sealed class AdminPushNotificationServiceTests
                 var client = new MongoClient(uri);
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
                 await client.GetDatabase("admin").RunCommandAsync((Command<MongoDB.Bson.BsonDocument>)"{ping:1}", cancellationToken: cts.Token);
-                return new AdminPushTestDatabase(client, databaseName, new MongoDbContext(uri, databaseName));
+                return new AdminPushTestDatabase(client, databaseName, new MongoDbContext(uri, databaseName), uri);
             }
             catch (Exception ex)
             {
