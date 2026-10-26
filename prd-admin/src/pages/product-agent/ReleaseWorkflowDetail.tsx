@@ -900,7 +900,7 @@ export function ReleaseWorkflowDetail({
       {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
       {loadError && <div role="alert" className="rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">{loadError}</div>}
 
-      <div className={isNew && !temporary ? 'sticky bottom-0 z-10 flex justify-end gap-2 border-t border-token-subtle bg-token-card py-3' : 'flex justify-end gap-2 border-t border-token-subtle pt-4'}>
+      <div className={isNew && !temporary ? 'sticky bottom-0 z-10 flex justify-end gap-2 border-t border-token-subtle py-3' : 'flex justify-end gap-2 border-t border-token-subtle pt-4'} style={isNew && !temporary ? { background: 'var(--bg-elevated)' } : undefined}>
         {isRecordDetail ? (
           canCompleteRelease ? (
             <>
@@ -1134,7 +1134,7 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>;
+  return <label className="block min-w-0"><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>;
 }
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50" />;
