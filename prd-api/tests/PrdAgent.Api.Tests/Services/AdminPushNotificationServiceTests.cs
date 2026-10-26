@@ -73,6 +73,81 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public async Task GatewayFailureAfterRecovery_CreatesFreshEpisode_WithoutReplayingOldDelivery()
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        var gateway = new LlmGatewayDataContext(db.ConnectionString, db.DatabaseName);
+        var config = new ConfigurationBuilder().AddConfiguration(TestConfiguration)
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["LlmGateway:InternalTenantId"] = "test-tenant" }).Build();
+        LlmGatewayIncidentWatchdog Watchdog() => new(gateway, db.Context, new AdminPushDispatchSignal(),
+            config, NullLogger<LlmGatewayIncidentWatchdog>.Instance);
+        LlmRequestLog Log(string id, string status, DateTime at) => new() {
+            RequestId = id, TenantId = "test-tenant", Provider = "test-provider", Model = "image-model",
+            AppCallerCode = "test.image::generation", AppCallerTitle = "配图", RequestType = "generation",
+            Status = status, StatusCode = status == "failed" ? 502 : 200, StartedAt = at,
+        };
+        await db.Context.AdminPushSubscriptions.InsertOneAsync(new AdminPushSubscription {
+            UserId = "u1", TopicKey = "api-request-alert", Enabled = true, ChannelType = "url", Method = "GET",
+            UrlTemplate = "https://example.com/push/{{message}}",
+        });
+        await gateway.LlmRequestLogs.InsertOneAsync(Log("first", "failed", DateTime.UtcNow.AddMinutes(-3)));
+        await Watchdog().SweepOnceAsync(default);
+        var first = await db.Context.AdminNotifications.Find(n => n.Level == "error").SingleAsync();
+        var http = new RecordingHttpClientFactory();
+        var clock = new PushTestClock();
+        AdminPushNotificationService Push() => new(db.Context, http, new AllowAllUrlValidator(), config,
+            NullLogger<AdminPushNotificationService>.Instance, clock);
+        await Push().DispatchPendingAsync(default);
+        Assert.Single(http.Requests);
+
+        await gateway.LlmRequestLogs.InsertOneAsync(Log("recovered", "succeeded", DateTime.UtcNow.AddMinutes(-2)));
+        await Watchdog().SweepOnceAsync(default);
+        Assert.Equal("closed", (await db.Context.AdminNotifications.Find(n => n.Id == first.Id).SingleAsync()).Status);
+        await gateway.LlmRequestLogs.InsertOneAsync(Log("recurrence", "failed", DateTime.UtcNow.AddSeconds(5)));
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Watchdog().SweepOnceAsync(default)));
+        var errors = await db.Context.AdminNotifications.Find(n => n.Level == "error").ToListAsync();
+        Assert.Equal(2, errors.Count);
+        var recurrence = Assert.Single(errors.Where(n => n.Status == "open"));
+        Assert.NotEqual(first.Id, recurrence.Id);
+        Assert.Equal(first.Key, recurrence.Key);
+
+        clock.Advance(TimeSpan.FromSeconds(61));
+        await Push().DispatchPendingAsync(default);
+        Assert.Equal(2, http.Requests.Count); // 同一个接收窗口里，复发也能使用有上限的严重故障名额。
+        var budget = await db.Context.Database.GetCollection<MongoDB.Bson.BsonDocument>("admin_push_dispatch_state")
+            .Find(_ => true).SingleAsync();
+        Assert.All(budget["attemptHistory"].AsBsonArray, attempt => Assert.True(attempt["urgent"].AsBoolean));
+        Assert.True(await db.Context.AdminPushDeliveryLogs.Find(n => n.Success
+            && n.CoveredNotificationIds.Contains(recurrence.Id)).AnyAsync());
+        await Watchdog().SweepOnceAsync(default);
+        await ExpireRecipientWindowAsync(db.Context);
+        await Push().DispatchPendingAsync(default);
+        Assert.Equal(2, http.Requests.Count);
+    }
+
+    [Fact]
+    public async Task HandledGatewayFailure_IsNotReopenedByUnchangedHistoricalLog()
+    {
+        await using var db = await AdminPushTestDatabase.TryCreateAsync();
+        var gateway = new LlmGatewayDataContext(db.ConnectionString, db.DatabaseName);
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+            ["LlmGateway:InternalTenantId"] = "test-tenant",
+        }).Build();
+        var watchdog = new LlmGatewayIncidentWatchdog(gateway, db.Context, new AdminPushDispatchSignal(), config,
+            NullLogger<LlmGatewayIncidentWatchdog>.Instance);
+        await gateway.LlmRequestLogs.InsertOneAsync(new LlmRequestLog {
+            RequestId = "old-failure", TenantId = "test-tenant", Provider = "test-provider", Model = "image-model",
+            Status = "failed", StatusCode = 502, StartedAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+        await watchdog.SweepOnceAsync(default);
+        await db.Context.AdminNotifications.UpdateManyAsync(_ => true, Builders<AdminNotification>.Update
+            .Set(n => n.Status, "closed").Set(n => n.HandledAt, DateTime.UtcNow));
+        await watchdog.SweepOnceAsync(default);
+        Assert.Equal(1, await db.Context.AdminNotifications.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await db.Context.AdminNotifications.CountDocumentsAsync(n => n.Status == "open"));
+    }
+
+    [Fact]
     public async Task Burst136_AggregatesAtChannel_AndRetainsEveryIndependentRecord()
     {
         await using var testDb = await AdminPushTestDatabase.TryCreateAsync();

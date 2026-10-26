@@ -121,11 +121,17 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                           ? "\n请检查模型可用性及网关路由；同一业务入口出现成功请求后自动关闭故障。"
                           : "\n请查看失败请求，核对上游服务的访问权限和可用性；同一上游出现成功请求后自动关闭故障。");
 
+        var previousEpisode = existing;
+        if (existing is not null && string.Equals(existing.Status, "closed", StringComparison.OrdinalIgnoreCase))
+        {
+            // 已经处理过的旧失败不能重放；恢复之后的新失败必须有新的投递身份。
+            if (signal.ObservedAt <= (existing.HandledAt ?? existing.UpdatedAt)) return false;
+            existing = null;
+        }
+
         if (existing is not null)
         {
-            var shouldReopen = string.Equals(existing.Status, "closed", StringComparison.OrdinalIgnoreCase);
-            if (!shouldReopen
-                && string.Equals(existing.Title, title, StringComparison.Ordinal)
+            if (string.Equals(existing.Title, title, StringComparison.Ordinal)
                 && string.Equals(existing.Message, message, StringComparison.Ordinal)
                 && string.Equals(existing.ActionUrl, actionUrl, StringComparison.Ordinal))
             {
@@ -140,31 +146,37 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.ActionUrl, actionUrl)
                 .Set(x => x.ActionKind, "llm-gateway")
                 .Set(x => x.UpdatedAt, now);
-            if (shouldReopen)
-            {
-                update = update
-                    .Set(x => x.Status, "open")
-                    .Unset(x => x.HandledAt);
-            }
-            await _mapDb.AdminNotifications.UpdateOneAsync(x => x.Id == existing.Id, update, cancellationToken: ct);
-            return shouldReopen;
+            await _mapDb.AdminNotifications.UpdateOneAsync(x => x.Id == existing.Id && x.Status != "closed", update, cancellationToken: ct);
+            return false;
         }
 
-        await _mapDb.AdminNotifications.InsertOneAsync(new AdminNotification
+        var notificationId = $"llmgw-upstream-{signal.Fingerprint}";
+        if (previousEpisode is not null)
+            notificationId += "-" + Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes(previousEpisode.Id))).ToLowerInvariant()[..24];
+        try
         {
-            Id = $"llmgw-upstream-{signal.Fingerprint}",
-            Key = key,
-            Title = title,
-            Message = message,
-            Level = "error",
-            Status = "open",
-            Source = "gateway-alert",
-            Section = AdminNotificationSections.Admin,
-            ActionLabel = "查看网关日志",
-            ActionUrl = actionUrl,
-            ActionKind = "llm-gateway",
-            ExpiresAt = null,
-        }, cancellationToken: ct);
+            await _mapDb.AdminNotifications.InsertOneAsync(new AdminNotification
+            {
+                Id = notificationId,
+                Key = key,
+                Title = title,
+                Message = message,
+                Level = "error",
+                Status = "open",
+                Source = "gateway-alert",
+                Section = AdminNotificationSections.Admin,
+                ActionLabel = "查看网关日志",
+                ActionUrl = actionUrl,
+                ActionKind = "llm-gateway",
+                ExpiresAt = null,
+            }, cancellationToken: ct);
+        }
+        catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 同一轮故障在多实例下只有一个确定的记录身份。
+            return false;
+        }
 
         _logger.LogWarning(
             "[LlmGatewayIncidentWatchdog] 上游故障已通知: Platform={Platform}, Model={Model}, RequestId={RequestId}",
@@ -181,7 +193,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             Builders<AdminNotification>.Filter.Ne(x => x.Status, "closed"));
         var transitionUpdate = Builders<AdminNotification>.Update
                 .Set(x => x.Status, "closed")
-                .Set(x => x.HandledAt, now)
+                .Set(x => x.HandledAt, signal.ObservedAt)
                 .Set(x => x.UpdatedAt, now);
         var transitioned = await _mapDb.AdminNotifications.FindOneAndUpdateAsync(
             transitionFilter,
@@ -230,7 +242,7 @@ internal static class LlmGatewayIncidentPolicy
             .GroupBy(x => x.Entry ? BuildEntryFingerprint(x.Log) : BuildFingerprint(x.Log))
             .Select(group =>
             {
-                var ordered = group.OrderBy(x => x.Log.StartedAt).ToList();
+                var ordered = group.OrderBy(x => x.Log.EndedAt ?? x.Log.StartedAt).ToList();
                 var (latest, entry) = ordered[^1];
                 var isFailure = IsFailure(latest);
                 return new LlmGatewayIncidentSignal(
@@ -242,7 +254,8 @@ internal static class LlmGatewayIncidentPolicy
                     Display(latest.Model, latest.ExpectedModel, latest.LogicalModelPublicId, "未进入模型调用"),
                     isFailure ? SummarizeFailure(latest) : string.Empty,
                     ordered.Count(x => IsFailure(x.Log)),
-                    entry);
+                    entry,
+                    latest.EndedAt ?? latest.StartedAt);
             })
             .ToList();
     }
@@ -330,4 +343,5 @@ internal sealed record LlmGatewayIncidentSignal(
     string ModelLabel,
     string FailureSummary,
     int FailureCount,
-    bool IsGatewayEntry = false);
+    bool IsGatewayEntry = false,
+    DateTime ObservedAt = default);

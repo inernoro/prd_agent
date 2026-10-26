@@ -8,6 +8,20 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class LlmGatewayIncidentPolicyTests
 {
+    [Fact]
+    public void LongRequestFailureAfterShortSuccess_IsOrderedByCompletionTime()
+    {
+        var now = DateTime.UtcNow;
+        var failure = Log("long-failure", "failed", 502, now.AddMinutes(-2));
+        failure.EndedAt = now;
+        var success = Log("short-success", "succeeded", 200, now.AddMinutes(-1));
+        success.EndedAt = now.AddSeconds(-30);
+        var signal = LlmGatewayIncidentPolicy.BuildSignals(new[] { failure, success }).ShouldHaveSingleItem();
+        signal.IsFailure.ShouldBeTrue();
+        signal.RequestId.ShouldBe(failure.RequestId);
+        signal.ObservedAt.ShouldBe(now);
+    }
+
     [Theory]
     [InlineData(409, PrdAgent.Core.LlmGateway.GatewayRouteFailure.AppCallerPoolUnbound)]
     [InlineData(503, PrdAgent.Core.LlmGateway.GatewayRouteFailure.ModelPoolAllUnavailable)]

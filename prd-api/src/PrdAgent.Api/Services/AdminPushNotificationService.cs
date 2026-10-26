@@ -607,7 +607,8 @@ public sealed class AdminPushNotificationService
 
     private static string IncidentKey(AdminNotification notice) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { notice.Source,
-            !string.IsNullOrWhiteSpace(notice.Key) ? notice.Key : notice.ActionUrl ?? notice.Source }))));
+            notice.Source == "gateway-alert" ? notice.Id
+                : !string.IsNullOrWhiteSpace(notice.Key) ? notice.Key : notice.ActionUrl ?? notice.Source }))));
 
     private static bool IsFreshUrgent(AdminNotification notice, DispatchBudget budget) =>
         notice.Level == "error" && !budget.Incidents.Contains(IncidentKey(notice));
