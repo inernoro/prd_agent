@@ -105,7 +105,7 @@ import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
 import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
-import type { ContainerService } from '../services/container.js';
+import type { ContainerService, ContainerRemoveContext } from '../services/container.js';
 import type { SchedulerService } from '../services/scheduler.js';
 import type { JanitorService } from '../services/janitor.js';
 import type { ExecutorRegistry } from '../scheduler/executor-registry.js';
@@ -2853,6 +2853,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const run = deploymentRunService.get(runId);
     if (!run || run.status === 'running' || run.status === 'failed' || run.status === 'cancelled') return;
     deploymentRunService.fail(runId, classifyDeploymentFailure({ message, phase, run }));
+  }
+
+  /** 只回写原执行体的真实清理进展；排队、失效身份和终态均不能借此续命。 */
+  function createCleanupProgressReporter(run: DeploymentRun | undefined, lease: BranchOperationLease | null | undefined,
+    entry: Pick<BranchEntry, 'id' | 'projectId'>, profileId: string,
+    emit: (event: OperationLogEvent) => void): ContainerRemoveContext['onProgress'] {
+    const original = run && { id: run.id, projectId: run.projectId, branchId: run.branchId, profileId: run.profileId,
+      operationId: run.operationId, generation: run.operationGeneration };
+    const projectId = entry.projectId || 'default', branchId = entry.id;
+    return step => {
+      assertBranchOperationCurrent(lease, 'cleanup progress');
+      if (!original || !lease || !deploymentRunService) return;
+      const current = deploymentRunService.get(original.id), branch = stateService.getBranch(branchId);
+      if (current !== run || !current || DEPLOYMENT_RUN_TERMINAL_STATUSES.has(current.status)
+        || current.projectId !== original.projectId || current.branchId !== original.branchId || current.profileId !== original.profileId
+        || current.operationId !== original.operationId || current.operationGeneration !== original.generation
+        || original.projectId !== projectId || original.branchId !== branchId || (branch?.projectId || 'default') !== projectId || !branch
+        || lease.operationId !== original.operationId || lease.generation !== original.generation || lease.branchId !== branchId
+        || lease.request.branchId !== branchId || (lease.request.projectId || 'default') !== projectId
+        || (lease.request.profileId || undefined) !== original.profileId || (original.profileId && original.profileId !== profileId)) return;
+      const progress = { admitted: '清理已获准，开始核对容器', 'diagnostics-returned': '容器核对已返回，准备停止命令',
+        stop: '执行槽已就绪，开始停止容器', 'stop-returned': '停止命令已返回，准备移除命令',
+        rm: '执行槽已就绪，开始移除容器', 'rm-returned': '移除命令已返回，继续核对回收结果' };
+      emit({ step: 'remove-orphan-service', status: 'running', title: `服务 "${profileId}" ${progress[step]}`,
+        timestamp: new Date().toISOString(), detail: { runId: original.id, projectId, branchId, profileId,
+          operationId: original.operationId, operationGeneration: original.generation, cleanupStep: step } });
+    };
   }
 
   // 部署静默阶段的 run 心跳（Codex P2「Do not reap live quiet deployment runs」）：
@@ -13181,6 +13208,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 operationId: cleanupLease?.operationId || null,
                 operationGeneration: cleanupLease?.generation,
                 assertCurrent: step => assertBranchOperationCurrent(cleanupLease, step),
+                onProgress: createCleanupProgressReporter(cleanupRun, cleanupLease, entry, sid, event => {
+                  appendDeploymentRunEvent(cleanupRun?.id, event); sendSSE(res, 'step', event);
+                }),
                 actor: cActor,
                 trigger: cTrigger,
                 operation: 'deploy-empty-profiles-cleanup',
@@ -13835,6 +13865,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 requestId: requestId || null, operationId: branchOperationLease?.operationId || null,
                 operationGeneration: branchOperationLease?.generation,
                 assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+                onProgress: createCleanupProgressReporter(deploymentRun, branchOperationLease, entry, sid, logEvent),
                 actor: oActor, trigger: oTrigger,
                 operation: 'deploy-remove-orphan-service', source: 'api.deploy-branch',
                 reason: '服务已从期望清单移除(额外服务被清/项目 profile 被删)',
@@ -14518,6 +14549,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               operationId: branchOperationLease?.operationId || null,
               operationGeneration: branchOperationLease?.generation,
               assertCurrent: step => assertBranchOperationCurrent(branchOperationLease, step),
+              onProgress: createCleanupProgressReporter(deploymentRun, branchOperationLease, entry, sid, logEvent),
               actor: zActor,
               trigger: zTrigger,
               operation: 'deploy-remove-orphan-service',
