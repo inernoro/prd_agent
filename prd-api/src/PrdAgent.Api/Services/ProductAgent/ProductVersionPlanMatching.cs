@@ -73,8 +73,14 @@ public static class ProductVersionPlanMatching
         var exact = named.Where(plan => Topic(plan.PlanName) == input).ToList();
         var matches = (coded.Count > 0 ? coded : exact.Count > 0 ? exact : named).DistinctBy(plan => plan.Id).ToList();
         result.CandidateInitiationIds = matches.Select(plan => plan.Id).ToList();
+        // 已确认应用别名后直接写出的完整T号可定位真实立项；R=T占位不能取得此资格。
+        var aliasWithCode = !string.IsNullOrWhiteSpace(result.TCode) && ApplicationAliases
+            .SelectMany(pair => new[] { pair.Key, pair.Value })
+            .Any(name => Compact(Prefix(raw ?? string.Empty)) == Compact(name + result.TCode));
+        var exactAliasCode = aliasWithCode && coded.Count == 1 && Topic(coded[0].PlanName) == input;
+        if (aliasWithCode && coded.Count == 0) return;
         // 存在明确应用前缀却不在可识别目录中时，即使主题唯一也只提示候选，不猜归属。
-        if (matches.Count != 1 || (apps.Count == 0 && Opening(raw ?? string.Empty) >= 0 && !string.IsNullOrWhiteSpace(Prefix(raw ?? string.Empty)))) return;
+        if (matches.Count != 1 || (apps.Count == 0 && !exactAliasCode && Opening(raw ?? string.Empty) >= 0 && !string.IsNullOrWhiteSpace(Prefix(raw ?? string.Empty)))) return;
         result.MatchedInitiationId = matches[0].Id;
         result.MatchedApplicationId = matches[0].ProductId;
         if (!result.HasExplicitPlanName) result.PlanName = matches[0].PlanName;

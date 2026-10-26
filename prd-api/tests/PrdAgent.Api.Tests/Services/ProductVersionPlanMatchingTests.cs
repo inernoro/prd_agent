@@ -10,6 +10,34 @@ public class ProductVersionPlanMatchingTests
     private const string Topic = "渠道返利是否宴席/团购商品订单结单后判定优化";
 
     [Theory]
+    [InlineData("米多星球", "T3.14.1", true)]
+    [InlineData("米多总平台", "T3.14.1", true)]
+    [InlineData("米多星球R=", "T3.14.1", false)]
+    [InlineData("未知应用", "T3.14.1", false)]
+    [InlineData("米多星球", "T3.14.2", false)]
+    public void 已确认别名完整T号和精确主题可从真实立项回填而占位冲突不猜测(string prefix, string code, bool matched)
+    {
+        var result = VersionRegistrationMessageParser.Parse($"产品方案名称：{prefix}{code}(IMP配套方案)AI文档1-3稿", "formal");
+        result.TCode.ShouldBe(code);
+        ProductVersionPlanMatching.Match(result, new[] { new VersionPlanApplication("product", "测试目录产品") },
+            new[] { new VersionPlanCandidate("imp", "product", "米多总平台（IMP配套方案）", "T3.14.1") }, true);
+        result.MatchedInitiationId.ShouldBe(matched ? "imp" : null);
+        result.MatchedApplicationId.ShouldBe(matched ? "product" : null);
+    }
+
+    [Fact]
+    public void 别名完整T号仍不自动选择多个相同编号和主题的立项()
+    {
+        var result = VersionRegistrationMessageParser.Parse("产品方案名称：米多星球T3.14.1(IMP配套方案)AI文档1-3稿", "formal");
+        ProductVersionPlanMatching.Match(result, Applications, new[] {
+            new VersionPlanCandidate("first", "marketing", "米多总平台（IMP配套方案）", "T3.14.1"),
+            new VersionPlanCandidate("second", "retail", "米多总平台（IMP配套方案）", "T3.14.1"),
+        }, true);
+        result.MatchedInitiationId.ShouldBeNull();
+        result.CandidateInitiationIds.Count.ShouldBe(2);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void 米多星球统一识别为米多总平台且保留明确粘贴的标题(bool formal)

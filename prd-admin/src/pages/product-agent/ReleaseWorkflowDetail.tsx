@@ -781,7 +781,7 @@ export function ReleaseWorkflowDetail({
             <>
               <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
               <Field label="产品负责人 *">
-                <UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索并选择产品负责人" />
+                <UserSearchSelect value={ownerId} onChange={setOwnerId} selectedUser={ownerId === currentUser?.userId ? currentUser : undefined} placeholder="搜索并选择产品负责人" />
               </Field>
               {!temporary && (
                 <>

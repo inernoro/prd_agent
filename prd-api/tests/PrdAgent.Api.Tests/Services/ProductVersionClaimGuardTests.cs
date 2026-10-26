@@ -21,6 +21,38 @@ namespace PrdAgent.Api.Tests.Services;
 public class ProductVersionClaimGuardTests
 {
     [Fact]
+    public async Task ExactImpNoticeReturnsCamelCaseSourceAndApplicationFromAuthorizedInitiation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        // The directory fixture deliberately cannot be matched by its name; the real T/source is authoritative.
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "imp-plan", ProductId = "product", LinkedProductId = "product", PlanName = "米多总平台（IMP配套方案）",
+            TCode = "T3.14.1", Status = "approved",
+        });
+        const string notice = "【版本上线】\n项目类别：非定制\n版本类别：小版本\n需求来源：内部\n产品方案名称：米多星球T3.14.1(IMP配套方案)AI文档1-3稿\n方案地址：https://miduo1031.yuque.com/rsaesz/oqbs8t/aeoyfh53233d5ssu\n项目组成员：林坤、石玲\n计划上线时间：2026.10.26";
+        foreach (var unused in new[] { 1, 2 })
+        {
+            var response = Assert.IsType<OkObjectResult>(await fixture.Controller().ParseProductVersionMessage(
+                new ParseProductVersionMessageRequest { Kind = "formal", Text = notice }));
+            var data = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(response.Value).Data,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web)).GetProperty("result");
+            Assert.Equal("T3.14.1", data.GetProperty("tCode").GetString());
+            Assert.Equal("imp-plan", data.GetProperty("matchedInitiationId").GetString());
+            Assert.Equal("product", data.GetProperty("matchedApplicationId").GetString());
+            Assert.Equal("T3.14.1", Assert.Single(data.GetProperty("initiationCandidates").EnumerateArray()).GetProperty("tCode").GetString());
+            Assert.Equal("standard", data.GetProperty("projectType").GetString());
+            Assert.Equal("minor", data.GetProperty("versionType").GetString());
+            Assert.Equal("内部", data.GetProperty("demandSource").GetString());
+            Assert.Contains("aeoyfh53233d5ssu", data.GetProperty("planUrl").GetString()!);
+            Assert.StartsWith("2026-10-26", data.GetProperty("plannedReleaseAt").GetString());
+            Assert.Equal(new[] { "林坤", "石玲" }, data.GetProperty("projectMemberNames").EnumerateArray().Select(x => x.GetString()));
+            Assert.Equal(8, data.GetProperty("matchedFields").GetArrayLength());
+        }
+        Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
     public async Task RepeatedNoticesResolveCanonicalApplicationAndLatestSourceWithoutIssuingNumbers()
     {
         await using var fixture = await Fixture.CreateAsync();

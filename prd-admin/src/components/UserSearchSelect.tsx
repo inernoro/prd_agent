@@ -36,6 +36,8 @@ export interface UserSearchSelectProps {
   onSelectUser?: (user: AdminUser) => void;
   /** 预加载的用户列表（不传则组件内部自动获取） */
   users?: AdminUser[];
+  /** 已确认的当前已选用户，仅用于回显；不替代目录搜索或改变可选范围。 */
+  selectedUser?: Pick<AdminUser, 'userId' | 'username' | 'displayName'> | null;
   /** 占位文本 */
   placeholder?: string;
   /** 是否显示"全部用户"选项（用于过滤场景） */
@@ -64,6 +66,7 @@ export function UserSearchSelect({
   onChange,
   onSelectUser,
   users: externalUsers,
+  selectedUser,
   placeholder = '搜索用户名或昵称...',
   showAllOption = false,
   allOptionLabel = '全部用户',
@@ -112,6 +115,7 @@ export function UserSearchSelect({
   // 已选 value 但用户未加载（关闭态/首次渲染）时，预拉目录解析显示名，避免触发器空白（如「处理人」框已指派却显示占位）。
   useEffect(() => {
     if (externalUsers || !value || open) return;
+    if (selectedUser?.userId === value) return;
     if (users.some((u) => u.userId === value)) return;
     let cancelled = false;
     void searchDirectoryUsers('', 200).then((res) => {
@@ -138,9 +142,9 @@ export function UserSearchSelect({
     return () => { cancelled = true; };
     // users 故意不入依赖（派生自 internalUsers，入依赖会在 setInternalUsers 后循环触发）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value, open, externalUsers]);
+  }, [value, open, externalUsers, selectedUser?.userId]);
 
-  const selected = users.find((u) => u.userId === value);
+  const selected = users.find((u) => u.userId === value) ?? (selectedUser?.userId === value ? selectedUser : undefined);
   const q = filter.trim().toLowerCase();
   const filtered = q
     ? users.filter(

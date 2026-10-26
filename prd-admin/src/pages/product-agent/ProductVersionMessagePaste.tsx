@@ -39,7 +39,7 @@ export function ProductVersionMessagePaste({ kind, onParsed, getPlanNameEditVers
           return;
         }
         latestOnParsed.current(result, editVersion);
-        setHint(`已识别并回填 ${result.matchedFields.length} 项，请核对后继续。`);
+        setHint(`已识别 ${result.matchedFields.length} 项，请核对回填内容。`);
       } catch {
         if (requestId.current === currentId) setHint('暂时无法识别，现有内容保持不变');
       } finally {
