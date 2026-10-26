@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ProductInitiation } from './types';
-import { filterReleasePlans } from './releasePlanOptions';
+import { filterReleasePlans, releasePlanOption } from './releasePlanOptions';
 import picker from './ReleasePlanPicker.tsx?raw';
 import workflow from './ReleaseWorkflowDetail.tsx?raw';
 import versions from './VersionWorkflowTab.tsx?raw';
@@ -17,6 +17,18 @@ describe('正式申领按方案选择应用', () => {
   });
   it('只选择已通过且有 T 号的方案', () => {
     expect(filterReleasePlans([...plans, { ...plans[0], id: 'no-code', tCode: '' }], '', '').map((item) => item.id)).toEqual(['a', 'b']);
+  });
+  it('V显示T号及T中最终保存的名称，只检索T记录的业务资料', () => {
+    const item = { ...plans[0], planName: 'T记录最终方案名', ownerName: '负责人', demandSource: '客户需求',
+      reviewAttempts: [{ planFileName: 'Agent原始文件名' }] } as ProductInitiation;
+    const option = releasePlanOption(item, '所属应用');
+    expect(option).toMatchObject({ id: item.id, subLabel: 'T1.2.3', label: 'T记录最终方案名' });
+    expect(option.searchExtra).toContain('负责人');
+    expect(option.searchExtra).toContain('客户需求');
+    expect(option.searchExtra).toContain('所属应用');
+    expect(JSON.stringify(option)).not.toContain('Agent原始文件名');
+    expect(filterReleasePlans([{ ...item, tCode: 'T待定' }, { ...item, tCode: '' }], '', '')).toEqual([]);
+    expect(workflow).toContain("(id) => listInitiations(id, 'all')");
   });
   it('直接打开正式申领，方案区只保留搜索选择', () => {
     expect(versions).toContain("dialog === 'temporary' && !actionProductId");
