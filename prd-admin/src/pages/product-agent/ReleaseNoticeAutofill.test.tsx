@@ -77,7 +77,7 @@ describe('完整正式申领弹窗的原文回填', () => {
     expect(owner.value).toBe('陈雅珊');
     await paste();
     expect(api.parseProductVersionMessage).toHaveBeenCalledWith('formal', notice);
-    expect(input('搜索方案名称或 T 号').value).toBe(source.planName);
+    expect(input('搜索方案名称或 T 号').value).toBe(`${source.tCode} · ${source.planName}`);
     expect(input('搜索方案名称或 T 号').title).toBe(`${source.tCode} · ${source.planName}`);
     expect(document.querySelector('[aria-label="按应用筛选方案"]')).toBeNull();
     expect(document.querySelector('[aria-label="按版本级别筛选方案"]')).toBeNull();
