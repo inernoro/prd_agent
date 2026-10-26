@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
+using PrdAgent.Api.Services.ProductAgent;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -19,6 +20,37 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class ProductVersionClaimGuardTests
 {
+    [Fact]
+    public async Task RepeatedNoticesResolveCanonicalApplicationAndLatestSourceWithoutIssuingNumbers()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Products.UpdateOneAsync(x => x.Id == "product", Builders<Product>.Update.Set(x => x.Name, "米多总平台"));
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "first-plan", ProductId = "product", LinkedProductId = "product", PlanName = "米多总平台（客户活动配置优化）", TCode = "T1.2.3", Status = "approved" },
+            new ProductInitiation { Id = "next-plan", ProductId = "product", LinkedProductId = "product", PlanName = "米多总平台（渠道返利结单校验）", TCode = "T1.2.4", Status = "approved" },
+        });
+        async Task<VersionRegistrationMessageParseResult> Parse(string name)
+        {
+            var response = Assert.IsType<OkObjectResult>(await fixture.Controller().ParseProductVersionMessage(
+                new ParseProductVersionMessageRequest { Kind = "formal", Text = $"【版本上线】\n产品方案名称：{name}\n项目组成员：张三、李四" }));
+            var data = JsonSerializer.SerializeToElement(Assert.IsType<ApiResponse<object>>(response.Value).Data);
+            return data.GetProperty("result").Deserialize<VersionRegistrationMessageParseResult>()!;
+        }
+        foreach (var unused in new[] { 1, 2 })
+        {
+            var result = await Parse("米多星球R=TXXXX（客户活动配置优化）-AI文档");
+            Assert.Equal("product", result.MatchedApplicationId);
+            Assert.Equal("first-plan", result.MatchedInitiationId);
+            Assert.Equal("T1.2.3", Assert.Single(result.InitiationCandidates).TCode);
+        }
+        var latest = await Parse("米多星球（渠道返利结单校验）-AI文档");
+        Assert.Equal("product", latest.MatchedApplicationId);
+        Assert.Equal("next-plan", latest.MatchedInitiationId);
+        Assert.Equal("T1.2.4", Assert.Single(latest.InitiationCandidates).TCode);
+        Assert.Equal(2, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

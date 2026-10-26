@@ -8,6 +8,23 @@ public sealed record VersionPlanCandidate(string Id, string ProductId, string Pl
 /// <summary>只在调用方已授权的应用/立项范围内做标题清洗和候选匹配，不发号、不改历史数据。</summary>
 public static class ProductVersionPlanMatching
 {
+    private static readonly IReadOnlyDictionary<string, string> ApplicationAliases = new Dictionary<string, string>
+    {
+        ["米多星球"] = "米多总平台",
+    };
+
+    private static string ApplicationPrefix(string value)
+    {
+        var prefix = Compact(Prefix(value));
+        foreach (var (alias, application) in ApplicationAliases)
+        {
+            var key = Compact(alias);
+            if (prefix.StartsWith(key, StringComparison.OrdinalIgnoreCase))
+                return Compact(application) + prefix[key.Length..];
+        }
+        return prefix;
+    }
+
     public static bool HistoricalTitlesEqual(string? left, string? right) =>
         HistoryTopic(left).Length > 0 && HistoryTopic(left) == HistoryTopic(right);
 
@@ -17,9 +34,9 @@ public static class ProductVersionPlanMatching
 
     public static IReadOnlyList<VersionPlanApplication> MatchApplications(string? title, IReadOnlyList<VersionPlanApplication> applications)
     {
-        var prefix = Prefix(title ?? string.Empty);
+        var prefix = ApplicationPrefix(title ?? string.Empty);
         var matches = applications.Where(app => !string.IsNullOrWhiteSpace(app.Name)
-            && Compact(prefix).StartsWith(Compact(app.Name), StringComparison.OrdinalIgnoreCase)).ToList();
+            && prefix.StartsWith(Compact(app.Name), StringComparison.OrdinalIgnoreCase)).ToList();
         if (matches.Count == 0) return matches;
         var longest = matches.Max(app => Compact(app.Name).Length);
         return matches.Where(app => Compact(app.Name).Length == longest).ToList();
@@ -30,7 +47,7 @@ public static class ProductVersionPlanMatching
         var raw = title?.Trim() ?? string.Empty;
         var opening = Opening(raw);
         if (opening < 0 || string.IsNullOrWhiteSpace(applicationName)
-            || !Compact(raw[..opening]).StartsWith(Compact(applicationName), StringComparison.OrdinalIgnoreCase)) return raw;
+            || !ApplicationPrefix(raw).StartsWith(Compact(applicationName), StringComparison.OrdinalIgnoreCase)) return raw;
         return applicationName.Trim() + raw[opening..];
     }
 

@@ -12,6 +12,37 @@ public class ProductVersionPlanMatchingTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public void 米多星球统一识别为米多总平台且保留明确粘贴的标题(bool formal)
+    {
+        var name = $"米多星球R=T1.2.3（{Topic}）-AI文档";
+        var result = VersionRegistrationMessageParser.Parse($"产品立项方案名称：{name}", formal ? "formal" : "internal");
+        var applications = new[] { new VersionPlanApplication("legacy", "米多星球"), new VersionPlanApplication("platform", "米多总平台") };
+        ProductVersionPlanMatching.Match(result, applications, new[] { new VersionPlanCandidate("plan", "platform", $"米多总平台（{Topic}）", "T1.2.3") }, formal);
+        result.MatchedApplicationId.ShouldBe("platform");
+        result.PlanName.ShouldBe(name);
+        if (formal) result.MatchedInitiationId.ShouldBe("plan");
+        ProductVersionPlanMatching.CleanTitle(name, "米多总平台").ShouldBe($"米多总平台（{Topic}）-AI文档");
+    }
+
+    [Fact]
+    public void 别名不绕过应用范围且同主题多个立项仍需选择()
+    {
+        var missing = new VersionRegistrationMessageParseResult { PlanName = $"米多星球（{Topic}）" };
+        ProductVersionPlanMatching.Match(missing, new[] { new VersionPlanApplication("legacy", "米多星球") },
+            new[] { new VersionPlanCandidate("legacy-plan", "legacy", $"米多星球（{Topic}）", "T1.0.0") }, true);
+        missing.MatchedApplicationId.ShouldBeNull(); missing.MatchedInitiationId.ShouldBeNull();
+        var ambiguous = new VersionRegistrationMessageParseResult { PlanName = $"米多星球（{Topic}）" };
+        ProductVersionPlanMatching.Match(ambiguous, new[] { new VersionPlanApplication("platform", "米多总平台") }, new[] {
+            new VersionPlanCandidate("first", "platform", $"米多总平台（{Topic}）", "T1.2.3"),
+            new VersionPlanCandidate("second", "platform", $"米多总平台（{Topic}）", "T1.2.4"),
+        }, true);
+        ambiguous.MatchedApplicationId.ShouldBe("platform"); ambiguous.MatchedInitiationId.ShouldBeNull();
+        ambiguous.CandidateInitiationIds.ShouldBe(new[] { "first", "second" });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public void 明确粘贴的立项名称优先于规范化和匹配方案(bool formal)
     {
         var name = $"互动营销T3.47.1（{Topic}调整）-AI文档";

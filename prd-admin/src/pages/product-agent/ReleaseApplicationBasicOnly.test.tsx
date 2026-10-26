@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react';
+import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,13 +7,12 @@ import { ReleaseWorkflowDetail } from './ReleaseWorkflowDetail';
 import type { ProductInitiation, ProductRelease } from './types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const api = vi.hoisted(() => Object.fromEntries(['listInitiations', 'listProductMembers', 'listRequirements', 'listFeatures', 'listTracedDefects', 'getInheritReleaseManifest', 'getRelease', 'getInitiation', 'checkReleaseHistory', 'createRelease'].map((name) => [name, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(['listInitiations', 'listProductMembers', 'listRequirements', 'listFeatures', 'listTracedDefects', 'getInheritReleaseManifest', 'getRelease', 'getInitiation', 'checkReleaseHistory', 'createRelease', 'parseProductVersionMessage'].map((name) => [name, vi.fn()])));
 vi.mock('@/services/real/productAgent', async (original) => ({ ...await original<typeof import('@/services/real/productAgent')>(), ...api }));
 vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) => unknown) => select({ user: { userId: 'me', displayName: '申请人' }, permissions: ['product-agent.use'], isRoot: false }) }));
 vi.mock('@/services/real/teams', () => ({ getUserCards: async () => ({ success: true, data: { items: [{ userId: 'me', displayName: '申请人' }] } }) }));
 vi.mock('./DynamicForm', async (original) => ({ ...await original<typeof import('./DynamicForm')>(), useEffectiveWorkflow: () => ({ workflow: null }) }));
 vi.mock('./useReleasePastedMembers', () => ({ useReleasePastedMembers: () => ({ matches: [], pendingCount: 0, identify: () => {}, choose: () => {} }) }));
-vi.mock('./ProductVersionMessagePaste', () => ({ ProductVersionMessagePaste: () => null }));
 vi.mock('./VersionCopyActions', () => ({ VersionCopyActions: () => null }));
 vi.mock('@/components/UserSearchSelect', () => ({ UserSearchSelect: () => null }));
 
@@ -52,9 +51,64 @@ beforeEach(() => {
   api.createRelease.mockResolvedValue({ success: true, data: { ...release, status: 'announcement_pending' } });
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async () => {}) } });
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
+
+const otherSource: ProductInitiation = { ...source, id: 'other-source', productId: 'other-app', tCode: 'T2.0.1', planName: '另一个应用方案' };
+function PasteApplication() {
+  const [application, setApplication] = useState('app');
+  return <><output aria-label="已回填应用">{application}</output><ReleaseWorkflowDetail productId={application} releaseId="new" isNew temporary={false}
+    availableInitiations={[source, otherSource]} onApplicationProductChange={setApplication} /></>;
+}
+const parsed = (item: ProductInitiation) => ({ success: true, data: { result: {
+  planName: item.planName, tCode: item.tCode, matchedApplicationId: item.productId,
+  matchedInitiationId: item.id, candidateInitiationIds: [item.id], initiationCandidates: [item], matchedFields: ['planName', 'tCode'],
+} } });
+async function pasteNotice(text: string) {
+  const area = host.querySelector('textarea[id="version-message-formal"]')!;
+  await act(async () => {
+    // jsdom does not perform the native clipboard insertion; set its resulting value explicitly.
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(area, text);
+    area.dispatchEvent(new Event('paste', { bubbles: true }));
+    area.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => { await vi.advanceTimersByTimeAsync(600); });
+}
 
 describe('正式申领只填写基础信息', () => {
+  it('相同通知重新粘贴会再次识别，并重新回填已改选的T号和应用', async () => {
+    vi.useFakeTimers();
+    api.parseProductVersionMessage.mockResolvedValue(parsed(source));
+    await act(async () => root.render(<MemoryRouter><PasteApplication /></MemoryRouter>));
+    expect(field('内部 T 来源 *').value).toBe('initiation');
+    const notice = '产品方案名称：测试应用（测试方案）';
+    await pasteNotice(notice);
+    expect(field('立项号 *').value).toBe(source.id);
+    await change('立项号 *', otherSource.id);
+    await change('产品方案名称 *', '上一次手工修改');
+    expect(host.querySelector('output')?.value).toBe('other-app');
+    await pasteNotice(notice);
+    expect(api.parseProductVersionMessage).toHaveBeenCalledTimes(2);
+    expect(field('内部 T 来源 *').value).toBe('initiation');
+    expect(field('立项号 *').value).toBe(source.id);
+    expect(host.querySelector('output')?.value).toBe('app');
+    expect(field('产品方案名称 *').value).toBe(source.planName);
+  });
+
+  it('改粘贴另一通知后按最新结果回填，较慢的旧结果不能覆盖T号和应用', async () => {
+    vi.useFakeTimers();
+    let finishOld!: (value: unknown) => void;
+    api.parseProductVersionMessage.mockReturnValueOnce(new Promise((resolve) => { finishOld = resolve; })).mockResolvedValueOnce(parsed(otherSource));
+    await act(async () => root.render(<MemoryRouter><PasteApplication /></MemoryRouter>));
+    await pasteNotice('产品方案名称：旧通知（测试方案）');
+    await pasteNotice('产品方案名称：新通知（另一个应用方案）');
+    expect(field('立项号 *').value).toBe(otherSource.id);
+    expect(host.querySelector('output')?.value).toBe('other-app');
+    await act(async () => finishOld(parsed(source)));
+    expect(field('立项号 *').value).toBe(otherSource.id);
+    expect(host.querySelector('output')?.value).toBe('other-app');
+    expect(field('产品方案名称 *').value).toBe(otherSource.planName);
+  });
+
   it.each([false, true])('空功能可确认并发起申领，手工T=%s', async (manual) => {
     // Hidden feature dependencies must not block this path, even when unavailable.
     api.getInheritReleaseManifest.mockRejectedValue(new Error('不应读取隐藏功能清单'));
