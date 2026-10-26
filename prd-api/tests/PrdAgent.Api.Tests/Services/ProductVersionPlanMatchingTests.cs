@@ -201,4 +201,15 @@ public class ProductVersionPlanMatchingTests
         ProductVersionPlanMatching.Match(result, Applications, new[] { new VersionPlanCandidate("old", "marketing", "互动营销（同名方案）", "T1.2.3") }, true);
         result.MatchedInitiationId.ShouldBeNull(); result.CandidateInitiationIds.ShouldBeEmpty();
     }
+
+    [Theory]
+    [InlineData("米多总平台扩展")]
+    [InlineData("米多星球扩展")]
+    public void 名称只有应用前缀相同不视作同一应用(string name)
+    {
+        var result = new VersionRegistrationMessageParseResult { PlanName = name + "T3.14.1（相同主题）", TCode = "T3.14.1" };
+        ProductVersionPlanMatching.Match(result, new[] { new VersionPlanApplication("platform", "米多总平台") },
+            new[] { new VersionPlanCandidate("t", "platform", "米多总平台（相同主题）", "T3.14.1", ApplicationName: "米多总平台") }, true);
+        result.MatchedInitiationId.ShouldBeNull();
+    }
 }

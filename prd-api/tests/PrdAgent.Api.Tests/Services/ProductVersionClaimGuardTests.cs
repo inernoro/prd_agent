@@ -122,17 +122,20 @@ public class ProductVersionClaimGuardTests
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductAgentSettings.InsertOneAsync(new ProductAgentSettings { ClaimWebhook = new() { Enabled = true } });
         await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
             Builders<ProductInitiation>.Update.Set(x => x.PlanName, "历史T原始名称（保持不变）")
                 .Set(x => x.PlanUrl, "https://example.test/stored-t-plan").Set(x => x.DemandSource, "原T需求来源"));
         var before = (await fixture.Db.ProductInitiations.Find(x => x.Id == "numbering-source").SingleAsync()).ToBsonDocument();
         var request = NumberingReleaseRequest();
         request.PlanName = "粘贴中完全不同的名称，不能改T或替代系统T名称";
-        var response = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        var response = Assert.IsType<OkObjectResult>(await fixture.Controller(notify: true).CreateRelease("product", request));
         var release = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(response.Value).Data);
         Assert.Equal("历史T原始名称（保持不变）", release.PlanName);
         Assert.Equal("https://example.test/stored-t-plan", release.PlanUrl);
         Assert.Equal("原T需求来源", release.DemandSource);
+        Assert.Equal("pending", release.ClaimNotification!.Status);
+        Assert.Equal(release.OwnerId, release.ClaimNotification.OwnerId);
         var after = (await fixture.Db.ProductInitiations.Find(x => x.Id == "numbering-source").SingleAsync()).ToBsonDocument();
         Assert.Equal(before, after);
         Assert.Equal(1, await fixture.Db.ProductReleases.CountDocumentsAsync(x => x.InitiationId == "numbering-source"));
@@ -1351,12 +1354,13 @@ public class ProductVersionClaimGuardTests
             await fixture.Db.VersionRegistryApplications.InsertOneAsync(new VersionRegistryApplication { Id = "application", Name = "测试应用", SystemId = "system", SystemName = "测试系统" });
             return fixture;
         }
-        public ProductAgentController Controller(bool test = false, bool admin = false)
+        public ProductAgentController Controller(bool test = false, bool admin = false, bool notify = false)
         {
             var claims = new List<Claim> { new("sub", "me"), new("permissions", AdminPermissionCatalog.ProductAgentUse) };
             if (test) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentVersionClaimTest));
             if (admin) claims.Add(new("permissions", AdminPermissionCatalog.ProductAgentAdmin));
             var http = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(claims, "test")) };
+            if (notify) http.RequestServices = new ServiceCollection().AddSingleton<IConfiguration>(new ConfigurationBuilder().Build()).BuildServiceProvider();
             return new ProductAgentController(Db, NullLogger<ProductAgentController>.Instance, null!, null!, null!, null!, null!, null!) {
                 ControllerContext = new ControllerContext { HttpContext = http },
             };

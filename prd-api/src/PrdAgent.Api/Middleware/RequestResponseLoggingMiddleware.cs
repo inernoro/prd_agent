@@ -67,6 +67,7 @@ public class RequestResponseLoggingMiddleware
     /// </summary>
     private static readonly string[] CredentialBearingPathPrefixes =
     {
+        "/api/product/claim-webhook",
         "/api/llm-gateway/sso/ticket",
         // SSO 入站 body 是交换令牌 / 登录后签发的凭据；只由专用出站审计保存脱敏证据。
         "/api/v1/auth/miduo-planet",

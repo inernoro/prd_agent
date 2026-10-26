@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Diagnostics;
 using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.DataProtection;
 using MongoDB.Driver;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Api.Services;
@@ -165,6 +166,20 @@ public class MiduoPlanetSsoController : ControllerBase
 
         await _userService.UpdateLastLoginAsync(user.UserId);
         await _userService.UpdateLastActiveAsync(user.UserId);
+
+        // 复用本次已验证的企微身份；密文只用于该MAP账号的定向通知，不改变登录权限。
+        if (PrdAgent.Infrastructure.Security.DeploymentAuthority.CanRunSharedScheduledWork(_cfg))
+        {
+            try
+            {
+                var protection = HttpContext?.RequestServices?.GetService<IDataProtectionProvider>();
+                if (protection != null)
+                    await PrdAgent.Api.Services.ProductAgent.ProductClaimMentionIdentity.RememberAsync(_db, user,
+                        profile.WeComUserId ?? (options.SubjectType == "wework_userid" ? profile.SubjectValue : null),
+                        profile.Mobile ?? (options.SubjectType == "mobile" ? profile.SubjectValue : null), protection);
+            }
+            catch (Exception) { _logger.LogWarning("企微通知身份暂未保存，登录不受影响；后续登录自动补齐"); }
+        }
 
         var tokenVersion = await _authSessionService.GetTokenVersionAsync(user.UserId, clientType);
         var (sessionKey, refreshToken) = await _authSessionService.CreateRefreshSessionAsync(user.UserId, clientType);
@@ -398,7 +413,9 @@ public class MiduoPlanetSsoController : ControllerBase
                     profile = new MiduoPlanetProfile
                     {
                         SubjectValue = NormalizeSubjectValue(options.SubjectType, ReadJsonPath(doc.RootElement, $"return_data.{options.SubjectType}")!),
-                        DisplayName = ReadJsonPath(doc.RootElement, "return_data.userName")?.Trim()
+                        DisplayName = ReadJsonPath(doc.RootElement, "return_data.userName")?.Trim(),
+                        WeComUserId = ReadJsonPath(doc.RootElement, "return_data.wework_userid")?.Trim(),
+                        Mobile = NormalizeSubjectValue("mobile", ReadJsonPath(doc.RootElement, "return_data.mobile") ?? string.Empty)
                     };
             }
         }
@@ -591,6 +608,8 @@ public class MiduoPlanetSsoController : ControllerBase
 
     private sealed class MiduoPlanetProfile
     {
+        public string? WeComUserId { get; set; }
+        public string? Mobile { get; set; }
         public string SubjectValue { get; set; } = string.Empty;
         public string? DisplayName { get; set; }
     }

@@ -72,11 +72,13 @@ public static class ProductVersionPlanMatching
         if (!formal) return;
         var appIds = apps.Select(app => app.Id).ToHashSet();
         var available = plans.Where(plan => appIds.Count == 0 || appIds.Contains(plan.LinkedProductId ?? plan.ProductId)).ToList();
-        var alias = ApplicationAliases.SelectMany(pair => new[] { pair.Key, pair.Value })
-            .FirstOrDefault(name => ApplicationPrefix(raw ?? string.Empty).StartsWith(Compact(name), StringComparison.Ordinal));
+        var prefix = ApplicationPrefix(raw ?? string.Empty);
+        var alias = ApplicationAliases.Values.FirstOrDefault(name => prefix == Compact(name)
+            || (!string.IsNullOrWhiteSpace(result.TCode) && prefix == Compact(name + result.TCode)));
         if (apps.Count == 0 && alias != null)
-            available = available.Where(plan => CanonicalApplicationName(plan.ApplicationName) == CanonicalApplicationName(alias)
-                || ApplicationPrefix(plan.PlanName).StartsWith(Compact(alias), StringComparison.Ordinal)).ToList();
+            available = available.Where(plan => !string.IsNullOrWhiteSpace(plan.ApplicationName)
+                ? CanonicalApplicationName(plan.ApplicationName) == CanonicalApplicationName(alias)
+                : ApplicationPrefix(plan.PlanName) == Compact(alias) || ApplicationPrefix(plan.PlanName) == Compact(alias + plan.TCode)).ToList();
         var input = Topic(raw);
         var named = available.Where(plan => IsSimilarTopic(input, Topic(plan.PlanName))).ToList();
         var coded = available.Where(plan => !string.IsNullOrWhiteSpace(result.TCode)
@@ -88,6 +90,8 @@ public static class ProductVersionPlanMatching
         var matches = (hasExplicitCode ? coded : exact.Count > 0 ? exact : named).DistinctBy(plan => plan.Id).ToList();
         result.CandidateInitiationIds = matches.Select(plan => plan.Id).ToList();
         if (matches.Count != 1 || (apps.Count != 1 && (alias == null || !hasExplicitCode))) return;
+        if (hasExplicitCode && apps.Count == 1 && prefix != Compact(apps[0].Name)
+            && prefix != Compact(apps[0].Name + result.TCode)) return;
         result.MatchedInitiationId = matches[0].Id;
         result.MatchedApplicationId = matches[0].ProductId;
         result.PlanName = matches[0].PlanName;

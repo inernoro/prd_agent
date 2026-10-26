@@ -31,7 +31,7 @@ public class ProductVersionCopyTemplateTests
     {
         var item = new ProductRelease
         {
-            VCode = "V4.26.1", ProjectType = "custom", VersionType = "minor",
+            VCode = "V4.26.1", ProjectType = "standard", VersionType = "minor",
             IsGlobalOpen = true, DemandSource = "拜耳", PlanName = "正式上线方案",
             PlanUrl = "https://example.test/plan",
             ProjectMemberNames = new() { "宇凡", "火巍" },
@@ -45,5 +45,14 @@ public class ProductVersionCopyTemplateTests
         message.ShouldContain("预计培训时长：30 分钟");
         message.ShouldContain("产品负责人：正式负责人");
         message.ShouldEndWith("V4.26.1");
+    }
+
+    [Theory]
+    [InlineData("custom", true)]
+    [InlineData("standard", false)]
+    public void 非全域非定制的通知不包含培训时长(string projectType, bool global)
+    {
+        ProductVersionCopyTemplate.Build(new ProductRelease { ProjectType = projectType, IsGlobalOpen = global, PlannedTrainingMinutes = 30 })
+            .ShouldNotContain("预计培训时长：");
     }
 }

@@ -33,7 +33,7 @@ public static class ProductInitiationIssuance
     }
 
     public static async Task<ProductInitiation?> IssueAsync(MongoDbContext db, string id,
-        string expectedStatus, UpdateDefinition<ProductInitiation>? decision = null)
+        string expectedStatus, UpdateDefinition<ProductInitiation>? decision = null, bool canNotify = false)
     {
         if (expectedStatus is not ("decision_pending" or "owner_pending"))
             throw new ArgumentException("不支持的自动发号来源状态", nameof(expectedStatus));
@@ -51,7 +51,13 @@ public static class ProductInitiationIssuance
             .Set(x => x.RequirementSyncPending, true).Set(x => x.IssuedAt, DateTime.UtcNow).Set(x => x.UpdatedAt, DateTime.UtcNow);
         // 仅新申领随实际T号原子保存标准名称；旧owner_pending补发和已发号记录不重命名。
         if (expectedStatus == "decision_pending" && !string.IsNullOrWhiteSpace(item.AppName))
-            update = update.Set(x => x.PlanName, ProductVersionPlanName.Format(item.AppName, code, item.PlanName));
+        {
+            item.PlanName = ProductVersionPlanName.Format(item.AppName, code, item.PlanName);
+            update = update.Set(x => x.PlanName, item.PlanName);
+        }
+        item.TCode = code;
+        var notification = await ProductClaimNotificationQueue.CreateAsync(db, item, item.OwnerId, false, canNotify && expectedStatus == "decision_pending");
+        update = update.Set(x => x.ClaimNotification, notification);
         if (decision != null) update = Builders<ProductInitiation>.Update.Combine(decision, update);
         // 发号时重新检查评审、状态和软删除；并发重试不能覆盖已有编号或原资料。
         var unchanged = eligible & Builders<ProductInitiation>.Filter.Eq(x => x.UpdatedAt, item.UpdatedAt);

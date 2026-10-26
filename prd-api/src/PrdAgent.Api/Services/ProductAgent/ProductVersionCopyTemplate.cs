@@ -18,8 +18,9 @@ internal static class ProductVersionCopyTemplate
         PlannedProjectAt = item.PlannedProjectAt,
     }), item.OwnerName);
 
-    public static string Build(ProductRelease item) => WithOwner(VersionRegistrationCopyTemplate.Build(new VersionRegistration
+    public static string Build(ProductRelease item)
     {
+        var text = VersionRegistrationCopyTemplate.Build(new VersionRegistration {
         Kind = VersionRegistrationKind.Formal,
         Code = item.VCode,
         ProjectType = item.ProjectType,
@@ -31,7 +32,11 @@ internal static class ProductVersionCopyTemplate
         ProjectMemberNames = item.ProjectMemberNames,
         PlannedReleaseAt = item.PlannedReleaseAt,
         PlannedTrainingMinutes = item.PlannedTrainingMinutes,
-    }), item.OwnerName);
+        });
+        if (item.ProjectType != "standard" || item.IsGlobalOpen != true)
+            text = string.Join("\n", text.Split('\n').Where(line => !line.StartsWith("预计培训时长：", StringComparison.Ordinal)));
+        return WithOwner(text, item.OwnerName);
+    }
 
     private static string WithOwner(string text, string? name)
     {

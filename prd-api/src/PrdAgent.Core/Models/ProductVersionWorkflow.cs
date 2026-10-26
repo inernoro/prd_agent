@@ -55,6 +55,7 @@ public class ProductInitiation
     public string? ApprovalComment { get; set; }
     /// <summary>自动发号后的需求状态待同步标记，后台幂等重试，不重新发号。</summary>
     public bool RequirementSyncPending { get; set; }
+    public ProductClaimNotification? ClaimNotification { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public string SourceType { get; set; } = "system";
     /// <summary>无编号历史导入行的规范化指纹，重导时用于去重。</summary>
@@ -89,6 +90,7 @@ public class InitiationMeetingDraftRound
 
 public class ProductRelease
 {
+    public ProductClaimNotification? ClaimNotification { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string ProductId { get; set; } = string.Empty;
     public string? InitiationId { get; set; }

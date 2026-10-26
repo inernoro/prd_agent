@@ -55,6 +55,12 @@ public class ProductAgentController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    private bool CanNotifyClaims()
+    {
+        var config = HttpContext?.RequestServices?.GetService<IConfiguration>();
+        return config != null && PrdAgent.Infrastructure.Security.DeploymentAuthority.CanRunSharedScheduledWork(config);
+    }
+
     /// <summary>是否具备指定权限（super 全通过）。</summary>
     private bool HasPermission(string perm)
     {
@@ -855,8 +861,6 @@ public class ProductAgentController : ControllerBase
                     result.PlanName = matched.PlanName;
                     result.PlanUrl = matched.PlanUrl;
                     result.DemandSource = matched.DemandSource;
-                    result.RequirementDescription = matched.RequirementDescription;
-                    result.DepartmentName = matched.DepartmentName;
                     result.ProjectType = matched.ProjectType;
                     result.VersionType = matched.VersionType;
                 }
@@ -1258,7 +1262,7 @@ public class ProductAgentController : ControllerBase
                 .Set(x => x.ReviewMeetingRequired, request.ReviewMeetingRequired)
                 .Set(x => x.ExpectedMeetingAt, request.ReviewMeetingRequired ? expectedMeetingAt : null)
                 .Set(x => x.MeetingDraftCount, meetingDraftCount)
-                .Set(x => x.MeetingDraftRounds, meetingRounds));
+                .Set(x => x.MeetingDraftRounds, meetingRounds), canNotify: CanNotifyClaims());
         if (updated == null)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "立项已处理，请刷新查看现有 T 号，不要重复提交"));
         return Ok(ApiResponse<object>.Ok(updated));
@@ -1482,7 +1486,7 @@ public class ProductAgentController : ControllerBase
             DepartmentName = request.DepartmentName?.Trim() ?? initiation?.DepartmentName,
             DemandSource = request.DemandSource?.Trim() ?? initiation?.DemandSource,
             RequirementDescription = request.RequirementDescription?.Trim() ?? initiation?.RequirementDescription,
-            OwnerName = request.OwnerName?.Trim() ?? userNames.GetValueOrDefault(request.OwnerId!),
+            OwnerName = userNames.GetValueOrDefault(request.OwnerId!),
             ProjectMemberNames = memberNames,
             ContractParty = request.ContractParty?.Trim(),
             Remark = request.Remark?.Trim(),
@@ -1504,6 +1508,7 @@ public class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
         item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id,
             string.IsNullOrWhiteSpace(initiation?.LinkedProductId) ? productId : initiation.LinkedProductId);
+        item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(_db, item, item.OwnerId, true, CanNotifyClaims());
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId, $"版本申领完成（{item.VCode}），自动流转到已上线");
         return Ok(ApiResponse<object>.Ok(item));

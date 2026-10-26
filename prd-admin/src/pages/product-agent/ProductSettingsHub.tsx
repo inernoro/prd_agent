@@ -42,8 +42,12 @@ import { WorkflowEditor } from './WorkflowTemplateSection';
 import { ProductAdminOverviewPanel } from './ProductAdminOverviewPanel';
 import { useGradeOptions } from './gradeOptions';
 import { ProductPermissionsPanel, type ProductPermissionTab } from './ProductPermissionsPanel';
+import { useSearchParams } from 'react-router-dom';
+import { useAuthStore } from '@/stores/authStore';
+import { PRODUCT_MAP_ADMIN } from './productPermissionAccess';
+import { ProductClaimWebhookPanel } from './ProductClaimWebhookPanel';
 
-type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb';
+type SettingsCat = 'perm' | 'product' | 'requirement' | 'feature' | 'defect' | 'customer' | 'consult-kb' | 'webhook';
 
 const CATS: { key: SettingsCat; label: string; icon: typeof ShieldCheck; desc: string }[] = [
   { key: 'perm', label: '权限', icon: ShieldCheck, desc: '菜单权限、功能权限与角色权限' },
@@ -53,10 +57,13 @@ const CATS: { key: SettingsCat; label: string; icon: typeof ShieldCheck; desc: s
   { key: 'defect', label: '缺陷', icon: Bug, desc: '缺陷的表单、流程、优先级与严重程度' },
   { key: 'customer', label: '客户', icon: Users, desc: '客户表单字段定义' },
   { key: 'consult-kb', label: '问策知识库', icon: BookOpen, desc: '营销问策智能体的专属知识库' },
+  { key: 'webhook', label: 'Webhook 配置', icon: ShieldCheck, desc: '版本申领自动推送、脱敏地址与发送结果' },
 ];
 
 export function ProductSettingsHub() {
-  const [cat, setCat] = useState<SettingsCat>('perm');
+  const [params, setParams] = useSearchParams();
+  const [cat, setCat] = useState<SettingsCat>(() => params.get('settingsCat') === 'webhook' ? 'webhook' : 'perm');
+  const isMapAdmin = useAuthStore(state => state.isRoot || state.permissions.includes(PRODUCT_MAP_ADMIN));
   const [products, setProducts] = useState<Product[]>([]);
 
   useEffect(() => {
@@ -76,13 +83,13 @@ export function ProductSettingsHub() {
       <div className="flex min-h-0 flex-1">
         {/* 左侧分类导航 */}
         <nav className="w-44 shrink-0 overflow-y-auto border-r border-token-subtle px-2 py-3" style={{ overscrollBehavior: 'contain' }}>
-          {CATS.map((c) => {
+          {CATS.filter(c => c.key !== 'webhook' || isMapAdmin).map((c) => {
             const Icon = c.icon;
             const on = c.key === cat;
             return (
               <button
                 key={c.key}
-                onClick={() => setCat(c.key)}
+                onClick={() => { setCat(c.key); setParams(previous => { const next = new URLSearchParams(previous); next.set('settingsCat', c.key); return next; }, { replace: true }); }}
                 className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${on ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}
               >
                 <Icon size={15} className="shrink-0" />
@@ -99,6 +106,7 @@ export function ProductSettingsHub() {
             <EntitySettingsPanel key={cat} entityType={cat} products={products} />
           )}
           {cat === 'consult-kb' && <ConsultKnowledgePanel />}
+          {cat === 'webhook' && (isMapAdmin ? <ProductClaimWebhookPanel /> : <p role="status" className="text-sm text-token-secondary">仅MAP管理员可配置申领Webhook。</p>)}
         </div>
       </div>
     </div>
