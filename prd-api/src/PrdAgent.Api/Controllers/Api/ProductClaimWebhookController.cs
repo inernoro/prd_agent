@@ -46,7 +46,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
         if (DeploymentAuthority.IsCdsBranchPreview(configuration))
             return BadRequest(ApiResponse<object>.Fail("PREVIEW_READ_ONLY", "请在正式环境保存Webhook配置，预览不会发送群通知"));
         var existing = await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync();
-        var protectedUrl = existing?.ClaimWebhook.ProtectedUrl;
+        var protectedUrl = existing?.ClaimWebhook?.ProtectedUrl;
         if (!string.IsNullOrWhiteSpace(request.Url))
         {
             if (!ProductClaimWebhookPayload.IsValidWebhook(request.Url.Trim()))

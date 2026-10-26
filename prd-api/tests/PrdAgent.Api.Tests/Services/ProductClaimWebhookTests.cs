@@ -128,6 +128,10 @@ public class ProductClaimWebhookTests
         Assert.Equal(403, Assert.IsType<StatusCodeResult>(await f.Controller(admin: false).Get()).StatusCode);
         Assert.Equal(403, Assert.IsType<StatusCodeResult>(await f.Controller(admin: false).Save(new SaveProductClaimWebhook { Url = TestUrl })).StatusCode);
         Assert.Null(await ProductClaimNotificationQueue.CreateAsync(f.Db, new ProductInitiation(), "owner", false, false));
+        // 跨站出口会把整份本站配置清成BsonNull；新目标站仍应能正常保存自己的配置。
+        await f.Db.Database.GetCollection<MongoDB.Bson.BsonDocument>("product_agent_settings").UpdateOneAsync(
+            MongoDB.Bson.BsonDocument.Parse("{}"), new MongoDB.Bson.BsonDocument("$set", new MongoDB.Bson.BsonDocument("ClaimWebhook", MongoDB.Bson.BsonNull.Value)));
+        Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Url = TestUrl, Enabled = true }));
     }
 
     private sealed class Fixture : IAsyncDisposable
