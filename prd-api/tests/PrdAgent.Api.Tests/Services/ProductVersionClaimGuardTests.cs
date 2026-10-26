@@ -27,7 +27,8 @@ public class ProductVersionClaimGuardTests
         // The directory fixture deliberately cannot be matched by its name; the real T/source is authoritative.
         await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
             Id = "imp-plan", ProductId = "product", LinkedProductId = "product", PlanName = "米多总平台（IMP配套方案）",
-            TCode = "T3.14.1", Status = "approved",
+            TCode = "T3.14.1", Status = "approved", DemandSource = "内部",
+            PlanUrl = "https://miduo1031.yuque.com/rsaesz/oqbs8t/aeoyfh53233d5ssu",
         });
         const string notice = "【版本上线】\n项目类别：非定制\n版本类别：小版本\n需求来源：内部\n产品方案名称：米多星球T3.14.1(IMP配套方案)AI文档1-3稿\n方案地址：https://miduo1031.yuque.com/rsaesz/oqbs8t/aeoyfh53233d5ssu\n项目组成员：林坤、石玲\n计划上线时间：2026.10.26";
         foreach (var unused in new[] { 1, 2 })
@@ -114,6 +115,45 @@ public class ProductVersionClaimGuardTests
         Assert.Equal("https://example.test/announcement", saved.AnnouncementUrl);
         Assert.Equal(item.ReleasedAt!.Value, saved.ReleasedAt!.Value, TimeSpan.FromMilliseconds(1));
         Assert.Empty(saved.FeatureManifest);
+    }
+
+    [Fact]
+    public async Task FormalClaimCopiesStoredTTitleAndNeverChangesOriginalTRecord()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
+            Builders<ProductInitiation>.Update.Set(x => x.PlanName, "历史T原始名称（保持不变）")
+                .Set(x => x.PlanUrl, "https://example.test/stored-t-plan").Set(x => x.DemandSource, "原T需求来源"));
+        var before = (await fixture.Db.ProductInitiations.Find(x => x.Id == "numbering-source").SingleAsync()).ToBsonDocument();
+        var request = NumberingReleaseRequest();
+        request.PlanName = "粘贴中完全不同的名称，不能改T或替代系统T名称";
+        var response = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        var release = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(response.Value).Data);
+        Assert.Equal("历史T原始名称（保持不变）", release.PlanName);
+        Assert.Equal("https://example.test/stored-t-plan", release.PlanUrl);
+        Assert.Equal("原T需求来源", release.DemandSource);
+        var after = (await fixture.Db.ProductInitiations.Find(x => x.Id == "numbering-source").SingleAsync()).ToBsonDocument();
+        Assert.Equal(before, after);
+        Assert.Equal(1, await fixture.Db.ProductReleases.CountDocumentsAsync(x => x.InitiationId == "numbering-source"));
+    }
+
+    [Fact]
+    public async Task NewTNameUsesActualIssuedCodeAndLeavesPreviouslyIssuedTUntouched()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "old-t", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", Status = "approved", PlanName = "旧T名称原样保留" });
+        var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateInitiation("product", new CreateInitiationRequest {
+            LinkedProductId = "product", PlanName = "测试应用T待定（IMP配套方案）AI文档1-3稿",
+        }));
+        var item = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == item.Id,
+            Builders<ProductInitiation>.Update.Set(x => x.ReviewPassed, true).Set(x => x.Status, "decision_pending"));
+        var response = Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation(item.Id, new InitiationDecisionRequest()));
+        var issued = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(response.Value).Data);
+        Assert.Equal($"测试应用{issued.TCode}（IMP配套方案）", issued.PlanName);
+        Assert.Equal(issued.PlanName, (await fixture.Db.ProductInitiations.Find(x => x.Id == issued.Id).SingleAsync()).PlanName);
+        Assert.Equal("旧T名称原样保留", (await fixture.Db.ProductInitiations.Find(x => x.Id == "old-t").SingleAsync()).PlanName);
     }
 
     [Theory]

@@ -56,6 +56,20 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); useAuthStore.setState(useAuthStore.getInitialState(), true); });
 
 describe('完整正式申领弹窗的原文回填', () => {
+  it('粘贴名称不同仍使用已匹配T保存的名称和关联资料，不提交对T的修改', async () => {
+    api.parseProductVersionMessage.mockResolvedValue({ success: true, data: { result: {
+      planName: '粘贴原文中的另一名称', matchedInitiationId: source.id, matchedApplicationId: source.productId,
+      candidateInitiationIds: [source.id], initiationCandidates: [source], matchedFields: ['planName', 'tCode'],
+      planUrl: 'https://example.test/wrong-pasted-url', demandSource: '错误的粘贴来源',
+    } } });
+    await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
+    await paste();
+    expect(input('搜索方案名称或 T 号').value).toBe(source.planName);
+    expect(input('搜索方案名称或 T 号').title).toBe(source.planName);
+    expect(api.createRelease).not.toHaveBeenCalled();
+    expect(source.planName).toBe('米多总平台（IMP配套方案）');
+  });
+
   it.each(['dark', 'light'])('%s主题方案区只显示方案，回填仍可改选负责人和再次粘贴', async (theme) => {
     document.documentElement.setAttribute('data-theme', theme);
     await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));

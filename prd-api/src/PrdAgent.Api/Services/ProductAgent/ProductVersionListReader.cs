@@ -7,7 +7,8 @@ namespace PrdAgent.Api.Services.ProductAgent;
 // Read DTOs only: legacy rows are never written into the product workflow collections.
 public sealed record ProductVersionListRow<T>(T Record, VersionRegistration? LegacyRegistration = null);
 public sealed record ProductVersionListResult<T>(
-    List<ProductVersionListRow<T>> Items, Dictionary<string, string> RequirementNames);
+    List<ProductVersionListRow<T>> Items, Dictionary<string, string> RequirementNames,
+    IReadOnlyDictionary<string, string>? ApplicationAliases = null);
 
 /// <summary>Global version lists, including authorized legacy registrations, without reading audit snapshots.</summary>
 public static class ProductVersionListReader
@@ -38,7 +39,7 @@ public static class ProductVersionListReader
             & Builders<ProductInitiation>.Filter.In(x => x.ProductId, ids)).ToListAsync();
         var legacy = await ReadLegacyAsync(db, VersionRegistrationKind.Internal, userId, canViewAllLegacy);
         await ProductInitiationDeletion.AnnotateAsync(db, current, userId);
-        return new(MergeInitiations(current, legacy, products), new());
+        return new(MergeInitiations(current, legacy, products), new(), ProductVersionPlanMatching.Aliases);
     }
 
     public static async Task<ProductVersionListResult<ProductRelease>> ReadReleasesAsync(
@@ -59,7 +60,7 @@ public static class ProductVersionListReader
                 .Project(x => new { x.Id, x.Title }).ToListAsync();
             foreach (var item in requirements) names[item.Id] = item.Title;
         }
-        return new(MergeReleases(current, legacy, products), names);
+        return new(MergeReleases(current, legacy, products), names, ProductVersionPlanMatching.Aliases);
     }
 
     private static string ResolveProductId(VersionRegistration record, IReadOnlyList<Product> products)

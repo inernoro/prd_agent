@@ -838,8 +838,8 @@ public class ProductAgentController : ControllerBase
             {
                 var candidates = await _db.ProductInitiations.Find(item => !item.IsDeleted && item.Status == "approved"
                     && item.TCode != null && permittedProductIds.Contains(item.ProductId))
-                    .Project(item => new { item.Id, item.ProductId, item.PlanName, item.TCode, item.LinkedProductId }).ToListAsync();
-                plans = candidates.Select(item => new VersionPlanCandidate(item.Id, item.ProductId, item.PlanName, item.TCode, item.LinkedProductId)).ToList();
+                    .Project(item => new { item.Id, item.ProductId, item.PlanName, item.TCode, item.LinkedProductId, item.AppName }).ToListAsync();
+                plans = candidates.Select(item => new VersionPlanCandidate(item.Id, item.ProductId, item.PlanName, item.TCode, item.LinkedProductId, item.AppName)).ToList();
             }
             ProductVersionPlanMatching.Match(result, applications, plans, request.Kind == VersionRegistrationKind.Formal);
             if (result.CandidateInitiationIds.Count > 0)
@@ -849,6 +849,17 @@ public class ProductAgentController : ControllerBase
                 result.CandidateInitiationIds = result.InitiationCandidates.Select(item => item.Id).ToList();
                 if (result.MatchedInitiationId != null && !result.CandidateInitiationIds.Contains(result.MatchedInitiationId))
                     result.MatchedInitiationId = null;
+                var matched = result.InitiationCandidates.SingleOrDefault(item => item.Id == result.MatchedInitiationId);
+                if (matched != null)
+                {
+                    result.PlanName = matched.PlanName;
+                    result.PlanUrl = matched.PlanUrl;
+                    result.DemandSource = matched.DemandSource;
+                    result.RequirementDescription = matched.RequirementDescription;
+                    result.DepartmentName = matched.DepartmentName;
+                    result.ProjectType = matched.ProjectType;
+                    result.VersionType = matched.VersionType;
+                }
             }
         }
         return Ok(ApiResponse<object>.Ok(new { result }));
@@ -1462,7 +1473,7 @@ public class ProductAgentController : ControllerBase
             InitiationId = initiation?.Id,
             TCode = initiation?.TCode,
             IsTemporaryOptimization = request.IsTemporaryOptimization,
-            PlanName = request.IsTemporaryOptimization ? request.PlanName?.Trim() ?? "临时优化需求" : string.IsNullOrWhiteSpace(request.PlanName) ? initiation?.PlanName ?? string.Empty : request.PlanName.Trim(),
+            PlanName = request.IsTemporaryOptimization ? request.PlanName?.Trim() ?? "临时优化需求" : initiation!.PlanName,
             VersionType = versionType,
             SystemName = initiation?.SystemName ?? productSystemName,
             AppName = initiation?.AppName ?? productAppName,

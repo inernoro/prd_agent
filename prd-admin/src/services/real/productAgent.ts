@@ -1157,6 +1157,7 @@ export function getOverviewReleases(params?: { keyword?: string }) {
 }
 export type WorkflowVersionRecord<T> = T & { legacyRegistration?: VersionRegistration | null };
 type WorkflowVersionList<T> = {
+  applicationAliases?: Record<string, string>;
   items: Array<{ record: T; legacyRegistration?: VersionRegistration | null }>;
   requirementNames: Record<string, string>;
 };

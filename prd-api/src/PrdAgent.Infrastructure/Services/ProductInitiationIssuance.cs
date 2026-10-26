@@ -49,6 +49,9 @@ public static class ProductInitiationIssuance
 
         var update = Builders<ProductInitiation>.Update.Set(x => x.TCode, code).Set(x => x.Status, "approved")
             .Set(x => x.RequirementSyncPending, true).Set(x => x.IssuedAt, DateTime.UtcNow).Set(x => x.UpdatedAt, DateTime.UtcNow);
+        // 仅新申领随实际T号原子保存标准名称；旧owner_pending补发和已发号记录不重命名。
+        if (expectedStatus == "decision_pending" && !string.IsNullOrWhiteSpace(item.AppName))
+            update = update.Set(x => x.PlanName, ProductVersionPlanName.Format(item.AppName, code, item.PlanName));
         if (decision != null) update = Builders<ProductInitiation>.Update.Combine(decision, update);
         // 发号时重新检查评审、状态和软删除；并发重试不能覆盖已有编号或原资料。
         var unchanged = eligible & Builders<ProductInitiation>.Filter.Eq(x => x.UpdatedAt, item.UpdatedAt);

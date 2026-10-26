@@ -56,6 +56,7 @@ import { useVersionPlanName } from './useVersionPlanName';
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
 import { VersionCopyActions } from './VersionCopyActions';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
+import { matchesVersionRecord } from './versionRecordSearch';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
 import { LegacyVersionDetail } from './LegacyVersionDetail';
 import { downloadListCsv } from './listExport';
@@ -78,6 +79,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [releases, setReleases] = useState<WorkflowVersionRecord<ProductRelease>[]>([]);
   const [requirementNames, setRequirementNames] = useState<Map<string, string>>(new Map());
   const [names, setNames] = useState<Map<string, string>>(new Map());
+  const [applicationAliases, setApplicationAliases] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [loadedTabs, setLoadedTabs] = useState({ initiation: false, release: false });
@@ -126,11 +128,13 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
         if (!isCurrent()) return;
         if (!result.success) { setLoadError(result.error?.message ?? '内部版本读取失败，请重试。'); return; }
         setInitiations(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+        setApplicationAliases(result.data.applicationAliases ?? {});
       } else {
         const result = await getWorkflowReleases();
         if (!isCurrent()) return;
         if (!result.success) { setLoadError(result.error?.message ?? '正式版本读取失败，请重试。'); return; }
         setReleases(result.data.items.map(({ record, legacyRegistration }) => ({ ...record, legacyRegistration })));
+        setApplicationAliases(result.data.applicationAliases ?? {});
         setRequirementNames(new Map(Object.entries(result.data.requirementNames)));
       }
       setLoadedTabs((previous) => ({ ...previous, [tab]: true }));
@@ -184,15 +188,15 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const visibleInitiations = useMemo(() => filterByTracked(
     initiations.filter((item) => (!productId || item.productId === productId)
       && (recordScope === 'all' || item.createdBy === currentUserId)
-      && matchesRecord(item, query, statusFilter)),
+      && matchesVersionRecord(item, query, statusFilter, productNames.get(item.productId), applicationAliases)),
     trackedOnly, 'initiation', (item) => ({ productId: item.productId, recordId: item.id }),
-  ), [initiations, productId, recordScope, currentUserId, query, statusFilter, trackedOnly]);
+  ), [initiations, productId, recordScope, currentUserId, query, statusFilter, trackedOnly, productNames, applicationAliases]);
   const visibleReleases = useMemo(() => filterByTracked(
     releases.filter((item) => (!productId || item.productId === productId)
       && (!releaseOwnerId || item.ownerId === releaseOwnerId)
-      && matchesRecord(item, query, statusFilter)),
+      && matchesVersionRecord(item, query, statusFilter, productNames.get(item.productId), applicationAliases)),
     trackedOnly, 'release', (item) => ({ productId: item.productId, recordId: item.id }),
-  ), [releases, productId, releaseOwnerId, query, statusFilter, trackedOnly]);
+  ), [releases, productId, releaseOwnerId, query, statusFilter, trackedOnly, productNames, applicationAliases]);
   const statuses = useMemo(() => Array.from(new Set(
     (tab === 'release' ? releases : initiations)
       .filter((item) => !productId || item.productId === productId).map((item) => item.status),
@@ -937,22 +941,6 @@ function formatDate(value?: string | null) {
 
 function formatBool(value?: boolean | null) {
   return value == null ? '-' : value ? '是' : '否';
-}
-
-function matchesRecord(
-  item: ProductInitiation | ProductRelease,
-  query: string,
-  status: string,
-) {
-  if (status && item.status !== status) return false;
-  const keyword = query.trim().toLowerCase();
-  if (!keyword) return true;
-  return Object.values(item).some((value) => {
-    if (value == null) return false;
-    if (Array.isArray(value)) return value.some((entry) => String(entry).toLowerCase().includes(keyword));
-    if (typeof value === 'object') return false;
-    return String(value).toLowerCase().includes(keyword);
-  });
 }
 
 function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, onOwnerChange, status, onStatusChange, statuses, trackedOnly, onTrackedOnlyChange }: {

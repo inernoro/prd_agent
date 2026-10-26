@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 namespace PrdAgent.Api.Services.ProductAgent;
 
 public sealed record VersionPlanApplication(string Id, string Name);
-public sealed record VersionPlanCandidate(string Id, string ProductId, string PlanName, string? TCode, string? LinkedProductId = null);
+public sealed record VersionPlanCandidate(string Id, string ProductId, string PlanName, string? TCode, string? LinkedProductId = null, string? ApplicationName = null);
 
 /// <summary>只在调用方已授权的应用/立项范围内做标题清洗和候选匹配，不发号、不改历史数据。</summary>
 public static class ProductVersionPlanMatching
@@ -12,6 +12,14 @@ public static class ProductVersionPlanMatching
     {
         ["米多星球"] = "米多总平台",
     };
+    public static IReadOnlyDictionary<string, string> Aliases => ApplicationAliases;
+
+    public static string CanonicalApplicationName(string? name)
+    {
+        var key = PrdAgent.Core.Models.VersionRegistryCatalog.NormalizeName(name);
+        var alias = ApplicationAliases.FirstOrDefault(pair => PrdAgent.Core.Models.VersionRegistryCatalog.NormalizeName(pair.Key) == key);
+        return PrdAgent.Core.Models.VersionRegistryCatalog.NormalizeName(alias.Value ?? name);
+    }
 
     private static string ApplicationPrefix(string value)
     {
@@ -59,32 +67,30 @@ public static class ProductVersionPlanMatching
         if (apps.Count == 1)
         {
             result.MatchedApplicationId = apps[0].Id;
-            if (!result.HasExplicitPlanName) result.PlanName = CleanTitle(raw, apps[0].Name);
+            if (!formal) result.PlanName = PrdAgent.Core.Helpers.ProductVersionPlanName.Format(apps[0].Name, result.TCode, raw ?? string.Empty);
         }
         if (!formal) return;
         var appIds = apps.Select(app => app.Id).ToHashSet();
         var available = plans.Where(plan => appIds.Count == 0 || appIds.Contains(plan.LinkedProductId ?? plan.ProductId)).ToList();
+        var alias = ApplicationAliases.SelectMany(pair => new[] { pair.Key, pair.Value })
+            .FirstOrDefault(name => ApplicationPrefix(raw ?? string.Empty).StartsWith(Compact(name), StringComparison.Ordinal));
+        if (apps.Count == 0 && alias != null)
+            available = available.Where(plan => CanonicalApplicationName(plan.ApplicationName) == CanonicalApplicationName(alias)
+                || ApplicationPrefix(plan.PlanName).StartsWith(Compact(alias), StringComparison.Ordinal)).ToList();
         var input = Topic(raw);
         var named = available.Where(plan => IsSimilarTopic(input, Topic(plan.PlanName))).ToList();
         var coded = available.Where(plan => !string.IsNullOrWhiteSpace(result.TCode)
-            && string.Equals(plan.TCode, result.TCode, StringComparison.OrdinalIgnoreCase)
-            // R=T... 等占位可能碰巧是有效号，有方案主题时必须与主题相符。
-            && (input.Length == 0 || IsSimilarTopic(input, Topic(plan.PlanName)))).ToList();
+            && string.Equals(plan.TCode, result.TCode, StringComparison.OrdinalIgnoreCase)).ToList();
         var exact = named.Where(plan => Topic(plan.PlanName) == input).ToList();
-        var matches = (coded.Count > 0 ? coded : exact.Count > 0 ? exact : named).DistinctBy(plan => plan.Id).ToList();
+        // 明确T号按应用+T号定位；无号或占位沿用原主题候选与歧义保护。
+        var hasExplicitCode = !string.IsNullOrWhiteSpace(result.TCode)
+            && !(raw ?? string.Empty).Contains("R=", StringComparison.OrdinalIgnoreCase);
+        var matches = (hasExplicitCode ? coded : exact.Count > 0 ? exact : named).DistinctBy(plan => plan.Id).ToList();
         result.CandidateInitiationIds = matches.Select(plan => plan.Id).ToList();
-        // 已确认应用别名后直接写出的完整T号可定位真实立项；R=T占位不能取得此资格。
-        var aliasWithCode = !string.IsNullOrWhiteSpace(result.TCode) && ApplicationAliases
-            .SelectMany(pair => new[] { pair.Key, pair.Value })
-            .Any(name => Compact(Prefix(raw ?? string.Empty)) == Compact(name + result.TCode));
-        var exactAliasCode = aliasWithCode && coded.Count == 1 && Topic(coded[0].PlanName) == input
-            && ApplicationAliases.Values.Any(name => ApplicationPrefix(coded[0].PlanName).StartsWith(Compact(name), StringComparison.Ordinal));
-        if (aliasWithCode && coded.Count == 0) return;
-        // 存在明确应用前缀却不在可识别目录中时，即使主题唯一也只提示候选，不猜归属。
-        if (matches.Count != 1 || (apps.Count == 0 && !exactAliasCode && Opening(raw ?? string.Empty) >= 0 && !string.IsNullOrWhiteSpace(Prefix(raw ?? string.Empty)))) return;
+        if (matches.Count != 1 || (apps.Count != 1 && (alias == null || !hasExplicitCode))) return;
         result.MatchedInitiationId = matches[0].Id;
         result.MatchedApplicationId = matches[0].ProductId;
-        if (!result.HasExplicitPlanName) result.PlanName = matches[0].PlanName;
+        result.PlanName = matches[0].PlanName;
     }
 
     private static int Opening(string value)

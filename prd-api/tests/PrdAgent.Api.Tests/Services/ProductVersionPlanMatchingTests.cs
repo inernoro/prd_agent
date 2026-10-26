@@ -50,14 +50,14 @@ public class ProductVersionPlanMatchingTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void 米多星球统一识别为米多总平台且保留明确粘贴的标题(bool formal)
+    public void 米多星球识别内部标准名称正式则读取已有T名称(bool formal)
     {
         var name = $"米多星球R=T1.2.3（{Topic}）-AI文档";
         var result = VersionRegistrationMessageParser.Parse($"产品立项方案名称：{name}", formal ? "formal" : "internal");
         var applications = new[] { new VersionPlanApplication("legacy", "米多星球"), new VersionPlanApplication("platform", "米多总平台") };
         ProductVersionPlanMatching.Match(result, applications, new[] { new VersionPlanCandidate("plan", "platform", $"米多总平台（{Topic}）", "T1.2.3") }, formal);
         result.MatchedApplicationId.ShouldBe("platform");
-        result.PlanName.ShouldBe(name);
+        result.PlanName.ShouldBe(formal ? $"米多总平台（{Topic}）" : $"米多总平台T1.2.3（{Topic}）");
         if (formal) result.MatchedInitiationId.ShouldBe("plan");
         ProductVersionPlanMatching.CleanTitle(name, "米多总平台").ShouldBe($"米多总平台（{Topic}）-AI文档");
     }
@@ -81,13 +81,13 @@ public class ProductVersionPlanMatchingTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void 明确粘贴的立项名称优先于规范化和匹配方案(bool formal)
+    public void 明确粘贴名称作为T清洗来源而V必须读取已有T名称(bool formal)
     {
         var name = $"互动营销T3.47.1（{Topic}调整）-AI文档";
         var result = VersionRegistrationMessageParser.Parse($"产品立项方案名称：{name} @张三", formal ? "formal" : "internal");
         ProductVersionPlanMatching.Match(result, Applications,
             new[] { new VersionPlanCandidate("plan", "marketing", $"互动营销（{Topic}）", "T3.47.1") }, formal);
-        result.PlanName.ShouldBe(name);
+        result.PlanName.ShouldBe(formal ? $"互动营销（{Topic}）" : $"互动营销T3.47.1（{Topic}调整）");
         result.MatchedApplicationId.ShouldBe("marketing");
         if (formal) result.MatchedInitiationId.ShouldBe("plan");
     }
@@ -181,5 +181,24 @@ public class ProductVersionPlanMatchingTests
             new[] { new VersionPlanCandidate("plan", "container", $"互动营销（{Topic}）", "T1.2.3", "marketing") }, true);
         result.MatchedInitiationId.ShouldBe("plan");
         result.MatchedApplicationId.ShouldBe("container");
+    }
+
+    [Fact]
+    public void 应用和T号相同即使用系统标题不受粘贴名称冲突影响()
+    {
+        var result = new VersionRegistrationMessageParseResult { PlanName = "互动营销T1.2.3（完全不同的文件名）AI文档1-3稿", TCode = "T1.2.3", HasExplicitPlanName = true };
+        ProductVersionPlanMatching.Match(result, Applications, new[] {
+            new VersionPlanCandidate("correct", "marketing", "系统存储的方案名称", "T1.2.3"),
+            new VersionPlanCandidate("other", "retail", "完全不同的文件名", "T1.2.3"),
+        }, true);
+        result.MatchedInitiationId.ShouldBe("correct"); result.PlanName.ShouldBe("系统存储的方案名称");
+    }
+
+    [Fact]
+    public void 明确T号不存在时不因同名退到另一个版本()
+    {
+        var result = new VersionRegistrationMessageParseResult { PlanName = "互动营销T1.2.4（同名方案）", TCode = "T1.2.4" };
+        ProductVersionPlanMatching.Match(result, Applications, new[] { new VersionPlanCandidate("old", "marketing", "互动营销（同名方案）", "T1.2.3") }, true);
+        result.MatchedInitiationId.ShouldBeNull(); result.CandidateInitiationIds.ShouldBeEmpty();
     }
 }

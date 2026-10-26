@@ -453,7 +453,8 @@ export function ReleaseWorkflowDetail({
       if (parsed.requirementDescription) setRequirementDescription(parsed.requirementDescription);
       if (parsed.departmentName) setDepartmentName(parsed.departmentName);
     }
-    if (parsed.planName) planNameDraft.setPasted(parsed.planName, editVersion);
+    if (source) planNameDraft.setPasted(source.planName, editVersion);
+    else if (parsed.planName) planNameDraft.setPasted(parsed.planName, editVersion);
     if (!source && parsed.ownerName) {
       setOwnerName(parsed.ownerName);
       const matchedOwner = members.find((member) => member.displayName === parsed.ownerName);
