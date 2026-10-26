@@ -20,6 +20,63 @@ namespace PrdAgent.Api.Tests.Services;
 public class ProductVersionClaimGuardTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FormalNumberCanBeIssuedWithoutFeaturesAndCompletedAfterAnnouncement(bool manualT)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.Features.DeleteManyAsync(_ => true);
+        var request = NumberingReleaseRequest();
+        request.FeatureManifest = null;
+        if (manualT)
+        {
+            request.InitiationId = null;
+            request.ManualTCode = "T6.19.8";
+            request.PlanName = "旧T号申领无功能方案";
+        }
+        else
+        {
+            await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
+                Builders<ProductInitiation>.Update.Set(x => x.RequirementIds, new List<string> { "inherited-requirement" }));
+        }
+        var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        var item = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
+        Assert.False(string.IsNullOrWhiteSpace(item.VCode));
+        Assert.Empty(item.FeatureManifest);
+        Assert.Equal("announcement_pending", item.Status);
+        Assert.Equal("me", item.CreatedBy);
+        Assert.Equal("me", item.OwnerId);
+        if (!manualT) Assert.Contains("inherited-requirement", item.RequirementIds);
+        var duplicate = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        Assert.Equal("DUPLICATE_RELEASE", Assert.IsType<ApiResponse<object>>(duplicate.Value).Error!.Code);
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CompleteRelease(item.Id, new CompleteReleaseRequest()));
+        var completed = Assert.IsType<OkObjectResult>(await fixture.Controller().CompleteRelease(item.Id,
+            new CompleteReleaseRequest { AnnouncementUrl = "https://example.test/announcement" }));
+        var saved = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(completed.Value).Data);
+        Assert.Equal("released", saved.Status);
+        Assert.Equal(item.VCode, saved.VCode);
+        Assert.Empty(saved.FeatureManifest);
+    }
+
+    [Fact]
+    public async Task TemporaryOptimizationAndExplicitManifestStillUseExistingValidation()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var request = NumberingReleaseRequest();
+        request.IsTemporaryOptimization = true;
+        request.InitiationId = null;
+        request.FeatureManifest = null;
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        request.IsTemporaryOptimization = false;
+        request.InitiationId = "numbering-source";
+        request.FeatureManifest = new() { new() { FeatureId = "missing", ChangeType = FeatureChangeType.Added } };
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(x => x.CreatedBy == "me"));
+    }
+
+    [Theory]
     [InlineData(null, "me", "真实申请人")]
     [InlineData("owner", "owner", "其他负责人")]
     public async Task BusinessOwnerDefaultsToApplicantAndCanBeSelectedWithoutApproval(string? selected, string expectedId, string expectedName)
