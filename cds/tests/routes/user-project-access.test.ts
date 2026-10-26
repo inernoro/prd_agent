@@ -205,7 +205,7 @@ describe('human project grants through the production server', () => {
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     const stalled = new Promise<void>(resolve => { finish = resolve; });
-    vi.spyOn(state, 'flush').mockImplementationOnce(() => stalled);
+    const flush = vi.spyOn(state, 'flush').mockImplementationOnce(() => stalled);
     const response = await grant(['project-b']);
     expect(response.status).toBe(500);
     expect(response.body.error).toContain('持久化状态无法确认');
