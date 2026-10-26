@@ -555,6 +555,11 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductClaimWebhookWorker>();
+builder.Services.AddHttpClient("ProductAnnouncements")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddScoped<PrdAgent.Api.Services.ProductAgent.ProductAnnouncementSyncService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductAnnouncementSyncWorker>();
 // 应用调用者同步：启动时增量注册代码中的 AppCaller（含 pa-agent.chat::chat），并自动回填 chat 模型组
 // 管理后台「初始化应用」仍可全量对齐；二者互补，新 Agent 无需人工点初始化
 builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();

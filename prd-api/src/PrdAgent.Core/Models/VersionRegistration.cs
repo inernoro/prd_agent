@@ -147,6 +147,7 @@ public class VersionRegistration
     public List<string> ProjectMemberNames { get; set; } = new();
     public DateTime? PlannedProjectAt { get; set; }
     public DateTime? PlannedReleaseAt { get; set; }
+    public string? AnnouncementUrl { get; set; }
     /// <summary>正式版本预计培训时长，单位为分钟。</summary>
     public int? PlannedTrainingMinutes { get; set; }
     public string? ContractParty { get; set; }

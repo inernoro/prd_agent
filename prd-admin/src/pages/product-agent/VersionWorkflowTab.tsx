@@ -58,6 +58,7 @@ import { VersionCopyActions } from './VersionCopyActions';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import { matchesVersionRecord } from './versionRecordSearch';
 import { VersionWorkflowImportDialog } from './VersionWorkflowImportDialog';
+import { VersionAnnouncementUpdate } from './VersionAnnouncementUpdate';
 import { LegacyVersionDetail } from './LegacyVersionDetail';
 import { downloadListCsv } from './listExport';
 import { initiationExportConfig, releaseExportConfig, VERSION_WORKFLOW_STATUS_LABEL as STATUS_LABEL } from './versionWorkflowExport';
@@ -225,6 +226,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
           trackedOnly={trackedOnly} onTrackedOnlyChange={setTrackedOnly} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
+        {isAdmin && tab === 'release' && <VersionAnnouncementUpdate onUpdated={reload} />}
         {isAdmin && <VersionDebugClearButton key={tab} kind={tab === 'initiation' ? 'internal' : 'formal'} onChanged={reload} />}
         {isAdmin && <Secondary disabled={!catalogLoaded || Boolean(catalogError) || selectedProductUnavailable} onClick={() => setImportKind(tab)}><Upload size={14} />导入历史{tab === 'release' ? '正式' : '内部'}版本</Secondary>}
         <Secondary disabled={listLoading || Boolean(catalogError) || Boolean(loadError) || (tab === 'release' ? visibleReleases : visibleInitiations).length === 0}

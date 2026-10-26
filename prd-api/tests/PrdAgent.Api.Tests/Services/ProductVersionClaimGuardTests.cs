@@ -395,6 +395,39 @@ public class ProductVersionClaimGuardTests
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData(30)]
+    [InlineData(-1)]
+    public async Task MiduoAdminReleaseDoesNotRequireOrStoreTrainingMinutes(int? minutes)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
+            Builders<ProductInitiation>.Update.Set(x => x.AppName, "米多总后台"));
+        var sourceResponse = Assert.IsType<OkObjectResult>(await fixture.Controller().GetInitiation("numbering-source"));
+        var source = Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(sourceResponse.Value).Data);
+        Assert.False(source.ReleaseTrainingRequired);
+        Assert.Null((await fixture.Db.ProductInitiations.Find(x => x.Id == source.Id).SingleAsync()).ReleaseTrainingRequired);
+        var request = NumberingReleaseRequest();
+        request.PlannedTrainingMinutes = minutes;
+        var response = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        var record = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(response.Value).Data);
+        Assert.Null(record.PlannedTrainingMinutes);
+        Assert.Equal("released", record.Status);
+        Assert.StartsWith("V", record.VCode);
+    }
+
+    [Fact]
+    public async Task OtherApplicationsStillRequireTrainingMinutes()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var request = NumberingReleaseRequest(); request.PlannedTrainingMinutes = null;
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(x => x.InitiationId == request.InitiationId));
+    }
+
     [Fact]
     public async Task WorkflowNumberingConcurrentDifferentTSourcesGetDistinctFormalNumbers()
     {

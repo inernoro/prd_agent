@@ -6,6 +6,13 @@
  * 禁止再 JSON.stringify；返回 ApiResponse<T>，用 res.success 判断。
  */
 import { apiRequest } from './apiClient';
+
+export interface ProductAnnouncementSyncStatus {
+  status: string; runId: string; message: string; pages: number; discovered: number;
+  updated: number; conflicts: number; lastSuccessAt?: string | null; nextRunAt?: string | null; calendarError?: string | null;
+}
+export const getProductAnnouncementSyncStatus = () => apiRequest<ProductAnnouncementSyncStatus>('/api/product/version-workflow/announcements/status');
+export const updateProductAnnouncements = () => apiRequest<ProductAnnouncementSyncStatus>('/api/product/version-workflow/announcements/update', { method: 'POST' });
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from './productVersionRegistry';
 import type { ApiResponse } from '@/types/api';
 import type {
@@ -62,6 +69,7 @@ export function getProduct(id: string): Promise<ApiResponse<Product>> {
   return apiRequest<Product>(`/api/product/products/${id}`);
 }
 export interface VersionApplicationProduct {
+  releaseTrainingRequired?: boolean;
   id: string;
   name: string;
   productNo: string;
@@ -225,7 +233,7 @@ export function createRelease(productId: string, body: {
   additionalRequirementIds?: string[];
   teamMemberIds: string[];
   plannedReleaseAt: string;
-  plannedTrainingMinutes: number;
+  plannedTrainingMinutes?: number;
   previousReleaseId?: string;
   featureManifest?: ReleaseFeatureItem[];
 }) {

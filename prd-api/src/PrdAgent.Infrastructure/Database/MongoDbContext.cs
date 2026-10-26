@@ -511,6 +511,9 @@ public class MongoDbContext
     public IMongoCollection<ProductVersion> ProductVersions => _database.GetCollection<ProductVersion>("product_versions");
     public IMongoCollection<ProductInitiation> ProductInitiations => _database.GetCollection<ProductInitiation>("product_initiations");
     public IMongoCollection<ProductRelease> ProductReleases => _database.GetCollection<ProductRelease>("product_releases");
+    public IMongoCollection<ProductAnnouncement> ProductAnnouncements => _database.GetCollection<ProductAnnouncement>("product_announcements");
+    public IMongoCollection<ProductAnnouncementSync> ProductAnnouncementSyncs => _database.GetCollection<ProductAnnouncementSync>("product_announcement_syncs");
+    public IMongoCollection<ProductWorkdayCalendar> ProductWorkdayCalendars => _database.GetCollection<ProductWorkdayCalendar>("product_workday_calendars");
     public IMongoCollection<ProductVersionWorkflowSnapshot> ProductVersionWorkflowSnapshots => _database.GetCollection<ProductVersionWorkflowSnapshot>("product_version_workflow_snapshots");
     public IMongoCollection<VersionRegistrySystem> VersionRegistrySystems => _database.GetCollection<VersionRegistrySystem>("version_registry_systems");
     public IMongoCollection<VersionRegistryApplication> VersionRegistryApplications => _database.GetCollection<VersionRegistryApplication>("version_registry_applications");

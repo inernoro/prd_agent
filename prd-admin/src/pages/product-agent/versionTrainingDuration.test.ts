@@ -21,7 +21,7 @@ describe('培训分钟与方案回填契约', () => {
     expect(parseVersionWorkflowImportCsv(csv, 'release')[0].plannedTrainingMinutes).toBe(30);
   });
   it('表单发送数值，方案资料不会再次被原文覆盖，识别后可继续手动加人', () => {
-    expect(workflow).toContain('plannedTrainingMinutes: Number(trainingMinutes)');
+    expect(workflow).toContain('plannedTrainingMinutes: trainingRequired ? Number(trainingMinutes) : undefined');
     expect(workflow).toContain('预计培训时长（分钟）*');
     expect(workflow).not.toContain('plannedTrainingAt');
     expect(workflow).toContain('parsed.initiationCandidates ?? []');
