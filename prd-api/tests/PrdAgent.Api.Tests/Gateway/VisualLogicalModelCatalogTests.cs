@@ -194,6 +194,10 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
             var leasedCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
             Assert.False(Assert.Single(leasedCatalog[0].Models).IsRecoveryProbeAvailable);
+            var busyRecovery = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.False(busyRecovery.Success);
+            Assert.Equal(GatewayRouteFailure.ModelPoolAllUnavailable, busyRecovery.FailureCode);
+            Assert.Equal(503, GatewayRouteFailure.HttpStatusCode(busyRecovery.FailureCode));
 
             await offerings
                 .UpdateManyAsync(

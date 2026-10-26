@@ -113,6 +113,16 @@ public static class GatewayRouteFailure
             _ => "未分类的路由失败，请补充错误码分类后再处理。",
         };
 
+    /// <summary>保留路由失败语义；只有未分类的旧解析结果沿用 404。</summary>
+    public static int HttpStatusCode(string? failureCode)
+        => failureCode switch
+        {
+            ProviderQuotaExceeded => 429,
+            ProviderUnavailable or ModelPoolAllUnavailable or GatewayConfigUnavailable => 503,
+            _ when IsConfigurationFault(failureCode) => 409,
+            _ => 404,
+        };
+
     /// <summary>该失败是否属于「重试不会自行恢复」的配置类问题。</summary>
     public static bool IsConfigurationFault(string? failureCode)
         => failureCode is RouteConfigIncompatible
