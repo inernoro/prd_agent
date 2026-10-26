@@ -143,6 +143,42 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
+    public async Task CustomVCompletesOnIssuanceWithoutAnnouncementAndExistingCustomPendingCanComplete()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
+            Builders<ProductInitiation>.Update.Set(x => x.ProjectType, "custom").Set(x => x.RequirementIds, new List<string> { "custom-req" }));
+        await fixture.Db.ProductWorkflowDefinitions.InsertOneAsync(new ProductWorkflowDefinition {
+            Id = "custom-flow", States = new() {
+                new() { Key = RequirementWorkflowCatalog.Developing, Label = "开发中" },
+                new() { Key = RequirementWorkflowCatalog.Released, Label = "已上线" },
+            },
+        });
+        await fixture.Db.Requirements.InsertOneAsync(new Requirement {
+            Id = "custom-req", ProductId = "product", WorkflowDefId = "custom-flow", CurrentState = RequirementWorkflowCatalog.Developing,
+        });
+        var request = NumberingReleaseRequest();
+        request.FeatureManifest = null;
+        request.ProjectType = "standard"; // The existing T record determines the project category.
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        var issued = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data);
+        Assert.Equal("custom", issued.ProjectType);
+        Assert.Equal("released", issued.Status);
+        Assert.NotNull(issued.ReleasedAt);
+        Assert.True(string.IsNullOrWhiteSpace(issued.AnnouncementUrl));
+        Assert.False(string.IsNullOrWhiteSpace(issued.VCode));
+        Assert.Equal(RequirementWorkflowCatalog.Released, (await fixture.Db.Requirements.Find(x => x.Id == "custom-req").SingleAsync()).CurrentState);
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease {
+            Id = "old-custom-pending", ProductId = "product", ProjectType = "custom", Status = "announcement_pending", OwnerId = "me", VCode = "V1.2.3",
+        });
+        var completed = Assert.IsType<OkObjectResult>(await fixture.Controller().CompleteRelease("old-custom-pending", new CompleteReleaseRequest()));
+        var saved = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(completed.Value).Data);
+        Assert.Equal("released", saved.Status);
+        Assert.True(string.IsNullOrWhiteSpace(saved.AnnouncementUrl));
+    }
+
+    [Fact]
     public async Task TemporaryOptimizationAndExplicitManifestStillUseExistingValidation()
     {
         await using var fixture = await Fixture.CreateAsync();

@@ -371,6 +371,7 @@ export function ReleaseWorkflowDetail({
   const isRecordDetail = !isNew && !!release;
   const isPendingWorkflow = isRecordDetail && release?.status === 'announcement_pending';
   const canCompleteRelease = isPendingWorkflow && release?.sourceType !== 'import';
+  const needsAnnouncement = (release?.projectType ?? effectiveProjectType) !== 'custom';
 
   const releaseLinkedFeatures = useMemo(() => {
     if (!release) return [] as Feature[];
@@ -654,7 +655,7 @@ export function ReleaseWorkflowDetail({
           </h1>
           {!isNew && release && (
             <p className="mt-1 text-xs text-token-muted">
-              {release.planName} · {SCALE_LABEL[release.versionType]} · {STATUS_LABEL[release.status] ?? release.status}
+              {release.planName} · {SCALE_LABEL[release.versionType]} · {release.status === 'announcement_pending' && !needsAnnouncement ? '待完成上线' : STATUS_LABEL[release.status] ?? release.status}
               {release.sourceType === 'import' ? ' · 历史导入' : ''}
             </p>
           )}
@@ -662,7 +663,7 @@ export function ReleaseWorkflowDetail({
         <div className="flex items-center gap-2 shrink-0">
           {!isNew && release?.status === 'announcement_pending' && (
             <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-amber)]">
-              待填写上线公告
+              {needsAnnouncement ? '待填写上线公告' : '待完成上线'}
             </span>
           )}
           {!isNew && release && (
@@ -727,7 +728,7 @@ export function ReleaseWorkflowDetail({
           {tab === 'basic' && (
             <WorkflowDetailCard title="基础信息">
               <WorkflowAttributeTable rows={releaseBasicRows} />
-              {canCompleteRelease && (
+              {canCompleteRelease && needsAnnouncement && (
                 <div className="mt-4 border-t border-token-subtle pt-4">
                   <Field label="上线公告地址 *">
                     <Input value={announcementUrl} onChange={(e) => setAnnouncementUrl(e.target.value)} placeholder="粘贴公告地址" />
@@ -840,7 +841,7 @@ export function ReleaseWorkflowDetail({
                   <div className="pt-4">{supplementaryFields}</div>
                 </details>
               </>}
-              <p className="text-xs leading-5 text-token-muted">确认后自动生成正式版本号，无需人工审批；生成后请补充上线公告地址。</p>
+              <p className="text-xs leading-5 text-token-muted">{needsAnnouncement ? '确认后自动生成正式版本号，无需人工审批；非定制项目需补充上线公告地址。' : '定制项目申领成功即完成，无需填写上线公告。'}</p>
             </>
           ) : null}
         </div>
@@ -919,7 +920,7 @@ export function ReleaseWorkflowDetail({
                   保存功能清单
                 </SecondaryButton>
               )}
-              <PrimaryButton onClick={() => void complete()} disabled={busy || !announcementUrl.trim()}>
+              <PrimaryButton onClick={() => void complete()} disabled={busy || (needsAnnouncement && !announcementUrl.trim())}>
                 完成上线
               </PrimaryButton>
             </>

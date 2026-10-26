@@ -116,4 +116,18 @@ describe('完整正式申领弹窗的原文回填', () => {
     await act(async () => confirm.click());
     expect(api.createRelease).not.toHaveBeenCalled();
   });
+
+  it('定制方案提示申领成功即完成，不要求填写上线公告', async () => {
+    const custom = { ...source, projectType: 'custom' as const };
+    api.listInitiations.mockResolvedValue({ success: true, data: { items: [custom] } });
+    api.parseProductVersionMessage.mockResolvedValue({ success: true, data: { result: {
+      planName: custom.planName, matchedInitiationId: custom.id, matchedApplicationId: custom.productId,
+      candidateInitiationIds: [custom.id], initiationCandidates: [custom], matchedFields: ['planName', 'tCode'],
+    } } });
+    await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
+    await paste();
+    expect(document.body.textContent).toContain('定制项目申领成功即完成，无需填写上线公告');
+    expect(document.body.textContent).not.toContain('非定制项目需补充上线公告地址');
+    expect(document.querySelector('input[placeholder="粘贴公告地址"]')).toBeNull();
+  });
 });
