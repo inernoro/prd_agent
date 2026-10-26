@@ -123,8 +123,10 @@ public sealed class GatewayRuntimeGovernanceTests
         stored.Reservations.Single().Status.ShouldBe("settled-unknown");
     }
 
-    [Fact]
-    public async Task TaskBudget_UnboundGrantKeepsExistingCallOnlyBehavior()
+    [Theory]
+    [InlineData(0)]
+    [InlineData(100)]
+    public async Task TaskBudget_UnboundGrantKeepsExistingCallOnlyBehavior(int maxOutputTokens)
     {
         var testDatabase = await TryCreateDatabaseAsync();
         if (testDatabase is null) return;
@@ -134,15 +136,76 @@ public sealed class GatewayRuntimeGovernanceTests
             Id = "unbound", KeyHash = "hash-unbound", TenantId = "tenant-a", RunId = "run-a",
             AppCallerCode = "generate-html::chat", MaxCalls = 1, ExpiresAt = DateTime.UtcNow.AddHours(1),
         };
-        await scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants").InsertOneAsync(grant);
+        var grants = scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        await grants.InsertOneAsync(grant);
         var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
 
         var decision = await counter.TryReserveAsync(
-            grant, new GatewayRuntimeGrantCallRequest("request-a", 100, 100), CancellationToken.None);
+            grant, new GatewayRuntimeGrantCallRequest("request-a", 100, maxOutputTokens), CancellationToken.None);
 
         decision.Allowed.ShouldBeTrue();
+        (await grants.Find(item => item.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(1);
+        var exhausted = await counter.TryReserveAsync(
+            grant, new GatewayRuntimeGrantCallRequest("request-b", 100, maxOutputTokens), CancellationToken.None);
+        exhausted.Allowed.ShouldBeFalse();
+        exhausted.ErrorCode.ShouldBe("GATEWAY_RUNTIME_GRANT_EXHAUSTED");
+        (await grants.Find(item => item.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(1);
         (await scope.Context.Database.GetCollection<GatewayRuntimeBudgetScopeRecord>("llmgw_runtime_budget_scopes")
             .CountDocumentsAsync(_ => true)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task TaskBudget_BoundGrantStillRequiresOutputLimitBeforeDatabaseAccess()
+    {
+        var counter = new GatewayRuntimeGrantCallCounter(null!);
+        var grant = ProtectedGrant("grant-requires-output", "run-requires-output", "scope-requires-output");
+
+        var decision = await counter.TryReserveAsync(
+            grant, new GatewayRuntimeGrantCallRequest("request-a", 100, 0), CancellationToken.None);
+
+        decision.Allowed.ShouldBeFalse();
+        decision.StatusCode.ShouldBe(400);
+        decision.ErrorCode.ShouldBe("GATEWAY_RUNTIME_TASK_BUDGET_INPUT_INVALID");
+    }
+
+    [Theory]
+    [InlineData("", 100)]
+    [InlineData("request-a", 0)]
+    public async Task TaskBudget_GrantStillRequiresRequestIdentityAndBodyBeforeDatabaseAccess(string requestId, int bodyBytes)
+    {
+        var counter = new GatewayRuntimeGrantCallCounter(null!);
+        var grant = new GatewayRuntimeGrantRecord { Id = "unbound-invalid-input" };
+
+        var decision = await counter.TryReserveAsync(
+            grant, new GatewayRuntimeGrantCallRequest(requestId, bodyBytes, 0), CancellationToken.None);
+
+        decision.Allowed.ShouldBeFalse();
+        decision.StatusCode.ShouldBe(400);
+        decision.ErrorCode.ShouldBe("GATEWAY_RUNTIME_TASK_BUDGET_INPUT_INVALID");
+    }
+
+    [Fact]
+    public async Task TaskBudget_UnboundGrantWithoutOutputLimitStillEnforcesExpiry()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var grant = new GatewayRuntimeGrantRecord
+        {
+            Id = "expired-unbound", KeyHash = "hash-expired-unbound", TenantId = "tenant-a", RunId = "run-a",
+            AppCallerCode = "generate-html::chat", MaxCalls = 1, ExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        };
+        var grants = scope.Context.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants");
+        await grants.InsertOneAsync(grant);
+        var counter = new GatewayRuntimeGrantCallCounter(scope.Context);
+
+        var decision = await counter.TryReserveAsync(
+            grant, new GatewayRuntimeGrantCallRequest("request-a", 100, 0), CancellationToken.None);
+
+        decision.Allowed.ShouldBeFalse();
+        decision.StatusCode.ShouldBe(401);
+        decision.ErrorCode.ShouldBe("GATEWAY_KEY_INVALID");
+        (await grants.Find(item => item.Id == grant.Id).SingleAsync()).CallCount.ShouldBe(0);
     }
 
     [Fact]

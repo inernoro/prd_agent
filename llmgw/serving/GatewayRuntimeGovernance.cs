@@ -138,7 +138,8 @@ public sealed class GatewayRuntimeGrantCallCounter(LlmGatewayDataContext data) :
     {
         if (string.IsNullOrWhiteSpace(request.RequestId)
             || request.RequestBodyUtf8Bytes <= 0
-            || request.EffectiveMaxOutputTokens <= 0)
+            // 原生 Responses 可以省略输出上限；只有显式绑定任务预算时才要求可预占的上限。
+            || (!string.IsNullOrWhiteSpace(grant.BudgetScopeId) && request.EffectiveMaxOutputTokens <= 0))
             return new(false, 400, "GATEWAY_RUNTIME_TASK_BUDGET_INPUT_INVALID", "runtime task budget input is invalid");
 
         GatewayRuntimeBudgetReservationRecord? taskReservation = null;
