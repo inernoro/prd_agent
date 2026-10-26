@@ -10,7 +10,7 @@ import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import type { ProductInitiation } from './types';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const api = vi.hoisted(() => Object.fromEntries(['listInitiations', 'listProductMembers', 'parseProductVersionMessage'].map((name) => [name, vi.fn()])));
+const api = vi.hoisted(() => Object.fromEntries(['listInitiations', 'listProductMembers', 'parseProductVersionMessage', 'createRelease'].map((name) => [name, vi.fn()])));
 const directory = vi.hoisted(() => vi.fn());
 vi.mock('@/services/real/productAgent', async (original) => ({ ...await original<typeof import('@/services/real/productAgent')>(), ...api }));
 vi.mock('@/services', () => ({ searchDirectoryUsers: directory }));
@@ -69,6 +69,7 @@ describe('完整正式申领弹窗的原文回填', () => {
     expect(document.querySelector('[aria-label="按版本级别筛选方案"]')).toBeNull();
     expect(document.body.textContent).not.toContain('内部 T 来源');
     expect(document.body.textContent).not.toContain('产品负责人名称');
+    expect(document.body.textContent).not.toContain('手工填写');
     expect(document.querySelector('details')?.open).toBe(false);
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
     expect([...document.querySelectorAll('[role="status"]')].some((item) => item.textContent === '米多总平台')).toBe(true);
@@ -98,5 +99,21 @@ describe('完整正式申领弹窗的原文回填', () => {
     expect(owner.value).toBe('欧石玲');
     expect(input('搜索方案名称或 T 号').title).toBe(source.planName);
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
+  });
+
+  it('未匹配到已有T时保留原文，不转为手工输入或允许无源申领', async () => {
+    api.parseProductVersionMessage.mockResolvedValue({ success: true, data: { result: {
+      planName: '未登记的新方案', tCode: 'T9.9.9', matchedFields: ['planName', 'tCode'], candidateInitiationIds: [], initiationCandidates: [],
+    } } });
+    await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
+    await paste();
+    expect(document.querySelector<HTMLTextAreaElement>('#version-message-formal')?.value).toBe(notice);
+    expect(input('搜索方案名称或 T 号').value).toBe('');
+    expect(document.body.textContent).toContain('请先在内部版本页面完成 T 号申领');
+    expect(document.body.textContent).not.toContain('手工填写');
+    const confirm = [...document.querySelectorAll('button')].find((button) => button.textContent === '确认并获取正式版本号')!;
+    expect(confirm.disabled).toBe(true);
+    await act(async () => confirm.click());
+    expect(api.createRelease).not.toHaveBeenCalled();
   });
 });

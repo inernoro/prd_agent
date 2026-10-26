@@ -83,27 +83,16 @@ public class ProductVersionClaimGuardTests
         Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task FormalNumberCanBeIssuedWithoutFeaturesAndCompletedAfterAnnouncement(bool manualT)
+    [Fact]
+    public async Task FormalNumberCanBeIssuedFromExistingTWithoutFeaturesAndCompletedAfterAnnouncement()
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
         await fixture.Db.Features.DeleteManyAsync(_ => true);
         var request = NumberingReleaseRequest();
         request.FeatureManifest = null;
-        if (manualT)
-        {
-            request.InitiationId = null;
-            request.ManualTCode = "T6.19.8";
-            request.PlanName = "旧T号申领无功能方案";
-        }
-        else
-        {
-            await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
-                Builders<ProductInitiation>.Update.Set(x => x.RequirementIds, new List<string> { "inherited-requirement" }));
-        }
+        await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
+            Builders<ProductInitiation>.Update.Set(x => x.RequirementIds, new List<string> { "inherited-requirement" }));
         var created = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
         var item = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
         Assert.False(string.IsNullOrWhiteSpace(item.VCode));
@@ -111,7 +100,7 @@ public class ProductVersionClaimGuardTests
         Assert.Equal("announcement_pending", item.Status);
         Assert.Equal("me", item.CreatedBy);
         Assert.Equal("me", item.OwnerId);
-        if (!manualT) Assert.Contains("inherited-requirement", item.RequirementIds);
+        Assert.Contains("inherited-requirement", item.RequirementIds);
         var duplicate = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
         Assert.Equal("DUPLICATE_RELEASE", Assert.IsType<ApiResponse<object>>(duplicate.Value).Error!.Code);
         Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CompleteRelease(item.Id, new CompleteReleaseRequest()));
@@ -121,6 +110,36 @@ public class ProductVersionClaimGuardTests
         Assert.Equal("released", saved.Status);
         Assert.Equal(item.VCode, saved.VCode);
         Assert.Empty(saved.FeatureManifest);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("manual")]
+    [InlineData("both")]
+    [InlineData("draft")]
+    [InlineData("deleted")]
+    [InlineData("no-code")]
+    [InlineData("invalid-code")]
+    [InlineData("foreign")]
+    public async Task FormalReleaseRequiresExistingApprovedTAndRejectsInvalidSourcesWithoutWrites(string scenario)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "source", ProductId = scenario == "foreign" ? "other" : "product", PlanName = "既有T方案",
+            Status = scenario == "draft" ? "draft" : "approved", IsDeleted = scenario == "deleted",
+            TCode = scenario == "no-code" ? null : scenario == "invalid-code" ? "TXXXX" : "T1.2.3",
+        });
+        var request = new CreateReleaseRequest {
+            InitiationId = scenario is "missing" or "manual" ? null : "source",
+            ManualTCode = scenario is "manual" or "both" ? "T1.2.3" : null,
+            PlanName = "不能代替T来源的新方案",
+        };
+        var created = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        Assert.Equal(ErrorCodes.INVALID_FORMAT, Assert.IsType<ApiResponse<object>>(created.Value).Error!.Code);
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CheckReleaseHistory("product", request.InitiationId, request.ManualTCode, request.PlanName));
+        Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(_ => true));
     }
 
     [Fact]

@@ -25,10 +25,11 @@ describe('正式申领按方案选择应用', () => {
     expect(picker).not.toContain('按应用筛选方案');
     expect(picker).not.toContain('按版本级别筛选方案');
   });
-  it('由方案产品 ID 回填并校验提交归属，手工 T 号保留表单内应用选择', () => {
+  it('由方案产品 ID 回填并校验提交归属，不提供手工 T 号入口', () => {
     expect(workflow).toContain("changeApplication(source?.productId ?? '')");
     expect(workflow).toContain('selectedInitiation?.productId !== productId');
-    expect(workflow).toContain('手工 T 号请选择所属应用');
+    expect(workflow).not.toContain('手工 T 号请选择所属应用');
+    expect(workflow).not.toContain('manualTCode');
     expect(workflow).toContain("if (!productId) { setLoading(false); return; }");
     expect(workflow).toContain('sequence !== loadSequence.current');
     expect(workflow).toContain('setManifest([]); setBaselineManifest([]); setPreviousReleaseId(null)');

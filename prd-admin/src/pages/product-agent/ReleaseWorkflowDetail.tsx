@@ -6,10 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
-import { ItemSearchSelect } from '@/components/ItemSearchSelect';
 import { loadProductVersionList } from '@/lib/productVersionList';
 import { ReleasePlanPicker } from './ReleasePlanPicker';
-import { toProductOptions } from './comboboxOptions';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
@@ -134,11 +132,9 @@ export function ReleaseWorkflowDetail({
   const loadSequence = useRef(0);
 
   const [initiationId, setInitiationId] = useState('');
-  const [manualTCode, setManualTCode] = useState('');
   const [pastedPlanCandidates, setPastedPlanCandidates] = useState<string[]>([]);
   const [pastedInitiations, setPastedInitiations] = useState<ProductInitiation[]>([]);
   const [planMatchHint, setPlanMatchHint] = useState('');
-  const [sourceMode, setSourceMode] = useState<'initiation' | 'manual_t'>('initiation');
   const [ownerId, setOwnerId] = useState(currentUser?.userId ?? '');
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const [showRequirementPicker, setShowRequirementPicker] = useState(false);
@@ -164,7 +160,7 @@ export function ReleaseWorkflowDetail({
   const [announcementUrl, setAnnouncementUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  const historyScope = JSON.stringify([productId, sourceMode, initiationId, manualTCode, planName]);
+  const historyScope = JSON.stringify([productId, initiationId, planName]);
   const historyScopeRef = useRef(historyScope);
   historyScopeRef.current = historyScope;
   const [historyReview, setHistoryReview] = useState<{ scope: string; check: VersionReleaseHistoryCheck; confirmed: boolean } | null>(null);
@@ -175,7 +171,7 @@ export function ReleaseWorkflowDetail({
   );
   const selectedInitiation = approved.find((item) => item.id === initiationId);
   // 与后端一致：有关联方案时项目类别以方案为准，手工 T 号使用表单类别。
-  const effectiveProjectType = !temporary && sourceMode === 'initiation' && selectedInitiation ? selectedInitiation.projectType : projectType;
+  const effectiveProjectType = !temporary && selectedInitiation ? selectedInitiation.projectType : projectType;
   const effectiveGlobalOpen = temporary ? isGlobalOpen : effectiveProjectType === 'standard' ? 'yes' : 'no';
   const editableOpenBrandScope = !temporary && openBrandScope === '上线全域开放' ? '' : openBrandScope;
   const effectiveOpenBrandScope = temporary ? openBrandScope : effectiveGlobalOpen === 'yes'
@@ -431,14 +427,6 @@ export function ReleaseWorkflowDetail({
     if (temporary) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
-  const changeSourceMode = () => {
-    const mode = sourceMode === 'initiation' ? 'manual_t' : 'initiation';
-    setSourceMode(mode);
-    setPastedPlanCandidates([]); setPlanMatchHint(''); setInitiationId('');
-    if (mode === 'initiation') setManualTCode('');
-    if (onApplicationProductChange) changeApplication('');
-  };
-
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
     const parsedInitiations = parsed.initiationCandidates ?? [];
     const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
@@ -448,15 +436,15 @@ export function ReleaseWorkflowDetail({
       const candidates = parsed.candidateInitiationIds ?? [];
       setPastedPlanCandidates(candidates);
       if (source) {
-        setSourceMode('initiation'); chooseInitiation(source.id, source); setManualTCode('');
+        chooseInitiation(source.id, source);
         setPlanMatchHint(`已匹配立项 ${source.tCode}，按已有方案资料回填。`);
       } else if (candidates.length) {
-        setSourceMode('initiation'); setInitiationId(''); changeApplication(parsed.matchedApplicationId ?? '');
+        setInitiationId(''); changeApplication(parsed.matchedApplicationId ?? '');
         setPlanMatchHint(`匹配到 ${candidates.length} 个相近方案，请选择正确立项。`);
       } else {
-        setSourceMode('manual_t'); setManualTCode(parsed.tCode ?? ''); setInitiationId('');
+        setInitiationId('');
         changeApplication(parsed.matchedApplicationId ?? '');
-        setPlanMatchHint('未找到匹配的已通过立项，已保留识别内容，请补齐手工 T 号和申领资料；也可切回方案选择。');
+        setPlanMatchHint('未找到匹配的 T 记录，识别内容已保留。请先在内部版本页面完成 T 号申领，再选择对应方案。');
       }
     }
     if (!source) {
@@ -495,8 +483,8 @@ export function ReleaseWorkflowDetail({
       setMessage('正在匹配企微成员，请稍候并核对名单后申领。');
       return;
     }
-    if (loadError || loading || !productId || (!temporary && sourceMode === 'initiation' && selectedInitiation?.productId !== productId)) {
-      setMessage('请先选择方案以回填所属应用；手工 T 号请在表单中选择应用。');
+    if (loadError || loading || !productId || (!temporary && selectedInitiation?.productId !== productId)) {
+      setMessage('请先选择已通过且已取得 T 号的方案。');
       return;
     }
     if (!releaseAt || trainingMinutes.trim() === '' || !Number.isInteger(Number(trainingMinutes)) || Number(trainingMinutes) < 0 || Number(trainingMinutes) > 2147483647) {
@@ -508,8 +496,7 @@ export function ReleaseWorkflowDetail({
     let historyConfirmationToken: string | undefined;
     if (!temporary) {
       const checked = await checkReleaseHistory(productId, {
-        initiationId: sourceMode === 'initiation' ? initiationId : undefined,
-        manualTCode: sourceMode === 'manual_t' ? manualTCode.trim() : undefined,
+        initiationId,
         planName: planName.trim() || undefined,
       });
       if (historyScopeRef.current !== historyScope) {
@@ -533,8 +520,7 @@ export function ReleaseWorkflowDetail({
     }
     const res = await createRelease(productId, {
       historyConfirmationToken,
-      initiationId: temporary || sourceMode === 'manual_t' ? undefined : initiationId,
-      manualTCode: !temporary && sourceMode === 'manual_t' ? manualTCode.trim() : undefined,
+      initiationId: temporary ? undefined : initiationId,
       isTemporaryOptimization: temporary,
       planName: temporary ? temporaryPlanName : planName.trim() || undefined,
       ownerId,
@@ -601,8 +587,8 @@ export function ReleaseWorkflowDetail({
   };
 
   const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || trainingMinutes.trim() === '' || !Number.isInteger(Number(trainingMinutes)) || Number(trainingMinutes) < 0 || Number(trainingMinutes) > 2147483647 || !effectiveGlobalOpen || pastedMembers.pendingCount > 0 || teamIds.length === 0
-    || (!temporary && sourceMode === 'initiation' && selectedInitiation?.productId !== productId)
-    || (temporary ? extraIds.length === 0 : sourceMode === 'manual_t' ? !manualTCode.trim() || !planName.trim() : !initiationId);
+    || (!temporary && selectedInitiation?.productId !== productId)
+    || (temporary ? extraIds.length === 0 : !initiationId || !planName.trim());
   const manifestInvalid = activeManifest.length === 0;
   const releaseDisplayTitle = useMemo(() => {
     if (!release) return '正式版本';
@@ -647,7 +633,7 @@ export function ReleaseWorkflowDetail({
       : <Input value={editableOpenBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder={temporary ? '上线全域开放' : '填写本次开放的品牌'} />}</Field>
   </div>;
   const supplementaryFields = <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
-    {!temporary && sourceMode === 'initiation' && <div className="sm:col-span-2"><Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="可粘贴识别、自动回填或手动修改" /></Field></div>}
+    {!temporary && <div className="sm:col-span-2"><Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="可粘贴识别、自动回填或手动修改" /></Field></div>}
     <Field label="需求来源"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} /></Field>
     <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
     <div className="sm:col-span-2"><Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field></div>
@@ -826,9 +812,7 @@ export function ReleaseWorkflowDetail({
               </> : <>
                 <section aria-label="申领信息" className="space-y-4">
                   <h2 className="text-sm font-semibold text-token-primary">申领信息</h2>
-                  <div className="relative space-y-2">
-                    <button type="button" onClick={changeSourceMode} className="absolute right-0 top-0 text-xs text-token-secondary hover:underline">{sourceMode === 'initiation' ? '手工填写 T 号' : '返回选择方案'}</button>
-                    {sourceMode === 'initiation' ? <>
+                  <div className="space-y-2">
                       <Field label={applicationProducts ? '所属方案 *' : '立项号 *'}>
                         {applicationProducts ? <ReleasePlanPicker plans={pastedPlanCandidates.length ? approved.filter((item) => pastedPlanCandidates.includes(item.id)) : approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} loading={planLoading} error={planError} progress={planProgress} onRetry={onRetryPlans} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
                           <option value="">请选择</option>
@@ -840,13 +824,6 @@ export function ReleaseWorkflowDetail({
                         <span role="status">{applicationProducts?.find((product) => product.id === productId)?.name ?? selectedInitiation.appName}</span>
                         <span>{effectiveProjectType === 'standard' ? '非定制' : '定制'}</span><span>{SCALE_LABEL[versionType]}</span>
                       </div>}
-                    </> : <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
-                      <Field label="手工 T 号 *"><Input value={manualTCode} onChange={(e) => setManualTCode(e.target.value)} placeholder="T1.2.3" /></Field>
-                      {applicationProducts && <Field label="所属应用 *"><ItemSearchSelect value={productId} onChange={changeApplication} options={toProductOptions(applicationProducts)} placeholder="手工 T 号请选择所属应用" countUnit="个应用" /></Field>}
-                      <div className="sm:col-span-2"><Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="填写本次上线的方案名称" /></Field></div>
-                      <Field label="项目类别"><Select value={effectiveProjectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
-                      <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
-                    </div>}
                     {planMatchHint && !selectedInitiation && <p role="status" className="text-xs leading-5 text-token-secondary">{planMatchHint}
                       {pastedPlanCandidates.length > 0 && <button type="button" className="ml-2 hover:underline" onClick={() => { setPastedPlanCandidates([]); setPlanMatchHint(''); }}>查看全部方案</button>}
                     </p>}

@@ -1380,16 +1380,15 @@ public class ProductAgentController : ControllerBase
     {
         var product = await FindAccessibleProductAsync(productId, GetUserId());
         if (product == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        ProductInitiation? initiation = null;
-        if (!string.IsNullOrWhiteSpace(initiationId)) {
-            initiation = await _db.ProductInitiations.Find(x => x.Id == initiationId && x.ProductId == productId && x.Status == "approved" && !x.IsDeleted).FirstOrDefaultAsync();
-            if (initiation == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已取得 T 号的立项"));
-        }
-        var code = initiation?.TCode ?? manualTCode?.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(initiationId) || !string.IsNullOrWhiteSpace(manualTCode))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先选择已通过且已取得 T 号的立项"));
+        var initiation = await _db.ProductInitiations.Find(x => x.Id == initiationId && x.ProductId == productId && x.Status == "approved" && !x.IsDeleted).FirstOrDefaultAsync();
+        if (initiation == null) return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已取得 T 号的立项"));
+        var code = initiation.TCode;
         if (string.IsNullOrWhiteSpace(code) || !IsWorkflowVersionCode(code, "T"))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请先选择或填写有效的 T 号"));
-        var result = await ProductVersionHistoryLinks.CheckAsync(_db, productId, initiation?.AppName ?? product.Name,
-            code, initiation?.PlanName ?? planName);
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选立项尚未取得有效 T 号"));
+        var result = await ProductVersionHistoryLinks.CheckAsync(_db, productId, initiation.AppName ?? product.Name,
+            code, initiation.PlanName);
         return Ok(ApiResponse<ReleaseHistoryCheck>.Ok(result));
     }
 
@@ -1403,37 +1402,20 @@ public class ProductAgentController : ControllerBase
         var (productSystemName, productAppName) = await ResolveInitiationSystemAppNamesAsync(product);
         var claimApplicationName = productAppName ?? product.Name;
         ProductInitiation? initiation = null;
-        var manualTCode = request.ManualTCode?.Trim().ToUpperInvariant();
-        var hasManualT = !string.IsNullOrWhiteSpace(manualTCode);
+        var hasManualT = !string.IsNullOrWhiteSpace(request.ManualTCode);
         if (request.IsTemporaryOptimization && (hasManualT || !string.IsNullOrWhiteSpace(request.InitiationId)))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "临时优化需求不能关联 T 号"));
         if (!request.IsTemporaryOptimization)
         {
-            if (hasManualT && !string.IsNullOrWhiteSpace(request.InitiationId))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已选立项时不能再填写手工 T 号"));
             if (hasManualT)
-            {
-                if (!IsWorkflowVersionCode(manualTCode!, "T"))
-                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "手工 T 号格式应为 T主版本.中版本.小版本"));
-                var linked = await _db.ProductInitiations.Find(x => x.ProductId == productId && x.TCode == manualTCode && !x.IsDeleted).FirstOrDefaultAsync();
-                if (linked != null)
-                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该 T 号已在产品管理中登记，请直接选择对应立项"));
-                var oldSources = await _db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Internal && x.Code == manualTCode).ToListAsync();
-                if (oldSources.Count > 0 && !oldSources.Any(x => x.ApplicationName == productAppName))
-                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该手工 T 号属于其他应用，请选择正确产品"));
-                if (string.IsNullOrWhiteSpace(request.PlanName))
-                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "手工 T 号申领需填写产品方案名称"));
-            }
-            else
-            {
-                initiation = await _db.ProductInitiations.Find(x => x.Id == request.InitiationId && x.ProductId == productId && x.Status == "approved" && !x.IsDeleted).FirstOrDefaultAsync();
-                if (initiation == null)
-                    return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已通过并取得 T 号的立项，或填写手工 T 号"));
-            }
-            var usedTCode = hasManualT ? manualTCode : initiation!.TCode;
-            claimApplicationName = initiation?.AppName ?? claimApplicationName;
-            if (string.IsNullOrWhiteSpace(usedTCode))
-                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选立项尚未取得 T 号"));
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "正式版本只能关联已有 T 记录，请先在内部版本页面完成申领，再选择对应方案"));
+            initiation = await _db.ProductInitiations.Find(x => x.Id == request.InitiationId && x.ProductId == productId && x.Status == "approved" && !x.IsDeleted).FirstOrDefaultAsync();
+            if (initiation == null)
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请选择已通过并取得 T 号的立项"));
+            var usedTCode = initiation.TCode;
+            claimApplicationName = initiation.AppName ?? claimApplicationName;
+            if (string.IsNullOrWhiteSpace(usedTCode) || !IsWorkflowVersionCode(usedTCode, "T"))
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "所选立项尚未取得有效 T 号"));
             var existing = await _db.ProductReleases.Find(x => !x.IsDeleted && (x.ProductId == productId || x.AppName == claimApplicationName) && x.TCode == usedTCode).FirstOrDefaultAsync();
             if (existing != null)
                 return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", $"该 T 号已申领上线号 {existing.VCode}"));
@@ -1478,8 +1460,7 @@ public class ProductAgentController : ControllerBase
         {
             ProductId = productId,
             InitiationId = initiation?.Id,
-            TCode = initiation?.TCode ?? manualTCode,
-            IsManualTCode = hasManualT,
+            TCode = initiation?.TCode,
             IsTemporaryOptimization = request.IsTemporaryOptimization,
             PlanName = request.IsTemporaryOptimization ? request.PlanName?.Trim() ?? "临时优化需求" : string.IsNullOrWhiteSpace(request.PlanName) ? initiation?.PlanName ?? string.Empty : request.PlanName.Trim(),
             VersionType = versionType,

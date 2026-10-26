@@ -207,7 +207,6 @@ export function listReleases(productId: string, scope: 'mine' | 'all' = 'mine', 
 export function createRelease(productId: string, body: {
   historyConfirmationToken?: string;
   initiationId?: string;
-  manualTCode?: string;
   isTemporaryOptimization: boolean;
   planName?: string;
   ownerId: string;
@@ -249,10 +248,9 @@ export type VersionReleaseHistoryCheck = {
   confirmationToken: string | null;
   candidates: Array<{ id: string; vCode: string; planName: string }>;
 };
-export function checkReleaseHistory(productId: string, source: { initiationId?: string; manualTCode?: string; planName?: string }) {
+export function checkReleaseHistory(productId: string, source: { initiationId: string; planName?: string }) {
   const query = new URLSearchParams();
   if (source.initiationId) query.set('initiationId', source.initiationId);
-  if (source.manualTCode) query.set('manualTCode', source.manualTCode);
   if (source.planName) query.set('planName', source.planName);
   return apiRequest<VersionReleaseHistoryCheck>(`/api/product/products/${productId}/releases/history-check?${query.toString()}`);
 }
