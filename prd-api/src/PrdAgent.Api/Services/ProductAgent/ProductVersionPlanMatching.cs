@@ -77,7 +77,8 @@ public static class ProductVersionPlanMatching
         var aliasWithCode = !string.IsNullOrWhiteSpace(result.TCode) && ApplicationAliases
             .SelectMany(pair => new[] { pair.Key, pair.Value })
             .Any(name => Compact(Prefix(raw ?? string.Empty)) == Compact(name + result.TCode));
-        var exactAliasCode = aliasWithCode && coded.Count == 1 && Topic(coded[0].PlanName) == input;
+        var exactAliasCode = aliasWithCode && coded.Count == 1 && Topic(coded[0].PlanName) == input
+            && ApplicationAliases.Values.Any(name => ApplicationPrefix(coded[0].PlanName).StartsWith(Compact(name), StringComparison.Ordinal));
         if (aliasWithCode && coded.Count == 0) return;
         // 存在明确应用前缀却不在可识别目录中时，即使主题唯一也只提示候选，不猜归属。
         if (matches.Count != 1 || (apps.Count == 0 && !exactAliasCode && Opening(raw ?? string.Empty) >= 0 && !string.IsNullOrWhiteSpace(Prefix(raw ?? string.Empty)))) return;

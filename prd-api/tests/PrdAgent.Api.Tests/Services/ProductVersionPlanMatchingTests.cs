@@ -26,6 +26,16 @@ public class ProductVersionPlanMatchingTests
     }
 
     [Fact]
+    public void 别名完整T号不能仅凭同号同主题选择其他应用立项()
+    {
+        var result = VersionRegistrationMessageParser.Parse("产品方案名称：米多星球T3.14.1(IMP配套方案)AI文档1-3稿", "formal");
+        ProductVersionPlanMatching.Match(result, Applications,
+            new[] { new VersionPlanCandidate("retail-plan", "retail", "零售（IMP配套方案）", "T3.14.1") }, true);
+        result.MatchedInitiationId.ShouldBeNull();
+        result.MatchedApplicationId.ShouldBeNull();
+    }
+
+    [Fact]
     public void 别名完整T号仍不自动选择多个相同编号和主题的立项()
     {
         var result = VersionRegistrationMessageParser.Parse("产品方案名称：米多星球T3.14.1(IMP配套方案)AI文档1-3稿", "formal");
