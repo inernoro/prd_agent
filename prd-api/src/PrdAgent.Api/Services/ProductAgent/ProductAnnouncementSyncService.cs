@@ -57,7 +57,7 @@ public sealed class ProductAnnouncementSyncService(MongoDbContext db, IHttpClien
         var state = await ReadAsync() ?? await EnsureAsync(now);
         if (state.Status is not "queued" and not "running")
         {
-            if (state.CalendarRetryAt > now && (state.NextRunAt == null || state.NextRunAt > now)) return;
+            if (state.CalendarRetryAt > now && (state.CalendarError != null || state.NextRunAt == null || state.NextRunAt > now)) return;
             await ScheduleAsync(state, now, stoppingToken);
         }
         var acquired = await db.ProductAnnouncementSyncs.FindOneAndUpdateAsync(

@@ -139,6 +139,20 @@ public class ProductAnnouncementSyncTests
         Assert.Equal(0, await f.Db.ProductAnnouncementSyncs.CountDocumentsAsync(_ => true));
     }
 
+    [Fact]
+    public async Task MissingStatutoryCalendarPausesScheduleAndBacksOffEvenWhenSlotIsOverdue()
+    {
+        await using var f = new Fixture();
+        var now = DateTime.UtcNow;
+        await f.Db.ProductAnnouncementSyncs.InsertOneAsync(new ProductAnnouncementSync { CreatedAt = now.AddMonths(-1), NextRunAt = now.AddMinutes(-1) });
+        await f.Service.TickAsync(now, default);
+        Assert.NotNull((await f.Service.StatusAsync()).CalendarError);
+        Assert.Single(f.Requests);
+        await f.Service.TickAsync(now.AddSeconds(3), default);
+        Assert.Single(f.Requests);
+        Assert.Equal("idle", (await f.Service.StatusAsync()).Status);
+    }
+
     private sealed class Fixture : HttpMessageHandler, IHttpClientFactory, IAsyncDisposable
     {
         private readonly string name = "announcement_test_" + Guid.NewGuid().ToString("N");
