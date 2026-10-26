@@ -107,11 +107,18 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
     private async Task<bool> UpsertFailureAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
     {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var changed = await UpsertFailureOnceAsync(signal, ct);
+            if (changed.HasValue) return changed.Value;
+        }
+        return false;
+    }
+
+    private async Task<bool?> UpsertFailureOnceAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
+    {
         var key = $"llmgw-upstream:{signal.Fingerprint}";
-        var existing = await _mapDb.AdminNotifications
-            .Find(x => x.Key == key)
-            .SortByDescending(x => x.CreatedAt)
-            .FirstOrDefaultAsync(ct);
+        var existing = await FindCurrentFailureAsync(key, ct);
         var now = DateTime.UtcNow;
         var actionUrl = $"/logs?requestId={Uri.EscapeDataString(signal.RequestId)}";
         var title = signal.IsGatewayEntry ? $"{signal.AppCallerLabel} 请求未能进入处理" : $"{signal.AppCallerLabel} 调用服务异常";
@@ -135,13 +142,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
                 .Set(x => x.ActionKind, "llm-gateway")
                 .Set(x => x.UpdatedAt, now)
                 .Set(x => x.GatewaySignalVersion, signal.SignalVersion);
-            var transitionFilter = Builders<AdminNotification>.Filter.Eq(x => x.Id, existing.Id)
-                & Builders<AdminNotification>.Filter.Eq(x => x.Status, existing.Status)
-                & NewerSignalFilter(signal);
-            transitionFilter &= existing.PushEpisode == 0
-                ? Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, 0)
-                    | Builders<AdminNotification>.Filter.Exists(x => x.PushEpisode, false)
-                : Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, existing.PushEpisode);
+            var transitionFilter = CurrentFailureFilter(existing, signal);
             if (shouldReopen)
             {
                 // 只有一个扫描者能从所观察到的关闭代次切换为新代次。
@@ -154,6 +155,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             }
             var transitioned = await _mapDb.AdminNotifications.UpdateOneAsync(transitionFilter, update,
                 new UpdateOptions { Collation = new Collation("simple") }, ct);
+            if (transitioned.MatchedCount != 1) return null;
             return shouldReopen && transitioned.ModifiedCount == 1;
         }
 
@@ -180,7 +182,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         catch (MongoWriteException ex) when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
         {
             // 同一轮故障在多实例下只有一个确定的记录身份。
-            return false;
+            return null;
         }
 
         _logger.LogWarning(
@@ -191,12 +193,31 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
 
     private async Task<bool> CloseFailureAndNotifyRecoveryAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
     {
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var changed = await CloseFailureAndNotifyRecoveryOnceAsync(signal, ct);
+            if (changed.HasValue) return changed.Value;
+        }
+        return false;
+    }
+
+    private async Task<bool?> CloseFailureAndNotifyRecoveryOnceAsync(LlmGatewayIncidentSignal signal, CancellationToken ct)
+    {
         var failureKey = $"llmgw-upstream:{signal.Fingerprint}";
+        var existing = await FindCurrentFailureAsync(failureKey, ct);
+        if (existing is null || string.CompareOrdinal(existing.GatewaySignalVersion, signal.SignalVersion) >= 0)
+            return false;
         var now = DateTime.UtcNow;
-        var transitionFilter = Builders<AdminNotification>.Filter.And(
-            Builders<AdminNotification>.Filter.Eq(x => x.Key, failureKey),
-            Builders<AdminNotification>.Filter.Ne(x => x.Status, "closed"),
-            NewerSignalFilter(signal));
+        var transitionFilter = CurrentFailureFilter(existing, signal);
+        if (string.Equals(existing.Status, "closed", StringComparison.OrdinalIgnoreCase))
+        {
+            // 成功/失败必须更新同一当前行；不能把水位写到更旧的同 Key 历史行。
+            var advanced = await _mapDb.AdminNotifications.UpdateOneAsync(
+                transitionFilter,
+                Builders<AdminNotification>.Update.Set(x => x.GatewaySignalVersion, signal.SignalVersion),
+                new UpdateOptions { Collation = new Collation("simple") }, ct);
+            return advanced.MatchedCount == 1 ? false : null;
+        }
         var transitionUpdate = Builders<AdminNotification>.Update
                 .Set(x => x.Status, "closed")
                 .Set(x => x.HandledAt, now)
@@ -211,13 +232,7 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
             ct);
         if (transitioned is null)
         {
-            // 已关闭时也推进成功水位，防止两次成功之间的滞后失败重新打开它。
-            await _mapDb.AdminNotifications.UpdateOneAsync(
-                Builders<AdminNotification>.Filter.Eq(x => x.Key, failureKey)
-                    & Builders<AdminNotification>.Filter.Eq(x => x.Status, "closed") & NewerSignalFilter(signal),
-                Builders<AdminNotification>.Update.Set(x => x.GatewaySignalVersion, signal.SignalVersion),
-                new UpdateOptions { Collation = new Collation("simple") }, ct);
-            return false;
+            return null;
         }
 
         var recoveryKey = $"llmgw-upstream-recovered:{signal.Fingerprint}:{signal.RequestId}";
@@ -246,6 +261,23 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
     private static FilterDefinition<AdminNotification> NewerSignalFilter(LlmGatewayIncidentSignal signal)
         => Builders<AdminNotification>.Filter.Eq(x => x.GatewaySignalVersion, null)
            | Builders<AdminNotification>.Filter.Lt(x => x.GatewaySignalVersion, signal.SignalVersion);
+
+    private Task<AdminNotification?> FindCurrentFailureAsync(string key, CancellationToken ct)
+        => _mapDb.AdminNotifications.Find(x => x.Key == key)
+            .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
+            .FirstOrDefaultAsync(ct);
+
+    private static FilterDefinition<AdminNotification> CurrentFailureFilter(
+        AdminNotification existing, LlmGatewayIncidentSignal signal)
+    {
+        var filter = Builders<AdminNotification>.Filter.Eq(x => x.Id, existing.Id)
+            & Builders<AdminNotification>.Filter.Eq(x => x.Status, existing.Status)
+            & NewerSignalFilter(signal);
+        return filter & (existing.PushEpisode == 0
+            ? Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, 0)
+                | Builders<AdminNotification>.Filter.Exists(x => x.PushEpisode, false)
+            : Builders<AdminNotification>.Filter.Eq(x => x.PushEpisode, existing.PushEpisode));
+    }
 }
 
 internal static class LlmGatewayIncidentPolicy

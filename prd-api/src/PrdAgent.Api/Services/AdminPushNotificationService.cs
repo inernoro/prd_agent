@@ -630,7 +630,10 @@ public sealed class AdminPushNotificationService
                 : !string.IsNullOrWhiteSpace(notice.ActionUrl) ? notice.ActionUrl : notice.Id }))));
 
     private static bool IsFreshUrgent(AdminNotification notice, DispatchBudget budget) =>
-        notice.Level == "error" && !budget.Incidents.Contains(IncidentKey(notice));
+        notice.Level == "error" && !budget.Incidents.Contains(IncidentKey(notice))
+        && !(notice.Source == "gateway-alert" && notice.PushEpisode == 0
+            && budget.Incidents.Contains(Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { notice.Source, notice.Id }))))));
 
     private static string DeliveryKey(AdminNotification notification)
         => $"{notification.Id}:episode:{notification.PushEpisode.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
