@@ -48,7 +48,7 @@ beforeEach(() => {
   api.getInheritReleaseManifest.mockResolvedValue({ success: true, data: { previousReleaseId: null, items: [] } });
   api.getRelease.mockResolvedValue({ success: true, data: release });
   api.checkReleaseHistory.mockResolvedValue({ success: true, data: { blocked: false, needsConfirmation: false } });
-  api.createRelease.mockResolvedValue({ success: true, data: { ...release, status: 'announcement_pending' } });
+  api.createRelease.mockResolvedValue({ success: true, data: release });
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: vi.fn(async () => {}) } });
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });

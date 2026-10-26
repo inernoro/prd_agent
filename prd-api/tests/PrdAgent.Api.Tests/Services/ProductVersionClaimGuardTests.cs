@@ -84,7 +84,7 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
-    public async Task FormalNumberCanBeIssuedFromExistingTWithoutFeaturesAndCompletedAfterAnnouncement()
+    public async Task FormalNumberFromExistingTCompletesWithoutAnnouncementAndProgramCanWriteLinkLater()
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
@@ -97,18 +97,22 @@ public class ProductVersionClaimGuardTests
         var item = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(created.Value).Data);
         Assert.False(string.IsNullOrWhiteSpace(item.VCode));
         Assert.Empty(item.FeatureManifest);
-        Assert.Equal("announcement_pending", item.Status);
+        Assert.Equal("released", item.Status);
+        Assert.NotNull(item.ReleasedAt);
+        Assert.True(string.IsNullOrWhiteSpace(item.AnnouncementUrl));
         Assert.Equal("me", item.CreatedBy);
         Assert.Equal("me", item.OwnerId);
         Assert.Contains("inherited-requirement", item.RequirementIds);
         var duplicate = Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
         Assert.Equal("DUPLICATE_RELEASE", Assert.IsType<ApiResponse<object>>(duplicate.Value).Error!.Code);
-        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CompleteRelease(item.Id, new CompleteReleaseRequest()));
+        Assert.IsType<OkObjectResult>(await fixture.Controller().CompleteRelease(item.Id, new CompleteReleaseRequest()));
         var completed = Assert.IsType<OkObjectResult>(await fixture.Controller().CompleteRelease(item.Id,
             new CompleteReleaseRequest { AnnouncementUrl = "https://example.test/announcement" }));
         var saved = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(completed.Value).Data);
         Assert.Equal("released", saved.Status);
         Assert.Equal(item.VCode, saved.VCode);
+        Assert.Equal("https://example.test/announcement", saved.AnnouncementUrl);
+        Assert.Equal(item.ReleasedAt!.Value, saved.ReleasedAt!.Value, TimeSpan.FromMilliseconds(1));
         Assert.Empty(saved.FeatureManifest);
     }
 
@@ -296,7 +300,7 @@ public class ProductVersionClaimGuardTests
         var release = Assert.IsType<ProductRelease>(issuedV.Data);
         Assert.Equal(expectedV, release.VCode);
         Assert.Equal(type, release.VersionType);
-        Assert.Equal("announcement_pending", release.Status);
+        Assert.Equal("released", release.Status);
     }
 
     [Fact]
@@ -959,9 +963,9 @@ public class ProductVersionClaimGuardTests
         };
         var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request));
         var issued = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data);
-        Assert.StartsWith("V", issued.VCode); Assert.Equal("announcement_pending", issued.Status);
+        Assert.StartsWith("V", issued.VCode); Assert.Equal("released", issued.Status);
         Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
-        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CompleteRelease(issued.Id, new CompleteReleaseRequest()));
+        Assert.IsType<OkObjectResult>(await fixture.Controller().CompleteRelease(issued.Id, new CompleteReleaseRequest()));
         Assert.Equal(1, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
     }
 

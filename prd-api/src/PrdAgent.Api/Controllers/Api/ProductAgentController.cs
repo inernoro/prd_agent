@@ -1484,8 +1484,8 @@ public class ProductAgentController : ControllerBase
             PlannedTrainingMinutes = request.PlannedTrainingMinutes,
             PreviousReleaseId = request.PreviousReleaseId ?? previousRelease?.Id,
             FeatureManifest = manifest,
-            Status = projectType == "custom" ? "released" : "announcement_pending",
-            ReleasedAt = projectType == "custom" ? DateTime.UtcNow : null,
+            Status = "released",
+            ReleasedAt = DateTime.UtcNow,
             CreatedBy = userId,
         };
         if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveSourceAsync(_db,
@@ -1494,8 +1494,7 @@ public class ProductAgentController : ControllerBase
         item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id,
             string.IsNullOrWhiteSpace(initiation?.LinkedProductId) ? productId : initiation.LinkedProductId);
         await _db.ProductReleases.InsertOneAsync(item, cancellationToken: CancellationToken.None);
-        if (item.Status == "released")
-            await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId, $"定制版本申领完成（{item.VCode}），自动流转到已上线");
+        await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, userId, $"版本申领完成（{item.VCode}），自动流转到已上线");
         return Ok(ApiResponse<object>.Ok(item));
     }
 
@@ -1507,13 +1506,11 @@ public class ProductAgentController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
         if (item.OwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可完成该上线记录"));
-        if (item.ProjectType != "custom" && string.IsNullOrWhiteSpace(request.AnnouncementUrl))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上线公告地址不能为空"));
         await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
             Builders<ProductRelease>.Update
                 .Set(x => x.AnnouncementUrl, string.IsNullOrWhiteSpace(request.AnnouncementUrl) ? item.AnnouncementUrl : request.AnnouncementUrl.Trim())
                 .Set(x => x.Status, "released")
-                .Set(x => x.ReleasedAt, DateTime.UtcNow)
+                .Set(x => x.ReleasedAt, item.ReleasedAt ?? DateTime.UtcNow)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
         var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, GetUserId(), $"上线完成（{updated?.VCode}），自动流转到已上线");
@@ -1749,7 +1746,7 @@ public class ProductAgentController : ControllerBase
                         ContractParty = row.ContractParty, Remark = row.Remark, IsGlobalOpen = row.IsGlobalOpen,
                         OpenBrandScope = string.IsNullOrWhiteSpace(row.OpenBrandScope) ? "上线全域开放" : row.OpenBrandScope,
                         PlanUrl = row.PlanUrl, TeamMemberIds = row.TeamMemberIds ?? new(),
-                        Status = row.ProjectType == "custom" || !string.IsNullOrWhiteSpace(row.AnnouncementUrl) ? "released" : "announcement_pending",
+                        Status = "released",
                         PlannedReleaseAt = row.Date, PlannedTrainingMinutes = row.PlannedTrainingMinutes,
                         ReleasedAt = row.Date, CreatedBy = userId, SourceType = "import",
                         LegacyData = legacyData,

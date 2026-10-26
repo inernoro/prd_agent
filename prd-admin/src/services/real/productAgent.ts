@@ -276,7 +276,7 @@ export function updateReleaseFeatureManifest(id: string, body: {
 }) {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}/feature-manifest`, { method: 'PUT', body });
 }
-export function completeRelease(id: string, announcementUrl: string) {
+export function completeRelease(id: string, announcementUrl = '') {
   return apiRequest<ProductRelease>(`/api/product/releases/${id}/complete`, { method: 'POST', body: { announcementUrl } });
 }
 export function importVersionWorkflow(productId: string, body: {

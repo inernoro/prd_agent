@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { CheckCircle2, Download, FileText, HelpCircle, Plus, Search, Upload, X } from 'lucide-react';
 import {
-  completeRelease, createInitiation, decideInitiation,
+  createInitiation, decideInitiation,
   listVersionApplicationProducts, getWorkflowInitiations, getWorkflowReleases,
   syncInitiationReview, updateInitiation, listProductVersionReviewSources, parseProductVersionMessage,
   getInitiationPlanDefaults,
@@ -238,7 +238,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     </div>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
       {!selectedProductUnavailable && (tab === 'release'
-          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onChanged={reload} currentUserId={currentUserId} onOpenLegacy={setLegacyDetail} />
+          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onOpenLegacy={setLegacyDetail} />
           : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
     </div>
     {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
@@ -888,7 +888,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   );
 }
 
-function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, onChanged, currentUserId, pending, onOpenLegacy }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, pending, onOpenLegacy }: {
   pending?: boolean;
   productId: string;
   productName: string;
@@ -896,13 +896,9 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
   items: WorkflowVersionRecord<ProductRelease>[];
   requirementNames: ReadonlyMap<string, string>;
   names: ReadonlyMap<string, string>;
-  onChanged: () => Promise<void>;
-  currentUserId?: string;
   onOpenLegacy: (record: VersionRegistration) => void;
 }) {
   const navigate = useNavigate();
-  const [editing, setEditing] = useState<string | null>(null);
-  const [url, setUrl] = useState('');
   const openRelease = (item: WorkflowVersionRecord<ProductRelease>) => item.legacyRegistration
     ? onOpenLegacy(item.legacyRegistration)
     : navigate(`/product-agent/p/${item.productId}/release/${item.id}`);
@@ -928,9 +924,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{formatVersionTrainingMinutes(item.plannedTrainingMinutes)}</Td>
       <Td>{formatBool(item.isGlobalOpen)}</Td>
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
-      <Td onClick={(e) => e.stopPropagation()}>{!item.legacyRegistration && item.status === 'announcement_pending' ? item.ownerId === currentUserId && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
-        : item.ownerId !== currentUserId ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
-        : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
+      <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
     </tr>)}{items.length === 0 && !pending && <Empty cols={18}>暂无上线记录</Empty>}
   </Table>
