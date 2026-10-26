@@ -1052,6 +1052,103 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(expected?.ToJsonString(), actual?.ToJsonString());
     }
 
+    [Fact]
+    public void PresentationManualEditProposal_IsFrozenSeparatelyFromTheTrustedMultiFileParent()
+    {
+        var run = BuildRun();
+        var proposal = "<!doctype html><html><head><link rel=\"stylesheet\" href=\"assets/deck.css\"></head><body>"
+            + new string('a', 166_629)
+            + "</body></html>";
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 20,
+            SourceContent = "完整来源",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("完整来源")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+            ParentRunId = "parent-ppt",
+            ParentPackageHash = new string('a', 64),
+            ManualEditHtml = proposal,
+            ManualEditHtmlHash = Hash(Encoding.UTF8.GetBytes(proposal)),
+        };
+        var currentFiles = new[]
+        {
+            BuildFile("current/index.html", "<!doctype html><html><body>父版本</body></html>", "text/html"),
+            BuildFile("current/assets/deck.css", "body{color:#123}", "text/css"),
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null, currentFiles);
+        Assert.NotEmpty(DesignArtifactWorkspaceContract.ValidateInputPackageSize(
+            package,
+            DesignArtifactWorkspaceBroker.MaxInputBytes));
+
+        var proposalFile = Assert.Single(package.Files, file => file.Path == "proposal/manual-edit.html");
+        Assert.Equal(proposal, Encoding.UTF8.GetString(Convert.FromBase64String(proposalFile.ContentBase64)));
+        Assert.Contains(package.Files, file => file.Path == "current/index.html");
+        Assert.Contains(package.Files, file => file.Path == "current/assets/deck.css");
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+        var manual = task.RootElement.GetProperty("presentationContract").GetProperty("manualEditProposal");
+        Assert.Equal("user-authored-untrusted-proposal", manual.GetProperty("authority").GetString());
+        Assert.Equal("proposal/manual-edit.html", manual.GetProperty("path").GetString());
+        Assert.Equal(run.PresentationInput.ManualEditHtmlHash, manual.GetProperty("contentHash").GetString());
+    }
+
+    [Fact]
+    public void PresentationGeneratePackage_OmitsAbsentManualEditProposal()
+    {
+        var run = BuildRun();
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.Operation = DesignArtifactOperations.Generate;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 20,
+            SourceContent = "完整来源",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("完整来源")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+
+        Assert.False(task.RootElement.GetProperty("presentationContract")
+            .TryGetProperty("manualEditProposal", out _));
+        Assert.DoesNotContain(package.Files, file => file.Path == "proposal/manual-edit.html");
+    }
+
+    [Fact]
+    public void PresentationSourcePlan_IsASeparateServerOwnedWorkspaceFile()
+    {
+        var run = BuildRun();
+        const string plan = "{\"SchemaVersion\":\"map-mdppt-source-plan-v2\",\"Fingerprint\":\"frozen\",\"Blocks\":[],\"Pages\":[]}";
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.PresentationInput = new DesignArtifactPresentationInput
+        {
+            TargetPages = 24,
+            SourceContent = "只包含用户需求，不包含附件正文",
+            SourceContentHash = Hash(Encoding.UTF8.GetBytes("只包含用户需求，不包含附件正文")),
+            OutlineJson = "{\"outline\":[]}",
+            OutlineHash = Hash(Encoding.UTF8.GetBytes("{\"outline\":[]}")),
+            Theme = "storytelling",
+            SourcePlanJson = plan,
+            SourcePlanHash = Hash(Encoding.UTF8.GetBytes(plan)),
+        };
+
+        var package = DesignArtifactWorkspaceContract.BuildInputPackage(run, null);
+        var planFile = Assert.Single(package.Files, file => file.Path == "brief/source-plan.json");
+        Assert.Equal(plan, Encoding.UTF8.GetString(Convert.FromBase64String(planFile.ContentBase64)));
+        using var task = JsonDocument.Parse(Convert.FromBase64String(
+            package.Files.Single(file => file.Path == "brief/task.json").ContentBase64));
+        var contract = task.RootElement.GetProperty("presentationContract").GetProperty("sourcePlan");
+        Assert.Equal("brief/source-plan.json", contract.GetProperty("path").GetString());
+        Assert.Equal(run.PresentationInput.SourcePlanHash, contract.GetProperty("contentHash").GetString());
+    }
+
     [Theory]
     [InlineData("在主标题下方新增一行短句“只出现一次的验收标记”", "只出现一次的验收标记")]
     [InlineData("请添加文案「唯一发布标记」到页面底部", "唯一发布标记")]
@@ -1242,6 +1339,39 @@ public sealed class DesignArtifactWorkspaceContractTests
             .Cast<System.Text.RegularExpressions.Match>());
         Assert.Contains("name=\"viewport\"", hardenedAgain, StringComparison.Ordinal);
         Assert.Contains("CDS result", hardenedAgain, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CurrentPresentationFilesUseNormalizedTrustedIndexAndPreserveOrdinaryAssets()
+    {
+        var hardenedHtml = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.GeneratedArtifactCsp}\"></head><body>父稿</body></html>";
+        var normalizedHtml = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(hardenedHtml);
+        var hardenedIndex = BuildFile("index.html", hardenedHtml, "text/html; charset=utf-8");
+        var asset = BuildFile("assets/deck.css", "body{color:#123}", "text/css; charset=utf-8");
+        var evidence = BuildFile("assets/provenance.json", "{}", "application/json; charset=utf-8");
+
+        var current = DesignArtifactWorkspaceBroker.MaterializeCurrentPresentationFiles(
+            new ParsedDesignWorkspaceResult(normalizedHtml, [hardenedIndex, asset, evidence]));
+
+        var currentIndex = Assert.Single(current, file => file.Path == "current/index.html");
+        Assert.Equal(normalizedHtml, Encoding.UTF8.GetString(Convert.FromBase64String(currentIndex.ContentBase64)));
+        Assert.Equal(Hash(Encoding.UTF8.GetBytes(normalizedHtml)), currentIndex.Sha256);
+        Assert.Equal(Encoding.UTF8.GetByteCount(normalizedHtml), currentIndex.Size);
+        var currentAsset = Assert.Single(current, file => file.Path == "current/assets/deck.css");
+        Assert.Equal(asset.ContentBase64, currentAsset.ContentBase64);
+        Assert.Equal(asset.Sha256, currentAsset.Sha256);
+        Assert.Equal(asset.Size, currentAsset.Size);
+        Assert.Equal(asset.MediaType, currentAsset.MediaType);
+        Assert.DoesNotContain(current, file => file.Path.EndsWith("provenance.json", StringComparison.Ordinal));
+
+        const string unsafeHtml = "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"></head><body><iframe></iframe><object></object></body></html>";
+        var unsafeIndex = BuildFile("index.html", unsafeHtml, "text/html; charset=utf-8");
+        var unsafeCurrent = Assert.Single(DesignArtifactWorkspaceBroker.MaterializeCurrentPresentationFiles(
+            new ParsedDesignWorkspaceResult(
+                HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(unsafeHtml),
+                [unsafeIndex])));
+        Assert.Equal(unsafeHtml, Encoding.UTF8.GetString(Convert.FromBase64String(unsafeCurrent.ContentBase64)));
+        Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(unsafeHtml));
     }
 
     [Theory]

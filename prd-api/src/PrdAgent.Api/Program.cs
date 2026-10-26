@@ -399,6 +399,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IWebPageDesignArtifactLifecycle
     PrdAgent.Api.Services.WebPageDesignArtifactLifecycleAdapter>();
 builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptDesignArtifactAdapter,
     PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptOpenDesignRunService,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptOpenDesignRunService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactRecoveryWorker>();
 builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptPublishCoordinator,
     PrdAgent.Api.Services.MdToPpt.HtmlPptPublishCoordinator>();
@@ -551,6 +553,13 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
 
 // 权限字符串迁移服务（启动时自动迁移旧格式 admin.xxx → 新格式 appKey.action）
 builder.Services.AddHostedService<PrdAgent.Api.Services.PermissionMigrationService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductInitiationAutoIssueWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductClaimWebhookWorker>();
+builder.Services.AddHttpClient("ProductAnnouncements")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddScoped<PrdAgent.Api.Services.ProductAgent.ProductAnnouncementSyncService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.ProductAgent.ProductAnnouncementSyncWorker>();
 // 应用调用者同步：启动时增量注册代码中的 AppCaller（含 pa-agent.chat::chat），并自动回填 chat 模型组
 // 管理后台「初始化应用」仍可全量对齐；二者互补，新 Agent 无需人工点初始化
 builder.Services.AddHostedService<PrdAgent.Api.Services.AppCallerRegistrySyncService>();
@@ -571,6 +580,7 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAppRegistryService, PrdAgen
 builder.Services.AddHttpClient("SafeOutbound")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddScoped<IMiduoPlanetSsoAuditWriter, MiduoPlanetSsoAuditWriter>();
 
 // Report Agent Phase 2: 自动采集服务
 builder.Services.AddScoped<PrdAgent.Api.Services.ReportAgent.MapActivityCollector>();
@@ -1492,6 +1502,10 @@ builder.Services.AddHttpClient("WebhookClient")
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHttpClient("webhook")
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+builder.Services.AddHttpClient("product-claim-webhook", client => client.Timeout = TimeSpan.FromSeconds(10))
+    .RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
 builder.Services.AddHttpClient("TapdBugAgent", client =>

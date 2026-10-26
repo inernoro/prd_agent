@@ -27,9 +27,15 @@ public class WebPagesController : ControllerBase
     private readonly IHostedSiteOptimizationService _optimizationService;
     private readonly IUploadProgressService _uploadProgress;
 
-    // 500MB —— 视频 / PDF 等媒体文件比 HTML 大几个量级
-    private const long MaxSingleFileSize = 500L * 1024 * 1024;
+    private const long MaxSingleFileSize = HostedSiteUploadLimits.MaxSingleFileBytes;
+    // 直接 ZIP 入口与分片入口共用包容量；为 multipart 边界预留请求开销。
+    private const long MaxUploadRequestSize = HostedSiteUploadLimits.MaxPackageBytes + 1024 * 1024;
     private const long MaxOptimizationChunkRequestSize = 3L * 1024 * 1024;
+
+    internal static string? ValidateUploadSize(long bytes, string extension) =>
+        string.Equals(extension, ".zip", StringComparison.OrdinalIgnoreCase)
+            ? HostedSiteUploadLimits.IsWithinPackageLimit(bytes) ? null : "ZIP 文件不能超过 5000 MB"
+            : bytes > MaxSingleFileSize ? HostedSiteUploadLimits.ValidateSingleFileSize(bytes) : null;
 
     // 视频扩展名（浏览器原生 <video> 支持）
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -290,8 +296,8 @@ public class WebPagesController : ControllerBase
 
     /// <summary>上传 HTML/ZIP/Markdown/PDF/视频文件，解压或包装后托管</summary>
     [HttpPost("upload")]
-    [RequestSizeLimit(MaxSingleFileSize)]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
+    [RequestSizeLimit(MaxUploadRequestSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = HostedSiteUploadLimits.MaxPackageBytes)]
     public async Task<IActionResult> Upload(
         IFormFile file,
         [FromForm] string? title,
@@ -303,11 +309,31 @@ public class WebPagesController : ControllerBase
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
 
-        if (file.Length > MaxSingleFileSize)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"文件大小不能超过 {MaxSingleFileSize / 1024 / 1024}MB"));
-
         var userId = GetUserId();
         var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var sizeError = ValidateUploadSize(file.Length, ext);
+        if (sizeError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
+        if (ext == ".zip")
+        {
+            try
+            {
+                using var zipStream = file.OpenReadStream();
+                var zipTags = string.IsNullOrWhiteSpace(tags) ? new List<string>()
+                    : tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                var zipSite = await _siteService.CreateFromZipAsync(
+                    userId, zipStream, title, description, folder, zipTags, uploadId: uploadId);
+                return Ok(ApiResponse<object>.Ok(zipSite));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            }
+            finally
+            {
+                await _uploadProgress.CompleteAsync(uploadId);
+            }
+        }
 
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
@@ -320,11 +346,7 @@ public class WebPagesController : ControllerBase
         try
         {
             HostedSite site;
-            if (ext == ".zip")
-            {
-                site = await _siteService.CreateFromZipAsync(userId, fileBytes, title, description, folder, tagList, uploadId: uploadId);
-            }
-            else if (ext is ".html" or ".htm")
+            if (ext is ".html" or ".htm")
             {
                 site = await _siteService.CreateFromHtmlAsync(userId, fileBytes, file.FileName, title, description, folder, tagList);
             }
@@ -1285,17 +1307,43 @@ public class WebPagesController : ControllerBase
 
     /// <summary>重新上传站点内容（覆盖原有文件）</summary>
     [HttpPost("{id}/reupload")]
-    [RequestSizeLimit(MaxSingleFileSize)]
-    [RequestFormLimits(MultipartBodyLengthLimit = MaxSingleFileSize)]
+    [RequestSizeLimit(MaxUploadRequestSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = HostedSiteUploadLimits.MaxPackageBytes)]
     public async Task<IActionResult> Reupload(string id, IFormFile file, [FromForm] string? uploadId = null)
     {
         if (file == null || file.Length == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请上传文件"));
 
+        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+        var sizeError = ValidateUploadSize(file.Length, ext);
+        if (sizeError != null)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, sizeError));
+        if (ext == ".zip")
+        {
+            try
+            {
+                using var zipStream = file.OpenReadStream();
+                var zipSite = await _siteService.ReuploadAsync(
+                    id, GetUserId(), zipStream, file.FileName, uploadId: uploadId);
+                return Ok(ApiResponse<object>.Ok(zipSite));
+            }
+            catch (KeyNotFoundException)
+            {
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+            }
+            finally
+            {
+                await _uploadProgress.CompleteAsync(uploadId);
+            }
+        }
+
         using var ms = new MemoryStream();
         await file.CopyToAsync(ms);
         var fileBytes = ms.ToArray();
-        var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
         var uploadName = file.FileName;
 
         // 视频 / PDF / Markdown：包装成 ZIP（保持与 Upload 一致的行为）

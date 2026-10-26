@@ -19,9 +19,8 @@ namespace PrdAgent.Infrastructure.Services;
 public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizationService
 {
     private const int UploadChunkSize = 2 * 1024 * 1024;
-    private const long MaxSourceFileBytes = 500L * 1024 * 1024;
     private const int MaxArchiveEntries = 20_000;
-    private const long MaxUncompressedBytes = 500L * 1024 * 1024;
+    private const long MaxUncompressedBytes = HostedSiteUploadLimits.MaxPackageBytes;
     private const long MaxOptimizationBytes = 200L * 1024 * 1024;
     private const long MaxScannedTextFileBytes = 8L * 1024 * 1024;
     private const long MaxScannedTextBytes = 32L * 1024 * 1024;
@@ -72,8 +71,8 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
     {
         if (request.FileSize <= 0)
             throw new InvalidOperationException("请选择非空 ZIP 文件");
-        if (request.FileSize > MaxSourceFileBytes)
-            throw new InvalidOperationException("ZIP 文件不能超过 500 MB");
+        if (!HostedSiteUploadLimits.IsWithinPackageLimit(request.FileSize))
+            throw new InvalidOperationException("ZIP 文件不能超过 5000 MB");
         if (!string.Equals(Path.GetExtension(request.FileName), ".zip", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("智能优化目前只支持 ZIP 文件");
         if (!string.IsNullOrWhiteSpace(request.TargetSiteId)
@@ -291,13 +290,18 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         var leaseHeartbeat = RenewWorkerLeaseAsync(session.Id, leaseOwner, leaseCancellation.Token);
         try
         {
-            var sourceBytes = await DownloadChunksAsync(session);
-            var analysis = Analyze(sourceBytes);
+            await using var sourceStream = await DownloadChunksAsync(session);
+            var analysis = BuildOptimizedPackage(sourceStream).Analysis;
             if (analysis.Blocked)
                 throw new InvalidOperationException(analysis.Error ?? "ZIP 文件无法通过安全检查，请重新导出后再试");
 
             if (analysis.Recommended)
             {
+                // 自动优化的执行预算仍为 200MB；只有这一档会进入整包快照与确认流程。
+                sourceStream.Position = 0;
+                using var bufferedSource = new MemoryStream();
+                await sourceStream.CopyToAsync(bufferedSource);
+                var sourceBytes = bufferedSource.ToArray();
                 session.SourceObjectKey = _storage.BuildSiteKey(StorageScope(session), "__source/source.zip");
                 session.SourceSha256 = Convert.ToHexString(SHA256.HashData(sourceBytes)).ToLowerInvariant();
                 var sourceRecorded = await _db.HostedSiteOptimizationSessions.UpdateOneAsync(
@@ -352,7 +356,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
             {
                 saved = await _hostedSites.CreateFromZipAsync(
                     session.OwnerUserId,
-                    sourceBytes,
+                    sourceStream,
                     session.Title,
                     session.Description,
                     session.Folder,
@@ -365,7 +369,7 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 saved = await _hostedSites.ReuploadAsync(
                     session.TargetSiteId,
                     session.OwnerUserId,
-                    sourceBytes,
+                    sourceStream,
                     session.SourceFileName,
                     ct: CancellationToken.None,
                     reuploadRef: session.Id);
@@ -1314,23 +1318,38 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
         return output.ToArray();
     }
 
-    private async Task<byte[]> DownloadChunksAsync(HostedSiteOptimizationSession session)
+    private async Task<FileStream> DownloadChunksAsync(HostedSiteOptimizationSession session)
     {
-        var sourceBytes = new byte[checked((int)session.SourceFileSize)];
-        var offset = 0;
-        for (var index = 0; index < session.TotalChunks; index++)
+        var temporaryDirectory = Path.GetTempPath();
+        // 分片已经在对象存储；这里只保留一份本机源包，预留少量空间供进程继续运行。
+        if (new DriveInfo(temporaryDirectory).AvailableFreeSpace < session.SourceFileSize + 64L * 1024 * 1024)
+            throw new InvalidOperationException("上传暂存空间不足，文件尚未保存，请稍后重试或缩小 ZIP 文件");
+        var stream = new FileStream(
+            Path.Combine(temporaryDirectory, $"hosted-site-{Guid.NewGuid():N}.zip"),
+            FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 64 * 1024,
+            FileOptions.Asynchronous | FileOptions.DeleteOnClose);
+        try
         {
-            var chunk = await _storage.TryDownloadBytesAsync(
-                            BuildChunkKey(session, index), CancellationToken.None)
-                        ?? throw new InvalidOperationException("临时上传分片已经过期，请重新选择文件");
-            if (chunk.Length > sourceBytes.Length - offset)
+            for (var index = 0; index < session.TotalChunks; index++)
+            {
+                var chunk = await _storage.TryDownloadBytesAsync(
+                                BuildChunkKey(session, index), CancellationToken.None)
+                            ?? throw new InvalidOperationException("临时上传分片已经过期，请重新选择文件");
+                var expectedLength = Math.Min((long)session.ChunkSize, session.SourceFileSize - stream.Length);
+                if (chunk.LongLength != expectedLength)
+                    throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
+                await stream.WriteAsync(chunk);
+            }
+            if (stream.Length != session.SourceFileSize)
                 throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
-            Buffer.BlockCopy(chunk, 0, sourceBytes, offset, chunk.Length);
-            offset += chunk.Length;
+            stream.Position = 0;
+            return stream;
         }
-        if (offset != sourceBytes.Length)
-            throw new InvalidOperationException("上传文件校验失败，请重新选择文件");
-        return sourceBytes;
+        catch
+        {
+            await stream.DisposeAsync();
+            throw;
+        }
     }
 
     private async Task<bool> CleanupSessionFilesAsync(HostedSiteOptimizationSession session)
@@ -1454,11 +1473,19 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
 
     private OptimizedBuild BuildOptimizedPackage(byte[] zipBytes)
     {
-        var analysis = new HostedSiteOptimizationAnalysis { OriginalArchiveBytes = zipBytes.LongLength };
+        using var input = new MemoryStream(zipBytes, writable: false);
+        return BuildOptimizedPackage(input);
+    }
+
+    internal HostedSiteOptimizationAnalysis Analyze(Stream input) => BuildOptimizedPackage(input).Analysis;
+
+    private OptimizedBuild BuildOptimizedPackage(Stream input)
+    {
+        input.Position = 0;
+        var analysis = new HostedSiteOptimizationAnalysis { OriginalArchiveBytes = input.Length };
         try
         {
-            using var input = new MemoryStream(zipBytes, writable: false);
-            using var archive = new ZipArchive(input, ZipArchiveMode.Read);
+            using var archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: true);
             analysis.OriginalEntries = archive.Entries.Count;
             if (archive.Entries.Count > MaxArchiveEntries)
                 return Blocked(analysis, $"ZIP 文件超过 {MaxArchiveEntries} 项，请先在本地导出运行包");
@@ -1478,10 +1505,14 @@ public sealed partial class HostedSiteOptimizationService : IHostedSiteOptimizat
                 .Select(x => new ArchiveFile(x, StripRoot(NormalizePath(x.FullName), prefix)))
                 .ToList();
             analysis.OriginalFiles = files.Count;
+            var oversizedFile = files.FirstOrDefault(x =>
+                HostedSiteUploadLimits.ValidateSingleFileSize(x.Entry.Length) != null);
+            if (oversizedFile != null)
+                return Blocked(analysis, HostedSiteUploadLimits.ValidateSingleFileSize(oversizedFile.Entry.Length)!);
             analysis.OriginalUncompressedBytes = files.Sum(x => x.Entry.Length);
             if (analysis.OriginalUncompressedBytes > MaxUncompressedBytes)
-                return Blocked(analysis, "ZIP 解压后超过 500 MB，未进行优化");
-            if (analysis.OriginalUncompressedBytes > MaxOptimizationBytes)
+                return Blocked(analysis, "ZIP 解压后超过 5000 MB，未进行优化");
+            if (analysis.OriginalUncompressedBytes > MaxOptimizationBytes || input.Length > MaxOptimizationBytes)
             {
                 analysis.Warnings.Add("文件解压后超过 200 MB，本次跳过自动优化并按原文件保存");
                 return new OptimizedBuild { Analysis = analysis };

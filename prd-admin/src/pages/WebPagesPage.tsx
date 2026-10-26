@@ -1,3 +1,4 @@
+import { getWebHostingUploadError } from '@/lib/webHostingUploadLimits';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/design/Button';
 import { Badge } from '@/components/design/Badge';
@@ -1608,6 +1609,21 @@ export default function WebPagesPage() {
                 <span className="text-[13px] font-semibold">筛选</span>
                 {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
               </button>
+              <button
+                type="button"
+                onClick={openCreateUploadDialog}
+                aria-label="上传网页"
+                title="上传网页"
+                data-tour-id="webpages-mobile-upload"
+                className="h-11 w-11 rounded-[12px] inline-flex items-center justify-center shrink-0"
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                }}
+              >
+                <Upload size={17} />
+              </button>
             </div>
             <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px] text-token-muted">
               <span className="truncate">{activeSpaceLabel}</span>
@@ -1628,7 +1644,7 @@ export default function WebPagesPage() {
         ) : null}
 
         {isMobile && (currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-          <MobileFab onClick={openCreateUploadDialog} icon={Upload} label="上传" />
+          <MobileFab onClick={openGenerateDialog} icon={Sparkles} label="生成网页" />
         )}
 
         {/* Batch actions */}
@@ -3326,6 +3342,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
 
   const handleSave = async () => {
     if (!isEdit && !file) return;
+    const sizeError = file ? getWebHostingUploadError(file) : null;
+    if (sizeError) {
+      toast.error('文件过大或为空', sizeError);
+      return;
+    }
     // 打完字直接点「开始上传」是常态，没回车的那一个也算数，别静默丢掉
     const pendingTag = tagInput.trim();
     const effectiveTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
@@ -3815,7 +3836,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
                     <p className="text-sm text-token-secondary">把文件拖到这里，或点击选择</p>
                     <p className="mt-1 text-xs text-token-muted">.html / .htm · .zip（≤20000 个文件，自动识别入口）</p>
                     <p className="text-xs text-token-muted">.md · .pdf · .mp4 / .webm / .mov</p>
-                    <p className="text-xs text-token-muted">单个文件上限 500 MB</p>
+                    <p className="text-xs text-token-muted">ZIP 包与解压总量上限 5000 MB；单个文件上限 500 MB</p>
                   </div>
                 )}
                 <input

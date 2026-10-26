@@ -205,7 +205,7 @@ describe('human project grants through the production server', () => {
     vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '20');
     let finish!: () => void;
     const stalled = new Promise<void>(resolve => { finish = resolve; });
-    const flush = vi.spyOn(state, 'flush').mockImplementationOnce(() => stalled);
+    vi.spyOn(state, 'flush').mockImplementationOnce(() => stalled);
     const response = await grant(['project-b']);
     expect(response.status).toBe(500);
     expect(response.body.error).toContain('持久化状态无法确认');
@@ -222,6 +222,7 @@ describe('human project grants through the production server', () => {
     const restored = new StateService(path.join(dir, 'late-write-restored.json'));
     restored.load();
     expect(restored.getProjectGrants().filter(g => !g.revokedAt).map(g => g.projectId)).toEqual(['project-a']);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await grant(['project-b'])).status).toBe(200);
   });
   it('restores a timed-out grant snapshot on restart before allowing the member or linked credentials', async () => {
@@ -1131,6 +1132,7 @@ describe('human project grants through the production server', () => {
     await vi.waitFor(() => expect(humanProjectGrantUpdateStatus(state, principalId)).toBeUndefined(), { timeout: 2000 });
     expect(state.getPrincipal(principalId)?.status).toBe('disabled');
     expect((await credentialCall('GET', '/api/projects', key)).status).toBe(401);
+    vi.stubEnv('CDS_GRANT_FLUSH_TIMEOUT_MS', '30000');
     expect((await call('PATCH', `/api/auth/users/${memberId}`, owner, { status: 'active' })).status).toBe(200);
   });
 

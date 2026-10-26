@@ -2,19 +2,34 @@ namespace PrdAgent.Core.Models;
 
 public class ProductInitiation
 {
+    /// <summary>服务端派生的正式申领表单规则，不写入立项主数据。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool? ReleaseTrainingRequired { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string ProductId { get; set; } = string.Empty;
     /// <summary>立项关联的产品目录条目（替代手填系统/应用）</summary>
     public string? LinkedProductId { get; set; }
-    /// <summary>立项编号 T{a}.{b}.{c}，全库 ProductInitiations 全局递增，与产品无关</summary>
+    /// <summary>立项编号 T{a}.{b}.{c}，从全域记录筛选对应应用后，按版本级别递增。</summary>
     public string? TCode { get; set; }
+    /// <summary>实际发号完成时间；普通资料编辑不会改变此时间。</summary>
+    public DateTime? IssuedAt { get; set; }
+    /// <summary>只读删除资格：全局最后成功发号、无下游且为申请人本人，不落库。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool CanDelete { get; set; }
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool CanChangeVersionType { get; set; }
     public string? SystemName { get; set; }
     public string? AppName { get; set; }
     public string ProjectType { get; set; } = "standard";
     public string? CustomerSource { get; set; }
+    public string? DemandSource { get; set; }
     public string PlanName { get; set; } = string.Empty;
     public string? RequirementDescription { get; set; }
     public string? DepartmentName { get; set; }
+    /// <summary>业务产品负责人；与实际提交人CreatedBy、历史审批人PrimaryOwnerId分别保留。</summary>
+    public string? OwnerId { get; set; }
+    public string? OwnerName { get; set; }
+    public List<string> ProjectMemberNames { get; set; } = new();
     public string? PlanUrl { get; set; }
     public string VersionType { get; set; } = "minor";
     public List<string> RequirementIds { get; set; } = new();
@@ -41,8 +56,13 @@ public class ProductInitiation
     public string? Remark { get; set; }
     public string? PrimaryOwnerId { get; set; }
     public string? ApprovalComment { get; set; }
+    /// <summary>自动发号后的需求状态待同步标记，后台幂等重试，不重新发号。</summary>
+    public bool RequirementSyncPending { get; set; }
+    public ProductClaimNotification? ClaimNotification { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public string SourceType { get; set; } = "system";
+    /// <summary>无编号历史导入行的规范化指纹，重导时用于去重。</summary>
+    public string? ImportFingerprint { get; set; }
     public Dictionary<string, string> LegacyData { get; set; } = new();
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -73,11 +93,12 @@ public class InitiationMeetingDraftRound
 
 public class ProductRelease
 {
+    public ProductClaimNotification? ClaimNotification { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string ProductId { get; set; } = string.Empty;
     public string? InitiationId { get; set; }
     public string? TCode { get; set; }
-    /// <summary>正式版本编号 V{a}.{b}.{c}，全库 ProductReleases 全局递增，与产品无关</summary>
+    /// <summary>正式版本编号 V{a}.{b}.{c}，从全域记录筛选对应应用后，独立于T序列递增。</summary>
     public string VCode { get; set; } = string.Empty;
     public string? SystemName { get; set; }
     public string? AppName { get; set; }
@@ -87,11 +108,21 @@ public class ProductRelease
     public string VersionType { get; set; } = "minor";
     public string? PlanUrl { get; set; }
     public string? DepartmentName { get; set; }
+    public string? DemandSource { get; set; }
+    public string? RequirementDescription { get; set; }
+    public string? OwnerName { get; set; }
+    public List<string> ProjectMemberNames { get; set; } = new();
+    public string? ContractParty { get; set; }
+    public string? Remark { get; set; }
+    public bool? IsGlobalOpen { get; set; }
+    public bool IsManualTCode { get; set; }
     public string? OwnerId { get; set; }
     public string OpenBrandScope { get; set; } = "上线全域开放";
     public List<string> RequirementIds { get; set; } = new();
     public List<string> TeamMemberIds { get; set; } = new();
     public DateTime? PlannedReleaseAt { get; set; }
+    /// <summary>预计培训时长，单位为分钟；不表示日期或时刻。</summary>
+    public int? PlannedTrainingMinutes { get; set; }
     public DateTime? ReleasedAt { get; set; }
     public string? AnnouncementUrl { get; set; }
     public string Status { get; set; } = "announcement_pending";
@@ -114,4 +145,20 @@ public class ReleaseFeatureItem
     /// <summary>变更类型：added / modified / deprecated / unchanged，见 FeatureChangeType</summary>
     public string ChangeType { get; set; } = FeatureChangeType.Unchanged;
     public string? ChangeNote { get; set; }
+}
+
+/// <summary>产品管理版本工作流的不可变导入/当前存档；不改写旧版本登记存档。</summary>
+public class ProductVersionWorkflowSnapshot
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = string.Empty;
+    public string SourceType { get; set; } = "history_import";
+    public string? SourceFileName { get; set; }
+    public int ImportedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public List<ProductInitiation> Initiations { get; set; } = new();
+    public List<ProductRelease> Releases { get; set; } = new();
+    public List<VersionRegistrationImportError> Errors { get; set; } = new();
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

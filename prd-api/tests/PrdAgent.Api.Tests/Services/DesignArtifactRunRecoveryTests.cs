@@ -1670,6 +1670,121 @@ public sealed class DesignArtifactRunRecoveryTests
     }
 
     [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PresentationEditPersistence_ShouldCreateNewVerifiedSiteAndKeepWholePackage()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync("design_run_recovery");
+        var now = MongoTime(DateTime.UtcNow);
+        var run = NewQueuedRun("run-presentation-edit-package", now);
+        run.Operation = DesignArtifactOperations.Edit;
+        run.ArtifactType = DesignArtifactTypes.HtmlPpt;
+        run.Runtime = DesignArtifactRuntimes.OpenDesign;
+        run.DeploymentSlug = DeploymentScope.Current;
+        run.TargetSiteId = "source-site";
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var claimed = await HostedSiteEditRunWorker.TryClaimAsync(
+            fixture.Db, run.Id, "worker-a", now, TimeSpan.FromMinutes(2), CancellationToken.None);
+        Assert.NotNull(claimed);
+        var files = BuildDesignWorkspaceFiles();
+        var html = Encoding.UTF8.GetString(Convert.FromBase64String(
+            files.Single(file => file.Path == "index.html").ContentBase64));
+        var preparedHtml = html.Replace("</body>", "<script src=\"assets/presentation-nav.js\"></script></body>", StringComparison.Ordinal);
+        var site = new HostedSite
+        {
+            Id = "new-presentation-site",
+            OwnerUserId = run.UserId,
+            SourceType = "design-agent",
+            SourceRef = run.Id,
+            SiteUrl = "https://site.invalid/new-presentation-site/index.html",
+            ContentVersion = now,
+        };
+        var baseline = new HostedSiteRevision
+        {
+            Id = "new-presentation-revision",
+            SiteId = site.Id,
+            CreatedByUserId = run.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Runtime = DesignArtifactRuntimes.OpenDesign,
+            SourceRunId = run.Id,
+            Html = preparedHtml,
+            PublishedContentVersion = now,
+        };
+        IReadOnlyList<HostedSiteVerifiedFile>? writtenPackage = null;
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(service => service.PrepareHtmlForHosting(
+                It.Is<byte[]>(bytes => Encoding.UTF8.GetString(bytes) == html),
+                "index.html"))
+            .Returns(Encoding.UTF8.GetBytes(preparedHtml));
+        sites.Setup(service => service.CreateFromVerifiedFilesAsync(
+                run.UserId,
+                It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(),
+                run.Title,
+                "由知识驱动设计生成",
+                "design-agent",
+                run.Id,
+                It.IsAny<List<string>?>(),
+                null,
+                "worker-a",
+                It.IsAny<CancellationToken>()))
+            .Callback((string _, IReadOnlyList<HostedSiteVerifiedFile> package, string? _, string? _, string _, string _, List<string>? _, string? _, string _, CancellationToken _) =>
+                writtenPackage = package)
+            .ReturnsAsync(site);
+        sites.Setup(service => service.GetEditableEntryHtmlAsync(site.Id, run.UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(site, preparedHtml, now));
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(service => service.EnsureGeneratedVerifiedSnapshotAsync(
+                site.Id,
+                run.UserId,
+                It.Is<HostedSiteEditableEntry>(entry => entry.Html == preparedHtml),
+                It.IsAny<IReadOnlyList<HostedSiteVerifiedFile>>(),
+                DesignArtifactRuntimes.OpenDesign,
+                run.Id,
+                It.IsAny<IReadOnlyCollection<string>>(),
+                It.IsAny<CancellationToken>()))
+            .Callback((string _, string _, HostedSiteEditableEntry _, IReadOnlyList<HostedSiteVerifiedFile> package, string _, string _, IReadOnlyCollection<string> _, CancellationToken _) =>
+            {
+                Assert.Same(writtenPackage, package);
+                baseline.VerifiedFiles = package.Select(file => new HostedSiteRevisionFile
+                {
+                    Path = file.Path,
+                    Content = file.Content,
+                    Sha256 = file.Sha256,
+                    MimeType = file.MimeType,
+                }).ToList();
+            })
+            .ReturnsAsync(baseline);
+
+        var persisted = await HostedSiteEditRunWorker.PersistArtifactWithLeaseAsync(
+            fixture.Db,
+            claimed!,
+            "worker-a",
+            html,
+            null,
+            null,
+            sites.Object,
+            revisions.Object,
+            now.AddMilliseconds(1),
+            TimeSpan.FromMinutes(2),
+            CancellationToken.None,
+            files,
+            persistEditAsNewSite: true);
+
+        Assert.Equal(site.Id, persisted.SiteId);
+        Assert.Equal(baseline.Id, persisted.RevisionId);
+        Assert.NotNull(writtenPackage);
+        Assert.Equal(files.Count, writtenPackage!.Count);
+        Assert.Equal(
+            files.Select(file => file.Path).OrderBy(path => path, StringComparer.Ordinal),
+            writtenPackage.Select(file => file.Path).OrderBy(path => path, StringComparer.Ordinal));
+        Assert.Equal(preparedHtml, Encoding.UTF8.GetString(
+            writtenPackage.Single(file => file.Path == "index.html").Content));
+        Assert.Contains(writtenPackage, file => file.Path == "assets/design-tokens.json");
+        Assert.Contains(writtenPackage, file => file.Path == "manifest.json");
+        sites.VerifyAll();
+        revisions.VerifyAll();
+    }
+
+    [Fact]
     public void VerifiedExecutorOutput_StripsOnlyTrustedCspAndRequiresExactPackageBytes()
     {
         var files = BuildDesignWorkspaceFiles();

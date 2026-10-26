@@ -1,3 +1,4 @@
+import { useHostedPdfDownload, HostedPdfDownloadStatus } from './useHostedPdfDownload';
 import { useEffect, useRef, useState } from 'react';
 import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
@@ -74,7 +75,9 @@ export default function SitePreviewModal({
   const [askEnabled, setAskEnabled] = useState(site.askEnabled === true);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const pdfDownload = useHostedPdfDownload({ id: site.id, siteUrl: site.siteUrl, entryFile: site.entryFile,
+    pdfFilePaths: site.pdfFilePaths });
+  const iframeRef = pdfDownload.iframeRef;
 
   useEffect(() => {
     if (site.askEnabled != null) return;
@@ -342,14 +345,16 @@ export default function SitePreviewModal({
                 </button>
               </div>
             )}
+            <HostedPdfDownloadStatus status={pdfDownload.status} />
             <iframe
               ref={iframeRef}
               key={renderMode}
               src={useSrcDoc ? undefined : previewSource.src}
-              srcDoc={useSrcDoc ? srcDoc! : undefined}
+              srcDoc={useSrcDoc && srcDoc ? pdfDownload.decorateHtml(srcDoc) : undefined}
               className="w-full h-full"
               tabIndex={-1}
               onLoad={() => {
+                pdfDownload.notifyFrame();
                 // iframe 成功加载：清 loading 同时清 errored
                 // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
                 setLoading(false);
