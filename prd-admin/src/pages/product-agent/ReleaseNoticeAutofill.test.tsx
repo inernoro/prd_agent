@@ -70,7 +70,7 @@ describe('完整正式申领弹窗的原文回填', () => {
     expect(source.planName).toBe('米多总平台（IMP配套方案）');
   });
 
-  it.each(['dark', 'light'])('%s主题方案区只显示方案，回填仍可改选负责人和再次粘贴', async (theme) => {
+  it.each(['dark', 'light'])('%s主题方案区显示T号与最终名称，回填仍可改选负责人和再次粘贴', async (theme) => {
     document.documentElement.setAttribute('data-theme', theme);
     await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
     const owner = input('搜索并选择产品负责人');
@@ -111,7 +111,7 @@ describe('完整正式申领弹窗的原文回填', () => {
     await paste();
     expect(api.parseProductVersionMessage).toHaveBeenCalledTimes(2);
     expect(owner.value).toBe('欧石玲');
-    expect(input('搜索方案名称或 T 号').title).toBe(source.planName);
+    expect(input('搜索方案名称或 T 号').title).toBe(`${source.tCode} · ${source.planName}`);
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
   });
 
