@@ -1,388 +1,127 @@
 name: CI
-
 on:
-  push:
-    branches: [main, develop]
-  pull_request:
-    branches: [main, develop]
   workflow_dispatch:
-
+permissions:
+  contents: read
 env:
-  DOTNET_VERSION: '8.0.x'
-  NODE_VERSION: '20'
-  PNPM_VERSION: '9'
-
+  SOURCE: 226998b2b187714695648e2114c548b6925d1570
+  BASE: 0dea45f1632a3e6a8cc0e7bbe0deb30f8ad91f45
 jobs:
-  # 检测变更的路径
-  changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    outputs:
-      server: ${{ steps.filter.outputs.server }}
-      admin: ${{ steps.filter.outputs.admin }}
-      desktop: ${{ steps.filter.outputs.desktop }}
-      cds: ${{ steps.filter.outputs.cds }}
-      docs: ${{ steps.filter.outputs.docs }}
-      release_scripts: ${{ steps.filter.outputs.release_scripts }}
-      acceptance_report: ${{ steps.filter.outputs.acceptance_report }}
-      design_runtime: ${{ steps.filter.outputs.design_runtime }}
+  admin:
+    name: Admin Dashboard Build
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Path filter
-        uses: dorny/paths-filter@v3
-        id: filter
+      - uses: actions/checkout@v4
         with:
-          filters: |
-            server:
-              - 'prd-api/**'
-              # 用量口径守卫（AdoptionTokenGuardTests / navCoverage 里的 route token 套件）读的是
-              # 周报底稿。不登记的话，「只写一份周报、标签写错一个字」的 PR 会整个跳过这道闸——
-              # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
-              - 'doc/report.*.md'
-              # GatewayDataDomainGuardTests 直接读取 llmgw/web 源码并校验跨模块产品契约。
-              - 'llmgw/web/**'
-              - 'llmgw/serving/**'
-              # ProviderPresets 的「baseUrl 是否自带版本号」判据必须与 OpenAIGatewayAdapter 一致，
-              # 守卫读的是 console-api 的源码。不登记的话，只改 console-api 的 PR 会跳过这道闸——
-              # 而判据漂移正好就发生在只改一边的时候（形状 7：守卫自己没接上线）。
-              - 'llmgw/console-api/**'
-              # StableSmokeIdentityPolicyTests 会直接读取部署模板与两份 Compose，校验正式巡检
-              # 联邦身份保持只读且变量真正进入容器。只改这些输入也必须运行 server-build。
-              - '.env.template'
-              - 'docker-compose.yml'
-              - 'docker-compose.dev.yml'
-              # 官方技能目录新鲜度自测跑在 server-build 里，它的输入是这三处。
-              # 不登记的话，「只改技能不改 prd-api」的 PR 会整个跳过这道闸 ——
-              # 而那恰好就是这道闸要防的场景（改了技能忘重新生成，分发旧内容）。
-              - '.claude/skills/**'
-              - 'scripts/skill-bundles.json'
-              - 'scripts/bundle-official-skills.mjs'
-              - 'scripts/test-official-skill-bundles.mjs'
-              - 'scripts/verify-dotnet-test-projects.sh'
-              - '.github/workflows/ci.yml'
-            admin:
-              - 'prd-admin/**'
-              # 用量口径守卫（AdoptionTokenGuardTests / navCoverage 里的 route token 套件）读的是
-              # 周报底稿。不登记的话，「只写一份周报、标签写错一个字」的 PR 会整个跳过这道闸——
-              # 而那正是它要防的场景（形状 7：守卫自己没接上线）。
-              - 'doc/report.*.md'
-              - 'e2e/**'
-              - '.github/workflows/ci.yml'
-            desktop:
-              - 'prd-desktop/**'
-              - '.github/workflows/ci.yml'
-            # 设计执行服务（design-runtime/opendesign）：tsc + vitest。移植过来的纯函数测试读
-            # 仓库根 scripts/fixtures 下的三份共享夹具，夹具改了也要跑。
-            design_runtime:
-              - 'design-runtime/**'
-              - 'scripts/fixtures/generated-html-normalization-v1.json'
-              - 'scripts/fixtures/opendesign-task-v1.json'
-              - 'scripts/fixtures/opendesign-task-v1-direction.json'
-              - '.github/workflows/ci.yml'
-            cds:
-              - 'cds/**'
-              - '.github/workflows/ci.yml'
-              # build-scope-ci-parity 守卫的两份被守文件，理由同 cds.yml 的同名条目（形状 7）。
-              - 'cds-compose.yml'
-              - '.github/workflows/branch-image.yml'
-            docs:
-              # 文档说人话闸门：判据 doc/rule.doc.readability.md。
-              # 新增文档必须自带导读三行，否则棘轮欠账上升，这道闸会红。
-              - 'doc/**'
-              # 规则与技能同闸：规则要有导读两行，技能 frontmatter 要能说清触发时机
-              - '.claude/rules/**'
-              # Codex 侧规则同属这道闸：少扫一处，那一处就能绕开导读要求
-              - '.Codex/rules/**'
-              # 面包屑守卫扫的是全仓 git 跟踪的源码文件，所以这道闸的触发面也必须是全仓：
-              # 列举根目录 = 列漏的那棵树里引入死引用时闸门照样跳过（形状 7）。
-              # 代价是这个 job 每个 PR 都跑一次，十几秒，换的是「守卫扫到哪、闸门就管到哪」。
-              - '**'
-              - '.claude/skills/**/SKILL.md'
-              # 守卫会读这几份汇报模板，断言「本周一句话 / 今日大事」还在。
-              # 不登记进来的话，只改模板的 PR 会整个跳过这道闸——守卫等于没接上线。
-              - '.claude/skills/weekly-update-summary/reference/**'
-              - '.claude/skills/daily-report-summary/reference/**'
-              - 'scripts/doc-readability-check.py'
-              - 'scripts/fixtures/doc-readability-baseline.json'
-              - 'scripts/tests/doc-readability-ratchet.test.py'
-              # --skills-audit 的输出契约守卫（entropy-cleanup 的 D4 靠那些前缀决策）
-              - 'scripts/tests/test_skills_audit_contract.py'
-              - '.github/workflows/ci.yml'
-            release_scripts:
-              - 'exec_dep.sh'
-              - 'scripts/lib/static-release.sh'
-              - 'scripts/lib/gateway-bind-mount.sh'
-              - 'scripts/prd-agent-public-surface-smoke.py'
-              - 'scripts/prd-agent-release-evidence.py'
-              - 'scripts/tests/static-release-*.test.sh'
-              - 'scripts/tests/gateway-bind-mount-coherence.test.sh'
-              - 'scripts/tests/public-surface-smoke.test.py'
-              - 'scripts/tests/asset-storage-readiness-gate.test.py'
-              - 'scripts/tests/release-evidence.test.py'
-              - 'scripts/llmgw-prod-preflight.py'
-              - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
-              # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
-              # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
-              # 它们守的是 gw-smoke / 发布双密钥 / ASR WebSocket 转发，
-              # 所以连同各自的被测脚本一起登记进这道闸。
-              - 'scripts/gw-smoke.py'
-              # changelog 碎片合并的被测文件：不登记的话，只改合并逻辑的 PR
-              # 完全跳过这道闸，而它要防的重复日期段恰恰是在那里长出来的（形状 7）。
-              - 'scripts/assemble-changelog.sh'
-              - 'scripts/lib/changelog_merge.py'
-              - 'scripts/tests/test_*.py'
-              # 债务台账解析器：守卫读的是它 collect() 出来的真实结果，
-              # 不登记被测文件的话，只改解析器的 PR 完全跳过这道闸（形状 7）。
-              - 'scripts/sync-debt-ledger.py'
-              # 台账本身也是被测输入：守卫扫的是 doc/debt.*.md 里的真实表格，
-              # 只登记解析器的话，「只改一份台账」的 PR 照样跳过这道闸 ——
-              # 而撞车的标识、认不出的表头、解析成空，恰恰都是在台账那边长出来的。
-              - 'doc/debt.*.md'
-              # 周报浅克隆闸的被测文件。守卫读的是采集器的退出码 + SKILL.md 里
-              # Phase 2.0 那段 shell，两者都得登记：只登记守卫自己，这道闸就只在
-              # 「守卫被改」时开，而漂移恰恰发生在被测文件那边（形状 7）。
-              # SKILL.md 虽在 docs filter 里，但那个 job 不跑这批 Python 守卫。
-              - '.claude/skills/weekly-update-summary/scripts/collect_week_context.py'
-              - '.claude/skills/weekly-update-summary/SKILL.md'
-              # 守卫还读 reference/data-collection.md（断言闸排在第一条 git log 之前、
-              # 重跑边界是 2.0 不是 2.1）。漏登记的话，只改那份 reference 把闸挪到
-              # git log 后面的 PR 一路全绿——守卫读什么就得登记什么。
-              - '.claude/skills/weekly-update-summary/reference/data-collection.md'
-              - '.agents/skills/prototype-export/scripts/audit_prototype_package.py'
-              - '.agents/skills/prototype-export/tests/test_audit_prototype_package.py'
-              # cdscli 的冒烟覆盖守卫盯的是这个脚本本身：不把它登记进来，
-              # 只改 cdscli 的 PR 就完全跳过这道闸，而假绿恰恰是在那里回潮的
-              # （形状 7：守卫自己没接上线）。
-              - '.claude/skills/cds/cli/cdscli.py'
-              # 守卫的**被测文件**也必须登记，否则这道闸只在「守卫自己被改」时开，
-              # 而它要防的漂移恰恰发生在被测文件那边：只改模板/规则的 PR 一路全绿，
-              # 守卫从头到尾没跑过（predicate-and-wiring-discipline 形状 2）。
-              # cds/** 虽有自己的 filter，但那个 job 不跑这批 Python 守卫，不能顶替。
-              - '.claude/rules/report-design-system.md'
-              - '.claude/skills/daily-report-summary/reference/report-template-html.html'
-              - '.claude/skills/weekly-update-summary/reference/report-template-html.html'
-              # 证据图守卫 test_report_evidence_figure.py 跑的是 publish.py 里的真判定函数
-              # （check_evidence_figure_css / img_embed），改 publish.py 也必须触发这道闸
-              - '.claude/skills/daily-report-summary/reference/publish.py'
-              - '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py'
-              - 'cds/src/scheduler/nginx-template.ts'
-              - 'scripts/tests/validate-static-dist.test.sh'
-              - 'scripts/validate-static-dist.sh'
-              # 同一个坑的第二批：scripts/tests/ 下 14 个 *.test.mjs（稳定冒烟的编排、
-              # 结果归并、视觉闸、通知分流，共 150 条断言）也从来没有任何 workflow 引用过。
-              # 它们今天全绿，说明不是坏的——只是没人跑。连同各自的被测脚本一起登记。
-              - 'scripts/tests/*.test.mjs'
-              - 'scripts/stable-smoke*.mjs'
-              - 'scripts/compose-stable-smoke-supervisor-report.mjs'
-              - 'scripts/prepare-stable-smoke-archive-report.mjs'
-              - 'scripts/split-stable-smoke-report.mjs'
-              # 视觉验收 harness 是 visual-harness-*.test.mjs 的被测文件，却一直没登记：
-              # 只改 harness.mjs 的 PR 完全跳过这道闸，而漂移恰恰长在那边（形状 7）。
-              - '.claude/skills/create-visual-test-to-kb/scripts/harness.mjs'
-              # 设计复刻工具里被守卫盯着的判据函数（样例数据键、档位导出与比对）
-              - '.claude/skills/design-replication/scripts/fixtures.mjs'
-              - '.claude/skills/design-replication/scripts/spec-export.mjs'
-              - '.claude/skills/design-replication/scripts/spec-diff.mjs'
-              # 切图的横向裁剪边界与漂移守卫的零比对判红。登记在这里是形状 7 的补课：
-              # 守卫只在自己被改时才跑的话，真正会引入漂移的那种 PR（只改被守文件）一路全绿。
-              - '.claude/skills/design-replication/scripts/extract-design.mjs'
-              - '.claude/skills/design-replication/scripts/fixture-drift.mjs'
-              # 每日验收的锚点与导航 label 的交叉核对：被守的是脚本与 navRegistry 两侧。
-              # 守卫读什么就得登记什么——path filter 匹配的是**改了哪些文件**，
-              # 不是 import 图，所以「被主脚本 import」不等于被这道闸覆盖（形状 7）。
-              # daily-acceptance-anchors.test.mjs 的输入现在有四个，逐个在册：
-              - 'scripts/smoke/daily-acceptance.mjs'
-              - 'scripts/smoke/lib/**'
-              - 'prd-admin/src/app/navRegistry.tsx'
-              - 'prd-admin/src/pages/WebPagesPage.tsx'
-              - 'deploy/nginx/**'
-              # 写死 checkout 绝对路径的守卫（test_no_hardcoded_checkout_path.py）扫的是
-              # e2e / scripts / .claude/skills 下所有可执行脚本。守卫扫到哪，闸门就得管到哪——
-              # 只登记守卫自己的话，「只新加一个写死路径的脚本」那种 PR 一路全绿，
-              # 而那正是这条守卫唯一要防的事（形状 7）。
-              - 'e2e/**'
-              - '.claude/skills/**'
-              - 'scripts/**'
-              - '.github/workflows/ci.yml'
-            acceptance_report:
-              # 验收报告的归档门禁（结论语义分层 + 给你的一页结论 + HTML 模板契约）。
-              # 这两个守卫此前躺在仓库里没有任何 workflow 引用，只有人手动跑才会红
-              # （predicate-and-wiring-discipline 形状 7：守卫自己没接上线）。
-              # 被守文件与守卫本身一起登记，只改规则/模板的 PR 也必须跑过这道闸。
-              - 'scripts/test-acceptance-archive-report-gates.py'
-              - 'scripts/check-acceptance-rule-ssot.py'
-              - 'scripts/sync-acceptance-rule-snapshots.py'
-              - '.claude/skills/create-visual-test-to-kb/scripts/archive_report.py'
-              - '.claude/skills/create-visual-test-to-kb/scripts/test_archive_report_verdict_contract.py'
-              - '.claude/skills/create-visual-test-to-kb/reference/**'
-              - '.claude/skills/create-visual-test-to-kb/templates/**'
-              - '.claude/skills/*/references/rules/**'
-              - 'doc/rule.acceptance.*.md'
-              - 'doc/guide.acceptance.*.md'
-              - 'doc/design.acceptance.knowledge-governance.md'
-              - '.github/workflows/ci.yml'
-
-  # 根目录契约扫描整个仓库顶层，不能按变更路径过滤；否则新增一个未批准的
-  # 根目录文件或目录时，守卫本身不会运行，只会在合入 main 后才把 CI 跑红。
-  repository-layout:
-    name: Repository Root Layout
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Root layout contract
-        run: python3 scripts/tests/test_root_layout_contract.py
-
-      # 监控自发现的跨语言契约。挂在这个 job 是因为它无 needs、无 if，每次 CI 都跑——
-      # 挂到带 path filter 的 job 上，只改自检端点的 PR 就会绕过守卫
-      # （predicate-and-wiring-discipline 形状 7：守卫自己没接上线）。
-      # 它守的正是「C# 那边写的字段名，TS 这边认不认」——对不上时两边都看着对，
-      # 而那条监控静默地不存在。
-      - name: Monitor discovery contract
-        run: python3 scripts/tests/test_monitor_discovery_contract.py
-
-      - name: cdscli monitor contract
-        run: python3 scripts/tests/test_cdscli_monitor.py
-
-  docs-readability:
-    name: Docs Readability Ratchet
-    needs: changes
-    if: needs.changes.outputs.docs == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        # 要跟目标分支算「本次碰过哪些文档」，浅克隆没有共同祖先，算不出来
-        uses: actions/checkout@v4
+          ref: 226998b2b187714695648e2114c548b6925d1570
+          fetch-depth: 20
+      - uses: pnpm/action-setup@v4
         with:
-          fetch-depth: 0
-
-      - name: Fetch base branch baseline
-        # 基线要跟目标分支比：不取 main 的话，本分支自己放宽的基线会拿来跟自己比
-        # PR 比目标分支；push 到 main 时 base_ref 是空的，必须比这次推送之前的那个 commit，
-        # 否则取到的就是刚推上去的自己，基线又变成跟自己比
+          version: '9'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Assert immutable source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE"
+      - name: Locked remote dependencies only
+        working-directory: prd-admin
+        run: pnpm install --frozen-lockfile
+      - name: Automatic issue and modal regressions
+        env:
+          RELEASE_PANEL_SNAPSHOT_DIR: ${{ runner.temp }}/release-panel-snapshots
+        working-directory: prd-admin
+        run: pnpm exec vitest run src/pages/product-agent/ReleaseApplicationBasicOnly.test.tsx src/pages/product-agent/ReleaseNoticeAutofill.test.tsx src/pages/product-agent/releaseMemberMatching.test.ts src/components/UserSearchSelect.test.tsx src/components/ItemSearchSelect.test.tsx src/pages/product-agent/ReleasePlanPicker.test.ts src/pages/product-agent/VersionNonBlockingLoading.test.ts src/pages/product-agent/InitiationSinglePage.test.tsx src/pages/product-agent/VersionWorkflowDeletion.test.tsx src/pages/product-agent/useVersionPlanName.test.tsx
+      - name: Type check
+        working-directory: prd-admin
+        run: pnpm tsc --noEmit
+      - name: Full frontend tests
+        working-directory: prd-admin
+        run: pnpm test
+      - name: Changed file lint baseline
+        working-directory: prd-admin
         run: |
-          if [ -n "${{ github.base_ref }}" ]; then
-            # PR：跟目标分支比
-            git fetch --no-tags origin "${{ github.base_ref }}:refs/remotes/origin/base"
-          elif [ -n "${{ github.event.before }}" ] \
-               && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
-            # push：跟这次推送之前的那个 commit 比
-            git fetch --no-tags origin "${{ github.event.before }}"
-            git update-ref refs/remotes/origin/base "${{ github.event.before }}"
-          else
-            # 手动 dispatch / 新分支首推：两个值都没有，退回默认分支。
-            # 不能沿用 push 分支 —— 那会执行 update-ref 传空 SHA，直接报错。
-            git fetch --no-tags origin "${{ github.event.repository.default_branch }}:refs/remotes/origin/base"
-          fi
-
-      - name: Doc reader-header ratchet
-        run: python3 scripts/doc-readability-check.py --ratchet --baseline-ref origin/base
-
-      - name: Doc readability checker guard test
-        run: python3 scripts/tests/doc-readability-ratchet.test.py
-
-      - name: Claude memory contract
-        # 守的是 CLAUDE.md 与 .claude/rules/ 的加载契约：frontmatter 键必须是 `paths`
-        # （写成 `globs` 会静默退化成全量加载）、每个 glob 必须命中真实文件（死 glob
-        # 会让规则永不加载，比不写还差）、注入行数不超预算。这道闸挂在 docs 这里是因为
-        # 它的 filter 已含 '**' 与 '.claude/rules/**'，每个 PR 都开——被测文件在哪
-        # 一棵树里改动都跑得到（predicate-and-wiring-discipline 形状 7）。
-        run: python3 scripts/tests/test_claude_memory_contract.py
-
-      - name: Skills audit output contract
-        # entropy-cleanup 的 D4 完全靠 --skills-audit 的输出前缀决策：
-        # `AUTOFIX_NAME: ` 触发自动补 name，`BLOCK: ` 触发硬闸拦住自动合并。
-        # 前缀改一个字、某种坏清单漏判、或退出码不对，熵减就会静默地要么不修、
-        # 要么把不可发现的技能合进去，而全仓测试照样全绿——正是「删掉不会红」
-        # 的那类接线，所以必须有守卫。同样挂在 docs 这道闸（filter 含 '**'）。
-        run: python3 scripts/tests/test_skills_audit_contract.py
-
-  release-script-test:
-    name: Production Release Script Test
-    needs: changes
-    if: needs.changes.outputs.release_scripts == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Static release layout
-        run: sh scripts/tests/static-release-layout.test.sh
-
-      - name: Static release through nginx worker
-        run: sh scripts/tests/static-release-nginx.test.sh
-
-      - name: Gateway bind mount coherence
-        run: sh scripts/tests/gateway-bind-mount-coherence.test.sh
-
-      - name: Public surface smoke unit test
-        run: python3 scripts/tests/public-surface-smoke.test.py
-
-      - name: Asset storage readiness gate
-        run: python3 scripts/tests/asset-storage-readiness-gate.test.py
-
-      - name: Release evidence ledger
-        run: python3 scripts/tests/release-evidence.test.py
-
-      - name: Gateway route self-test failure diagnosis
-        run: python3 scripts/tests/gateway-route-self-test-diagnosis.test.py
-
-      - name: Static dist validation
-        run: sh scripts/tests/validate-static-dist.test.sh
-
-      - name: Release script source guards
+          git worktree add "$RUNNER_TEMP/auto-issue-lint-base" "$BASE"
+          ln -s "$GITHUB_WORKSPACE/prd-admin/node_modules" "$RUNNER_TEMP/auto-issue-lint-base/prd-admin/node_modules"
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { existsSync } from 'node:fs';
+          import path from 'node:path';
+          const current = process.cwd();
+          const baseline = path.join(process.env.RUNNER_TEMP, 'auto-issue-lint-base/prd-admin');
+          const files = execFileSync('git', ['diff', '--relative', '--name-only', process.env.BASE, process.env.SOURCE, '--', 'src'], { cwd: current, encoding: 'utf8' }).trim().split('\n').filter(f => /\.tsx?$/.test(f));
+          if (!files.length) throw new Error('Expected changed frontend source files');
+          const eslint = path.join(current, 'node_modules/eslint/bin/eslint.js');
+          function scan(cwd, paths) {
+            if (!paths.length) return new Map();
+            let output;
+            try { output = execFileSync(process.execPath, [eslint, ...paths, '--format', 'json'], { cwd, encoding: 'utf8' }); }
+            catch (error) { if (!error.stdout) throw error; output = error.stdout; }
+            const counts = new Map();
+            for (const result of JSON.parse(output)) for (const m of result.messages) {
+              const key = JSON.stringify([path.relative(cwd, result.filePath), m.ruleId, m.severity, m.message]);
+              counts.set(key, (counts.get(key) ?? 0) + 1);
+            }
+            return counts;
+          }
+          const before = scan(baseline, files.filter(f => existsSync(path.join(baseline, f))));
+          const after = scan(current, files);
+          const added = [...after].filter(([key, count]) => count > (before.get(key) ?? 0));
+          console.log(JSON.stringify({ files, added }));
+          if (added.length) process.exit(1);
+          NODE
+      - name: Build frontend
+        working-directory: prd-admin
+        run: pnpm build
+      - name: Capture rendered release panel with installed Chrome
         run: |
-          set -e
-          for t in scripts/tests/test_*.py; do
-            echo "--- $t"
-            python3 "$t"
+          set -euo pipefail
+          chrome="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
+          test -n "$chrome"
+          "$chrome" --version
+          capture="$RUNNER_TEMP/release-panel-snapshots"
+          test -s "$capture/release-panel-dark.html"
+          test -s "$capture/release-panel-light.html"
+          cp -R prd-admin/dist/assets "$capture/assets"
+          CAPTURE_DIR="$capture" python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          folder=Path(os.environ['CAPTURE_DIR'])
+          css=sorted((folder/'assets').glob('index-*.css'))
+          assert css
+          for path in folder.glob('release-panel-*.html'):
+              html=path.read_text()
+              links=''.join(f'<link rel="stylesheet" href="/assets/{item.name}">' for item in css)
+              boot='<script>addEventListener("load",()=>{if(location.search.includes("bottom")){for(const el of document.querySelectorAll("[role=dialog] div")){if(getComputedStyle(el).overflowY==="auto")el.scrollTop=el.scrollHeight;}}});</script>'
+              path.write_text('<!doctype html>'+html.replace('<head>','<head><meta charset="utf-8">',1).replace('</head>',links+'</head>').replace('</body>',boot+'</body>'))
+          (folder/'source.json').write_text(json.dumps({'source':os.environ['SOURCE'],'kind':'actual React Dialog DOM after exact notice regression; static CSS browser capture, no production data'},indent=2))
+          PY
+          python3 -m http.server 8767 --bind 127.0.0.1 --directory "$capture" >"$RUNNER_TEMP/release-panel-http.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8767/source.json >/dev/null; then break; fi
+            sleep 0.2
           done
+          for theme in dark light; do
+            for view in top bottom narrow; do
+              size=1280,1000
+              query=""
+              if [ "$view" = bottom ]; then query='?bottom=1'; fi
+              if [ "$view" = narrow ]; then size=390,844; fi
+              "$chrome" --headless --no-sandbox --disable-dev-shm-usage --disable-gpu --no-first-run --no-default-browser-check --user-data-dir="$RUNNER_TEMP/panel-chrome-$theme-$view" --window-size="$size" --virtual-time-budget=2500 --screenshot="$capture/$theme-$view.png" "http://127.0.0.1:8767/release-panel-$theme.html$query" >"$RUNNER_TEMP/panel-chrome-$theme-$view.log" 2>&1
+              test -s "$capture/$theme-$view.png"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-panel-visual
+          path: |
+            ${{ runner.temp }}/release-panel-snapshots/*.png
+            ${{ runner.temp }}/release-panel-snapshots/source.json
+          retention-days: 7
 
-      - name: Prototype export audit tests
-        run: python3 .agents/skills/prototype-export/tests/test_audit_prototype_package.py
-
-      # scripts/tests/ 下的 *.test.mjs 此前没有任何 workflow 引用（写了等于没写）。
-      # 用 node --test 一次跑完；shopt -s nullglob 保证「一个都没有」时是空跑而不是
-      # 把字面量 '*.test.mjs' 当文件名传进去炸掉。
-      - name: Script guards (node --test)
-        shell: bash
-        run: |
-          set -e
-          shopt -s nullglob
-          files=(scripts/tests/*.test.mjs)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "没有 *.test.mjs —— 这道步骤本该有东西可跑，请检查是不是被误删了"
-            exit 1
-          fi
-          node --test "${files[@]}"
-
-  acceptance-report-gate:
-    name: Acceptance Report Gate
-    needs: changes
-    if: needs.changes.outputs.acceptance_report == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Acceptance rule SSOT wiring
-        run: python3 scripts/check-acceptance-rule-ssot.py
-
-      - name: Archive report gates
-        run: python3 scripts/test-acceptance-archive-report-gates.py
-
-      - name: Daily verdict and plain-summary contract
-        run: python3 .claude/skills/create-visual-test-to-kb/scripts/test_archive_report_verdict_contract.py
-
-  # 后端服务构建和测试
-  server-build:
+  server:
     name: Server Build & Test
-    needs: changes
-    if: needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    # 临时兼容：Ubuntu 24.04 runner 的 Linux 6.19+ 内核被当前 Mongo 8.0 拒绝启动。
     runs-on: ubuntu-22.04
     services:
       mongodb:
@@ -396,492 +135,31 @@ jobs:
           --health-retries 20
     env:
       MONGODB_TEST_CONNECTION: mongodb://127.0.0.1:27017
-    defaults:
-      run:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 226998b2b187714695648e2114c548b6925d1570
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Video test dependencies on CI
+        run: |
+          if command -v ffmpeg >/dev/null 2>&1; then
+            ffmpeg -version
+          else
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+      - name: Assert immutable source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE"
+      - name: Restore remote only
         working-directory: prd-api
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: MongoDB runtime versions
-        run: |
-          uname -r
-          docker exec "${{ job.services.mongodb.id }}" mongosh --quiet --eval \
-            'const v = db.version(); print("MongoDB " + v); if (!/^8[.]0[.]/.test(v) || db.adminCommand({ ping: 1 }).ok !== 1) quit(1);'
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Install video test dependencies
-        run: |
-          # Azure 镜像源曾连续两轮卡在 deb 下载；使用官方 HTTPS 源，保留包签名与完整依赖校验。
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/apt-mirrors.txt
-          fi
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: Cache NuGet packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/**.csproj') }}
-          restore-keys: |
-            ${{ runner.os }}-nuget-
-
-      # 官方技能目录是 EmbeddedResource：改了 .claude/skills 却忘了重新生成，
-      # 后端会继续分发旧内容，而编译和单测都不会红（2026-07-28 真实踩过：
-      # findmapskills 的更新命令在源文件已修，客户下载到的仍是静默不更新的旧版）。
-      # 这条自测同时校验生成物新鲜度、分发产物完整性与零 emoji。
-      - name: Official skill catalog freshness and bundle self-test
-        working-directory: ${{ github.workspace }}
-        run: node scripts/test-official-skill-bundles.mjs
-
-      - name: Verify .NET test project discovery contract
-        working-directory: ${{ github.workspace }}
-        run: bash scripts/verify-dotnet-test-projects.sh
-
-      - name: Restore dependencies
         run: dotnet restore PrdAgent.sln
-
-      - name: Build
+      - name: Build full solution
+        working-directory: prd-api
         run: dotnet build PrdAgent.sln -c Release --no-restore
-
-      - name: Run tests (exclude integration and manual tests)
-        run: |
-          set -o pipefail
-          dotnet test PrdAgent.sln -c Release --no-build --verbosity detailed \
-            --filter "Category!=Integration&Category!=Manual" \
-            --logger "trx;LogFileName=test-results.trx" \
-            --logger "console;verbosity=detailed" \
-            --results-directory ./TestResults 2>&1 | tee dotnet-test.log
-        shell: bash
-
-      # 失败兜底诊断 —— xunit 失败默认不上 annotation panel,WebFetch 读 HTML 也看不到 raw log,
-      # 用 grep 提取 [FAIL] 行并显式 ::error:: 上 annotation,annotation 是公开 HTML 可读的.
-      - name: Surface test failures (on failure)
-        if: failure()
-        run: |
-          echo "===== ALWAYS-ON DIAGNOSTIC RAN ====="
-          ls -la
-          echo "----- find trx -----"
-          find . -name "*.trx" -mmin -30 2>/dev/null || echo "(no trx)"
-          if [ ! -f dotnet-test.log ]; then
-            echo "::warning::dotnet-test.log not found - Build step likely failed BEFORE test step ran"
-            exit 0
-          fi
-          echo "----- last 300 lines of dotnet-test.log -----"
-          tail -300 dotnet-test.log
-          echo "----- grep [FAIL] / Assert / error markers -----"
-          grep -nE "\[FAIL\]|Assert\.|error CS|Failed!|Build FAILED" dotnet-test.log | head -80 || true
-
-          # xunit detailed verbosity 会输出形如:
-          #   [xUnit.net 00:00:00.05]   PrdAgent.Api.Tests.Services.ReportImportMarkdownTests.X [FAIL]
-          # 把这些行直接转成 annotation,人眼+WebFetch 都能看见.
-          echo "----- emitting [FAIL] annotations -----"
-          grep -E "\[FAIL\]" dotnet-test.log | sed 's/^[[:space:]]*//' | while IFS= read -r line; do
-            echo "::error title=Test FAIL::${line}"
-          done || true
-
-          # trx 路线作为补充
-          echo "----- emitting trx annotations -----"
-          for trx in $(find . -name "test-results.trx" 2>/dev/null); do
-            python3 -c "
-          import re, sys, xml.etree.ElementTree as ET
-          ns = {'t': 'http://microsoft.com/schemas/VisualStudio/TeamTest/2010'}
-          root = ET.parse(sys.argv[1]).getroot()
-          for r in root.findall('.//t:UnitTestResult[@outcome=\"Failed\"]', ns):
-              name = r.get('testName', '?')
-              msg_el = r.find('./t:Output/t:ErrorInfo/t:Message', ns)
-              msg = (msg_el.text or '').strip() if msg_el is not None else ''
-              msg_one = re.sub(r'\s+', ' ', msg)[:500]
-              print(f'::error title=Test FAIL: {name}::{msg_one}')
-          " "$trx" || echo "(failed to parse $trx)"
-          done
-        shell: bash
-
-  # Web 管理后台构建
-  admin-build:
-    name: Admin Dashboard Build
-    needs: changes
-    # main 分支发布不能只依赖本次 push 的路径变更:
-    # 如果上一轮某个模块构建失败,后续只改其他模块会导致失败模块永久 skipped。
-    # PR/develop 仍按路径过滤节省资源。
-    if: needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: prd-admin
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Get pnpm store directory
-        id: pnpm_store
-        shell: bash
-        run: |
-          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-admin-${{ hashFiles('prd-admin/pnpm-lock.yaml', 'prd-admin/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-admin-
-
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Type check
-        run: pnpm tsc --noEmit
-
-      - name: Run tests
-        run: pnpm test
-
-      - name: Build
-        run: pnpm build
-
-      - name: Install recording acceptance dependencies
-        working-directory: ${{ github.workspace }}/e2e
-        run: pnpm install --frozen-lockfile
-
-      - name: Type check recording acceptance
-        working-directory: ${{ github.workspace }}/e2e
-        run: pnpm typecheck
-
-      - name: Install Chromium for recording acceptance
-        working-directory: ${{ github.workspace }}/e2e
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Run focused browser acceptance
-        working-directory: ${{ github.workspace }}/e2e
-        env:
-          E2E_LOCAL_SERVER: '1'
-        run: pnpm exec playwright test specs/recording-continuity.spec.ts specs/generation-progress-layout.spec.ts specs/web-hosting-version-touch-target.spec.ts
-
-      - name: Upload recording acceptance evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: recording-continuity-acceptance-${{ github.run_id }}
-          path: |
-            e2e/playwright-report/
-            e2e/results.json
-          if-no-files-found: warn
-          retention-days: 14
-
-  # 桌面客户端构建检查（不打包）
-  desktop-check:
-    name: Desktop Client Check
-    needs: changes
-    if: needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-22.04
-    defaults:
-      run:
-        working-directory: prd-desktop
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Get pnpm store directory
-        id: pnpm_store
-        shell: bash
-        run: |
-          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-desktop-${{ hashFiles('prd-desktop/pnpm-lock.yaml', 'prd-desktop/package.json') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-desktop-
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust toolchain fingerprint
-        id: rustc
-        run: |
-          if command -v sha256sum >/dev/null 2>&1; then
-            FP="$(rustc -Vv | sha256sum | awk '{print $1}')"
-          else
-            FP="$(rustc -Vv | shasum -a 256 | awk '{print $1}')"
-          fi
-          echo "fingerprint=$FP" >> "$GITHUB_OUTPUT"
-
-      - name: glibc fingerprint (Linux)
-        id: glibc
-        run: |
-          GLIBC_VER="$(getconf GNU_LIBC_VERSION 2>/dev/null || (ldd --version | head -n1))"
-          GLIBC_FP="$(printf '%s' "$GLIBC_VER" | sha256sum | cut -d ' ' -f1)"
-          echo "fingerprint=$GLIBC_FP" >> $GITHUB_OUTPUT
-
-      - name: Cache Cargo registry/git
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/registry/src/
-            ~/.cargo/git/db/
-            ~/.cargo/git/checkouts/
-          key: ${{ runner.os }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-registry-${{ steps.rustc.outputs.fingerprint }}-
-            ${{ runner.os }}-cargo-registry-
-
-      - name: Cache Cargo target (platform specific)
-        uses: actions/cache@v4
-        with:
-          path: |
-            prd-desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-${{ steps.glibc.outputs.fingerprint }}-${{ hashFiles('prd-desktop/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-${{ steps.glibc.outputs.fingerprint }}-
-            ${{ runner.os }}-cargo-target-${{ steps.rustc.outputs.fingerprint }}-
-            ${{ runner.os }}-cargo-target-
-
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
-      
-      - name: Enable sccache (best effort)
-        shell: bash
-        run: |
-          set +e
-          SCCACHE_GHA_ENABLED=true sccache --start-server
-          if [ $? -eq 0 ]; then
-            echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
-            echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
-          else
-            echo "sccache unavailable (likely GH cache transient issue), fallback to plain rustc"
-          fi
-          set -e
-
-      - name: Install system dependencies (Linux)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-      - name: Install frontend dependencies
-        run: pnpm install
-
-      - name: Type check frontend
-        run: pnpm tsc --noEmit
-
-      - name: Build frontend
-        run: pnpm build
-
-      - name: Generate Tauri icons
-        run: pnpm tauri:icons
-
-      - name: Check Rust (dev)
-        working-directory: prd-desktop/src-tauri
-        run: cargo check
-
-      - name: Check Rust (release)
-        working-directory: prd-desktop/src-tauri
-        run: cargo check --release
-
-      - name: Rust format check
-        working-directory: prd-desktop/src-tauri
-        run: cargo fmt --check
-
-      - name: Rust clippy
-        working-directory: prd-desktop/src-tauri
-        run: cargo clippy -- -D warnings
-
-      - name: sccache stats
-        if: always()
-        shell: bash
-        run: |
-          if command -v sccache >/dev/null 2>&1; then
-            sccache --show-stats || true
-          fi
-
-  # CDS dashboard (Node/Express) — tsc + vitest (738 tests baseline).
-  # Mirrors the dedicated `cds.yml` workflow so every aggregate `ci.yml`
-  # run reports a unified ci-status for branch protection, even though
-  # cds.yml still exists for operator familiarity. The jobs are
-  # path-filtered so a PR that only touches cds/** doesn't pay the
-  # full admin+desktop+server price here.
-  cds-build:
-    name: CDS Build & Test
-    needs: changes
-    if: needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: cds
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Get pnpm store directory
-        id: pnpm_store
-        shell: bash
-        run: |
-          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-cds-
-
-      - name: Install dependencies
-        run: pnpm install
-
-      # 前端依赖装在 cds/web/node_modules。tests/ 里的渲染冒烟直接 import 前端组件，
-      # vitest.config.ts 把 react / react-dom 别名指向那里；这一步缺了别名就解析不到，
-      # 整个测试文件加载失败。守卫见 tests/lint/ci-installs-web-deps.test.ts。
-      - name: Install web dependencies
-        run: pnpm run install:web
-
-      - name: Type check
-        run: pnpm exec tsc --noEmit
-
-      - name: Run tests
-        run: pnpm test
-
-  # 设计执行服务（design-runtime/opendesign）—— tsc + vitest。
-  # 镜像构建在 branch-image.yml 里，而镜像的构建阶段只跑 `pnpm run build`（不编译测试、不跑 vitest），
-  # 所以测试只能在这里跑。
-  design-runtime-test:
-    name: Design Runtime Test
-    needs: changes
-    if: needs.changes.outputs.design_runtime == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: design-runtime/opendesign
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install isolated quality browser
-        run: pnpm exec playwright-core install --with-deps chromium
-
-      - name: Type check
-        run: pnpm exec tsc --noEmit && pnpm run typecheck
-
-      - name: Run tests
-        run: pnpm test
-
-  # CI 状态汇总（用于 branch protection）
-  ci-status:
-    name: CI Status
-    runs-on: ubuntu-latest
-    needs: [changes, repository-layout, server-build, admin-build, desktop-check, cds-build, design-runtime-test, docs-readability, acceptance-report-gate]
-    if: always()
-    steps:
-      - name: Check CI status
-        run: |
-          echo "Changes detected:"
-          echo "  Server: ${{ needs.changes.outputs.server }}"
-          echo "  Admin: ${{ needs.changes.outputs.admin }}"
-          echo "  Desktop: ${{ needs.changes.outputs.desktop }}"
-          echo "  CDS: ${{ needs.changes.outputs.cds }}"
-          echo "  Design runtime: ${{ needs.changes.outputs.design_runtime }}"
-          echo "  Docs: ${{ needs.changes.outputs.docs }}"
-          echo "  Acceptance report: ${{ needs.changes.outputs.acceptance_report }}"
-
-          # main push 是发布线,所有关键 job 都必须成功。
-          # PR/develop 仍只要求本次改动涉及的模块成功。
-          main_push="${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}"
-          server_required="${{ needs.changes.outputs.server == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
-          admin_required="${{ needs.changes.outputs.admin == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
-          desktop_required="${{ needs.changes.outputs.desktop == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
-          cds_required="${{ needs.changes.outputs.cds == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
-          design_runtime_required="${{ needs.changes.outputs.design_runtime == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
-          docs_required="${{ needs.changes.outputs.docs == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
-          acceptance_required="${{ needs.changes.outputs.acceptance_report == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}"
-
-          echo "Main push: $main_push"
-          echo "Required jobs:"
-          echo "  Server: $server_required"
-          echo "  Admin: $admin_required"
-          echo "  Desktop: $desktop_required"
-          echo "  CDS: $cds_required"
-          echo "  Design runtime: $design_runtime_required"
-          echo "  Docs: $docs_required"
-          echo "  Acceptance report: $acceptance_required"
-
-          server_ok="$([[ "$server_required" != "true" || "${{ needs.server-build.result }}" == "success" ]] && echo true || echo false)"
-          admin_ok="$([[ "$admin_required" != "true" || "${{ needs.admin-build.result }}" == "success" ]] && echo true || echo false)"
-          desktop_ok="$([[ "$desktop_required" != "true" || "${{ needs.desktop-check.result }}" == "success" ]] && echo true || echo false)"
-          cds_ok="$([[ "$cds_required" != "true" || "${{ needs.cds-build.result }}" == "success" ]] && echo true || echo false)"
-          design_runtime_ok="$([[ "$design_runtime_required" != "true" || "${{ needs.design-runtime-test.result }}" == "success" ]] && echo true || echo false)"
-          docs_ok="$([[ "$docs_required" != "true" || "${{ needs.docs-readability.result }}" == "success" ]] && echo true || echo false)"
-          acceptance_ok="$([[ "$acceptance_required" != "true" || "${{ needs.acceptance-report-gate.result }}" == "success" ]] && echo true || echo false)"
-          layout_ok="$([[ "${{ needs.repository-layout.result }}" == "success" ]] && echo true || echo false)"
-
-          if [[ "$layout_ok" == "true" && "$server_ok" == "true" && "$admin_ok" == "true" && "$desktop_ok" == "true" && "$cds_ok" == "true" && "$design_runtime_ok" == "true" && "$docs_ok" == "true" && "$acceptance_ok" == "true" ]]; then
-            echo "All required checks passed!"
-            exit 0
-          else
-            echo "Some checks failed"
-            echo "  Repository layout: ${{ needs.repository-layout.result }}"
-            echo "  Server: ${{ needs.server-build.result }}"
-            echo "  Admin: ${{ needs.admin-build.result }}"
-            echo "  Desktop: ${{ needs.desktop-check.result }}"
-            echo "  CDS: ${{ needs.cds-build.result }}"
-            echo "  Design runtime: ${{ needs.design-runtime-test.result }}"
-            echo "  Docs: ${{ needs.docs-readability.result }}"
-            echo "  Acceptance report: ${{ needs.acceptance-report-gate.result }}"
-            exit 1
-          fi
+      - name: Automatic issuance database regressions
+        working-directory: prd-api
+        run: dotnet test tests/PrdAgent.Api.Tests -c Release --no-build --filter 'FullyQualifiedName~ProductVersionClaimGuardTests|FullyQualifiedName~ProductVersionSourceLifecycleTests' --logger 'console;verbosity=normal'
+      - name: Non integration non manual tests
+        working-directory: prd-api
+        run: dotnet test PrdAgent.sln -c Release --no-build --filter 'Category!=Integration&Category!=Manual' --logger 'console;verbosity=normal'
