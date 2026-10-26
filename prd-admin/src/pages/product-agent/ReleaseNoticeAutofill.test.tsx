@@ -84,7 +84,9 @@ describe('完整正式申领弹窗的原文回填', () => {
     expect(document.body.textContent).not.toContain('内部 T 来源');
     expect(document.body.textContent).not.toContain('产品负责人名称');
     expect(document.body.textContent).not.toContain('手工填写');
-    expect(document.querySelector('details')?.open).toBe(false);
+    expect(document.querySelector('details')).toBeNull();
+    expect(document.body.textContent).not.toContain('补充资料');
+    expect(document.body.textContent).not.toContain('产品方案名称 *');
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
     expect([...document.querySelectorAll('[role="status"]')].some((item) => item.textContent === '米多总平台')).toBe(true);
     expect(document.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe('2026-10-26');

@@ -84,14 +84,15 @@ describe('正式申领只填写基础信息', () => {
     await pasteNotice(notice);
     expect(field('立项号 *').value).toBe(source.id);
     await change('立项号 *', otherSource.id);
-    await change('产品方案名称 *', '上一次手工修改');
+    expect(host.textContent).not.toContain('补充资料');
+    expect(host.textContent).not.toContain('产品方案名称 *');
     expect(host.querySelector('output')?.value).toBe('other-app');
     await pasteNotice(notice);
     expect(api.parseProductVersionMessage).toHaveBeenCalledTimes(2);
     expect(button('手工填写 T 号')).toBeUndefined();
     expect(field('立项号 *').value).toBe(source.id);
     expect(host.querySelector('output')?.value).toBe('app');
-    expect(field('产品方案名称 *').value).toBe(source.planName);
+    expect((field('立项号 *') as HTMLSelectElement).selectedOptions[0].textContent).toBe(`${source.tCode} · ${source.planName}`);
   });
 
   it('改粘贴另一通知后按最新结果回填，较慢的旧结果不能覆盖T号和应用', async () => {
@@ -106,7 +107,7 @@ describe('正式申领只填写基础信息', () => {
     await act(async () => finishOld(parsed(source)));
     expect(field('立项号 *').value).toBe(otherSource.id);
     expect(host.querySelector('output')?.value).toBe('other-app');
-    expect(field('产品方案名称 *').value).toBe(otherSource.planName);
+    expect((field('立项号 *') as HTMLSelectElement).selectedOptions[0].textContent).toBe(`${otherSource.tCode} · ${otherSource.planName}`);
   });
 
   it('选择已有T后空功能可确认并发起申领', async () => {
@@ -117,6 +118,8 @@ describe('正式申领只填写基础信息', () => {
     expect(button('确认并获取正式版本号')?.disabled).toBe(true);
     expect(button('手工填写 T 号')).toBeUndefined();
     await change('立项号 *', 'source');
+    expect(host.textContent).not.toContain('补充资料');
+    expect(host.textContent).not.toContain('产品方案名称 *');
     expect(host.textContent).not.toContain('在「需求」标签页查看与追加');
     await change('上线日期 *', '2026-10-26'); await change('预计培训时长（分钟）*', '0');
     expect(button('确认并获取正式版本号')?.disabled).toBe(false);

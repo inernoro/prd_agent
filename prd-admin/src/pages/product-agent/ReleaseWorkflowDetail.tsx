@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, Plus, Search, X } from 'lucide-react';
 import { UserSearchSelect } from '@/components/UserSearchSelect';
 import { loadProductVersionList } from '@/lib/productVersionList';
 import { ReleasePlanPicker } from './ReleasePlanPicker';
+import { filterReleasePlans } from './releasePlanOptions';
 import { Dialog } from '@/components/ui/Dialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
@@ -165,7 +166,7 @@ export function ReleaseWorkflowDetail({
   const [historyReview, setHistoryReview] = useState<{ scope: string; check: VersionReleaseHistoryCheck; confirmed: boolean } | null>(null);
 
   const approved = useMemo(
-    () => [...new Map([...(availableInitiations ?? initiations), ...pastedInitiations].map((item) => [item.id, item])).values()].filter((item) => item.status === 'approved' && item.tCode),
+    () => filterReleasePlans([...new Map([...(availableInitiations ?? initiations), ...pastedInitiations].map((item) => [item.id, item])).values()], '', ''),
     [initiations, availableInitiations, pastedInitiations],
   );
   const selectedInitiation = approved.find((item) => item.id === initiationId);
@@ -635,7 +636,6 @@ export function ReleaseWorkflowDetail({
       : <Input value={editableOpenBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder={temporary ? '上线全域开放' : '填写本次开放的品牌'} />}</Field>
   </div>;
   const supplementaryFields = <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
-    {!temporary && <div className="sm:col-span-2"><Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="可粘贴识别、自动回填或手动修改" /></Field></div>}
     <Field label="需求来源"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} /></Field>
     <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
     <div className="sm:col-span-2"><Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field></div>
@@ -811,7 +811,7 @@ export function ReleaseWorkflowDetail({
                       <Field label={applicationProducts ? '所属方案 *' : '立项号 *'}>
                         {applicationProducts ? <ReleasePlanPicker plans={pastedPlanCandidates.length ? approved.filter((item) => pastedPlanCandidates.includes(item.id)) : approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} loading={planLoading} error={planError} progress={planProgress} onRetry={onRetryPlans} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
                           <option value="">请选择</option>
-                          {approved.map((i) => <option key={i.id} value={i.id}>{i.planName}</option>)}
+                          {approved.map((i) => <option key={i.id} value={i.id}>{i.tCode} · {i.planName}</option>)}
                         </Select>}
                       </Field>
                       {selectedInitiation && <div aria-label="方案关联信息" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-token-muted">
@@ -830,10 +830,6 @@ export function ReleaseWorkflowDetail({
                   <h2 className="text-sm font-semibold text-token-primary">上线安排</h2>
                   {scheduleFields}
                 </section>
-                <details className="border-t border-token-subtle pt-4">
-                  <summary className="cursor-pointer text-sm text-token-secondary">补充资料<span className="ml-2 text-xs text-token-muted">方案资料、需求来源、备注</span></summary>
-                  <div className="pt-4">{supplementaryFields}</div>
-                </details>
               </>}
               <p className="text-xs leading-5 text-token-muted">确认后自动生成正式版本号并完成上线，无需人工审批。</p>
             </>

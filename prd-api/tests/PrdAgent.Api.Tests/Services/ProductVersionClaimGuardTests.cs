@@ -125,15 +125,22 @@ public class ProductVersionClaimGuardTests
         await fixture.Db.ProductAgentSettings.InsertOneAsync(new ProductAgentSettings { ClaimWebhook = new() { Enabled = true } });
         await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
             Builders<ProductInitiation>.Update.Set(x => x.PlanName, "历史T原始名称（保持不变）")
-                .Set(x => x.PlanUrl, "https://example.test/stored-t-plan").Set(x => x.DemandSource, "原T需求来源"));
+                .Set(x => x.PlanUrl, "https://example.test/stored-t-plan").Set(x => x.DemandSource, "原T需求来源")
+                .Set(x => x.DepartmentName, "原T部门").Set(x => x.RequirementDescription, "原T描述").Set(x => x.Remark, "原T备注"));
         var before = (await fixture.Db.ProductInitiations.Find(x => x.Id == "numbering-source").SingleAsync()).ToBsonDocument();
         var request = NumberingReleaseRequest();
         request.PlanName = "粘贴中完全不同的名称，不能改T或替代系统T名称";
+        request.PlanUrl = "https://example.test/wrong-pasted";
+        request.DemandSource = "错误来源"; request.DepartmentName = "错误部门";
+        request.RequirementDescription = "错误描述"; request.Remark = "不能替换T资料";
         var response = Assert.IsType<OkObjectResult>(await fixture.Controller(notify: true).CreateRelease("product", request));
         var release = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(response.Value).Data);
         Assert.Equal("历史T原始名称（保持不变）", release.PlanName);
         Assert.Equal("https://example.test/stored-t-plan", release.PlanUrl);
         Assert.Equal("原T需求来源", release.DemandSource);
+        Assert.Equal("原T部门", release.DepartmentName);
+        Assert.Equal("原T描述", release.RequirementDescription);
+        Assert.Equal("原T备注", release.Remark);
         Assert.Equal("pending", release.ClaimNotification!.Status);
         Assert.Equal(release.OwnerId, release.ClaimNotification.OwnerId);
         var after = (await fixture.Db.ProductInitiations.Find(x => x.Id == "numbering-source").SingleAsync()).ToBsonDocument();
