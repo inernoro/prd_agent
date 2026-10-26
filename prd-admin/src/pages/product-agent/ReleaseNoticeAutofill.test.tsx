@@ -59,7 +59,8 @@ describe('完整正式申领弹窗的原文回填', () => {
     expect(owner.value).toBe('陈雅珊');
     await paste();
     expect(api.parseProductVersionMessage).toHaveBeenCalledWith('formal', notice);
-    expect(input('搜索方案名称或 T 号').value).toBe(source.planName);
+    expect(input('搜索方案名称或 T 号').value).toContain('T3.14.1');
+    expect(input('搜索方案名称或 T 号').title).toBe(`T3.14.1 · 米多总平台 · ${source.planName}`);
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
     expect([...document.querySelectorAll('[role="status"]')].some((item) => item.textContent === '米多总平台')).toBe(true);
     expect(document.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe('2026-10-26');
@@ -75,7 +76,7 @@ describe('完整正式申领弹窗的原文回填', () => {
     await paste();
     expect(api.parseProductVersionMessage).toHaveBeenCalledTimes(2);
     expect(owner.value).toBe('欧石玲');
-    expect(input('搜索方案名称或 T 号').value).toBe(source.planName);
+    expect(input('搜索方案名称或 T 号').title).toBe(`T3.14.1 · 米多总平台 · ${source.planName}`);
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
   });
 });
