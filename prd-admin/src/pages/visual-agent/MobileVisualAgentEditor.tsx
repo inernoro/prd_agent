@@ -35,7 +35,7 @@ import type { ModelGroupForApp } from '@/types/modelGroup';
 import type { ModelAdapterInfo } from '@/services/contracts/models';
 import { buildVisualAgentModelOptions, selectVisualModel, visualImageSizeChoices } from '../ai-chat/visualAgentModelOptions';
 import { VisualModelIcon, VisualModelOptionContent, VisualModelMenuHeading, VisualModelMenuHint } from '@/components/visual-agent/VisualModelOptionContent';
-import { buildInlineImageToken, parseInlinePrompt, tryParseWxH } from '@/lib/visualAgentPromptUtils';
+import { buildInlineImageToken, tryParseWxH } from '@/lib/visualAgentPromptUtils';
 import { parseVisualAgentHandoff } from '@/lib/visualAgentHandoff';
 
 // 与 AdvancedVisualAgentTab 的持久化契约一致（schemaVersion=1）
