@@ -169,7 +169,7 @@ export function ReleaseWorkflowDetail({
     [initiations, availableInitiations, pastedInitiations],
   );
   const selectedInitiation = approved.find((item) => item.id === initiationId);
-  // 与后端一致：有关联方案时项目类别以方案为准，手工 T 号使用表单类别。
+  // 正式申领项目类别以所选T记录为准；临时优化沿用表单类别。
   const effectiveProjectType = !temporary && selectedInitiation ? selectedInitiation.projectType : projectType;
   const effectiveGlobalOpen = temporary ? isGlobalOpen : effectiveProjectType === 'standard' ? 'yes' : 'no';
   const editableOpenBrandScope = !temporary && openBrandScope === '上线全域开放' ? '' : openBrandScope;

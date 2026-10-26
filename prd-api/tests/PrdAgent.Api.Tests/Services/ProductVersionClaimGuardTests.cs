@@ -158,6 +158,7 @@ public class ProductVersionClaimGuardTests
                 new() { Key = RequirementWorkflowCatalog.Developing, Label = "开发中" },
                 new() { Key = RequirementWorkflowCatalog.Released, Label = "已上线" },
             },
+            Transitions = new() { new() { FromState = RequirementWorkflowCatalog.Developing, ToState = RequirementWorkflowCatalog.Released } },
         });
         await fixture.Db.Requirements.InsertOneAsync(new Requirement {
             Id = "custom-req", ProductId = "product", WorkflowDefId = "custom-flow", CurrentState = RequirementWorkflowCatalog.Developing,
