@@ -54,7 +54,7 @@ public sealed class ProductAnnouncementSyncService(MongoDbContext db, IHttpClien
     /// <summary>由唯一权威部署轮询；数据库条件租约跨实例互斥，过期任务自动恢复。</summary>
     public async Task TickAsync(DateTime now, CancellationToken stoppingToken)
     {
-        var state = await EnsureAsync(now);
+        var state = await ReadAsync() ?? await EnsureAsync(now);
         if (state.Status is not "queued" and not "running")
         {
             if (state.CalendarRetryAt > now && (state.NextRunAt == null || state.NextRunAt > now)) return;
@@ -106,6 +106,7 @@ public sealed class ProductAnnouncementSyncService(MongoDbContext db, IHttpClien
         timeout.CancelAfter(TimeSpan.FromSeconds(25));
         token = timeout.Token;
         using var client = clients.CreateClient("ProductAnnouncements");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("MAP-VersionAnnouncements/1.0");
         client.Timeout = TimeSpan.FromSeconds(25);
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
         response.EnsureSuccessStatusCode();

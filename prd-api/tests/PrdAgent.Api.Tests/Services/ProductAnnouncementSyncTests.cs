@@ -38,7 +38,7 @@ public class ProductAnnouncementSyncTests
     [Fact]
     public void StatutoryHolidaysAndMakeupSundayDetermineFirstWorkdayAtBeijingEight()
     {
-        var calendar = ProductAnnouncementSource.ParseCalendar($$"""{"year":2026,"papers":["{{Official}}"],"days":[{"date":"2026-01-01","isOffDay":true},{"date":"2026-01-02","isOffDay":true},{"date":"2026-01-03","isOffDay":true},{"date":"2026-01-04","isOffDay":false},{"date":"2026-05-01","isOffDay":true},{"date":"2026-05-04","isOffDay":true},{"date":"2026-05-05","isOffDay":true}]}""");
+        var calendar = ProductAnnouncementSource.ParseCalendar($$"""{"year":2026,"papers":["{{Official}}"],"days":[{"date":"2026-01-01","isOffDay":true},{"date":"2026-01-02","isOffDay":true},{"date":"2026-01-03","isOffDay":true},{"date":"2026-01-04","isOffDay":false},{"date":"2026-05-01","isOffDay":true},{"date":"2026-05-04","isOffDay":true},{"date":"2026-05-05","isOffDay":true}]}""", 2026);
         Assert.Equal(new DateTime(2026, 1, 4, 0, 0, 0, DateTimeKind.Utc), ProductAnnouncementSource.MonthlySlotUtc(2026, 1, calendar));
         Assert.Equal(new DateTime(2026, 5, 6, 0, 0, 0, DateTimeKind.Utc), ProductAnnouncementSource.MonthlySlotUtc(2026, 5, calendar));
         Assert.Throws<InvalidDataException>(() => ProductAnnouncementSource.ParseCalendar("{\"year\":2026,\"papers\":[],\"days\":[]}", 2026));
