@@ -43,7 +43,7 @@ export function withPdfDownloadBridge(html: string, context: PdfDownloadContext)
     .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   return `${html}<script data-map-pdf-download-bridge>(function(){
 var context=${config};
-document.addEventListener('click',function(event){
+window.addEventListener('click',function(event){
   if(!event.isTrusted || event.defaultPrevented || event.button!==0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
   var link=event.target instanceof Element ? event.target.closest('a[href]') : null;
   if(!link) return;
@@ -51,13 +51,13 @@ document.addEventListener('click',function(event){
   var path=context.urls[url.href];
   if(!path){
     if(!/\\.pdf$/i.test(url.pathname)) return;
-    event.preventDefault();
+    event.preventDefault();event.stopImmediatePropagation();
     var note=document.getElementById('map-pdf-download-error');
     if(!note){note=document.createElement('div');note.id='map-pdf-download-error';note.setAttribute('role','alert');
       link.insertAdjacentElement('afterend',note);}
     note.textContent='这份 PDF 未登记到当前网页，请联系分享者重新上传。';return;
   }
-  event.preventDefault();
+  event.preventDefault();event.stopImmediatePropagation();
   window.parent.postMessage({type:'${PDF_DOWNLOAD_REQUEST}',siteId:context.siteId,nonce:context.nonce,
     filePath:path,requestId:crypto.randomUUID()},'*');
 },true);
