@@ -65,6 +65,7 @@ describe('正式申领只填写基础信息', () => {
       await change('内部 T 来源 *', 'manual_t');
       await change('手工 T 号 *', 'T9.0.0'); await change('产品方案名称 *', '手工方案');
     } else await change('立项号 *', 'source');
+    expect(host.textContent).not.toContain('在「需求」标签页查看与追加');
     await change('上线日期 *', '2026-10-26'); await change('预计培训时长（分钟）*', '0');
     expect(button('确认并获取正式版本号')?.disabled).toBe(false);
     await act(async () => button('确认并获取正式版本号')?.click());
