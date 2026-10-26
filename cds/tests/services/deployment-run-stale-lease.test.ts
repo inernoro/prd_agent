@@ -7,7 +7,8 @@ import { BranchOperationCoordinator, BranchOperationSupersededError, type Branch
 import { DeploymentRunService, DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../../src/services/deployment-run.js';
 import { DeploymentPhaseBudget, deploymentPhaseBudget } from '../../src/services/deployment-phase-budget.js';
 import { ContainerService } from '../../src/services/container.js';
-import type { CdsConfig, ExecOptions, ExecResult, OperationLogEvent } from '../../src/types.js';
+import { IsolatedShellExecutor } from '../../src/services/isolated-shell-executor.js';
+import type { CdsConfig, ExecAssignment, ExecOptions, ExecResult, OperationLogEvent } from '../../src/types.js';
 import { StateService } from '../../src/services/state.js';
 import { drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
   DRAIN_GATE_MAX_HOLD_MS, resolveSelfUpdateDrainTimeoutMs, SelfUpdateRestartBlockedError,
@@ -360,6 +361,120 @@ describe('部署心跳过期后的精确租约回收', () => {
       expect(runs.reconcileInterrupted().map(run => run.id)).toEqual([old.run.id]);
     } finally {
       finishStop(ok()); releaseBlocker(); await completed; vi.useRealTimers();
+    }
+  });
+
+  it.each([0, 1, 2].flatMap(index => (['return', 'cancel'] as const).map(outcome => ({ index, outcome }))))(
+    '真实IPC任务命令入口$index/$outcome：原代次进展、返回与取消不借Docker替身充当物理清理', async ({ index, outcome }) => {
+    const old = await trackedDeployment({ ...request, kind: 'deploy', profileId: undefined });
+    const events: OperationLogEvent[] = [], { method, context } = actualCleanupInvocation(index, old, events);
+    const cid = 'a'.repeat(64), name = 'cds-b1-api', target = method === 'remove' ? name : cid;
+    const fixture = path.join(directory, 'owned-cleanup-command.mjs');
+    const permit = path.join(directory, 'stop.permit'), entered = path.join(directory, 'stop.entered');
+    // 只执行任务自有Node子进程；Docker命令只在本适配器内匹配，绝不传给shell或daemon。
+    fs.writeFileSync(fixture, `import fs from 'node:fs';import path from 'node:path';
+      const [root,phase]=process.argv.slice(2);
+      fs.writeFileSync(path.join(root,phase+'.entered'),JSON.stringify({pid:process.pid,phase}));
+      if(phase==='rm'){fs.writeFileSync(path.join(root,'rm.returned'),'task-only');process.stdout.write('task-rm-return');}
+      else{const deadline=setTimeout(()=>process.exit(2),4000);const poll=setInterval(()=>{
+        if(fs.existsSync(path.join(root,'stop.permit'))){clearInterval(poll);clearTimeout(deadline);
+          fs.writeFileSync(path.join(root,'stop.returned'),'task-only');process.stdout.write('task-stop-return');}
+      },10);}`);
+    const noFallback = vi.fn(async (): Promise<ExecResult> => { throw new Error('任务IPC验收禁止任何原生shell回退'); });
+    const isolated = new IsolatedShellExecutor({ exec: noFallback }, { isolatedLane: 'operation',
+      concurrency: 2, reservedCleanup: 1, defaultTimeoutMs: 15 * 60_000 });
+    const abort = new AbortController(), assignments: Array<ExecAssignment & { phase: string }> = [];
+    const authorizations: Array<{ phase: string; entered: boolean; current: boolean }> = [], transported: string[] = [];
+    const results: string[] = [];
+    const quote = (value: string) => `'${value.replace(/'/g, "'\\''")}'`;
+    const ok = (): ExecResult => ({ stdout: '', stderr: '', exitCode: 0 });
+    const container = new ContainerService({ exec: async (command, options) => {
+      if (command.startsWith('docker inspect --format') && command.includes('"networks"')) return { ...ok(), stdout: JSON.stringify({
+        id: cid, running: true, project: 'p1', branch: 'b1', profile: 'api', networks: { 'test-network': { Aliases: ['api'] } } }) };
+      if (command.startsWith('docker inspect --format') && fs.existsSync(path.join(directory, 'rm.returned'))) return {
+        stdout: '', stderr: `Error: No such container: ${cid}`, exitCode: 1 };
+      if (command.startsWith('docker inspect ')) return { ...ok(), stdout: '[]' };
+      if (command.startsWith('docker logs ')) return ok();
+      const phase = command === `docker stop ${target}` ? 'stop' : command === `docker rm ${target}` ? 'rm' : undefined;
+      if (!phase) throw new Error(`任务IPC验收未授权命令：${command}`);
+      const local = [process.execPath, fixture, directory, phase].map(quote).join(' ');
+      transported.push(local);
+      try {
+        const result = await isolated.exec(local, { ...options, signal: abort.signal,
+          onAssigned: value => { assignments.push({ ...value, phase }); options?.onAssigned?.(value); },
+          beforeStart: () => {
+            authorizations.push({ phase, entered: fs.existsSync(path.join(directory, `${phase}.entered`)), current: old.lease.isCurrent() });
+            options?.beforeStart?.();
+          },
+        });
+        results.push(`${phase}:${result.exitCode}`); return result;
+      } catch (error) { results.push(`${phase}:${(error as { code?: string }).code}`); throw error; }
+    } }, { repoRoot: '/repo', worktreeBase: '/wt', masterPort: 9900, workerPort: 5500,
+      dockerNetwork: 'test-network', portStart: 10001, sharedEnv: {}, jwt: { secret: 'test-secret', issuer: 'test' } });
+    const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api', operationId: old.lease.operationId,
+      operationGeneration: old.lease.generation };
+    let releaseBlocker: (() => void) | undefined, completed: Promise<void> | undefined, settled = false, failure: unknown;
+    try {
+      await isolated.start();
+      releaseBlocker = await deploymentPhaseBudget.acquire('cleanup', { projectId: 'other-project', branchId: 'other-branch' });
+      deploymentPhaseBudget.reserveKnownMemory(name, 512, owner);
+      vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(clock);
+      const removing = method === 'remove' ? container.remove(name, context)
+        : container.removeRuntimeGroup({ profileId: 'api', containerName: name, containerId: cid, hostPort: 10001, status: 'running' }, context);
+      completed = removing.then(() => { settled = true; }, error => { settled = true; failure = error; });
+      await vi.waitFor(() => expect(deploymentPhaseBudget.waitingOperation(owner.operationId, owner.operationGeneration)).toBeDefined());
+      expect(transported).toEqual([]); expect(events).toEqual([]);
+      clock = new Date(clock.getTime() + 16 * 60_000); vi.setSystemTime(clock);
+      releaseBlocker();
+      await vi.waitFor(() => expect(fs.existsSync(entered)).toBe(true));
+      const commandIdentity = JSON.parse(fs.readFileSync(entered, 'utf8'));
+      expect(commandIdentity).toMatchObject({ phase: 'stop' }); expect(commandIdentity.pid).toBeGreaterThan(1);
+      expect(settled).toBe(false); expect(fs.existsSync(path.join(directory, 'stop.returned'))).toBe(false);
+      expect(authorizations).toEqual([{ phase: 'stop', entered: false, current: true }]);
+      expect(assignments).toHaveLength(1); expect(assignments[0]).toMatchObject({ phase: 'stop', lane: 'operation' });
+      expect(assignments[0].factoryPid).toBeGreaterThan(1); expect(assignments[0].actorPid).toBeGreaterThan(1);
+      expect(assignments[0].factoryGeneration).toBeGreaterThanOrEqual(1);
+      expect(deploymentPhaseBudget.snapshot().cleanup.active).toEqual([expect.objectContaining(owner)]);
+      const reaped = runs.reconcileInterrupted().map(run => run.id);
+      expect({ reaped, status: old.run.status, current: old.lease.isCurrent(), settled }).toEqual({
+        reaped: [], status: 'building', current: true, settled: false });
+      expect(events.map(event => event.detail?.cleanupStep)).toEqual(['admitted', 'diagnostics-returned', 'stop']);
+      if (outcome === 'return') {
+        fs.writeFileSync(permit, 'return'); await completed;
+        expect(failure).toBeUndefined(); expect(results).toEqual(['stop:0', 'rm:0']);
+        expect(authorizations).toEqual([{ phase: 'stop', entered: false, current: true }, { phase: 'rm', entered: false, current: true }]);
+        expect(assignments).toHaveLength(2); expect(assignments[1].jobId).not.toBe(assignments[0].jobId);
+        expect(fs.existsSync(path.join(directory, 'stop.returned'))).toBe(true);
+        expect(fs.existsSync(path.join(directory, 'rm.returned'))).toBe(true);
+        expect(events.map(event => event.detail?.cleanupStep)).toEqual(['admitted', 'diagnostics-returned', 'stop', 'stop-returned', 'rm', 'rm-returned']);
+        expect(old.lease.isCurrent()).toBe(true); expect(deploymentPhaseBudget.memorySnapshot()).toEqual([]);
+      } else {
+        runs.cancel(old.run.id, '任务IPC取消控制');
+        expect(coordinator.revokeInterrupted({ projectId: 'p1', branchId: 'b1', operationId: old.lease.operationId,
+          generation: old.lease.generation })).toBe(true);
+        const next = coordinator.begin({ ...request, kind: 'deploy', profileId: undefined, commitSha: 'b'.repeat(40) });
+        expect(next.status).toBe('started');
+        const nextOwner = { ...owner, operationId: next.operationId, operationGeneration: next.generation };
+        deploymentPhaseBudget.reserveKnownMemory(name, 768, nextOwner);
+        const before = { seq: old.run.seq, heartbeatAt: old.run.heartbeatAt };
+        abort.abort(); await completed;
+        expect(failure).toBeDefined(); expect(results).toEqual(['stop:cancelled']);
+        expect(fs.existsSync(path.join(directory, 'stop.returned'))).toBe(false);
+        expect(fs.existsSync(path.join(directory, 'rm.entered'))).toBe(false);
+        expect(events.map(event => event.detail?.cleanupStep)).toEqual(['admitted', 'diagnostics-returned', 'stop']);
+        expect({ seq: old.run.seq, heartbeatAt: old.run.heartbeatAt }).toEqual(before);
+        expect(old.run.status).toBe('cancelled'); expect(old.lease.isCurrent()).toBe(false); expect(next.lease!.isCurrent()).toBe(true);
+        expect(deploymentPhaseBudget.memorySnapshot()).toEqual([expect.objectContaining({ key: name, memoryMB: 768, owner: nextOwner })]);
+      }
+      expect(deploymentPhaseBudget.snapshot().cleanup.active).toEqual([]);
+      expect(isolated.getStats()).toMatchObject({ active: 0, queued: 0, bytes: 0 });
+      expect(noFallback).not.toHaveBeenCalled(); expect(transported).toHaveLength(outcome === 'return' ? 2 : 1);
+      expect(transported.every(command => command.startsWith(quote(process.execPath)) && !command.includes('docker'))).toBe(true);
+      console.log('[cleanup-real-ipc]', JSON.stringify({ index, method, outcome, actualDocker: false, commandPid: commandIdentity.pid,
+        assignments, authorizations, results, oldCurrent: old.lease.isCurrent(), status: old.run.status }));
+    } finally {
+      fs.writeFileSync(permit, 'finally'); releaseBlocker?.(); abort.abort(); await completed;
+      await isolated.close(); vi.useRealTimers();
     }
   });
 
