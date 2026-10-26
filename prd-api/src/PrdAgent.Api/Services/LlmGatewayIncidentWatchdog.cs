@@ -262,8 +262,8 @@ public sealed class LlmGatewayIncidentWatchdog : BackgroundService
         => Builders<AdminNotification>.Filter.Eq(x => x.GatewaySignalVersion, null)
            | Builders<AdminNotification>.Filter.Lt(x => x.GatewaySignalVersion, signal.SignalVersion);
 
-    private Task<AdminNotification?> FindCurrentFailureAsync(string key, CancellationToken ct)
-        => _mapDb.AdminNotifications.Find(x => x.Key == key)
+    private async Task<AdminNotification?> FindCurrentFailureAsync(string key, CancellationToken ct)
+        => await _mapDb.AdminNotifications.Find(x => x.Key == key)
             .SortByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id)
             .FirstOrDefaultAsync(ct);
 
