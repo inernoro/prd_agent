@@ -233,7 +233,7 @@ export function createRelease(productId: string, body: {
   additionalRequirementIds?: string[];
   teamMemberIds: string[];
   plannedReleaseAt: string;
-  plannedTrainingMinutes: number;
+  plannedTrainingMinutes?: number;
   previousReleaseId?: string;
   featureManifest?: ReleaseFeatureItem[];
 }) {
