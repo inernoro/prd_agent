@@ -114,6 +114,9 @@ public sealed class AdminPushNotificationServiceTests
         clock.Advance(TimeSpan.FromSeconds(61));
         await Push().DispatchPendingAsync(default);
         Assert.Equal(2, http.Requests.Count); // 同一个接收窗口里，复发也能使用有上限的严重故障名额。
+        var budget = await db.Context.Database.GetCollection<MongoDB.Bson.BsonDocument>("admin_push_dispatch_state")
+            .Find(_ => true).SingleAsync();
+        Assert.All(budget["attemptHistory"].AsBsonArray, attempt => Assert.True(attempt["urgent"].AsBoolean));
         Assert.True(await db.Context.AdminPushDeliveryLogs.Find(n => n.Success
             && n.CoveredNotificationIds.Contains(recurrence.Id)).AnyAsync());
         await Watchdog().SweepOnceAsync(default);
