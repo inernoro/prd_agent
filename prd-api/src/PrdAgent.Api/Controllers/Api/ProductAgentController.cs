@@ -1463,7 +1463,7 @@ public class ProductAgentController : ControllerBase
         var versionType = request.IsTemporaryOptimization ? "minor" : initiation?.VersionType ?? NormalizeVersionType(request.VersionType);
         var previousRelease = await FindLatestReleaseWithManifestAsync(productId);
         var manifest = await ResolveReleaseFeatureManifestAsync(productId, request.FeatureManifest, previousRelease);
-        if (manifest.Count == 0)
+        if (request.IsTemporaryOptimization && manifest.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "功能清单不能为空，请至少纳入一项功能"));
         var manifestError = await ValidateReleaseFeatureManifestAsync(productId, manifest);
         if (manifestError != null)

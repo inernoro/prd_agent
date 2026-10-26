@@ -1,5 +1,5 @@
 /**
- * 正式版本申领 / 详情 — 基础信息 + 需求 + 功能 + 缺陷四标签页。
+ * 正式版本申领仅填基础信息；详情和临时优化保留原关联页签。
  * 路由：/product-agent/p/:productId/release/:id（id=new 为新建）
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -191,6 +191,16 @@ export function ReleaseWorkflowDetail({
       setInitiations([]); setRequirements([]); setMembers([]); setFeatures([]); setTracedDefects([]);
       setManifest([]); setBaselineManifest([]); setPreviousReleaseId(null); setPreviousVCode(null);
       if (!productId) { setLoading(false); return; }
+      if (!temporary) {
+        const [initRes, memRes] = await Promise.all([
+          listInitiations(productId, 'all'), listProductMembers(productId),
+        ]);
+        if (sequence !== loadSequence.current) return;
+        if (initRes.success) setInitiations(initRes.data.items);
+        if (memRes.success) setMembers(memRes.data.members);
+        setLoading(false);
+        return;
+      }
     }
     const [initRes, reqRes, memRes, featRes, defRes] = await Promise.all([
       listInitiations(productId, 'all'),
@@ -260,7 +270,7 @@ export function ReleaseWorkflowDetail({
       }
     }
     setLoading(false);
-  }, [isNew, productId, releaseId]);
+  }, [isNew, productId, releaseId, temporary]);
 
   useEffect(() => {
     const request = reload();
@@ -534,12 +544,12 @@ export function ReleaseWorkflowDetail({
       remark: remark.trim() || undefined,
       projectType: effectiveProjectType,
       versionType,
-      additionalRequirementIds: extraIds,
+      additionalRequirementIds: temporary ? extraIds : undefined,
       teamMemberIds: teamIds,
       plannedReleaseAt: new Date(`${releaseAt}T00:00:00+08:00`).toISOString(),
       plannedTrainingMinutes: Number(trainingMinutes),
-      previousReleaseId: previousReleaseId ?? undefined,
-      featureManifest: activeManifest,
+      previousReleaseId: temporary ? previousReleaseId ?? undefined : undefined,
+      featureManifest: temporary ? activeManifest : undefined,
     });
     setBusy(false);
     if (!res.success) {
@@ -653,7 +663,7 @@ export function ReleaseWorkflowDetail({
         <VersionCopyActions kind="release" id={release.id} code={release.vCode} />
       </>}
 
-      <div className="flex border-b border-token-subtle">
+      {(!isNew || temporary) && <div className="flex border-b border-token-subtle">
         <TabButton active={tab === 'basic'} onClick={() => setTab('basic')}>基础信息</TabButton>
         <TabButton active={tab === 'requirements'} onClick={() => setTab('requirements')}>
           需求
@@ -687,7 +697,7 @@ export function ReleaseWorkflowDetail({
             )}
           </TabButton>
         )}
-      </div>
+      </div>}
 
       {isRecordDetail ? (
         <>
@@ -765,7 +775,7 @@ export function ReleaseWorkflowDetail({
             </WorkflowDetailCard>
           )}
         </>
-      ) : tab === 'basic' ? (
+      ) : tab === 'basic' || (isNew && !temporary) ? (
         <div className="space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5">
           {isNew ? (
             <>
@@ -936,7 +946,7 @@ export function ReleaseWorkflowDetail({
             {isNew ? (
               <PrimaryButton
                 onClick={() => void saveNew()}
-                disabled={busy || basicInvalid || manifestInvalid}
+                disabled={busy || basicInvalid || (temporary && manifestInvalid)}
               >
                 {busy ? <><Loader2 size={14} className="animate-spin" /> 处理中...</> : '确认并获取正式版本号'}
               </PrimaryButton>
