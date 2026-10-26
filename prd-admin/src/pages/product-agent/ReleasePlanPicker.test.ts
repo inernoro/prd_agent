@@ -18,12 +18,12 @@ describe('正式申领按方案选择应用', () => {
   it('只选择已通过且有 T 号的方案', () => {
     expect(filterReleasePlans([...plans, { ...plans[0], id: 'no-code', tCode: '' }], '', '').map((item) => item.id)).toEqual(['a', 'b']);
   });
-  it('直接打开正式申领，不先打开产品选择弹框，筛选只用于找方案', () => {
+  it('直接打开正式申领，方案区只保留搜索选择', () => {
     expect(versions).toContain("dialog === 'temporary' && !actionProductId");
     expect(versions).toContain('productId="" applicationProducts={products}');
     expect(picker).toContain('搜索方案名称或 T 号');
-    expect(picker).toContain('按应用筛选方案');
-    expect(picker).toContain('按版本级别筛选方案');
+    expect(picker).not.toContain('按应用筛选方案');
+    expect(picker).not.toContain('按版本级别筛选方案');
   });
   it('由方案产品 ID 回填并校验提交归属，手工 T 号保留表单内应用选择', () => {
     expect(workflow).toContain("changeApplication(source?.productId ?? '')");

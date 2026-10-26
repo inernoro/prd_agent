@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import type { ProductInitiation } from './types';
 
@@ -54,20 +56,37 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); useAuthStore.setState(useAuthStore.getInitialState(), true); });
 
 describe('完整正式申领弹窗的原文回填', () => {
-  it('真实人员和方案选择器显示默认记录人，回填T及应用，支持改选负责人后再次粘贴', async () => {
+  it.each(['dark', 'light'])('%s主题方案区只显示方案，回填仍可改选负责人和再次粘贴', async (theme) => {
+    document.documentElement.setAttribute('data-theme', theme);
     await act(async () => root.render(<MemoryRouter><ReleaseApplicationDialog productId="" applicationProducts={products} onClose={() => {}} /></MemoryRouter>));
     const owner = input('搜索并选择产品负责人');
     expect(owner.value).toBe('陈雅珊');
     await paste();
     expect(api.parseProductVersionMessage).toHaveBeenCalledWith('formal', notice);
-    expect(input('搜索方案名称或 T 号').value).toContain('T3.14.1');
-    expect(input('搜索方案名称或 T 号').title).toBe(`T3.14.1 · 米多总平台 · ${source.planName}`);
+    expect(input('搜索方案名称或 T 号').value).toBe(source.planName);
+    expect(input('搜索方案名称或 T 号').title).toBe(source.planName);
+    expect(document.querySelector('[aria-label="按应用筛选方案"]')).toBeNull();
+    expect(document.querySelector('[aria-label="按版本级别筛选方案"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('内部 T 来源');
+    expect(document.body.textContent).not.toContain('产品负责人名称');
+    expect(document.querySelector('details')?.open).toBe(false);
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
     expect([...document.querySelectorAll('[role="status"]')].some((item) => item.textContent === '米多总平台')).toBe(true);
     expect(document.querySelector<HTMLInputElement>('input[type="date"]')?.value).toBe('2026-10-26');
     expect(document.body.textContent).toContain('企微成员已匹配 2/2 人');
     expect(document.body.textContent).not.toContain('请选择正确立项');
     expect(document.body.textContent).toContain('已识别 8 项，请核对回填内容。');
+    if (process.env.RELEASE_PANEL_SNAPSHOT_DIR) {
+      mkdirSync(process.env.RELEASE_PANEL_SNAPSHOT_DIR, { recursive: true });
+      const snapshot = document.documentElement.cloneNode(true) as HTMLElement;
+      const controls = document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,textarea,select');
+      snapshot.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,textarea,select').forEach((control, index) => {
+        if (control instanceof HTMLTextAreaElement) control.textContent = controls[index].value;
+        else if (control instanceof HTMLInputElement) control.setAttribute('value', controls[index].value);
+        else [...control.options].forEach((option) => option.toggleAttribute('selected', option.value === controls[index].value));
+      });
+      writeFileSync(join(process.env.RELEASE_PANEL_SNAPSHOT_DIR, `release-panel-${theme}.html`), snapshot.outerHTML);
+    }
     await act(async () => { owner.focus(); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(owner, '石玲'); owner.dispatchEvent(new Event('input', { bubbles: true })); });
     await settle(240);
     const candidate = [...document.querySelectorAll('div.cursor-pointer')].find((item) => item.textContent?.includes('欧石玲')) as HTMLElement;
@@ -77,7 +96,7 @@ describe('完整正式申领弹窗的原文回填', () => {
     await paste();
     expect(api.parseProductVersionMessage).toHaveBeenCalledTimes(2);
     expect(owner.value).toBe('欧石玲');
-    expect(input('搜索方案名称或 T 号').title).toBe(`T3.14.1 · 米多总平台 · ${source.planName}`);
+    expect(input('搜索方案名称或 T 号').title).toBe(source.planName);
     expect(document.body.textContent).toContain('已匹配立项 T3.14.1');
   });
 });

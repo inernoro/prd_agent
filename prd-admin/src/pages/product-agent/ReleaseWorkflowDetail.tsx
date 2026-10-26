@@ -431,6 +431,14 @@ export function ReleaseWorkflowDetail({
     if (temporary) setProjectMembers((source.projectMemberNames ?? []).join('、'));
   };
 
+  const changeSourceMode = () => {
+    const mode = sourceMode === 'initiation' ? 'manual_t' : 'initiation';
+    setSourceMode(mode);
+    setPastedPlanCandidates([]); setPlanMatchHint(''); setInitiationId('');
+    if (mode === 'initiation') setManualTCode('');
+    if (onApplicationProductChange) changeApplication('');
+  };
+
   const applyParsedMessage = (parsed: VersionRegistrationMessageParseResult, editVersion?: number) => {
     const parsedInitiations = parsed.initiationCandidates ?? [];
     const source = !temporary && parsed.matchedInitiationId ? parsedInitiations.find((item) => item.id === parsed.matchedInitiationId)
@@ -621,6 +629,35 @@ export function ReleaseWorkflowDetail({
     );
   }
 
+  const ownerField = <Field label="产品负责人 *">
+    <UserSearchSelect value={ownerId} onChange={setOwnerId} selectedUser={ownerId === currentUser?.userId ? currentUser : undefined} placeholder="搜索并选择产品负责人" />
+  </Field>;
+  const memberField = <div role="group" aria-label="项目组成员">
+    <span className="mb-2 block text-xs text-token-secondary">项目组成员 *</span>
+    <MemberChecks compact={!temporary} members={members} selected={teamIds} onChange={setTeamIds} pastedMatches={pastedMembers.matches} onChoosePasted={pastedMembers.choose} />
+  </div>;
+  const scheduleFields = <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
+    <Field label="上线日期 *"><Input type="date" value={releaseAt} onChange={(e) => setReleaseAt(e.target.value)} /></Field>
+    <Field label="预计培训时长（分钟）*"><Input type="number" min={0} max={2147483647} step={1} value={trainingMinutes} onChange={(e) => setTrainingMinutes(e.target.value)} placeholder="填写分钟数，例如 30" /></Field>
+    <Field label="是否全域开放">{temporary
+      ? <Select value={isGlobalOpen} onChange={(e) => setIsGlobalOpen(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select>
+      : <span className="block py-2 text-sm text-token-secondary">{effectiveGlobalOpen === 'yes' ? '是（非定制项目）' : '否（定制项目）'}</span>}</Field>
+    <Field label="当前开放品牌">{!temporary && effectiveGlobalOpen === 'yes'
+      ? <span className="block py-2 text-sm text-token-secondary">上线全域开放</span>
+      : <Input value={editableOpenBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder={temporary ? '上线全域开放' : '填写本次开放的品牌'} />}</Field>
+  </div>;
+  const supplementaryFields = <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
+    {!temporary && sourceMode === 'initiation' && <div className="sm:col-span-2"><Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="可粘贴识别、自动回填或手动修改" /></Field></div>}
+    <Field label="需求来源"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} /></Field>
+    <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
+    <div className="sm:col-span-2"><Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field></div>
+    {temporary && <Field label="产品负责人名称"><Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} /></Field>}
+    {temporary && <Field label="项目组成员名称"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="企微通知中的姓名，用顿号分隔" /></Field>}
+    {temporary && <Field label="合同签订方"><Input value={contractParty} onChange={(e) => setContractParty(e.target.value)} /></Field>}
+    {temporary && <Field label="项目需求描述"><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>}
+    <div className="sm:col-span-2"><Field label="备注"><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field></div>
+  </div>;
+
   return (
     <div className="flex flex-col gap-4">
       {loading && isNew && <p role="status" className="flex items-center gap-2 text-xs text-token-secondary"><MapSpinner size={14} />正在回填所属应用的需求、成员和版本资料，可以先填写基础信息…</p>}
@@ -776,84 +813,57 @@ export function ReleaseWorkflowDetail({
           )}
         </>
       ) : tab === 'basic' || (isNew && !temporary) ? (
-        <div className="space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5">
+        <div className={isNew && !temporary ? 'space-y-6' : 'space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5'}>
           {isNew ? (
             <>
               <ProductVersionMessagePaste kind="formal" onParsed={applyParsedMessage} getPlanNameEditVersion={planNameDraft.getEditVersion} />
-              <Field label="产品负责人 *">
-                <UserSearchSelect value={ownerId} onChange={setOwnerId} selectedUser={ownerId === currentUser?.userId ? currentUser : undefined} placeholder="搜索并选择产品负责人" />
-              </Field>
-              {!temporary && (
-                <>
-                  <Field label="内部 T 来源 *">
-                    <Select value={sourceMode} onChange={(e) => {
-                      const mode = e.target.value as typeof sourceMode;
-                      setSourceMode(mode);
-                      setPastedPlanCandidates([]); setPlanMatchHint('');
-                      if (mode === 'manual_t') setInitiationId('');
-                      else setManualTCode('');
-                      if (onApplicationProductChange) {
-                        changeApplication(''); setInitiationId('');
-                      }
-                    }}>
-                      <option value="initiation">选择已通过立项</option>
-                      <option value="manual_t">手工填写 T 号（旧记录兜底）</option>
-                    </Select>
-                  </Field>
-                  {sourceMode === 'initiation' ? (
-                    <Field label={applicationProducts ? '立项方案 *' : '立项号 *'}>
-                      {applicationProducts ? <ReleasePlanPicker plans={pastedPlanCandidates.length ? approved.filter((item) => pastedPlanCandidates.includes(item.id)) : approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} loading={planLoading} error={planError} progress={planProgress} onRetry={onRetryPlans} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
-                        <option value="">请选择</option>
-                        {approved.map((i) => <option key={i.id} value={i.id}>{i.tCode} · {i.planName}</option>)}
-                      </Select>}
-                    </Field>
-                  ) : (
-                    <Field label="手工 T 号 *"><Input value={manualTCode} onChange={(e) => setManualTCode(e.target.value)} placeholder="T1.2.3" /></Field>
-                  )}
-                  {applicationProducts && <Field label={sourceMode === 'manual_t' ? '所属应用 *' : '所属应用（方案自动回填）'}>
-                    {sourceMode === 'manual_t' ? <ItemSearchSelect value={productId} onChange={changeApplication} options={toProductOptions(applicationProducts)} placeholder="手工 T 号请选择所属应用" countUnit="个应用" />
-                      : <div role="status" className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{applicationProducts.find((product) => product.id === productId)?.name ?? '选择方案后自动回填'}</div>}
-                  </Field>}
-                  {planMatchHint && <p role="status" className="text-xs leading-5 text-token-secondary">{planMatchHint}
-                    {pastedPlanCandidates.length > 0 && <button type="button" className="ml-2 hover:underline" onClick={() => { setPastedPlanCandidates([]); setPlanMatchHint(''); }}>查看全部方案</button>}
-                  </p>}
-                  {selectedInitiation && (
-                    <InfoBox>
-                      <b>方案：</b>{selectedInitiation.planName}<br />
-                      <b>级别：</b>{SCALE_LABEL[selectedInitiation.versionType]}
-                    </InfoBox>
-                  )}
-                </>
-              )}
-              {temporary && (
+              {temporary ? <>
+                {ownerField}
                 <InfoBox>临时优化需求请在「需求」标签页选择要上线的需求条目。</InfoBox>
-              )}
-              <div role="group" aria-label="项目组成员">
-                <span className="mb-1.5 block text-xs text-token-secondary">项目组成员 *</span>
-                <MemberChecks members={members} selected={teamIds} onChange={setTeamIds} pastedMatches={pastedMembers.matches} onChoosePasted={pastedMembers.choose} />
-              </div>
-              {!temporary && <>
-                <Field label="项目类别"><Select value={effectiveProjectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
-                <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)} disabled={sourceMode === 'initiation' && !!selectedInitiation}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
+                {memberField}
+                {supplementaryFields}
+                {scheduleFields}
+              </> : <>
+                <section aria-label="申领信息" className="space-y-4">
+                  <h2 className="text-sm font-semibold text-token-primary">申领信息</h2>
+                  <div className="relative space-y-2">
+                    <button type="button" onClick={changeSourceMode} className="absolute right-0 top-0 text-xs text-token-secondary hover:underline">{sourceMode === 'initiation' ? '手工填写 T 号' : '返回选择方案'}</button>
+                    {sourceMode === 'initiation' ? <>
+                      <Field label={applicationProducts ? '所属方案 *' : '立项号 *'}>
+                        {applicationProducts ? <ReleasePlanPicker plans={pastedPlanCandidates.length ? approved.filter((item) => pastedPlanCandidates.includes(item.id)) : approved} products={applicationProducts} value={initiationId} onChange={chooseInitiation} loading={planLoading} error={planError} progress={planProgress} onRetry={onRetryPlans} /> : <Select value={initiationId} onChange={(e) => chooseInitiation(e.target.value)} disabled={readOnly}>
+                          <option value="">请选择</option>
+                          {approved.map((i) => <option key={i.id} value={i.id}>{i.planName}</option>)}
+                        </Select>}
+                      </Field>
+                      {selectedInitiation && <div aria-label="方案关联信息" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-token-muted">
+                        <span>已匹配立项 {selectedInitiation.tCode}</span>
+                        <span role="status">{applicationProducts?.find((product) => product.id === productId)?.name ?? selectedInitiation.appName}</span>
+                        <span>{effectiveProjectType === 'standard' ? '非定制' : '定制'}</span><span>{SCALE_LABEL[versionType]}</span>
+                      </div>}
+                    </> : <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
+                      <Field label="手工 T 号 *"><Input value={manualTCode} onChange={(e) => setManualTCode(e.target.value)} placeholder="T1.2.3" /></Field>
+                      {applicationProducts && <Field label="所属应用 *"><ItemSearchSelect value={productId} onChange={changeApplication} options={toProductOptions(applicationProducts)} placeholder="手工 T 号请选择所属应用" countUnit="个应用" /></Field>}
+                      <div className="sm:col-span-2"><Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="填写本次上线的方案名称" /></Field></div>
+                      <Field label="项目类别"><Select value={effectiveProjectType} onChange={(e) => setProjectType(e.target.value as typeof projectType)}><option value="standard">非定制</option><option value="custom">定制</option></Select></Field>
+                      <Field label="版本类别"><Select value={versionType} onChange={(e) => setVersionType(e.target.value as typeof versionType)}><option value="minor">小版本</option><option value="medium">中版本</option><option value="major">大版本</option></Select></Field>
+                    </div>}
+                    {planMatchHint && !selectedInitiation && <p role="status" className="text-xs leading-5 text-token-secondary">{planMatchHint}
+                      {pastedPlanCandidates.length > 0 && <button type="button" className="ml-2 hover:underline" onClick={() => { setPastedPlanCandidates([]); setPlanMatchHint(''); }}>查看全部方案</button>}
+                    </p>}
+                  </div>
+                  {ownerField}
+                  {memberField}
+                </section>
+                <section aria-label="上线安排" className="space-y-4 border-t border-token-subtle pt-5">
+                  <h2 className="text-sm font-semibold text-token-primary">上线安排</h2>
+                  {scheduleFields}
+                </section>
+                <details className="border-t border-token-subtle pt-4">
+                  <summary className="cursor-pointer text-sm text-token-secondary">补充资料<span className="ml-2 text-xs text-token-muted">方案资料、需求来源、备注</span></summary>
+                  <div className="pt-4">{supplementaryFields}</div>
+                </details>
               </>}
-              {!temporary && <Field label="产品方案名称 *"><Input value={planName} onChange={(e) => planNameDraft.setManual(e.target.value)} placeholder="可粘贴识别、自动回填或手动修改" /></Field>}
-              <Field label="需求来源"><Input value={demandSource} onChange={(e) => setDemandSource(e.target.value)} /></Field>
-              <Field label="方案地址"><Input value={planUrl} onChange={(e) => setPlanUrl(e.target.value)} placeholder="https://" /></Field>
-              <Field label="所属部门"><Input value={departmentName} onChange={(e) => setDepartmentName(e.target.value)} /></Field>
-              <Field label="产品负责人名称"><Input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} /></Field>
-              {temporary && <Field label="项目组成员名称"><Input value={projectMembers} onChange={(e) => setProjectMembers(e.target.value)} placeholder="企微通知中的姓名，用顿号分隔" /></Field>}
-              {temporary && <Field label="合同签订方"><Input value={contractParty} onChange={(e) => setContractParty(e.target.value)} /></Field>}
-              {temporary && <Field label="项目需求描述"><textarea value={requirementDescription} onChange={(e) => setRequirementDescription(e.target.value)} rows={3} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>}
-              <Field label="备注"><textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-400/50" /></Field>
-              <Field label="上线日期 *"><Input type="date" value={releaseAt} onChange={(e) => setReleaseAt(e.target.value)} /></Field>
-              <Field label="预计培训时长（分钟）*"><Input type="number" min={0} max={2147483647} step={1} value={trainingMinutes} onChange={(e) => setTrainingMinutes(e.target.value)} placeholder="填写分钟数，例如 30" /></Field>
-              <Field label="是否全域开放">{temporary
-                ? <Select value={isGlobalOpen} onChange={(e) => setIsGlobalOpen(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select>
-                : <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">{effectiveGlobalOpen === 'yes' ? '是（非定制项目）' : '否（定制项目）'}</div>}</Field>
-              <Field label="当前开放品牌">{!temporary && effectiveGlobalOpen === 'yes'
-                ? <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">上线全域开放</div>
-                : <Input value={editableOpenBrandScope} onChange={(e) => setOpenBrandScope(e.target.value)} placeholder={temporary ? '上线全域开放' : '填写本次开放的品牌'} />}</Field>
-              <InfoBox>确认后自动生成正式版本号，无需人工审批；随后必须补充上线公告地址才能完成上线。</InfoBox>
+              <p className="text-xs leading-5 text-token-muted">确认后自动生成正式版本号，无需人工审批；生成后请补充上线公告地址。</p>
             </>
           ) : null}
         </div>
@@ -922,7 +932,7 @@ export function ReleaseWorkflowDetail({
       {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-[color:var(--accent-fg-danger)]">{message}</div>}
       {loadError && <div role="alert" className="rounded-lg border border-token-subtle bg-token-nested p-3 text-sm text-token-secondary">{loadError}</div>}
 
-      <div className="flex justify-end gap-2 border-t border-token-subtle pt-4">
+      <div className={isNew && !temporary ? 'sticky bottom-0 z-10 flex justify-end gap-2 border-t border-token-subtle bg-token-card py-3' : 'flex justify-end gap-2 border-t border-token-subtle pt-4'}>
         {isRecordDetail ? (
           canCompleteRelease ? (
             <>
@@ -1229,9 +1239,10 @@ function RequirementSummary({ title, requirements, emptyText }: {
   );
 }
 
-function MemberChecks({ members, selected, onChange, pastedMatches, onChoosePasted }: {
+function MemberChecks({ members, selected, onChange, pastedMatches, onChoosePasted, compact = false }: {
   members: ProductMember[]; selected: string[]; onChange: (ids: string[]) => void;
   pastedMatches: PastedMemberMatch[]; onChoosePasted: (name: string, userId: string) => void;
+  compact?: boolean;
 }) {
   const currentUser = useAuthStore((state) => state.user);
   const [extraNames, setExtraNames] = useState<Map<string, string>>(new Map());
@@ -1251,8 +1262,8 @@ function MemberChecks({ members, selected, onChange, pastedMatches, onChoosePast
     || (id === currentUser?.userId ? currentUser?.displayName : extraNames.get(id)) || id;
   const availableMembers = members.filter((member) => !selected.includes(member.userId));
   return (
-    <div className="space-y-4">
-      <section aria-label="已选项目成员" className="rounded-lg border border-token-subtle bg-token-nested p-3">
+    <div className={compact ? 'space-y-3' : 'space-y-4'}>
+      <section aria-label="已选项目成员" className={compact ? 'space-y-2' : 'rounded-lg border border-token-subtle bg-token-nested p-3'}>
         <div className="mb-2 text-xs font-medium text-token-secondary">已选成员（{selected.length}）</div>
         {selected.length === 0
           ? <p className="py-2 text-xs text-token-muted">尚未选择成员，请在下方搜索添加。</p>
@@ -1265,7 +1276,7 @@ function MemberChecks({ members, selected, onChange, pastedMatches, onChoosePast
               </div>)}
             </div>}
       </section>
-      <section aria-label="添加项目成员" className="rounded-lg border border-token-subtle bg-token-nested p-3">
+      <section aria-label="添加项目成员" className={compact ? 'space-y-2' : 'rounded-lg border border-token-subtle bg-token-nested p-3'}>
         <div className="mb-2 text-xs font-medium text-token-secondary">添加成员</div>
         {pastedMatches.length > 0 && <div aria-live="polite" className="mb-3 space-y-2 text-xs text-token-secondary">
           <p className="flex items-center gap-2">{pastedMatches.some((item) => item.status === 'pending') && <MapSpinner size={14} />}

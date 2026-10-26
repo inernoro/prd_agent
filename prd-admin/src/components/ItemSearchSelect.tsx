@@ -31,11 +31,12 @@ export interface ItemSearchSelectProps {
   disabled?: boolean;
   emptyText?: string;
   countUnit?: string;
+  truncateSelectedLabel?: boolean;
 }
 
 export function ItemSearchSelect({
   value, onChange, options, placeholder = '搜索...', clearOptionLabel,
-  uiSize = 'md', className, style, disabled = false, emptyText = '暂无可选项', countUnit = '项',
+  uiSize = 'md', className, style, disabled = false, emptyText = '暂无可选项', countUnit = '项', truncateSelectedLabel = true,
 }: ItemSearchSelectProps) {
   const { open, setOpen, filter, setFilter, triggerRef, panelRef, inputRef, pos, closePanel } = useItemComboboxPanel(disabled);
   const selected = useMemo(() => options.find((o) => o.id === value), [options, value]);
@@ -44,7 +45,8 @@ export function ItemSearchSelect({
   const radius = comboboxRadius(uiSize);
   const rowHeight = uiSize === 'sm' ? 'h-8' : 'h-9';
   const inputPlaceholder = !value && clearOptionLabel ? clearOptionLabel : placeholder;
-  const closedLabel = value && selected ? truncateItemLabel(formatItemSearchLabel(selected)) : '';
+  const selectedLabel = selected ? formatItemSearchLabel(selected) : '';
+  const closedLabel = value ? truncateSelectedLabel ? truncateItemLabel(selectedLabel) : selectedLabel : '';
   const inputDisplayValue = open ? filter : closedLabel;
 
   // 复用菜单的弹窗内 portal 与定位校正，避免 body 下的列表被模态滚动锁拦截。

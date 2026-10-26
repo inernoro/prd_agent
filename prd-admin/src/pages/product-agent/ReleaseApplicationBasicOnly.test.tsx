@@ -79,7 +79,7 @@ describe('正式申领只填写基础信息', () => {
     vi.useFakeTimers();
     api.parseProductVersionMessage.mockResolvedValue(parsed(source));
     await act(async () => root.render(<MemoryRouter><PasteApplication /></MemoryRouter>));
-    expect(field('内部 T 来源 *').value).toBe('initiation');
+    expect(button('手工填写 T 号')).toBeDefined();
     const notice = '产品方案名称：测试应用（测试方案）';
     await pasteNotice(notice);
     expect(field('立项号 *').value).toBe(source.id);
@@ -88,7 +88,7 @@ describe('正式申领只填写基础信息', () => {
     expect(host.querySelector('output')?.value).toBe('other-app');
     await pasteNotice(notice);
     expect(api.parseProductVersionMessage).toHaveBeenCalledTimes(2);
-    expect(field('内部 T 来源 *').value).toBe('initiation');
+    expect(button('手工填写 T 号')).toBeDefined();
     expect(field('立项号 *').value).toBe(source.id);
     expect(host.querySelector('output')?.value).toBe('app');
     expect(field('产品方案名称 *').value).toBe(source.planName);
@@ -116,7 +116,7 @@ describe('正式申领只填写基础信息', () => {
     expect(button('需求')).toBeUndefined(); expect(button('功能')).toBeUndefined();
     expect(button('确认并获取正式版本号')?.disabled).toBe(true);
     if (manual) {
-      await change('内部 T 来源 *', 'manual_t');
+      await act(async () => button('手工填写 T 号')?.click());
       await change('手工 T 号 *', 'T9.0.0'); await change('产品方案名称 *', '手工方案');
     } else await change('立项号 *', 'source');
     expect(host.textContent).not.toContain('在「需求」标签页查看与追加');
