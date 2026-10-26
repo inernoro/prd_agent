@@ -155,7 +155,9 @@ public class ProductClaimWebhookTests
         }
         public ProductClaimWebhookController Controller(bool admin = true, bool preview = false)
         {
-            var configuration = new ConfigurationBuilder().AddInMemoryCollection(preview ? new Dictionary<string, string?> { ["CDS_PROJECT_ID"] = "prd-agent" } : new()).Build();
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
+                ["CDS_PROJECT_ID"] = preview ? "prd-agent" : null,
+            }).Build();
             return new(Db, Protection, configuration) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", admin ? "admin" : "member") }, "test")) } } };
         }
         public async Task AddPendingAsync()
