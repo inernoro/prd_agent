@@ -625,7 +625,7 @@ public sealed class AdminPushNotificationService
 
     private static string IncidentKey(AdminNotification notice) => Convert.ToHexString(SHA256.HashData(
         Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new[] { notice.Source,
-            notice.Source == "gateway-alert" ? notice.Id
+            notice.Source == "gateway-alert" ? DeliveryKey(notice)
                 : !string.IsNullOrWhiteSpace(notice.Key) ? notice.Key
                 : !string.IsNullOrWhiteSpace(notice.ActionUrl) ? notice.ActionUrl : notice.Id }))));
 

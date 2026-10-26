@@ -277,7 +277,8 @@ internal static class LlmGatewayIncidentPolicy
                     isFailure ? SummarizeFailure(latest) : string.Empty,
                     ordered.Count(x => IsFailure(x.Log)),
                     BuildSignalVersion(latest),
-                    entry);
+                    entry,
+                    latest.EndedAt ?? latest.StartedAt);
             })
             .ToList();
     }
@@ -294,8 +295,9 @@ internal static class LlmGatewayIncidentPolicy
     {
         // Mongo 日志只有毫秒精度。同毫秒没有真实先后证据，保守地让失败胜出；
         // 最后用稳定身份摘要打破同类信号平局，所有字符为 ASCII，与 simple collation 一致。
-        var utc = log.StartedAt.Kind == DateTimeKind.Unspecified
-            ? DateTime.SpecifyKind(log.StartedAt, DateTimeKind.Utc) : log.StartedAt.ToUniversalTime();
+        var observedAt = log.EndedAt ?? log.StartedAt;
+        var utc = observedAt.Kind == DateTimeKind.Unspecified
+            ? DateTime.SpecifyKind(observedAt, DateTimeKind.Utc) : observedAt.ToUniversalTime();
         var ticks = utc.Ticks / TimeSpan.TicksPerMillisecond * TimeSpan.TicksPerMillisecond;
         var identity = System.Text.Json.JsonSerializer.Serialize(new[] { log.RequestId, log.Id });
         return $"{ticks.ToString("D19", System.Globalization.CultureInfo.InvariantCulture)}:{(IsFailure(log) ? "1" : "0")}:"
@@ -378,4 +380,5 @@ internal sealed record LlmGatewayIncidentSignal(
     string FailureSummary,
     int FailureCount,
     string SignalVersion,
-    bool IsGatewayEntry = false);
+    bool IsGatewayEntry = false,
+    DateTime ObservedAt = default);

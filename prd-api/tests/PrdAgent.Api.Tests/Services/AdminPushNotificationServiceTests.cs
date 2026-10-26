@@ -106,9 +106,10 @@ public sealed class AdminPushNotificationServiceTests
         await gateway.LlmRequestLogs.InsertOneAsync(Log("recurrence", "failed", DateTime.UtcNow.AddSeconds(5)));
         await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => Watchdog().SweepOnceAsync(default)));
         var errors = await db.Context.AdminNotifications.Find(n => n.Level == "error").ToListAsync();
-        Assert.Equal(2, errors.Count);
+        Assert.Single(errors);
         var recurrence = Assert.Single(errors.Where(n => n.Status == "open"));
-        Assert.NotEqual(first.Id, recurrence.Id);
+        Assert.Equal(first.Id, recurrence.Id);
+        Assert.Equal(first.PushEpisode + 1, recurrence.PushEpisode);
         Assert.Equal(first.Key, recurrence.Key);
 
         clock.Advance(TimeSpan.FromSeconds(61));
@@ -118,7 +119,7 @@ public sealed class AdminPushNotificationServiceTests
             .Find(_ => true).SingleAsync();
         Assert.All(budget["attemptHistory"].AsBsonArray, attempt => Assert.True(attempt["urgent"].AsBoolean));
         Assert.True(await db.Context.AdminPushDeliveryLogs.Find(n => n.Success
-            && n.CoveredNotificationIds.Contains(recurrence.Id)).AnyAsync());
+            && n.CoveredNotificationDeliveryKeys.Contains(recurrence.Id + ":episode:" + recurrence.PushEpisode)).AnyAsync());
         await Watchdog().SweepOnceAsync(default);
         await ExpireRecipientWindowAsync(db.Context);
         await Push().DispatchPendingAsync(default);
