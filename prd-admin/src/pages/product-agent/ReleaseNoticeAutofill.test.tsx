@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAuthStore } from '@/stores/authStore';
 import { ReleaseApplicationDialog } from './ReleaseWorkflowDetail';
 import type { ProductInitiation } from './types';
 
@@ -12,7 +13,6 @@ const directory = vi.hoisted(() => vi.fn());
 vi.mock('@/services/real/productAgent', async (original) => ({ ...await original<typeof import('@/services/real/productAgent')>(), ...api }));
 vi.mock('@/services', () => ({ searchDirectoryUsers: directory }));
 vi.mock('@/services/real/directory', () => ({ searchDirectoryUsers: directory }));
-vi.mock('@/stores/authStore', () => ({ useAuthStore: (select: (state: unknown) => unknown) => select({ user: { userId: 'me', username: 'recorder', displayName: '陈雅珊' }, permissions: ['product-agent.use'], isRoot: false }) }));
 vi.mock('@/services/real/teams', () => ({ getUserCards: async () => ({ success: true, data: { items: [
   { userId: 'me', displayName: '陈雅珊' }, { userId: 'lin', displayName: '吴林坤' }, { userId: 'shi', displayName: '欧石玲' },
 ] } }) }));
@@ -38,6 +38,7 @@ async function paste() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
+  useAuthStore.setState({ user: { userId: 'me', username: 'recorder', displayName: '陈雅珊', role: 'PM' }, permissions: ['product-agent.use'], isRoot: false });
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
   api.listInitiations.mockResolvedValue({ success: true, data: { items: [source] } });
   api.listProductMembers.mockResolvedValue({ success: true, data: { members: [] } });
@@ -50,7 +51,7 @@ beforeEach(() => {
     matchedFields: ['projectType', 'versionType', 'demandSource', 'planName', 'planUrl', 'projectMemberNames', 'plannedReleaseAt', 'tCode'],
   } } });
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); useAuthStore.setState(useAuthStore.getInitialState(), true); });
 
 describe('完整正式申领弹窗的原文回填', () => {
   it('真实人员和方案选择器显示默认记录人，回填T及应用，支持改选负责人后再次粘贴', async () => {
