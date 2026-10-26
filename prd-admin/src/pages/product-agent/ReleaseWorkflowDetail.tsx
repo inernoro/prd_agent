@@ -169,6 +169,9 @@ export function ReleaseWorkflowDetail({
     [initiations, availableInitiations, pastedInitiations],
   );
   const selectedInitiation = approved.find((item) => item.id === initiationId);
+  const trainingRequired = (selectedInitiation?.releaseTrainingRequired
+    ?? applicationProducts?.find((item) => item.id === productId)?.releaseTrainingRequired) !== false;
+  const trainingInvalid = trainingRequired && (trainingMinutes.trim() === '' || !Number.isInteger(Number(trainingMinutes)) || Number(trainingMinutes) < 0 || Number(trainingMinutes) > 2147483647);
   // 正式申领项目类别以所选T记录为准；临时优化沿用表单类别。
   const effectiveProjectType = !temporary && selectedInitiation ? selectedInitiation.projectType : projectType;
   const effectiveGlobalOpen = temporary ? isGlobalOpen : effectiveProjectType === 'standard' ? 'yes' : 'no';
@@ -485,8 +488,8 @@ export function ReleaseWorkflowDetail({
       setMessage('请先选择已通过且已取得 T 号的方案。');
       return;
     }
-    if (!releaseAt || trainingMinutes.trim() === '' || !Number.isInteger(Number(trainingMinutes)) || Number(trainingMinutes) < 0 || Number(trainingMinutes) > 2147483647) {
-      setMessage('请填写上线日期和预计培训时长（非负整数分钟）');
+    if (!releaseAt || trainingInvalid) {
+      setMessage(!releaseAt ? '请填写上线日期' : '请填写预计培训时长（非负整数分钟）');
       return;
     }
     setBusy(true);
@@ -539,7 +542,7 @@ export function ReleaseWorkflowDetail({
       additionalRequirementIds: temporary ? extraIds : undefined,
       teamMemberIds: teamIds,
       plannedReleaseAt: new Date(`${releaseAt}T00:00:00+08:00`).toISOString(),
-      plannedTrainingMinutes: Number(trainingMinutes),
+      plannedTrainingMinutes: trainingRequired ? Number(trainingMinutes) : undefined,
       previousReleaseId: temporary ? previousReleaseId ?? undefined : undefined,
       featureManifest: temporary ? activeManifest : undefined,
     });
@@ -584,7 +587,7 @@ export function ReleaseWorkflowDetail({
     else setRelease(res.data);
   };
 
-  const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || trainingMinutes.trim() === '' || !Number.isInteger(Number(trainingMinutes)) || Number(trainingMinutes) < 0 || Number(trainingMinutes) > 2147483647 || !effectiveGlobalOpen || pastedMembers.pendingCount > 0 || teamIds.length === 0
+  const basicInvalid = loading || Boolean(loadError) || !productId || !ownerId || !releaseAt || trainingInvalid || !effectiveGlobalOpen || pastedMembers.pendingCount > 0 || teamIds.length === 0
     || (!temporary && selectedInitiation?.productId !== productId)
     || (temporary ? extraIds.length === 0 : !initiationId || !planName.trim());
   const manifestInvalid = activeManifest.length === 0;
@@ -622,7 +625,7 @@ export function ReleaseWorkflowDetail({
   </div>;
   const scheduleFields = <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2">
     <Field label="上线日期 *"><Input type="date" value={releaseAt} onChange={(e) => setReleaseAt(e.target.value)} /></Field>
-    <Field label="预计培训时长（分钟）*"><Input type="number" min={0} max={2147483647} step={1} value={trainingMinutes} onChange={(e) => setTrainingMinutes(e.target.value)} placeholder="填写分钟数，例如 30" /></Field>
+    {trainingRequired && <Field label="预计培训时长（分钟）*"><Input type="number" min={0} max={2147483647} step={1} value={trainingMinutes} onChange={(e) => setTrainingMinutes(e.target.value)} placeholder="填写分钟数，例如 30" /></Field>}
     <Field label="是否全域开放">{temporary
       ? <Select value={isGlobalOpen} onChange={(e) => setIsGlobalOpen(e.target.value)}><option value="">请选择</option><option value="yes">是</option><option value="no">否</option></Select>
       : <span className="block py-2 text-sm text-token-secondary">{effectiveGlobalOpen === 'yes' ? '是（非定制项目）' : '否（定制项目）'}</span>}</Field>

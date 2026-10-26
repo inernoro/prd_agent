@@ -2,6 +2,9 @@ namespace PrdAgent.Core.Models;
 
 public class ProductInitiation
 {
+    /// <summary>服务端派生的正式申领表单规则，不写入立项主数据。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnore]
+    public bool? ReleaseTrainingRequired { get; set; }
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string ProductId { get; set; } = string.Empty;
     /// <summary>立项关联的产品目录条目（替代手填系统/应用）</summary>

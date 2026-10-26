@@ -136,6 +136,22 @@ describe('正式申领只填写基础信息', () => {
     expect(api.getInheritReleaseManifest).toHaveBeenCalled();
   });
 
+  it('米多总后台按服务端规则隐藏培训时长，切换方案后不带入之前的培训分钟', async () => {
+    const exempt = { ...source, appName: '米多总后台', releaseTrainingRequired: false };
+    const ordinary = { ...source, id: 'ordinary', releaseTrainingRequired: true };
+    api.listInitiations.mockResolvedValue({ success: true, data: { items: [exempt, ordinary] } });
+    await mount();
+    await change('立项号 *', 'ordinary');
+    await change('上线日期 *', '2026-10-26');
+    expect(button('确认并获取正式版本号')?.disabled).toBe(true);
+    await change('预计培训时长（分钟）*', '30');
+    await change('立项号 *', source.id);
+    expect(host.textContent).not.toContain('预计培训时长（分钟）*');
+    expect(button('确认并获取正式版本号')?.disabled).toBe(false);
+    await act(async () => button('确认并获取正式版本号')?.click());
+    expect(api.createRelease).toHaveBeenCalledWith('app', expect.objectContaining({ initiationId: source.id, plannedTrainingMinutes: undefined }));
+  });
+
   it('已发号详情保留需求功能及缺陷页签，不删除历史入口', async () => {
     await mount(false);
     expect(button('需求')).toBeDefined(); expect(button('功能')).toBeDefined(); expect(button('缺陷')).toBeDefined();

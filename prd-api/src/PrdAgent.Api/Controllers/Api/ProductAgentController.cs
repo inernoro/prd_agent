@@ -779,7 +779,7 @@ public partial class ProductAgentController : ControllerBase
             .SortBy(x => x.Name)
             .Project(x => new { x.Id, x.Name, x.ProductNo, x.Code })
             .ToListAsync();
-        return Ok(ApiResponse<object>.Ok(new { items }));
+        return Ok(ApiResponse<object>.Ok(new { items = items.Select(x => new { x.Id, x.Name, x.ProductNo, x.Code, releaseTrainingRequired = ProductReleaseTrainingPolicy.IsRequired(x.Name) }) }));
     }
 
     [HttpGet("version-workflow/products/{productId}")]
@@ -788,7 +788,7 @@ public partial class ProductAgentController : ControllerBase
         var product = await FindAccessibleProductAsync(productId, GetUserId());
         if (product == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "产品不存在或无权访问"));
-        return Ok(ApiResponse<object>.Ok(new { product.Id, product.Name, product.ProductNo, product.Code }));
+        return Ok(ApiResponse<object>.Ok(new { product.Id, product.Name, product.ProductNo, product.Code, releaseTrainingRequired = ProductReleaseTrainingPolicy.IsRequired(product.Name) }));
     }
 
     [HttpGet("version-workflow/review-sources")]
@@ -846,6 +846,7 @@ public partial class ProductAgentController : ControllerBase
             {
                 result.InitiationCandidates = await _db.ProductInitiations.Find(item => !item.IsDeleted && item.Status == "approved"
                     && permittedProductIds.Contains(item.ProductId) && result.CandidateInitiationIds.Contains(item.Id)).ToListAsync();
+                await ProductReleaseTrainingPolicy.AnnotateAsync(_db, result.InitiationCandidates);
                 result.CandidateInitiationIds = result.InitiationCandidates.Select(item => item.Id).ToList();
                 if (result.MatchedInitiationId != null && !result.CandidateInitiationIds.Contains(result.MatchedInitiationId))
                     result.MatchedInitiationId = null;
@@ -886,6 +887,7 @@ public partial class ProductAgentController : ControllerBase
         var items = await _db.ProductInitiations.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
         await ProductInitiationDeletion.AnnotateAsync(_db, items, userId);
+        await ProductReleaseTrainingPolicy.AnnotateAsync(_db, items);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -896,6 +898,7 @@ public partial class ProductAgentController : ControllerBase
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
         await ProductInitiationDeletion.AnnotateAsync(_db, new[] { item }, GetUserId());
+        await ProductReleaseTrainingPolicy.AnnotateAsync(_db, new[] { item });
         return Ok(ApiResponse<object>.Ok(item));
     }
 
@@ -1434,7 +1437,8 @@ public partial class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "项目组成员不能为空"));
         if (!request.PlannedReleaseAt.HasValue)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "上线时间不能为空"));
-        if (!request.PlannedTrainingMinutes.HasValue || request.PlannedTrainingMinutes.Value < 0)
+        var trainingRequired = ProductReleaseTrainingPolicy.IsRequired(claimApplicationName);
+        if (trainingRequired && (!request.PlannedTrainingMinutes.HasValue || request.PlannedTrainingMinutes.Value < 0))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写预计培训时长（非负整数分钟）"));
         if (string.IsNullOrWhiteSpace(request.OwnerId))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "产品负责人（申领人）不能为空"));
@@ -1481,7 +1485,7 @@ public partial class ProductAgentController : ControllerBase
             RequirementIds = (initiation?.RequirementIds ?? new()).Concat(request.AdditionalRequirementIds ?? new()).Distinct().ToList(),
             TeamMemberIds = request.TeamMemberIds.Distinct().ToList(),
             PlannedReleaseAt = request.PlannedReleaseAt,
-            PlannedTrainingMinutes = request.PlannedTrainingMinutes,
+            PlannedTrainingMinutes = trainingRequired ? request.PlannedTrainingMinutes : null,
             PreviousReleaseId = request.PreviousReleaseId ?? previousRelease?.Id,
             FeatureManifest = manifest,
             Status = "released",

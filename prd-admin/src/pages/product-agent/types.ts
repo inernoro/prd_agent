@@ -193,6 +193,7 @@ export interface ProductVersion {
 export type VersionScale = 'major' | 'medium' | 'minor';
 
 export interface ProductInitiation {
+  releaseTrainingRequired?: boolean | null;
   id: string;
   productId: string;
   linkedProductId?: string | null;

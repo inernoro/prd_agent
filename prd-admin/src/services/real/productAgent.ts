@@ -69,6 +69,7 @@ export function getProduct(id: string): Promise<ApiResponse<Product>> {
   return apiRequest<Product>(`/api/product/products/${id}`);
 }
 export interface VersionApplicationProduct {
+  releaseTrainingRequired?: boolean;
   id: string;
   name: string;
   productNo: string;
