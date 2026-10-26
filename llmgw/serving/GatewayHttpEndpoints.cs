@@ -4269,11 +4269,13 @@ public static class GatewayHttpEndpoints
                     request.PinnedModelId,
                     ct);
                 var raw = await gateway.SendRawWithResolutionAsync(request, resolution, ct);
+                if (!resolution.Success && !raw.Success)
+                    http.Items["llmgw.route.failure-code"] = raw.ErrorCode;
                 if (store is not null && execution is not null)
                 {
                     if (raw.Success)
                         await store.CompleteAsync(GetVerifiedTenantId(http), execution.ExecutionId, JsonSerializer.Serialize(raw), CancellationToken.None);
-                    else if (raw.StatusCode >= 500)
+                    else if (raw.StatusCode >= 500 && resolution.Success)
                         await store.UnknownAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "UPSTREAM_OUTCOME_UNKNOWN", CancellationToken.None);
                     else
                         await store.FailAsync(GetVerifiedTenantId(http), execution.ExecutionId, raw.ErrorCode ?? "RAW_REQUEST_FAILED", CancellationToken.None);
