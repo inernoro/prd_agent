@@ -30,7 +30,7 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/product")]
 [Authorize]
 [AdminController("product-agent", AdminPermissionCatalog.ProductAgentUse)]
-public class ProductAgentController : ControllerBase
+public partial class ProductAgentController : ControllerBase
 {
     private readonly MongoDbContext _db;
     private readonly ILogger<ProductAgentController> _logger;

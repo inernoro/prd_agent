@@ -13,6 +13,13 @@ public static class ProductVersionPlanMatching
         ["米多星球"] = "米多总平台",
     };
 
+    public static string CanonicalApplicationName(string? name)
+    {
+        var key = PrdAgent.Core.Models.VersionRegistryCatalog.NormalizeName(name);
+        var alias = ApplicationAliases.FirstOrDefault(pair => PrdAgent.Core.Models.VersionRegistryCatalog.NormalizeName(pair.Key) == key);
+        return PrdAgent.Core.Models.VersionRegistryCatalog.NormalizeName(alias.Value ?? name);
+    }
+
     private static string ApplicationPrefix(string value)
     {
         var prefix = Compact(Prefix(value));

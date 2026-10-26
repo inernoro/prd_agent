@@ -127,6 +127,7 @@ public static class ProductVersionListReader
                 ProjectMemberNames = old.ProjectMemberNames, ContractParty = old.ContractParty, Remark = old.Remark,
                 IsGlobalOpen = old.IsGlobalOpen, OpenBrandScope = old.IsGlobalOpen == true ? "上线全域开放" : string.Empty,
                 PlannedReleaseAt = old.PlannedReleaseAt, PlannedTrainingMinutes = old.PlannedTrainingMinutes,
+                AnnouncementUrl = old.AnnouncementUrl,
                 Status = "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
                 CreatedAt = old.CreatedAt, UpdatedAt = old.UpdatedAt,
             };
