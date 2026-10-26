@@ -67,7 +67,8 @@ public static class ProductVersionPlanMatching
         if (apps.Count == 1)
         {
             result.MatchedApplicationId = apps[0].Id;
-            if (!formal) result.PlanName = PrdAgent.Core.Helpers.ProductVersionPlanName.Format(apps[0].Name, result.TCode, raw ?? string.Empty);
+            if (!formal) result.PlanName = PrdAgent.Core.Helpers.ProductVersionPlanName.Format(apps[0].Name,
+                result.TCode ?? VersionRegistrationMessageParser.Parse(raw, "formal").TCode, raw ?? string.Empty);
         }
         if (!formal) return;
         var appIds = apps.Select(app => app.Id).ToHashSet();

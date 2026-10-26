@@ -99,7 +99,10 @@ public class DataSyncScopeCoverageTests
         // 已知会带密钥的可导出集合 -> 至少要清空的字段。
         var required = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["users"] = new[] { "PasswordHash" },
+            ["users"] = new[] { "PasswordHash", "NotificationIdentityProtected" },
+            ["product_agent_settings"] = new[] { "ClaimWebhook" },
+            ["product_initiations"] = new[] { "ClaimNotification" },
+            ["product_releases"] = new[] { "ClaimNotification" },
             ["llmplatforms"] = new[] { "ApiKeyEncrypted" },
             ["llmmodels"] = new[] { "ApiKeyEncrypted" },
             ["channel_settings"] = new[] { "ImapPassword", "SmtpPassword" },

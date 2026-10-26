@@ -124,7 +124,7 @@ public static class DataSyncScope
             new DataSyncCollection("user_collections", System.Array.Empty<string>()),
             new DataSyncCollection("user_preferences", System.Array.Empty<string>()),
             new DataSyncCollection("user_report_template_preferences", System.Array.Empty<string>()),
-            new DataSyncCollection("users", new[] { "PasswordHash" }),
+            new DataSyncCollection("users", new[] { "PasswordHash", "NotificationIdentityProtected" }),
         }),
         new DataSyncGroup("llm-config", "平台与模型配置", new[]
         {
@@ -177,7 +177,8 @@ public static class DataSyncScope
             new DataSyncCollection("model_lab_groups", System.Array.Empty<string>()),
             new DataSyncCollection("model_lab_model_sets", System.Array.Empty<string>()),
             new DataSyncCollection("model_scheduler_config", System.Array.Empty<string>()),
-            new DataSyncCollection("product_agent_settings", System.Array.Empty<string>()),
+            // 机器人配置属于本站；连同启停标志整体保留，避免跨站导入意外投递。
+            new DataSyncCollection("product_agent_settings", new[] { "ClaimWebhook" }),
             new DataSyncCollection("reference_image_configs", System.Array.Empty<string>()),
             new DataSyncCollection("routing_rules", System.Array.Empty<string>()),
             new DataSyncCollection("shortcut_templates", System.Array.Empty<string>()),
@@ -249,9 +250,9 @@ public static class DataSyncScope
             new DataSyncCollection("product_desc_templates", System.Array.Empty<string>()),
             new DataSyncCollection("product_form_templates", System.Array.Empty<string>()),
             new DataSyncCollection("product_grade_options", System.Array.Empty<string>()),
-            new DataSyncCollection("product_initiations", System.Array.Empty<string>()),
+            new DataSyncCollection("product_initiations", new[] { "ClaimNotification" }),
             new DataSyncCollection("product_item_summaries", System.Array.Empty<string>()),
-            new DataSyncCollection("product_releases", System.Array.Empty<string>()),
+            new DataSyncCollection("product_releases", new[] { "ClaimNotification" }),
             new DataSyncCollection("product_rules", System.Array.Empty<string>()),
             new DataSyncCollection("product_structure_nodes", System.Array.Empty<string>()),
             new DataSyncCollection("product_terms", System.Array.Empty<string>()),
