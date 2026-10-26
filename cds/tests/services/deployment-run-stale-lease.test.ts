@@ -60,9 +60,9 @@ describe('部署心跳过期后的精确租约回收', () => {
     return runs.reconcileInterrupted();
   }
 
-  function actualCleanupContext(index: number, old: Awaited<ReturnType<typeof trackedDeployment>>, events: OperationLogEvent[]) {
+  function actualCleanupInvocation(index: number, old: Awaited<ReturnType<typeof trackedDeployment>>, events: OperationLogEvent[]) {
     const source = ts.createSourceFile('branches.ts', fs.readFileSync(new URL('../../src/routes/branches.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest);
-    const functions: string[] = [], contexts: string[] = [];
+    const functions: string[] = [], contexts: string[] = [], methods: string[] = [];
     const names = ['createCleanupProgressReporter', 'appendDeploymentRunEvent', 'assertBranchOperationCurrent'];
     let reporterFound = false;
     const visit = (node: ts.Node): void => {
@@ -74,11 +74,14 @@ describe('部署心跳过期后的精确租约回收', () => {
         const context = node.arguments[1];
         if (context && ts.isObjectLiteralExpression(context) && context.properties.some(property =>
           ts.isPropertyAssignment(property) && property.name.getText(source) === 'operation'
-          && /^['"]deploy-(?:empty-profiles-cleanup|remove-orphan-service)['"]$/.test(property.initializer.getText(source)))) contexts.push(context.getText(source));
+          && /^['"]deploy-(?:empty-profiles-cleanup|remove-orphan-service)['"]$/.test(property.initializer.getText(source)))) {
+          contexts.push(context.getText(source)); methods.push(node.expression.getText(source).split('.')[1]);
+        }
       }
       ts.forEachChild(node, visit);
     };
     visit(source); expect(contexts).toHaveLength(3);
+    expect(methods).toEqual(['removeRuntimeGroup', 'remove', 'removeRuntimeGroup']);
     const functionSource = ts.transpileModule(functions.join('\n'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
     const functionsAtRuntime = new Function('deploymentRunService', 'stateService', 'DEPLOYMENT_RUN_TERMINAL_STATUSES',
       `${functionSource}\nreturn { appendDeploymentRunEvent, assertBranchOperationCurrent, createCleanupProgressReporter: ${reporterFound ? 'createCleanupProgressReporter' : 'undefined'} };`)(runs, state, DEPLOYMENT_RUN_TERMINAL_STATUSES);
@@ -89,7 +92,11 @@ describe('部署心跳过期后的精确租约回收', () => {
       cTrigger: 'manual', oTrigger: 'manual', zTrigger: 'manual', logEvent, res: {},
       sendSSE: (_res: unknown, _type: unknown, event: OperationLogEvent) => events.push(event) };
     const compiled = ts.transpileModule(`const context = ${contexts[index]};`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-    return new Function(...Object.keys(bindings), `${compiled}\nreturn context;`)(...Object.values(bindings));
+    return { method: methods[index], context: new Function(...Object.keys(bindings), `${compiled}\nreturn context;`)(...Object.values(bindings)) };
+  }
+
+  function actualCleanupContext(index: number, old: Awaited<ReturnType<typeof trackedDeployment>>, events: OperationLogEvent[]) {
+    return actualCleanupInvocation(index, old, events).context;
   }
 
   it.each([undefined, 'embedded', 'master-current'])('本节点%s不能只把运行账本写成失败而继续保留原执行租约', async executorId => {
@@ -278,10 +285,10 @@ describe('部署心跳过期后的精确租约回收', () => {
     runs = new DeploymentRunService(state, { now: () => new Date(clock), isExecutionWaiting });
     runs.bindOperationCoordinator(coordinator);
     const old = await trackedDeployment({ ...request, kind: 'deploy', profileId: undefined }), heartbeat = old.run.heartbeatAt;
-    const events: OperationLogEvent[] = [], context = actualCleanupContext(index, old, events);
+    const events: OperationLogEvent[] = [], { method, context } = actualCleanupInvocation(index, old, events);
     const owner = { projectId: 'p1', branchId: 'b1', profileId: 'api',
       operationId: old.lease.operationId, operationGeneration: old.lease.generation };
-    const cid = 'a'.repeat(64), commands: string[] = [];
+    const cid = 'a'.repeat(64), name = 'cds-b1-api', target = method === 'remove' ? name : cid, commands: string[] = [];
     let finishStop!: (value: ExecResult) => void, stopStarted!: () => void, stopPending = false, settled = false, removed = false;
     const stopEntered = new Promise<void>(resolve => { stopStarted = resolve; });
     const stopResponse = new Promise<ExecResult>(resolve => { finishStop = resolve; });
@@ -300,11 +307,11 @@ describe('部署心跳过期后的精确租约回收', () => {
         ...ok(), stdout: JSON.stringify([{ Id: cid, State: { Status: 'running', Running: true } }]),
       };
       if (command.startsWith('docker logs ')) return ok();
-      if (command === `docker stop ${cid}`) {
+      if (command === `docker stop ${target}`) {
         stopPending = true; stopStarted();
         try { return await stopResponse; } finally { stopPending = false; }
       }
-      if (command === `docker rm ${cid}`) { removed = true; return ok(); }
+      if (command === `docker rm ${target}`) { removed = true; return ok(); }
       throw new Error(`测试未授权的shell命令：${command}`);
     } };
     const config: CdsConfig = { repoRoot: '/repo', worktreeBase: '/wt', masterPort: 9900, workerPort: 5500,
@@ -313,8 +320,10 @@ describe('部署心跳过期后的精确租约回收', () => {
     const releaseBlocker = await deploymentPhaseBudget.acquire('cleanup', { projectId: 'other-project', branchId: 'other-branch' });
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(clock);
-    const removing = container.removeRuntimeGroup({ profileId: 'api', containerName: 'cds-b1-api',
-      containerId: cid, hostPort: 10001, status: 'running' }, context);
+    const removing = method === 'remove'
+      ? container.remove(name, context)
+      : container.removeRuntimeGroup({ profileId: 'api', containerName: name,
+        containerId: cid, hostPort: 10001, status: 'running' }, context);
     const completed = removing.then(() => { settled = true; }, () => { settled = true; });
     try {
       await vi.waitFor(() => expect(deploymentPhaseBudget.waitingOperation(owner.operationId, owner.operationGeneration)).toMatchObject({ phase: 'cleanup' }));
@@ -326,8 +335,8 @@ describe('部署心跳过期后的精确租约回收', () => {
       expect(old.lease.isCurrent()).toBe(true);
       releaseBlocker();
       await stopEntered;
-      expect(commands).toContain(`docker stop ${cid}`);
-      expect(commands).not.toContain(`docker rm ${cid}`);
+      expect(commands).toContain(`docker stop ${target}`);
+      expect(commands).not.toContain(`docker rm ${target}`);
       expect(settled).toBe(false);
       expect(deploymentPhaseBudget.waitingOperation(owner.operationId, owner.operationGeneration)).toBeUndefined();
       expect(deploymentPhaseBudget.snapshot().cleanup.active).toEqual([expect.objectContaining(owner)]);
@@ -343,6 +352,8 @@ describe('部署心跳过期后的精确租约回收', () => {
       finishStop(ok()); await completed;
       expect(events.map(event => event.detail?.cleanupStep)).toEqual(['admitted', 'diagnostics-returned', 'stop', 'stop-returned', 'rm', 'rm-returned']);
       expect(removed).toBe(true); expect(deploymentPhaseBudget.snapshot().cleanup.active).toEqual([]);
+      console.log('[cleanup-actual-method]', JSON.stringify({ index, method, target,
+        cleanupSteps: events.map(event => event.detail?.cleanupStep), leaseCurrent: old.lease.isCurrent() }));
       expect(runs.reconcileInterrupted()).toEqual([]);
       // 完成后不再有真实进展；不能把曾获准的active当作永久存活事实。
       clock = new Date(clock.getTime() + 16 * 60_000); vi.setSystemTime(clock);
