@@ -35,7 +35,7 @@ public class ProductVersionSourceLifecycleTests
         Assert.Equal("T99.0.0", (await fixture.Db.ProductInitiations.Find(x => x.Id == "older").SingleAsync()).TCode);
         Assert.True(changed.CanDelete);
         Assert.True(changed.CanChangeVersionType);
-        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("latest"));
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("latest", new ProductVersionVoidRequest { Reason = "重复申领需要作废" }));
     }
 
     [Fact]
@@ -46,7 +46,7 @@ public class ProductVersionSourceLifecycleTests
         var row = await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").SingleAsync();
         await ProductInitiationDeletion.AnnotateAsync(fixture.Db, new[] { row }, "me");
         Assert.False(row.CanDelete);
-        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller(admin: true).DeleteInitiation("latest")).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller(admin: true).DeleteInitiation("latest", new ProductVersionVoidRequest { Reason = "重复申领需要作废" })).StatusCode);
         Assert.True(await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").AnyAsync());
     }
 
@@ -64,7 +64,7 @@ public class ProductVersionSourceLifecycleTests
     {
         await using var fixture = await Fixture.CreateAsync();
         var first = await fixture.CreateIssuedAsync();
-        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation(first.Id));
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation(first.Id, new ProductVersionVoidRequest { Reason = "重复申领需要作废" }));
         Assert.Null(await fixture.ClaimAsync(ProductVersionClaimPolicy.ReviewKey("source")));
         var second = await fixture.CreateIssuedAsync();
         Assert.NotEqual(first.Id, second.Id);

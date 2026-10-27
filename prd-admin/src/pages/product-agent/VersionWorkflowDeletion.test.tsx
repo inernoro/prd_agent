@@ -26,7 +26,7 @@ function record(id: string, productId: string, tCode: string, canDelete: boolean
     status: 'approved', developmentStatus: '待开发', requirementIds: [], createdBy: 'me', sourceType: 'system',
     createdAt: '2026-10-21', updatedAt: '2026-10-21' };
 }
-const buttons = () => [...host.querySelectorAll('button')].filter((button) => button.textContent === '删除');
+const buttons = () => [...host.querySelectorAll('button')].filter((button) => button.textContent === '作废');
 async function mount(scope = '', isAdmin = false) {
   await act(async () => root.render(<MemoryRouter initialEntries={[`/product-agent?section=versions&versionTab=initiation${scope}`]}><VersionWorkflowTab isAdmin={isAdmin} /></MemoryRouter>));
 }
@@ -55,6 +55,7 @@ describe('全局最新内部版本删除入口', () => {
     await mount();
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('T6.19.0');
+    expect(buttons()[0].closest('td')?.textContent).toContain('T6.19.0');
     expect([...host.querySelectorAll('button')].filter((button) => button.textContent === '修改资料')).toHaveLength(2);
   });
   it('筛选到旧记录所属产品时不把它当成最新记录', async () => {
@@ -79,6 +80,7 @@ describe('全局最新内部版本删除入口', () => {
     await act(async () => root.render(<MemoryRouter initialEntries={['/product-agent?section=versions&versionTab=release']}><VersionWorkflowTab /></MemoryRouter>));
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('V1.2.4');
+    expect(buttons()[0].closest('td')?.textContent).toContain('V1.2.4');
     expect(releaseDetailSource).toContain('canDelete={release.canDelete}');
   });
 });

@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using System.Text;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -124,8 +125,30 @@ public static class ProductVersionClaimGuard
             .Find(Builders<BsonDocument>.Filter.Eq("_id", "source-removed:" + target)).AnyAsync();
     }
 
-    public static Task<bool> MarkSourceRemovalAsync(MongoDbContext db, string targetId) =>
-        TryReserveAsync(db.Database, "source-removed:" + targetId, targetId);
+    public static string? NormalizeRemovalReason(string? value)
+    {
+        var reason = value?.Trim();
+        return reason != null && reason.EnumerateRunes().Count() > 5 ? reason : null;
+    }
+
+    public static async Task<bool> MarkSourceRemovalAsync(MongoDbContext db, string targetId,
+        string? reason = null, string? requestedBy = null)
+    {
+        var key = "source-removed:" + targetId;
+        if (reason != null && (NormalizeRemovalReason(reason) == null || string.IsNullOrWhiteSpace(requestedBy)))
+            throw new ArgumentException("作废理由至少填写6个字符，并记录操作人");
+        if (!await TryReserveAsync(db.Database, key, targetId)) return false;
+        // 删除前保存理由；记录仍存在时凭证不代表已作废，不携带号码或参与发号。
+        if (reason != null)
+        {
+            var saved = await db.Database.GetCollection<BsonDocument>(CollectionName).UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", key) & Builders<BsonDocument>.Filter.Eq("targetId", targetId),
+                Builders<BsonDocument>.Update.Set("reason", reason.Trim()).Set("requestedBy", requestedBy)
+                    .Set("requestedAt", DateTime.UtcNow), cancellationToken: CancellationToken.None);
+            return saved.MatchedCount == 1;
+        }
+        return true;
+    }
 
     public static async Task ReleaseDeletedSourceClaimsAsync(MongoDbContext db, string targetId)
     {
