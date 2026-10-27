@@ -20,6 +20,12 @@ public interface IHostedSiteService
     byte[] PrepareHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
 
     /// <summary>
+    /// 返回已通过演示稿浏览器质检的 OpenDesign 产物托管字节。
+    /// 保留父窗口导航桥接，但不向已自带导航的演示稿叠加第二套视觉提示。
+    /// </summary>
+    byte[] PrepareTrustedPresentationHtmlForHosting(byte[] htmlBytes, string entryFile = "index.html");
+
+    /// <summary>
     /// 以稳定 sourceRef 创建 HTML 站点。站点 ID 和对象 key 均由 owner + sourceRef 确定，
     /// 因此并发重试或进程在写入后崩溃都不会产生第二个站点。
     /// </summary>
@@ -42,6 +48,15 @@ public interface IHostedSiteService
     /// </param>
     Task<HostedSite> CreateFromZipAsync(
         string userId, byte[] zipBytes,
+        string? title, string? description, string? folder, List<string>? tags,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? sourceRef = null);
+
+    /// <summary>从可寻址 ZIP 流创建站点，调用方负责流的生命周期。</summary>
+    Task<HostedSite> CreateFromZipAsync(
+        string userId, Stream zipStream,
         string? title, string? description, string? folder, List<string>? tags,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
@@ -85,6 +100,14 @@ public interface IHostedSiteService
     Task<HostedSite> ReuploadAsync(
         string siteId, string userId,
         byte[] fileBytes, string fileName,
+        string? wrappedAssetType = null,
+        CancellationToken ct = default,
+        string? uploadId = null,
+        string? reuploadRef = null);
+
+    /// <summary>用可寻址 ZIP 流替换站点，调用方负责流的生命周期。</summary>
+    Task<HostedSite> ReuploadAsync(
+        string siteId, string userId, Stream zipStream, string fileName,
         string? wrappedAssetType = null,
         CancellationToken ct = default,
         string? uploadId = null,
@@ -733,6 +756,9 @@ public class SharedSiteInfo
     /// 找不到入口文件条目时为 0（前端据此退回「不拦，失败时给受控文案」）。
     /// </summary>
     public long EntrySize { get; set; }
+
+    /// <summary>仅可经本站点受控附件端点下载的 PDF 相对路径，不包含存储键。</summary>
+    public List<string> PdfFilePaths { get; set; } = new();
 
     public int FileCount { get; set; }
     public string? CoverImageUrl { get; set; }

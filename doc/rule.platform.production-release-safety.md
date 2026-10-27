@@ -127,6 +127,7 @@
 ## 当前实现
 
 - `exec_dep.sh`：不可变静态产物必须通过 SHA256；在 gateway 已挂载的稳定 `deploy/web/dist` 根目录内，用 `.staging-*` 离线解压和校验，再通过 `scripts/lib/static-release.sh` 把目录精确归一为 `755`、文件归一为 `644`，最后原子切换 `current`，`previous` 保存上一版。Nginx 的 standalone root 固定指向 bind 根内的 `current`，切换不需要重建容器。
+- 静态独立发布：仅在显式提供静态提交与运行时提交、不可变 ZIP 及 SHA256、同运行时 fast 意图、稳定生产 `.env` 与 Compose 根，并确认活动 Nginx 配置无漂移后启用。发布前验证 Serving、设计服务和资产存储，切换后分别核对入口资源与运行时身份；六个运行容器和生产 `.env` 不得变化。失败时恢复 previous，并按旧静态提交与原运行时提交复验公网，回滚成功不能覆盖本次发布失败。
 - 代理稳定：非 gateway 服务重建后立即使用当前配置原地 reload gateway，先刷新 API 与 LLMGW 容器地址，再等待较长的 Serving readiness；静态切换后的任一强制阶段失败都会恢复 previous，并再次执行 `nginx -t` 与 reload 后复跑公网表面探针。`llmgw-rollback-inproc.sh` 和 `llmgw-restore-shadow-safe.sh` 同样只重启 API、原地 reload gateway。正常发布、静态复用、inproc 回滚和 shadow 恢复都不改变 gateway 容器 IP。
 - `scripts/prd-agent-public-surface-smoke.py`：验证根 HTML、实际同源 JS/CSS、根级 `/health`、`/api/version`、LLMGW 页面及 Console/Serving 双健康；发布后强制运行。
 - `scripts/prd-agent-release-evidence.py`：按唯一发布编号写不可覆盖 JSON，记录操作者、主机、release PID、开始结束时间、ref、产物 URL 与 hash、静态链接和权限、公网探针、首个失败阶段和回滚结果。

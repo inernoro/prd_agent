@@ -197,7 +197,9 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 结论：URL 一律走 cdscli，不再维护任何本地公式。
 -->
 
----
+### 12. 第三方服务器返回信息必须审计
+
+每次第三方调用必须持久化可关联业务请求的脱敏响应证据；成功、失败、超时和解析异常均须可追溯，禁止只记 HTTP 状态或归一化错误。完整约束见 [第三方响应审计原则](.claude/rules/external-response-audit.md)，验收必须证明能从本系统查询上游返回与本地判定。
 
 ## 规则与技能
 

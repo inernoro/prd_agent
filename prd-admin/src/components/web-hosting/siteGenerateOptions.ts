@@ -74,16 +74,6 @@ export const RUNTIME_CARD_REGISTRY: Record<string, RuntimeCardCopy> = {
   },
 };
 
-/** 卡片排列顺序：已知执行器按表里的顺序，未知的排在后面。 */
-export function orderRuntimeCards<T extends { id: string }>(runtimes: readonly T[]): T[] {
-  const known = Object.keys(RUNTIME_CARD_REGISTRY);
-  return [...runtimes].sort((a, b) => {
-    const ai = known.indexOf(a.id);
-    const bi = known.indexOf(b.id);
-    return (ai < 0 ? known.length : ai) - (bi < 0 ? known.length : bi);
-  });
-}
-
 export function runtimeCardTitle(runtime: { id: string; label: string }): string {
   return RUNTIME_CARD_REGISTRY[runtime.id]?.title ?? runtime.label;
 }

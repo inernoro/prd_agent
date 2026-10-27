@@ -1,5 +1,7 @@
 import type { Product } from './types';
 
+type ProductMatchCandidate = Pick<Product, 'id' | 'name'> & Partial<Pick<Product, 'code'>>;
+
 const PRODUCT_FIELD_KEYS = ['应用', '产品', '所属产品', '产品名称', '产品线', 'product', 'productname'];
 
 const BRACKET_PREFIX = /^【([^】]+)】/;
@@ -31,14 +33,15 @@ export function resolveProductLabelFromVersionRow(
   return null;
 }
 
-export function matchProductByLabel(products: Product[], label: string): Product | null {
+export function matchProductByLabel<T extends ProductMatchCandidate>(products: T[], label: string): T | null {
   const q = label.trim();
   if (!q) return null;
-  const exact = products.find(
+  const exact = products.filter(
     (p) => p.name.trim().toLowerCase() === q.toLowerCase()
       || (p.code?.trim().toLowerCase() === q.toLowerCase()),
   );
-  if (exact) return exact;
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return null;
   const contains = products
     .filter((p) => {
       const name = p.name.trim();
@@ -46,13 +49,12 @@ export function matchProductByLabel(products: Product[], label: string): Product
       const lower = name.toLowerCase();
       const query = q.toLowerCase();
       return lower.includes(query) || query.includes(lower);
-    })
-    .sort((a, b) => b.name.length - a.name.length)[0];
-  return contains ?? null;
+    });
+  return contains.length === 1 ? contains[0] : null;
 }
 
 export function resolveImportProductId(
-  products: Product[],
+  products: ProductMatchCandidate[],
   options: {
     title?: string;
     sourceFields?: Record<string, string>;

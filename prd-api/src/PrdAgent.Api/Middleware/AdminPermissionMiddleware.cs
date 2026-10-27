@@ -223,8 +223,61 @@ public sealed class AdminPermissionMiddleware
         var isRoot = IsRoot(context);
 
         var perms = await permissionService.GetEffectivePermissionsAsync(userId, isRoot);
+        var productRequest = required.StartsWith("product-agent.", StringComparison.Ordinal);
+        if (productRequest)
+        {
+            string? entityType = null;
+            if (path.Equals("/api/product/transition", StringComparison.OrdinalIgnoreCase)
+                || path.Equals("/api/product/items/batch", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Request.EnableBuffering();
+                try
+                {
+                    using var body = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+                    if (body.RootElement.ValueKind == JsonValueKind.Object && body.RootElement.TryGetProperty("entityType", out var kind) && kind.ValueKind == JsonValueKind.String) entityType = kind.GetString();
+                }
+                catch (JsonException) { /* 非法请求不获得菜单准入，交由拒绝路径返回。 */ }
+                finally { context.Request.Body.Position = 0; }
+            }
+            if (!ProductMenuRoutePolicy.Allows(perms.ToArray(), path, method, entityType))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = "application/json; charset=utf-8";
+                await context.Response.WriteAsync(JsonSerializer.Serialize(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED,
+                    "当前账号未开放此产品管理菜单，请联系MAP管理员调整权限表。"), _jsonOptions));
+                return;
+            }
+            if (perms.Contains(ProductPermissionRules.Scoped) && !perms.Contains(ProductPermissionRules.MapAdmin))
+                perms = perms.Where(p => p != AdminPermissionCatalog.Super).Concat(perms.Contains(AdminPermissionCatalog.Super) ? new[] { AdminPermissionCatalog.Access } : Array.Empty<string>()).Distinct().ToArray();
+            // 产品专用入口复用原评审控制器的方法，不把这些请求级授权写入账号或旧入口。
+            if (path.StartsWith("/api/product/review/", StringComparison.OrdinalIgnoreCase))
+            {
+                var scoped = perms.Contains(ProductPermissionRules.Scoped);
+                if (!scoped && !perms.Contains(ProductPermissionRules.MapAdmin)
+                    && !perms.Contains(AdminPermissionCatalog.ReviewAgentUse) && !perms.Contains(AdminPermissionCatalog.Super))
+                {
+                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                    context.Response.ContentType = "application/json; charset=utf-8";
+                    await context.Response.WriteAsync(JsonSerializer.Serialize(ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "当前账号没有评审使用权限。"), _jsonOptions));
+                    return;
+                }
+                if (perms.Contains(ProductPermissionRules.MapAdmin))
+                    perms = perms.Concat(new[] { AdminPermissionCatalog.ReviewAgentUse, AdminPermissionCatalog.ReviewAgentViewAll, AdminPermissionCatalog.ReviewAgentManage, AdminPermissionCatalog.ReviewAgentAppealReview }).Distinct().ToArray();
+                else if (scoped)
+                {
+                    var productPerms = perms.Where(p => !p.StartsWith("review-agent.", StringComparison.Ordinal)).ToList();
+                    productPerms.Add(AdminPermissionCatalog.ReviewAgentUse);
+                    if (perms.Contains(ProductPermissionRules.ReviewViewAll)) productPerms.Add(AdminPermissionCatalog.ReviewAgentViewAll);
+                    if (perms.Contains(ProductPermissionRules.ReviewManage)) productPerms.Add(AdminPermissionCatalog.ReviewAgentManage);
+                    if (perms.Contains(ProductPermissionRules.ReviewAppeal)) productPerms.Add(AdminPermissionCatalog.ReviewAgentAppealReview);
+                    perms = productPerms;
+                }
+            }
+        }
         var has = perms.Contains(AdminPermissionCatalog.Super) ||
-                  perms.Contains(required);
+                  perms.Contains(required) ||
+                  (perms.Contains(AdminPermissionCatalog.ProductAgentVersionApply)
+                   && ProductVersionApplyRoutePolicy.Allows(path, method, required));
 
         // 所有权限都必须先具备 access 权限（除了 root/super）
         if (!isRoot &&
@@ -238,6 +291,8 @@ public sealed class AdminPermissionMiddleware
         var identity = context.User.Identity as System.Security.Claims.ClaimsIdentity;
         if (identity != null)
         {
+            if (productRequest)
+                foreach (var stale in identity.FindAll("permissions").ToList()) identity.RemoveClaim(stale);
             foreach (var p in perms)
             {
                 identity.AddClaim(new System.Security.Claims.Claim("permissions", p));

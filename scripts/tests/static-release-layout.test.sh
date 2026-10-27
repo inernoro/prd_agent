@@ -99,4 +99,75 @@ test -r "$restricted_root/current/assets/app.js"
 find "$restricted_root/.releases/restricted" -type d -exec test -x {} \;
 find "$restricted_root/.releases/restricted" -type f -exec test -r {} \;
 
+python3 - "$repo_root/exec_dep.sh" <<'PY'
+import sys
+from pathlib import Path
+
+deploy = Path(sys.argv[1]).read_text(encoding="utf-8")
+
+required = (
+    'PRD_AGENT_STATIC_ONLY_COMMIT',
+    'static-only release requires LLMGW_VERIFY_ONLY=1 and SKIP_API_PULL=1',
+    'static-only release requires an audited DIST_URL and DIST_SHA256',
+    'static-only release requires the fast.sh intent',
+    'static-only release cannot reuse the existing static distribution',
+    'static-only release refuses to overwrite a different active nginx configuration',
+    'static_release_id="${static_artifact_tag}-',
+    '--expect-static-commit "$smoke_static_commit" --expect-runtime-commit "$smoke_runtime_commit"',
+    'run_public_surface_smoke "$rollback_smoke_json" 6 "$rollback_static_commit" "$rollback_runtime_commit"',
+    '"commandSemantics": "static-only-rollback"',
+    '"releaseFailure": read_optional(os.environ["FAILED_SMOKE"])',
+    '"rollbackVerification": read_optional(os.environ["ROLLBACK_SMOKE"])',
+    'Static-only runtime identity: all six containers preserved',
+)
+for marker in required:
+    assert marker in deploy, marker
+
+verify_start = deploy.index('if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then')
+verify_end = deploy.index('\nelse\n  release_failure_stage="compose-update"', verify_start)
+verify_block = deploy[verify_start:verify_end]
+assert verify_block.index('wait_for_llmgw_serving_readiness') < verify_block.index('wait_for_design_runtime_readiness')
+assert verify_block.index('wait_for_design_runtime_readiness') < verify_block.index('run_asset_storage_readiness')
+assert verify_block.index('run_asset_storage_readiness') < verify_block.index('activate_pending_static_release')
+assert 'compose_run up' not in verify_block
+assert 'sync_active_gateway_nginx_config' not in verify_block
+
+assert deploy.index('capture_runtime_identity "$runtime_identity_before_file"') < deploy.index('activate_pending_static_release')
+assert deploy.index('activate_pending_static_release', verify_start) < deploy.index('capture_runtime_identity "$runtime_identity_after_file"')
+PY
+
+runtime_sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+static_sha="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+mkdir -p "$tmp_root/production-root"
+: > "$tmp_root/production.env"
+if env \
+  PRD_AGENT_STATIC_ONLY_COMMIT="$static_sha" \
+  LLMGW_VERIFY_ONLY=1 \
+  SKIP_API_PULL=1 \
+  DIST_URL="https://example.test/static.zip" \
+  DIST_SHA256="invalid" \
+  PRD_AGENT_DOTENV_FILE="$tmp_root/production.env" \
+  PRD_AGENT_COMPOSE_PROJECT_DIRECTORY="$tmp_root/production-root" \
+  PRD_AGENT_RELEASE_INTENT_FILE="$tmp_root/missing-intent.env" \
+  sh "$repo_root/exec_dep.sh" --commit "$runtime_sha" >"$tmp_root/invalid-checksum.log" 2>&1; then
+  echo "expected invalid static-only checksum to fail before deployment" >&2
+  exit 1
+fi
+grep -F 'static-only DIST_SHA256 must contain exactly 64 hexadecimal characters' "$tmp_root/invalid-checksum.log" >/dev/null
+
+if env \
+  PRD_AGENT_STATIC_ONLY_COMMIT="$static_sha" \
+  LLMGW_VERIFY_ONLY=1 \
+  SKIP_API_PULL=1 \
+  DIST_URL="https://example.test/static.zip" \
+  DIST_SHA256="$(printf '%064d' 0 | tr '0' 'c')" \
+  PRD_AGENT_DOTENV_FILE="$tmp_root/production.env" \
+  PRD_AGENT_COMPOSE_PROJECT_DIRECTORY="$tmp_root/production-root" \
+  PRD_AGENT_RELEASE_INTENT_FILE="$tmp_root/missing-intent.env" \
+  sh "$repo_root/exec_dep.sh" --commit "$runtime_sha" >"$tmp_root/missing-intent.log" 2>&1; then
+  echo "expected missing runtime fast intent to fail before deployment" >&2
+  exit 1
+fi
+grep -F 'static-only release requires the fast.sh intent' "$tmp_root/missing-intent.log" >/dev/null
+
 echo "Static release layout test: PASS"

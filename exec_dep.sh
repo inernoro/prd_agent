@@ -36,6 +36,7 @@ set -eu
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
 #   - DIST_SHA256 / DIST_SHA256_URL：DIST_URL 对应的审计哈希或哈希文件；不可变发布必须提供其一
+#   - PRD_AGENT_STATIC_ONLY_COMMIT：仅切换 MAP 静态站的完整 40 位 SHA；必须与 --commit 的运行时 SHA 成对校验
 #   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
 #   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收与网关返回 MAP 的权威根地址，必须显式配置
 #   - PRD_AGENT_API_SERVICE：正式 Compose 中的 API service 名，默认 api
@@ -63,6 +64,7 @@ set -eu
 
 SKIP_VERIFY="${SKIP_VERIFY:-}"
 LLMGW_VERIFY_ONLY="${LLMGW_VERIFY_ONLY:-0}"
+static_only_commit_raw="${PRD_AGENT_STATIC_ONLY_COMMIT:-}"
 release_ref="${PRD_AGENT_RELEASE_REF:-}"
 release_ref_type="ref"
 
@@ -74,6 +76,8 @@ Usage:
   ./exec_dep.sh --commit <40-char-sha>
   ./exec_dep.sh --tag <tag>
   ./exec_dep.sh --ref <latest|sha-commit|tag>
+  PRD_AGENT_STATIC_ONLY_COMMIT=<static-sha> LLMGW_VERIFY_ONLY=1 SKIP_API_PULL=1 \
+    DIST_URL=<zip-url> DIST_SHA256=<sha256> ./exec_dep.sh --commit <runtime-sha>
 
 Compatibility:
   ./exec_dep.sh release continues to deploy latest. Prefer an immutable --commit for audited production releases.
@@ -240,6 +244,30 @@ normalize_ref() {
 }
 
 TAG="$(normalize_ref "$release_ref" "$release_ref_type")"
+static_only_mode=0
+static_commit=""
+runtime_commit=""
+static_artifact_tag="$TAG"
+release_command_semantics="${release_ref_type}:${TAG}"
+if [ -n "$(printf '%s' "$static_only_commit_raw" | xargs || true)" ]; then
+  static_only_tag="$(normalize_commit_ref "$static_only_commit_raw")"
+  static_commit="${static_only_tag#sha-}"
+  case "$TAG" in
+    sha-*) runtime_commit="${TAG#sha-}" ;;
+    *)
+      echo "ERROR: PRD_AGENT_STATIC_ONLY_COMMIT requires --commit <runtime-sha>" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$static_commit" = "$runtime_commit" ]; then
+    echo "ERROR: static-only release requires different static and runtime commits; use the existing --commit flow for one SHA" >&2
+    exit 1
+  fi
+  static_only_mode=1
+  static_artifact_tag="$static_only_tag"
+  release_command_semantics="static-only:${static_only_tag}@runtime:${TAG}"
+  echo "Deploy target: static-only static=$static_only_tag runtime=$TAG"
+fi
 if [ "$TAG" = "latest" ]; then
   echo "Deploy target: latest"
 else
@@ -504,6 +532,64 @@ config_value() {
 
 check_fast_release_intent
 
+validate_static_only_release_contract() {
+  [ "$static_only_mode" = "1" ] || return 0
+  if [ "$LLMGW_VERIFY_ONLY" != "1" ] || [ "${SKIP_API_PULL:-}" != "1" ]; then
+    echo "ERROR: static-only release requires LLMGW_VERIFY_ONLY=1 and SKIP_API_PULL=1" >&2
+    exit 1
+  fi
+  if [ "${PRD_AGENT_ALLOW_IMAGE_OVERRIDE:-0}" = "1" ]; then
+    echo "ERROR: static-only release cannot override runtime image identities" >&2
+    exit 1
+  fi
+  if [ -n "${SKIP_VERIFY:-}" ] || [ -n "${PRD_AGENT_IGNORE_FAST_INTENT:-}" ]; then
+    echo "ERROR: static-only release cannot skip artifact verification or fast intent validation" >&2
+    exit 1
+  fi
+  case "$(printf '%s' "${PRD_AGENT_REUSE_EXISTING_STATIC_DIST:-0}" | tr 'A-Z' 'a-z' | xargs || true)" in
+    1|true|yes)
+      echo "ERROR: static-only release cannot reuse the existing static distribution" >&2
+      exit 1
+      ;;
+  esac
+  if [ -z "${DIST_URL:-}" ] || [ -z "${DIST_SHA256:-}" ]; then
+    echo "ERROR: static-only release requires an audited DIST_URL and DIST_SHA256 for the static commit" >&2
+    exit 1
+  fi
+  static_dotenv_file="${PRD_AGENT_DOTENV_FILE:-}"
+  static_project_directory="${PRD_AGENT_COMPOSE_PROJECT_DIRECTORY:-}"
+  case "$static_dotenv_file" in
+    /*) ;;
+    *)
+      echo "ERROR: static-only release requires an absolute PRD_AGENT_DOTENV_FILE" >&2
+      exit 1
+      ;;
+  esac
+  case "$static_project_directory" in
+    /*) ;;
+    *)
+      echo "ERROR: static-only release requires an absolute PRD_AGENT_COMPOSE_PROJECT_DIRECTORY" >&2
+      exit 1
+      ;;
+  esac
+  if [ ! -f "$static_dotenv_file" ] || [ ! -d "$static_project_directory" ]; then
+    echo "ERROR: static-only release requires the existing production env file and compose project directory" >&2
+    exit 1
+  fi
+  normalized_dist_sha="$(printf '%s' "$DIST_SHA256" | tr 'A-F' 'a-f' | xargs || true)"
+  if ! printf '%s' "$normalized_dist_sha" | grep -Eq '^[0-9a-f]{64}$'; then
+    echo "ERROR: static-only DIST_SHA256 must contain exactly 64 hexadecimal characters" >&2
+    exit 1
+  fi
+  release_intent_file="${PRD_AGENT_RELEASE_INTENT_FILE:-.prd-agent-release-intent.env}"
+  if [ -z "$release_intent_file" ] || [ ! -f "$release_intent_file" ]; then
+    echo "ERROR: static-only release requires the fast.sh intent for runtime $TAG" >&2
+    exit 1
+  fi
+  echo "Static-only contract: verified static=$static_artifact_tag runtime=$TAG"
+}
+validate_static_only_release_contract
+
 if command -v docker-compose >/dev/null 2>&1; then
   COMPOSE="docker-compose"
 elif command -v docker >/dev/null 2>&1; then
@@ -561,7 +647,11 @@ if [ ! -x scripts/llmgw-prod-topology-preflight.sh ]; then
 fi
 scripts/llmgw-prod-topology-preflight.sh
 
-persist_release_image_pins
+if [ "$static_only_mode" = "1" ]; then
+  echo "Release image pins: preserved for static-only release"
+else
+  persist_release_image_pins
+fi
 
 # api 与 design-opendesign 之间的内部密钥：没人需要知道它的值。shell 或 .env 里已有就原样使用；
 # 都没有时生成一把写进 .env（只追加这一行，不打印值），之后每次发布沿用同一把。
@@ -594,7 +684,11 @@ ensure_design_runtime_api_key() {
   chmod 600 "$key_dotenv_file"
   echo "Design runtime key: generated and saved to $key_dotenv_file (value not printed)"
 }
-ensure_design_runtime_api_key
+if [ "$static_only_mode" = "1" ]; then
+  echo "Design runtime key: preserved for static-only release"
+else
+  ensure_design_runtime_api_key
+fi
 
 if [ ! -f scripts/lib/static-release.sh ]; then
   echo "ERROR: missing scripts/lib/static-release.sh" >&2
@@ -651,6 +745,97 @@ static_before_mode="$(stat -c '%a' "$active_static_root" 2>/dev/null || true)"
 static_before_owner="$(stat -c '%u:%g' "$active_static_root" 2>/dev/null || true)"
 static_before_current="$(readlink "$active_static_root/current" 2>/dev/null || true)"
 static_before_previous="$(readlink "$active_static_root/previous" 2>/dev/null || true)"
+static_rollback_commit=""
+runtime_identity_before_file="$tmp_dir/runtime-identity-before.txt"
+static_only_dotenv_sha_before=""
+
+file_sha256() {
+  file_path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file_path" | awk '{print $1}'
+  else
+    shasum -a 256 "$file_path" | awk '{print $1}'
+  fi
+}
+
+read_static_entry_commit() {
+  static_root="$1"
+  python3 - "$static_root/index.html" <<'PY'
+import re
+import sys
+from html.parser import HTMLParser
+from pathlib import Path
+
+class Parser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.urls = []
+    def handle_starttag(self, tag, attrs):
+        values = {key.lower(): value or "" for key, value in attrs}
+        if tag.lower() == "script" and values.get("src"):
+            self.urls.append(values["src"])
+        if tag.lower() == "link" and "stylesheet" in values.get("rel", "").lower() and values.get("href"):
+            self.urls.append(values["href"])
+
+parser = Parser()
+parser.feed(Path(sys.argv[1]).read_text(encoding="utf-8"))
+commits = {match.group(1).lower() for url in parser.urls for match in [re.search(r"([0-9a-fA-F]{40})", url)] if match}
+if len(commits) != 1:
+    raise SystemExit(f"expected exactly one commit in entry assets, found {len(commits)}")
+print(commits.pop())
+PY
+}
+
+capture_runtime_identity() {
+  identity_output="$1"
+  : > "$identity_output"
+  for identity_service in api llmgw llmgw-serve llmgw-serve-b llmgw-web design-opendesign; do
+    identity_container="$(compose_run ps -q "$identity_service" 2>/dev/null | head -n 1)"
+    if [ -z "$identity_container" ]; then
+      echo "ERROR: static-only release requires running service: $identity_service" >&2
+      return 1
+    fi
+    identity_started="$(docker inspect --format '{{.State.StartedAt}}' "$identity_container" 2>/dev/null || true)"
+    identity_revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$identity_container" 2>/dev/null || true)"
+    if [ -z "$identity_started" ] || [ "$identity_revision" != "$runtime_commit" ]; then
+      echo "ERROR: static-only runtime identity mismatch for $identity_service" >&2
+      return 1
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$identity_service" "$identity_container" "$identity_started" "$identity_revision" >> "$identity_output"
+  done
+}
+
+verify_static_only_gateway_config() {
+  [ "$static_only_mode" = "1" ] || return 0
+  candidate_conf="deploy/nginx/conf.d/branches/_standalone.conf"
+  active_conf="$active_nginx_conf_root/branches/_standalone.conf"
+  if [ ! -f "$candidate_conf" ] || [ ! -f "$active_conf" ]; then
+    echo "ERROR: static-only release requires both candidate and active standalone nginx configs" >&2
+    return 1
+  fi
+  candidate_conf_sha="$(file_sha256 "$candidate_conf")"
+  active_conf_sha="$(file_sha256 "$active_conf")"
+  if [ "$candidate_conf_sha" != "$active_conf_sha" ]; then
+    echo "ERROR: static-only release refuses to overwrite a different active nginx configuration" >&2
+    return 1
+  fi
+  if [ "$(readlink "$active_nginx_conf_root/default.conf" 2>/dev/null || true)" != "branches/_standalone.conf" ]; then
+    echo "ERROR: static-only release requires the active gateway to use branches/_standalone.conf" >&2
+    return 1
+  fi
+  echo "Static-only gateway config: unchanged and verified"
+}
+
+if [ "$static_only_mode" = "1" ]; then
+  static_only_dotenv_sha_before="$(file_sha256 "$compose_dotenv_file")"
+  verify_static_only_gateway_config
+  if [ -L "$active_static_root/current" ]; then
+    static_rollback_commit="$(read_static_entry_commit "$active_static_root/current")"
+  else
+    static_rollback_commit="$(read_static_entry_commit "$active_static_root")"
+  fi
+  capture_runtime_identity "$runtime_identity_before_file"
+fi
 
 write_release_evidence() {
   evidence_status="$1"
@@ -665,7 +850,7 @@ write_release_evidence() {
     --status "$evidence_status" \
     --release-ref "$TAG" \
     --started-at "$release_started_at" \
-    --command-semantics "${release_ref_type}:${TAG}" \
+    --command-semantics "$release_command_semantics" \
     --release-pid "$$" \
     --asset-url "$asset_url" \
     --asset-file "$zip_path" \
@@ -707,13 +892,10 @@ write_release_evidence() {
 run_public_surface_smoke() {
   smoke_output="$1"
   smoke_attempts="${2:-${PRD_AGENT_PUBLIC_SMOKE_ATTEMPTS:-12}}"
+  smoke_static_commit="${3:-}"
+  smoke_runtime_commit="${4:-}"
   public_base="$PRD_AGENT_PUBLIC_BASE_URL"
-  public_smoke_commit_args=""
-  case "$TAG" in
-    sha-*) public_smoke_commit_args="--expect-commit ${TAG#sha-}" ;;
-  esac
-  # shellcheck disable=SC2086
-  python3 scripts/prd-agent-public-surface-smoke.py \
+  set -- python3 scripts/prd-agent-public-surface-smoke.py \
     --base "$public_base" \
     --api-health-path "${PRD_AGENT_PUBLIC_API_HEALTH_PATH:-/api/version}" \
     --root-health-path "${PRD_AGENT_PUBLIC_ROOT_HEALTH_PATH:-/health}" \
@@ -723,8 +905,15 @@ run_public_surface_smoke() {
     --attempts "$smoke_attempts" \
     --interval "${PRD_AGENT_PUBLIC_SMOKE_INTERVAL_SECONDS:-5}" \
     --timeout "${PRD_AGENT_PUBLIC_SMOKE_TIMEOUT_SECONDS:-15}" \
-    --json-out "$smoke_output" \
-    $public_smoke_commit_args
+    --json-out "$smoke_output"
+  if [ -n "$smoke_static_commit" ] || [ -n "$smoke_runtime_commit" ]; then
+    set -- "$@" --expect-static-commit "$smoke_static_commit" --expect-runtime-commit "$smoke_runtime_commit"
+  else
+    case "$TAG" in
+      sha-*) set -- "$@" --expect-commit "${TAG#sha-}" ;;
+    esac
+  fi
+  "$@"
 }
 
 run_asset_storage_readiness() {
@@ -781,6 +970,39 @@ reload_active_gateway() {
   docker exec "$current_gateway_id" nginx -s reload
 }
 
+write_static_only_rollback_evidence() {
+  combined_output="$1"
+  failed_smoke="$2"
+  rollback_smoke="$3"
+  STATIC_COMMIT="$static_commit" RUNTIME_COMMIT="$runtime_commit" \
+  FAILED_SMOKE="$failed_smoke" ROLLBACK_SMOKE="$rollback_smoke" COMBINED_OUTPUT="$combined_output" \
+  python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+def read_optional(path_value):
+    path = Path(path_value)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {"verdict": "unreadable"}
+
+payload = {
+    "verdict": "fail",
+    "commandSemantics": "static-only-rollback",
+    "expectedStaticCommit": os.environ["STATIC_COMMIT"],
+    "expectedRuntimeCommit": os.environ["RUNTIME_COMMIT"],
+    "releaseFailure": read_optional(os.environ["FAILED_SMOKE"]),
+    "rollbackVerification": read_optional(os.environ["ROLLBACK_SMOKE"]),
+}
+output = Path(os.environ["COMBINED_OUTPUT"])
+output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
 release_exit() {
   exit_status=$?
   trap - EXIT
@@ -796,12 +1018,28 @@ release_exit() {
             release_rollback_result="static-restored-gateway-reload-failed"
           fi
         fi
-        if [ "$compose_started" = "1" ] && [ "$release_rollback_result" != "static-restored-gateway-reload-failed" ]; then
-          if run_public_surface_smoke "$rollback_smoke_json" 6; then
-            public_smoke_json="$rollback_smoke_json"
+        if { [ "$compose_started" = "1" ] || [ "$static_only_mode" = "1" ]; } && [ "$release_rollback_result" != "static-restored-gateway-reload-failed" ]; then
+          if [ "$static_only_mode" = "1" ]; then
+            rollback_static_commit="$static_rollback_commit"
+            rollback_runtime_commit="$runtime_commit"
+          else
+            rollback_static_commit=""
+            rollback_runtime_commit=""
+          fi
+          failed_public_smoke_json="$public_smoke_json"
+          rollback_smoke_passed=0
+          if run_public_surface_smoke "$rollback_smoke_json" 6 "$rollback_static_commit" "$rollback_runtime_commit"; then
             release_rollback_result="static-restored-and-public-verified"
+            rollback_smoke_passed=1
           else
             release_rollback_result="static-restored-public-verification-failed"
+          fi
+          if [ "$static_only_mode" = "1" ]; then
+            combined_smoke_json="$tmp_dir/static-only-failure-and-rollback.json"
+            write_static_only_rollback_evidence "$combined_smoke_json" "$failed_public_smoke_json" "$rollback_smoke_json"
+            public_smoke_json="$combined_smoke_json"
+          elif [ "$rollback_smoke_passed" = "1" ]; then
+            public_smoke_json="$rollback_smoke_json"
           fi
         fi
       else
@@ -931,7 +1169,7 @@ case "$reuse_static_dist" in
       exit 1
     fi
     release_failure_stage="static-offline-validation"
-    static_release_id="${TAG}-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+    static_release_id="${static_artifact_tag}-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
     mkdir -p "$active_static_root"
     static_staging_dir="$active_static_root/.staging-$static_release_id"
     if [ -e "$static_staging_dir" ] || [ -L "$static_staging_dir" ]; then
@@ -941,6 +1179,14 @@ case "$reuse_static_dist" in
     mkdir -p "$static_staging_dir"
     unzip -q "$zip_path" -d "$static_staging_dir"
     scripts/validate-static-dist.sh --normalize "$static_staging_dir"
+    if [ "$static_only_mode" = "1" ]; then
+      staged_static_commit="$(read_static_entry_commit "$static_staging_dir")"
+      if [ "$staged_static_commit" != "$static_commit" ]; then
+        echo "ERROR: static artifact entry assets do not match PRD_AGENT_STATIC_ONLY_COMMIT" >&2
+        exit 1
+      fi
+      echo "Static artifact identity: verified $static_artifact_tag"
+    fi
 
     echo "Static release staged and verified: $static_staging_dir"
     ;;
@@ -955,7 +1201,11 @@ if [ -L "$active_static_root/current" ]; then
 else
   active_static_validation_root="$active_static_root"
 fi
-scripts/validate-static-dist.sh --normalize "$active_static_validation_root"
+if [ "$static_only_mode" = "1" ]; then
+  scripts/validate-static-dist.sh "$active_static_validation_root"
+else
+  scripts/validate-static-dist.sh --normalize "$active_static_validation_root"
+fi
 
 # 激活独立部署模式的 nginx 配置：
 # - 仓库里 default.conf 默认 symlink 到 branches/_disconnected.conf（CDS 未激活时的 502 兜底）
@@ -1151,7 +1401,11 @@ ensure_ffmpeg() {
   fi
 }
 
-ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
+if [ "$static_only_mode" = "1" ]; then
+  echo "ffmpeg check: skipped for static-only release"
+else
+  ensure_ffmpeg || echo "WARN: ffmpeg 自动安装失败，视频创作 / 转录相关功能可能报错。" >&2
+fi
 
 # MAP 只有一条模型调用路径（独立网关 serving），发布前不再有影子样本门禁。
 # 发布后必须带 key 探测一次公网网关：地址默认由 PRD_AGENT_PUBLIC_BASE_URL 推出，
@@ -1178,6 +1432,10 @@ prepare_llmgw_post_deploy_verification() {
     LLMGW_POST_DEPLOY_RUN_SMOKE="${LLMGW_GATE_RUN_SMOKE:-1}"
   else
     LLMGW_POST_DEPLOY_RUN_SMOKE="${LLMGW_GATE_RUN_SMOKE:-0}"
+  fi
+  if [ "$static_only_mode" = "1" ]; then
+    LLMGW_POST_DEPLOY_RUN_SMOKE=0
+    LLMGW_POST_DEPLOY_RUN_PROTOCOL_CANARY=0
   fi
   echo "LLM Gateway post-deploy probe target: $gate_base"
 
@@ -1478,6 +1736,12 @@ wait_for_design_runtime_readiness() {
 
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
   echo "LLM Gateway verify-only: preserving current containers"
+  if [ "$static_only_mode" = "1" ]; then
+    release_failure_stage="serving-readiness"
+    wait_for_llmgw_serving_readiness
+    release_failure_stage="design-runtime-readiness"
+    wait_for_design_runtime_readiness
+  fi
   release_failure_stage="asset-storage-readiness"
   run_asset_storage_readiness
   activate_pending_static_release
@@ -1533,7 +1797,22 @@ release_failure_stage="llmgw-post-deploy-verification"
 run_llmgw_post_deploy_verification_if_needed
 
 release_failure_stage="public-product-surface"
-run_public_surface_smoke "$public_smoke_json"
+if [ "$static_only_mode" = "1" ]; then
+  run_public_surface_smoke "$public_smoke_json" "${PRD_AGENT_PUBLIC_SMOKE_ATTEMPTS:-12}" "$static_commit" "$runtime_commit"
+  runtime_identity_after_file="$tmp_dir/runtime-identity-after.txt"
+  capture_runtime_identity "$runtime_identity_after_file"
+  if ! cmp -s "$runtime_identity_before_file" "$runtime_identity_after_file"; then
+    echo "ERROR: static-only release changed one or more runtime container identities" >&2
+    exit 1
+  fi
+  if [ "$(file_sha256 "$compose_dotenv_file")" != "$static_only_dotenv_sha_before" ]; then
+    echo "ERROR: static-only release changed the production env file" >&2
+    exit 1
+  fi
+  echo "Static-only runtime identity: all six containers preserved"
+else
+  run_public_surface_smoke "$public_smoke_json"
+fi
 
 release_failure_stage="release-evidence"
 write_release_evidence success "" "not-needed"

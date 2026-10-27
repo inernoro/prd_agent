@@ -74,6 +74,7 @@ describe('md-to-ppt native request URLs', () => {
     streamMdToPptPatch({
       parentRunId: 'run-1',
       currentHtml: '<html></html>',
+      manualEditHtml: '<html><body>用户草稿</body></html>',
       slideRequest: '强化标题',
       onDone: done,
     });
@@ -83,5 +84,12 @@ describe('md-to-ppt native request URLs', () => {
       'https://api.example.test/platform/api/md-to-ppt/patch',
       expect.objectContaining({ method: 'POST' }),
     );
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).toMatchObject({
+      parentRunId: 'run-1',
+      currentHtml: '<html></html>',
+      manualEditHtml: '<html><body>用户草稿</body></html>',
+      slideRequest: '强化标题',
+    });
   });
 });

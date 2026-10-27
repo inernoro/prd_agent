@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using PrdAgent.Api.Services;
 using PrdAgent.Api.Services.MdToPpt;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
@@ -23,6 +24,131 @@ public class MdToPptSourcePlanTests
     }
 
     private static string Slots(MdToPptSourcePlan.PagePlan page) => string.Join("", page.Blocks.Select(x => $"<div data-mdppt-source=\"{x.Id}\">\n  </div>"));
+
+    private static string CapacityFixture(int payloadBlocks = 136)
+    {
+        var blocks = new List<string>();
+        for (var index = 1; index <= 58; index++)
+        {
+            blocks.Add($"## 条件组 {index}");
+            blocks.Add($"条件组 {index} 的负责人、通知记录与限定语必须完整保留。");
+        }
+        for (var index = 59; index <= payloadBlocks; index++)
+            blocks.Add($"独立事实 {index} 的适用对象与限制条件必须完整保留。");
+        for (var index = 1; index <= 15; index++)
+            blocks.Add("---");
+        return string.Join("\n\n", blocks);
+    }
+
+    [Fact]
+    public void UploadedAttachment_IsFrozenAsSource_WithoutTreatingInstructionAsSource()
+    {
+        const string attachment = "# 发布条件\n\n- 回滚前必须保留通知记录与负责人。\n- 5% 只是金丝雀示例，不是强制值。";
+        var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
+        Assert.Contains(plan.Blocks, block => block.Markdown.Contains("通知记录与负责人", StringComparison.Ordinal));
+        Assert.Contains(plan.Blocks, block => block.Markdown.Contains("不是强制值", StringComparison.Ordinal));
+        Assert.DoesNotContain(plan.Blocks, block => block.Markdown.Contains("请做20页", StringComparison.Ordinal));
+        var catalog = plan.SerializeCatalog();
+        Assert.Equal(plan.Fingerprint, MdToPptSourcePlan.RestoreCatalog(catalog).Fingerprint);
+    }
+
+    [Fact]
+    public void AutoPageCapacity_UsesPayloadBlocksWithoutDroppingHeadingsOrSeparators()
+    {
+        var attachment = CapacityFixture();
+        var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
+        Assert.Equal(209, plan.Blocks.Count);
+        Assert.Equal(58, plan.Blocks.Count(block => block.Markdown.StartsWith("## 条件组", StringComparison.Ordinal)));
+        Assert.Equal(15, plan.Blocks.Count(block => block.Markdown.Trim() == "---"));
+        Assert.Equal(136, plan.PayloadBlockCount);
+        Assert.Equal(34, plan.RecommendedPageCount(attachment.Length));
+        var bound = plan.Bind(Enumerable.Range(0, 34).Select(pageIndex => new MdToPptOutlinePageDto
+        {
+            Title = $"第 {pageIndex + 1} 页",
+            SourceBlockIds = plan.Blocks.Where((_, blockIndex) => blockIndex % 34 == pageIndex)
+                .Select(block => block.Id).ToList(),
+        }).ToList(), 34);
+        Assert.Equal(209, bound.SelectMany(page => page.Blocks).Select(block => block.Id).Distinct().Count());
+        Assert.Equal(58, bound.SelectMany(page => page.Blocks).Count(block => block.Markdown.StartsWith("## 条件组", StringComparison.Ordinal)));
+        Assert.Equal(15, bound.SelectMany(page => page.Blocks).Count(block => block.Markdown.Trim() == "---"));
+        Assert.Equal(34, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
+            plan));
+        Assert.Equal(22, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "严格生成 22 页演示稿", AttachmentText = attachment },
+            plan));
+
+        Assert.Equal(23, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "严格生成 23 页演示稿", AttachmentText = attachment },
+            plan));
+        Assert.Equal(41, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "严格生成 41 页演示稿", AttachmentText = attachment },
+            plan));
+    }
+
+    [Fact]
+    public void AutoPageSuggestion_DoesNotBecomeAPlatformPageLimit()
+    {
+        var attachment = CapacityFixture(payloadBlocks: 164);
+        var plan = MdToPptSourcePlan.Create(attachment, Array.Empty<DesignKnowledgeSnapshot>());
+        Assert.Equal(41, plan.RecommendedPageCount(attachment.Length));
+        Assert.Equal(41, MdToPptController.ResolveTargetPages(
+            new MdToPptOutlineRequest { Content = "完整可读，必要时增加附录", AttachmentText = attachment },
+            plan));
+    }
+
+    [Fact]
+    public void ThirtyFourPageOutlineAndSinglePagePatch_StayWithinTheValidatedContract()
+    {
+        var outline = new
+        {
+            totalPages = 34,
+            outline = Enumerable.Range(1, 34).Select(index => new { title = $"第 {index} 页" }).ToArray(),
+        };
+        var normalized = MdToPptController.NormalizeOutlinePayload(JsonSerializer.Serialize(outline), 34);
+        Assert.Equal(34, normalized["outline"]!.AsArray().Count);
+        MdToPptController.EnsureOutlinePageCount(34, 34, 34);
+        Assert.Equal(34, MdToPptController.ResolvePatchSlideIndex(null, "修改第 34 页标题"));
+        Assert.Equal(41, MdToPptController.ResolvePatchSlideIndex(null, "修改第 41 页标题"));
+    }
+
+    [Fact]
+    public void ManualEditOverlay_PreservesVisibleTextChange_AndRejectsUnknownHiddenOrScriptChanges()
+    {
+        var plan = MdToPptSourcePlan.Create("# 条件\n\n通知负责人。", Array.Empty<DesignKnowledgeSnapshot>());
+        var pages = plan.Bind(new[]
+        {
+            new MdToPptOutlinePageDto { Title = "条件", SourceBlockIds = plan.Blocks.Select(block => block.Id).ToList() },
+        }, 1);
+        var frozen = plan.SerializeBound(pages);
+        var parent = "<html><body><section class=\"slide\">" + string.Join("", pages[0].Blocks.Select(block =>
+            $"<div data-mdppt-source=\"{block.Id}\">{block.Html}</div>")) + "</section><script>next()</script></body></html>";
+        var proposal = parent.Replace("通知负责人。", "通知值班负责人。", StringComparison.Ordinal);
+        var updated = MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, proposal, out var overlayHash);
+        Assert.Matches("^[a-f0-9]{64}$", overlayHash);
+        var updatedBlock = Assert.Single(
+            Assert.Single(MdToPptSourcePlan.RestoreBound(updated)).Blocks,
+            block => block.Markdown.Contains("通知值班负责人。", StringComparison.Ordinal));
+        Assert.Contains("通知值班负责人。", updatedBlock.Markdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("通知负责人。", updatedBlock.Markdown, StringComparison.Ordinal);
+
+        var nonSourceEdit = parent.Replace("class=\"slide\"", "class=\"slide revised\"", StringComparison.Ordinal);
+        var unchanged = MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, nonSourceEdit, out var unchangedOverlayHash);
+        Assert.Equal(
+            Assert.Single(MdToPptSourcePlan.RestoreBound(frozen)).Blocks.Select(block => block.Markdown),
+            Assert.Single(MdToPptSourcePlan.RestoreBound(unchanged)).Blocks.Select(block => block.Markdown));
+        Assert.Matches("^[a-f0-9]{64}$", unchangedOverlayHash);
+
+        var unknown = proposal.Replace("data-mdppt-source=\"", "data-mdppt-source=\"forged-", StringComparison.Ordinal);
+        Assert.Equal("manual_edit_source_slot_invalid",
+            Assert.Throws<MdToPptSourcePlanException>(() => MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, unknown, out _)).Code);
+        var hidden = proposal.Replace("<div data-mdppt-source", "<div hidden data-mdppt-source", StringComparison.Ordinal);
+        Assert.Equal("manual_edit_source_hidden",
+            Assert.Throws<MdToPptSourcePlanException>(() => MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, hidden, out _)).Code);
+        var script = proposal.Replace("next()", "steal()", StringComparison.Ordinal);
+        Assert.Equal("manual_edit_script_changed",
+            Assert.Throws<MdToPptSourcePlanException>(() => MdToPptSourcePlan.ApplyManualEditOverlay(frozen, parent, script, out _)).Code);
+    }
 
     [Fact]
     public void FrozenCatalog_HasStableVersionedIdentityAndNoOverlappingListOrTableRows()
@@ -191,7 +317,7 @@ public class MdToPptSourcePlanTests
     }
 
     [Fact]
-    public void FirstAndOnlyRetry_ActualGatewayUserSharesSamePlan_WithoutSourceDuplicateOrTokenCap()
+    public void FirstAndOnlyRetry_SharesSamePlanWithoutDuplicatingSource()
     {
         var (_, page) = OnePage("| 日期 | 名额 |\n|---|---|\n| 周六 | 12 |\n| 周日 | 10 |\n| 周一 | 8 |\n");
         var req = new MdToPptConvertRequest { Content = "用户指令99不是事实", OutlinePages = new() { new() { Title = "活动安排", Design = "表格" } } };
@@ -200,32 +326,27 @@ public class MdToPptSourcePlanTests
             new(MdToPptController.UnsupportedVisibleClaimKind.SourceContentIncomplete));
         foreach (var prompt in new[] { user, retry })
         {
-            var wire = MdToPptController.BuildGatewayPageRequest(new InfraAgentRuntimeProfile { Model = "model-a" }, "system", prompt,
-                "md-to-ppt-agent.generation::chat", "request", "user", "page", "run");
-            var sent = wire.RequestBody!["messages"]![1]!["content"]!.GetValue<string>();
-            Assert.Single(Regex.Matches(sent, page.Hash));
+            Assert.Single(Regex.Matches(prompt, page.Hash));
             // 线上标识是短代号，不是 64 位内容寻址 Id——模型抄不全长 Id，
             // 会整轮漏块（source_plan_incomplete）。仍然只许出现一次，不许重复喂源。
-            Assert.Single(Regex.Matches(sent, Regex.Escape(page.Blocks[0].Alias)));
-            Assert.DoesNotContain(page.Blocks[0].Id, sent, StringComparison.Ordinal);
-            Assert.DoesNotContain("用户指令99", sent);
-            Assert.False(wire.RequestBody.ContainsKey("max_tokens"));
-            Assert.Equal("run", wire.Context!.RunId);
-            Assert.Equal("model-a", wire.ExpectedModel);
+            Assert.Single(Regex.Matches(prompt, Regex.Escape(page.Blocks[0].Alias)));
+            Assert.DoesNotContain(page.Blocks[0].Id, prompt, StringComparison.Ordinal);
+            Assert.DoesNotContain("用户指令99", prompt);
         }
         Assert.StartsWith(user, retry);
     }
 
     [Fact]
-    public void ChildRunOwnsPlan_FinalNormalizedFourPagesCannotSilentlyDropOrMoveSource()
+    public void ChildRunOwnsPlan_FinalSaveChecksFrozenIdentityWithoutInspectingOpenDesignDom()
     {
         var sources = Sources("# 介绍\n\n不提供线上报名。\n\n# 活动\n\n每场最多12人。");
         var catalog = MdToPptSourcePlan.Create(sources);
         var pages = catalog.Blocks.Select(x => new MdToPptOutlinePageDto { Title = "用户确认的展示标题", SourceBlockIds = new() { x.Id } }).ToList();
+        var frozen = catalog.SerializeCatalog();
         var child = new MdToPptRun { KnowledgeReferences = sources, SourcePlanVersion = 1, SourcePlanPageCount = 4,
-            SourcePlanJson = MdToPptController.BuildCanonicalOutlineJson(pages, "摘要"),
-            SourcePlanHash = MdToPptController.ComputeSourcePlanHash(sources, pages, 4) };
-        var plan = MdToPptController.RestoreSourcePlan(child);
+            SourcePlanJson = frozen,
+            SourcePlanHash = MdToPptSourcePlan.Hash(frozen) };
+        var plan = catalog.Bind(pages, pages.Count);
         pages[0].SourceBlockIds!.Clear(); // 模拟父工作稿后续改动，子 Run 不可被影响。
         var anchor = MdToPptAnchors.Resolve("tech-dark")!;
         var sections = plan.Select((p, i) => MdToPptController.NormalizeSlidePageIdentity(
@@ -233,27 +354,90 @@ public class MdToPptSourcePlanTests
         var document = MdToPptController.NormalizePresentationDocument(anchor.Prefix + string.Join("\n", sections) + anchor.Suffix);
         document = Encoding.UTF8.GetString(HostedSiteService.RewritePublishedEntryHtml(Encoding.UTF8.GetBytes(document), "index.html"));
         Assert.True(MdToPptController.ValidateSourcePlanDocument(child, document));
-        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, document.Replace("不提供", "提供")));
-        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, anchor.Prefix + string.Join("\n", sections.Take(3)) + anchor.Suffix));
-        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, anchor.Prefix + string.Join("\n", sections.Reverse()) + anchor.Suffix));
+        Assert.True(MdToPptController.ValidateSourcePlanDocument(child, document.Replace("不提供", "提供")));
+        Assert.True(MdToPptController.ValidateSourcePlanDocument(child, anchor.Prefix + string.Join("\n", sections.Take(3)) + anchor.Suffix));
+        child.SourcePlanHash = "0".PadLeft(64, '0');
+        Assert.False(MdToPptController.ValidateSourcePlanDocument(child, document));
         Assert.Contains("用户确认的展示标题", document);
     }
 
     [Fact]
-    public void PersistenceWiring_ChecksPreparedBytesBeforeDoneAndUsesChildOwnedPlan()
+    public void OpenDesignWiring_FreezesSourceOutlineAndTargetPagesIntoWorkspaceContract()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "prd-api/src/PrdAgent.Api/Controllers/Api/MdToPptController.cs"))) directory = directory.Parent;
         Assert.NotNull(directory);
-        var source = File.ReadAllText(Path.Combine(directory!.FullName, "prd-api/src/PrdAgent.Api/Controllers/Api/MdToPptController.cs"));
-        var begin = source.IndexOf("private async Task<bool> PersistRunDoneAsync", StringComparison.Ordinal);
-        var prepare = source.IndexOf("html = PreparePublishedHtml(NormalizePresentationDocument(html))", begin, StringComparison.Ordinal);
-        var gate = source.IndexOf("ValidateSourcePlanDocument(run, html)", begin, StringComparison.Ordinal);
-        var done = source.IndexOf("run.Status = \"done\"", begin, StringComparison.Ordinal);
-        Assert.True(prepare > begin && gate > prepare && done > gate);
-        Assert.Contains("sourcePlanJson: sourcePlanJson", source);
-        Assert.Contains("sourcePages = RestoreSourcePlan(run)", source);
-        Assert.Equal(2, Regex.Matches(source, "section = MaterializeSourcePage\\(section, sourcePages\\[i\\]").Count);
+        var service = File.ReadAllText(Path.Combine(
+            directory!.FullName,
+            "prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptOpenDesignRunService.cs"));
+        var broker = File.ReadAllText(Path.Combine(
+            directory.FullName,
+            "prd-api/src/PrdAgent.Api/Services/DesignArtifactWorkspaceBroker.cs"));
+        var designArtifactsController = File.ReadAllText(Path.Combine(
+            directory.FullName,
+            "prd-api/src/PrdAgent.Api/Controllers/Api/DesignArtifactsController.cs"));
+
+        Assert.Contains("PresentationInput = new DesignArtifactPresentationInput", service);
+        Assert.Contains("SourceContent = input.SourceContent", service);
+        Assert.Contains("SourceContentHash = sourceHash", service);
+        Assert.Contains("OutlineJson = input.OutlineJson", service);
+        Assert.Contains("OutlineHash = outlineHash", service);
+        Assert.Contains("SourcePlanJson = input.SourcePlanJson", service);
+        Assert.Contains("SourcePlanHash = input.SourcePlanHash", service);
+        Assert.Contains("TargetPages = input.TargetPages", service);
+        Assert.Contains("ParentPackageHash = input.ParentPackageHash", service);
+        Assert.Contains("ManualEditHtml = manualEditHtml", service);
+        Assert.Contains("ManualEditHtmlHash = manualEditHtmlHash", service);
+        Assert.Contains("FileName = \"presentation-source.md\"", service);
+        Assert.Contains("\"source/presentation.md\"", broker);
+        Assert.Contains("\"brief/outline.json\"", broker);
+        Assert.Contains("\"brief/source-plan.json\"", broker);
+        Assert.Contains("requiredSlideIndexes = Enumerable.Range(1, run.PresentationInput.TargetPages)", broker);
+        Assert.Contains("\"proposal/manual-edit.html\"", broker);
+        Assert.Contains("PresentationInput = ClonePresentationInput(source.PresentationInput)", designArtifactsController);
+        Assert.Contains("RepairCandidateHtml = source.RepairCandidateHtml", designArtifactsController);
+        Assert.Contains("RepairCandidateHtmlHash = source.RepairCandidateHtmlHash", designArtifactsController);
+    }
+
+    [Fact]
+    public void ManualEditProposal_NormalizesOnlyTrustedHostingEnvelopeBeforeHashing()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null && !File.Exists(Path.Combine(
+                   directory.FullName,
+                   "prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptOpenDesignRunService.cs")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        var service = File.ReadAllText(Path.Combine(
+            directory!.FullName,
+            "prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptOpenDesignRunService.cs"));
+        var normalization = service.IndexOf(
+            "DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(input.ManualEditHtml)",
+            StringComparison.Ordinal);
+        var hashing = service.IndexOf("Sha256(manualEditHtml)", StringComparison.Ordinal);
+        Assert.True(normalization >= 0, "手动提案必须在进入 DesignArtifactRun 前复用可信托管包装归一化");
+        Assert.True(hashing > normalization, "手动提案必须先归一化再计算持久化哈希");
+
+        var trusted = $"<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.VerifiedPackageArtifactCsp}\"><link rel=\"stylesheet\" href=\"assets/site.css\"></head><body><h1>从代码到生产：修订版</h1><p>协作契约（用户修订）</p><script src=\"assets/app.js\"></script></body></html>";
+        var expected = "<!doctype html><html><head><link rel=\"stylesheet\" href=\"assets/site.css\"></head><body><h1>从代码到生产：修订版</h1><p>协作契约（用户修订）</p><script src=\"assets/app.js\"></script></body></html>";
+        var normalized = DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(trusted);
+
+        Assert.Equal(expected, normalized);
+        Assert.Equal(normalized, DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(normalized));
+
+        var exact = $"<head><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.VerifiedPackageArtifactCsp}\"></head>";
+        var unsafeVariants = new[]
+        {
+            $"<!doctype html><html><head><title>moved</title><meta http-equiv=\"Content-Security-Policy\" content=\"{HostedSiteRevisionRules.VerifiedPackageArtifactCsp}\"></head><body></body></html>",
+            $"<!doctype html><html>{exact}{exact}<body></body></html>",
+            "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"></head><body></body></html>",
+            "<!doctype html><html><head><meta http-equiv=\"refresh\" content=\"0;url=https://evil.example\"></head><body></body></html>",
+        };
+        foreach (var candidate in unsafeVariants)
+        {
+            var boundaryResult = DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(candidate);
+            Assert.Throws<InvalidOperationException>(() => HostedSiteRevisionRules.HardenGeneratedHtml(boundaryResult));
+        }
     }
 
     [Theory]
@@ -321,33 +505,28 @@ public class MdToPptOutlineSourcePlanContractTests
     }
 
     [Fact]
-    public void Contract_NamesTheFieldBindActuallyRequires()
+    public void OutlinePrompt_ProvidesFrozenMaterialWithoutPlatformSlotIdentifiers()
     {
         // Bind 缺这个字段就抛 source_plan_missing，契约文案必须点名同一个字段。
         var plan = MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
         {
             new() { StoreId = "s", EntryId = "e", Content = "# 标题\n\n正文一句话。\n", ContentHash = MdToPptSourcePlan.Hash("# 标题\n\n正文一句话。\n") },
         });
-        var missing = Assert.Throws<MdToPptSourcePlanException>(
-            () => plan.Bind(new[] { new MdToPptOutlinePageDto() }, 1));
-        Assert.Equal("source_plan_missing", missing.Code);
-        var contract = MdToPptController.SourcePlanOutlineContract(plan.Blocks.Count);
-        Assert.Contains("sourceBlockIds", contract, StringComparison.Ordinal);
-        // 第二次失败形态是 source_plan_incomplete（字段有了、id 没覆盖全），
-        // 所以契约还必须把「一共几个 id」告诉模型，否则它没有可自查的数。
-        Assert.Contains(plan.Blocks.Count.ToString(), contract, StringComparison.Ordinal);
+        var prompt = plan.OutlinePrompt();
+        Assert.Contains("服务端冻结来源材料", prompt, StringComparison.Ordinal);
+        Assert.Contains("markdown", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourceBlockIds", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain(plan.Blocks[0].Id, prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain(plan.Blocks[0].Alias, prompt, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void BothOutlineEndpoints_AppendTheContractToTheirSystemPrompt()
+    public void BothOutlineEndpoints_DoNotInjectASourceSlotOutputContract()
     {
         var source = ControllerSource();
-        var appends = Regex.Matches(source, @"if\s*\(sourcePlan\s*!=\s*null\)\s*systemPrompt\s*\+=\s*SourcePlanOutlineContract\(sourcePlan\.Blocks\.Count,\s*ResolveTargetPages\(req\)\)\s*;").Count;
-
-        // /outline（整块 JSON）与 /outline-stream（JSONL）各一处；少一处就有一条入口
-        // 仍然发不出 sourceBlockIds，而它不会让任何现有用例变红。页数也要传进去，
-        // 否则来源块少于页数时模型不知道封面、结尾可以留空（Codex P1）。
-        Assert.Equal(2, appends);
+        Assert.DoesNotContain("SourcePlanOutlineContract", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("sourcePlan.RepairCoverage", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("WriteBackSourceBlockIds(payload", source, StringComparison.Ordinal);
     }
 }
 
@@ -774,10 +953,13 @@ public class MdToPptSourceBindingOwnershipTests
     }
 
     [Fact]
-    public void OutlinePromptTellsTheModelOneBlockBelongsToOnePage()
+    public void OutlinePromptLeavesPageGroupingToOpenDesignWithoutExposingIds()
     {
-        // 判据改严了就必须同时告诉模型，否则等于按一份没交代过的契约罚它。
-        Assert.Contains("每个ID只能出现在一页", Plan().OutlinePrompt());
+        var plan = Plan();
+        var prompt = plan.OutlinePrompt();
+        Assert.Contains("自行规划页数与结构", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("每个ID只能出现在一页", prompt, StringComparison.Ordinal);
+        Assert.All(plan.Blocks, block => Assert.DoesNotContain(block.Id, prompt, StringComparison.Ordinal));
     }
 
     [Fact]
@@ -810,19 +992,12 @@ public class MdToPptSourceBindingOwnershipTests
     }
 
     [Fact]
-    public void RepairedPagesAreReEmittedBeforeDone()
+    public void OutlineStream_DoesNotPostRepairSourceAssignmentsBeforeDone()
     {
-        // 接线守卫：判据算得再对，不发出去也白搭——而删掉那段重发不会让任何用例变红
-        // （SSE 这条路没有集成测试覆盖）。所以这里直接盯源码里的次序。
         var source = File.ReadAllText(LocateController());
-        var repair = source.IndexOf("foreach (var index in repairedPages)", StringComparison.Ordinal);
-        Assert.True(repair > 0, "补齐后的页不再重发，前端手里会留着补齐前的来源绑定");
-
-        var computed = source.IndexOf("ChangedSourceBindingPages(beforeRepair", StringComparison.Ordinal);
-        Assert.True(computed > 0 && computed < repair, "重发的页必须来自补齐前后的实际差集");
-
-        var done = source.IndexOf("WriteEventAsync(\"done\", new { pages = emittedPages", StringComparison.Ordinal);
-        Assert.True(done > repair, "重发必须排在 done 之前，done 之后前端已经收尾了");
+        Assert.DoesNotContain("foreach (var index in repairedPages)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("ChangedSourceBindingPages(beforeRepair", source, StringComparison.Ordinal);
+        Assert.Contains("WriteEventAsync(\"done\", new { pages = emittedPages", source, StringComparison.Ordinal);
     }
 
     private static string LocateController()

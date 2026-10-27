@@ -4,7 +4,7 @@ namespace PrdAgent.Core.Helpers;
 /// 产品域实体编号规则 SSOT。
 /// <list type="bullet">
 /// <item>需求 / 缺陷：全库单表 TAPD 纯数字全局递增（与产品无关）</item>
-/// <item>版本 T/V 编码：全库全局递增（T{a}.{b}.{c} / V{a}.{b}.{c}）</item>
+/// <item>版本 T/V 编码：调用方先筛选对应应用，再按三段数字最大值升级（T{a}.{b}.{c} / V{a}.{b}.{c}）</item>
 /// <item>功能：单张 Features 表；每个正式版本（OfficialReleaseId）一份功能清单，FeatureNo 在清单内递增；未绑定正式版本时按产品草稿清单递增</item>
 /// </list>
 /// </summary>
@@ -30,7 +30,7 @@ public static class ProductEntityNumbering
         return (max + 1).ToString();
     }
 
-    /// <summary>下一工作流版本编码（T/V 前缀，全库全局递增）。</summary>
+    /// <summary>在调用方限定的应用与类型候选中，取数字最大版本并按级升级、归零后位。</summary>
     public static string NextWorkflowCode(string prefix, string versionType, IEnumerable<string> existingCodes)
     {
         var max = new[] { 0, 0, 0 };

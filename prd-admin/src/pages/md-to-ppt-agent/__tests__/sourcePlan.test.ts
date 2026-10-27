@@ -57,6 +57,56 @@ describe('PPT 来源绑定传输', () => {
     expect(page.mock.calls[0][0].sourceBlockIds).toBeUndefined();
   });
 
+  it.each([
+    ['EOF', () => events([
+      ['run', { runId: 'outline-running' }],
+      ['page', { index: 1, title: '仍在生成', bullets: ['第一页'] }],
+    ])],
+    ['网络异常', () => {
+      const encoder = new TextEncoder();
+      const reader = {
+        read: vi.fn()
+          .mockResolvedValueOnce({
+            done: false,
+            value: encoder.encode('event: run\ndata: {"runId":"outline-running"}\n\n'),
+          })
+          .mockRejectedValueOnce(new Error('socket closed')),
+      };
+      return { ok: true, body: { getReader: () => reader } } as unknown as Response;
+    }],
+  ])('run 已建立后遇到%s时交给恢复流程，不误报终态失败', async (_label, response) => {
+    const disconnect = vi.fn();
+    const error = vi.fn();
+    const done = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response()));
+    const options = {
+      content: '社区指南',
+      onDisconnect: disconnect,
+      onError: error,
+      onDone: done,
+    };
+
+    streamMdToPptOutline(options);
+
+    await vi.waitFor(() => expect(disconnect).toHaveBeenCalledOnce());
+    expect(error).not.toHaveBeenCalled();
+    expect(done).not.toHaveBeenCalled();
+  });
+
+  it('服务器显式 error 仍按终态失败处理，不伪装成可恢复断线', async () => {
+    const disconnect = vi.fn();
+    const error = vi.fn();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(events([
+      ['run', { runId: 'outline-failed' }],
+      ['error', { message: '大纲页数不完整' }],
+    ])));
+
+    streamMdToPptOutline({ content: '社区指南', onDisconnect: disconnect, onError: error });
+
+    await vi.waitFor(() => expect(error).toHaveBeenCalledWith('大纲页数不完整'));
+    expect(disconnect).not.toHaveBeenCalled();
+  });
+
   it('大纲开始前来源校验失败时显示恢复动作，不显示状态码', async () => {
     const error = vi.fn();
     const done = vi.fn();
@@ -120,5 +170,12 @@ describe('PPT 来源绑定传输', () => {
     expect(source).toContain('{ ...sl, title: e.target.value }');
     expect(source).toContain('const outline = (d.outline ?? []).filter(Boolean)');
     expect(source).toContain('JSON.stringify(toSave)');
+    const disconnectHandler = source.slice(
+      source.indexOf('onDisconnect: () => {'),
+      source.indexOf('onError: (err) => finish(err)', source.indexOf('onDisconnect: () => {')),
+    );
+    expect(disconnectHandler).toContain('大纲仍在后台继续');
+    expect(disconnectHandler).not.toContain('removeItem(OUTLINE_RUN_KEY)');
+    expect(disconnectHandler).not.toContain('finish(');
   });
 });

@@ -6,8 +6,8 @@ import { toast } from '@/lib/toast';
 import { importProducts, type ImportProductRow } from '@/services/real/productAgent';
 import { parseProductImportFile, parseProductImportXlsxBuffer } from './productImportParse';
 
-const TEMPLATE_XLSX = '/templates/product-import-initial-apps.xlsx';
-const TEMPLATE_CSV = '/templates/product-import-initial-apps.csv';
+const TEMPLATE_XLSX = '/templates/product-import-initial-apps.xlsx?v=20261020';
+const TEMPLATE_CSV = '/templates/product-import-initial-apps.csv?v=20261020';
 
 export function ProductImportDialog({
   onClose,
@@ -60,7 +60,7 @@ export function ProductImportDialog({
     setParsing(true);
     setMessage('');
     try {
-      const res = await fetch(TEMPLATE_XLSX);
+      const res = await fetch(TEMPLATE_XLSX, { cache: 'no-store' });
       if (!res.ok) {
         throw new Error(`初始模板加载失败（HTTP ${res.status}），请改用「下载 Excel 初始模板」后手动上传。`);
       }
@@ -124,7 +124,7 @@ export function ProductImportDialog({
               disabled={parsing || busy}
               className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/15 px-3 py-1.5 text-xs text-[color:var(--accent-fg-blue)] hover:bg-cyan-500/25 disabled:opacity-50"
             >
-              {parsing ? <MapSpinner size={14} /> : <Sparkles size={14} />} 一键加载初始模板（19 个应用）
+              {parsing ? <MapSpinner size={14} /> : <Sparkles size={14} />} 一键加载初始模板（23 个应用）
             </button>
             <a
               href={TEMPLATE_XLSX}

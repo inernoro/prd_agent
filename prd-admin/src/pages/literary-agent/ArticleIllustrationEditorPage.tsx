@@ -60,9 +60,10 @@ import {
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
 import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryModelOption } from './literaryModelOptions';
+import { fitLiteraryImageSize, imageRunFailure } from './literaryImageRunContract';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
-import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
+import { type SizesByResolution } from '@/lib/imageAspectOptions';
 import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, ChevronsUpDown, SlidersHorizontal, History, AlertTriangle } from 'lucide-react';
 import { IllustrationHistoryDialog } from './IllustrationHistoryDialog';
 import { PopupButton, QuickMenu, QuickMenuAction, QuickMenuEmpty, QuickMenuItem } from './LiteraryQuickMenu';
@@ -695,6 +696,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   // 生图模型尺寸选项（按分辨率分组，从后端 adapter-info 获取）
   const [sizesByResolutionForPicker, setSizesByResolutionForPicker] = useState<SizesByResolution>({ '1k': [], '2k': [], '4k': [] });
   const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable] = useState(false);
+  const [imageCapabilitiesModel, setImageCapabilitiesModel] = useState<string | null>(null);
+  const [imageCapabilitiesError, setImageCapabilitiesError] = useState<string | null>(null);
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
@@ -1092,50 +1095,37 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     return () => { cancelled = true; };
   }, [enabledChatModels.length, modelsLoading]);
 
-  // 从 ASPECT_OPTIONS 构建默认尺寸选项（当适配器未返回尺寸时作为 fallback）
-  const defaultSizesByResolution: SizesByResolution = React.useMemo(() => ({
-    '1k': ASPECT_OPTIONS.map(opt => ({ size: opt.size1k, aspectRatio: opt.id })),
-    '2k': ASPECT_OPTIONS.map(opt => ({ size: opt.size2k, aspectRatio: opt.id })),
-    '4k': ASPECT_OPTIONS.map(opt => ({ size: opt.size4k, aspectRatio: opt.id })),
-  }), []);
-
-  // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
+  // 能力读取失败时禁止生成，不能用另一模型的默认尺寸冒充当前能力。
   useEffect(() => {
     const modelName = effectiveModel?.modelName || imageGenModel?.modelName;
-    if (!modelName) {
-      setSizesByResolutionForPicker(defaultSizesByResolution);
-      setCurrentModelSizesNotApplicable(false);
-      return;
-    }
+    setImageCapabilitiesModel(null);
+    setImageCapabilitiesError(null);
+    setSizesByResolutionForPicker({ '1k': [], '2k': [], '4k': [] });
+    setCurrentModelSizesNotApplicable(false);
+    if (!modelName) return;
     let cancelled = false;
     void (async () => {
       try {
         const res = await getLiteraryAgentAdapterInfo(modelName);
         if (cancelled) return;
-        if (res.success && res.data?.matched && res.data.sizesByResolution) {
-          const data = res.data.sizesByResolution;
-          const resolved: SizesByResolution = {
-            '1k': Array.isArray(data['1k']) ? data['1k'] : [],
-            '2k': Array.isArray(data['2k']) ? data['2k'] : [],
-            '4k': Array.isArray(data['4k']) ? data['4k'] : [],
-          };
-          // 适配器返回了有效尺寸则使用，否则 fallback 到默认
-          const hasAny = resolved['1k'].length > 0 || resolved['2k'].length > 0 || resolved['4k'].length > 0;
-          setSizesByResolutionForPicker(hasAny ? resolved : defaultSizesByResolution);
-          setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);
-        } else {
-          setSizesByResolutionForPicker(defaultSizesByResolution);
-          setCurrentModelSizesNotApplicable(false);
+        if (!res.success || !res.data?.matched || !res.data.sizesByResolution) {
+          setImageCapabilitiesError(res.error?.message || '无法读取当前模型的图片能力，请刷新后重新选择模型。');
+          return;
         }
+        const data = res.data.sizesByResolution;
+        setSizesByResolutionForPicker({
+          '1k': Array.isArray(data['1k']) ? data['1k'] : [],
+          '2k': Array.isArray(data['2k']) ? data['2k'] : [],
+          '4k': Array.isArray(data['4k']) ? data['4k'] : [],
+        });
+        setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);
+        setImageCapabilitiesModel(modelName);
       } catch {
-        if (!cancelled) {
-          setSizesByResolutionForPicker(defaultSizesByResolution);
-          setCurrentModelSizesNotApplicable(false);
-        }
+        if (!cancelled) setImageCapabilitiesError('无法读取当前模型的图片能力，请刷新后重新选择模型。');
       }
     })();
     return () => { cancelled = true; };
-  }, [effectiveModel?.modelName, imageGenModel?.modelName, defaultSizesByResolution]);
+  }, [effectiveModel?.modelName, imageGenModel?.modelName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1902,6 +1892,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       toast.error(imageGenModelError || '未选择生图模型');
       return;
     }
+    if (imageCapabilitiesModel !== (effectiveModel?.modelName || imageGenModel.modelName)) {
+      toast.error(imageCapabilitiesError || '正在读取模型的图片能力，请稍后重试。');
+      return;
+    }
     const current = markerRunItems.find((x) => x.markerIndex === markerIndex) ?? null;
     if (!current) return;
     const text = String(current.draftText || current.markerText || '').trim();
@@ -1957,6 +1951,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     plannedSize = plannedSize || parseSizeFromText(plannedPrompt) || parseSizeFromText(text) || '1024x1024';
+    const fittedSize = fitLiteraryImageSize(plannedSize, sizesByResolutionForPicker, currentModelSizesNotApplicable);
+    if (!fittedSize) {
+      const errorMsg = '当前模型不支持这个配图比例，请从尺寸菜单重新选择。';
+      setMarkerRunItems((prev) => prev.map((x) => x.markerIndex === markerIndex
+        ? { ...x, status: 'error', errorMessage: errorMsg, planItem: cachedPlanItem } : x));
+      await updateMarkerStatus(markerIndex, { status: 'error', errorMessage: errorMsg });
+      return;
+    }
+    plannedSize = fittedSize;
+    planItem = { ...(planItem || { prompt: plannedPrompt, count: 1 }), size: plannedSize };
+
 
     setMarkerRunItems((prev) =>
       prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'parsed', planItem } : x))
@@ -2021,6 +2026,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     // 3) 订阅 SSE，拿到 base64/url
     let gotBase64: string | null = null;
     let gotUrl: string | null = null;
+    let generationFailure: string | null = null;
     const ac = genAbortRef.current;
     const res = await streamLiteraryAgentImageGenRunWithRetry({
       runId,
@@ -2044,8 +2050,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             prev.map((x) => (x.markerIndex === markerIndex ? { ...x, base64: b64, url: url, errorMessage: null } : x))
           );
         }
-        if (t === 'imageError') {
-          const msg = String(o.errorMessage ?? '生图失败');
+        const failure = imageRunFailure(o);
+        if (failure) {
+          generationFailure = failure;
+          const msg = failure;
           setMarkerRunItems((prev) =>
             prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: msg } : x))
           );
@@ -2081,7 +2089,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
     if (!finalB64) {
       setMarkerRunItems((prev) =>
-        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: '生图失败：未返回图片' } : x))
+        prev.map((x) => (x.markerIndex === markerIndex ? { ...x, status: 'error', errorMessage: generationFailure || '图片尚未生成，请稍后重试或选择其他模型。' } : x))
       );
       return;
     }
