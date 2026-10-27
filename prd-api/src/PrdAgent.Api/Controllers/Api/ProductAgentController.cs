@@ -1149,7 +1149,7 @@ public partial class ProductAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
         var reason = ProductVersionClaimGuard.NormalizeRemovalReason(request?.Reason);
         if (reason == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写作废理由，去除首尾空白后至少6个字符。"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写删除理由，去除首尾空白后至少6个字符。"));
         var queuedApplicationId = string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId;
         await using var versionLease = await ProductVersionApplicationLease.AcquireAsync(_db, new[] { queuedApplicationId });
         item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
@@ -1177,7 +1177,7 @@ public partial class ProductAgentController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该 T 号已申领或正在申领正式版本，不能删除。请查看关联记录。"));
         await versionLease.EnsureHeldAsync();
         if (!await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "initiation:" + id, reason, userId))
-            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "作废信息未能保存，本次未删除，请刷新后重试。"));
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "删除理由未能保存，本次未删除，请刷新后重试。"));
         var deleted = await _db.ProductInitiations.DeleteOneAsync(x => x.Id == id && !x.IsDeleted
             && x.TCode == item.TCode && x.UpdatedAt == item.UpdatedAt, CancellationToken.None);
         if (deleted.DeletedCount == 0)
@@ -1402,7 +1402,7 @@ public partial class ProductAgentController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
         var reason = ProductVersionClaimGuard.NormalizeRemovalReason(request?.Reason);
         if (reason == null)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写作废理由，去除首尾空白后至少6个字符。"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请填写删除理由，去除首尾空白后至少6个字符。"));
         var queuedApplicationId = item.ProductId;
         if (!string.IsNullOrWhiteSpace(item.InitiationId))
             queuedApplicationId = await _db.ProductInitiations.Find(x => x.Id == item.InitiationId)
@@ -1420,7 +1420,7 @@ public partial class ProductAgentController : ControllerBase
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "通知正在发送，请稍后刷新再删除。"));
         await versionLease.EnsureHeldAsync();
         if (!await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "release:" + id, reason, userId))
-            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "作废信息未能保存，本次未删除，请刷新后重试。"));
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "删除理由未能保存，本次未删除，请刷新后重试。"));
         var deleted = await _db.ProductReleases.DeleteOneAsync(x => x.Id == id && !x.IsDeleted
             && x.VCode == item.VCode && x.UpdatedAt == item.UpdatedAt
             && (x.ClaimNotification == null || x.ClaimNotification.Status != "sending"), CancellationToken.None);
