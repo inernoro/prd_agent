@@ -1,7 +1,5 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
-using System.Security.Cryptography;
-using System.Text;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -9,35 +7,24 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 依靠 MongoDB 原生 _id 唯一性占用来源及编号，跨实例和新旧入口共用。
-/// 目标确认删除后释放其来源及编号；未知结果与在途请求继续占号，不能被其他请求重占。
+/// 评审/立项来源的唯一性与历史删除回执；号码只从有效业务记录计算，应用租约负责串行写入。
 /// </summary>
 public static class ProductVersionClaimGuard
 {
     public const string CollectionName = "product_version_claims";
 
-    /// <summary>先筛选对应应用，再按其T/V数字最大值升级；占号按稳定产品ID隔离。</summary>
-    public static async Task<string> ReserveWorkflowCodeAsync(MongoDbContext db, string prefix, string versionType,
-        string targetId, string applicationProductId)
+    /// <summary>持有应用租约后读取有效记录发号，不读取或新增独立数字占号。</summary>
+    public static async Task<string> NextWorkflowCodeAsync(MongoDbContext db, string prefix, string versionType,
+        string targetId, string applicationProductId, ProductVersionApplicationLease lease)
     {
         if (prefix is not ("T" or "V")) throw new ArgumentException("不支持的版本编号类型", nameof(prefix));
         if (string.IsNullOrWhiteSpace(applicationProductId)) throw new ArgumentException("请选择所属应用", nameof(applicationProductId));
-        var application = await db.Products.Find(x => x.Id == applicationProductId && !x.IsDeleted).FirstOrDefaultAsync()
-            ?? throw new InvalidOperationException("所属应用不存在，请重新选择后申领");
-        var keyPrefix = "workflow-code:" + prefix + ":"
-            + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(applicationProductId))).ToLowerInvariant() + ":";
-        var claims = db.Database.GetCollection<BsonDocument>(CollectionName);
-        var codeClaims = Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^" + keyPrefix));
-        // 只兼容旧的无应用占号；能由原目标归属到当前应用才计入，不能把其它应用的号带过来。
-        var oldKeyPrefix = "workflow-code:" + prefix + ":";
-        var oldClaims = Builders<BsonDocument>.Filter.Regex("_id",
-            new BsonRegularExpression("^" + oldKeyPrefix + prefix + "[0-9]+\\.[0-9]+\\.[0-9]+$"));
+        if (!lease.Covers(applicationProductId)) throw new InvalidOperationException("请先取得所属应用的申领队列再发号");
+        await lease.EnsureHeldAsync();
         if (await IsDeletedTargetAsync(db, targetId))
             throw new InvalidOperationException("申领记录已删除，请刷新后重新申领");
-        var reserved = await claims.Find(codeClaims & Builders<BsonDocument>.Filter.Eq("targetId", targetId)).FirstOrDefaultAsync();
-        if (reserved != null) return reserved["_id"].AsString[keyPrefix.Length..];
-        var oldReserved = await claims.Find(oldClaims & Builders<BsonDocument>.Filter.Eq("targetId", targetId)).FirstOrDefaultAsync();
-        if (oldReserved != null) return oldReserved["_id"].AsString[oldKeyPrefix.Length..];
+        var application = await db.Products.Find(x => x.Id == applicationProductId && !x.IsDeleted).FirstOrDefaultAsync()
+            ?? throw new InvalidOperationException("所属应用不存在，请重新选择后申领");
         var normalizedName = VersionRegistryCatalog.NormalizeName(application.Name);
         var productNames = await db.Products.Find(x => !x.IsDeleted).Project(x => x.Name).ToListAsync();
         // 与全域表的旧登记归属一致：应用名称必须唯一匹配，重名不猜测归属。
@@ -50,42 +37,21 @@ public static class ProductVersionClaimGuard
             legacy.AddRange((await db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal).ToListAsync())
                 .Where(x => VersionRegistryCatalog.NormalizeName(x.ApplicationName) == normalizedName && !string.IsNullOrWhiteSpace(x.TCode))
                 .Select(x => x.TCode!));
-        for (var attempt = 0; attempt < 64; attempt++)
-        {
-            // 仍有效的记录和在途占号参与发号；确认删除的残留占号不能继续抬高基准。
-            var candidates = await db.ProductInitiations.Find(x => !x.IsDeleted && (x.LinkedProductId == applicationProductId
+        // 号码唯一业务依据是当前有效记录；历史占号和删除回执都不参与基准。
+        var candidates = await db.ProductInitiations.Find(x => !x.IsDeleted && (x.LinkedProductId == applicationProductId
                 || x.ProductId == applicationProductId)).ToListAsync();
-            var initiations = candidates.Where(x => (string.IsNullOrWhiteSpace(x.LinkedProductId) ? x.ProductId : x.LinkedProductId) == applicationProductId).ToList();
-            var initiationIds = initiations.Select(x => x.Id).ToList();
-            var foreignInitiationIds = candidates.Where(x => !initiationIds.Contains(x.Id)).Select(x => x.Id).ToList();
-            var releases = await db.ProductReleases.Find(x => !x.IsDeleted && (x.ProductId == applicationProductId
-                && (x.InitiationId == null || !foreignInitiationIds.Contains(x.InitiationId))
-                || (x.InitiationId != null && initiationIds.Contains(x.InitiationId)))).ToListAsync();
-            var existing = prefix == "T"
-                // 调试清空T但保留V时，仍有效的V引用的T号也不能重发给另一份方案。
-                ? initiations.Where(x => x.TCode != null).Select(x => x.TCode!)
-                    .Concat(releases.Where(x => !string.IsNullOrWhiteSpace(x.TCode)).Select(x => x.TCode!)).ToList()
-                : releases.Select(x => x.VCode).ToList();
-            var ownTargets = prefix == "T" ? initiations.Select(x => "initiation:" + x.Id).ToList()
-                : releases.Select(x => "release:" + x.Id).ToList();
-            var oldAllocations = await claims.Find(oldClaims & Builders<BsonDocument>.Filter.In("targetId", ownTargets)).ToListAsync();
-            var allocations = await claims.Find(codeClaims).ToListAsync();
-            var activeTargets = ownTargets.ToHashSet(StringComparer.Ordinal);
-            var removedTargets = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var allocationTarget in allocations.Select(x => x.GetValue("targetId", "").AsString).Distinct())
-            {
-                var rootTarget = RemovalTarget(allocationTarget);
-                if (activeTargets.Contains(rootTarget) || !await IsDeletedTargetAsync(db, rootTarget)) continue;
-                await ReleaseDeletedSourceClaimsAsync(db, rootTarget);
-                removedTargets.Add(rootTarget);
-            }
-            var candidate = ProductEntityNumbering.NextWorkflowCode(prefix, versionType,
-                existing.Concat(legacy).Concat(oldAllocations.Select(x => x["_id"].AsString[oldKeyPrefix.Length..]))
-                    .Concat(allocations.Where(x => !removedTargets.Contains(RemovalTarget(x.GetValue("targetId", "").AsString)))
-                        .Select(x => x["_id"].AsString[keyPrefix.Length..])));
-            if (await TryReserveAsync(db.Database, keyPrefix + candidate, targetId)) return candidate;
-        }
-        throw new InvalidOperationException("自动发号繁忙，请稍后重试");
+        var initiations = candidates.Where(x => (string.IsNullOrWhiteSpace(x.LinkedProductId) ? x.ProductId : x.LinkedProductId) == applicationProductId).ToList();
+        var initiationIds = initiations.Select(x => x.Id).ToList();
+        var foreignInitiationIds = candidates.Where(x => !initiationIds.Contains(x.Id)).Select(x => x.Id).ToList();
+        var releases = await db.ProductReleases.Find(x => !x.IsDeleted && (x.ProductId == applicationProductId
+            && (x.InitiationId == null || !foreignInitiationIds.Contains(x.InitiationId))
+            || (x.InitiationId != null && initiationIds.Contains(x.InitiationId)))).ToListAsync();
+        var existing = prefix == "T"
+            // 调试清空T但保留V时，仍有效的V引用的T号也不能重发给另一份方案。
+            ? initiations.Where(x => x.TCode != null).Select(x => x.TCode!)
+                .Concat(releases.Where(x => !string.IsNullOrWhiteSpace(x.TCode)).Select(x => x.TCode!)).ToList()
+            : releases.Select(x => x.VCode).ToList();
+        return ProductEntityNumbering.NextWorkflowCode(prefix, versionType, existing.Concat(legacy));
     }
 
     public static async Task<bool> TryReserveAsync(IMongoDatabase database, string key, string targetId)

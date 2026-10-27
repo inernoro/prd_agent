@@ -11,7 +11,7 @@ public sealed record ProductVersionClearPreview(string Kind, string KindLabel, i
     string ConfirmPhrase, string Token);
 public sealed record ProductVersionClearResult(string Kind, long ClearedCount, long SkippedCount, string? BackupId);
 
-/// <summary>临时调试：确认后按ID和修改版本物理删除全局记录及来源关联，编号不回收。</summary>
+/// <summary>临时调试：持有应用队列后按ID及修改版本物理删除，删除记录不再参与发号。</summary>
 public static class ProductVersionDebugClear
 {
     public static bool IsValidKind(string kind) => kind is "internal" or "formal";
@@ -46,6 +46,9 @@ public static class ProductVersionDebugClear
 
     public static async Task<ProductVersionClearResult?> ClearAsync(MongoDbContext db, string kind, string expectedToken, string userId)
     {
+        var applications = await db.Products.Find(_ => true).Project(x => x.Id).ToListAsync();
+        if (applications.Count == 0) applications.Add("product-version-clear");
+        await using var versionLease = await ProductVersionApplicationLease.AcquireAsync(db, applications);
         var snapshot = await ReadAsync(db, kind);
         if (!string.Equals(Token(kind, snapshot), expectedToken, StringComparison.Ordinal)) return null;
         var count = snapshot.Initiations.Count + snapshot.Releases.Count;
@@ -57,6 +60,7 @@ public static class ProductVersionDebugClear
         var now = DateTime.UtcNow;
         snapshot.Name = $"调试清空{(kind == "internal" ? "T" : "V")}备份 {now:yyyy-MM-dd HH:mm:ss} UTC";
         snapshot.CreatedBy = userId;
+        await versionLease.EnsureHeldAsync();
         snapshot.CreatedAt = now;
         snapshot.ImportedCount = count;
         // 必须先成功保存整份所见记录；备份失败时不得开始任何清理。
@@ -66,6 +70,7 @@ public static class ProductVersionDebugClear
         {
             foreach (var item in snapshot.Initiations)
             {
+                await versionLease.EnsureHeldAsync();
                 var target = "initiation:" + item.Id;
                 await ProductVersionClaimGuard.MarkSourceRemovalAsync(db, target);
                 var removed = await db.ProductInitiations.DeleteOneAsync(x => x.Id == item.Id && x.UpdatedAt == item.UpdatedAt, CancellationToken.None);
@@ -77,6 +82,7 @@ public static class ProductVersionDebugClear
         {
             foreach (var item in snapshot.Releases)
             {
+                await versionLease.EnsureHeldAsync();
                 var target = "release:" + item.Id;
                 await ProductVersionClaimGuard.MarkSourceRemovalAsync(db, target);
                 var removed = await db.ProductReleases.DeleteOneAsync(x => x.Id == item.Id && x.UpdatedAt == item.UpdatedAt, CancellationToken.None);
@@ -86,7 +92,7 @@ public static class ProductVersionDebugClear
         }
         // 只释放已实际物理删除目标的业务来源，条件删除跳过的有效记录仍保留占用。
         await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsForKindAsync(db, kind);
-        // 原评审、独立审计快照和永久数字编号占用不作为版本业务数据读取。
+        // 原评审、独立审计快照和旧数字占号都不是号码基准。
         return new(kind, cleared, count - cleared, snapshot.Id);
     }
 }

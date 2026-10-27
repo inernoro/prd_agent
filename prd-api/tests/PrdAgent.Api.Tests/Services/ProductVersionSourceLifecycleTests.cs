@@ -71,7 +71,7 @@ public class ProductVersionSourceLifecycleTests
         Assert.Equal(first.TCode, second.TCode);
         Assert.Null(await fixture.Db.ProductInitiations.Find(x => x.Id == first.Id).FirstOrDefaultAsync());
         Assert.Equal("initiation:" + second.Id, (await fixture.ClaimAsync("review:source"))!["targetId"].AsString);
-        Assert.Equal(1, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:T:"))));
     }
 

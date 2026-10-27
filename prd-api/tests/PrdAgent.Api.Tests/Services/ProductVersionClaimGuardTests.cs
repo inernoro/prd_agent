@@ -368,14 +368,14 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
-    public async Task WorkflowNumberingFormalReservedHistoryMustNotBeReused()
+    public async Task WorkflowNumberingUsesBusinessRecordsInsteadOfOldNumericReservations()
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
         Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
             WorkflowClaimKey("product", "V", "V6.19.6"), "release:interrupted"));
         var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest()));
-        Assert.Equal("V6.19.7", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
+        Assert.Equal("V6.19.6", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
     }
 
     [Fact]
@@ -452,8 +452,9 @@ public class ProductVersionClaimGuardTests
             Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data).VCode).ToArray();
         Assert.Equal(count, codes.Distinct().Count());
         Assert.Equal(Enumerable.Range(6, count).Select(i => "V6.19." + i).OrderBy(x => x), codes.OrderBy(x => x));
-        Assert.Equal(count, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionApplicationLease.CollectionName).CountDocumentsAsync(_ => true));
     }
 
     private static async Task SeedWorkflowNumberingAsync(Fixture fixture, string type = "minor")
@@ -497,12 +498,12 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
-    public async Task WorkflowNumberingSameTargetRetryKeepsItsOldReservedCode()
+    public async Task WorkflowNumberingDoesNotRestoreAnOldUnwrittenNumber()
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
         Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
-            "workflow-code:T:T6.19.6", "initiation:numbering-source"));
+            "workflow-code:T:T9.0.0", "initiation:numbering-source"));
         await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
             Builders<ProductInitiation>.Update.Set(x => x.TCode, null).Set(x => x.Status, "decision_pending"));
         var result = Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation("numbering-source", new InitiationDecisionRequest()));
@@ -514,7 +515,7 @@ public class ProductVersionClaimGuardTests
     [Theory]
     [InlineData("T")]
     [InlineData("V")]
-    public async Task WorkflowNumberingOldClaimsOnlyAffectTheirOwnApplication(string prefix)
+    public async Task WorkflowNumberingOldClaimsCannotAdvanceAnyApplication(string prefix)
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
@@ -530,12 +531,12 @@ public class ProductVersionClaimGuardTests
             await fixture.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "numbering-source",
                 Builders<ProductInitiation>.Update.Set(x => x.TCode, null).Set(x => x.Status, "decision_pending"));
             var result = Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation("numbering-source", new InitiationDecisionRequest()));
-            Assert.Equal("T6.19.9", Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(result.Value).Data).TCode);
+            Assert.Equal("T6.19.6", Assert.IsType<ProductInitiation>(Assert.IsType<ApiResponse<object>>(result.Value).Data).TCode);
         }
         else
         {
             var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest()));
-            Assert.Equal("V6.19.9", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
+            Assert.Equal("V6.19.6", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
         }
     }
 
@@ -931,7 +932,7 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
-    public async Task DuplicateRequestsIssueOnceAndRetryKeepsItsReservedNumber()
+    public async Task DuplicateRequestsIssueOnceFromBusinessRecordsAndReleaseTheirApplicationQueue()
     {
         await using var fixture = await Fixture.CreateAsync();
         await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
@@ -942,8 +943,9 @@ public class ProductVersionClaimGuardTests
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
             ProductInitiationIssuance.IssueAsync(fixture.Db, "pending", "decision_pending")));
         Assert.Single(results.Where(x => x != null));
-        Assert.Equal("T2.3.4", (await fixture.Db.ProductInitiations.Find(x => x.Id == "pending").SingleAsync()).TCode);
+        Assert.Equal("T0.0.1", (await fixture.Db.ProductInitiations.Find(x => x.Id == "pending").SingleAsync()).TCode);
         Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(_ => true));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionApplicationLease.CollectionName).CountDocumentsAsync(_ => true));
     }
 
     [Fact]
@@ -1397,7 +1399,7 @@ public class ProductVersionClaimGuardTests
         var numberClaims = fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName);
         Assert.False(await numberClaims.Find(claimFilter.Eq("targetId", "release:" + issued.Id)
             & claimFilter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))).AnyAsync());
-        Assert.True(await numberClaims.Find(claimFilter.Eq("targetId", "release:" + repeated.Id)
+        Assert.False(await numberClaims.Find(claimFilter.Eq("targetId", "release:" + repeated.Id)
             & claimFilter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))).AnyAsync());
     }
 
@@ -1418,14 +1420,16 @@ public class ProductVersionClaimGuardTests
         if (prefix == "T") Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
             WorkflowClaimKey("product", prefix, "T9.0.0"), target + ":revision:T6.19.9:major"));
         var nextTarget = (prefix == "T" ? "initiation:" : "release:") + "new-owner";
-        var code = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(fixture.Db, prefix, "minor", nextTarget, "product");
+        await using var lease = await ProductVersionApplicationLease.AcquireAsync(fixture.Db, new[] { "product" });
+        var code = await ProductVersionClaimGuard.NextWorkflowCodeAsync(fixture.Db, prefix, "minor", nextTarget, "product", lease);
         Assert.Equal(prefix + "6.19.6", code);
-        // 迟到的旧记录清理不应释放已由新请求取得的同号占用。
+        // 新发号写入业务表；迟到的旧记录清理不能移除新记录，也不产生新的数字占号。
+        if (prefix == "T") await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "new-owner", ProductId = "product", TCode = code, Status = "approved" });
+        else await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "new-owner", ProductId = "product", VCode = code });
         await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(fixture.Db, target);
-        var allocation = await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
-            .Find(new BsonDocument("_id", WorkflowClaimKey("product", prefix, code))).SingleAsync();
-        Assert.Equal(nextTarget, allocation["targetId"].AsString);
-        Assert.Equal(prefix + "6.19.7", await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(fixture.Db, prefix, "minor", nextTarget + "-second", "product"));
+        Assert.False(await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+            .Find(new BsonDocument("_id", WorkflowClaimKey("product", prefix, code))).AnyAsync());
+        Assert.Equal(prefix + "6.19.7", await ProductVersionClaimGuard.NextWorkflowCodeAsync(fixture.Db, prefix, "minor", nextTarget + "-second", "product", lease));
     }
 
     [Theory]
@@ -1438,11 +1442,76 @@ public class ProductVersionClaimGuardTests
         var targetPrefix = prefix == "T" ? "initiation:" : "release:";
         await ProductVersionClaimGuard.MarkSourceRemovalAsync(fixture.Db, targetPrefix + "removed");
         await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, WorkflowClaimKey("product", prefix, prefix + "99.0.0"), targetPrefix + "removed");
-        var codes = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => ProductVersionClaimGuard.ReserveWorkflowCodeAsync(
-            fixture.Db, prefix, "minor", targetPrefix + "parallel-" + i, "product")));
+        var sources = Enumerable.Range(0, 8).Select(i => new ProductInitiation {
+            Id = "parallel-" + i, ProductId = "product", AppName = "测试应用", PlanName = "排队方案" + i,
+            Status = prefix == "T" ? "decision_pending" : "approved", ReviewPassed = true,
+            TCode = prefix == "T" ? null : "T1.2." + (30 + i), CreatedBy = "me",
+        }).ToList();
+        await fixture.Db.ProductInitiations.InsertManyAsync(sources);
+        async Task<string> Claim(ProductInitiation source)
+        {
+            if (prefix == "T")
+            {
+                var saved = await ProductInitiationIssuance.IssueAsync(fixture.Db, source.Id, "decision_pending");
+                Assert.NotNull(saved); return saved!.TCode!;
+            }
+            var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest(source.Id)));
+            return Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode;
+        }
+        var codes = await Task.WhenAll(sources.Select(Claim));
         Assert.Equal(8, codes.Distinct().Count());
         Assert.Contains(prefix + "6.19.6", codes);
         Assert.DoesNotContain(codes, code => code.StartsWith(prefix + "99.", StringComparison.Ordinal));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionApplicationLease.CollectionName).CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task ApplicationQueueSerializesOneApplicationWithoutBlockingAnotherAndReleasesAfterUse()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using var first = await ProductVersionApplicationLease.AcquireAsync(fixture.Db, new[] { "product" });
+        var waiting = ProductVersionApplicationLease.AcquireAsync(fixture.Db, new[] { "product" });
+        await Task.Delay(120);
+        Assert.False(waiting.IsCompleted);
+        await using var other = await ProductVersionApplicationLease.AcquireAsync(fixture.Db, new[] { "other-product" }, TimeSpan.FromSeconds(1));
+        await other.EnsureHeldAsync();
+        await first.DisposeAsync();
+        await using var second = await waiting.WaitAsync(TimeSpan.FromSeconds(3));
+        await second.EnsureHeldAsync();
+        await second.DisposeAsync(); await other.DisposeAsync();
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionApplicationLease.CollectionName).CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task ExpiredApplicationQueueHolderCannotWriteOrReleaseTheNewHolder()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using var old = await ProductVersionApplicationLease.AcquireAsync(fixture.Db, new[] { "product" });
+        var collection = fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionApplicationLease.CollectionName);
+        await collection.UpdateOneAsync(Builders<BsonDocument>.Filter.Empty,
+            Builders<BsonDocument>.Update.Set("expiresAt", DateTime.UtcNow.AddSeconds(-1)));
+        await using var current = await ProductVersionApplicationLease.AcquireAsync(fixture.Db, new[] { "product" });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => old.EnsureHeldAsync());
+        await old.DisposeAsync();
+        await current.EnsureHeldAsync();
+        Assert.Equal(1, await collection.CountDocumentsAsync(_ => true));
+        await current.DisposeAsync();
+        Assert.Equal(0, await collection.CountDocumentsAsync(_ => true));
+    }
+
+    [Fact]
+    public async Task RejectedClaimReleasesApplicationQueueAndDoesNotAdvanceTheNextNumber()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var request = NumberingReleaseRequest(); request.PlannedTrainingMinutes = -1;
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", request));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionApplicationLease.CollectionName).CountDocumentsAsync(_ => true));
+        var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest()));
+        Assert.Equal("V6.19.6", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+            .CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:"))));
+        Assert.Equal(0, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionApplicationLease.CollectionName).CountDocumentsAsync(_ => true));
     }
 
     [Fact]
