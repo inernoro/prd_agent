@@ -6,6 +6,29 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class ProductVersionPlanMatchingTests
 {
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\u00a0")]
+    [InlineData("\u202f")]
+    public void 扫码风控原文裸T和企微空格不影响应用及字段识别(string space)
+    {
+        var text = "【版本立项】\n项目类别：非定制\n版本类别：小版本\n是否需要UI设计：否\n是否属于AI"
+            + space + "POC项目：是\n需求来源：文君\n产品立项方案名称：品牌商后台基础T（扫码风控优化二期）\n计划立项时间：2026.10.28\n";
+        var result = VersionRegistrationMessageParser.Parse(text, "internal");
+        var apps = new[] { new VersionPlanApplication("brand-app", "品牌商后台基础"), new VersionPlanApplication("other", "互动营销") };
+        ProductVersionPlanMatching.Match(result, apps, Array.Empty<VersionPlanCandidate>(), false);
+        result.MatchedApplicationId.ShouldBe("brand-app");
+        result.PlanName.ShouldBe("品牌商后台基础（扫码风控优化二期）");
+        result.IsAiPoc.ShouldBe(true); result.NeedUiDesign.ShouldBe(false);
+        result.DemandSource.ShouldBe("文君"); result.ProjectType.ShouldBe("standard"); result.VersionType.ShouldBe("minor");
+        result.PlannedProjectAt.ShouldBe(new DateTime(2026, 10, 28));
+        result.TCode.ShouldBeNull(); result.MatchedInitiationId.ShouldBeNull();
+        result.MatchedFields.ShouldContain("isAiPoc");
+        var outside = VersionRegistrationMessageParser.Parse(text, "internal");
+        ProductVersionPlanMatching.Match(outside, new[] { apps[1] }, Array.Empty<VersionPlanCandidate>(), false);
+        outside.MatchedApplicationId.ShouldBeNull();
+    }
+
     private static readonly VersionPlanApplication[] Applications = { new("marketing", "互动营销"), new("retail", "零售") };
     private const string Topic = "渠道返利是否宴席/团购商品订单结单后判定优化";
 

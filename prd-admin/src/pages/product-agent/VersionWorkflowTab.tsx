@@ -313,6 +313,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const [demandSource, setDemandSource] = useState(seed?.demandSource ?? '');
   const [linkedProductId, setLinkedProductId] = useState(seed?.linkedProductId ?? productId);
   const [catalogProducts, setCatalogProducts] = useState<VersionApplicationProduct[]>([]);
+  const [pendingApplicationId, setPendingApplicationId] = useState<string | null>(null);
   const planNameDraft = useVersionPlanName(seed?.planName ?? '');
   const planName = planNameDraft.value;
   const [plannedProjectAt, setPlannedProjectAt] = useState(seed?.plannedProjectAt ? formatVersionBasicDate(seed.plannedProjectAt) : '');
@@ -469,15 +470,23 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
   const productOptionsRef = useRef(productOptions);
   productOptionsRef.current = productOptions;
 
+  useEffect(() => {
+    if (!pendingApplicationId || !productOptions.some((option) => option.id === pendingApplicationId)) return;
+    setLinkedProductId(pendingApplicationId);
+    setPendingApplicationId(null);
+  }, [pendingApplicationId, productOptions]);
+
   useEffect(() => () => { reviewApplicationSequence.current += 1; }, []);
 
   const cancelReviewApplicationLookup = () => {
     reviewApplicationSequence.current += 1;
     setReviewApplicationMatching(false);
+    setPendingApplicationId(null);
   };
 
   const chooseReviewSource = (id: string) => {
     const sequence = ++reviewApplicationSequence.current;
+    setPendingApplicationId(null);
     setReviewSubmissionId(id);
     setLinkedProductId('');
     setReviewApplicationMatching(false);
@@ -494,6 +503,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       }
       const applicationId = response.data.result.matchedApplicationId;
       if (applicationId && productOptionsRef.current.some((option) => option.id === applicationId)) setLinkedProductId(applicationId);
+      else if (applicationId) setPendingApplicationId(applicationId);
     }).catch(() => {
       if (sequence === reviewApplicationSequence.current) setMessage('暂时无法识别方案所属应用，请手动选择所属应用后继续。');
     }).finally(() => {
@@ -696,6 +706,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
       const productMatches = availableProducts.filter((product) =>
         (canSelectApplication || product.id === productId) && product.name.trim() && parsed.planName?.includes(product.name.trim()));
       if (parsed.matchedApplicationId && availableProducts.some((product) => product.id === parsed.matchedApplicationId && (canSelectApplication || product.id === productId))) setLinkedProductId(parsed.matchedApplicationId);
+      else if (parsed.matchedApplicationId) setPendingApplicationId(parsed.matchedApplicationId);
       else if (productMatches.length === 1) setLinkedProductId(productMatches[0].id);
     }
     if (parsed.plannedProjectAt) setPlannedProjectAt(parsed.plannedProjectAt.slice(0, 10));
