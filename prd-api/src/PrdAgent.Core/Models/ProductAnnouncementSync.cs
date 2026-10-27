@@ -1,11 +1,25 @@
 namespace PrdAgent.Core.Models;
 
-/// <summary>公开公告索引，不是第二份版本主数据。完整成功的抓取才提交水位。</summary>
+/// <summary>公开公告抓取台账；公告信息和详情待办逐条保存，版本主数据仍由版本表维护。</summary>
 public sealed class ProductAnnouncement
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
     public string Url { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
+    public string ApplicationName { get; set; } = string.Empty;
+    public string Version { get; set; } = string.Empty;
+    public string PublishedAtRaw { get; set; } = string.Empty;
+    public string FooterTimeRaw { get; set; } = string.Empty;
+    public DateTime? PublishedAt { get; set; }
+    public DateTime? FooterTime { get; set; }
+    public string DetailStatus { get; set; } = "pending";
+    public string? LastError { get; set; }
+    public int Attempts { get; set; }
+    public int SourcePage { get; set; }
+    public DateTime? LastAttemptAt { get; set; }
+    public DateTime? DetailFetchedAt { get; set; }
+    public string MatchStatus { get; set; } = "pending";
+    public int MatchedCount { get; set; }
     public bool Committed { get; set; }
     public DateTime FetchedAt { get; set; } = DateTime.UtcNow;
 }
@@ -35,6 +49,24 @@ public sealed class ProductAnnouncementSync
     public int Discovered { get; set; }
     public int Updated { get; set; }
     public int Conflicts { get; set; }
+    /// <summary>完整保存一页列表后才推进；任务失败、服务重启均从此页继续。</summary>
+    public int NextPage { get; set; } = 1;
+    public bool ListingComplete { get; set; }
+    public string ScanMode { get; set; } = "full";
+    public string? ImportedSeedHash { get; set; }
+    public DateTime? SeedImportedAt { get; set; }
+}
+
+/// <summary>真实公开源的本地初始化快照；不完整快照只补台账，不代表全量水位。</summary>
+public sealed class ProductAnnouncementSeed
+{
+    public int SchemaVersion { get; set; }
+    public string SourceUrl { get; set; } = string.Empty;
+    public DateTime FetchedAt { get; set; }
+    public bool ScanCompleted { get; set; }
+    public int ExpectedPages { get; set; }
+    public int PagesScanned { get; set; }
+    public List<ProductAnnouncement> Records { get; set; } = new();
 }
 
 public sealed class ProductWorkdayCalendar

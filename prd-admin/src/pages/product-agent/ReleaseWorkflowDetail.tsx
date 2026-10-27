@@ -56,7 +56,7 @@ import { ReleaseDeleteAction } from '@/components/product-agent/InitiationDelete
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
-  announcement_pending: '待完成上线',
+  announcement_pending: '待填写上线公告',
   released: '已上线',
 };
 
@@ -666,7 +666,7 @@ export function ReleaseWorkflowDetail({
           {!isNew && release && release.createdBy === currentUser?.userId && <ReleaseDeleteAction id={release.id} code={release.vCode} canDelete={release.canDelete} onDeleted={() => { if (onClose) onClose(); else navigate('/product-agent?section=versions&versionTab=release'); }} />}
           {!isNew && release?.status === 'announcement_pending' && (
             <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-amber)]">
-              待完成上线
+              待填写上线公告
             </span>
           )}
           {!isNew && release && (

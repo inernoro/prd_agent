@@ -10,9 +10,25 @@ import { apiRequest } from './apiClient';
 export interface ProductAnnouncementSyncStatus {
   status: string; runId: string; message: string; pages: number; discovered: number;
   updated: number; conflicts: number; lastSuccessAt?: string | null; nextRunAt?: string | null; calendarError?: string | null;
+  total: number; detailSucceeded: number; failed: number; matched: number; pending: number;
+  nextPage: number; listingComplete: boolean;
 }
 export const getProductAnnouncementSyncStatus = () => apiRequest<ProductAnnouncementSyncStatus>('/api/product/version-workflow/announcements/status');
 export const updateProductAnnouncements = () => apiRequest<ProductAnnouncementSyncStatus>('/api/product/version-workflow/announcements/update', { method: 'POST' });
+export interface ProductAnnouncementRecord {
+  id: string; url: string; title: string; applicationName: string; version: string;
+  publishedAtRaw: string; footerTimeRaw: string; publishedAt?: string | null; footerTime?: string | null;
+  status: 'pending' | 'running' | 'succeeded' | 'failed'; statusLabel: string; error?: string | null;
+  fetchedAt: string; detailFetchedAt?: string | null; attempts: number; matchedCount: number;
+  matchStatus: 'pending' | 'matched' | 'unmatched' | 'conflict'; matchStatusLabel: string;
+}
+export interface ProductAnnouncementRecordPage {
+  items: ProductAnnouncementRecord[]; total: number; page: number; pageSize: number; totalPages: number;
+}
+export function getProductAnnouncementRecords(page = 1, failedOnly = false) {
+  const query = new URLSearchParams({ page: String(page), pageSize: '20', failedOnly: String(failedOnly) });
+  return apiRequest<ProductAnnouncementRecordPage>(`/api/product/version-workflow/announcements/records?${query}`);
+}
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from './productVersionRegistry';
 import type { ApiResponse } from '@/types/api';
 import type {
