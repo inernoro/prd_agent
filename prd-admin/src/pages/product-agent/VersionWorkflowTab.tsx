@@ -47,11 +47,7 @@ import {
 import { TrackedFilterToggle } from './TrackedFilterToggle';
 import { OVERVIEW_LIST_SEARCH_BOX } from './listFilter';
 import { filterByTracked } from './productRecordTrackStorage';
-import { InitiationMeetingRoundsEditor } from './InitiationWorkflowPanel';
-import {
-  formatInitiationReviewScore,
-  isMeetingResultPending,
-} from './initiationWorkflowUtils';
+import { formatInitiationReviewScore } from './initiationWorkflowUtils';
 import { ProductVersionMessagePaste } from './ProductVersionMessagePaste';
 import { useVersionPlanName } from './useVersionPlanName';
 import type { VersionRegistration, VersionRegistrationMessageParseResult } from '@/services/real/productVersionRegistry';
@@ -90,7 +86,6 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
   const [importKind, setImportKind] = useState<MainTab | null>(null);
   const [legacyDetail, setLegacyDetail] = useState<VersionRegistration | null>(null);
   const [retrySeed, setRetrySeed] = useState<ProductInitiation | null>(null);
-  const [meetingFillItem, setMeetingFillItem] = useState<ProductInitiation | null>(null);
   const [recordScope, setRecordScope] = useState<RecordScope>('all');
   const [releaseOwnerId, setReleaseOwnerId] = useState('');
   const [query, setQuery] = useState('');
@@ -246,7 +241,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
       {!selectedProductUnavailable && (tab === 'release'
           ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onOpenLegacy={setLegacyDetail} onChanged={reload} />
-          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
+          : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
     </div>
     {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
       <p className="mb-4 text-sm text-token-secondary">请选择本次申领所属的产品，列表筛选不会改变。</p>
@@ -261,10 +256,6 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
       <LegacyVersionDetail record={legacyDetail} />
     </Modal>}
     {retrySeed && <InitiationApplication productId={retrySeed.productId} seed={retrySeed} onClose={() => setRetrySeed(null)} onChanged={reload} />}
-    {meetingFillItem && <Modal title="会议结果" onClose={() => setMeetingFillItem(null)} width="max-w-2xl">
-      <InitiationMeetingRoundsEditor initiation={meetingFillItem} editable={meetingFillItem.createdBy === currentUserId}
-        onSaved={async () => { setMeetingFillItem(null); await reload(); }} />
-    </Modal>}
   </div>;
 }
 
@@ -826,7 +817,7 @@ const INITIATION_SOURCE_REJECTION_TITLES: Record<string, string> = {
 function InitiationInput(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className={INITIATION_CONTROL_CLASS} />; }
 function InitiationSelect(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className={INITIATION_CONTROL_CLASS}>{props.children}</select>; }
 
-function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onFillMeeting, onChanged, pending, onOpenLegacy }: {
+function InitiationTable({ productId, productName, productNames, items, names, currentUserId, onRetryReview, onChanged, pending, onOpenLegacy }: {
   pending?: boolean;
   productId: string;
   productName: string;
@@ -835,7 +826,6 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   names: ReadonlyMap<string, string>;
   currentUserId?: string;
   onRetryReview: (item: ProductInitiation) => void;
-  onFillMeeting: (item: ProductInitiation) => void;
   onOpenLegacy: (record: VersionRegistration) => void;
   onChanged: () => Promise<void>;
 }) {
@@ -850,8 +840,8 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       <Table headers={['产品', '项目类别', '立项号', '版本类别', '产品立项方案名称', '需求来源', '项目需求描述', '所属部门', '产品负责人', '第一稿\n会议时间', '第二稿\n会议时间', '第三稿\n会议时间', '立项时间\n（三稿通过）', '计划立项时间', '是否需要UI设计', '是否 AI POC', '方案地址', '开发状态', '备注', 'Agent\n评审', '操作']} selection={tableSelection}>
         {items.map((item) => {
           const isOwner = !item.legacyRegistration && item.createdBy === currentUserId;
-          const showRetryReview = isOwner && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
-          const showFillMeeting = isOwner && item.status !== "voided" && isMeetingResultPending(item);
+          const canEdit = isOwner && item.status !== 'voided' && (Boolean(item.tCode)
+            || ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status));
           const reviewScoreText = formatInitiationReviewScore(item);
           return (
         <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')} onClick={() => openDetail(item)}>
@@ -884,19 +874,10 @@ function InitiationTable({ productId, productName, productNames, items, names, c
         )}
       </Td>
       <Td onClick={(e) => e.stopPropagation()}>
-        {item.legacyRegistration && <button type="button" onClick={() => onOpenLegacy(item.legacyRegistration!)} className="text-token-secondary hover:underline">历史详情</button>}
-        {isOwner && item.status !== "voided" && item.tCode && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">修改资料</button>}
-        <InitiationDeleteAction id={item.id} code={item.tCode ?? "未发号立项"} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} />
-        {(showRetryReview || showFillMeeting) ? (
-          <div className="flex flex-col items-start gap-1">
-            {showRetryReview && (
-              <button type="button" onClick={() => onRetryReview(item)} className="text-amber-200 hover:underline">{item.status === 'review_failed' ? '修改并重新评审' : '继续申领'}</button>
-            )}
-            {showFillMeeting && (
-              <button type="button" onClick={() => onFillMeeting(item)} className="text-cyan-300 hover:underline">会议结果</button>
-            )}
-          </div>
-        ) : null}
+        <div className="inline-flex items-center gap-2 whitespace-nowrap">
+          {canEdit && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">编辑</button>}
+          <InitiationDeleteAction id={item.id} code={item.tCode ?? '未发号立项'} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} showVoid={false} onDeleted={onChanged} />
+        </div>
       </Td>
     </tr>
           );
@@ -945,7 +926,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-      <Td onClick={(event) => event.stopPropagation()}><ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} /></Td>
+      <Td onClick={(event) => event.stopPropagation()}><ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} showVoid={false} onDeleted={onChanged} /></Td>
     </tr>)}{items.length === 0 && !pending && <Empty cols={19}>暂无上线记录</Empty>}
   </Table>
   </>;

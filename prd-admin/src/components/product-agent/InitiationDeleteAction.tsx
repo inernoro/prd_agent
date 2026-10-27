@@ -3,7 +3,7 @@ import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { deleteInitiation, deleteRelease, voidProductVersion } from '@/services/real/productAgent';
 
-type DeleteProps = { id: string; code: string; status?: string; voidReason?: string | null; canDelete?: boolean; onDeleted: () => void | Promise<void> };
+type DeleteProps = { id: string; code: string; status?: string; voidReason?: string | null; canDelete?: boolean; showVoid?: boolean; onDeleted: () => void | Promise<void> };
 const VARIANTS = {
   initiation: { title: '内部版本', kind: 'T' as const, remove: deleteInitiation },
   release: { title: '正式版本', kind: 'V' as const, remove: deleteRelease },
@@ -12,7 +12,7 @@ export function InitiationDeleteAction(props: DeleteProps) { return <VersionActi
 export function ReleaseDeleteAction(props: DeleteProps) { return <VersionActions {...props} kind="release" />; }
 
 /** 作废不限最新；删除资格由服务端按所属应用计算，两个动作分开。 */
-function VersionActions({ id, code, status, voidReason, canDelete, onDeleted, kind }: DeleteProps & { kind: keyof typeof VARIANTS }) {
+function VersionActions({ id, code, status, voidReason, canDelete, showVoid = true, onDeleted, kind }: DeleteProps & { kind: keyof typeof VARIANTS }) {
   const variant = VARIANTS[kind];
   const [mode, setMode] = useState<'void' | 'delete' | null>(null);
   const [busy, setBusy] = useState(false);
@@ -36,8 +36,8 @@ function VersionActions({ id, code, status, voidReason, canDelete, onDeleted, ki
     finally { submitting.current = false; setBusy(false); }
   };
   return <span className="inline-flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
-    <button type="button" aria-label={`作废 ${code}`} title={voidReason ?? undefined} disabled={status === 'voided'}
-      className="text-token-secondary hover:underline disabled:cursor-default disabled:no-underline" onClick={() => open('void')}>{status === 'voided' ? '已作废' : '作废'}</button>
+    {showVoid && <button type="button" aria-label={`作废 ${code}`} title={voidReason ?? undefined} disabled={status === 'voided'}
+      className="text-token-secondary hover:underline disabled:cursor-default disabled:no-underline" onClick={() => open('void')}>{status === 'voided' ? '已作废' : '作废'}</button>}
     {canDelete === true && <button type="button" aria-label={`删除 ${code}`} className="text-token-secondary hover:underline" onClick={() => open('delete')}>删除</button>}
     {mode && <Dialog open onOpenChange={(value) => { if (!submitting.current && !value) setMode(null); }} title={`${label}${variant.title} ${code}`} tone="danger"
       content={<div className="space-y-3 text-sm text-token-secondary">
