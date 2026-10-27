@@ -2,6 +2,7 @@ import type {StorageBinding} from '../types.js';
 import {profileStorageTargetKey,profileStorageBranchIdentity,profileStorageDeclarationDigest,type ProfileStorageTarget,type ProfileStorageBinding} from "./profile-storage-provision.js";
 import {storageProvisionDigest,type StorageBirth} from './storage-provision.js';
 import {profileStoragePlan,withRuntimeTmpfs,stableStorageVolumeName,type DeploymentStoragePlan,type StorageBirthRequirements} from './deployment-storage-plan.js';
+import {validateBoundedStorageProof} from './bounded-storage-provider.js';
 import {withWritableSourceLayer} from './source-workspace.js';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -1254,18 +1255,24 @@ if((this.profileStorageDrafts.size||this.storageProvisionDrafts.size)&&completeH
           && storageProvisionDigest(m.storage) === storageProvisionDigest(b))) throw new Error('storage_provision_unconfirmed');
     }
     for (const mount of plan.mounts.filter(m => m.kind === 'volume')) {
-      const row = this.state.storageBirths?.[mount.source]; if (!row) continue;
+      const row = this.state.storageBirths?.[mount.source]; if (!row) { if(mount.storage?.policy) throw new Error('storage_provision_unconfirmed'); continue; }
       if (row.stage !== 'published' || !row.createIssued || row.name !== stableStorageVolumeName(row.binding)
         || storageProvisionDigest(row.binding) !== storageProvisionDigest(mount.storage)
         || !row.observation || row.observation.labels['cds.storage.birth'] !== row.birthNonce
         || Object.values(this.state.storageProvisionPublications || {}).some(p => p.names.includes(row.name)) || Object.values(this.state.profileStoragePublications||{}).some(p=>p.binding.names.includes(row.name))) throw new Error('storage_provision_unconfirmed');
-      requirements[row.name] = {birthNonce:row.birthNonce,daemonId:row.daemonId,mountpoint:row.observation.mountpoint,createdAt:row.observation.createdAt};
+      if (row.binding.policy) validateBoundedStorageProof(row.observation.bounded);
+      else if (row.observation.bounded) throw new Error('storage_provision_unconfirmed');
+      requirements[row.name] = {birthNonce:row.birthNonce,daemonId:row.daemonId,mountpoint:row.observation.mountpoint,createdAt:row.observation.createdAt,...(row.observation.bounded ? {bounded:structuredClone(row.observation.bounded)} : {})};
     }
     return requirements;
   }
 
   async writeStorageBirthDurably(input: StorageBirth, expectedSeq: number | undefined, assertCurrent: () => void): Promise<void> {
     const row = structuredClone(input), previous = this.state.storageBirths?.[row.name]; assertCurrent();
+    if (row.observation) {
+      if(row.binding.policy) validateBoundedStorageProof(row.observation.bounded);
+      else if(row.observation.bounded) throw new Error('storage_provision_unconfirmed');
+    }
     const declaredTarget=(row as StorageBirth & {target?:unknown}).target;const expectedTarget=row.binding.scope==='branch-private'?{kind:'profile',projectId:row.binding.projectId,branchId:row.binding.branchId,serviceId:row.binding.serviceId}:{kind:'infra',projectId:row.binding.projectId,serviceId:row.binding.serviceId};
     if((row.binding.scope==='branch-private'||declaredTarget!==undefined)&&storageProvisionDigest(declaredTarget)!==storageProvisionDigest(expectedTarget))throw new Error('storage_provision_unconfirmed');
     if (row.version !== 1 || row.name !== stableStorageVolumeName(row.binding) || !['project-shared','branch-private'].includes(row.binding.scope)
