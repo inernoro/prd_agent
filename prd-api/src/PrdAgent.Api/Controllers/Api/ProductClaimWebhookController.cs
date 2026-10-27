@@ -100,7 +100,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
             if (config.DebugMode) state |= f.Eq("ClaimNotification.Status", "pending") | f.Eq("ClaimNotification.Status", "waiting_identity");
             return (await collection.UpdateOneAsync(permitted & state & f.Ne("ClaimNotification.ManualDispatchApproved", true),
                 Builders<T>.Update.Set("ClaimNotification.Status", "pending").Set("ClaimNotification.ManualDispatchApproved", true)
-                    .Set("ClaimNotification.Error", null).Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow), cancellationToken: CancellationToken.None)).ModifiedCount;
+                    .Set("ClaimNotification.Error", (string?)null).Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow), cancellationToken: CancellationToken.None)).ModifiedCount;
         }
         var count = kind switch { "T" => await Queue(db.ProductInitiations), "V" => await Queue(db.ProductReleases), _ => 0 };
         return count == 1 ? Ok(ApiResponse<object>.Ok(new { queued = true }))

@@ -91,13 +91,13 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
             if (latestConfig?.Enabled != true || (formal ? !latestConfig.NotifyFormal : !latestConfig.NotifyInternal))
             {
                 await collection.UpdateOneAsync(filter.Eq("ClaimNotification.LeaseId", lease) & filter.Eq("ClaimNotification.Status", "sending"),
-                    update.Set("ClaimNotification.Status", "pending").Set("ClaimNotification.Error", null), cancellationToken: CancellationToken.None);
+                    update.Set("ClaimNotification.Status", "pending").Set("ClaimNotification.Error", (string?)null), cancellationToken: CancellationToken.None);
                 return;
             }
             if (latestConfig.DebugMode && !task.ManualDispatchApproved)
             {
                 await collection.UpdateOneAsync(filter.Eq("ClaimNotification.LeaseId", lease) & filter.Eq("ClaimNotification.Status", "sending"),
-                    update.Set("ClaimNotification.Status", "debug_pending").Set("ClaimNotification.Error", null), cancellationToken: CancellationToken.None);
+                    update.Set("ClaimNotification.Status", "debug_pending").Set("ClaimNotification.Error", (string?)null), cancellationToken: CancellationToken.None);
                 return;
             }
             var client = services.GetRequiredService<IHttpClientFactory>().CreateClient("product-claim-webhook");
