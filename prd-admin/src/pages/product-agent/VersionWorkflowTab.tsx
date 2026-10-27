@@ -26,7 +26,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
-import { InitiationDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { InitiationDeleteAction, ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
 import { VersionDebugClearButton } from '@/components/product-agent/VersionDebugClearButton';
 import { useProductListScope } from '@/lib/productListScope';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
@@ -244,7 +244,7 @@ export function VersionWorkflowTab({ productId: initialProductId = '', isAdmin =
     </div>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ overscrollBehavior: 'contain' }}>
       {!selectedProductUnavailable && (tab === 'release'
-          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onOpenLegacy={setLegacyDetail} />
+          ? <ReleaseTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleReleases} requirementNames={requirementNames} names={names} onOpenLegacy={setLegacyDetail} onChanged={reload} />
           : <InitiationTable pending={listLoading || Boolean(loadError)} productId={productId} productName={productName} productNames={productNames} items={visibleInitiations} names={names} currentUserId={currentUserId} onRetryReview={setRetrySeed} onFillMeeting={setMeetingFillItem} onChanged={reload} onOpenLegacy={setLegacyDetail} />)}
     </div>
     {dialog === 'temporary' && !actionProductId && <Modal compact title={dialogTitle} onClose={() => setDialog(null)} width="max-w-lg">
@@ -894,12 +894,13 @@ function InitiationTable({ productId, productName, productNames, items, names, c
   );
 }
 
-function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, pending, onOpenLegacy }: {
+function ReleaseTable({ productId, productName, productNames, items, requirementNames, names, pending, onOpenLegacy, onChanged }: {
   pending?: boolean;
   productId: string;
   productName: string;
   productNames: ReadonlyMap<string, string>;
   items: WorkflowVersionRecord<ProductRelease>[];
+  onChanged: () => void | Promise<void>;
   requirementNames: ReadonlyMap<string, string>;
   names: ReadonlyMap<string, string>;
   onOpenLegacy: (record: VersionRegistration) => void;
@@ -912,7 +913,7 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态', '操作']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
@@ -932,7 +933,8 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && !pending && <Empty cols={18}>暂无上线记录</Empty>}
+      <Td onClick={(event) => event.stopPropagation()}><ReleaseDeleteAction id={item.id} code={item.vCode} canDelete={item.canDelete} onDeleted={onChanged} /></Td>
+    </tr>)}{items.length === 0 && !pending && <Empty cols={19}>暂无上线记录</Empty>}
   </Table>
   </>;
 }

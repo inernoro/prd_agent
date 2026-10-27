@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { getClaimWebhook, saveClaimWebhook, getClaimNotices, retryClaimNotice, type ClaimWebhookConfig, type ClaimNoticeRow } from '@/services/real/productClaimWebhook';
 
-const STATUS: Record<string, string> = { pending: '待发送', sending: '发送中', sent: '已发送', failed: '未发送', unknown: '结果待确认', waiting_identity: '等待自动补齐企微身份' };
+const STATUS: Record<string, string> = { pending: '待发送', sending: '发送中', sent: '已发送', failed: '未发送', unknown: '结果待确认', waiting_identity: '待发送', cancelled: '已取消' };
 
 export function ProductClaimWebhookPanel() {
   const [config, setConfig] = useState<ClaimWebhookConfig | null>(null);
@@ -37,7 +37,7 @@ export function ProductClaimWebhookPanel() {
       <div className="flex flex-wrap gap-5 text-sm"><label className="flex gap-2"><input type="checkbox" checked={config.notifyInternal} onChange={e => setConfig({ ...config, notifyInternal: e.target.checked })} />T版本立项</label><label className="flex gap-2"><input type="checkbox" checked={config.notifyFormal} onChange={e => setConfig({ ...config, notifyFormal: e.target.checked })} />V版本上线</label></div>
       <button type="button" onClick={() => void save()} className="inline-flex items-center gap-2 rounded-lg border border-token-subtle px-4 py-2 text-sm hover-bg-soft">{busy && <MapSpinner size={14} />}{busy ? '保存中…' : '保存配置'}</button>
     </fieldset>
-    <div className="rounded-xl border border-token-subtle p-4 text-xs leading-6 text-token-secondary"><h4 className="font-medium text-token-primary">负责人身份自动复用</h4><p>直接使用所选MAP账号已验证的企微userid，缺少userid时使用已验证手机号；不用按姓名手填对应表。</p><p>已就绪 {config.identityReadyCount} 人，待自动同步 {config.identityPendingCount} 人。旧账号只有脱敏身份时，该负责人重新通过企微登录MAP后自动补齐，待发送通知会自动继续。</p></div>
+    <div className="rounded-xl border border-token-subtle p-4 text-xs leading-6 text-token-secondary"><h4 className="font-medium text-token-primary">负责人身份自动复用</h4><p>直接使用所选MAP账号已验证的企微userid，缺少userid时使用已验证手机号；不用按姓名手填对应表。</p><p>已就绪 {config.identityReadyCount} 人，待自动同步 {config.identityPendingCount} 人。身份暂未同步也会正常发送通知；负责人再次通过企微登录后，后续通知自动使用该身份。</p></div>
     {message && <p role="status" className="text-sm text-token-secondary">{message}</p>}
     <div className="space-y-3 border-t border-token-subtle pt-4"><div className="flex items-center justify-between"><h4 className="text-sm font-medium">最近申领通知</h4><button type="button" className="text-xs text-token-secondary" onClick={() => void refresh()}>刷新状态</button></div>
       {notices.length === 0 && <p className="text-xs text-token-secondary">暂无新申领通知。</p>}

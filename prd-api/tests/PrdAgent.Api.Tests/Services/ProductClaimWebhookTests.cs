@@ -82,20 +82,59 @@ public class ProductClaimWebhookTests
     }
 
     [Fact]
-    public async Task MissingOldIdentityWaitsThenAutomaticallyResumesAfterVerifiedLogin()
+    public async Task MissingOldIdentitySendsUnchangedNoticeWithoutMentionAndNeverResendsAfterLogin()
     {
         await using var f = new Fixture();
         await f.EnableAsync();
         await f.AddPendingAsync();
         await f.ProcessTAsync();
-        Assert.Empty(f.Http.Bodies);
-        Assert.Equal("waiting_identity", (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).ClaimNotification!.Status);
+        var saved = await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync();
+        Assert.Equal("sent", saved.ClaimNotification!.Status);
+        Assert.Null(saved.ClaimNotification.Error);
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        var text = payload.RootElement.GetProperty("text");
+        Assert.False(text.TryGetProperty("mentioned_list", out _));
+        Assert.False(text.TryGetProperty("mentioned_mobile_list", out _));
+        Assert.Equal(ProductVersionCopyTemplate.Build(JsonSerializer.Deserialize<ProductInitiation>(saved.ClaimNotification.Snapshot)!), text.GetProperty("content").GetString());
+        Assert.DoesNotContain("未艾特", text.GetProperty("content").GetString()!);
         await f.RememberOwnerAsync(mobileOnly: true);
         await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t", Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.NextAttemptAt, DateTime.UtcNow.AddMinutes(-1)));
         await f.ProcessTAsync();
+        Assert.Single(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task FormalClaimWithoutIdentitySendsUnchangedAndCancelledTaskNeverSends()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        var item = new ProductRelease { ProductId = "product", VCode = "V1.2.3", OwnerId = "owner", OwnerName = "负责人", PlanName = "测试方案" };
+        item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(f.Db, item, "owner", true, true);
+        await f.Db.ProductReleases.InsertOneAsync(item);
+        using var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton(f.Protection).AddSingleton<IHttpClientFactory>(f.Http).BuildServiceProvider();
+        var config = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        await ProductClaimWebhookWorker.ProcessAsync(f.Db.ProductReleases, config, true, services, CancellationToken.None);
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        Assert.Equal(ProductVersionCopyTemplate.Build(item), payload.RootElement.GetProperty("text").GetProperty("content").GetString());
+        Assert.Equal(1, payload.RootElement.GetProperty("text").EnumerateObject().Count());
+        await f.AddPendingAsync();
+        await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t", Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.Status, "cancelled"));
+        await f.ProcessTAsync();
+        Assert.Single(f.Http.Bodies);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task VerifiedMobileStillMentionsOwnerAndUnavailableOwnerCannotSend(bool active)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync(); await f.RememberOwnerAsync(mobileOnly: true); await f.AddPendingAsync();
+        if (!active) await f.Db.Users.UpdateOneAsync(x => x.UserId == "owner", Builders<User>.Update.Set(x => x.Status, UserStatus.Disabled));
+        await f.ProcessTAsync();
+        if (!active) { Assert.Empty(f.Http.Bodies); return; }
         using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
         Assert.Equal("13800000001", Assert.Single(payload.RootElement.GetProperty("text").GetProperty("mentioned_mobile_list").EnumerateArray()).GetString());
-        Assert.Equal("sent", (await f.Db.ProductInitiations.Find(x => x.Id == "t").SingleAsync()).ClaimNotification!.Status);
     }
 
     [Fact]

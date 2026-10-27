@@ -51,6 +51,7 @@ public static class ProductVersionListReader
             Builders<ProductRelease>.Filter.Eq(x => x.IsDeleted, false)
             & Builders<ProductRelease>.Filter.In(x => x.ProductId, ids)).ToListAsync();
         var legacy = await ReadLegacyAsync(db, VersionRegistrationKind.Formal, userId, canViewAllLegacy);
+        await ProductReleaseDeletion.AnnotateAsync(db, current, userId);
         var requirementIds = current.SelectMany(x => x.RequirementIds).Distinct().ToList();
         var names = new Dictionary<string, string>();
         if (requirementIds.Count > 0)

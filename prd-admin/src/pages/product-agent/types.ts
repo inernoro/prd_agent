@@ -262,6 +262,7 @@ export interface InitiationMeetingDraftRound {
 
 export interface ProductRelease {
   id: string;
+  canDelete?: boolean;
   productId: string;
   initiationId?: string | null;
   tCode?: string | null;

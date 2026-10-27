@@ -1370,6 +1370,74 @@ public class ProductVersionClaimGuardTests
         Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
     }
 
+    [Fact]
+    public async Task LatestFormalDeletionPreservesTAndReservedNumberAndAllowsReclaimingSameSource()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertOneAsync(new User { UserId = "me", DisplayName = "申请人" });
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "deletable-t", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", Status = "approved", PlanName = "最终方案", CreatedBy = "me" });
+        var before = await fixture.Db.Database.GetCollection<BsonDocument>("product_initiations").Find(new BsonDocument("_id", "deletable-t")).SingleAsync();
+        var request = NumberingReleaseRequest("deletable-t"); request.FeatureManifest = new();
+        var issued = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request)).Value).Data);
+        var detail = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await fixture.Controller().GetRelease(issued.Id)).Value).Data);
+        Assert.True(detail.CanDelete);
+        Assert.False((await fixture.Db.Database.GetCollection<BsonDocument>("product_releases").Find(new BsonDocument("_id", issued.Id)).SingleAsync()).Contains("CanDelete"));
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteRelease(issued.Id));
+        Assert.False(await fixture.Db.ProductReleases.Find(x => x.Id == issued.Id).AnyAsync());
+        var after = await fixture.Db.Database.GetCollection<BsonDocument>("product_initiations").Find(new BsonDocument("_id", "deletable-t")).SingleAsync();
+        Assert.Equal(before.ToJson(), after.ToJson());
+        var repeated = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request)).Value).Data);
+        Assert.NotEqual(issued.VCode, repeated.VCode);
+        Assert.Equal("deletable-t", repeated.InitiationId);
+        Assert.True(await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).Find(new BsonDocument("targetId", "release:" + issued.Id)).AnyAsync());
+    }
+
+    [Fact]
+    public async Task FormalDeleteEligibilityIsGlobalAndRejectsStalePageAndForeignOwner()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var now = DateTime.UtcNow;
+        await fixture.Db.Products.InsertOneAsync(new Product { Id = "other-app", Name = "另一应用", MemberIds = new() { "me" } });
+        await fixture.Db.ProductReleases.InsertManyAsync(new[] {
+            new ProductRelease { Id = "v-old", ProductId = "other-app", VCode = "V99.0.0", CreatedBy = "me", CreatedAt = now.AddMinutes(-2), UpdatedAt = now.AddDays(2) },
+            new ProductRelease { Id = "v-new", ProductId = "product", VCode = "V1.0.0", CreatedBy = "me", CreatedAt = now },
+            new ProductRelease { Id = "draft", ProductId = "other-app", CreatedBy = "me", CreatedAt = now.AddMinutes(2) },
+            new ProductRelease { Id = "deleted", ProductId = "other-app", VCode = "V999.0.0", CreatedBy = "me", CreatedAt = now.AddMinutes(3), IsDeleted = true },
+        });
+        var all = await fixture.Db.ProductReleases.Find(x => !x.IsDeleted).ToListAsync();
+        await ProductReleaseDeletion.AnnotateAsync(fixture.Db, all, "me");
+        Assert.Equal("v-new", Assert.Single(all.Where(x => x.CanDelete)).Id);
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteRelease("v-old"));
+        var scoped = await ProductVersionListReader.ReadReleasesAsync(fixture.Db, new HashSet<string> { "other-app" }, "me", false);
+        Assert.DoesNotContain(scoped.Items, x => x.Record.CanDelete);
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "newer-foreign-owner", ProductId = "other-app", VCode = "V2.0.0", CreatedBy = "other", CreatedAt = now.AddMinutes(1) });
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().DeleteRelease("v-new"));
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller(admin: true).DeleteRelease("newer-foreign-owner")).StatusCode);
+        Assert.True(await fixture.Db.ProductReleases.Find(x => x.Id == "v-new").AnyAsync());
+    }
+
+    [Theory]
+    [InlineData("legacy")]
+    [InlineData("release")]
+    [InlineData("feature")]
+    [InlineData("requirement")]
+    [InlineData("sending")]
+    public async Task FormalDeletionCannotRemoveLegacyPredecessorDownstreamOrSendingNotice(string kind)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var item = new ProductRelease { Id = "v", ProductId = "product", VCode = "V1.2.3", CreatedBy = "me" };
+        if (kind == "sending") item.ClaimNotification = new ProductClaimNotification { Status = "sending" };
+        await fixture.Db.ProductReleases.InsertOneAsync(item);
+        if (kind == "legacy") await fixture.Db.VersionRegistrations.InsertOneAsync(new VersionRegistration { Kind = VersionRegistrationKind.Formal, Code = "V4.5.6", CreatedAt = item.CreatedAt.AddMinutes(1) });
+        if (kind == "release") await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { ProductId = "product", PreviousReleaseId = "v" });
+        if (kind == "feature") await fixture.Db.Features.InsertOneAsync(new Feature { OfficialReleaseId = "v" });
+        if (kind == "requirement") await fixture.Db.Requirements.InsertOneAsync(new Requirement { VersionIds = new() { "v" } });
+        await ProductReleaseDeletion.AnnotateAsync(fixture.Db, new[] { item }, "me");
+        Assert.False(item.CanDelete);
+        Assert.IsNotType<OkObjectResult>(await fixture.Controller().DeleteRelease("v"));
+        Assert.True(await fixture.Db.ProductReleases.Find(x => x.Id == "v").AnyAsync());
+    }
+
     private static CreateInitiationRequest Request(string review) => new() {
         LinkedProductId = "product", PlanName = "申领测试方案", ReviewSubmissionId = review,
     };

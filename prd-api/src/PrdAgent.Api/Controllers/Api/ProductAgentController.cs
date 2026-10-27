@@ -1332,6 +1332,7 @@ public partial class ProductAgentController : ControllerBase
                 Builders<ProductRelease>.Filter.Eq(x => x.CreatedBy, userId));
         var items = await _db.ProductReleases.Find(filter)
             .SortByDescending(x => x.CreatedAt).ToListAsync();
+        await ProductReleaseDeletion.AnnotateAsync(_db, items, userId);
         return Ok(ApiResponse<object>.Ok(new { items }));
     }
 
@@ -1362,7 +1363,35 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        await ProductReleaseDeletion.AnnotateAsync(_db, new[] { item }, GetUserId());
         return Ok(ApiResponse<object>.Ok(item));
+    }
+
+    [HttpDelete("releases/{id}")]
+    public async Task<IActionResult> DeleteRelease(string id)
+    {
+        var userId = GetUserId();
+        var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
+        if (item == null || await FindAccessibleProductAsync(item.ProductId, userId) == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (item.CreatedBy != userId)
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅该记录的申请人本人可删除，管理员和其他人不能代删。"));
+        if (string.IsNullOrWhiteSpace(item.VCode) || !Version.TryParse(item.VCode.TrimStart('V', 'v'), out _))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新正式版本记录。"));
+        if (await ProductReleaseDeletion.LatestIdAsync(_db) != id)
+            return BadRequest(ApiResponse<object>.Fail("RELEASE_NOT_LATEST", "只允许删除全局最后一条申领成功的正式版本记录。"));
+        if (await ProductReleaseDeletion.HasDownstreamAsync(_db, id))
+            return BadRequest(ApiResponse<object>.Fail("RELEASE_HAS_DOWNSTREAM", "该正式版本已有后续版本或功能等关联，不能删除。"));
+        if (item.ClaimNotification?.Status == "sending")
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "通知正在发送，请稍后刷新再删除。"));
+        await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "release:" + id);
+        var deleted = await _db.ProductReleases.DeleteOneAsync(x => x.Id == id && !x.IsDeleted
+            && x.VCode == item.VCode && x.UpdatedAt == item.UpdatedAt
+            && (x.ClaimNotification == null || x.ClaimNotification.Status != "sending"), CancellationToken.None);
+        if (deleted.DeletedCount == 0)
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后重新核对，未重复删除。"));
+        await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "release:" + id);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
     [HttpPut("releases/{id}/feature-manifest")]
@@ -7123,6 +7152,7 @@ public partial class ProductAgentController : ControllerBase
             return Ok(ApiResponse<object>.Ok(await ProductVersionListReader.ReadReleasesAsync(
                 _db, scope, GetUserId(), HasPermission(AdminPermissionCatalog.ReviewAgentManage))));
         var items = await FindInScopeAsync<ProductRelease>(scope, r => r.ProductId, r => r.IsDeleted);
+        await ProductReleaseDeletion.AnnotateAsync(_db, items, GetUserId());
         var names = await ProductNamesAsync(items.Select(r => r.ProductId));
         var reqIds = items.SelectMany(r => r.RequirementIds).Where(id => !string.IsNullOrEmpty(id)).Distinct().ToList();
         var reqTitles = new Dictionary<string, string>();
@@ -7192,6 +7222,7 @@ public partial class ProductAgentController : ControllerBase
                     r.AnnouncementUrl,
                     r.Status,
                     r.IsTemporaryOptimization,
+                    r.CanDelete,
                     r.UpdatedAt,
                 };
             })

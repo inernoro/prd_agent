@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VersionWorkflowTab } from './VersionWorkflowTab';
 import type { ProductInitiation } from './types';
 import detailSource from './InitiationWorkflowDetail.tsx?raw';
+import releaseDetailSource from './ReleaseWorkflowDetail.tsx?raw';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const api = vi.hoisted(() => ({ getWorkflowInitiations: vi.fn(), getWorkflowReleases: vi.fn() }));
@@ -71,5 +72,13 @@ describe('全局最新内部版本删除入口', () => {
   });
   it('详情也使用后端资格，不凭有无 T 号自行开放删除', () => {
     expect(detailSource).toContain('canDelete={initiation.canDelete}');
+  });
+  it('正式版本只显示后端授予的全局最新记录，筛选不改变资格', async () => {
+    const release = (id: string, productId: string, canDelete: boolean) => ({ id, productId, vCode: id === 'v-latest' ? 'V1.2.4' : 'V1.2.3', canDelete, createdBy: 'me', planName: id, status: 'released', versionType: 'minor', projectType: 'standard', teamMemberIds: [], requirementIds: [], openBrandScope: '', createdAt: '2026-10-27', updatedAt: '2026-10-27' });
+    api.getWorkflowReleases.mockResolvedValue({ success: true, data: { items: [{ record: release('v-latest', 'a', true) }, { record: release('v-old', 'b', false) }], requirementNames: {} } });
+    await act(async () => root.render(<MemoryRouter initialEntries={['/product-agent?section=versions&versionTab=release']}><VersionWorkflowTab /></MemoryRouter>));
+    expect(buttons()).toHaveLength(1);
+    expect(buttons()[0].closest('tr')?.textContent).toContain('V1.2.4');
+    expect(releaseDetailSource).toContain('canDelete={release.canDelete}');
   });
 });

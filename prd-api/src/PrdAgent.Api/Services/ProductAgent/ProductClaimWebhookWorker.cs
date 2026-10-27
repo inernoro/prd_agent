@@ -75,16 +75,16 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
                 : ProductVersionCopyTemplate.Build(JsonSerializer.Deserialize<ProductInitiation>(task.Snapshot)!);
             var db = services.GetRequiredService<MongoDbContext>();
             var owner = await db.Users.Find(user => user.UserId == task.OwnerId).FirstOrDefaultAsync();
+            if (owner == null || owner.Status != UserStatus.Active || owner.UserType != UserType.Human)
+                throw new InvalidOperationException("负责人账号不可用，请核对记录，编号不受影响");
             var mention = ProductClaimMentionIdentity.Resolve(owner, services.GetRequiredService<IDataProtectionProvider>());
-            if (mention == null)
-            {
-                status = "waiting_identity";
-                throw new InvalidOperationException("等待该负责人通过企微重新登录MAP以自动补齐身份；编号已生成，无需重复申领");
-            }
             var payload = ProductClaimWebhookPayload.Build(text, mention);
             var url = services.GetRequiredService<IDataProtectionProvider>()
                 .CreateProtector(ProductClaimWebhookController.ProtectionPurpose).Unprotect(config.ProtectedUrl!);
             if (!ProductClaimWebhookPayload.IsValidWebhook(url)) throw new InvalidOperationException("Webhook配置无效，请重新保存配置");
+            // 用户取消或删除后，已经被本实例取出的任务也不得继续投递。
+            if (!await collection.Find(filter.Eq("ClaimNotification.LeaseId", lease)
+                & filter.Eq("ClaimNotification.Status", "sending") & filter.Eq("IsDeleted", false)).AnyAsync()) return;
             var client = services.GetRequiredService<IHttpClientFactory>().CreateClient("product-claim-webhook");
             started = true;
             using var response = await client.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"), stoppingToken);
@@ -94,6 +94,9 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
                 using var result = JsonDocument.Parse(await response.Content.ReadAsStringAsync(stoppingToken));
                 var success = result.RootElement.TryGetProperty("errcode", out var code) && code.TryGetInt32(out var n) && n == 0;
                 status = success ? "sent" : "failed";
+                if (success && mention == null)
+                    services.GetService<ILogger<ProductClaimWebhookWorker>>()?.LogWarning(
+                        "产品申领通知已发送，负责人企微身份未同步，本次未艾特。任务租约 {LeaseId}", lease);
                 if (!success) error = "企微拒绝通知，请检查Webhook及负责人企微身份，申领编号不受影响";
             }
         }

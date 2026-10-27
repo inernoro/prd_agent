@@ -11,10 +11,12 @@ public static class ProductClaimWebhookPayload
         && uri.Port == 443 && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0
         && uri.AbsolutePath == "/cgi-bin/webhook/send" && Regex.IsMatch(uri.Query, @"\A\?key=[A-Za-z0-9-]+\z");
 
-    public static string Build(string content, ProductMentionTarget target)
+    public static string Build(string content, ProductMentionTarget? target)
     {
         content = Regex.Replace(content, @"<@[^>]*>", string.Empty);
         if (Encoding.UTF8.GetByteCount(content) > 2048) throw new InvalidOperationException("通知超过企微长度限制，请精简后重试通知");
+        if (target == null)
+            return JsonSerializer.Serialize(new { msgtype = "text", text = new { content } });
         if (target.Kind == "userid" && ProductClaimMentionIdentity.ValidUserId(target.Value))
             return JsonSerializer.Serialize(new { msgtype = "text", text = new { content, mentioned_list = new[] { target.Value } } });
         if (target.Kind == "mobile" && ProductClaimMentionIdentity.ValidMobile(target.Value))
