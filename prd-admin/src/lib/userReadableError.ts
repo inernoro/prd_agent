@@ -59,6 +59,7 @@ const IDENTIFIER_DIAGNOSTIC_PATTERNS = [
 const USER_MESSAGE_ALLOWLIST = new Map<string, ReadonlySet<string>>([
   ['INVALID_FORMAT', new Set([
     '文件内容无法解析',
+    '文件无法解析，请确认文件未损坏并重新选择',
     '文件格式不受支持，请更换文件后重试。',
     '头像上传未完成，请稍后重新上传。',
   ])],
