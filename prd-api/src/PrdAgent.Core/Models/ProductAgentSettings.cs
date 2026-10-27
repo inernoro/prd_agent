@@ -16,6 +16,7 @@ public class ProductAgentSettings
 public class ProductClaimWebhookConfig
 {
     public bool Enabled { get; set; }
+    public DateTime? InitializedAt { get; set; }
     public bool NotifyInternal { get; set; } = true;
     public bool NotifyFormal { get; set; } = true;
     [System.Text.Json.Serialization.JsonIgnore]

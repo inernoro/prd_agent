@@ -1,5 +1,7 @@
 using System.Net;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
@@ -134,6 +136,88 @@ public class ProductClaimWebhookTests
         Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Url = TestUrl, Enabled = true }));
     }
 
+    [Fact]
+    public async Task DefaultBootstrapEncryptsEnablesAndPreservesOtherSettingsWithoutSending()
+    {
+        await using var f = new Fixture();
+        await f.Db.ProductAgentSettings.InsertOneAsync(new ProductAgentSettings { AdminIds = new() { "existing-admin" } });
+        await f.SeedAsync();
+        Assert.True(await f.BootstrapAsync());
+        var saved = await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync();
+        Assert.Equal("existing-admin", Assert.Single(saved.AdminIds));
+        Assert.True(saved.ClaimWebhook.Enabled);
+        Assert.True(saved.ClaimWebhook.NotifyInternal && saved.ClaimWebhook.NotifyFormal);
+        Assert.NotNull(saved.ClaimWebhook.InitializedAt);
+        Assert.Equal(TestUrl, f.Protection.CreateProtector(ProductClaimWebhookController.ProtectionPurpose).Unprotect(saved.ClaimWebhook.ProtectedUrl!));
+        Assert.DoesNotContain("unit-test-only", JsonSerializer.Serialize(saved));
+        Assert.False(File.Exists(Path.Combine(f.SeedDirectory, "private.pem")));
+        Assert.False(File.Exists(Path.Combine(f.SeedDirectory, "url.enc")));
+        Assert.Empty(f.Http.Bodies);
+        Assert.False(await f.BootstrapAsync());
+    }
+
+    [Fact]
+    public async Task AdministratorReplacementAndDisabledStateSurviveReseedingAndRestart()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync();
+        Assert.True(await f.BootstrapAsync());
+        await f.Db.Users.InsertOneAsync(new User { UserId = "admin", Role = UserRole.ADMIN });
+        var replacement = TestUrl + "-replacement";
+        Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Url = replacement, Enabled = false, NotifyInternal = false }));
+        var before = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        await f.SeedAsync();
+        Assert.False(await f.BootstrapAsync());
+        var after = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        Assert.Equal(before.ProtectedUrl, after.ProtectedUrl);
+        Assert.Equal(replacement, f.Protection.CreateProtector(ProductClaimWebhookController.ProtectionPurpose).Unprotect(after.ProtectedUrl!));
+        Assert.False(after.Enabled);
+        Assert.False(after.NotifyInternal);
+        var json = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await f.Controller().Get()).Value);
+        Assert.Contains("key=********", json);
+        Assert.DoesNotContain("replacement", json);
+        Assert.Empty(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task ExplicitEmptyDisabledConfigurationAlsoPreventsDefaultInitialization()
+    {
+        await using var f = new Fixture();
+        await f.Db.Users.InsertOneAsync(new User { UserId = "admin", Role = UserRole.ADMIN });
+        Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Enabled = false }));
+        await f.SeedAsync();
+        Assert.False(await f.BootstrapAsync());
+        var saved = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+        Assert.False(saved.Enabled);
+        Assert.Null(saved.ProtectedUrl);
+    }
+
+    [Fact]
+    public async Task PreviewCannotConsumeProductionSeedOrChangeSharedConfiguration()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync();
+        Assert.False(await f.BootstrapAsync(preview: true));
+        Assert.Equal(0, await f.Db.ProductAgentSettings.CountDocumentsAsync(_ => true));
+        Assert.True(File.Exists(Path.Combine(f.SeedDirectory, "private.pem")));
+        Assert.True(File.Exists(Path.Combine(f.SeedDirectory, "url.enc")));
+        Assert.Empty(f.Http.Bodies);
+    }
+
+    [Fact]
+    public async Task ConcurrentBootstrapsOnlyInitializeOnceAndInvalidSeedNeverChangesConfiguration()
+    {
+        await using var f = new Fixture();
+        await f.SeedAsync("https://example.test/not-a-wecom-webhook");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => f.BootstrapAsync());
+        Assert.Equal(0, await f.Db.ProductAgentSettings.CountDocumentsAsync(_ => true));
+        await f.SeedAsync();
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => f.BootstrapAsync()));
+        Assert.Single(results.Where(x => x));
+        Assert.Equal(1, await f.Db.ProductAgentSettings.CountDocumentsAsync(_ => true));
+        Assert.Empty(f.Http.Bodies);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         private readonly MongoClient client;
@@ -141,6 +225,16 @@ public class ProductClaimWebhookTests
         public MongoDbContext Db { get; }
         public IDataProtectionProvider Protection { get; } = new EphemeralDataProtectionProvider();
         public FakeHttp Http { get; } = new();
+        public string SeedDirectory { get; } = Path.Combine(Path.GetTempPath(), "claim-webhook-test-" + Guid.NewGuid().ToString("N"));
+        public async Task SeedAsync(string url = TestUrl)
+        {
+            Directory.CreateDirectory(SeedDirectory);
+            using var rsa = RSA.Create(2048);
+            await File.WriteAllTextAsync(Path.Combine(SeedDirectory, "private.pem"), rsa.ExportPkcs8PrivateKeyPem());
+            await File.WriteAllBytesAsync(Path.Combine(SeedDirectory, "url.enc"), rsa.Encrypt(Encoding.UTF8.GetBytes(url), RSAEncryptionPadding.OaepSHA256));
+        }
+        public Task<bool> BootstrapAsync(bool preview = false) => ProductClaimWebhookBootstrap.TryInitializeAsync(Db, Protection,
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["CDS_PROJECT_ID"] = preview ? "prd-agent" : null }).Build(), SeedDirectory);
         public Fixture()
         {
             var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27018";
@@ -176,7 +270,11 @@ public class ProductClaimWebhookTests
             var config = (await Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
             await ProductClaimWebhookWorker.ProcessAsync(Db.ProductInitiations, config, false, services, CancellationToken.None);
         }
-        public ValueTask DisposeAsync() => new(client.DropDatabaseAsync(name));
+        public async ValueTask DisposeAsync()
+        {
+            await client.DropDatabaseAsync(name);
+            if (Directory.Exists(SeedDirectory)) Directory.Delete(SeedDirectory, recursive: true);
+        }
     }
 
     private sealed class FakeHttp : HttpMessageHandler, IHttpClientFactory

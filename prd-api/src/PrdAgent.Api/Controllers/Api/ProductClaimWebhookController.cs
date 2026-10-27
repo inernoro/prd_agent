@@ -57,7 +57,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "启用通知前请填写Webhook地址"));
         var config = new ProductClaimWebhookConfig {
             Enabled = request.Enabled, NotifyInternal = request.NotifyInternal, NotifyFormal = request.NotifyFormal,
-            ProtectedUrl = protectedUrl,
+            ProtectedUrl = protectedUrl, InitializedAt = existing?.ClaimWebhook?.InitializedAt ?? DateTime.UtcNow,
         };
         await db.ProductAgentSettings.UpdateOneAsync(x => x.Id == ProductAgentSettings.SingletonId,
             Builders<ProductAgentSettings>.Update.Set(x => x.ClaimWebhook, config)

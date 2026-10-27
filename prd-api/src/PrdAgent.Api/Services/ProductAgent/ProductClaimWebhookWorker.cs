@@ -23,6 +23,9 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
             {
                 using var scope = services.CreateScope();
                 var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+                if (await ProductClaimWebhookBootstrap.TryInitializeAsync(db,
+                    scope.ServiceProvider.GetRequiredService<IDataProtectionProvider>(), configuration))
+                    logger.LogInformation("产品申领Webhook已完成默认初始化，地址已加密保存");
                 var config = (await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync())?.ClaimWebhook;
                 if (config?.Enabled == true && !string.IsNullOrEmpty(config.ProtectedUrl))
                 {
