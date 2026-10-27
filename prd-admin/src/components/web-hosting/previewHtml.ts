@@ -107,10 +107,20 @@ export function hasFetchableHtml(site: {
  *
  * 所以判据是「有没有模块脚本」，而不是「是不是 HTML」。内联的 module 也算——
  * 它里面的 `import` 同样按 CORS 模式取，理由见 hasModuleScript。
+ *
+ * 多页面评审壳还会在入口页里创建 iframe，再由脚本基于 `location.href` 计算子页面地址。
+ * srcDoc 文档的 `location.href` 固定是 `about:srcdoc`，即使注入绝对 `<base>` 也不会改变；
+ * `new URL('product.html', location.href)` 因此直接抛 Invalid URL，旅程卡片和交互演示整块空白。
+ * 嵌套浏览上下文需要保留真实文档 URL，统一退回托管域名直链。
  */
 export function canUseSrcDocPreview(html: string): boolean {
   if (!html) return false;
-  return !hasModuleScript(stripInjectedTelemetry(html));
+  const content = stripInjectedTelemetry(html);
+  return !hasModuleScript(content) && !hasNestedBrowsingContext(content);
+}
+
+function hasNestedBrowsingContext(html: string): boolean {
+  return scanHtmlStartTags(html, new Set(['iframe', 'frame'])).length > 0;
 }
 
 /**

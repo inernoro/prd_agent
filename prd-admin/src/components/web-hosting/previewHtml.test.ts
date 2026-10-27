@@ -67,6 +67,30 @@ describe('srcDoc 安全判据（模块脚本一律退回直链）', () => {
     expect(canUseSrcDocPreview("<script type='module'>import './a.js'</script>")).toBe(false);
     expect(canUseSrcDocPreview('<script type=module src=/a.js></script>')).toBe(false);
   });
+
+  it('含嵌套页面的评审壳退回直链，保留可用于解析子页面的真实文档 URL', () => {
+    const reviewShell = [
+      '<!DOCTYPE html><html><body>',
+      '<iframe id="product" src="about:blank"></iframe>',
+      '<script>document.querySelector("#product").src = new URL("product.html", location.href)</script>',
+      '</body></html>',
+    ].join('');
+
+    expect(canUseSrcDocPreview(reviewShell)).toBe(false);
+    expect(canUseSrcDocPreview('<html><body><frame src="legacy.html"></frame></body></html>')).toBe(false);
+  });
+
+  it('脚本字符串和注释中的伪 iframe 不改变自包含页面的预览路径', () => {
+    const selfContained = [
+      '<html><body>',
+      '<script>const sample = `<iframe src="fake.html"></iframe>`;</script>',
+      '<!-- <iframe src="comment.html"></iframe> -->',
+      '<main>正文</main>',
+      '</body></html>',
+    ].join('');
+
+    expect(canUseSrcDocPreview(selfContained)).toBe(true);
+  });
 });
 
 describe('CDN 注入的遥测脚本', () => {
