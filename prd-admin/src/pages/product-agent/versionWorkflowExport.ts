@@ -5,7 +5,7 @@ export const VERSION_WORKFLOW_STATUS_LABEL: Record<string, string> = {
   draft: '草稿', review_pending: 'Agent 评审中', review_failed: '评审未通过',
   decision_pending: '待确认评审方式', owner_pending: '待自动发号', approved: '已取得立项号',
   announcement_pending: '待填写上线公告', released: '已上线',
-  legacy_readonly: '历史登记',
+  legacy_readonly: '历史登记', voided: '已作废',
 };
 export const VERSION_SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' };
 // 用户填写的文本作为单元格文字导出，不交给表格软件执行公式。

@@ -193,13 +193,17 @@ export interface ProductVersion {
 export type VersionScale = 'major' | 'medium' | 'minor';
 
 export interface ProductInitiation {
+  voidReason?: string | null;
+  voidedBy?: string | null;
+  voidedAt?: string | null;
+  statusBeforeVoid?: string | null;
   claimNotification?: { status: string } | null;
   releaseTrainingRequired?: boolean | null;
   id: string;
   productId: string;
   linkedProductId?: string | null;
   tCode?: string | null;
-  /** 服务端按全局 T 序列和下游关联计算的只读删除资格。 */
+  /** 服务端按所属应用最新版本和下游关联计算的只读删除资格。 */
   canDelete?: boolean;
   canChangeVersionType?: boolean;
   systemName?: string | null;
@@ -262,6 +266,10 @@ export interface InitiationMeetingDraftRound {
 }
 
 export interface ProductRelease {
+  voidReason?: string | null;
+  voidedBy?: string | null;
+  voidedAt?: string | null;
+  statusBeforeVoid?: string | null;
   claimNotification?: { status: string } | null;
   id: string;
   canDelete?: boolean;

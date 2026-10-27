@@ -840,7 +840,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
         {items.map((item) => {
           const isOwner = !item.legacyRegistration && item.createdBy === currentUserId;
           const showRetryReview = isOwner && ['draft', 'review_pending', 'review_failed', 'decision_pending'].includes(item.status);
-          const showFillMeeting = isOwner && isMeetingResultPending(item);
+          const showFillMeeting = isOwner && item.status !== "voided" && isMeetingResultPending(item);
           const reviewScoreText = formatInitiationReviewScore(item);
           return (
         <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')} onClick={() => openDetail(item)}>
@@ -848,8 +848,7 @@ function InitiationTable({ productId, productName, productNames, items, names, c
           <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
       <Td mono>{item.tCode
-        ? <div className="flex items-center gap-2"><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
-          {isOwner && <InitiationDeleteAction id={item.id} code={item.tCode} canDelete={item.canDelete} onDeleted={onChanged} />}</div>
+        ? <button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
         : '-'}</Td>
       <Td>{SCALE_LABEL[item.versionType]}</Td>
       <Td><button type="button" onClick={(e) => { e.stopPropagation(); openDetail(item); }} className="text-left text-cyan-300 hover:underline">{item.planName}</button></Td>
@@ -875,7 +874,8 @@ function InitiationTable({ productId, productName, productNames, items, names, c
       </Td>
       <Td onClick={(e) => e.stopPropagation()}>
         {item.legacyRegistration && <button type="button" onClick={() => onOpenLegacy(item.legacyRegistration!)} className="text-token-secondary hover:underline">历史详情</button>}
-        {isOwner && item.tCode && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">修改资料</button>}
+        {isOwner && item.status !== "voided" && item.tCode && <button type="button" onClick={() => onRetryReview(item)} className="text-token-secondary hover:underline">修改资料</button>}
+        <InitiationDeleteAction id={item.id} code={item.tCode ?? "未发号立项"} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} />
         {(showRetryReview || showFillMeeting) ? (
           <div className="flex flex-col items-start gap-1">
             {showRetryReview && (
@@ -914,12 +914,11 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
   const { selection, exportSelected, tableSelection } = useOverviewTableSelection(items, releaseExportConfig(productId || '全部产品', productName, names, [], productNames, requirementNames));
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态']} selection={tableSelection}>
+    <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '需求来源', '所属部门', '产品负责人', '项目组成员', '方案地址', '上线日期', '预计培训时长', '是否全域开放', '当前开放品牌', '关联需求', '上线公告地址', '状态', '操作']} selection={tableSelection}>
     {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productNames.get(item.productId) ?? productName)}</Td>
-      <Td mono><div className="flex items-center gap-2"><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button>
-        <ReleaseDeleteAction id={item.id} code={item.vCode} canDelete={item.canDelete} onDeleted={onChanged} /></div></Td>
+      <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
       <Td mono>{item.initiationId && item.tCode
         ? <button type="button" onClick={(e) => { e.stopPropagation(); openInitiation(item); }} className="text-cyan-300 hover:underline">{item.tCode}</button>
         : (item.tCode ?? '临时优化需求')}</Td>
@@ -935,7 +934,8 @@ function ReleaseTable({ productId, productName, productNames, items, requirement
       <Td>{item.openBrandScope || (item.isGlobalOpen === true ? '上线全域开放' : '-')}</Td><Td>{item.requirementIds.map((id) => requirementNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
-    </tr>)}{items.length === 0 && !pending && <Empty cols={18}>暂无上线记录</Empty>}
+      <Td onClick={(event) => event.stopPropagation()}><ReleaseDeleteAction id={item.id} code={item.vCode} status={item.status} voidReason={item.voidReason} canDelete={item.canDelete} onDeleted={onChanged} /></Td>
+    </tr>)}{items.length === 0 && !pending && <Empty cols={19}>暂无上线记录</Empty>}
   </Table>
   </>;
 }

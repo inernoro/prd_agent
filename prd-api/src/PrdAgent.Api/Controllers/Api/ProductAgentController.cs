@@ -1034,6 +1034,7 @@ public partial class ProductAgentController : ControllerBase
         var currentApplicationId = string.IsNullOrWhiteSpace(item.LinkedProductId) ? item.ProductId : item.LinkedProductId;
         if (currentApplicationId != originalApplicationId && currentApplicationId != requestedApplicationId)
             return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "所属应用已变化，请刷新后核对"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能修改或重新申领。"));
         var issued = !string.IsNullOrWhiteSpace(item.TCode);
         if (!issued && item.Status is not ("draft" or "review_pending" or "review_failed" or "decision_pending"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "当前状态不允许修改基础信息"));
@@ -1158,8 +1159,8 @@ public partial class ProductAgentController : ControllerBase
         if (string.IsNullOrWhiteSpace(item.TCode) || !Version.TryParse(item.TCode.TrimStart('T', 't'), out _))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新内部版本记录。"));
 
-        if (await ProductInitiationDeletion.LatestIdAsync(_db) != id)
-            return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "只允许删除全局最后一条申领成功的内部版本记录，当前记录不是最新一条，请保留并修改资料。"));
+        if (await ProductInitiationDeletion.LatestIdAsync(_db, queuedApplicationId) != id)
+            return BadRequest(ApiResponse<object>.Fail("INITIATION_NOT_LATEST", "只允许删除该应用最新的内部版本记录。"));
 
         var applicationId = item.LinkedProductId ?? item.ProductId;
         var product = await _db.Products.Find(x => x.Id == applicationId).FirstOrDefaultAsync();
@@ -1195,6 +1196,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能继续修改或申领。"));
         if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可更新该立项记录"));
         var submission = await _db.ReviewSubmissions.Find(x => x.Id == request.SubmissionId).FirstOrDefaultAsync();
@@ -1298,6 +1300,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductInitiations.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "立项记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能继续修改或申领。"));
         if (item.ReviewMeetingRequired != true)
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "该立项未选择召开评审会"));
         if (item.CreatedBy != GetUserId() && !await CanManageAsync(GetUserId()))
@@ -1322,7 +1325,7 @@ public partial class ProductAgentController : ControllerBase
         var allPassed = rounds.Count >= maxRound && rounds.All(r => r.Passed == true);
         var projectAt = allPassed ? rounds.Where(r => r.HeldAt.HasValue).Max(r => r.HeldAt) : item.ProjectAt;
 
-        await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id,
+        var saved = await _db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductInitiation>.Update
                 .Set(x => x.MeetingDraftRounds, rounds)
                 .Set(x => x.FirstDraftMeetingAt, firstAt)
@@ -1330,6 +1333,7 @@ public partial class ProductAgentController : ControllerBase
                 .Set(x => x.ThirdDraftMeetingAt, thirdAt)
                 .Set(x => x.ProjectAt, projectAt)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (saved.MatchedCount != 1) return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后核对。"));
         var updated = await _db.ProductInitiations.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -1408,8 +1412,8 @@ public partial class ProductAgentController : ControllerBase
         if (item == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录已删除"));
         if (string.IsNullOrWhiteSpace(item.VCode) || !Version.TryParse(item.VCode.TrimStart('V', 'v'), out _))
             return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "此入口仅支持删除已发号的最新正式版本记录。"));
-        if (await ProductReleaseDeletion.LatestIdAsync(_db) != id)
-            return BadRequest(ApiResponse<object>.Fail("RELEASE_NOT_LATEST", "只允许删除全局最后一条申领成功的正式版本记录。"));
+        if (await ProductReleaseDeletion.LatestIdAsync(_db, queuedApplicationId) != id)
+            return BadRequest(ApiResponse<object>.Fail("RELEASE_NOT_LATEST", "只允许删除该应用最新的正式版本记录。"));
         if (await ProductReleaseDeletion.HasDownstreamAsync(_db, id))
             return BadRequest(ApiResponse<object>.Fail("RELEASE_HAS_DOWNSTREAM", "该正式版本已有后续版本或功能等关联，不能删除。"));
         if (item.ClaimNotification?.Status == "sending")
@@ -1432,6 +1436,7 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废记录不能继续修改或申领。"));
         if (HasPermission(AdminPermissionCatalog.ProductAgentVersionApply)
             && !HasPermission(AdminPermissionCatalog.ProductAgentUse)
             && item.CreatedBy != GetUserId() && item.OwnerId != GetUserId())
@@ -1444,11 +1449,12 @@ public partial class ProductAgentController : ControllerBase
         var manifestError = await ValidateReleaseFeatureManifestAsync(item.ProductId, manifest);
         if (manifestError != null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, manifestError));
-        await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+        var saved = await _db.ProductReleases.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductRelease>.Update
                 .Set(x => x.FeatureManifest, manifest)
                 .Set(x => x.PreviousReleaseId, request.PreviousReleaseId ?? item.PreviousReleaseId)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (saved.MatchedCount != 1) return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后核对。"));
         var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
         return Ok(ApiResponse<object>.Ok(updated));
     }
@@ -1600,14 +1606,16 @@ public partial class ProductAgentController : ControllerBase
         var item = await _db.ProductReleases.Find(x => x.Id == id && !x.IsDeleted).FirstOrDefaultAsync();
         if (item == null || await FindAccessibleProductAsync(item.ProductId, GetUserId()) == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "上线记录不存在或无权访问"));
+        if (item.Status == "voided") return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "已作废版本不能继续上线。"));
         if (item.OwnerId != GetUserId() && !await CanManageAsync(GetUserId()))
             return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "仅申请人可完成该上线记录"));
-        await _db.ProductReleases.UpdateOneAsync(x => x.Id == id,
+        var saved = await _db.ProductReleases.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.UpdatedAt == item.UpdatedAt,
             Builders<ProductRelease>.Update
                 .Set(x => x.AnnouncementUrl, string.IsNullOrWhiteSpace(request.AnnouncementUrl) ? item.AnnouncementUrl : request.AnnouncementUrl.Trim())
                 .Set(x => x.Status, "released")
                 .Set(x => x.ReleasedAt, item.ReleasedAt ?? DateTime.UtcNow)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow));
+        if (saved.MatchedCount != 1) return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "记录已变化，请刷新后核对。"));
         var updated = await _db.ProductReleases.Find(x => x.Id == id).FirstOrDefaultAsync();
         await AdvanceRequirementsToStateAsync(item.ProductId, item.RequirementIds, RequirementWorkflowCatalog.Released, GetUserId(), $"上线完成（{updated?.VCode}），自动流转到已上线");
         return Ok(ApiResponse<object>.Ok(updated));

@@ -26,7 +26,7 @@ function record(id: string, productId: string, tCode: string, canDelete: boolean
     status: 'approved', developmentStatus: '待开发', requirementIds: [], createdBy: 'me', sourceType: 'system',
     createdAt: '2026-10-21', updatedAt: '2026-10-21' };
 }
-const buttons = () => [...host.querySelectorAll('button')].filter((button) => button.textContent === '作废');
+const buttons = () => [...host.querySelectorAll('button')].filter((button) => button.textContent === '删除');
 async function mount(scope = '', isAdmin = false) {
   await act(async () => root.render(<MemoryRouter initialEntries={[`/product-agent?section=versions&versionTab=initiation${scope}`]}><VersionWorkflowTab isAdmin={isAdmin} /></MemoryRouter>));
 }
@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.clearAllMocks(); });
 
-describe('全局最新内部版本删除入口', () => {
+describe('末尾操作列区分作废与删除', () => {
   it('普通用户不显示调试清空入口，管理员在T/V各页签仅看到对应按钮', async () => {
     await mount();
     expect(host.textContent).not.toContain('调试清空');
@@ -51,11 +51,13 @@ describe('全局最新内部版本删除入口', () => {
     expect(host.textContent).toContain('调试清空V记录');
     expect(host.textContent).not.toContain('调试清空T记录');
   });
-  it('不同应用均显示修改资料，只有后端允许的全局最新记录有删除', async () => {
+  it('每行都有作废，只有后端授予删除资格的记录显示删除', async () => {
     await mount();
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('T6.19.0');
-    expect(buttons()[0].closest('td')?.textContent).toContain('T6.19.0');
+    expect(buttons()[0].closest('td')).toBe(buttons()[0].closest('tr')?.lastElementChild);
+    expect([...host.querySelectorAll('button')].filter((button) => button.textContent === '作废')).toHaveLength(2);
+    expect(host.querySelector('thead tr')?.lastElementChild?.textContent).toBe('操作');
     expect([...host.querySelectorAll('button')].filter((button) => button.textContent === '修改资料')).toHaveLength(2);
   });
   it('筛选到旧记录所属产品时不把它当成最新记录', async () => {
@@ -70,17 +72,20 @@ describe('全局最新内部版本删除入口', () => {
     ], requirementNames: {} } });
     await mount();
     expect(buttons()).toHaveLength(0);
+    expect([...host.querySelectorAll('button')].filter((button) => button.textContent === '作废')).toHaveLength(2);
   });
   it('详情也使用后端资格，不凭有无 T 号自行开放删除', () => {
     expect(detailSource).toContain('canDelete={initiation.canDelete}');
   });
-  it('正式版本只显示后端授予的全局最新记录，筛选不改变资格', async () => {
+  it('正式版本每行可作废，按后端资格显示删除，操作列始终末尾', async () => {
     const release = (id: string, productId: string, canDelete: boolean) => ({ id, productId, vCode: id === 'v-latest' ? 'V1.2.4' : 'V1.2.3', canDelete, createdBy: 'me', planName: id, status: 'released', versionType: 'minor', projectType: 'standard', teamMemberIds: [], requirementIds: [], openBrandScope: '', createdAt: '2026-10-27', updatedAt: '2026-10-27' });
     api.getWorkflowReleases.mockResolvedValue({ success: true, data: { items: [{ record: release('v-latest', 'a', true) }, { record: release('v-old', 'b', false) }], requirementNames: {} } });
     await act(async () => root.render(<MemoryRouter initialEntries={['/product-agent?section=versions&versionTab=release']}><VersionWorkflowTab /></MemoryRouter>));
     expect(buttons()).toHaveLength(1);
     expect(buttons()[0].closest('tr')?.textContent).toContain('V1.2.4');
-    expect(buttons()[0].closest('td')?.textContent).toContain('V1.2.4');
+    expect(buttons()[0].closest('td')).toBe(buttons()[0].closest('tr')?.lastElementChild);
+    expect([...host.querySelectorAll('button')].filter((button) => button.textContent === '作废')).toHaveLength(2);
+    expect(host.querySelector('thead tr')?.lastElementChild?.textContent).toBe('操作');
     expect(releaseDetailSource).toContain('canDelete={release.canDelete}');
   });
 });

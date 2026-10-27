@@ -155,6 +155,10 @@ public class VersionRegistration
     public string? Remark { get; set; }
 
     /// <summary>completed；保留状态字段，便于后续扩展撤回/作废但不回收编号。</summary>
+    public string? StatusBeforeVoid { get; set; }
+    public string? VoidReason { get; set; }
+    public string? VoidedBy { get; set; }
+    public DateTime? VoidedAt { get; set; }
     public string Status { get; set; } = VersionRegistrationStatus.Completed;
     public string CreatedBy { get; set; } = string.Empty;
     public string? CreatedByName { get; set; }

@@ -664,7 +664,7 @@ export function ReleaseWorkflowDetail({
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {!isNew && release && release.createdBy === currentUser?.userId && <ReleaseDeleteAction id={release.id} code={release.vCode} canDelete={release.canDelete} onDeleted={() => { if (onClose) onClose(); else navigate('/product-agent?section=versions&versionTab=release'); }} />}
+          {!isNew && release && release.createdBy === currentUser?.userId && <ReleaseDeleteAction id={release.id} code={release.vCode} status={release.status} voidReason={release.voidReason} canDelete={release.canDelete} onDeleted={() => { if (onClose) onClose(); else navigate('/product-agent?section=versions&versionTab=release'); }} />}
           {!isNew && release?.status === 'announcement_pending' && (
             <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-xs text-[color:var(--accent-fg-amber)]">
               待填写上线公告

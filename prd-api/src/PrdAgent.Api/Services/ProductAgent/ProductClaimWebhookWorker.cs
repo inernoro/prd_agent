@@ -52,7 +52,7 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
             update.Set("ClaimNotification.Status", "unknown").Set("ClaimNotification.Error", "投递结果未知，请先在企微群确认，避免重复通知"),
             cancellationToken: CancellationToken.None);
         var lease = Guid.NewGuid().ToString("N");
-        var eligible = filter.Eq("IsDeleted", false)
+        var eligible = filter.Eq("IsDeleted", false) & filter.Ne("Status", "voided")
                 & (filter.Eq("ClaimNotification.Status", "pending")
                     | (filter.Eq("ClaimNotification.Status", "waiting_identity") & filter.Lte("ClaimNotification.NextAttemptAt", DateTime.UtcNow)));
         if (config.DebugMode) eligible &= filter.Eq("ClaimNotification.ManualDispatchApproved", true);
@@ -86,7 +86,7 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
             if (!ProductClaimWebhookPayload.IsValidWebhook(url)) throw new InvalidOperationException("Webhook配置无效，请重新保存配置");
             // 用户取消或删除后，已经被本实例取出的任务也不得继续投递。
             if (!await collection.Find(filter.Eq("ClaimNotification.LeaseId", lease)
-                & filter.Eq("ClaimNotification.Status", "sending") & filter.Eq("IsDeleted", false)).AnyAsync()) return;
+                & filter.Eq("ClaimNotification.Status", "sending") & filter.Eq("IsDeleted", false) & filter.Ne("Status", "voided")).AnyAsync()) return;
             var latestConfig = (await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync())?.ClaimWebhook;
             if (latestConfig?.Enabled != true || (formal ? !latestConfig.NotifyFormal : !latestConfig.NotifyInternal))
             {

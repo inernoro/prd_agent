@@ -94,7 +94,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
         async Task<long> Queue<T>(IMongoCollection<T> collection)
         {
             var f = Builders<T>.Filter;
-            var permitted = f.Eq("_id", id) & f.Eq("IsDeleted", false);
+            var permitted = f.Eq("_id", id) & f.Eq("IsDeleted", false) & f.Ne("Status", "voided");
             if (!admin) permitted &= f.Eq("CreatedBy", actor);
             var state = f.Eq("ClaimNotification.Status", "debug_pending");
             if (config.DebugMode) state |= f.Eq("ClaimNotification.Status", "pending") | f.Eq("ClaimNotification.Status", "waiting_identity");
@@ -114,9 +114,9 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
         if (DeploymentAuthority.IsCdsBranchPreview(configuration))
             return BadRequest(ApiResponse<object>.Fail("PREVIEW_READ_ONLY", "预览不能重发真实群通知"));
         long count;
-        if (kind == "T") count = (await db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.ClaimNotification != null && x.ClaimNotification.Status == "failed",
+        if (kind == "T") count = (await db.ProductInitiations.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.ClaimNotification != null && x.ClaimNotification.Status == "failed",
             Builders<ProductInitiation>.Update.Set(x => x.ClaimNotification!.Status, "pending").Set(x => x.ClaimNotification!.Error, null), cancellationToken: CancellationToken.None)).ModifiedCount;
-        else if (kind == "V") count = (await db.ProductReleases.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.ClaimNotification != null && x.ClaimNotification.Status == "failed",
+        else if (kind == "V") count = (await db.ProductReleases.UpdateOneAsync(x => x.Id == id && !x.IsDeleted && x.Status != "voided" && x.ClaimNotification != null && x.ClaimNotification.Status == "failed",
             Builders<ProductRelease>.Update.Set(x => x.ClaimNotification!.Status, "pending").Set(x => x.ClaimNotification!.Error, null), cancellationToken: CancellationToken.None)).ModifiedCount;
         else return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "不支持的通知类型"));
         return count == 1 ? Ok(ApiResponse<object>.Ok(new { queued = true }))

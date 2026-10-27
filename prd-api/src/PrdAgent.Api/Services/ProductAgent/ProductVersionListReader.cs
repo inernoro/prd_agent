@@ -101,7 +101,8 @@ public static class ProductVersionListReader
                 OwnerName = old.OwnerName ?? old.CreatedByName, ProjectMemberNames = old.ProjectMemberNames,
                 PlannedProjectAt = old.PlannedProjectAt, NeedUiDesign = old.NeedUiDesign, IsAiPoc = old.IsAiPoc,
                 DevelopmentStatus = old.DevelopmentStatus ?? string.Empty, Remark = old.Remark,
-                Status = "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                Status = old.Status == "voided" ? "voided" : "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                VoidReason = old.VoidReason, VoidedBy = old.VoidedBy, VoidedAt = old.VoidedAt, StatusBeforeVoid = old.StatusBeforeVoid,
                 CreatedAt = old.CreatedAt, UpdatedAt = old.UpdatedAt,
             };
             rows.Add(new(record, old));
@@ -130,7 +131,8 @@ public static class ProductVersionListReader
                 IsGlobalOpen = old.IsGlobalOpen, OpenBrandScope = old.IsGlobalOpen == true ? "上线全域开放" : string.Empty,
                 PlannedReleaseAt = old.PlannedReleaseAt, PlannedTrainingMinutes = old.PlannedTrainingMinutes,
                 AnnouncementUrl = old.AnnouncementUrl,
-                Status = "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                Status = old.Status == "voided" ? "voided" : "legacy_readonly", SourceType = "import", CreatedBy = old.CreatedBy,
+                VoidReason = old.VoidReason, VoidedBy = old.VoidedBy, VoidedAt = old.VoidedAt, StatusBeforeVoid = old.StatusBeforeVoid,
                 CreatedAt = old.CreatedAt, UpdatedAt = old.UpdatedAt,
             };
             rows.Add(new(record, old));
