@@ -10,6 +10,7 @@ import {
   getSiteContent,
   restartDesignArtifactRun,
   streamDesignArtifactRun,
+  type DesignArtifactRunSummary,
 } from '@/services/real/webPages';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
@@ -22,6 +23,7 @@ import {
 import {
   appendGenerationStage,
   closeGenerationStages,
+  completedRunDurationSeconds,
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
   resolvePersistedRunPreview,
@@ -109,6 +111,7 @@ export interface GenerationRequest {
 export interface CompletedGeneration {
   id: string;
   url?: string;
+  durationSeconds: number | null;
 }
 
 interface Options {
@@ -173,20 +176,21 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
     setPreviewHtml(html);
   }, []);
 
-  const finishGeneration = useCallback((siteId: string, siteUrl?: string, destinationError?: string | null) => {
+  const finishGeneration = useCallback((siteId: string, run: DesignArtifactRunSummary) => {
     // 建站成功、归属失败是一种部分成功。不提示的话，用户在团队空间里找不到它，
     // 只会以为生成丢了——「坏的那条路」不许长得跟完全成功一样。
-    if (destinationError) {
-      toast.error('已生成，但归属团队失败', `${destinationError}（网页暂在个人空间，可在卡片上手动移动）`);
+    if (run.destinationApplyError) {
+      toast.error('已生成，但归属团队失败', `${run.destinationApplyError}（网页暂在个人空间，可在卡片上手动移动）`);
     }
     // 服务端推过 preview 事件时以它为准；只有直连流才从累计的 delta 里取最后一版。
     if (previewRevisionRef.current < 0) {
       const finalPreview = previewableAiStreamHtml(streamRef.current);
       if (finalPreview) applyPreviewHtml(finalPreview, AI_STREAM_PREVIEW_SANDBOX);
     }
-    const now = Date.now();
-    setStages((current) => closeGenerationStages(current, now));
-    setCompletedSite({ id: siteId, url: siteUrl });
+    const durationSeconds = completedRunDurationSeconds(run);
+    const completedAtMs = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+    if (Number.isFinite(completedAtMs)) setStages((current) => closeGenerationStages(current, completedAtMs));
+    setCompletedSite({ id: siteId, durationSeconds });
     setRestartableRunId(null);
     setProgress(100);
     setPhase('网页已生成并保存到网页托管，只有你能看到');
@@ -261,7 +265,7 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
         const status = result.data.status.toLowerCase();
         const siteId = resolveGeneratedSiteId(result.data);
         if (status === 'done' && siteId) {
-          finishGeneration(siteId, undefined, result.data.destinationApplyError);
+          finishGeneration(siteId, result.data);
           return;
         }
         if (status === 'done') {
@@ -476,7 +480,8 @@ export function useSiteGenerationRun({ destinationTeamId, hasInitialSource, onCr
           }
           if (item.kind === 'done') {
             terminalObserved = true;
-            finishGeneration(item.siteId, item.siteUrl, item.destinationApplyError);
+            // SSE 只负责通知完成；最终耗时取同一 Run 的持久化起止，不取本地计时器快照。
+            void recoverActiveRun(created.data.runId, abort.signal);
             return;
           }
           if (item.kind === 'error') {

@@ -124,7 +124,9 @@ describe('网页微调与版本入口接线', () => {
 
   it('工作台里的版本记录就是修改对话：每一轮都能看、已发布的旧版能换回', () => {
     const source = read('components/web-hosting/workbench/SiteEditStage.tsx');
-    expect(source).toContain('void openRevision(revision.id)');
+    expect(source).toContain('showRevision(target.id)');
+    expect(source).toContain('onClick={() => showRevision(revision.id)}');
+    expect(source).toContain('void openRevision(revisionId)');
     expect(source).toContain('void rollback(revision.id, createRevisionMutationIdempotencyKey())');
     // 换回必须先确认：客户打开同一个链接会立即看到旧版。
     expect(source).toContain('setConfirmRollbackId(revision.id)');

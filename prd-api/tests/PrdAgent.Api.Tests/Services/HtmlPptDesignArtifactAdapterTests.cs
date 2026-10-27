@@ -1167,11 +1167,19 @@ public sealed class HtmlPptDesignArtifactAdapterTests
     }
 
     [Fact]
-    public void HostedWorkspacePreparation_ShouldBeIdempotentAndKeepEveryNonEntryFileByteExact()
+    public void HostedWorkspacePreparation_ShouldPreserveVerifiedWebPackageIncludingManifest()
     {
         const string html = "<!doctype html><html><body><main>deck</main></body></html>";
         var htmlBytes = Encoding.UTF8.GetBytes(html);
         var cssBytes = Encoding.UTF8.GetBytes("main { display: grid; }");
+        var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            files = new[]
+            {
+                new { path = "index.html", sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(htmlBytes)).ToLowerInvariant(), size = htmlBytes.Length },
+                new { path = "assets/deck.css", sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(cssBytes)).ToLowerInvariant(), size = cssBytes.Length },
+            },
+        });
         var files = new[]
         {
             new DesignWorkspaceFile(
@@ -1186,6 +1194,12 @@ public sealed class HtmlPptDesignArtifactAdapterTests
                 Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(cssBytes)).ToLowerInvariant(),
                 cssBytes.LongLength,
                 "text/css"),
+            new DesignWorkspaceFile(
+                "manifest.json",
+                Convert.ToBase64String(manifestBytes),
+                Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(manifestBytes)).ToLowerInvariant(),
+                manifestBytes.LongLength,
+                "application/json"),
         };
         var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
         sites.Setup(service => service.PrepareHtmlForHosting(It.IsAny<byte[]>(), "index.html"))
@@ -1193,20 +1207,32 @@ public sealed class HtmlPptDesignArtifactAdapterTests
         sites.Setup(service => service.PrepareTrustedPresentationHtmlForHosting(It.IsAny<byte[]>(), "index.html"))
             .Returns((byte[] bytes, string _) => HostedSiteService.RewritePublishedEntryHtml(bytes, "index.html", bridgeOnly: true));
 
-        var prepared = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(sites.Object, files, html);
+        var prepared = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(
+            sites.Object, files, html, preserveVerifiedWebPackage: true);
         var preparedHtml = Encoding.UTF8.GetString(Convert.FromBase64String(
             Assert.Single(prepared, file => file.Path == "index.html").ContentBase64));
         var preparedAgain = HostedSiteEditRunWorker.PrepareWorkspaceFilesForHosting(
             sites.Object,
             prepared,
-            preparedHtml);
+            preparedHtml,
+            preserveVerifiedWebPackage: true);
 
-        Assert.NotEqual(html, preparedHtml);
+        Assert.Equal(html, preparedHtml);
+        Assert.Equal(JsonSerializer.Serialize(files), JsonSerializer.Serialize(prepared));
         Assert.Equal(JsonSerializer.Serialize(prepared), JsonSerializer.Serialize(preparedAgain));
         var originalCss = Assert.Single(files, file => file.Path == "assets/deck.css");
         var preparedCss = Assert.Single(prepared, file => file.Path == "assets/deck.css");
         Assert.Equal(originalCss, preparedCss);
-        sites.Verify(service => service.PrepareHtmlForHosting(It.IsAny<byte[]>(), "index.html"), Times.Exactly(2));
+        using var manifest = JsonDocument.Parse(Convert.FromBase64String(
+            Assert.Single(prepared, file => file.Path == "manifest.json").ContentBase64));
+        foreach (var record in manifest.RootElement.GetProperty("files").EnumerateArray())
+        {
+            var file = Assert.Single(prepared, item => item.Path == record.GetProperty("path").GetString());
+            var content = Convert.FromBase64String(file.ContentBase64);
+            Assert.Equal(record.GetProperty("size").GetInt64(), content.LongLength);
+            Assert.Equal(record.GetProperty("sha256").GetString(), file.Sha256);
+        }
+        sites.Verify(service => service.PrepareHtmlForHosting(It.IsAny<byte[]>(), "index.html"), Times.Never);
         sites.Verify(service => service.PrepareTrustedPresentationHtmlForHosting(It.IsAny<byte[]>(), "index.html"), Times.Never);
     }
 
