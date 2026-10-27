@@ -27,6 +27,7 @@ import { MapSpinner } from '@/components/ui/VideoLoader';
 import { Dialog } from '@/components/ui/Dialog';
 import { Button } from '@/components/design/Button';
 import { InitiationDeleteAction, ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 import { VersionDebugClearButton } from '@/components/product-agent/VersionDebugClearButton';
 import { useProductListScope } from '@/lib/productListScope';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
@@ -727,7 +728,7 @@ export function InitiationWizard({ productId, applicationProducts, onApplication
     content={<div className="space-y-5">
       {completed ? <section className="space-y-3 rounded-md border border-token-subtle bg-token-nested p-4">
         <div className="flex items-center gap-2 text-sm font-medium text-token-primary"><CheckCircle2 size={18} />内部版本号已生成</div>
-        {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /></>}
+        {issuedCode && item && <><p className="text-sm text-token-primary">立项号：<span className="font-mono font-semibold">{issuedCode}</span></p><VersionCopyActions kind="initiation" id={item.id} code={issuedCode} /><DebugClaimNotificationButton kind="T" id={item.id} visible={item.claimNotification?.status === 'debug_pending'} /></>}
       </section> : <form id={formId} onSubmit={(event) => { event.preventDefault(); void confirmApplication(); }} aria-busy={busy}>
         <fieldset disabled={busy} className="min-w-0 space-y-5 border-0 p-0">
           <section hidden={editingIssued} className="space-y-3" aria-labelledby={`${formId}-source`}>

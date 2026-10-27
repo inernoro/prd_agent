@@ -193,6 +193,7 @@ export interface ProductVersion {
 export type VersionScale = 'major' | 'medium' | 'minor';
 
 export interface ProductInitiation {
+  claimNotification?: { status: string } | null;
   releaseTrainingRequired?: boolean | null;
   id: string;
   productId: string;
@@ -261,6 +262,7 @@ export interface InitiationMeetingDraftRound {
 }
 
 export interface ProductRelease {
+  claimNotification?: { status: string } | null;
   id: string;
   canDelete?: boolean;
   productId: string;

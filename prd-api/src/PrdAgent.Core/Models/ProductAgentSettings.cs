@@ -16,6 +16,7 @@ public class ProductAgentSettings
 public class ProductClaimWebhookConfig
 {
     public bool Enabled { get; set; }
+    public bool DebugMode { get; set; }
     public DateTime? InitializedAt { get; set; }
     public bool NotifyInternal { get; set; } = true;
     public bool NotifyFormal { get; set; } = true;
@@ -26,6 +27,7 @@ public class ProductClaimWebhookConfig
 public class ProductClaimNotification
 {
     public string Status { get; set; } = "pending";
+    public bool ManualDispatchApproved { get; set; }
     public string OwnerId { get; set; } = string.Empty;
     public int Attempts { get; set; }
     public DateTime NextAttemptAt { get; set; } = DateTime.UtcNow;

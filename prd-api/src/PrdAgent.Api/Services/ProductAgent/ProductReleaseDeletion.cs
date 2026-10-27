@@ -11,7 +11,7 @@ public static class ProductReleaseDeletion
 {
     public static async Task<string?> LatestIdAsync(MongoDbContext db)
     {
-        var current = await db.ProductReleases.Find(x => !x.IsDeleted && x.VCode != "")
+        var current = await db.ProductReleases.Find(x => !x.IsDeleted && x.VCode != null && x.VCode != "")
             .Project(x => new { x.Id, x.VCode, x.CreatedAt }).ToListAsync();
         var legacy = await db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal)
             .Project(x => new { x.Code, x.CreatedAt }).ToListAsync();

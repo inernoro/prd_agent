@@ -175,6 +175,59 @@ public class ProductClaimWebhookTests
         Assert.IsType<OkObjectResult>(await f.Controller().Save(new SaveProductClaimWebhook { Url = TestUrl, Enabled = true }));
     }
 
+    [Theory]
+    [InlineData("T")]
+    [InlineData("V")]
+    public async Task DebugModeIssuesRecordWithoutSendingUntilManualClickAndDoesNotSendTwice(string kind)
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync();
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = true });
+        if (kind == "T") await f.AddPendingAsync();
+        else
+        {
+            var v = new ProductRelease { Id = "v-debug", ProductId = "product", VCode = "V1.2.3", OwnerId = "owner", CreatedBy = "member" };
+            v.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(f.Db, v, "owner", true, true);
+            Assert.Equal("debug_pending", v.ClaimNotification!.Status);
+            await f.Db.ProductReleases.InsertOneAsync(v);
+        }
+        var id = kind == "T" ? "t" : "v-debug";
+        using var services = new ServiceCollection().AddSingleton(f.Db).AddSingleton(f.Protection).AddSingleton<IHttpClientFactory>(f.Http).BuildServiceProvider();
+        async Task Process()
+        {
+            var config = (await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook;
+            if (kind == "T") await ProductClaimWebhookWorker.ProcessAsync(f.Db.ProductInitiations, config, false, services, CancellationToken.None);
+            else await ProductClaimWebhookWorker.ProcessAsync(f.Db.ProductReleases, config, true, services, CancellationToken.None);
+        }
+        await Process(); Assert.Empty(f.Http.Bodies);
+        // 关闭调试模式不会把已等待手工推送的通知突然发出。
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = false });
+        await Process(); Assert.Empty(f.Http.Bodies);
+        Assert.IsType<OkObjectResult>(await f.Controller().DebugNotify(kind, id));
+        Assert.IsType<ConflictObjectResult>(await f.Controller().DebugNotify(kind, id));
+        await Process(); await Process();
+        using var payload = JsonDocument.Parse(Assert.Single(f.Http.Bodies));
+        Assert.DoesNotContain("未艾特", payload.RootElement.GetProperty("text").GetProperty("content").GetString()!);
+        Assert.IsType<ConflictObjectResult>(await f.Controller().DebugNotify(kind, id));
+    }
+
+    [Fact]
+    public async Task DebugModePausesExistingPendingAndRestrictsManualDispatchAndPreview()
+    {
+        await using var f = new Fixture();
+        await f.EnableAsync(); await f.AddPendingAsync();
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true, DebugMode = true });
+        await f.Controller().Save(new SaveProductClaimWebhook { Enabled = true });
+        Assert.True((await f.Db.ProductAgentSettings.Find(_ => true).SingleAsync()).ClaimWebhook.DebugMode);
+        await f.ProcessTAsync(); Assert.Empty(f.Http.Bodies);
+        Assert.IsType<ConflictObjectResult>(await f.Controller(admin: false).DebugNotify("T", "t"));
+        Assert.IsType<BadRequestObjectResult>(await f.Controller(preview: true).DebugNotify("T", "t"));
+        await f.Db.ProductInitiations.UpdateOneAsync(x => x.Id == "t", Builders<ProductInitiation>.Update.Set(x => x.CreatedBy, "member"));
+        Assert.IsType<OkObjectResult>(await f.Controller(admin: false).DebugNotify("T", "t"));
+        await f.ProcessTAsync(); Assert.Single(f.Http.Bodies);
+        Assert.IsType<ConflictObjectResult>(await f.Controller().DebugNotify("T", "t"));
+    }
+
     [Fact]
     public async Task DefaultBootstrapEncryptsEnablesAndPreservesOtherSettingsWithoutSending()
     {

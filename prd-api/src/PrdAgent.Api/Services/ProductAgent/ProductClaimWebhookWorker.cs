@@ -52,9 +52,11 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
             update.Set("ClaimNotification.Status", "unknown").Set("ClaimNotification.Error", "投递结果未知，请先在企微群确认，避免重复通知"),
             cancellationToken: CancellationToken.None);
         var lease = Guid.NewGuid().ToString("N");
-        var record = await collection.FindOneAndUpdateAsync(filter.Eq("IsDeleted", false)
+        var eligible = filter.Eq("IsDeleted", false)
                 & (filter.Eq("ClaimNotification.Status", "pending")
-                    | (filter.Eq("ClaimNotification.Status", "waiting_identity") & filter.Lte("ClaimNotification.NextAttemptAt", DateTime.UtcNow))),
+                    | (filter.Eq("ClaimNotification.Status", "waiting_identity") & filter.Lte("ClaimNotification.NextAttemptAt", DateTime.UtcNow)));
+        if (config.DebugMode) eligible &= filter.Eq("ClaimNotification.ManualDispatchApproved", true);
+        var record = await collection.FindOneAndUpdateAsync(eligible,
             update.Set("ClaimNotification.Status", "sending").Set("ClaimNotification.LeaseId", lease)
                 .Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow.AddMinutes(2)).Inc("ClaimNotification.Attempts", 1),
             new FindOneAndUpdateOptions<T> { ReturnDocument = ReturnDocument.After }, CancellationToken.None);
@@ -85,6 +87,19 @@ public sealed class ProductClaimWebhookWorker(IServiceProvider services, IConfig
             // 用户取消或删除后，已经被本实例取出的任务也不得继续投递。
             if (!await collection.Find(filter.Eq("ClaimNotification.LeaseId", lease)
                 & filter.Eq("ClaimNotification.Status", "sending") & filter.Eq("IsDeleted", false)).AnyAsync()) return;
+            var latestConfig = (await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync())?.ClaimWebhook;
+            if (latestConfig?.Enabled != true || (formal ? !latestConfig.NotifyFormal : !latestConfig.NotifyInternal))
+            {
+                await collection.UpdateOneAsync(filter.Eq("ClaimNotification.LeaseId", lease) & filter.Eq("ClaimNotification.Status", "sending"),
+                    update.Set("ClaimNotification.Status", "pending").Set("ClaimNotification.Error", null), cancellationToken: CancellationToken.None);
+                return;
+            }
+            if (latestConfig.DebugMode && !task.ManualDispatchApproved)
+            {
+                await collection.UpdateOneAsync(filter.Eq("ClaimNotification.LeaseId", lease) & filter.Eq("ClaimNotification.Status", "sending"),
+                    update.Set("ClaimNotification.Status", "debug_pending").Set("ClaimNotification.Error", null), cancellationToken: CancellationToken.None);
+                return;
+            }
             var client = services.GetRequiredService<IHttpClientFactory>().CreateClient("product-claim-webhook");
             started = true;
             using var response = await client.PostAsync(url, new StringContent(payload, Encoding.UTF8, "application/json"), stoppingToken);

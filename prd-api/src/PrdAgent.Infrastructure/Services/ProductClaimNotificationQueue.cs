@@ -23,6 +23,7 @@ public static class ProductClaimNotificationQueue
                 PlannedTrainingMinutes = v.PlannedTrainingMinutes, OwnerName = v.OwnerName },
             _ => throw new InvalidOperationException("不支持的申领通知类型"),
         };
-        return new ProductClaimNotification { OwnerId = ownerId ?? string.Empty, Snapshot = JsonSerializer.Serialize(body, body.GetType()) };
+        return new ProductClaimNotification { Status = config.DebugMode ? "debug_pending" : "pending",
+            OwnerId = ownerId ?? string.Empty, Snapshot = JsonSerializer.Serialize(body, body.GetType()) };
     }
 }

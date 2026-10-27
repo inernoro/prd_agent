@@ -30,7 +30,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
         var users = await db.Users.Find(x => x.Status == UserStatus.Active && x.UserType == UserType.Human).ToListAsync();
         var ready = users.Count(user => ProductClaimMentionIdentity.Resolve(user, protection) != null);
         return Ok(ApiResponse<object>.Ok(new {
-            config.Enabled, config.NotifyInternal, config.NotifyFormal,
+            config.Enabled, config.DebugMode, config.NotifyInternal, config.NotifyFormal,
             configured = !string.IsNullOrEmpty(config.ProtectedUrl),
             maskedUrl = string.IsNullOrEmpty(config.ProtectedUrl) ? null : "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=********",
             identityReadyCount = ready, identityPendingCount = users.Count - ready,
@@ -57,6 +57,7 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "启用通知前请填写Webhook地址"));
         var config = new ProductClaimWebhookConfig {
             Enabled = request.Enabled, NotifyInternal = request.NotifyInternal, NotifyFormal = request.NotifyFormal,
+            DebugMode = request.DebugMode ?? existing?.ClaimWebhook?.DebugMode ?? false,
             ProtectedUrl = protectedUrl, InitializedAt = existing?.ClaimWebhook?.InitializedAt ?? DateTime.UtcNow,
         };
         await db.ProductAgentSettings.UpdateOneAsync(x => x.Id == ProductAgentSettings.SingletonId,
@@ -78,6 +79,32 @@ public class ProductClaimWebhookController(MongoDbContext db, IDataProtectionPro
             .Concat(v.Select(x => new ClaimNoticeRow("V", x.Id, x.VCode, x.OwnerName, x.CreatedAt, x.ClaimNotification!)))
             .OrderByDescending(x => x.CreatedAt).Take(20);
         return Ok(ApiResponse<object>.Ok(new { items = rows }));
+    }
+
+    [HttpPost("notifications/{kind}/{id}/debug")]
+    public async Task<IActionResult> DebugNotify(string kind, string id)
+    {
+        if (DeploymentAuthority.IsCdsBranchPreview(configuration) || !DeploymentAuthority.CanRunSharedScheduledWork(configuration))
+            return BadRequest(ApiResponse<object>.Fail("PREVIEW_READ_ONLY", "请在正式环境手工推送调试通知"));
+        var actor = this.GetRequiredUserId();
+        var admin = await IsMapAdminAsync();
+        var config = (await db.ProductAgentSettings.Find(x => x.Id == ProductAgentSettings.SingletonId).FirstOrDefaultAsync())?.ClaimWebhook;
+        if (config?.Enabled != true || string.IsNullOrEmpty(config.ProtectedUrl) || (kind == "T" ? !config.NotifyInternal : !config.NotifyFormal))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_STATE", "请先启用对应的申领通知开关"));
+        async Task<long> Queue<T>(IMongoCollection<T> collection)
+        {
+            var f = Builders<T>.Filter;
+            var permitted = f.Eq("_id", id) & f.Eq("IsDeleted", false);
+            if (!admin) permitted &= f.Eq("CreatedBy", actor);
+            var state = f.Eq("ClaimNotification.Status", "debug_pending");
+            if (config.DebugMode) state |= f.Eq("ClaimNotification.Status", "pending") | f.Eq("ClaimNotification.Status", "waiting_identity");
+            return (await collection.UpdateOneAsync(permitted & state & f.Ne("ClaimNotification.ManualDispatchApproved", true),
+                Builders<T>.Update.Set("ClaimNotification.Status", "pending").Set("ClaimNotification.ManualDispatchApproved", true)
+                    .Set("ClaimNotification.Error", null).Set("ClaimNotification.NextAttemptAt", DateTime.UtcNow), cancellationToken: CancellationToken.None)).ModifiedCount;
+        }
+        var count = kind switch { "T" => await Queue(db.ProductInitiations), "V" => await Queue(db.ProductReleases), _ => 0 };
+        return count == 1 ? Ok(ApiResponse<object>.Ok(new { queued = true }))
+            : Conflict(ApiResponse<object>.Fail("INVALID_STATE", "该通知不可推送或已提交推送；仅申请人本人或MAP管理员可操作，请刷新核对，勿重复点击"));
     }
 
     [HttpPost("notifications/{kind}/{id}/retry")]
@@ -103,6 +130,7 @@ public class SaveProductClaimWebhook
 {
     public string? Url { get; set; }
     public bool Enabled { get; set; }
+    public bool? DebugMode { get; set; }
     public bool NotifyInternal { get; set; } = true;
     public bool NotifyFormal { get; set; } = true;
 }

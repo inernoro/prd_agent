@@ -53,6 +53,7 @@ import { VersionCopyActions } from './VersionCopyActions';
 import { mergeMemberIds, type PastedMemberMatch } from './releaseMemberMatching';
 import { useReleasePastedMembers } from './useReleasePastedMembers';
 import { ReleaseDeleteAction } from '@/components/product-agent/InitiationDeleteAction';
+import { DebugClaimNotificationButton } from '@/components/product-agent/DebugClaimNotificationButton';
 
 const SCALE_LABEL = { major: '大版本', medium: '中版本', minor: '小版本' } as const;
 const STATUS_LABEL: Record<string, string> = {
@@ -688,6 +689,7 @@ export function ReleaseWorkflowDetail({
           </p>
         )}
         <VersionCopyActions kind="release" id={release.id} code={release.vCode} />
+        <DebugClaimNotificationButton kind="V" id={release.id} visible={release.claimNotification?.status === 'debug_pending'} />
       </>}
 
       {(!isNew || temporary) && <div className="flex border-b border-token-subtle">
