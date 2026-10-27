@@ -24,6 +24,8 @@ describe('列表与详情共用内部版本删除确认', () => {
     await click('删除');
     expect(removeRelease).not.toHaveBeenCalled();
     expect(host.textContent).toContain('原T资料保留');
+    expect(host.textContent).toContain('按所属应用仍保留的最新有效版本发号');
+    expect(host.textContent).not.toContain('编号不会回收');
     await click('确认删除');
     expect(removeRelease).toHaveBeenCalledTimes(1);
     expect(removeRelease).toHaveBeenCalledWith('v-latest');

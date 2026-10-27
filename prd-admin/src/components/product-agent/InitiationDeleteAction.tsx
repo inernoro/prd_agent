@@ -5,8 +5,8 @@ import { deleteInitiation, deleteRelease } from '@/services/real/productAgent';
 
 type DeleteProps = { id: string; code: string; canDelete?: boolean; onDeleted: () => void | Promise<void> };
 const VARIANTS = {
-  initiation: { title: '内部版本', remove: (id: string) => deleteInitiation(id), description: '仅申请人本人可删除全局最后一条申领成功、且没有正式版本等下游关联的内部版本记录。', effect: '记录及对应方案申领关联会删除，方案可重新申领；已发编号的防重记录保留，编号不会回收。' },
-  release: { title: '正式版本', remove: (id: string) => deleteRelease(id), description: '仅申请人本人可删除全局最后一条申领成功、且没有后续版本等下游关联的正式版本记录。', effect: '删除正式版本记录后，对应T可重新申领V；原T资料保留，已发V编号不会回收。' },
+  initiation: { title: '内部版本', remove: (id: string) => deleteInitiation(id), description: '仅申请人本人可删除全局最后一条申领成功、且没有正式版本等下游关联的内部版本记录。', effect: '记录及对应方案申领关联会删除，方案可重新申领；后续按所属应用仍保留的最新有效版本发号，不计入本次已删除的记录。' },
+  release: { title: '正式版本', remove: (id: string) => deleteRelease(id), description: '仅申请人本人可删除全局最后一条申领成功、且没有后续版本等下游关联的正式版本记录。', effect: '删除正式版本记录后，对应T可重新申领V；原T资料保留，后续按所属应用仍保留的最新有效版本发号，不计入本次已删除的记录。' },
 };
 
 export function InitiationDeleteAction(props: DeleteProps) { return <VersionDeleteAction {...props} kind="initiation" />; }

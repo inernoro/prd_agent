@@ -355,15 +355,16 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
-    public async Task WorkflowNumberingFormalDeletedHistoryMustNotBeReused()
+    public async Task WorkflowNumberingFormalDeletedHistoryDoesNotAdvanceTheRemainingBase()
     {
         await using var fixture = await Fixture.CreateAsync();
         await SeedWorkflowNumberingAsync(fixture);
         await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, WorkflowClaimKey("product", "V", "V6.19.5"), "release:numbering-v-base");
         await fixture.Db.ProductReleases.UpdateOneAsync(x => x.Id == "numbering-v-base",
             Builders<ProductRelease>.Update.Set(x => x.IsDeleted, true));
+        await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "remaining-v", ProductId = "product", VCode = "V6.19.4" });
         var result = Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest()));
-        Assert.Equal("V6.19.6", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
+        Assert.Equal("V6.19.5", Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(result.Value).Data).VCode);
     }
 
     [Fact]
@@ -1134,8 +1135,8 @@ public class ProductVersionClaimGuardTests
         });
         Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("global-latest"));
         Assert.Null(await fixture.Db.ProductInitiations.Find(x => x.Id == "global-latest").FirstOrDefaultAsync());
-        Assert.False(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
-            ProductVersionClaimPolicy.ReleaseKey("测试应用", "T10.0.0"), "release:after-delete"));
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest("global-latest")));
+        Assert.Equal(0, await fixture.Db.ProductReleases.CountDocumentsAsync(_ => true));
     }
 
     [Fact]
@@ -1239,31 +1240,34 @@ public class ProductVersionClaimGuardTests
     public async Task DeleteAndFormalClaimCannotBothWinAndNonOwnerCannotDelete()
     {
         await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertOneAsync(new User { UserId = "me", DisplayName = "申请人" });
         await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
             new ProductInitiation { Id = "latest", ProductId = "product", AppName = "测试应用", TCode = "T1.2.3", CreatedBy = "me", Status = "approved" },
             new ProductInitiation { Id = "other-owner", ProductId = "product", AppName = "测试应用", TCode = "T1.2.2", CreatedBy = "other", Status = "approved", IssuedAt = DateTime.UtcNow.AddMinutes(-1) },
         });
         Assert.Equal(403, Assert.IsType<ObjectResult>(await fixture.Controller().DeleteInitiation("other-owner")).StatusCode);
         var deletion = fixture.Controller().DeleteInitiation("latest");
-        var claim = ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, ProductVersionClaimPolicy.ReleaseKey("测试应用", "T1.2.3"), "release:concurrent");
+        var request = NumberingReleaseRequest("latest"); request.FeatureManifest = new();
+        var claim = fixture.Controller().CreateRelease("product", request);
         await Task.WhenAll(deletion, claim);
-        Assert.NotEqual(deletion.Result is OkObjectResult, claim.Result);
+        Assert.NotEqual(deletion.Result is OkObjectResult, claim.Result is OkObjectResult);
         Assert.Equal(deletion.Result is OkObjectResult, !await fixture.Db.ProductInitiations.Find(x => x.Id == "latest").AnyAsync());
     }
 
     [Fact]
-    public async Task IssuingTDoesNotRecycleDeletedNumbers()
+    public async Task IssuingTIgnoresConfirmedDeletedNumbersAndUsesTheRemainingBase()
     {
         await using var fixture = await Fixture.CreateAsync();
         await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, WorkflowClaimKey("product", "T", "T9.2.3"), "initiation:deleted-highest");
         await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
             new ProductInitiation { Id = "deleted-highest", ProductId = "product", TCode = "T9.2.3", IsDeleted = true },
+            new ProductInitiation { Id = "remaining", ProductId = "product", TCode = "T9.2.2", Status = "approved" },
             new ProductInitiation { Id = "new", ProductId = "product", CreatedBy = "me", ReviewPassed = true, Status = "decision_pending" },
         });
         Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation("new", new InitiationDecisionRequest {
             ReviewMeetingRequired = true, ExpectedMeetingAt = DateTime.UtcNow.AddDays(1),
         }));
-        Assert.Equal("T9.2.4", (await fixture.Db.ProductInitiations.Find(x => x.Id == "new").SingleAsync()).TCode);
+        Assert.Equal("T9.2.3", (await fixture.Db.ProductInitiations.Find(x => x.Id == "new").SingleAsync()).TCode);
     }
 
     [Theory]
@@ -1303,7 +1307,7 @@ public class ProductVersionClaimGuardTests
         Assert.Equal(new[] { "t", "v" }, (await fixture.Db.Requirements.Find(x => x.Id == "req").SingleAsync()).VersionIds);
         Assert.Equal(1, await fixture.Db.Products.CountDocumentsAsync(_ => true));
         Assert.Equal(1, await fixture.Db.VersionRegistrations.CountDocumentsAsync(_ => true));
-        Assert.Equal(1, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:"))));
+        Assert.Equal(kind == "internal" ? 0 : 1, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:"))));
         Assert.Null(await PrdAgent.Api.Services.ProductAgent.ProductVersionDebugClear.ClearAsync(fixture.Db, kind, preview.Token, "me"));
         Assert.Equal(1, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
     }
@@ -1371,7 +1375,7 @@ public class ProductVersionClaimGuardTests
     }
 
     [Fact]
-    public async Task LatestFormalDeletionPreservesTAndReservedNumberAndAllowsReclaimingSameSource()
+    public async Task LatestFormalDeletionPreservesTAndReclaimsTheCodeFromTheRemainingBase()
     {
         await using var fixture = await Fixture.CreateAsync();
         await fixture.Db.Users.InsertOneAsync(new User { UserId = "me", DisplayName = "申请人" });
@@ -1387,9 +1391,79 @@ public class ProductVersionClaimGuardTests
         var after = await fixture.Db.Database.GetCollection<BsonDocument>("product_initiations").Find(new BsonDocument("_id", "deletable-t")).SingleAsync();
         Assert.Equal(before.ToJson(), after.ToJson());
         var repeated = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request)).Value).Data);
-        Assert.NotEqual(issued.VCode, repeated.VCode);
+        Assert.Equal(issued.VCode, repeated.VCode);
         Assert.Equal("deletable-t", repeated.InitiationId);
-        Assert.True(await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).Find(new BsonDocument("targetId", "release:" + issued.Id)).AnyAsync());
+        Assert.False(await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).Find(new BsonDocument("targetId", "release:" + issued.Id)).AnyAsync());
+        Assert.True(await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).Find(new BsonDocument("targetId", "release:" + repeated.Id)).AnyAsync());
+    }
+
+    [Theory]
+    [InlineData("T", false)]
+    [InlineData("T", true)]
+    [InlineData("V", false)]
+    [InlineData("V", true)]
+    public async Task HistoricalConfirmedDeletionReleasesOnlyItsOwnNumberClaims(string prefix, bool physical)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var target = (prefix == "T" ? "initiation:" : "release:") + "removed";
+        if (physical) await ProductVersionClaimGuard.MarkSourceRemovalAsync(fixture.Db, target);
+        else if (prefix == "T") await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation { Id = "removed", ProductId = "product", IsDeleted = true });
+        else await fixture.Db.ProductReleases.InsertOneAsync(new ProductRelease { Id = "removed", ProductId = "product", IsDeleted = true });
+        Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, WorkflowClaimKey("product", prefix, prefix + "6.19.9"), target));
+        if (prefix == "T") Assert.True(await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database,
+            WorkflowClaimKey("product", prefix, "T9.0.0"), target + ":revision:T6.19.9:major"));
+        var nextTarget = (prefix == "T" ? "initiation:" : "release:") + "new-owner";
+        var code = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(fixture.Db, prefix, "minor", nextTarget, "product");
+        Assert.Equal(prefix + "6.19.6", code);
+        // 迟到的旧记录清理不应释放已由新请求取得的同号占用。
+        await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(fixture.Db, target);
+        var allocation = await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+            .Find(new BsonDocument("_id", WorkflowClaimKey("product", prefix, code))).SingleAsync();
+        Assert.Equal(nextTarget, allocation["targetId"].AsString);
+        Assert.Equal(prefix + "6.19.7", await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(fixture.Db, prefix, "minor", nextTarget + "-second", "product"));
+    }
+
+    [Theory]
+    [InlineData("T")]
+    [InlineData("V")]
+    public async Task ConcurrentClaimsAfterDeletionStillAllocateUniqueCodes(string prefix)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await SeedWorkflowNumberingAsync(fixture);
+        var targetPrefix = prefix == "T" ? "initiation:" : "release:";
+        await ProductVersionClaimGuard.MarkSourceRemovalAsync(fixture.Db, targetPrefix + "removed");
+        await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, WorkflowClaimKey("product", prefix, prefix + "99.0.0"), targetPrefix + "removed");
+        var codes = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => ProductVersionClaimGuard.ReserveWorkflowCodeAsync(
+            fixture.Db, prefix, "minor", targetPrefix + "parallel-" + i, "product")));
+        Assert.Equal(8, codes.Distinct().Count());
+        Assert.Contains(prefix + "6.19.6", codes);
+        Assert.DoesNotContain(codes, code => code.StartsWith(prefix + "99.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ReissuedTAfterDeletionCanStillClaimVFromTheNewRecord()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.Db.Users.InsertOneAsync(new User { UserId = "me", DisplayName = "申请人" });
+        await fixture.Db.ProductInitiations.InsertManyAsync(new[] {
+            new ProductInitiation { Id = "remaining", ProductId = "product", AppName = "测试应用", TCode = "T3.2.4", Status = "approved", CreatedBy = "me", IssuedAt = DateTime.UtcNow.AddMinutes(-1) },
+            new ProductInitiation { Id = "removed", ProductId = "product", AppName = "测试应用", TCode = "T3.2.5", Status = "approved", CreatedBy = "me" },
+        });
+        await ProductVersionClaimGuard.TryReserveAsync(fixture.Db.Database, WorkflowClaimKey("product", "T", "T3.2.5"), "initiation:removed");
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DeleteInitiation("removed"));
+        await fixture.Db.ProductInitiations.InsertOneAsync(new ProductInitiation {
+            Id = "replacement", ProductId = "product", AppName = "测试应用", PlanName = "替换方案", Status = "decision_pending", ReviewPassed = true, CreatedBy = "me",
+        });
+        Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation("replacement", new InitiationDecisionRequest {
+            ReviewMeetingRequired = true, ExpectedMeetingAt = DateTime.UtcNow.AddDays(1),
+        }));
+        Assert.Equal("T3.2.5", (await fixture.Db.ProductInitiations.Find(x => x.Id == "replacement").SingleAsync()).TCode);
+        var request = NumberingReleaseRequest("replacement"); request.FeatureManifest = new();
+        var issued = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request)).Value).Data);
+        Assert.Equal("replacement", issued.InitiationId);
+        Assert.Equal("T3.2.5", issued.TCode);
+        Assert.IsType<BadRequestObjectResult>(await fixture.Controller().CreateRelease("product", NumberingReleaseRequest("removed")));
     }
 
     [Fact]

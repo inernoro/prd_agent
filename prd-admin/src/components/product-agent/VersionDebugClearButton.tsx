@@ -53,11 +53,11 @@ function VersionDebugClearDialog({ kind, onClose, onChanged }: {
     title={`调试清空${code}记录`} tone="danger" maxWidth={560}
     content={<div className="space-y-3 text-sm text-token-secondary" style={{ minHeight: 0, maxHeight: '65vh', overflowY: 'auto', overscrollBehavior: 'contain' }}>
       <p>这是临时调试功能。仅清空产品管理的{code}记录，包含草稿、历史导入和已申领记录；不受当前产品、人员或状态筛选影响。</p>
-      <p>另一类型版本、产品、需求、功能、评审及权限不清空。旧独立版本登记与历史备份保留；编号不会回收或从头重置。</p>
+      <p>另一类型版本、产品、需求、功能、评审及权限不清空。旧独立版本登记与历史备份保留；后续按所属应用剩余有效记录发号，已删除记录不计入基准。</p>
       {loading && <p className="flex items-center gap-2"><MapSpinner size={14} />正在核对清理范围…</p>}
       {preview && <>
         <p>将清理：{preview.kindLabel} {preview.recordCount} 条。旧独立登记保留，可能仍显示在列表。</p>
-        <p>执行前保存独立备份；全局版本记录及对应申领关联会物理删除，正常查询不读取备份，编号不回收。</p>
+        <p>执行前保存独立备份；全局版本记录及对应申领关联会物理删除，正常查询和发号不读取已删除记录或备份，旧独立登记仍参与发号。</p>
         {!result && <label className="block"><span className="mb-2 block">输入“{preview.confirmPhrase}”以确认</span>
           <input aria-label="清理确认语" value={phrase} disabled={busy} onChange={(event) => setPhrase(event.target.value)}
             className="w-full rounded-md border border-token-subtle bg-token-nested px-3 py-2 text-token-primary" autoComplete="off" /></label>}

@@ -40,7 +40,7 @@ describe('版本页临时调试清空', () => {
     await click('调试清空T记录');
     expect(api.previewVersionDebugClear).toHaveBeenCalledWith('internal');
     expect(host.textContent).toContain('不受当前产品、人员或状态筛选影响');
-    expect(host.textContent).toContain('编号不会回收或从头重置');
+    expect(host.textContent).toContain('后续按所属应用剩余有效记录发号');
     expect(api.clearVersionDebugRecords).not.toHaveBeenCalled();
     await click('取消');
     expect(api.clearVersionDebugRecords).not.toHaveBeenCalled();

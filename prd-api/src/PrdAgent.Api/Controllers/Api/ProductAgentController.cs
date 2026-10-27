@@ -1151,7 +1151,7 @@ public partial class ProductAgentController : ControllerBase
         if (await ProductInitiationDeletion.HasDownstreamAsync(_db, item, applicationName))
             return BadRequest(ApiResponse<object>.Fail("INITIATION_HAS_DOWNSTREAM", "该立项已有正式版本或其他下游关联，不能删除。请保留记录并修改资料。"));
 
-        // 与正式申领使用相同永久键：并发请求只能有一方成功，不在删除后重新开放手工 T 申领。
+        // 与正式申领使用相同来源键，防止删除与已有T申领并发成功；确认删除后释放给后续的新T记录。
         var key = ProductVersionClaimPolicy.ReleaseKey(applicationName, item.TCode);
         var target = "deleted-initiation:" + id;
         if (!await ProductVersionClaimGuard.TryReserveAsync(_db.Database, key, target))
@@ -1539,6 +1539,14 @@ public partial class ProductAgentController : ControllerBase
         if (!request.IsTemporaryOptimization && !await ProductVersionClaimGuard.TryReserveSourceAsync(_db,
                 ProductVersionClaimPolicy.ReleaseKey(claimApplicationName, item.TCode!), "release:" + item.Id))
             return BadRequest(ApiResponse<object>.Fail("DUPLICATE_RELEASE", "该 T 号已被申领或正在申领 V 号，请刷新后查看现有记录，不要重复提交"));
+        // 占用来源后复核原T，避免删除完成后迟到的旧请求继续申领；后续同号新T仍以新记录ID为准。
+        if (!request.IsTemporaryOptimization && !await _db.ProductInitiations.Find(x => x.Id == initiation!.Id
+                && !x.IsDeleted && x.Status == "approved" && x.TCode == item.TCode).AnyAsync())
+        {
+            await ProductVersionClaimGuard.MarkSourceRemovalAsync(_db, "release:" + item.Id);
+            await ProductVersionClaimGuard.ReleaseDeletedSourceClaimsAsync(_db, "release:" + item.Id);
+            return Conflict(ApiResponse<object>.Fail("INVALID_STATE", "所选T记录已删除或变化，请刷新后选择当前有效方案再申领"));
+        }
         item.VCode = await ProductVersionClaimGuard.ReserveWorkflowCodeAsync(_db, "V", versionType, "release:" + item.Id,
             string.IsNullOrWhiteSpace(initiation?.LinkedProductId) ? productId : initiation.LinkedProductId);
         item.ClaimNotification = await ProductClaimNotificationQueue.CreateAsync(_db, item, item.OwnerId, true, CanNotifyClaims());
