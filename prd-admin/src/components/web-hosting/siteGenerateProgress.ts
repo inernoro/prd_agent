@@ -16,6 +16,26 @@ export function resolveGeneratedSiteId(run: DesignArtifactRunSummary): string | 
   return run.artifactSiteId || run.producedArtifactSiteId || null;
 }
 
+/** 完成态只认同一任务持久化的起止时间，不把重开窗口的零秒或当前时间当作实际耗时。 */
+export function completedRunDurationSeconds(
+  run: Pick<DesignArtifactRunSummary, 'createdAt' | 'completedAt'>,
+): number | null {
+  const start = Date.parse(run.createdAt);
+  const end = run.completedAt ? Date.parse(run.completedAt) : Number.NaN;
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start
+    ? (end - start) / 1000
+    : null;
+}
+
+export function formatCompletedRunDuration(seconds: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '未知';
+  const rounded = Math.round(seconds);
+  const minutes = Math.floor(rounded / 60);
+  return minutes > 0
+    ? `${minutes} 分 ${String(rounded % 60).padStart(2, '0')} 秒`
+    : `${rounded} 秒`;
+}
+
 export function resolvePersistedRunPreview(
   run: Pick<DesignArtifactRunSummary, 'previewHtml' | 'previewRevision'>,
 ): { html: string; revision: number } | null {

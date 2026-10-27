@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ExternalLink, FileDown, ImagePlus, Library, RefreshCw, RotateCcw, Share2, X } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
@@ -31,6 +31,7 @@ import {
   useSiteEditSession,
 } from './useSiteEditSession';
 import type { GenerationIntro } from './NewSiteStage';
+import { RevisionRunRecord } from './RevisionRunRecord';
 import { missingRuntimeBlocker } from './outputForm';
 import {
   AssistantBubble,
@@ -135,6 +136,11 @@ export default function SiteEditStage({
   const pendingDraft = [...ordered].reverse().find((item) => item.status === 'draft' || item.status === 'publishing') ?? null;
   const view: 'live' | 'draft' = pendingDraft && previewedRevision?.id === pendingDraft.id ? 'draft' : 'live';
   const shareLink = pickQuickShareLink(shareLinks, site.id);
+  const showRevision = useCallback((revisionId: string) => {
+    // 默认打开和“看这版”必须走同一可见预览路径，不能在尚未切到预览时启动首个 iframe 导航。
+    onPaneChange('preview');
+    void openRevision(revisionId);
+  }, [onPaneChange, openRevision]);
 
   // 进来先让右边有东西：有待确认的草稿就看草稿，否则看线上版。
   useEffect(() => {
@@ -142,8 +148,8 @@ export default function SiteEditStage({
     const target = pendingDraft ?? liveRevision;
     if (!target) return;
     openedInitialRef.current = true;
-    void openRevision(target.id);
-  }, [generating, liveRevision, loadingHistory, openRevision, pendingDraft]);
+    showRevision(target.id);
+  }, [generating, liveRevision, loadingHistory, pendingDraft, showRevision]);
 
   // 一轮修改做完（出了新草稿）就清空输入框：那一轮已经作为对话显示在上面了。
   const lastDraftRef = useRef<string | null>(null);
@@ -247,10 +253,11 @@ export default function SiteEditStage({
                   : `${outcome.text}。${revision.source === 'ai-edit' ? revisionChangeSummary(revision, null) : ''}`}
               </p>
               <p className="mt-0.5 text-[11px] text-token-muted">{formatRevisionTime(revision.publishedAt || revision.createdAt)}</p>
+              {isFirst && <RevisionRunRecord siteId={site.id} sourceRunId={revision.sourceRunId} />}
             </div>
             <button
               type="button"
-              onClick={() => { void openRevision(revision.id); onPaneChange('preview'); }}
+              onClick={() => showRevision(revision.id)}
               disabled={previewing}
               className="shrink-0 rounded-md px-2 py-1 text-[11px] text-token-secondary hover-bg-soft disabled:opacity-50"
             >
