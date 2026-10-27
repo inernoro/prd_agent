@@ -46,6 +46,10 @@ public static class ProductVersionClaimGuard
             prefix == "T" ? VersionRegistrationKind.Internal : VersionRegistrationKind.Formal);
         var legacy = uniqueName ? (await db.VersionRegistrations.Find(legacyFilter).ToListAsync())
             .Where(x => VersionRegistryCatalog.NormalizeName(x.ApplicationName) == normalizedName).Select(x => x.Code).ToList() : new List<string>();
+        if (prefix == "T" && uniqueName)
+            legacy.AddRange((await db.VersionRegistrations.Find(x => x.Kind == VersionRegistrationKind.Formal).ToListAsync())
+                .Where(x => VersionRegistryCatalog.NormalizeName(x.ApplicationName) == normalizedName && !string.IsNullOrWhiteSpace(x.TCode))
+                .Select(x => x.TCode!));
         for (var attempt = 0; attempt < 64; attempt++)
         {
             // 仍有效的记录和在途占号参与发号；确认删除的残留占号不能继续抬高基准。
@@ -54,11 +58,13 @@ public static class ProductVersionClaimGuard
             var initiations = candidates.Where(x => (string.IsNullOrWhiteSpace(x.LinkedProductId) ? x.ProductId : x.LinkedProductId) == applicationProductId).ToList();
             var initiationIds = initiations.Select(x => x.Id).ToList();
             var foreignInitiationIds = candidates.Where(x => !initiationIds.Contains(x.Id)).Select(x => x.Id).ToList();
-            var releases = prefix == "V" ? await db.ProductReleases.Find(x => !x.IsDeleted && (x.ProductId == applicationProductId
+            var releases = await db.ProductReleases.Find(x => !x.IsDeleted && (x.ProductId == applicationProductId
                 && (x.InitiationId == null || !foreignInitiationIds.Contains(x.InitiationId))
-                || (x.InitiationId != null && initiationIds.Contains(x.InitiationId)))).ToListAsync() : new List<ProductRelease>();
+                || (x.InitiationId != null && initiationIds.Contains(x.InitiationId)))).ToListAsync();
             var existing = prefix == "T"
-                ? initiations.Where(x => x.TCode != null).Select(x => x.TCode!).ToList()
+                // 调试清空T但保留V时，仍有效的V引用的T号也不能重发给另一份方案。
+                ? initiations.Where(x => x.TCode != null).Select(x => x.TCode!)
+                    .Concat(releases.Where(x => !string.IsNullOrWhiteSpace(x.TCode)).Select(x => x.TCode!)).ToList()
                 : releases.Select(x => x.VCode).ToList();
             var ownTargets = prefix == "T" ? initiations.Select(x => "initiation:" + x.Id).ToList()
                 : releases.Select(x => "release:" + x.Id).ToList();

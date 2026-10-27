@@ -60,7 +60,7 @@ public class ProductVersionSourceLifecycleTests
         Assert.False(await ProductVersionClaimGuard.TryReserveSourceAsync(fixture.Db, "review:source", "initiation:other"));
     }
     [Fact]
-    public async Task DeletedIssuedInitiationReleasesReviewAndCanBeClaimedAgainWithoutRecyclingCode()
+    public async Task DeletedIssuedInitiationReleasesReviewAndReclaimsCodeFromRemainingRecords()
     {
         await using var fixture = await Fixture.CreateAsync();
         var first = await fixture.CreateIssuedAsync();
@@ -68,10 +68,10 @@ public class ProductVersionSourceLifecycleTests
         Assert.Null(await fixture.ClaimAsync(ProductVersionClaimPolicy.ReviewKey("source")));
         var second = await fixture.CreateIssuedAsync();
         Assert.NotEqual(first.Id, second.Id);
-        Assert.Equal(ProductEntityNumbering.NextWorkflowCode("T", "minor", new[] { first.TCode! }), second.TCode);
+        Assert.Equal(first.TCode, second.TCode);
         Assert.Null(await fixture.Db.ProductInitiations.Find(x => x.Id == first.Id).FirstOrDefaultAsync());
         Assert.Equal("initiation:" + second.Id, (await fixture.ClaimAsync("review:source"))!["targetId"].AsString);
-        Assert.Equal(2, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
+        Assert.Equal(1, await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName)
             .CountDocumentsAsync(Builders<BsonDocument>.Filter.Regex("_id", new BsonRegularExpression("^workflow-code:T:"))));
     }
 
@@ -92,7 +92,7 @@ public class ProductVersionSourceLifecycleTests
         Assert.Equal(1, await fixture.Db.ProductInitiations.CountDocumentsAsync(x => !x.IsDeleted));
         var issued = Data<ProductInitiation>(Assert.IsType<OkObjectResult>(await fixture.Controller().DecideInitiation(created.Id,
             new InitiationDecisionRequest { ReviewMeetingRequired = false })));
-        Assert.Equal("T8.3.3", issued.TCode);
+        Assert.Equal("T0.0.1", issued.TCode);
         Assert.Equal("initiation:" + created.Id, (await fixture.ClaimAsync("review:source"))!["targetId"].AsString);
     }
 
@@ -112,7 +112,7 @@ public class ProductVersionSourceLifecycleTests
     }
 
     [Fact]
-    public async Task InternalDebugClearReleasesReviewButKeepsFormalAndNumberHistory()
+    public async Task InternalDebugClearReleasesReviewButProtectsTCodeReferencedByValidFormalRecord()
     {
         await using var fixture = await Fixture.CreateAsync();
         var first = await fixture.CreateIssuedAsync();
@@ -125,12 +125,13 @@ public class ProductVersionSourceLifecycleTests
         Assert.False((await fixture.Db.ProductReleases.Find(x => x.Id == "formal").SingleAsync()).IsDeleted);
         var second = await fixture.CreateIssuedAsync();
         Assert.NotEqual(first.TCode, second.TCode);
+        Assert.Equal(ProductEntityNumbering.NextWorkflowCode("T", "minor", new[] { first.TCode! }), second.TCode);
         Assert.Equal(1, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
         Assert.Equal(1, await fixture.Db.ReviewSubmissions.CountDocumentsAsync(x => x.Id == "source"));
     }
 
     [Fact]
-    public async Task FormalDebugClearReleasesTSourceAndHistoryCheckWithoutRecyclingV()
+    public async Task FormalDebugClearReleasesTSourceAndUsesRemainingValidVBase()
     {
         await using var fixture = await Fixture.CreateAsync();
         var initiation = await fixture.CreateIssuedAsync();
@@ -143,8 +144,7 @@ public class ProductVersionSourceLifecycleTests
         Assert.NotNull(await fixture.ClaimAsync("review:source"));
         Assert.False((await ProductVersionHistoryLinks.CheckAsync(fixture.Db, "product", "测试应用", initiation.TCode!, initiation.PlanName)).Blocked);
         var second = Data<ProductRelease>(Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", Fixture.ReleaseRequest(initiation.Id))));
-        Assert.NotEqual(first.VCode, second.VCode);
-        Assert.Equal(ProductEntityNumbering.NextWorkflowCode("V", "minor", new[] { first.VCode }), second.VCode);
+        Assert.Equal(first.VCode, second.VCode);
         Assert.Null(await fixture.Db.ProductReleases.Find(x => x.Id == first.Id).FirstOrDefaultAsync());
     }
 
@@ -166,7 +166,8 @@ public class ProductVersionSourceLifecycleTests
         Assert.NotNull(cleared);
         Assert.Equal(0, cleared.ClearedCount);
         Assert.Null(await fixture.ClaimAsync(key));
-        Assert.NotNull(await fixture.ClaimAsync("workflow-code:T:T1.0.0"));
+        if (internalKind) Assert.Null(await fixture.ClaimAsync("workflow-code:T:T1.0.0"));
+        else Assert.NotNull(await fixture.ClaimAsync("workflow-code:T:T1.0.0"));
         Assert.NotNull(await fixture.ClaimAsync(internalKind ? "review:pending" : "release:pending"));
         Assert.Equal(0, await fixture.Db.ProductVersionWorkflowSnapshots.CountDocumentsAsync(_ => true));
     }
