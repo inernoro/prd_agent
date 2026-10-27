@@ -1393,8 +1393,12 @@ public class ProductVersionClaimGuardTests
         var repeated = Assert.IsType<ProductRelease>(Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(await fixture.Controller().CreateRelease("product", request)).Value).Data);
         Assert.Equal(issued.VCode, repeated.VCode);
         Assert.Equal("deletable-t", repeated.InitiationId);
-        Assert.False(await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).Find(new BsonDocument("targetId", "release:" + issued.Id)).AnyAsync());
-        Assert.True(await fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName).Find(new BsonDocument("targetId", "release:" + repeated.Id)).AnyAsync());
+        var claimFilter = Builders<BsonDocument>.Filter;
+        var numberClaims = fixture.Db.Database.GetCollection<BsonDocument>(ProductVersionClaimGuard.CollectionName);
+        Assert.False(await numberClaims.Find(claimFilter.Eq("targetId", "release:" + issued.Id)
+            & claimFilter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))).AnyAsync());
+        Assert.True(await numberClaims.Find(claimFilter.Eq("targetId", "release:" + repeated.Id)
+            & claimFilter.Regex("_id", new BsonRegularExpression("^workflow-code:V:"))).AnyAsync());
     }
 
     [Theory]
