@@ -281,8 +281,9 @@ public sealed class HtmlPptContinuationTests
         var proposal = f.Current.Html.Replace("现有演示稿", "现有演示稿：交接有据可查", StringComparison.Ordinal);
         var manualHash = HtmlPptContinuationService.RequestFingerprint(edit.Id, manualBase.Context,
             "保存手动编辑并检查", null, null, null, proposal);
+        var manualSaveKey=Guid.NewGuid().ToString("N");
         var manualAdmission = await service.AdmitModificationAsync(edit.Id,"owner",manualBase.Context,
-            Guid.NewGuid().ToString("N"),manualHash,CancellationToken.None,isManualSave:true);
+            manualSaveKey,manualHash,CancellationToken.None,isManualSave:true);
         Assert.Equal(first.ScopeId,manualAdmission.ScopeId);
         Assert.Equal(first.CompletionId,manualAdmission.CompletionId);
         Assert.Equal(3,await scopes.CountDocumentsAsync(FilterDefinition<GatewayRuntimeBudgetScopeRecord>.Empty));
@@ -311,6 +312,18 @@ public sealed class HtmlPptContinuationTests
         Assert.Equal(1,completedBudget.PptCompletion!.ManualSave.UsedPhysicalCalls);
         Assert.Equal(2,completedBudget.Reservations.Count);
         Assert.All(completedBudget.Reservations,x=>Assert.Equal("settled-unknown",x.Status));
+        // 客户端接纳后失去SSE，再次手动保存须重放同一身份，不认领第二个ManualSave或新增预占。
+        var budgetBeforeReplay=completedBudget.ToJson();
+        var grantCountBeforeReplay=await gw.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(FilterDefinition<GatewayRuntimeGrantRecord>.Empty);
+        var manualReplay=await service.AdmitModificationAsync(edit.Id,"owner",manualBase.Context,
+            manualSaveKey,manualHash,CancellationToken.None,isManualSave:true);
+        Assert.Equal(manualAdmission.RunId,manualReplay.RunId);
+        Assert.Equal(manualAdmission.ScopeId,manualReplay.ScopeId);
+        Assert.Equal(manualAdmission.CompletionId,manualReplay.CompletionId);
+        Assert.Equal(budgetBeforeReplay,(await scopes.Find(x=>x.Id==first.ScopeId).SingleAsync()).ToJson());
+        Assert.Equal(grantCountBeforeReplay,await gw.Database.GetCollection<GatewayRuntimeGrantRecord>("llmgw_runtime_grants")
+            .CountDocumentsAsync(FilterDefinition<GatewayRuntimeGrantRecord>.Empty));
         Assert.Equal(oldBytes,(await scopes.Find(x=>x.Id==template.Id).SingleAsync()).ToJson());
 
         // M 完成后走真实协调器与版本发布服务；仅对象存储替换使用桩，仍核线上 ContentVersion CAS。

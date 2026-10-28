@@ -5,6 +5,8 @@ import {
   streamMdToPptConvert,
   streamMdToPptOutline,
   streamMdToPptPatch,
+  retainMdToPptManualSaveIntent,
+  type MdToPptManualSaveIntent,
 } from '../mdToPptService';
 
 const { authState } = vi.hoisted(() => ({
@@ -119,5 +121,67 @@ describe('md-to-ppt native request URLs', () => {
     await vi.waitFor(() => expect(error).toHaveBeenCalledWith('当前恢复关系无法验证，原稿保留'));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1]?.method).not.toBe('POST');
+  });
+
+  it('recovers the admitted manual save after a lost stream when the user clicks save again', async () => {
+    const context = {
+      sourceRunId: 'parent-draft', sourcePackageHash: 'package', baseSiteId: 'site', baseRevisionId: 'draft-d3',
+      basePublishedRevisionId: 'restored', baseContentVersion: '2026-10-28T14:00:00Z',
+      baseHtmlHash: 'entry', baseFilesFingerprint: 'files',
+    };
+    const request = {
+      parentRunId: 'parent-draft', currentHtml: '<html><body>原稿</body></html>',
+      manualEditHtml: '<html><body>交接有据可查</body></html>', slideRequest: '保存手动编辑', theme: 'editorial',
+    };
+    const posts: Array<Record<string, unknown>> = [];
+    let acceptedKey: unknown;
+    let admissions = 0;
+    let reads = 0;
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method !== 'POST') {
+        reads++;
+        return new Response(JSON.stringify({ id: request.parentRunId, editContext: context }), { status: 200 });
+      }
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      posts.push(body);
+      if (acceptedKey == null) {
+        acceptedKey = body.idempotencyKey;
+        admissions++;
+        return sseResponse('run', { runId: 'accepted-manual-run' }); // 接纳后断流，没有 done/error。
+      }
+      if (body.idempotencyKey !== acceptedKey) {
+        return new Response(JSON.stringify({ code: 'ppt_manual_contract_busy', error: '人工保存已由另一操作接管' }), { status: 409 });
+      }
+      return new Response('event: run\ndata: {"runId":"accepted-manual-run"}\n\nevent: done\ndata: {"html":"<html>已保存</html>","revisionId":"manual-draft"}\n\n', {
+        status: 200, headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const errors = vi.fn();
+    const done = vi.fn();
+    const runs = vi.fn();
+    let pending: MdToPptManualSaveIntent | null = null;
+    const userClicksSave = () => {
+      pending = retainMdToPptManualSaveIntent(pending, request);
+      streamMdToPptPatch({ ...request, manualSaveIntent: pending, onError: errors, onDone: done, onRun: runs });
+      return pending;
+    };
+    const first = userClicksSave();
+    await vi.waitFor(() => expect(errors).toHaveBeenCalledWith('连接意外断开，请重试'));
+    expect(first.settled).toBe(false);
+    expect(posts).toHaveLength(1); // 没有自动重试。
+    const retry = userClicksSave();
+    await vi.waitFor(() => expect(errors.mock.calls.length + done.mock.calls.length).toBe(2));
+    expect(posts).toHaveLength(2);
+    expect(posts[1].idempotencyKey === posts[0].idempotencyKey).toBe(true);
+    expect(posts[1]).toEqual(posts[0]);
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(admissions).toBe(1);
+    expect(reads).toBe(1);
+    expect(runs.mock.calls).toEqual([['accepted-manual-run'], ['accepted-manual-run']]);
+    expect(retry).toBe(first);
+    expect(retry.settled).toBe(true);
+    expect(retainMdToPptManualSaveIntent(retry, request).idempotencyKey === retry.idempotencyKey).toBe(false);
+    expect(posts).toHaveLength(2); // 确定结果后仅释放本地身份，没有第三次发送。
   });
 });

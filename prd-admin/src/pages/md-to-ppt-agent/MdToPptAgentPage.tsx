@@ -31,11 +31,13 @@ import {
   type MdToPptDiagEvent,
   type MdToPptRunDetail,
   type MdToPptRunSummary,
+  type MdToPptManualSaveIntent,
   type MdToPptTemplateItem,
   type OutlineSlide,
   streamMdToPptConvert,
   streamMdToPptPatch,
   createMdToPptModificationKey,
+  retainMdToPptManualSaveIntent,
   publishMdToPpt,
   getMdToPptRun,
   getRecentMdToPptRuns,
@@ -2866,6 +2868,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
   //     styleOverride 用于「换风格/换模板 = AI 按新参照重绘」（不传则沿用当前选择；
   //     templateId 传 null 表示明确切回官方主题）。
   const patchSubmissionRef = useRef(false);
+  const manualSaveIntentRef = useRef<MdToPptManualSaveIntent | null>(null);
 
   const startPatch = useCallback(
     (
@@ -2885,7 +2888,16 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         return;
       }
 
-      const modificationKey = createMdToPptModificationKey();
+      const effectiveSlideIndex = slideIndex ?? resolveNaturalPatchSlideIndex(instruction);
+      const effTemplateId = styleOverride?.templateId !== undefined ? styleOverride.templateId : templateId;
+      const request = {
+        parentRunId: sourceRunId, currentHtml: base, manualEditHtml, slideRequest: instruction,
+        slideIndex: effectiveSlideIndex ?? undefined, theme: styleOverride?.theme ?? theme, templateId: effTemplateId ?? undefined,
+      };
+      const manualIntent = manualEditHtml ? retainMdToPptManualSaveIntent(manualSaveIntentRef.current,
+        { ...request, manualEditHtml }) : null;
+      if (manualIntent) manualSaveIntentRef.current = manualIntent;
+      const modificationKey = manualIntent?.idempotencyKey ?? createMdToPptModificationKey();
       patchSubmissionRef.current = true;
       setIsProcessing(true);
       patchParentRef.current = { runId: sourceRunId, siteUrl: sourceSiteUrl };
@@ -2895,7 +2907,6 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       setRuntimeModelCallCount(0);
       hasRuntimePreviewRef.current = false;
       resetStreamPreview();
-      const effectiveSlideIndex = slideIndex ?? resolveNaturalPatchSlideIndex(instruction);
       const isSinglePage = effectiveSlideIndex != null;
       // 单页重绘：保持整份 deck 可见（只遮目标页），不铺骨架；整份精修才按页数占位骨架
       setPatchingSlide(isSinglePage ? effectiveSlideIndex : null);
@@ -2907,16 +2918,10 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         content: '正在修改 PPT...',
         phase: 'patching',
       });
-      const effTemplateId = styleOverride?.templateId !== undefined ? styleOverride.templateId : templateId;
       const cleanup = streamMdToPptPatch({
+        ...request,
+        manualSaveIntent: manualIntent ?? undefined,
         idempotencyKey: modificationKey,
-        parentRunId: sourceRunId,
-        currentHtml: base,
-        manualEditHtml,
-        slideRequest: instruction,
-        slideIndex: effectiveSlideIndex ?? undefined,
-        theme: styleOverride?.theme ?? theme,
-        templateId: effTemplateId ?? undefined,
         onRun: (runId) => {
           if (runId) setActiveRunId(runId);
         },
@@ -2944,6 +2949,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           setArtifactSiteUrl('');
         },
         onDone: (result) => {
+          if (manualIntent && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
           patchSubmissionRef.current = false;
           const html = result.html;
           if (!isPreviewableDeck(html)) {
@@ -2982,6 +2988,7 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           );
         },
         onError: (err) => {
+          if (manualIntent?.settled && manualSaveIntentRef.current === manualIntent) manualSaveIntentRef.current = null;
           patchSubmissionRef.current = false;
           setMessages((prev) =>
             prev.map((m) =>

@@ -328,6 +328,26 @@ export interface MdToPptPatchRequest {
   theme?: string;
 }
 
+export interface MdToPptManualSaveIntent {
+  requestIdentity: string;
+  idempotencyKey: string;
+  expectedEditContext?: MdToPptEditContext;
+  settled: boolean;
+}
+
+export function retainMdToPptManualSaveIntent(
+  previous: MdToPptManualSaveIntent | null,
+  request: MdToPptPatchRequest & { manualEditHtml: string; templateId?: string },
+): MdToPptManualSaveIntent {
+  const requestIdentity = JSON.stringify({
+    parentRunId: request.parentRunId, currentHtml: request.currentHtml, manualEditHtml: request.manualEditHtml,
+    slideRequest: request.slideRequest, slideIndex: request.slideIndex, theme: request.theme, templateId: request.templateId,
+  });
+  // 断流不等于任务失败；相同手动提案的下一次显式保存只取回原操作。
+  if (previous && !previous.settled && previous.requestIdentity === requestIdentity) return previous;
+  return { requestIdentity, idempotencyKey: createMdToPptModificationKey(), settled: false };
+}
+
 export interface MdToPptPublishRequest {
   htmlContent: string;
   title?: string;
@@ -387,7 +407,7 @@ async function readSseStream(
     onFrame?: (data: { head: string; suffix?: string; total: number; anchored?: boolean }) => void;
     onPage?: (data: { index: number; total: number; html: string; done: number }) => void;
     onDone?: (data: Record<string, unknown>) => void;
-    onError?: (message: string) => void;
+    onError?: (message: string, terminal?: boolean) => void;
   }
 ): Promise<void> {
   const reader = response.body?.getReader();
@@ -457,7 +477,7 @@ async function readSseStream(
             handlers.onDone?.(data);
             return;
           } else if (currentEvent === 'error') {
-            handlers.onError?.((data.message as string) ?? '生成失败');
+            handlers.onError?.((data.message as string) ?? '生成失败', true);
             return;
           }
         } catch (e) {
@@ -625,6 +645,7 @@ export function streamMdToPptConvert(options: MdToPptConvertSseOptions): () => v
 // ============ Patch SSE ============
 
 export interface MdToPptPatchSseOptions {
+  manualSaveIntent?: MdToPptManualSaveIntent;
   idempotencyKey?: string;
   expectedEditContext?: MdToPptEditContext;
   parentRunId: string;
@@ -659,14 +680,16 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
   (async () => {
     try {
       // 只读取当前身份；不会替换用户看到的正文。若基稿已变，服务端按正文哈希/版本围栏拒绝。
-      const source = options.expectedEditContext ? null : await getMdToPptRun(options.parentRunId);
+      const frozenContext = options.manualSaveIntent?.expectedEditContext ?? options.expectedEditContext;
+      const source = frozenContext ? null : await getMdToPptRun(options.parentRunId);
       if (abortController.signal.aborted) return;
-      const expectedEditContext = options.expectedEditContext ?? source?.editContext;
+      const expectedEditContext = frozenContext ?? source?.editContext;
       if (!expectedEditContext) {
         options.onError?.(source?.editContextError || '当前演示稿缺少可继续修改的版本身份，请重新载入当前版本。');
         return;
       }
-      const idempotencyKey = options.idempotencyKey ?? createMdToPptModificationKey();
+      if (options.manualSaveIntent) options.manualSaveIntent.expectedEditContext = expectedEditContext;
+      const idempotencyKey = options.manualSaveIntent?.idempotencyKey ?? options.idempotencyKey ?? createMdToPptModificationKey();
       const response = await fetch(resolveApiUrl('/api/md-to-ppt/patch'), {
         method: 'POST',
         headers: buildSseHeaders(),
@@ -703,6 +726,7 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
         onPreview: options.onPreview,
         onDone: (data) => {
           resolved = true;
+          if (options.manualSaveIntent) options.manualSaveIntent.settled = true;
           options.onDone?.({
             html: (data.html as string) ?? '',
             siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : undefined,
@@ -710,8 +734,9 @@ export function streamMdToPptPatch(options: MdToPptPatchSseOptions): () => void 
             revisionId: typeof data.revisionId === 'string' ? data.revisionId : undefined,
           });
         },
-        onError: (msg) => {
+        onError: (msg, terminal) => {
           resolved = true;
+          if (terminal && options.manualSaveIntent) options.manualSaveIntent.settled = true;
           options.onError?.(msg);
         },
       });
