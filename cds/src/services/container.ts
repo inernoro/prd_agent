@@ -1946,7 +1946,8 @@ export class ContainerService {
     });
 
     const resolvedEnv = this.resolveProfileRuntimeEnv(
-      runCommitSha ? { ...entry, pinnedCommit: undefined, githubCommitSha: runCommitSha } : entry,
+      // 已选定不可变产物/源码的实际提交优先于分支缓存的另一次 CI 目标。
+      runCommitSha ? { ...entry, pinnedCommit: undefined, ciTargetSha: undefined, githubCommitSha: runCommitSha } : entry,
       profile,
       customEnv,
     );
