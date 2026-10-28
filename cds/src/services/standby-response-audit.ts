@@ -75,7 +75,9 @@ export function createStandbyResponseAudit(sink: ServerEventLogSink | null | und
     async record(facts: StandbyResponseFacts) {
       if (!sink?.recordImmediate || !sink.findRecent) throw new Error('备用站持久响应审计不可用');
       const requestId = `${operationId}:${++attempt}`;
-      const url = new URL(facts.url); url.username = ''; url.password = ''; url.search = ''; url.hash = '';
+      let target = '[invalid peer URL omitted]';
+      try { const url = new URL(facts.url); url.username = ''; url.password = ''; url.search = ''; url.hash = ''; target = url.toString(); }
+      catch { /* A malformed request still needs a durable no-response record. */ }
       const text = facts.text ?? '';
       const limits = { truncated: false };
       let snapshot: string;
@@ -99,12 +101,14 @@ export function createStandbyResponseAudit(sink: ServerEventLogSink | null | und
       else snapshot = text ? '[unstructured response omitted; status, content type, bytes and hash retained]' : '';
       const bytes = Buffer.from(snapshot);
       const truncated = limits.truncated || bytes.length > SNAPSHOT_BYTES || Buffer.byteLength(text) > SNAPSHOT_BYTES;
+      const upstreamRequestId = facts.upstreamRequestId ? safeText(facts.upstreamRequestId, facts.secrets) : '';
+      const mediaType = facts.contentType?.split(';')[0].trim() || '';
       const details = {
-        ...scope, attempt, method: facts.method, target: url.toString(), peerId: facts.peerId,
+        ...scope, attempt, method: facts.method, target, peerId: facts.peerId,
         startedAt: facts.startedAt, endedAt: new Date().toISOString(), durationMs: facts.durationMs,
         timeoutMs: facts.timeoutMs, snapshotLimitBytes: SNAPSHOT_BYTES,
-        responseReceived: facts.responseReceived, httpStatus: facts.httpStatus, contentType: facts.contentType,
-        upstreamRequestId: facts.upstreamRequestId && /^[a-z0-9_.:-]{1,128}$/i.test(facts.upstreamRequestId) ? facts.upstreamRequestId : null,
+        responseReceived: facts.responseReceived, httpStatus: facts.httpStatus, contentType: /^[a-z0-9.+-]+\/[a-z0-9.+-]+$/i.test(mediaType) ? mediaType : null,
+        upstreamRequestId: /^[a-z0-9_.:-]{1,128}$/i.test(upstreamRequestId) ? upstreamRequestId : null,
         originalBytes: facts.text === undefined ? null : Buffer.byteLength(text),
         snapshot: bytes.subarray(0, SNAPSHOT_BYTES).toString('utf8').replace(/\uFFFD$/, ''), truncated,
         omissionReason: facts.parseState === 'body-read-failed' ? 'response body interrupted before complete read; partial body not retained'

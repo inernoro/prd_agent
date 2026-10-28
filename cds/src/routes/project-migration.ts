@@ -138,7 +138,7 @@ async function remoteFetch(
     });
     response = resp; parseState = 'body-read-failed';
     text = await resp.text();
-    if (resp.headers.get('content-type')?.includes('text/event-stream')) {
+    if (resp.headers.get('content-type')?.toLowerCase().includes('text/event-stream')) {
       parseState = 'sse'; localDecision = resp.ok && readDeploymentSseOutcome(text).ok ? 'success' : 'upstream-failure';
     } else {
       try { json = text ? JSON.parse(text) : null; parseState = text ? 'json' : 'empty'; }
@@ -281,13 +281,16 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
         };
     const stores = stateService.getInfraServicesForProject(projectId).filter(service =>
       /mongo|mysql|mariadb|postgres|redis|sqlserver/i.test(service.dockerImage) || !!service.volumes?.length);
+    const projectBranches = stateService.getAllBranches().filter(branch => (branch.projectId || 'default') === projectId);
+    const declarations = [...stateService.getBuildProfilesForProject(projectId),
+      ...projectBranches.flatMap(branch => [...(branch.extraProfiles || []), ...Object.values(branch.profileOverrides || {})])];
     const declaredEnv = { ...stateService.getCustomEnv(projectId),
-      ...Object.assign({}, ...stateService.getBuildProfilesForProject(projectId).map(profile => profile.env || {})) };
+      ...Object.assign({}, ...declarations.map(profile => profile.env || {}), ...projectBranches.map(branch => stateService.getCustomEnvScope?.(branch.id) || {})) };
     const externalDataDeclared = Object.entries(declaredEnv).some(([name, value]) =>
-      /mongo|mysql|mariadb|postgres|redis|sqlserver|database.*(?:url|uri|connection)|connection.*string/i.test(name) && typeof value === 'string' && !!value.trim());
+      /mongo|mysql|mariadb|postgres|redis|sqlserver|database.*(?:url|uri|connection)|connection.*string/i.test(name) && typeof value === 'string' && !!value.trim())
+      || declarations.some(profile => 'cacheMounts' in profile && profile.cacheMounts?.some(mount => mount.storage?.purpose === 'persistent'));
     const baseline = Math.max(0, ...[stateService.getProject(projectId)?.createdAt, stateService.getProject(projectId)?.standbyMirror?.updatedAt,
-      ...stateService.getAllBranches().filter(branch => (branch.projectId || 'default') === projectId)
-        .flatMap(branch => [branch.createdAt, branch.lastPushAt, branch.lastDeployDispatchAt])]
+      ...projectBranches.flatMap(branch => [branch.createdAt, branch.lastPushAt, branch.lastDeployDispatchAt])]
       .map(value => value ? Date.parse(value) : 0).filter(Number.isFinite));
     // 无持久数据时不虚构迁移任务；有数据只认当前目标、完整范围和当前配置之后的快照。
     const dataSnapshotReady = !(stores.length === 0 && externalDataDeclared) && stores.every(store => /mongo/i.test(store.dockerImage)

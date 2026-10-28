@@ -26,7 +26,7 @@ let worktree: WorktreeService;
 let scheduledTick: () => void;
 let auditFile: string;
 let scheduledInterval: ReturnType<typeof setInterval>;
-let fingerprintOverride: { status: number; body: string; type?: string; delayMs?: number; headersOnly?: boolean } | undefined;
+let fingerprintOverride: { status: number; body: string; type?: string; headers?: Record<string, string>; delayMs?: number; headersOnly?: boolean } | undefined;
 let responseTimers: ReturnType<typeof setTimeout>[];
 const auditSink = {
   record: () => { throw new Error('Durable audit must use immediate writes'); },
@@ -107,6 +107,7 @@ beforeEach(async () => {
     if (req.method !== 'GET') writes.push(req.path);
     if (req.path.endsWith('/migration/fingerprint') && fingerprintOverride) {
       const override = fingerprintOverride;
+      if (override.headers) res.set(override.headers);
       if (override.headersOnly) { res.status(override.status).type(override.type || 'application/json').flushHeaders(); return; }
       const send = () => res.status(override.status).type(override.type || 'application/json').send(override.body);
       if (override.delayMs) { const timer = setTimeout(send, override.delayMs); timer.unref(); responseTimers.push(timer); } else send();
@@ -210,12 +211,15 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     expect(config.enabled).toBe(true); expect(config.lastAudit?.readyForFailover).toBe(false);
     expect(config.lastAudit?.error).toContain('不存在'); expect(writes).toEqual([]);
   });
-  it.each(['stateless', 'reverse', 'other-project', 'subset', 'stale', 'exact'])('data readiness uses scoped current evidence: %s', async scenario => {
+  it.each(['stateless', 'app-persistent', 'external-db', 'reverse', 'other-project', 'subset', 'stale', 'exact'])('data readiness uses scoped current evidence: %s', async scenario => {
     const branch = seed(source, 'main', shaA); branch.createdAt = '2026-10-01T00:00:00Z';
     source.updateProject(projectId, { createdAt: '2026-10-01T00:00:00Z', standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
       branchSyncPolicy: 'audit-only', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-02T00:00:00Z' } });
-    const infra = scenario === 'stateless' ? [] : [{ id: 'mongo', projectId, name: 'Mongo', dockerImage: 'mongo:7', containerPort: 27017, dbName: 'fixture-db', env: {}, volumes: [] }];
+    const infra = ['stateless', 'app-persistent', 'external-db'].includes(scenario) ? [] : [{ id: 'mongo', projectId, name: 'Mongo', dockerImage: 'mongo:7', containerPort: 27017, dbName: 'fixture-db', env: {}, volumes: [] }];
     const infraSpy = vi.spyOn(source, 'getInfraServicesForProject').mockReturnValue(infra as any);
+    const profiles = vi.spyOn(source, 'getBuildProfilesForProject').mockReturnValue(['app-persistent', 'external-db'].includes(scenario) ? [{ id: 'app', name: 'App', dockerImage: 'node', containerPort: 8080,
+      ...(scenario === 'external-db' ? { env: { MONGODB_URI: 'mongodb://synthetic.invalid/data' } } : { cacheMounts: [{ name: 'app-data', containerPath: '/data', storage: {
+        version: 1, purpose: 'persistent', instanceId: 'fixture-instance', projectId, scope: 'branch-private', branchId: branch.id, serviceId: 'app', mountKey: 'data' } }] }) }] as any : []);
     const migration = { id: 'fixture-migration', projectId, dbType: 'mongodb', status: 'completed', progress: 100,
       source: { type: 'local', projectId, serviceId: 'mongo', database: 'fixture-db' },
       target: { type: 'cds', cdsPeerId: 'fixture-peer', projectId: scenario === 'other-project' ? 'another-project' : projectId, serviceId: 'mongo', database: 'fixture-db' },
@@ -227,7 +231,7 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
       const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       expect(response.status).toBe(200);
       expect((await response.json() as any).audit.dataSnapshotReady).toBe(['stateless', 'exact'].includes(scenario));
-    } finally { infraSpy.mockRestore(); migrationSpy.mockRestore(); }
+    } finally { infraSpy.mockRestore(); migrationSpy.mockRestore(); profiles.mockRestore(); }
   });
   it('a historical matching migration does not prove current stateful takeover safety', async () => {
     for (const state of [source, target]) { const branch = seed(state, 'main', shaA); branch.createdAt = '2026-10-01T00:00:00Z'; }
@@ -312,7 +316,8 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
   it('HTTP failure evidence retains diagnostic facts while masking credentials, personal data and large text', async () => {
     seed(source, 'main', shaA);
     source.updateCdsPeer('fixture-peer', { accessKey: 'SYNTHETIC_SHARED_AUTH_SENTINEL' });
-    fingerprintOverride = { status: 503, body: JSON.stringify({ code: 'PEER_BUSY', message: 'retry later test.person@example.invalid +8613812345678',
+    fingerprintOverride = { status: 503, headers: { 'x-request-id': 'SYNTHETIC_SHARED_AUTH_SENTINEL' },
+      type: 'application/json; charset=utf-8; token=SYNTHETIC_SHARED_AUTH_SENTINEL', body: JSON.stringify({ code: 'PEER_BUSY', message: 'retry later test.person@example.invalid +8613812345678',
       token: 'SYNTHETIC_TOKEN_SENTINEL', nested: { password: 'SYNTHETIC_PASSWORD_SENTINEL', document: 'PRIVATE_DOCUMENT_SENTINEL'.repeat(600) },
       details: { reason: 'SYNTHETIC_SHARED_AUTH_SENTINEL' } }) };
     const failure = await reconcile(); expect(failure.status).toBe(502); expect(failure.body.responseAuditId).toMatch(/^[a-f0-9-]{36}$/);
@@ -331,6 +336,13 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     expect(details).toMatchObject({ responseReceived: true, httpStatus: 200, parseState: 'invalid-json', localDecision: 'parse-failure' });
     expect(details.originalBytes).toBeGreaterThan(0); expect(details.snapshot).toContain('unstructured response omitted');
     expect(fs.readFileSync(auditFile, 'utf8')).not.toContain('UNSTRUCTURED_PRIVATE_SENTINEL');
+  });
+  it('an invalid peer URL still leaves durable no-response evidence with its unsafe target omitted', async () => {
+    seed(source, 'main', shaA); source.updateCdsPeer('fixture-peer', { baseUrl: 'https://invalid%20host.invalid' });
+    expect((await reconcile()).status).toBe(502);
+    const details = (await auditSink.findRecent({ projectId }))[0].details;
+    expect(details).toMatchObject({ responseReceived: false, httpStatus: null, target: '[invalid peer URL omitted]', parseState: 'no-response' });
+    expect(writes).toEqual([]);
   });
   it('a real aborted peer request persists no-response timeout facts without fabricated HTTP status', async () => {
     seed(source, 'main', shaA); fingerprintOverride = { status: 200, body: '{}', delayMs: 200 };
