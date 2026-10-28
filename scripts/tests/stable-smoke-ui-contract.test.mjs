@@ -221,6 +221,15 @@ test('REG-stsmk-account-scope-001 REC010原case真实完成前缀登记两次run
   assert.deepEqual(configs, [{ retries: 0 }], '原case失败后不得自动再创建一轮付费资源');
 });
 
+test('REG-stsmk-paid-retry-001 REC003真实录音失败后不得自动再次创建付费资源', () => {
+  const source = readFileSync(new URL('../../e2e/specs/stable-smoke.spec.ts', import.meta.url), 'utf8');
+  const localSuite = source.split("test.describe('REC003真实录音清理闭环不自动重试'")[1]
+    ?.split("test('[REC-004][REC-005]")[0];
+  assert.ok(localSuite, 'REC003真实录音必须有独立零重试作用域');
+  assert.match(localSuite, /test\.describe\.configure\(\{ retries: 0 \}\)/);
+  assert.match(localSuite, /test\(recordingJourneyPlan\.title/);
+});
+
 test('REG-stsmk-account-scope-001 GWBASE API入口与真实控制台入口按现存发布合同分离', () => {
   assert.equal(typeof uiContract.resolveGatewayUiBaseUrl, 'function');
   const apiBase = 'https://inspection.invalid';

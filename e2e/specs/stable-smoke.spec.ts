@@ -5982,7 +5982,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test(recordingJourneyPlan.title, { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
+  test.describe('REC003真实录音清理闭环不自动重试', () => {
+    test.describe.configure({ retries: 0 });
+    test(recordingJourneyPlan.title, { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.setTimeout(240_000);
     // 真值来自完整合成输入，不来自历史ASR输出；尚未经过人工真听核准。
     const speechReference = loadStableSmokeSpeechReference();
@@ -6220,6 +6222,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }, testInfo);
       }
     }
+    });
   });
 
   test('[REC-004][REC-005] 路由离开后从保险箱恢复同一后台录音', { tag: '@cleanup' }, async ({ page, request }) => {
