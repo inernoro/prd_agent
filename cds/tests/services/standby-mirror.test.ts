@@ -174,6 +174,16 @@ describe('percentile', () => {
 });
 
 describe('standby branch sync plan', () => {
+  it('non-executable divergence diagnostics never starve eligible branch groups and remain visible after the budget', () => {
+    const divergence = Array.from({ length: 100 }, (_, i) => ({ kind: 'divergent' as const, name: `divergent-${i}`, sourceStatus: 'idle', sourceCommit: null, reason: 'identity unknown' }));
+    const pair = [{ kind: 'create' as const, name: 'missing', sourceStatus: 'running', sourceCommit: 'a'.repeat(40), reason: 'missing' },
+      { kind: 'deploy' as const, name: 'missing', sourceStatus: 'running', sourceCommit: 'a'.repeat(40), reason: 'warm' }];
+    const trailing = { kind: 'divergent' as const, name: 'trailing', sourceStatus: 'idle', sourceCommit: null, reason: 'different' };
+    const selected = limitStandbySyncActions([...divergence, ...pair, trailing], 2);
+    expect(selected.filter(action => action.kind !== 'divergent')).toEqual(pair);
+    expect(selected.filter(action => action.kind === 'divergent')).toEqual([...divergence, trailing]);
+    expect(limitStandbySyncActions([...divergence, ...pair, trailing], 1)).toEqual([...divergence, trailing]);
+  });
   it('the action budget keeps every create/deploy pair whole', () => {
     const actions = Array.from({ length: 51 }, (_, index) => [
       { kind: 'create' as const, name: `branch-${index}`, sourceStatus: 'running', sourceCommit: 'a'.repeat(40), reason: 'fixture' },

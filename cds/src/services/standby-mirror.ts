@@ -60,7 +60,13 @@ export function limitStandbySyncActions(actions: StandbyBranchSyncAction[], limi
   const groups = new Map<string, StandbyBranchSyncAction[]>();
   for (const action of actions) groups.set(action.name, [...(groups.get(action.name) || []), action]);
   const selected: StandbyBranchSyncAction[] = [];
-  for (const group of groups.values()) { if (selected.length + group.length > limit) break; selected.push(...group); }
+  let executableCount = 0;
+  for (const group of groups.values()) {
+    const cost = group.filter(action => action.kind !== 'divergent').length;
+    if (executableCount + cost > limit) continue;
+    selected.push(...group);
+    executableCount += cost;
+  }
   return selected;
 }
 
