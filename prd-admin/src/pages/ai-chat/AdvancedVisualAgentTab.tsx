@@ -7188,9 +7188,9 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                           <div
                             className="absolute left-3 top-3 text-[11px] font-extrabold rounded-full px-2.5 h-6 inline-flex items-center"
                             style={{
-                              background: 'rgba(168, 85, 247, 0.16)',
-                              border: '1px solid rgba(168, 85, 247, 0.30)',
-                              color: 'rgba(255,255,255,0.92)',
+                              background: 'color-mix(in srgb, var(--semantic-purple-text) 12%, var(--bg-elevated))',
+                              border: '1px solid var(--semantic-purple-border)',
+                              color: 'var(--semantic-purple-text)',
                             }}
                             title={
                               it.ratioAdjusted

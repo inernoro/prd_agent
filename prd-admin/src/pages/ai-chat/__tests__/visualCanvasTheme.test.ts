@@ -49,6 +49,24 @@ const chat = one(openings(editor).filter(node =>
   attribute(node, 'ref')?.getText() === '{chatPanelRef}'), '浮动对话面板');
 const messageBubble = one(openings(message).filter(node =>
   attribute(node, 'className')?.getText().includes('leading-[16px]')), '普通消息气泡');
+const sizeNotice = one(openings(editor).filter(node =>
+  attribute(node, 'title')?.getText().includes('比例已微调：')), '尺寸调整提示');
+function containingExpression(node: ts.Node): ts.Expression {
+  for (let parent = node.parent; parent; parent = parent.parent) {
+    if (ts.isJsxExpression(parent) && parent.expression) return parent.expression;
+  }
+  throw new Error('尺寸调整提示必须由真实JSX表达式控制');
+}
+const sizeNoticeCondition = containingExpression(sizeNotice);
+function renderSizeNotice(it: Record<string, unknown>) {
+  const code = ts.transpileModule(`(${sizeNoticeCondition.getText()})`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React },
+  }).outputText;
+  return runInNewContext(code, {
+    it,
+    React: { createElement: (_tag: string, props: Record<string, unknown>, text: string) => ({ props, text }) },
+  }) as { props: { title: string; style: Record<string, string> }; text: string } | null;
+}
 
 describe('视觉创作编辑器双主题接线', () => {
   it('编辑页不再继承固定暗岛，根背景使用现有主题底色', () => {
@@ -111,7 +129,31 @@ describe('视觉创作编辑器双主题接线', () => {
     }
   });
 
-  it('消费的底色、点阵和按钮token都有真实明暗定义，且随主题发生变化', () => {
+  it.each([
+    [true, '比例已微调'],
+    [false, '尺寸已替换'],
+  ])('尺寸提示比例微调=%s时保留文案与tooltip，使用成对紫色主题token', (ratioAdjusted, text) => {
+    const notice = renderSizeNotice({ status: 'done', sizeAdjusted: true, ratioAdjusted, requestedSize: '1024x1024', effectiveSize: '1024x1536' });
+    expect(notice?.text).toBe(text);
+    expect(notice?.props.title).toBe(`${text}：1024x1024 → 1024x1536`);
+    expect(notice?.props.style).toEqual({
+      background: 'color-mix(in srgb, var(--semantic-purple-text) 12%, var(--bg-elevated))',
+      border: '1px solid var(--semantic-purple-border)',
+      color: 'var(--semantic-purple-text)',
+    });
+  });
+
+  it.each([
+    ['done', false], ['done', undefined], ['running', true], ['error', true], ['queued', true],
+  ])('状态=%s、尺寸调整=%s时不显示尺寸提示', (status, sizeAdjusted) => {
+    expect(renderSizeNotice({ status, sizeAdjusted })).toBeNull();
+  });
+
+  it('尺寸提示缺失尺寸字段时保留原有tooltip空值兜底', () => {
+    expect(renderSizeNotice({ status: 'done', sizeAdjusted: true, ratioAdjusted: false })?.props.title).toBe('尺寸已替换： → ');
+  });
+
+  it('消费的底色、点阵、按钮和尺寸提示token都有真实明暗定义，且随主题发生变化', () => {
     const css = readFileSync(resolve(__dirname, '../../../styles/tokens.css'), 'utf8');
     const block = (selector: string) => {
       const start = css.indexOf(selector);
@@ -123,8 +165,11 @@ describe('视觉创作编辑器双主题接线', () => {
       if (!match) throw new Error(`缺少主题token：${token}`);
       return match[1]!.trim();
     };
-    for (const token of ['bg-base', 'border-subtle', 'bg-elevated', 'bg-card-hover', 'border-default', 'text-primary']) {
+    for (const token of ['bg-base', 'border-subtle', 'bg-elevated', 'bg-card-hover', 'border-default', 'text-primary', 'semantic-purple-border', 'semantic-purple-text']) {
       expect(value(block(':root {'), token)).not.toBe(value(block('[data-theme="light"] {'), token));
+    }
+    for (const token of ['semantic-purple-border', 'semantic-purple-text']) {
+      expect(value(block('.surface-tone-dark {'), token)).toBe(value(block(':root {'), token));
     }
   });
 });
