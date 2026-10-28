@@ -301,13 +301,20 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
           && (!migration.target.database || migration.target.database === store.dbName)
           && Number.isFinite(started) && Number.isFinite(finished) && started >= baseline && finished >= started && finished <= Date.now();
       }));
+    // 当前迁移协议只有历史完成记录，没有源/目标实时水位或一致性证明。
+    // 不猜测允许丢失的数据窗口；该切流门禁不参与三种分支同步策略的执行许可。
+    const currentDataVerified = stores.length === 0 && !externalDataDeclared;
+    const dataReadinessReason = currentDataVerified ? '无声明的持久数据，数据门禁不适用'
+      : dataSnapshotReady ? '已有历史快照，尚未核验当前两端数据一致，暂不可切流'
+        : '尚无完整目标快照与当前数据一致性证据，暂不可切流';
     const readyForFailover = remoteReachable
       && protocolReady
       && comparison.repositoryMatches
       && comparison.configMatches
       && comparison.secretKeysMatch
       && comparison.defaultBranchMatches
-      && dataSnapshotReady;
+      && dataSnapshotReady
+      && currentDataVerified;
 
     const audit: StandbyMirrorAudit = {
       id: `standby_${Date.now().toString(36)}`,
@@ -322,6 +329,8 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
       secretKeysMatch: comparison.secretKeysMatch,
       defaultBranchMatches: comparison.defaultBranchMatches,
       dataSnapshotReady,
+      currentDataVerified,
+      dataReadinessReason,
       readyForFailover,
       missingBranches: comparison.missingBranches.slice(0, 100),
       divergentBranches: comparison.divergentBranches.slice(0, 100),
@@ -768,6 +777,7 @@ export function createProjectMigrationRouter(deps: ProjectMigrationDeps): Router
     const operational = !!config?.enabled
       && fresh
       && !!audit?.responseAuditId
+      && audit.currentDataVerified === true
       && audit?.readyForFailover === true;
     res.status(operational ? 200 : 503).json({
       status: operational ? 'pass' : 'fail',

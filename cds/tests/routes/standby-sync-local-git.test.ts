@@ -229,6 +229,25 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
       expect((await response.json() as any).audit.dataSnapshotReady).toBe(['stateless', 'exact'].includes(scenario));
     } finally { infraSpy.mockRestore(); migrationSpy.mockRestore(); }
   });
+  it('a historical matching migration does not prove current stateful takeover safety', async () => {
+    for (const state of [source, target]) { const branch = seed(state, 'main', shaA); branch.createdAt = '2026-10-01T00:00:00Z'; }
+    source.updateProject(projectId, { createdAt: '2026-10-01T00:00:00Z', standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,
+      branchSyncPolicy: 'audit-only', autoFailover: false, intervalMinutes: 5, updatedAt: '2026-10-02T00:00:00Z' } });
+    const infra = [{ id: 'mongo', projectId, name: 'Mongo', dockerImage: 'mongo:7', containerPort: 27017, dbName: 'fixture-db', env: {}, volumes: [] }] as any;
+    const sourceInfra = vi.spyOn(source, 'getInfraServicesForProject').mockReturnValue(infra);
+    const targetInfra = vi.spyOn(target, 'getInfraServicesForProject').mockReturnValue(infra);
+    const migration = vi.spyOn(source, 'getDataMigrations').mockReturnValue([{ id: 'historical', projectId, status: 'completed',
+      source: { type: 'local', projectId, serviceId: 'mongo' }, target: { type: 'cds', projectId, cdsPeerId: 'fixture-peer', serviceId: 'mongo' },
+      startedAt: '2026-10-03T00:00:00Z', finishedAt: '2026-10-04T00:00:00Z' } as any]);
+    try {
+      const response = await fetch(`${sourceUrl}/api/projects/${projectId}/migration/standby/audit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const { audit } = await response.json() as any;
+      expect(audit.defaultBranchMatches).toBe(true); expect(audit.configMatches).toBe(true); expect(audit.dataSnapshotReady).toBe(true);
+      expect(audit.readyForFailover).toBe(false);
+      expect(audit.currentDataVerified).toBe(false); expect(audit.dataReadinessReason).toContain('历史快照');
+      expect((await reconcile('warm-running')).status).toBe(200);
+    } finally { sourceInfra.mockRestore(); targetInfra.mockRestore(); migration.mockRestore(); }
+  });
   it.each(['disabled', 'audit-only', 'peer', 'project', 'peer-url', 'peer-key', 'fallback-key'])('scheduled sync refuses stale %s settings after audit awaits', async mutation => {
     seed(source, 'main', shaA);
     source.updateProject(projectId, { standbyMirror: { peerId: 'fixture-peer', remoteProjectId: projectId, enabled: true,

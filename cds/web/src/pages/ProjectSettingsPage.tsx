@@ -3587,6 +3587,8 @@ interface StandbyAudit {
   secretKeysMatch: boolean;
   defaultBranchMatches: boolean;
   dataSnapshotReady: boolean;
+  currentDataVerified?: boolean;
+  dataReadinessReason?: string;
   readyForFailover: boolean;
   missingBranches: string[];
   divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
@@ -3660,6 +3662,7 @@ export function ProjectMigrationTab({
   const [syncingBranches, setSyncingBranches] = useState<'dry' | 'apply' | null>(null);
   const [branchSyncResult, setBranchSyncResult] = useState<StandbyBranchSyncResult | null>(null);
   const [auditElapsedSeconds, setAuditElapsedSeconds] = useState(0);
+  const standbyReadyForFailover = standby?.lastAudit?.readyForFailover && standby.lastAudit.currentDataVerified === true;
 
   // projectId 切换时:① 立刻清空上一个项目的残留(预览 cds-compose 含明文 env,绝不能跨项目串显);
   // ② 旧项目的慢响应到达时用 liveProjectId 丢弃,避免覆盖新项目视图(Bugbot High「Stale migration preview leak」)。
@@ -4195,7 +4198,8 @@ export function ProjectMigrationTab({
                   ['代码仓库', standby.lastAudit.repositoryMatches, standby.lastAudit.repositoryMatches ? '两端绑定同一仓库' : '仓库身份不同或缺失'],
                   ['配置与密钥项', standby.lastAudit.configMatches && standby.lastAudit.secretKeysMatch, `配置 ${standby.lastAudit.configMatches ? '一致' : '不一致'}，密钥项 ${standby.lastAudit.secretKeysMatch ? '齐全' : '有差异'}`],
                   ['主分支提交', standby.lastAudit.defaultBranchMatches, standby.lastAudit.defaultBranchMatches ? '提交一致' : '提交不一致或缺少主分支'],
-                  ['数据快照', standby.lastAudit.dataSnapshotReady, standby.lastAudit.dataSnapshotReady ? '已有完成的迁移证据' : '尚无完成的迁移证据'],
+                  ['当前数据就绪', standby.lastAudit.currentDataVerified === true, standby.lastAudit.dataReadinessReason
+                    || (standby.lastAudit.dataSnapshotReady ? '已有历史快照，请重新核对当前数据' : '尚无当前数据一致性证据')],
                 ].map(([label, passed, evidence]) => (
                   <tr key={String(label)} className="border-t border-[hsl(var(--hairline))]">
                     <td className="px-3 py-2 font-medium">{String(label)}</td>
@@ -4212,8 +4216,8 @@ export function ProjectMigrationTab({
                 </tr>
               </tbody>
             </table>
-            <div className={`border-t border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium ${standby.lastAudit.readyForFailover ? 'text-ok' : 'text-warn'}`}>
-              {standby.lastAudit.readyForFailover ? '全部门禁通过，可以进入切流演练' : '尚不允许切流，请先处理表格中的未通过项'}
+            <div className={`border-t border-[hsl(var(--hairline))] px-3 py-2 text-sm font-medium ${standbyReadyForFailover ? 'text-ok' : 'text-warn'}`}>
+              {standbyReadyForFailover ? '全部门禁通过，可以进入切流演练' : '尚不允许切流，请先处理表格中的未通过项'}
               <span className="ml-2 text-xs font-normal text-muted-foreground">核对于 {new Date(standby.lastAudit.checkedAt).toLocaleString()}</span>
             </div>
           </div>

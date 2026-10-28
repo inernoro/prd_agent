@@ -3797,6 +3797,9 @@ export interface StandbyMirrorAudit {
   secretKeysMatch: boolean;
   defaultBranchMatches: boolean;
   dataSnapshotReady: boolean;
+  /** A historical transfer alone cannot prove current stateful data equality. */
+  currentDataVerified?: boolean;
+  dataReadinessReason?: string;
   readyForFailover: boolean;
   missingBranches: string[];
   divergentBranches: Array<{ name: string; sourceCommit: string | null; targetCommit: string | null }>;
