@@ -77,6 +77,16 @@ describe('standby mirror fingerprint', () => {
     const target = buildStandbyMirrorFingerprint({ ...input, infra: [{ ...service, hostPort: 23456, containerName: 'target-cache', status: 'idle', errorMessage: 'historical error', createdAt: '2026-01-02' } as any] });
     expect(source.configHash).toBe(target.configHash);
   });
+  it('includes effective database isolation in both portable identity and local condition', () => {
+    const branch = { id: 'feature', branch: 'feature', status: 'idle', githubCommitSha: 'a'.repeat(40) } as BranchEntry;
+    const input = { profiles: [{ id: 'api', name: 'API', workDir: '.', dockerImage: 'node', containerPort: 8080,
+      dbScope: 'shared' } as BuildProfile], branch, env: { MONGODB_URL: 'mongodb://synthetic.invalid/app' }, infra: [], routingRules: [] };
+    const shared = buildStandbyBranchConfiguration(input);
+    const isolated = buildStandbyBranchConfiguration({ ...input, branch: { ...branch, profileOverrides: { api: { dbScope: 'per-branch' } } } });
+    const clone = buildStandbyBranchConfiguration({ ...input, branch: { ...branch, profileOverrides: { api: { dbScope: 'per-branch', dbInit: 'clone' } } } });
+    expect(shared.configHash).not.toBe(isolated.configHash); expect(shared.configurationRevision).not.toBe(isolated.configurationRevision);
+    expect(isolated.configHash).not.toBe(clone.configHash); expect(isolated.configurationRevision).not.toBe(clone.configurationRevision);
+  });
   it('keeps declared image templates portable across different branch runtime identities', () => {
     const profiles = [{ id: 'api', name: 'API', workDir: '.', containerPort: 8080, prebuiltImage: true,
       dockerImage: 'ghcr.io/fixture/api:sha-${CDS_COMMIT_SHA}', fallbackImage: ['ghcr.io/fixture/api:branch-${CDS_BRANCH_SLUG}'] } as BuildProfile];

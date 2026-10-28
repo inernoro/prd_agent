@@ -4775,7 +4775,7 @@ describe('Branch Routes', () => {
       expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]); begin.mockRestore();
     });
 
-    it.each(['pin', 'configuration', 'secret'] as const)('备用同步快照在产物复核期间新增%s时不能准入或清pin', async change => {
+    it.each(['pin', 'configuration', 'secret', 'db-scope'] as const)('备用同步快照在产物复核期间新增%s时不能准入或清pin', async change => {
       const A = 'a'.repeat(40), B = 'b'.repeat(40), id = 'standby-artifact-pin-during-check';
       stateService.addBuildProfile({ id: 'api', projectId: 'default', name: 'Synthetic prebuilt',
         dockerImage: `ghcr.io/owned/api:sha-${A}`, workDir: '.', command: '', containerPort: 3000, prebuiltImage: true });
@@ -4787,6 +4787,7 @@ describe('Branch Routes', () => {
       const inspect = vi.spyOn(containerService, 'inspectDeploymentArtifacts').mockImplementation(async (...args) => {
         const result = await originalInspect(...args);
         if (change === 'pin') entry.pinnedCommit = B;
+        else if (change === 'db-scope') entry.profileOverrides = { api: { dbScope: 'per-branch' } };
         else if (change === 'secret') stateService.setCustomEnv({ API_TOKEN: 'synthetic-changed-secret' }, entry.id);
         else entry.profileOverrides = { api: { env: { PUBLIC_SETTING: 'changed' } } };
         return result;
@@ -4795,6 +4796,7 @@ describe('Branch Routes', () => {
         standbyExpected: { commitSha: A, status: 'idle', pinnedCommit: null, ...standbyConfiguration(entry) } });
       expect(inspect).toHaveBeenCalled(); expect(result.status).toBe(409);
       if (change === 'pin') expect(entry.pinnedCommit).toBe(B);
+      else if (change === 'db-scope') expect(entry.profileOverrides?.api.dbScope).toBe('per-branch');
       else if (change === 'secret') expect(stateService.getCustomEnvScope(entry.id).API_TOKEN).toBe('synthetic-changed-secret');
       else expect(entry.profileOverrides?.api.env?.PUBLIC_SETTING).toBe('changed');
       expect(branchOperationCoordinator.getArtifactWaiters()).toEqual([]); expect(deploymentRunService.list({ branchId: id })).toEqual([]);

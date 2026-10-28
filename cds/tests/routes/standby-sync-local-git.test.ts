@@ -1,3 +1,4 @@
+import { resolveBranchEnvLayers } from '../../src/services/branch-env-layers.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import fs from 'node:fs';
@@ -221,7 +222,7 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     expect(response.body.result.deployed).toEqual([]); expect(deployedCommits).toEqual([shaA]);
     expect((side === 'source' ? local : remote).profileOverrides?.api.env?.PUBLIC_SETTING).toBe('new');
   });
-  it.each(['command', 'override-env', 'extra', 'mode', 'branch-env'])('warm-running refuses non-default effective %s configuration divergence', async layer => {
+  it.each(['command', 'override-env', 'extra', 'mode', 'branch-env', 'db-scope'])('warm-running refuses non-default effective %s configuration divergence', async layer => {
     for (const state of [source, target]) {
       seed(state, 'main', shaA);
       state.addBuildProfile({ id: 'api', projectId, name: 'API', dockerImage: 'node', command: 'node original.js', containerPort: 8080, env: {},
@@ -231,6 +232,14 @@ describe('three-policy real local Git / HTTP / State / fingerprint chain', () =>
     if (layer === 'command') branch.profileOverrides = { api: { command: 'node different.js' } };
     if (layer === 'override-env') branch.profileOverrides = { api: { env: { PUBLIC_SETTING: 'different' } } };
     if (layer === 'extra') branch.extraProfiles = [{ id: 'extra', projectId, name: 'Extra', dockerImage: 'node', containerPort: 8081, command: 'node extra.js' } as any];
+    if (layer === 'db-scope') {
+      branch.profileOverrides = { api: { dbScope: 'per-branch' } };
+      for (const state of [source, target]) state.getBuildProfilesForProject(projectId)[0].env = { MONGODB_URL: 'mongodb://synthetic.invalid/app' };
+      const sourceEnv = resolveBranchEnvLayers(source, branch, { jwtIssuer: 'cds' }).profiles[0].provenance;
+      const targetEnv = resolveBranchEnvLayers(target, remote, { jwtIssuer: 'cds' }).profiles[0].provenance;
+      expect(sourceEnv.find(row => row.key === 'MONGODB_URL')?.value).toBe('mongodb://synthetic.invalid/app_feature');
+      expect(targetEnv.find(row => row.key === 'MONGODB_URL')?.value).toBe('mongodb://synthetic.invalid/app');
+    }
     if (layer === 'mode') branch.profileOverrides = { api: { activeDeployMode: 'different' } };
     if (layer === 'branch-env') source.setCustomEnv({ PUBLIC_SETTING: 'different' }, branch.id);
     const response = await reconcile('warm-running');

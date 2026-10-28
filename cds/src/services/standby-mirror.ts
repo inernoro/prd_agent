@@ -16,6 +16,7 @@ import { resolveEffectiveProfile } from './container.js';
 import { confirmedRunningRevisionSha } from './running-version.js';
 import { normalizeRepositoryIdentity } from './release-strategy.js';
 import { configuredProfileEnvLayers } from './branch-env-layers.js';
+import { effectiveDbInit } from './db-init-mode.js';
 
 const SECRET_PRESENT = '__cds_secret_present__';
 const SECRET_MISSING = '__cds_secret_missing__';
@@ -136,6 +137,12 @@ function branchName(branch: BranchEntry): string {
   return String(branch.branch || branch.id);
 }
 
+/** Runtime isolation is not part of Compose export; keep its effective intent explicitly. */
+function databaseIsolationIdentity(profile: BuildProfile, depth = 0): unknown {
+  return { scope: profile.dbScope || 'shared', init: profile.dbScope === 'per-branch' ? effectiveDbInit(profile) : null,
+    ...(profile.sourceFallbackProfile && depth < 2 ? { fallback: databaseIsolationIdentity(profile.sourceFallbackProfile, depth + 1) } : {}) };
+}
+
 /** Portable configured layers only; node-derived runtime IDs/URLs are deliberately excluded. */
 export function buildStandbyBranchConfiguration(input: {
   profiles: BuildProfile[]; env: Record<string, string>; branch?: BranchEntry; branchEnv?: Record<string, string>;
@@ -144,7 +151,7 @@ export function buildStandbyBranchConfiguration(input: {
   const baseEnv = { ...input.env, ...input.branchEnv };
   const secretKeys = new Set(Object.keys(baseEnv).filter(isSecretEnvKey));
   const secretScopes: Array<{ profile: string; keys: string[] }> = [];
-  const localProfiles: string[] = [];
+  const localProfiles: Array<{ id: string; config: string; database: unknown }> = [];
   const profiles = mergeBranchProfiles(input.profiles, input.branch).map(baseline => {
     const layers = configuredProfileEnvLayers(baseline, input.branch, !!input.branch?.extraProfiles?.some(profile => profile.id === baseline.id));
     const env = Object.assign({}, baseEnv, ...layers.map(layer => layer.env)) as Record<string, string>;
@@ -152,8 +159,9 @@ export function buildStandbyBranchConfiguration(input: {
     secretScopes.push({ profile: baseline.id, keys });
     const resolved = resolveEffectiveProfile(baseline, input.branch, { preserveImageTemplates: true });
     const effective = { ...resolved, workDir: resolved.workDir || '.' };
-    localProfiles.push(toCdsCompose([stable({ ...effective, env }) as BuildProfile], {}, [], []));
-    return { id: baseline.id, config: toCdsCompose([stable({ ...scrubProfile(effective), env: scrubEnv(env) }) as BuildProfile], {}, [], []) };
+    const database = databaseIsolationIdentity(effective);
+    localProfiles.push({ id: baseline.id, config: toCdsCompose([stable({ ...effective, env }) as BuildProfile], {}, [], []), database });
+    return { id: baseline.id, database, config: toCdsCompose([stable({ ...scrubProfile(effective), env: scrubEnv(env) }) as BuildProfile], {}, [], []) };
   }).sort((a, b) => a.id.localeCompare(b.id));
   const configHash = hash({ profiles, env: scrubEnv(baseEnv),
     infra: [...input.infra].sort((a, b) => a.id.localeCompare(b.id)).map(scrubInfra),
